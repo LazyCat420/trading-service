@@ -63,7 +63,8 @@ async def optimize_agent_tools(
                 if tool_name in db_stats:
                     status, unused_count = db_stats[tool_name]
                     if status == "pruned":
-                        pruned_names.add(tool_name)
+                        if tool_name != "generate_trading_chart":
+                            pruned_names.add(tool_name)
                     elif status == "highlighted":
                         highlighted_names.append(tool_name)
                 else:
