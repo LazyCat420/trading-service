@@ -248,7 +248,19 @@ async def run_perticker_collection(
                 try:
                     from app.processors.technical_processor import compute_technicals
 
-                    compute_technicals(ticker)
+                    tech_t0 = time.monotonic()
+                    rows = compute_technicals(ticker)
+                    tech_ms = elapsed_ms(tech_t0)
+                    async with results_lock:
+                        results.setdefault("processors", {})[f"{ticker}_technicals"] = rows
+                    emit(
+                        "collecting",
+                        f"technicals_{ticker}",
+                        f"{ticker}: {rows} technical indicator rows computed",
+                        status="ok",
+                        data={"rows": rows},
+                        elapsed_ms=tech_ms,
+                    )
                 except Exception:
                     pass
                 if analysis_queue is not None:
@@ -322,7 +334,19 @@ async def run_perticker_collection(
                             compute_technicals,
                         )
 
-                        compute_technicals(ticker)
+                        tech_t0 = time.monotonic()
+                        rows = compute_technicals(ticker)
+                        tech_ms = elapsed_ms(tech_t0)
+                        async with results_lock:
+                            results.setdefault("processors", {})[f"{ticker}_technicals"] = rows
+                        emit(
+                            "collecting",
+                            f"technicals_{ticker}",
+                            f"{ticker}: {rows} technical indicator rows computed",
+                            status="ok",
+                            data={"rows": rows},
+                            elapsed_ms=tech_ms,
+                        )
                     except Exception:
                         pass
 
