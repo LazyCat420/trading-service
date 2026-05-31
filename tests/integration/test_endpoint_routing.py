@@ -6,8 +6,8 @@ from app.services.vllm_client import VLLMClient, Priority
 
 def _make_client():
     with patch("app.services.vllm_client.settings") as mock_settings:
-        mock_settings.JETSON_VLLM_URL = "http://10.0.0.30:8000"
-        mock_settings.DGX_SPARK_VLLM_URL = "http://10.0.0.141:8000"
+        mock_settings.PROVIDER_VLLM_1_URL = "http://10.0.0.30:8000"
+        mock_settings.PROVIDER_VLLM_2_URL = "http://10.0.0.141:8000"
         mock_settings.JETSON_MAX_CONCURRENT = 10
         mock_settings.DGX_MAX_CONCURRENT = 10
         mock_settings.ACTIVE_MODEL = "qwen-3.5-7b"

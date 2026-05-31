@@ -71,7 +71,7 @@ class MetricsCollector:
     def __init__(self, max_history: int = 360):
         # 360 snapshots × 10s interval = 1 hour of history
         self._history: deque[MetricsSnapshot] = deque(maxlen=max_history)
-        self._base_url = settings.JETSON_VLLM_URL
+        self._base_url = settings.PROVIDER_VLLM_1_URL
         self._polling = False
         self._poll_task: asyncio.Task | None = None
 

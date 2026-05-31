@@ -28,7 +28,7 @@ def format_number(n: int | float) -> str:
 
 async def collect_and_display():
     """Main monitoring loop — collects metrics and displays dashboard."""
-    print(f"Starting vLLM Monitor — {settings.JETSON_VLLM_URL}")
+    print(f"Starting vLLM Monitor — {settings.PROVIDER_VLLM_1_URL}")
     print("Press Ctrl+C to exit\n")
 
     # Subscribe to live calls

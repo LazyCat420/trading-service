@@ -206,7 +206,7 @@ def _build_rlm(
         )
     else:
         target_model = settings.ACTIVE_MODEL
-        target_url = settings.JETSON_VLLM_URL
+        target_url = settings.PROVIDER_VLLM_1_URL
         logger.info(
             "[RLM] %s unavailable, falling back to Jetson: %s @ %s",
             role_label,

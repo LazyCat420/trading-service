@@ -32,7 +32,7 @@ async def monitor_health():
         pass
     return {
         "vllm_healthy": healthy,
-        "vllm_url": settings.JETSON_VLLM_URL,
+        "vllm_url": settings.PROVIDER_VLLM_1_URL,
         "model": llm.model or "Auto-discovering...",
         "loaded_models": models,
         "semaphore_max_jetson": settings.JETSON_MAX_CONCURRENT,

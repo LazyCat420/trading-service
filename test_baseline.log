@@ -1,0 +1,507 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /home/lazycat/github/projects/sun/trading-service/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/lazycat/github/projects/sun/trading-service
+configfile: pytest.ini
+plugins: anyio-4.13.0, deepeval-4.0.2, rerunfailures-16.2, repeat-0.9.4, xdist-3.8.0, cov-7.1.0, typeguard-4.5.2, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 1068 items
+
+tests/integration/test_agent_coordination.py::test_post_and_read_findings PASSED [  0%]
+tests/integration/test_agent_coordination.py::test_request_and_check_investigation PASSED [  0%]
+tests/integration/test_agent_coordination.py::test_targeted_investigation PASSED [  0%]
+tests/integration/test_briefings_generation.py::test_flash_briefing_generation SKIPPED [  0%]
+tests/integration/test_briefings_generation.py::test_morning_briefing_generation SKIPPED [  0%]
+tests/integration/test_circuit_breaker_resilience.py::test_circuit_breaker_race_conditions PASSED [  0%]
+tests/integration/test_circuit_breaker_resilience.py::test_dynamic_role_discovery_under_load PASSED [  0%]
+tests/integration/test_connection_pool_exhaustion.py::TestGetDbContextManager::test_get_db_yields_cursor_and_auto_closes PASSED [  0%]
+tests/integration/test_connection_pool_exhaustion.py::TestGetDbContextManager::test_get_db_closes_on_exception PASSED [  0%]
+tests/integration/test_connection_pool_exhaustion.py::TestPoolTimeoutRecovery::test_pool_timeout_triggers_gc_retry PASSED [  0%]
+tests/integration/test_connection_pool_exhaustion.py::TestLeakDetection::test_pooled_cursor_del_warns_on_leak PASSED [  1%]
+tests/integration/test_connection_pool_exhaustion.py::TestCloseIdempotency::test_double_close_is_safe PASSED [  1%]
+tests/integration/test_connection_pool_exhaustion.py::TestConcurrentAccess::test_concurrent_get_db_no_deadlock PASSED [  1%]
+tests/integration/test_connection_pool_exhaustion.py::TestExecuteErrorHandling::test_execute_rolls_back_on_error PASSED [  1%]
+tests/integration/test_correlation_pipeline.py::test_correlation_computes_with_backfilled_data PASSED [  1%]
+tests/integration/test_crash_recovery.py::TestPipelineStateRecovery::test_stale_running_state_detected PASSED [  1%]
+tests/integration/test_crash_recovery.py::TestPipelineStateRecovery::test_idle_state_not_touched PASSED [  1%]
+tests/integration/test_crash_recovery.py::TestCycleControlResilience::test_pause_sets_flag PASSED [  1%]
+tests/integration/test_crash_recovery.py::TestCycleControlResilience::test_resume_clears_flag PASSED [  1%]
+tests/integration/test_crash_recovery.py::TestCycleControlResilience::test_double_pause_is_safe PASSED [  1%]
+tests/integration/test_crash_recovery.py::TestCycleControlResilience::test_resume_without_pause_is_safe PASSED [  1%]
+tests/integration/test_crash_recovery.py::TestRecoveryEngineResilience::test_transient_error_returns_retry PASSED [  2%]
+tests/integration/test_crash_recovery.py::TestRecoveryEngineResilience::test_fatal_error_returns_skip PASSED [  2%]
+tests/integration/test_crash_recovery.py::TestGracefulShutdown::test_cycle_control_stop_sets_flag PASSED [  2%]
+tests/integration/test_db_constraints.py::test_news_articles_no_unique_url_constraint SKIPPED [  2%]
+tests/integration/test_debate_db_persistence.py::test_run_adversarial_debate_persistence PASSED [  2%]
+tests/integration/test_debate_tool_budget_e2e.py::test_realistic_evidence_payload_exhaustion PASSED [  2%]
+tests/integration/test_decision_outcome_pipeline.py::TestOutcomeTrackerIntegration::test_record_and_resolve_buy SKIPPED [  2%]
+tests/integration/test_decision_outcome_pipeline.py::TestOutcomeTrackerIntegration::test_resolve_loss SKIPPED [  2%]
+tests/integration/test_decision_outcome_pipeline.py::TestOutcomeTrackerIntegration::test_hold_not_recorded SKIPPED [  2%]
+tests/integration/test_decision_outcome_pipeline.py::TestOutcomeTrackerIntegration::test_cancel_outcome SKIPPED [  2%]
+tests/integration/test_decision_outcome_pipeline.py::TestScoringFromRealOutcomes::test_outcome_based_scoring_with_seeded_data SKIPPED [  2%]
+tests/integration/test_decision_outcome_pipeline.py::TestScoringFromRealOutcomes::test_empty_outcomes_triggers_cold_start SKIPPED [  3%]
+tests/integration/test_decision_outcome_pipeline.py::TestReflectionPromptIntegration::test_reflection_prompt_includes_prediction_scorecard SKIPPED [  3%]
+tests/integration/test_decision_outcome_pipeline.py::TestEvolutionRouterDecisionRouting::test_critical_issues_routed_to_debate SKIPPED [  3%]
+tests/integration/test_duplicate_prevention.py::TestPipelineStateLock::test_concurrent_cycle_returns_409 PASSED [  3%]
+tests/integration/test_duplicate_prevention.py::TestTradingPhaseDedup::test_same_ticker_buy_not_duplicated PASSED [  3%]
+tests/integration/test_duplicate_prevention.py::TestScheduler409::test_409_logs_skipped_not_error PASSED [  3%]
+tests/integration/test_endpoint_routing.py::test_endpoint_override PASSED [  3%]
+tests/integration/test_endpoint_routing.py::test_balanced_routing PASSED [  3%]
+tests/integration/test_endpoint_routing.py::test_parameter_size_routing PASSED [  3%]
+tests/integration/test_endpoint_routing.py::test_qwen_35b_routing_rules PASSED [  3%]
+tests/integration/test_fund_alerts.py::test_fund_alerts_creation SKIPPED [  4%]
+tests/integration/test_memory_generation.py::test_memory_generation_on_cycle_close PASSED [  4%]
+tests/integration/test_pipeline_stop_cleanup.py::test_pipeline_abort_mid_analysis PASSED [  4%]
+tests/integration/test_pipeline_stop_propagation.py::test_trading_phase_aborts_on_stop PASSED [  4%]
+tests/integration/test_pipeline_stop_propagation.py::test_trading_phase_executes_zero_trades_on_stop PASSED [  4%]
+tests/integration/test_pipeline_stop_propagation.py::test_trading_phase_stops_mid_batch PASSED [  4%]
+tests/integration/test_pipeline_stop_propagation.py::test_v2_pipeline_aborts_on_stop PASSED [  4%]
+tests/integration/test_runtime_health.py::test_production_db_config PASSED [  4%]
+tests/integration/test_trace_capture.py::test_trace_capture_insertion PASSED [  4%]
+tests/integration/test_vllm_dispatcher_stress.py::test_vllm_dispatcher_priority_and_concurrency PASSED [  4%]
+tests/integration/test_vllm_dispatcher_stress.py::test_queue_timeout_and_eviction PASSED [  4%]
+tests/integration/test_vllm_dispatcher_stress.py::test_hot_swap_model_stress PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestQueueBackpressure::test_waiting_exceeds_running_forces_min PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestQueueBackpressure::test_waiting_equals_running_forces_min PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestQueueBackpressure::test_no_waiting_allows_max PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestQueueBackpressure::test_small_waiting_vs_large_running PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestCachePressure::test_high_cache_forces_min PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestCachePressure::test_low_cache_allows_max PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestCachePressure::test_medium_cache_interpolates PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestCachePressure::test_exact_80_returns_min PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestCachePressure::test_zero_cache_returns_max PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestMultiEndpoint::test_averages_across_endpoints PASSED [  5%]
+tests/regression/test_adaptive_concurrency.py::TestMultiEndpoint::test_sums_waiting_across_endpoints PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestMultiEndpoint::test_sums_running_across_endpoints PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestGather::test_empty_tasks_returns_empty PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestGather::test_single_task PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestGather::test_preserves_order PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestGather::test_concurrency_limited PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestGather::test_exceptions_returned PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestGather::test_exceptions_raised PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestLabelTracking::test_label_tracked_during_execution PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestLabelTracking::test_label_cleaned_after_completion PASSED [  6%]
+tests/regression/test_adaptive_concurrency.py::TestStatus::test_status_returns_full_vllm_data PASSED [  7%]
+tests/regression/test_adaptive_concurrency.py::TestStatus::test_total_active_zero_at_rest PASSED [  7%]
+tests/regression/test_adaptive_concurrency.py::TestFallback::test_no_endpoints_returns_zero_cache PASSED [  7%]
+tests/regression/test_adaptive_concurrency.py::TestFallback::test_no_endpoints_gives_max_limit PASSED [  7%]
+tests/regression/test_adaptive_concurrency.py::TestFallback::test_import_error_gives_max PASSED [  7%]
+tests/regression/test_bare_get_db_leak.py::test_no_new_bare_get_db_calls PASSED [  7%]
+tests/regression/test_bare_get_db_leak.py::test_main_py_has_no_bare_get_db PASSED [  7%]
+tests/regression/test_box_scorecard_schema.py::test_box_scorecard_schema_compatibility PASSED [  7%]
+tests/regression/test_checkpoint.py::test_force_save_checkpoint_queries_db_for_tickers PASSED [  7%]
+tests/regression/test_data_janitor_future.py::test_data_janitor_future_earnings PASSED [  7%]
+tests/regression/test_debate_overfitting_locks.py::TestNoSharedDebateCache::test_persona_caches_are_separate_dicts PASSED [  7%]
+tests/regression/test_debate_overfitting_locks.py::TestNoSharedDebateCache::test_evidence_filter_no_overlap PASSED [  8%]
+tests/regression/test_debate_overfitting_locks.py::TestClaimExtractionNoEarlyReturn::test_both_turns_included PASSED [  8%]
+tests/regression/test_debate_overfitting_locks.py::TestClaimExtractionNoEarlyReturn::test_survived_rebuttal_marked_correctly PASSED [  8%]
+tests/regression/test_debate_overfitting_locks.py::TestMinorityDissentRequired::test_minority_detection_bear_dissent PASSED [  8%]
+tests/regression/test_debate_overfitting_locks.py::TestTemperatureDiversity::test_temperatures_are_distinct PASSED [  8%]
+tests/regression/test_import_safety.py::TestImportSafety::test_data_perticker_collection_no_missing_imports PASSED [  8%]
+tests/regression/test_import_safety.py::TestImportSafety::test_quant_tools_no_unresolved_names PASSED [  8%]
+tests/regression/test_import_safety.py::TestImportSafety::test_pipeline_tools_no_unresolved_names PASSED [  8%]
+tests/regression/test_import_safety.py::TestImportSafety::test_critical_pipeline_files_parseable PASSED [  8%]
+tests/regression/test_import_safety.py::TestImportSafety::test_collector_datetime_imports PASSED [  8%]
+tests/regression/test_lifecycle_controller.py::test_double_start_cycle_race_condition PASSED [  8%]
+tests/regression/test_lifecycle_controller.py::test_task_dies_during_starting_phase PASSED [  9%]
+tests/regression/test_lifecycle_controller.py::test_stop_cycle_with_inflight_llm_call PASSED [  9%]
+tests/regression/test_lifecycle_controller.py::test_pause_cycle_enforces_wait PASSED [  9%]
+tests/regression/test_lifecycle_controller.py::test_request_stop_non_blocking PASSED [  9%]
+tests/regression/test_prism_and_debate_fixes.py::TestPrismToolStripping::test_prism_payload_includes_tools_when_agentic_mode_false PASSED [  9%]
+tests/regression/test_prism_and_debate_fixes.py::TestPrismToolStripping::test_prism_payload_includes_tools_when_agentic_mode_true PASSED [  9%]
+tests/regression/test_prism_and_debate_fixes.py::TestPrismToolStripping::test_prism_payload_no_tools_when_none_provided PASSED [  9%]
+tests/regression/test_prism_and_debate_fixes.py::TestPrismToolStripping::test_conversation_id_reused_only_in_agentic_mode PASSED [  9%]
+tests/regression/test_prism_and_debate_fixes.py::TestPrismToolStripping::test_call_prism_agent_forwards_tools PASSED [  9%]
+tests/regression/test_prism_and_debate_fixes.py::TestDebateToolBudget::test_debate_max_tool_turns_default PASSED [  9%]
+tests/regression/test_prism_and_debate_fixes.py::TestDebateToolBudget::test_fast_debate_mode_enabled PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestDebateToolBudget::test_prism_agent_routing_enabled PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestDebateEmptyToolBailout::test_biased_agent_bails_on_empty_tools PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestToolCallScorecard::test_scorecard_tracks_errors PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestToolCallScorecard::test_scorecard_tracks_empty_results PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestToolCallScorecard::test_scorecard_resets_consecutive_on_success PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestToolCallScorecard::test_scorecard_quality_ratio PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestCycleSmoke::test_debate_timeout_is_reasonable PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestCycleSmoke::test_per_ticker_analysis_timeout_exists PASSED [ 10%]
+tests/regression/test_prism_and_debate_fixes.py::TestCycleSmoke::test_agent_budget_has_limits PASSED [ 10%]
+tests/regression/test_runner_variable_order.py::test_held_defined_before_first_read PASSED [ 10%]
+tests/regression/test_runner_variable_order.py::test_position_context_defined_before_first_read PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestSchemaAlignment::test_schema_file_exists PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestSchemaAlignment::test_schema_has_tables PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestSchemaAlignment::test_no_technical_indicators_reference PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestSchemaAlignment::test_tool_sql_references_valid PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestColumnAlignment::test_technicals_has_expected_columns PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestColumnAlignment::test_fundamentals_has_expected_columns PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestColumnAlignment::test_fundamentals_no_dividend_yield PASSED [ 11%]
+tests/regression/test_schema_alignment.py::TestColumnAlignment::test_fundamentals_no_updated_at PASSED [ 11%]
+tests/regression/test_sector_performance_backfill.py::test_regression_0_sector_correlations_computed PASSED [ 11%]
+tests/regression/test_tool_call_scorecard.py::test_tool_call_scorecard_empty_structures PASSED [ 11%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[grep_search_text] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[paginated_read] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[spawn_research_subagent] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[amend_constitution] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[browser_click] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[browser_type] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[browser_screenshot] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[browser_evaluate] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tool_not_in_registry[browser_close] PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_removed_tools_not_in_schemas PASSED [ 12%]
+tests/regression/test_tool_registry_cleanup.py::test_swarm_universal_tools_all_registered FAILED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_swarm_does_not_reference_ghost_tools PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_swarm_has_correct_options_tool PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_search_trading_skills_in_whitelist[sentiment] PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_search_trading_skills_in_whitelist[technical] PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_search_trading_skills_in_whitelist[fundamental] PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_search_trading_skills_in_whitelist[retriever] PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_search_trading_skills_not_in_risk_agent PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_tool_count_after_cleanup PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_kept_tool_still_registered[browser_navigate] PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_kept_tool_still_registered[run_playwright_script] PASSED [ 13%]
+tests/regression/test_tool_registry_cleanup.py::test_kept_tool_still_registered[search_web] PASSED [ 14%]
+tests/regression/test_tool_registry_cleanup.py::test_kept_tool_still_registered[scrape_url] PASSED [ 14%]
+tests/regression/test_tool_registry_cleanup.py::test_kept_tool_still_registered[get_market_data] PASSED [ 14%]
+tests/regression/test_tool_registry_cleanup.py::test_kept_tool_still_registered[search_trading_skills] PASSED [ 14%]
+tests/regression/test_tool_registry_cleanup.py::test_kept_tool_still_registered[execute_python] PASSED [ 14%]
+tests/regression/test_tool_registry_cleanup.py::test_tools_router_uses_correct_interval_pattern PASSED [ 14%]
+tests/regression/test_tool_registry_cleanup.py::test_maintenance_agent_uses_correct_interval_pattern PASSED [ 14%]
+tests/regression/test_tracerecord_null_pnl.py::TestTraceRecordNullCoercion::test_pnl_pct_none_coerces_to_zero PASSED [ 14%]
+tests/regression/test_tracerecord_null_pnl.py::TestTraceRecordNullCoercion::test_decision_confidence_none_coerces_to_zero PASSED [ 14%]
+tests/regression/test_tracerecord_null_pnl.py::TestTraceRecordNullCoercion::test_both_none_simultaneously PASSED [ 14%]
+tests/regression/test_tracerecord_null_pnl.py::TestTraceRecordNullCoercion::test_explicit_float_values_still_work PASSED [ 14%]
+tests/regression/test_tracerecord_null_pnl.py::TestTraceRecordNullCoercion::test_defaults_when_omitted PASSED [ 15%]
+tests/regression/test_tracerecord_null_pnl.py::TestEvalEngineWithNullFields::test_evaluate_trace_with_coerced_nulls PASSED [ 15%]
+tests/regression/test_tracerecord_null_pnl.py::TestEvalEngineWithNullFields::test_classify_failure_with_coerced_nulls PASSED [ 15%]
+tests/regression/test_tracerecord_null_pnl.py::TestEvalEngineWithNullFields::test_hold_bias_only_with_real_pnl PASSED [ 15%]
+tests/test_adaptive_scraper.py::test_adaptive_scraper_success PASSED     [ 15%]
+tests/test_adaptive_scraper.py::test_adaptive_scraper_failure PASSED     [ 15%]
+tests/test_buy_pipeline_audit.py::TestPreTradeAgentFailOpen::test_parse_failure_returns_approve PASSED [ 15%]
+tests/test_buy_pipeline_audit.py::TestPreTradeAgentFailOpen::test_pydantic_validation_failure_returns_approve PASSED [ 15%]
+tests/test_buy_pipeline_audit.py::TestPreTradeAgentFailOpen::test_valid_approve_passes_through PASSED [ 15%]
+tests/test_buy_pipeline_audit.py::TestHallucinationGateAdvisoryOnly::test_hallucination_gate_preserves_buy_action PASSED [ 15%]
+tests/test_buy_pipeline_audit.py::TestPositionSizing::test_get_size_pct_at_min_confidence PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestPositionSizing::test_get_size_pct_at_max_confidence PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestPositionSizing::test_get_size_pct_at_mid_confidence PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestPositionSizing::test_get_size_pct_below_minimum PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestPositionSizing::test_estimate_trade_returns_valid_dict PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestTradingPhaseExecutionGates::test_buy_decision_reaches_execution PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestTradingPhaseExecutionGates::test_pre_trade_veto_is_advisory_not_blocking PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestTradingPhaseExecutionGates::test_allocator_veto_is_advisory_not_blocking PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestTradingPhaseExecutionGates::test_low_integrity_reduces_confidence_not_overrides_action PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestTradingPhaseExecutionGates::test_hold_action_is_not_executed_as_buy PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestTradingPhaseExecutionGates::test_multiple_buys_can_execute PASSED [ 16%]
+tests/test_buy_pipeline_audit.py::TestActionGateLogic::test_buy_not_held_stays_buy PASSED [ 17%]
+tests/test_buy_pipeline_audit.py::TestActionGateLogic::test_sell_not_held_stays_sell PASSED [ 17%]
+tests/test_buy_pipeline_audit.py::TestActionGateLogic::test_hold_not_held_becomes_sell PASSED [ 17%]
+tests/test_buy_pipeline_audit.py::TestActionGateLogic::test_buy_held_stays_buy PASSED [ 17%]
+tests/test_buy_pipeline_audit.py::TestActionGateLogic::test_sell_held_stays_sell PASSED [ 17%]
+tests/test_buy_pipeline_audit.py::TestActionGateLogic::test_hold_held_stays_hold PASSED [ 17%]
+tests/test_buy_pipeline_audit.py::TestDatabaseGroundTruth::test_buy_decisions_exist_in_analysis_results SKIPPED [ 17%]
+tests/test_buy_pipeline_audit.py::TestDatabaseGroundTruth::test_buy_count_matches_expected SKIPPED [ 17%]
+tests/test_buy_pipeline_audit.py::TestDatabaseGroundTruth::test_debate_history_not_corrupted SKIPPED [ 17%]
+tests/test_cycle_concurrency.py::test_queue_concurrency_nonblocking_ingestion PASSED [ 17%]
+tests/test_cycle_concurrency.py::test_multiple_workers_consume_concurrently PASSED [ 17%]
+tests/test_cycle_concurrency.py::test_worker_receives_tickers_as_they_arrive PASSED [ 18%]
+tests/test_cycle_concurrency.py::test_sentinel_stops_worker_gracefully PASSED [ 18%]
+tests/test_dynamic_agents.py::TestPlannerAgent::test_planner_agent_run PASSED [ 18%]
+tests/test_dynamic_agents.py::TestPlannerAgent::test_planner_ontology_injection PASSED [ 18%]
+tests/test_dynamic_agents.py::TestRetrieverAgent::test_retriever_agent_run PASSED [ 18%]
+tests/test_dynamic_agents.py::TestVerifierAgent::test_verifier_agent_run PASSED [ 18%]
+tests/test_embedding_fallback.py::test_embed_batch_fallback_to_prism PASSED [ 18%]
+tests/test_general_audit.py::TestSlowDB::test_phase1_health_survives_slow_db PASSED [ 18%]
+tests/test_general_audit.py::TestSlowDB::test_portfolio_gate_survives_slow_db PASSED [ 18%]
+tests/test_general_audit.py::TestSlowDB::test_run_with_timeout_protects_against_slow_operations PASSED [ 18%]
+tests/test_general_audit.py::TestSlowDB::test_state_manager_get_state_survives_slow_db PASSED [ 19%]
+tests/test_general_audit.py::TestMessageQueueSilentDrop::test_priority_queue_sentinel_before_all_tickers_processed PASSED [ 19%]
+tests/test_general_audit.py::TestMessageQueueSilentDrop::test_analysis_queue_worker_handles_early_sentinel PASSED [ 19%]
+tests/test_general_audit.py::TestMessageQueueSilentDrop::test_analysis_queue_partial_drain_then_sentinel PASSED [ 19%]
+tests/test_general_audit.py::TestMessageQueueSilentDrop::test_multiple_workers_single_sentinel_propagation PASSED [ 19%]
+tests/test_general_audit.py::TestMessageQueueSilentDrop::test_queue_get_timeout_prevents_infinite_hang PASSED [ 19%]
+tests/test_general_audit.py::TestContainerRestart::test_zombie_cycle_reset_on_boot_detects_checkpoint PASSED [ 19%]
+tests/test_general_audit.py::TestContainerRestart::test_zombie_cycle_reset_on_boot_no_checkpoint_resets_to_idle PASSED [ 19%]
+tests/test_general_audit.py::TestContainerRestart::test_resume_interrupted_cycle_determines_correct_phase_and_resumes PASSED [ 19%]
+tests/test_general_audit.py::TestInferenceOverload::test_pre_trade_agent_truncated_response PASSED [ 19%]
+tests/test_general_audit.py::TestInferenceOverload::test_trade_execution_agent_truncated_response PASSED [ 19%]
+tests/test_general_audit.py::TestInferenceOverload::test_portfolio_allocator_agent_truncated_response PASSED [ 20%]
+tests/test_general_audit.py::TestInferenceOverload::test_post_mortem_auditor_agent_truncated_response PASSED [ 20%]
+tests/test_general_audit.py::TestInferenceOverload::test_meta_agent_truncated_response PASSED [ 20%]
+tests/test_general_audit.py::TestInferenceOverload::test_context_compressor_truncated_response PASSED [ 20%]
+tests/test_general_audit.py::TestConnectionPoolExhaustion::test_get_db_recovers_on_gc_collect PASSED [ 20%]
+tests/test_general_audit.py::TestConnectionPoolExhaustion::test_get_db_raises_after_failed_retry PASSED [ 20%]
+tests/test_general_audit.py::TestConnectionPoolExhaustion::test_pipeline_state_db_survives_pool_exhaustion PASSED [ 20%]
+tests/test_general_audit.py::TestNetworkPartition::test_single_source_failure_isolated PASSED [ 20%]
+tests/test_general_audit.py::TestNetworkPartition::test_yfinance_network_failure_rejects_ticker_not_others PASSED [ 20%]
+tests/test_general_audit.py::TestNetworkPartition::test_timeout_disconnection_rejects_ticker PASSED [ 20%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_scheduler_market_open_boundary_930am_et PASSED [ 20%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_scheduler_market_close_boundary_400pm_et PASSED [ 21%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_scheduler_one_minute_after_close PASSED [ 21%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_scheduler_weekend_saturday PASSED [ 21%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_passive_collector_extended_hours_open PASSED [ 21%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_passive_collector_after_extended_close PASSED [ 21%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_off_peak_during_market_hours PASSED [ 21%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_off_peak_after_market_close PASSED [ 21%]
+tests/test_general_audit.py::TestProcessingWindowBoundary::test_scheduler_skips_market_hours_only_schedule_outside_hours PASSED [ 21%]
+tests/test_general_audit.py::TestOffHoursBlackoutWindow::test_summarize_stale_records_skips_during_market_hours PASSED [ 21%]
+tests/test_general_audit.py::TestOffHoursBlackoutWindow::test_summarize_stale_records_proceeds_during_off_peak PASSED [ 21%]
+tests/test_general_audit.py::TestOffHoursBlackoutWindow::test_passive_collector_off_hours_sleep_duration PASSED [ 22%]
+tests/test_general_audit.py::TestOffHoursBlackoutWindow::test_passive_collector_skips_collection_during_off_hours PASSED [ 22%]
+tests/test_general_audit.py::TestOffHoursBlackoutWindow::test_is_off_peak_before_market_open PASSED [ 22%]
+tests/test_general_audit.py::TestOffHoursBlackoutWindow::test_is_off_peak_sunday PASSED [ 22%]
+tests/test_general_audit.py::TestClockDrift::test_future_timestamp_makes_data_appear_fresh PASSED [ 22%]
+tests/test_general_audit.py::TestClockDrift::test_should_collect_unknown_source_always_true PASSED [ 22%]
+tests/test_general_audit.py::TestClockDrift::test_parse_timestamp_naive_string PASSED [ 22%]
+tests/test_general_audit.py::TestClockDrift::test_parse_timestamp_date_object PASSED [ 22%]
+tests/test_general_audit.py::TestClockDrift::test_hours_since_last_returns_none_when_no_data PASSED [ 22%]
+tests/test_general_audit.py::TestClockDrift::test_stale_data_triggers_collection PASSED [ 22%]
+tests/test_general_audit.py::TestMidnightUTCRollover::test_sec_13f_quarter_january_boundary PASSED [ 22%]
+tests/test_general_audit.py::TestMidnightUTCRollover::test_sec_13f_quarter_may_boundary PASSED [ 23%]
+tests/test_general_audit.py::TestMidnightUTCRollover::test_should_collect_daily_source_just_before_midnight PASSED [ 23%]
+tests/test_general_audit.py::TestMidnightUTCRollover::test_should_collect_daily_source_after_24h PASSED [ 23%]
+tests/test_general_audit.py::TestMidnightUTCRollover::test_is_off_peak_at_midnight_et PASSED [ 23%]
+tests/test_general_audit.py::TestMidnightUTCRollover::test_parse_timestamp_midnight_consistency PASSED [ 23%]
+tests/test_general_audit.py::TestFrozenTimeRegression::test_elapsed_ms_frozen_monotonic PASSED [ 23%]
+tests/test_general_audit.py::TestFrozenTimeRegression::test_run_with_timeout_fires_even_with_frozen_wallclock PASSED [ 23%]
+tests/test_general_audit.py::TestFrozenTimeRegression::test_hours_since_last_zero_when_now_equals_collected PASSED [ 23%]
+tests/test_general_audit.py::TestFrozenTimeRegression::test_market_hours_deterministic_with_frozen_clock PASSED [ 23%]
+tests/test_general_audit.py::TestQueueBacklog::test_scraper_queue_drops_when_full PASSED [ 23%]
+tests/test_general_audit.py::TestQueueBacklog::test_scraper_queue_deduplicates_pending PASSED [ 23%]
+tests/test_general_audit.py::TestQueueBacklog::test_scraper_queue_cooldown_blocks_enqueue PASSED [ 24%]
+tests/test_general_audit.py::TestQueueBacklog::test_analysis_queue_watermark_config_exists PASSED [ 24%]
+tests/test_general_audit.py::TestQueueBacklog::test_scraper_cleanup_stale_resets_stuck_requests PASSED [ 24%]
+tests/test_general_audit.py::TestMaxParallelism::test_collection_max_concurrent_is_sane PASSED [ 24%]
+tests/test_general_audit.py::TestMaxParallelism::test_rate_limiter_per_api_limits PASSED [ 24%]
+tests/test_general_audit.py::TestMaxParallelism::test_burst_mode_bypasses_semaphores PASSED [ 24%]
+tests/test_general_audit.py::TestMaxParallelism::test_rate_limiter_default_for_unknown_service PASSED [ 24%]
+tests/test_general_audit.py::TestMaxParallelism::test_semaphore_blocks_at_capacity PASSED [ 24%]
+tests/test_general_audit.py::TestMaxParallelism::test_rate_limiter_status_report PASSED [ 24%]
+tests/test_general_audit.py::TestLargeDatasetHistory::test_truncate_context_short_passes_through PASSED [ 24%]
+tests/test_general_audit.py::TestLargeDatasetHistory::test_truncate_context_long_truncates PASSED [ 25%]
+tests/test_general_audit.py::TestLargeDatasetHistory::test_debate_engine_smart_truncation_over_10k PASSED [ 25%]
+tests/test_general_audit.py::TestLargeDatasetHistory::test_raw_data_ttl_and_archive_ttl_configured PASSED [ 25%]
+tests/test_general_audit.py::TestLargeDatasetHistory::test_scraper_queue_purge_prevents_unbounded_growth PASSED [ 25%]
+tests/test_general_audit.py::TestMemorySoak::test_truncate_context_no_accumulation PASSED [ 25%]
+tests/test_general_audit.py::TestMemorySoak::test_rate_limiter_no_semaphore_leak PASSED [ 25%]
+tests/test_general_audit.py::TestMemorySoak::test_parse_timestamp_repeated_no_leak PASSED [ 25%]
+tests/test_general_audit.py::TestMemorySoak::test_collector_status_dict_fixed_size PASSED [ 25%]
+tests/test_general_audit.py::TestConnectionLeak::test_pooled_cursor_del_detects_leak PASSED [ 25%]
+tests/test_general_audit.py::TestCascadeFailures::test_stale_checkpoint_plus_slow_db PASSED [ 25%]
+tests/test_general_audit.py::TestCascadeFailures::test_dual_failure_scraper_stale_and_llm_timeout PASSED [ 25%]
+tests/test_general_audit.py::TestCascadeFailures::test_partial_collection_then_crash_resume PASSED [ 26%]
+tests/test_general_audit.py::TestCascadeFailures::test_command_flood_plus_running_cycle PASSED [ 26%]
+tests/test_general_audit.py::TestNegativeSpace::test_analysis_returns_zero_actions Running teardown with pytest sessionfinish...
+
+
+=================================== FAILURES ===================================
+__________________ test_swarm_universal_tools_all_registered ___________________
+
+    def test_swarm_universal_tools_all_registered():
+        """Every tool in swarm_consensus.UNIVERSAL_TOOLS must exist in the registry."""
+        from app.pipeline.analysis.swarm_consensus import UNIVERSAL_TOOLS
+        from app.tools.registry import registry
+    
+        registered_names = set(registry.tools.keys())
+    
+        # Skip if registry is under-populated (missing deps)
+        if len(registered_names) < 30:
+            pytest.skip(f"Registry only has {len(registered_names)} tools")
+    
+        missing = [t for t in UNIVERSAL_TOOLS if t not in registered_names]
+>       assert not missing, (
+            f"Swarm UNIVERSAL_TOOLS references unregistered tools: {missing}"
+        )
+E       AssertionError: Swarm UNIVERSAL_TOOLS references unregistered tools: ['generate_trading_chart']
+E       assert not ['generate_trading_chart']
+
+tests/regression/test_tool_registry_cleanup.py:68: AssertionError
+=============================== warnings summary ===============================
+app/cognition/contracts/claims.py:10
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/claims.py:10: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class Provenance(BaseModel):
+
+app/cognition/contracts/claims.py:24
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/claims.py:24: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class Claim(BaseModel):
+
+app/cognition/contracts/retrieval.py:53
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/retrieval.py:53: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class RetrievalContext(BaseModel):
+
+app/cognition/contracts/evidence.py:21
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/evidence.py:21: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class EvidencePacket(BaseModel):
+
+app/cognition/contracts/debate.py:9
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/debate.py:9: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class HypothesisDraft(BaseModel):
+
+app/cognition/contracts/debate.py:32
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/debate.py:32: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class ArgumentDraft(BaseModel):
+
+app/cognition/contracts/debate.py:41
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/debate.py:41: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class DecisionDraft(BaseModel):
+
+app/cognition/contracts/debate.py:50
+  /home/lazycat/github/projects/sun/trading-service/tests/../app/cognition/contracts/debate.py:50: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class DebateResult(BaseModel):
+
+tests/regression/test_bare_get_db_leak.py:54
+  /home/lazycat/github/projects/sun/trading-service/tests/regression/test_bare_get_db_leak.py:54: PytestUnknownMarkWarning: Unknown pytest.mark.unit - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.unit
+
+tests/regression/test_bare_get_db_leak.py:82
+  /home/lazycat/github/projects/sun/trading-service/tests/regression/test_bare_get_db_leak.py:82: PytestUnknownMarkWarning: Unknown pytest.mark.unit - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.unit
+
+tests/unit/test_data_janitor.py:171
+  /home/lazycat/github/projects/sun/trading-service/tests/unit/test_data_janitor.py:171: PytestUnknownMarkWarning: Unknown pytest.mark.integration - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.integration
+
+tests/unit/test_data_janitor.py:210
+  /home/lazycat/github/projects/sun/trading-service/tests/unit/test_data_janitor.py:210: PytestUnknownMarkWarning: Unknown pytest.mark.integration - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.integration
+
+tests/unit/test_data_janitor.py:283
+  /home/lazycat/github/projects/sun/trading-service/tests/unit/test_data_janitor.py:283: PytestUnknownMarkWarning: Unknown pytest.mark.integration - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.integration
+
+tests/unit/test_paper_trader_lot_closures.py:5
+  /home/lazycat/github/projects/sun/trading-service/tests/unit/test_paper_trader_lot_closures.py:5: PytestUnknownMarkWarning: Unknown pytest.mark.integration - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.integration
+
+tests/unit/test_paper_trader_lot_closures.py:54
+  /home/lazycat/github/projects/sun/trading-service/tests/unit/test_paper_trader_lot_closures.py:54: PytestUnknownMarkWarning: Unknown pytest.mark.integration - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.integration
+
+tests/unit/test_scoring_formula.py:153
+  /home/lazycat/github/projects/sun/trading-service/tests/unit/test_scoring_formula.py:153: PytestUnknownMarkWarning: Unknown pytest.mark.integration - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.integration
+
+tests/test_general_audit.py::TestCascadeFailures::test_partial_collection_then_crash_resume
+  /home/lazycat/github/projects/sun/trading-service/.venv/lib/python3.12/site-packages/edgar/_markdown.py:9: DeprecationWarning: edgar.files.html_documents module (including HtmlDocument) is deprecated and will be removed in v6.0. Please use edgar.documents.HTMLParser instead. See migration guide: https://edgartools.readthedocs.io/en/latest/migration/
+    from edgar.files.html_documents import HtmlDocument
+
+tests/test_general_audit.py::TestCascadeFailures::test_partial_collection_then_crash_resume
+  /home/lazycat/github/projects/sun/trading-service/.venv/lib/python3.12/site-packages/edgar/files/markdown.py:4: DeprecationWarning: edgar.files.html module is deprecated and will be removed in v6.0. Please use edgar.documents.HTMLParser instead. See migration guide: https://edgartools.readthedocs.io/en/latest/migration/
+    from edgar.files.html import BaseNode, Document
+
+tests/test_general_audit.py::TestCascadeFailures::test_partial_collection_then_crash_resume
+  /home/lazycat/github/projects/sun/trading-service/.venv/lib/python3.12/site-packages/edgar/_filings.py:58: DeprecationWarning: edgar.files.htmltools module (including ChunkedDocument) is deprecated and will be removed in v6.0. Please use edgar.documents.HTMLParser instead. See migration guide: https://edgartools.readthedocs.io/en/latest/migration/
+    from edgar.files.htmltools import html_sections
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+Test 
+tests/integration/test_briefings_generation.py::test_fl
+ash_briefing_generation was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_briefings_generation.py', 4, 
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_briefings_generation.py::test_mo
+rning_briefing_generation was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_briefings_generation.py', 52, 
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_db_constraints.py::test_news_art
+icles_no_unique_url_constraint was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_db_constraints.py', 9, 'Skipped: 
+Test database not enabled. Set TRADING_BOT_TEST_DB=1 to
+enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stOutcomeTrackerIntegration::test_record_and_resolve_bu
+y was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 33, 
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stOutcomeTrackerIntegration::test_resolve_loss was 
+skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 85, 
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stOutcomeTrackerIntegration::test_hold_not_recorded was
+skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 105,
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stOutcomeTrackerIntegration::test_cancel_outcome was 
+skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 120,
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stScoringFromRealOutcomes::test_outcome_based_scoring_w
+ith_seeded_data was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 148,
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stScoringFromRealOutcomes::test_empty_outcomes_triggers
+_cold_start was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 200,
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stReflectionPromptIntegration::test_reflection_prompt_i
+ncludes_prediction_scorecard was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 224,
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_decision_outcome_pipeline.py::Te
+stEvolutionRouterDecisionRouting::test_critical_issues_
+routed_to_debate was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_decision_outcome_pipeline.py', 288,
+'Skipped: Test database not enabled. Set 
+TRADING_BOT_TEST_DB=1 to enable.')
+Test 
+tests/integration/test_fund_alerts.py::test_fund_alerts
+_creation was skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/integration/test_fund_alerts.py', 6, 'Skipped: Test 
+database not enabled. Set TRADING_BOT_TEST_DB=1 to 
+enable.')
+Test 
+tests/test_buy_pipeline_audit.py::TestDatabaseGroundTru
+th::test_buy_decisions_exist_in_analysis_results was 
+skipped. Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/test_buy_pipeline_audit.py', 497, 'Skipped: Test 
+database not enabled. Set TRADING_BOT_TEST_DB=1 to 
+enable.')
+Test 
+tests/test_buy_pipeline_audit.py::TestDatabaseGroundTru
+th::test_buy_count_matches_expected was skipped. 
+Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/test_buy_pipeline_audit.py', 524, 'Skipped: Test 
+database not enabled. Set TRADING_BOT_TEST_DB=1 to 
+enable.')
+Test 
+tests/test_buy_pipeline_audit.py::TestDatabaseGroundTru
+th::test_debate_history_not_corrupted was skipped. 
+Reason: 
+('/home/lazycat/github/projects/sun/trading-service/tes
+ts/test_buy_pipeline_audit.py', 556, 'Skipped: Test 
+database not enabled. Set TRADING_BOT_TEST_DB=1 to 
+enable.')

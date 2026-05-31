@@ -251,7 +251,7 @@ async def _ocr_screenshots(
                 f"Qwen3.5-35B ({total_b64:,} base64 chars)..."
             )
             r = await client.post(
-                f"{settings.JETSON_VLLM_URL}/v1/chat/completions",
+                f"{settings.PROVIDER_VLLM_1_URL}/v1/chat/completions",
                 json=payload,
             )
             r.raise_for_status()

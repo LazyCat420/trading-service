@@ -189,7 +189,7 @@ async def generate_script(domain: str, screenshot_b64: str, previous_script: str
         async with httpx.AsyncClient(timeout=120.0) as client:
             logger.info(f"[adaptive] Requesting JS script generation for {domain}...")
             r = await client.post(
-                f"{settings.JETSON_VLLM_URL}/v1/chat/completions",
+                f"{settings.PROVIDER_VLLM_1_URL}/v1/chat/completions",
                 json=payload,
             )
             r.raise_for_status()

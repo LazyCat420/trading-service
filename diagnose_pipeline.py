@@ -188,8 +188,8 @@ async def main():
     # ── 1. Endpoint Health ─────────────────────────────────────────────
     print("\n┌─ 1. VLLM ENDPOINT HEALTH ─────────────────────────────┐")
     endpoints = [
-        ("Jetson", settings.JETSON_VLLM_URL),
-        ("DGX Spark", settings.DGX_SPARK_VLLM_URL),
+        ("Jetson", settings.PROVIDER_VLLM_1_URL),
+        ("DGX Spark", settings.PROVIDER_VLLM_2_URL),
     ]
     for name, url in endpoints:
         result = await check_vllm_endpoint(name, url)

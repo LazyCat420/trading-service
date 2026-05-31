@@ -130,28 +130,34 @@ def _parse_parameter_size(model_id: str) -> float | None:
 
 
 def _url_to_prism_provider(url: str | None) -> str:
-    """Resolve the canonical Prism provider name ('vllm', 'vllm-2')
+    """Resolve the canonical Prism provider name ('vllm', 'vllm-2', 'vllm-3')
     based on the endpoint URL.
     """
     if not url:
         return "vllm"
-    if settings.JETSON_VLLM_URL and settings.JETSON_VLLM_URL in url:
+    if settings.PROVIDER_VLLM_1_URL and settings.PROVIDER_VLLM_1_URL in url:
         return "vllm"
-    if settings.DGX_SPARK_VLLM_URL and settings.DGX_SPARK_VLLM_URL in url:
+    if settings.PROVIDER_VLLM_2_URL and settings.PROVIDER_VLLM_2_URL in url:
         return "vllm-2"
+    if settings.PROVIDER_VLLM_3_URL and settings.PROVIDER_VLLM_3_URL in url:
+        return "vllm-3"
+        
     # Fallback to hostname checks if exact URL didn't match
     from urllib.parse import urlparse
     try:
         parsed_url = urlparse(url)
         host = parsed_url.hostname or url
         
-        jetson_host = urlparse(settings.JETSON_VLLM_URL).hostname if settings.JETSON_VLLM_URL else None
-        dgx_host = urlparse(settings.DGX_SPARK_VLLM_URL).hostname if settings.DGX_SPARK_VLLM_URL else None
+        vllm1_host = urlparse(settings.PROVIDER_VLLM_1_URL).hostname if settings.PROVIDER_VLLM_1_URL else None
+        vllm2_host = urlparse(settings.PROVIDER_VLLM_2_URL).hostname if settings.PROVIDER_VLLM_2_URL else None
+        vllm3_host = urlparse(settings.PROVIDER_VLLM_3_URL).hostname if settings.PROVIDER_VLLM_3_URL else None
         
-        if jetson_host and jetson_host in host:
+        if vllm1_host and vllm1_host in host:
             return "vllm"
-        if dgx_host and dgx_host in host:
+        if vllm2_host and vllm2_host in host:
             return "vllm-2"
+        if vllm3_host and vllm3_host in host:
+            return "vllm-3"
     except Exception:
         pass
     return "vllm"
@@ -369,29 +375,41 @@ class VLLMClient:
         # ── Build endpoint registry ──
         self._endpoints: dict[str, VLLMEndpoint] = {}
 
-        if settings.JETSON_VLLM_URL:
+        if settings.PROVIDER_VLLM_1_URL:
             ep = VLLMEndpoint(
                 name="jetson",
-                url=settings.JETSON_VLLM_URL,
+                url=settings.PROVIDER_VLLM_1_URL,
                 role="collector",
-                max_concurrent=settings.JETSON_MAX_CONCURRENT,
+                max_concurrent=settings.PROVIDER_VLLM_1_CONCURRENCY,
                 purpose="Data collection, summarization, LLM curation, agents",
-                batch_size=settings.JETSON_BATCH_SIZE,
+                batch_size=min(24, settings.PROVIDER_VLLM_1_CONCURRENCY),
             )
             ep.init_concurrency(self.RESERVED_HIGH_SLOTS)
             self._endpoints["jetson"] = ep
 
-        if settings.DGX_SPARK_VLLM_URL:
+        if settings.PROVIDER_VLLM_2_URL:
             ep = VLLMEndpoint(
                 name="dgx_spark",
-                url=settings.DGX_SPARK_VLLM_URL,
+                url=settings.PROVIDER_VLLM_2_URL,
                 role="trader",
-                max_concurrent=settings.DGX_MAX_CONCURRENT,
+                max_concurrent=settings.PROVIDER_VLLM_2_CONCURRENCY,
                 purpose="Final trading decisions — uses most capable model",
-                batch_size=settings.DGX_BATCH_SIZE,
+                batch_size=min(8, settings.PROVIDER_VLLM_2_CONCURRENCY),
             )
             ep.init_concurrency(self.RESERVED_HIGH_SLOTS)
             self._endpoints["dgx_spark"] = ep
+            
+        if settings.PROVIDER_VLLM_3_URL:
+            ep = VLLMEndpoint(
+                name="vllm_3",
+                url=settings.PROVIDER_VLLM_3_URL,
+                role="analyst",
+                max_concurrent=settings.PROVIDER_VLLM_3_CONCURRENCY,
+                purpose="Analytics and parallel processing",
+                batch_size=min(8, settings.PROVIDER_VLLM_3_CONCURRENCY),
+            )
+            ep.init_concurrency(self.RESERVED_HIGH_SLOTS)
+            self._endpoints["vllm_3"] = ep
 
         # ── Prism gateway ──
         self.prism_client = PrismClient()
@@ -457,9 +475,14 @@ class VLLMClient:
         # CRITICAL: Force Qwen 35B / cyankiwi models to route strictly to Jetson Orin AGX 64GB
         if requested_model and ("cyankiwi" in requested_model.lower() or "qwen3.6-35b" in requested_model.lower() or "35b" in requested_model.lower()):
             jetson_ep = self._endpoints.get("jetson")
-            if jetson_ep and jetson_ep.enabled:
+            if jetson_ep and jetson_ep.enabled and jetson_ep.model:
                 logger.info("[VLLM] Forcing Jetson Orin AGX 64GB routing for 35B model: %s", requested_model)
                 return jetson_ep
+            else:
+                raise RuntimeError(
+                    f"Requested model '{requested_model}' requires Jetson (vLLM 1) but it is disabled or offline. "
+                    "Refusing to failover to vLLM 2 because Prism will reject it."
+                )
 
         # Step 1: All endpoints with models loaded
         all_ready = [

@@ -7,8 +7,8 @@ from app.services.vllm_client import VLLMClient, Priority
 
 @pytest.fixture
 def mocked_vllm_cb(monkeypatch):
-    monkeypatch.setattr("app.services.vllm_client.settings.JETSON_VLLM_URL", "http://10.0.0.30:8000")
-    monkeypatch.setattr("app.services.vllm_client.settings.DGX_SPARK_VLLM_URL", "http://10.0.0.141:8000")
+    monkeypatch.setattr("app.services.vllm_client.settings.PROVIDER_VLLM_1_URL", "http://10.0.0.30:8000")
+    monkeypatch.setattr("app.services.vllm_client.settings.PROVIDER_VLLM_2_URL", "http://10.0.0.141:8000")
     monkeypatch.setattr("app.services.vllm_client.settings.JETSON_MAX_CONCURRENT", 10)
     monkeypatch.setattr("app.services.vllm_client.settings.DGX_MAX_CONCURRENT", 10)
     monkeypatch.setattr("app.services.vllm_client.settings.ACTIVE_MODEL", "test-model")
