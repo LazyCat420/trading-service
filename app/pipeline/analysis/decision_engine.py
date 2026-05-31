@@ -1130,6 +1130,7 @@ def _log_decision(result: dict, cycle_id: str, bot_id: str) -> None:
     try:
         from app.utils.text_utils import sanitize_surrogates
         result = sanitize_surrogates(result)
+        ticker = result["ticker"]
         with get_db() as db:
             result_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{cycle_id}_{bot_id}_{ticker}_{result.get('config_used', 'C')}"))
 
@@ -1137,7 +1138,6 @@ def _log_decision(result: dict, cycle_id: str, bot_id: str) -> None:
             estimate = None
             action = result.get("action", "HOLD")
             confidence = result.get("confidence", 0)
-            ticker = result["ticker"]
 
             if action == "BUY" and confidence > 0:
                 try:
