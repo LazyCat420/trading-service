@@ -74,7 +74,7 @@ def _cap_debate_text(text: str, max_chars: int, label: str = "debate") -> str:
 
 PERSONAS = {
     "Fundamental": "Focus purely on valuation multiples, earnings trends, balance sheet health, ratios, and margins.",
-    "Technical": "Focus purely on price action, moving averages, relative strength (RSI), volume patterns, and momentum indicators.",
+    "Technical": "Focus purely on price action, moving averages, relative strength (RSI), volume patterns, and momentum indicators. CRITICAL: You MUST use the `generate_trading_chart` tool to map out support/resistance zones, trendlines, and technical overlays.",
     "Macro_Sentiment": "Focus purely on the broader macroeconomic regime, interest rates, industry catalysts, and social/news sentiment.",
 }
 
@@ -203,6 +203,7 @@ CRITICAL RULES:
 - Be specific with numbers, dates, and metrics.
 
 PRECISION QUERY TOOLS (use when needed):
+- If you need to generate technical analysis overlays, support/resistance zones, and trendlines, you MUST call generate_trading_chart.
 - If you need to verify a specific metric (P/E, revenue, debt-to-equity, FCF), call query_financial_metrics.
 - If you need to check a technical indicator (RSI, MACD, SMA levels), call query_technical_indicator.
 - If you want to verify a claim from a news article or search for insider/congressional activity, call search_database_facts.

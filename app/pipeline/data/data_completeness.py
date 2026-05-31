@@ -339,6 +339,25 @@ async def check_and_fill(ticker: str, emit=None, enqueue_only: bool = False) -> 
         f"{f' (filled {filled_count} gaps)' if filled_count else ' (all up to date)'}"
     )
 
+    # ── 10. Pre-generate Trading Chart ──
+    try:
+        from app.tools.finance_tools import generate_trading_chart
+        import asyncio
+        _emit(f"📊 {ticker}: Pre-generating trading chart overlay...", status="running")
+        async def _run_chart():
+            try:
+                await generate_trading_chart(ticker=ticker)
+                logger.info("[DATA CHECK] Pre-generated trading chart for %s successfully", ticker)
+            except Exception as chart_err:
+                logger.warning("[DATA CHECK] Pre-generation of trading chart failed for %s: %s", ticker, chart_err)
+        chart_task = asyncio.create_task(_run_chart())
+        try:
+            await asyncio.wait_for(chart_task, timeout=20.0)
+        except asyncio.TimeoutError:
+            logger.warning("[DATA CHECK] Chart generation timed out (20s) for %s (non-fatal)", ticker)
+    except Exception as e:
+        logger.warning("[DATA CHECK] Failed to initiate chart generation: %s", e)
+
     needs_jit_processing = False
     if filled_count > 0:
         needs_jit_processing = True
