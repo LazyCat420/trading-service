@@ -114,3 +114,81 @@ def test_select_tickers_with_cooldown(mock_get_active_bot_id, mock_get_db):
     assert "AMZN" in res.non_position_tickers # Requested, not in cooldown
     assert "MSFT" in res.non_position_tickers # Watchlist, not in cooldown
     assert "TSLA" in res.non_position_tickers # Discovered, not in cooldown
+
+
+@patch("app.pipeline.ticker_selector.get_db")
+@patch("app.services.bot_manager.get_active_bot_id")
+def test_select_tickers_completed_cycle_cooldown(mock_get_active_bot_id, mock_get_db):
+    """Verify that tickers from the last COMPLETED cycle (status='done') are placed on cooldown."""
+    mock_get_active_bot_id.return_value = "test-bot"
+    mock_db = MagicMock()
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    
+    def side_effect_execute(query, params=None):
+        mock_cursor = MagicMock()
+        if "information_schema" in query:
+            mock_cursor.fetchone.return_value = (1,)
+        elif "position_lots" in query:
+            mock_cursor.fetchall.return_value = [("AAPL",)]
+        elif "decision_outcomes WHERE created_at" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "analysis_results WHERE created_at" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "cycle_benchmarks WHERE status = 'done'" in query:
+            mock_cursor.fetchone.return_value = ("completed_cycle_123",)
+        elif "cycle_ticker_benchmarks WHERE cycle_id" in query:
+            # Tickers in last completed cycle: AAPL (position), MSFT (watchlist)
+            mock_cursor.fetchall.return_value = [("AAPL",), ("MSFT",)]
+        elif "watchlist" in query:
+            mock_cursor.fetchall.return_value = [("MSFT",), ("GOOG",)]
+        elif "discovered_tickers" in query:
+            mock_cursor.fetchall.return_value = [("TSLA", 100, "large", True, "2000-01-01")]
+        else:
+            mock_cursor.fetchall.return_value = []
+        return mock_cursor
+
+    mock_db.execute.side_effect = side_effect_execute
+    
+    res = TickerSelector.select_tickers_for_cycle_v2([], cap=50)
+    
+    assert "AAPL" in res.position_tickers       # Position included regardless of cooldown
+    assert "MSFT" not in res.non_position_tickers  # Watchlist, skipped due to completed cycle cooldown
+    assert "GOOG" in res.non_position_tickers      # Watchlist, not in cooldown
+    assert "TSLA" in res.non_position_tickers      # Discovered, not in cooldown
+
+
+@patch("app.pipeline.ticker_selector.get_db")
+@patch("app.services.bot_manager.get_active_bot_id")
+def test_select_tickers_failed_cycle_no_cooldown(mock_get_active_bot_id, mock_get_db):
+    """Verify that tickers from a FAILED/incomplete cycle are NOT placed on cooldown."""
+    mock_get_active_bot_id.return_value = "test-bot"
+    mock_db = MagicMock()
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    
+    def side_effect_execute(query, params=None):
+        mock_cursor = MagicMock()
+        if "information_schema" in query:
+            mock_cursor.fetchone.return_value = (1,)
+        elif "position_lots" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "decision_outcomes WHERE created_at" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "analysis_results WHERE created_at" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "cycle_benchmarks WHERE status = 'done'" in query:
+            # No completed cycle found
+            mock_cursor.fetchone.return_value = None
+        elif "watchlist" in query:
+            mock_cursor.fetchall.return_value = [("MSFT",)]
+        elif "discovered_tickers" in query:
+            mock_cursor.fetchall.return_value = []
+        else:
+            mock_cursor.fetchall.return_value = []
+        return mock_cursor
+
+    mock_db.execute.side_effect = side_effect_execute
+    
+    res = TickerSelector.select_tickers_for_cycle_v2([], cap=50)
+    
+    assert "MSFT" in res.non_position_tickers  # Included since there was no completed cycle to put it on cooldown
+

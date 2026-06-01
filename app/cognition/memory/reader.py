@@ -70,19 +70,34 @@ def read_memories(
     """
     _ensure_schema()
     with get_db() as db:
-        query = "SELECT * FROM cognition_memory_envelopes WHERE entity_id = %s"
+        query = """
+            SELECT e.* FROM cognition_memory_envelopes e
+            WHERE e.entity_id = %s
+        """
         params: list[Any] = [entity_id]
 
         if active_only:
-            query += " AND status = %s"
+            query += " AND e.status = %s"
             params.append(MemoryStatus.ACTIVE.value)
 
         if memory_types:
             placeholders = ",".join(["%s"] * len(memory_types))
-            query += f" AND memory_type IN ({placeholders})"
+            query += f" AND e.memory_type IN ({placeholders})"
             params.extend(memory_types)
 
-        query += " ORDER BY updated_at DESC LIMIT %s"
+        # Enforce that episodic memories must come from successfully completed cycles
+        query += """
+            AND (
+                e.memory_type != 'episodic'
+                OR EXISTS (
+                    SELECT 1 FROM cognition_episodic_memories ep
+                    JOIN cycle_benchmarks cb ON ep.cycle_id = cb.cycle_id
+                    WHERE ep.id = e.id AND cb.status = 'done'
+                )
+            )
+        """
+
+        query += " ORDER BY e.updated_at DESC LIMIT %s"
         params.append(limit)
 
         rows = _rows_to_dicts(db.execute(query, params))

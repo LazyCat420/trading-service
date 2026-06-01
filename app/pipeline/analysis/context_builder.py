@@ -723,6 +723,9 @@ def _get_evolve_signal(ticker: str) -> str | None:
 
 
 def _build_supplemental_analysis_section(db, ticker: str) -> str:
+    sections = []
+    
+    # 1. Manual run analysis check
     try:
         from datetime import timedelta
         cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
@@ -747,22 +750,60 @@ def _build_supplemental_analysis_section(db, ticker: str) -> str:
             rationale = res_dict.get("rationale", "")
             
             if rationale:
-                # Truncate to 1000 chars to save tokens
                 rationale_trunc = _truncate(rationale, 1000)
                 date_str = created_at.strftime("%Y-%m-%d %H:%M UTC") if created_at else "?"
-                
-                lines = [
-                    "\n## PAST DEEP ANALYSIS (SUPPLEMENTAL DATA)",
-                    f"A prior deep analysis was run for {ticker} on {date_str}.",
-                    f"  - Action: {action}",
-                    f"  - Confidence: {conf}%",
-                    f"  - Rationale (truncated): {rationale_trunc}",
-                    ""
-                ]
-                return "\n".join(lines)
+                sections.append(
+                    f"\n## PAST DEEP ANALYSIS (SUPPLEMENTAL DATA)\n"
+                    f"A prior deep analysis was run for {ticker} on {date_str}.\n"
+                    f"  - Action: {action}\n"
+                    f"  - Confidence: {conf}%\n"
+                    f"  - Rationale (truncated): {rationale_trunc}\n"
+                )
     except Exception as e:
-        logger.debug("supplemental analysis query failed: %s", e)
-    return ""
+        logger.debug("supplemental manual analysis query failed: %s", e)
+
+    # 2. Last 3 completed cycles check
+    try:
+        rows = db.execute(
+            """
+            SELECT ar.cycle_id, ar.created_at, ar.confidence, ar.result_json, tr.report_markdown
+            FROM analysis_results ar
+            JOIN cycle_benchmarks cb ON ar.cycle_id = cb.cycle_id
+            LEFT JOIN ticker_reports tr ON ar.cycle_id = tr.cycle_id AND ar.ticker = tr.ticker
+            WHERE ar.ticker = %s AND cb.status = 'done'
+            ORDER BY cb.started_at DESC, ar.created_at DESC
+            LIMIT 3
+            """,
+            [ticker]
+        ).fetchall()
+        
+        if rows:
+            history_lines = ["\n## HISTORICAL ANALYSIS SUMMARY (LAST 3 COMPLETED CYCLES)"]
+            for r in rows:
+                c_id, c_created_at, c_conf, c_result_json, c_report_md = r
+                try:
+                    res_dict = json.loads(c_result_json) if c_result_json else {}
+                except Exception:
+                    res_dict = {}
+                
+                c_action = res_dict.get("action", "UNKNOWN")
+                c_rationale = res_dict.get("rationale", "")
+                
+                date_str = c_created_at.strftime("%Y-%m-%d %H:%M UTC") if c_created_at else "?"
+                history_lines.append(f"### Cycle {c_id} ({date_str})")
+                history_lines.append(f"  - **Verdict**: {c_action} @ {c_conf}%")
+                if c_rationale:
+                    history_lines.append(f"  - **Rationale (truncated)**: {_truncate(c_rationale, 400)}")
+                if c_report_md:
+                    report_clean = c_report_md.strip()
+                    history_lines.append(f"  - **Report (truncated)**: {_truncate(report_clean, 400)}")
+                history_lines.append("") # spacing
+            
+            sections.append("\n".join(history_lines))
+    except Exception as e:
+        logger.debug("historical completed cycles query failed: %s", e)
+
+    return "\n".join(sections)
 
 
 # _ensure_summary_columns, _section, _is_scrape_artifact moved to shared utilities

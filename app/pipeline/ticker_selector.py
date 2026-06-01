@@ -102,10 +102,11 @@ class TickerSelector:
             except Exception as e:
                 logger.warning("[SELECTOR] Failed to fetch open positions: %s", e)
 
-        # ── 1.5. Fetch 24-Hour Cooldown Tickers ──
+        # ── 1.5. Fetch 24-Hour Cooldown & Last Completed Cycle Tickers ──
         recent_analyzed: set[str] = set()
         with get_db() as db:
             try:
+                # 24-hour cooldown
                 recent_rows = db.execute(
                     "SELECT DISTINCT ticker FROM decision_outcomes WHERE created_at > NOW() - INTERVAL '24 hours'"
                 ).fetchall()
@@ -113,11 +114,33 @@ class TickerSelector:
                     "SELECT DISTINCT ticker FROM analysis_results WHERE created_at > NOW() - INTERVAL '24 hours'"
                 ).fetchall()
                 for r in recent_rows:
-                    recent_analyzed.add(r[0])
+                    recent_analyzed.add(r[0].upper().strip())
                 for r in analysis_rows:
-                    recent_analyzed.add(r[0])
+                    recent_analyzed.add(r[0].upper().strip())
+
+                # Last completed cycle cooldown
+                last_cycle = db.execute(
+                    "SELECT cycle_id FROM cycle_benchmarks WHERE status = 'done' ORDER BY finished_at DESC, started_at DESC LIMIT 1"
+                ).fetchone()
+                if last_cycle:
+                    last_cycle_id = last_cycle[0]
+                    logger.info("[SELECTOR] Found last completed cycle: %s", last_cycle_id)
+                    ticker_rows = db.execute(
+                        """
+                        SELECT DISTINCT ticker FROM cycle_ticker_benchmarks WHERE cycle_id = %s
+                        UNION
+                        SELECT DISTINCT ticker FROM analysis_results WHERE cycle_id = %s
+                        """,
+                        [last_cycle_id, last_cycle_id]
+                    ).fetchall()
+                    for r in ticker_rows:
+                        recent_analyzed.add(r[0].upper().strip())
+                    logger.info(
+                        "[SELECTOR] Added %d tickers from last completed cycle '%s' to cooldown",
+                        len(ticker_rows), last_cycle_id
+                    )
             except Exception as e:
-                logger.warning("[SELECTOR] Failed to fetch 24-hour cooldown tickers: %s", e)
+                logger.warning("[SELECTOR] Failed to fetch cooldown tickers: %s", e)
 
         # ── 1b. Enforce hard cap on positions themselves ──
         # Positions get priority but still count against the total cap.
