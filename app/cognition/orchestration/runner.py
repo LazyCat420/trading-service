@@ -1629,9 +1629,10 @@ async def execute_open_position_fast_track(
 
     emit(
         "analyzing",
-        f"v2_fast_track_done_{ticker}",
-        f"⚡ {ticker}: Fast-Track verdict → {action} @ {confidence}% in {elapsed:.1f}s",
-        elapsed_ms=int(elapsed * 1000),
+        f"v2_done_{ticker}",
+        f"✅ {ticker}: Fast-Track verdict → {action} @ {confidence}% in {elapsed:.1f}s",
+        status="ok",
+        data={"action": action, "confidence": confidence, "elapsed_ms": int(elapsed * 1000)},
     )
 
     return result
