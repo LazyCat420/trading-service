@@ -398,6 +398,21 @@ class OrchestratorCoreMixin:
             except Exception as ar_err:
                 logger.warning("[CYCLE] Failed to trigger AutoResearch: %s", ar_err)
 
+            # Calculate entire cycle duration
+            elapsed_sec = time.monotonic() - cls._start_time
+            mins = int(elapsed_sec // 60)
+            secs = int(elapsed_sec % 60)
+            duration_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+
+            final_phase = "trading" if ctx.trade else "analyzing"
+            cls.emit(
+                final_phase,
+                "cycle_complete",
+                f"Entire trading cycle completed in {duration_str}",
+                status="ok",
+                data={"elapsed_ms": int(elapsed_sec * 1000)}
+            )
+
             # ── Write cycle summary to centralized JSONL log ──
             try:
                 log_manager.log_cycle_summary(ctx.cycle_id, dict(cls._cycle_summary))
