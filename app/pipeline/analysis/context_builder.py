@@ -89,7 +89,8 @@ def _build_portfolio_section(ticker: str) -> str:
                 f"  - Avg Entry Price: ${entry:.2f}",
                 f"  - Current Price: ${curr:.2f}",
                 f"  - **Unrealized PnL: {pnl:+.1f}%**",
-                "Keep your current position and stop-losses into account when providing advice!\n",
+                "Keep your current position and stop-losses into account when providing advice!",
+                "[CRITICAL WARNING: YOU ALREADY HOLD AN OPEN POSITION IN THIS STOCK. DO NOT TREAT THIS AS A NEW OPPORTUNITY. EVALUATE FOR HOLD, TAKE-PROFIT, OR STOP-LOSS.]\n",
             ]
             res += "\n".join(pos_lines) + "\n"
 

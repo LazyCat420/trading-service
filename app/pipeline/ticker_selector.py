@@ -280,7 +280,7 @@ class TickerSelector:
             discovery.extend(mid_picks)
 
             leftovers = large_candidates + mid_small_candidates + mystery_candidates
-            shortfall = non_position_slots - (len(non_position) + len(discovery))
+            shortfall = remaining_slots - len(discovery)
             random_picks: list[str] = []
             if shortfall > 0 and leftovers:
                 random.shuffle(leftovers)
