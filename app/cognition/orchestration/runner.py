@@ -98,6 +98,20 @@ async def execute_v2_pipeline(
         "position_context": {k: v for k, v in position_context.items() if k != "raw"} if position_context else {},
     })
 
+    if held:
+        return await execute_open_position_fast_track(
+            ticker=ticker,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            emit=emit,
+            macro_memo=macro_memo,
+            position_context=position_context,
+            portfolio_dashboard=portfolio_dashboard,
+            thesis_semaphore=thesis_semaphore,
+            db_semaphore=db_semaphore,
+            start_time=start,
+        )
+
     # ── Step 0.5: Data completeness (shared with V1) ─────────────────
     t0 = time.monotonic()
 
@@ -1372,6 +1386,255 @@ def _build_v1_compatible_result(
         # V2-specific metadata (ignored by V1 consumers, useful for debugging)
         "v2_metadata": v2_meta,
     }
+
+
+# ── Position Monitor Agent Fast-Track Prompt & Function ───────────────
+
+POSITION_MONITOR_SYSTEM_PROMPT = """You are the Position Monitor Agent. Your task is to evaluate whether we should HOLD or SELL (exit/trim) our existing position in {ticker}.
+
+## POSITION STATE:
+- Ticker: {ticker}
+- Average Entry Price: ${avg_entry}
+- Current Price: ${current_price}
+- Unrealized P&L: {unrealized_pnl_pct:+.2f}%
+- Days Held: {holding_days} days
+- Sector: {sector}
+
+## PORTFOLIO RISK & CORRELATION DASHBOARD:
+{portfolio_dashboard}
+
+## MACRO ENVIRONMENT MEMO:
+{macro_memo}
+
+## EVIDENCE PACKET DATA (Recent News & Technicals):
+{evidence_summary}
+
+## DECISION INSTRUCTIONS:
+- You MUST output a decision of either HOLD or SELL.
+- Set the confidence score from 0 to 100 based on the strength of the evidence.
+- Provide a clear, 2-3 sentence rationale explaining the decision.
+- Focus on risk management: check stop-loss/take-profit targets, momentum, and whether there is any critical news.
+
+## OUTPUT FORMAT:
+You MUST respond with a valid JSON object matching this schema:
+{{
+    "action": "HOLD|SELL",
+    "confidence": 85,
+    "rationale": "Your 2-3 sentence rationale here."
+}}
+"""
+
+
+async def execute_open_position_fast_track(
+    ticker: str,
+    *,
+    cycle_id: str = "",
+    bot_id: str = "",
+    emit: Callable[..., Any] | None = None,
+    macro_memo: str = "",
+    position_context: dict = None,
+    portfolio_dashboard: str = "",
+    thesis_semaphore: asyncio.Semaphore | None = None,
+    db_semaphore: asyncio.Semaphore | None = None,
+    start_time: float = 0.0,
+) -> dict[str, Any] | None:
+    """Run a fast-track single-agent evaluation for a held portfolio position.
+
+    Bypasses the multi-agent specialist routing, debate, and thesis steps
+    to finish in seconds while remaining context-aware.
+    """
+    from app.utils.pipeline_utils import noop as _noop
+    from app.utils.pipeline_utils import elapsed_ms
+    from app.cognition.evidence.packet_builder import build_evidence_packet
+
+    if emit is None:
+        emit = _noop
+
+    emit(
+        "analyzing",
+        f"v2_fast_track_start_{ticker}",
+        f"⚡ {ticker}: Open Position Fast-Track Monitor starting",
+        status="running",
+    )
+
+    # 1. Build Evidence Packet (Pure DB retrieval, very fast)
+    t_ev = time.monotonic()
+    packet = await build_evidence_packet(ticker)
+    ms_ev = elapsed_ms(t_ev)
+
+    # Extract clean evidence summary
+    facts_str = "\n".join(f"- {f.field_name if hasattr(f, 'field_name') else str(f)}: {f.value if hasattr(f, 'value') else ''}" for f in packet.structured_facts)
+    claims_str = "\n".join(f"- {c.text if hasattr(c, 'text') else str(c)} (source: {c.source_url if hasattr(c, 'source_url') else ''})" for c in packet.claims)
+    evidence_summary = (
+        f"### Technicals & Fundamentals:\n{facts_str or 'No structured facts available.'}\n\n"
+        f"### Recent Qualitative Claims:\n{claims_str or 'No claims available.'}"
+    )
+
+    # 2. Format System Prompt
+    avg_entry = position_context.get("avg_entry", 0.0)
+    current_price = position_context.get("current_price", 0.0)
+    unrealized_pnl_pct = position_context.get("unrealized_pnl_pct", 0.0)
+    holding_days = position_context.get("holding_days", 0)
+    sector = position_context.get("sector", "default")
+
+    system_prompt = POSITION_MONITOR_SYSTEM_PROMPT.format(
+        ticker=ticker,
+        avg_entry=avg_entry,
+        current_price=current_price,
+        unrealized_pnl_pct=unrealized_pnl_pct,
+        holding_days=holding_days,
+        sector=sector,
+        portfolio_dashboard=portfolio_dashboard or "Not available.",
+        macro_memo=macro_memo or "No macro memo available.",
+        evidence_summary=evidence_summary,
+    )
+
+    user_prompt = (
+        f"Evaluate the position in {ticker}.\n"
+        f"Determine whether we should HOLD or SELL.\n"
+        f"Output JSON response matching the requested schema."
+    )
+
+    # 3. Call Position Monitor Agent (Lightweight, single LLM call)
+    from app.agents.base_agent import run_agent
+    from app.utils.text_utils import parse_json_response
+
+    if thesis_semaphore:
+        async with thesis_semaphore:
+            agent_result = await run_agent(
+                agent_name="position_monitor",
+                ticker=ticker,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=256,
+                enable_tools=False,
+            )
+    else:
+        agent_result = await run_agent(
+            agent_name="position_monitor",
+            ticker=ticker,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=256,
+            enable_tools=False,
+        )
+
+    response_text = agent_result.get("response", "")
+    tokens_used = agent_result.get("tokens_used", 0)
+
+    # 4. Parse response
+    parsed_json = {}
+    try:
+        parsed_json = parse_json_response(response_text)
+    except Exception as parse_err:
+        logger.warning(
+            "[V2] [Fast-Track] parse_json_response failed for %s: %s",
+            ticker, parse_err,
+        )
+
+    action = parsed_json.get("action", "HOLD").upper()
+    confidence = parsed_json.get("confidence", 80)
+    rationale = parsed_json.get("rationale", "Fast-track position monitor executed.")
+
+    # 5. Form V1-compatible result
+    class DummySufficiency:
+        status = "sufficient"
+        warnings = []
+
+    elapsed = time.monotonic() - start_time
+    result = _build_v1_compatible_result(
+        ticker=ticker,
+        action=action,
+        confidence=confidence,
+        rationale=rationale,
+        cycle_id=cycle_id,
+        total_tokens=tokens_used,
+        elapsed=elapsed,
+        stages=["fast_track_evidence", "fast_track_monitor"],
+        config_used="v2_position_fast_track",
+        sufficiency=DummySufficiency(),
+    )
+
+    # Attach transient report data for post phase
+    try:
+        _structured_facts = []
+        for fact in packet.structured_facts[:100]:
+            _structured_facts.append({
+                "field_name": getattr(fact, "field_name", str(fact)),
+                "value": getattr(fact, "value", None),
+                "source": getattr(fact, "source", "unknown"),
+            })
+    except Exception:
+        _structured_facts = []
+
+    result["_report_data"] = {
+        "agent_insights": {"position_monitor": rationale},
+        "debate_result": None,
+        "thesis": None,
+        "sufficiency": DummySufficiency(),
+        "stages": ["fast_track_evidence", "fast_track_monitor"],
+        "stage_timings": {
+            "fast_track_evidence": int(ms_ev),
+            "fast_track_monitor": int(elapsed * 1000 - ms_ev)
+        },
+        "hallucination_result": None,
+        "memory_brief": "",
+        "present_sources": [],
+        "missing_sources": [],
+        "freshness_summary": getattr(packet, "freshness_summary", None),
+        "structured_facts": _structured_facts,
+        "failure_diagnosis": None,
+    }
+
+    # DB log (analysis_results table)
+    try:
+        from app.pipeline.analysis.decision_engine import _log_decision
+        if db_semaphore:
+            async with db_semaphore:
+                _log_decision(result, cycle_id, bot_id)
+        else:
+            _log_decision(result, cycle_id, bot_id)
+    except Exception as e:
+        logger.warning("[V2] [Fast-Track] _log_decision failed for %s: %s", ticker, e)
+
+    # Post-cycle hooks
+    try:
+        from app.pipeline.orchestration.post_cycle_hooks import run_post_cycle_hooks
+        await run_post_cycle_hooks(
+            ticker=ticker,
+            result=result,
+            escalated=False,
+            cycle_id=cycle_id,
+            final_action=action,
+            final_confidence=confidence,
+        )
+    except Exception as hooks_err:
+        logger.warning("[V2] [Fast-Track] Post-cycle hooks failed for %s: %s", ticker, hooks_err)
+
+    # Attention record
+    try:
+        from app.pipeline.attention_tracker import record_analysis as _record_attn
+        _record_attn(
+            ticker,
+            action=action,
+            confidence=confidence,
+            was_deep=False,
+        )
+    except Exception as attn_err:
+        logger.warning("[V2] [Fast-Track] Attention tracker failed for %s: %s", ticker, attn_err)
+
+    emit(
+        "analyzing",
+        f"v2_fast_track_done_{ticker}",
+        f"⚡ {ticker}: Fast-Track verdict → {action} @ {confidence}% in {elapsed:.1f}s",
+        elapsed_ms=int(elapsed * 1000),
+    )
+
+    return result
 
 
 async def execute_v2_tickers(

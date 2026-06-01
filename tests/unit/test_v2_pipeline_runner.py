@@ -351,3 +351,47 @@ async def test_phase4_partial_crash_continues():
     assert len(crash_r) == 1
     assert crash_r[0]["action"] == "HOLD"
     assert crash_r[0]["confidence"] == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_v2_pipeline_fast_tracks_open_positions(runner_mocks):
+    """If the ticker is held (open position), it should fast-track via execute_open_position_fast_track."""
+    from app.cognition.orchestration.runner import execute_v2_pipeline
+
+    # Override get_position_context to return held=True
+    runner_mocks["app.tools.portfolio_tools.get_position_context"].return_value = {
+        "held": True,
+        "avg_entry": 150.0,
+        "current_price": 160.0,
+        "unrealized_pnl_pct": 6.67,
+        "holding_days": 12,
+        "sector": "technology",
+    }
+
+    # Mock run_agent inside the fast-track monitor
+    fake_agent_res = {
+        "response": '{"action": "HOLD", "confidence": 92, "rationale": "Position is stable, indicators neutral."}',
+        "tokens_used": 180,
+    }
+
+    with patch("app.agents.base_agent.run_agent", AsyncMock(return_value=fake_agent_res)) as mock_run_agent:
+        result = await execute_v2_pipeline(
+            "ADBE", cycle_id="test-fast-track", bot_id="test-bot",
+        )
+
+        assert result is not None
+        assert result["ticker"] == "ADBE"
+        assert result["action"] == "HOLD"
+        assert result["confidence"] == 92
+        assert result["rationale"] == "Position is stable, indicators neutral."
+        assert result["config_used"] == "v2_position_fast_track"
+
+        # Verify it didn't call the full thesis agent or meta orchestrator
+        runner_mocks["app.cognition.debate.thesis_agent.generate_thesis"].assert_not_called()
+        runner_mocks["app.cognition.orchestration.meta_orchestrator.MetaOrchestrator.orchestrate"].assert_not_called()
+        runner_mocks["app.cognition.debate.debate_coordinator.run_adversarial_debate"].assert_not_called()
+
+        # Verify run_agent was called for the position_monitor
+        mock_run_agent.assert_called_once()
+        assert mock_run_agent.call_args[1]["agent_name"] == "position_monitor"
+
