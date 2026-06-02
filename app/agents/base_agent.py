@@ -301,7 +301,7 @@ async def run_agent(
         from app.agents.tool_whitelists import get_agent_tools, get_agent_budget_turns
 
         # Per-agent tool whitelist: only show tools relevant to this agent's role
-        agent_tools = get_agent_tools(agent_name) if enable_tools else None
+        agent_tools = get_agent_tools(agent_name) if enable_tools else []
 
         # Try routing via Prism agent harness first if routing is enabled and healthy
         if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
