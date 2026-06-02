@@ -6,5 +6,9 @@
     "deploy": "bash deploy.sh",
     "deploy:dry": "bash deploy.sh --dry-run",
     "deploy:all-changed": "bash deploy_changed.sh --changed-only"
+  },
+  "dependencies": {
+    "fastapi": "^0.0.8",
+    "uvicorn": "^0.0.1-security"
   }
 }
