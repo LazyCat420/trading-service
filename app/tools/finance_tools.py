@@ -166,40 +166,4 @@ async def get_technical_indicators(ticker: str) -> str:
     return signals if signals else "No technical signals available."
 
 
-class ChartingInput(BaseModel):
-    ticker: str = Field(description="The stock ticker symbol (e.g. AAPL)")
-    iterations: int = Field(default=1, description="Number of LLM reasoning iterations to build the chart (default 1)")
-    period: str = Field(default="3mo", description="Timeframe of historical data to fetch (e.g., '1mo', '3mo', '6mo', '1y')")
 
-
-@registry.register(
-    name="generate_trading_chart",
-    description="Generate an interactive HTML technical analysis chart for a stock using LLM quant strategies.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "ticker": {"type": "string", "description": "The stock ticker symbol"},
-            "iterations": {"type": "integer", "description": "Number of self-reflection iterations (default 1)"},
-            "period": {"type": "string", "description": "Timeframe of historical data to fetch (e.g., '1mo', '3mo', '6mo', '1y')"}
-        },
-        "required": ["ticker"],
-    },
-    tier=1,
-    source="llm_agent",
-    input_model=ChartingInput,
-)
-async def generate_trading_chart(ticker: str, iterations: int = 1, period: str = "3mo") -> str:
-    import httpx
-    import os
-    base_url = os.environ.get("LAZY_TOOL_SERVICE_URL", "http://10.0.0.16:5591")
-    url = f"{base_url}/execute/generate_trading_chart"
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        resp = await client.post(url, json={
-            "ticker": ticker,
-            "iterations": iterations,
-            "period": period
-        })
-        if resp.status_code != 200:
-            raise RuntimeError(f"lazy-tool-service returned status code {resp.status_code}: {resp.text}")
-        resp_json = resp.json()
-        return resp_json.get("content", "")

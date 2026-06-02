@@ -3,7 +3,7 @@ from app.tools.finance_tools import (
     get_market_data,
     get_finnhub_news,
     get_technical_indicators,
-    generate_trading_chart,
+
 )
 from app.tools.wiki_tools import write_memory_note, read_memory_note, search_wiki
 from app.tools.web_tools import search_web, web_search, scrape_url, query_hermes
@@ -104,7 +104,7 @@ __all__ = [
     "get_market_data",
     "get_finnhub_news",
     "get_technical_indicators",
-    "generate_trading_chart",
+
     "write_memory_note",
     "read_memory_note",
     "search_wiki",

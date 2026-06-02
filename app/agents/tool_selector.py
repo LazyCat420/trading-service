@@ -150,8 +150,6 @@ async def select_tools_for_task(
             return available_tool_schemas
 
         # Force-include critical charting tool if available
-        if "generate_trading_chart" in available_names and "generate_trading_chart" not in valid_names:
-            valid_names.append("generate_trading_chart")
 
         # Build the filtered schema list
         selected_schemas = [

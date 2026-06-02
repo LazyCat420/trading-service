@@ -49,7 +49,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "post_finding",
         "read_team_findings",
         "query_technical_indicator",
-        "generate_trading_chart",
+
     ],
     "fundamental": [
         "get_market_data",
