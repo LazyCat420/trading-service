@@ -109,7 +109,7 @@ async def run_technical_analyst(ticker: str, cycle_id: str = "JIT", bot_id: str 
         logger.error("[TECHNICAL_ANALYST] Agent execution failed: %s", e)
         return False
         
-    content = result.get("agent_output", "").strip()
+    content = result.get("response", "").strip()
     
     # Clean possible markdown
     clean = content.replace('```json', '').replace('```', '').strip()
@@ -118,8 +118,16 @@ async def run_technical_analyst(ticker: str, cycle_id: str = "JIT", bot_id: str 
     if si != -1 and ei > si:
         clean = clean[si:ei]
         
+    # Repair missing opening braces in JSON array of objects (common LLM error)
+    import re
+    repaired = re.sub(
+        r'\}\s*,\s*"(type|kind|x0|y0|x1|y1|color|reasoning)"\s*:',
+        r'},{"\1":',
+        clean
+    )
+    
     try:
-        overlays = json.loads(clean)
+        overlays = json.loads(repaired)
     except Exception as e:
         logger.error("[TECHNICAL_ANALYST] Failed to parse JSON from agent: %s | Output: %s", e, content)
         return False
