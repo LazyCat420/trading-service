@@ -15,8 +15,11 @@ Categories checked:
 """
 
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
+
+_running_chart_tasks = set()
 
 
 from app.config import settings
@@ -342,7 +345,6 @@ async def check_and_fill(ticker: str, emit=None, enqueue_only: bool = False) -> 
     # ── 10. Pre-generate Trading Chart ──
     try:
         from app.agents.technical_analyst_agent import run_technical_analyst
-        import asyncio
         _emit(f"📊 {ticker}: Pre-generating trading chart overlay...", status="running")
         async def _run_chart():
             try:
@@ -354,11 +356,8 @@ async def check_and_fill(ticker: str, emit=None, enqueue_only: bool = False) -> 
             except Exception as chart_err:
                 logger.warning("[DATA CHECK] Pre-generation of trading chart failed for %s: %s", ticker, chart_err)
         chart_task = asyncio.create_task(_run_chart())
-        try:
-            # allow more time since it uses full agent loop
-            await asyncio.wait_for(chart_task, timeout=900.0)
-        except asyncio.TimeoutError:
-            logger.warning("[DATA CHECK] Chart generation timed out (900s) for %s (non-fatal)", ticker)
+        _running_chart_tasks.add(chart_task)
+        chart_task.add_done_callback(_running_chart_tasks.discard)
     except Exception as e:
         logger.warning("[DATA CHECK] Failed to initiate chart generation: %s", e)
 
