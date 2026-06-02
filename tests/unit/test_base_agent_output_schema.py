@@ -242,3 +242,23 @@ async def test_b10_playbook_appended_not_overwritten(mock_run_agent_loop):
         assert "ORIGINAL SYSTEM" in sys_passed
         assert "TOOL PLAYBOOK RULES" in user_passed
         assert "use tool A" in user_passed
+
+@pytest.mark.asyncio
+async def test_b11_non_tool_agent_receives_empty_tools(mock_run_agent_loop, mock_db_empty):
+    """
+    B-11: An agent running with enable_tools=False must receive an empty list of tools []
+    to prevent fallback to the full tool registry.
+    """
+    await run_agent(
+        agent_name="test_agent",
+        ticker="AAPL",
+        cycle_id="1",
+        bot_id="1",
+        system_prompt="sys",
+        user_prompt="user",
+        enable_tools=False
+    )
+    
+    assert mock_run_agent_loop.called
+    call_args = mock_run_agent_loop.call_args[1]
+    assert call_args["tools_override"] == []
