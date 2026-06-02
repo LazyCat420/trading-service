@@ -1208,6 +1208,14 @@ async def execute_v2_pipeline(
         elapsed_ms=int(elapsed * 1000),
     )
 
+    formatted_agent_results = {}
+    if agent_insights:
+        for k, v in agent_insights.items():
+            formatted_agent_results[k] = {
+                "response": v if isinstance(v, str) else str(v),
+                "tokens": 0,
+            }
+
     result = _build_v1_compatible_result(
         ticker=ticker,
         action=final_action,
@@ -1222,6 +1230,7 @@ async def execute_v2_pipeline(
         sufficiency=sufficiency,
         memory_context=memory_context,
         debate_result=debate_result,
+        agent_results=formatted_agent_results,
     )
 
     # ── Attach transient report data for phase6_post report generation ──
@@ -1320,6 +1329,7 @@ def _build_v1_compatible_result(
     sufficiency: Any = None,
     memory_context: dict[str, Any] | None = None,
     debate_result: Any = None,
+    agent_results: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a result dict matching V1's analyze_ticker() output shape.
 
@@ -1363,7 +1373,7 @@ def _build_v1_compatible_result(
         "config_used": config_used,
         "triage_tier": sufficiency.status if sufficiency else "standard",
         "escalated": debate_result is not None,
-        "agent_results": {},
+        "agent_results": agent_results or {},
         "c_result": {
             "action": action,
             "confidence": int(confidence),
@@ -1557,6 +1567,12 @@ async def execute_open_position_fast_track(
         stages=["fast_track_evidence", "fast_track_monitor"],
         config_used="v2_position_fast_track",
         sufficiency=DummySufficiency(),
+        agent_results={
+            "position_monitor": {
+                "response": response_text,
+                "tokens": tokens_used,
+            }
+        }
     )
 
     # Attach transient report data for post phase
