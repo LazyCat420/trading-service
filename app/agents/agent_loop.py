@@ -130,6 +130,8 @@ async def run_agent_loop(
         lessons = get_agent_lessons(agent_name)
         spotlight = get_spotlight_tools(limit=5)
         
+        dynamic_instructions = ""
+
         # Phase 1: Check hold streak to penalize hold bias
         hold_streak = 0
         try:
@@ -142,7 +144,7 @@ async def run_agent_loop(
             logger.warning(f"[AgentLoop] Failed to fetch hold_streak: {e}")
 
         if hold_streak >= 3:
-            enhanced_system_prompt += (
+            dynamic_instructions += (
                 f"\n\n### HOLD STREAK NOTICE ({hold_streak} cycles):\n"
                 f"This ticker has been HELD for {hold_streak} consecutive cycles. "
                 "This suggests either (a) genuine uncertainty that warrants continued monitoring, "
@@ -156,11 +158,11 @@ async def run_agent_loop(
 
         if lessons:
             lesson_text = "\n".join([f"- {l}" for l in lessons])
-            enhanced_system_prompt += f"\n\n### PAST LESSONS LEARNED (Follow these to maximize success):\n{lesson_text}"
+            dynamic_instructions += f"\n\n### PAST LESSONS LEARNED (Follow these to maximize success):\n{lesson_text}"
             
         if spotlight:
             spotlight_text = ", ".join(spotlight)
-            enhanced_system_prompt += (
+            dynamic_instructions += (
                 "\n\n### REQUIRED TOOL CHECK:\n"
                 f"The following tools have NOT been used recently: [{spotlight_text}].\n"
                 "Before writing your final answer, you MUST ask yourself: "
@@ -168,17 +170,22 @@ async def run_agent_loop(
                 "If yes, call it now. If no, briefly state why it's not relevant."
             )
             
-        enhanced_system_prompt += "\n\n### WORKING MEMORY RULE:\nAfter every tool call, before taking your next action, you MUST output a compressed structured memory object summarizing the evidence. Include: evidence type, freshness, confidence, contradiction flags, decision relevance, and source reference."
+        dynamic_instructions += "\n\n### WORKING MEMORY RULE:\nAfter every tool call, before taking your next action, you MUST output a compressed structured memory object summarizing the evidence. Include: evidence type, freshness, confidence, contradiction flags, decision relevance, and source reference."
         
-        enhanced_system_prompt += "\n\n### TOOL USE RULE:\nBefore calling any tool, you MUST briefly state your rationale for calling it (why you need it) and your planned next action after receiving the data."
+        dynamic_instructions += "\n\n### TOOL USE RULE:\nBefore calling any tool, you MUST briefly state your rationale for calling it (why you need it) and your planned next action after receiving the data."
             
         messages = [{"role": "system", "content": enhanced_system_prompt}]
     else:
         spotlight = []  # We only have spotlight tools on the first message
         messages = previous_messages.copy()
+        dynamic_instructions = ""
 
     if user_prompt:
-        messages.append({"role": "user", "content": user_prompt})
+        final_user_prompt = user_prompt + dynamic_instructions if dynamic_instructions else user_prompt
+        messages.append({"role": "user", "content": final_user_prompt})
+    elif dynamic_instructions:
+        # Edge case if no user prompt was provided but we have dynamic instructions
+        messages.append({"role": "user", "content": dynamic_instructions})
 
     active_tools = tools_override if tools_override is not None else registry.schemas
 

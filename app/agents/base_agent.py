@@ -231,11 +231,12 @@ async def run_agent(
     except Exception as e:
         logger.error(f"[BaseAgent] Failed to fetch playbook rules: {e}")
 
+    dynamic_tail_instructions = ""
     if playbook_rules:
-        actual_system_prompt += playbook_rules
+        dynamic_tail_instructions += playbook_rules
 
     if enable_dynamic_prompt and data_context:
-        actual_system_prompt, dynamic_rationale = await _generate_dynamic_prompt(
+        generated_sys_prompt, dynamic_rationale = await _generate_dynamic_prompt(
             agent_name=agent_name,
             static_prompt=system_prompt,
             data_context=data_context,
@@ -243,6 +244,8 @@ async def run_agent(
             cycle_id=cycle_id,
             bot_id=bot_id,
         )
+        if generated_sys_prompt and generated_sys_prompt != system_prompt:
+            dynamic_tail_instructions += f"\n\n### DYNAMIC CONTEXT ADAPTATION:\n{generated_sys_prompt}"
 
     # ── Inject prior trade outcome context for analysis agents ──
     outcome_ctx = ""
@@ -270,6 +273,9 @@ async def run_agent(
         full_prompt = f"{outcome_ctx}{data_context}\n\n{user_prompt}"
     else:
         full_prompt = f"{outcome_ctx}{user_prompt}" if outcome_ctx else user_prompt
+        
+    if dynamic_tail_instructions:
+        full_prompt += dynamic_tail_instructions
 
     # ── Verbose input logging ──
     prompt_label = (
@@ -389,10 +395,7 @@ async def run_agent(
         "tokens_used": tokens,
         "execution_ms": elapsed_ms,
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
-        "dynamic_prompt_used": enable_dynamic_prompt
-        and actual_system_prompt != system_prompt,
-        "dynamic_prompt": actual_system_prompt
-        if actual_system_prompt != system_prompt
-        else None,
+        "dynamic_prompt_used": enable_dynamic_prompt and dynamic_rationale != "",
+        "dynamic_prompt": dynamic_tail_instructions if dynamic_tail_instructions else None,
         "dynamic_rationale": dynamic_rationale if dynamic_rationale else None,
     }

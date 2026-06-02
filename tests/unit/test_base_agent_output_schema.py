@@ -237,7 +237,8 @@ async def test_b10_playbook_appended_not_overwritten(mock_run_agent_loop):
         
         call_args = mock_run_agent_loop.call_args[1]
         sys_passed = call_args["system_prompt"]
+        user_passed = call_args["user_prompt"]
         
         assert "ORIGINAL SYSTEM" in sys_passed
-        assert "TOOL PLAYBOOK RULES" in sys_passed
-        assert "use tool A" in sys_passed
+        assert "TOOL PLAYBOOK RULES" in user_passed
+        assert "use tool A" in user_passed
