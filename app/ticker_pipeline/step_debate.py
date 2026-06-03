@@ -24,7 +24,7 @@ _THESIS_BUDGET_SECONDS = 960
 
 async def run_debate_step(ctx: TickerContext) -> TickerContext:
     """Run adversarial debate if conditions are met."""
-    from app.pipeline.orchestration.cycle_control import cycle_control
+    from app.cycle.orchestration.cycle_control import cycle_control
 
     # ── Skip conditions ──
     skip_debate = not ctx.orchestrator_had_agents

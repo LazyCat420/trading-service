@@ -21,7 +21,7 @@ async def run_memory_step(ctx: TickerContext) -> TickerContext:
     """Read prior memories and procedural rules for the ticker."""
     try:
         from app.cognition.memory.reader import read_memories, read_procedural
-        from app.pipeline.orchestration.cycle_control import cycle_control
+        from app.cycle.orchestration.cycle_control import cycle_control
 
         await cycle_control.wait_if_paused()
         loop = asyncio.get_running_loop()

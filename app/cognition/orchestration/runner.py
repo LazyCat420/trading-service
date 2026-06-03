@@ -392,7 +392,7 @@ async def execute_open_position_fast_track(
 
     # Post-cycle hooks
     try:
-        from app.pipeline.orchestration.post_cycle_hooks import run_post_cycle_hooks
+        from app.cycle.orchestration.post_cycle_hooks import run_post_cycle_hooks
         await run_post_cycle_hooks(
             ticker=ticker,
             result=result,
@@ -406,7 +406,7 @@ async def execute_open_position_fast_track(
 
     # Attention record
     try:
-        from app.pipeline.attention_tracker import record_analysis as _record_attn
+        from app.cycle.attention_tracker import record_analysis as _record_attn
         _record_attn(
             ticker,
             action=action,
@@ -534,7 +534,7 @@ async def execute_v2_tickers(
             import traceback
 
             try:
-                from app.pipeline.orchestration.state_manager import PipelineStateDB
+                from app.cycle.orchestration.state_manager import PipelineStateDB
 
                 PipelineStateDB.log_execution_error(
                     cycle_id or "unknown",

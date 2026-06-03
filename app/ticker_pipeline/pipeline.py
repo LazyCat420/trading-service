@@ -60,7 +60,7 @@ async def execute_ticker_pipeline(
     trading phase, post-cycle hooks, and report generation work unchanged.
     """
     from app.utils.pipeline_utils import noop as _noop
-    from app.pipeline.orchestration.cycle_control import cycle_control
+    from app.cycle.orchestration.cycle_control import cycle_control
 
     if emit is None:
         emit = _noop

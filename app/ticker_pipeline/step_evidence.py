@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 async def run_evidence_step(ctx: TickerContext) -> TickerContext:
     """Build the evidence packet from DB data."""
     from app.cognition.evidence.packet_builder import build_evidence_packet
-    from app.pipeline.orchestration.cycle_control import cycle_control
+    from app.cycle.orchestration.cycle_control import cycle_control
 
     await cycle_control.wait_if_paused()
     t2 = time.monotonic()

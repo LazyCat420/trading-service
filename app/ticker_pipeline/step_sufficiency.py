@@ -29,7 +29,7 @@ async def run_sufficiency_step(ctx: TickerContext) -> TickerContext | dict[str, 
         None if ticker should be rejected entirely (fake/delisted).
     """
     from app.cognition.verification.sufficiency_gate import check_data_sufficiency
-    from app.pipeline.orchestration.cycle_control import cycle_control
+    from app.cycle.orchestration.cycle_control import cycle_control
 
     ctx.sufficiency = check_data_sufficiency(ctx.ticker, ctx.packet)
     ctx.add_stage("sufficiency_gate")
@@ -149,7 +149,7 @@ async def _handle_abstain(ctx: TickerContext) -> dict[str, Any] | None:
         logger.warning("[V2] log_decision (abstain) failed for %s: %s", ctx.ticker, e)
 
     try:
-        from app.pipeline.orchestration.post_cycle_hooks import run_post_cycle_hooks
+        from app.cycle.orchestration.post_cycle_hooks import run_post_cycle_hooks
 
         await run_post_cycle_hooks(
             ticker=ctx.ticker, result=abstain_result, escalated=False,

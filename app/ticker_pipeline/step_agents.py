@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 async def run_agents_step(ctx: TickerContext) -> TickerContext:
     """Run MetaOrchestrator agent routing and pull team findings."""
     from app.cognition.orchestration.meta_orchestrator import MetaOrchestrator
-    from app.pipeline.orchestration.cycle_control import cycle_control
+    from app.cycle.orchestration.cycle_control import cycle_control
 
     ctx.safe_emit(
         "analyzing", f"v2_orchestrator_{ctx.ticker}",

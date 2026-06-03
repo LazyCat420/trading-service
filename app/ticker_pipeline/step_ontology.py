@@ -21,7 +21,7 @@ async def run_ontology_step(ctx: TickerContext) -> TickerContext:
     """Build ontology context for the ticker."""
     try:
         from app.cognition.ontology.ontology_builder import OntologyBuilder
-        from app.pipeline.orchestration.cycle_control import cycle_control
+        from app.cycle.orchestration.cycle_control import cycle_control
 
         await cycle_control.wait_if_paused()
         t1 = time.monotonic()

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 async def run_verify_step(ctx: TickerContext) -> TickerContext:
     """Run hallucination check and inject sufficiency warnings."""
-    from app.pipeline.orchestration.cycle_control import cycle_control
+    from app.cycle.orchestration.cycle_control import cycle_control
 
     # ── Hallucination checker ──
     try:

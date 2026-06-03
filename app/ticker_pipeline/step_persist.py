@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 async def run_persist_step(ctx: TickerContext) -> dict[str, Any]:
     """Persist results to DB, memory, hooks, and return the final result dict."""
-    from app.pipeline.orchestration.cycle_control import cycle_control
+    from app.cycle.orchestration.cycle_control import cycle_control
 
     # ── Step 7: Episodic memory write-back ──
     try:
@@ -165,7 +165,7 @@ async def run_persist_step(ctx: TickerContext) -> dict[str, Any]:
 
     # ── Step 10: Post-cycle hooks ──
     try:
-        from app.pipeline.orchestration.post_cycle_hooks import run_post_cycle_hooks
+        from app.cycle.orchestration.post_cycle_hooks import run_post_cycle_hooks
 
         await run_post_cycle_hooks(
             ticker=ctx.ticker, result=result, escalated=False,
@@ -179,7 +179,7 @@ async def run_persist_step(ctx: TickerContext) -> dict[str, Any]:
 
     # ── Step 11: Attention tracker ──
     try:
-        from app.pipeline.attention_tracker import record_analysis as _record_attn
+        from app.cycle.attention_tracker import record_analysis as _record_attn
 
         _record_attn(
             ctx.ticker,
