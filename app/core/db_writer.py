@@ -7,9 +7,17 @@ don't need to import a 1279-line file for 2 small functions.
 Functions:
   - log_decision():         Write analysis result to analysis_results table
   - execute_quarantine():   Quarantine a ticker (insufficient data / fake)
+
+IMPORTANT: The SQL here must exactly match the real analysis_results table
+schema.  The table columns are:
+  id, cycle_id, bot_id, ticker, agent_name, result_json, confidence,
+  created_at, triage_tier, thesis_verdict, thesis_confidence,
+  thesis_summary, thesis_updated_at, thesis_unchanged
 """
 
+import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -24,56 +32,173 @@ def log_decision(
     cycle_id: str,
     bot_id: str,
 ) -> None:
-    """Persist an analysis result to the analysis_results table.
+    """Persist an analysis result to the analysis_results + cycle_summaries tables.
 
-    This is the single place where ticker decisions are written to the DB.
-    Previously duplicated inside decision_engine.py._log_decision().
+    This is a direct extraction of decision_engine.py._log_decision().
+    The SQL, column names, and payload structure are identical so the
+    frontend, trading phase, and report service all work unchanged.
+
+    Both INSERTs are wrapped in a single transaction for atomicity.
+    Uses ON CONFLICT upsert to prevent duplicates.
     """
-    ticker = result.get("ticker", "?")
-    action = result.get("action", "HOLD")
-    confidence = result.get("confidence", 0)
-    rationale = result.get("rationale", "")
-    config_used = result.get("config_used", "unknown")
-    total_tokens = result.get("total_tokens", 0)
-    total_time_s = result.get("total_time_s", 0)
-    v2_metadata = result.get("v2_metadata")
-    escalated = result.get("escalated", False)
-    triage_tier = result.get("triage_tier", "standard")
-
     try:
-        import json
+        from app.utils.text_utils import sanitize_surrogates
+
+        result = sanitize_surrogates(result)
+        ticker = result["ticker"]
 
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO analysis_results
-                    (cycle_id, bot_id, ticker, action, confidence, rationale,
-                     config_used, total_tokens, total_time_s, v2_metadata,
-                     escalated, triage_tier, created_at)
-                VALUES
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (cycle_id, ticker)
-                DO UPDATE SET
-                    action = EXCLUDED.action,
-                    confidence = EXCLUDED.confidence,
-                    rationale = EXCLUDED.rationale,
-                    config_used = EXCLUDED.config_used,
-                    total_tokens = EXCLUDED.total_tokens,
-                    total_time_s = EXCLUDED.total_time_s,
-                    v2_metadata = EXCLUDED.v2_metadata,
-                    escalated = EXCLUDED.escalated,
-                    triage_tier = EXCLUDED.triage_tier,
-                    created_at = EXCLUDED.created_at
-                """,
-                [
-                    cycle_id, bot_id, ticker, action, confidence,
-                    rationale[:5000],  # Truncate rationale to prevent DB bloat
-                    config_used, total_tokens, total_time_s,
-                    json.dumps(v2_metadata) if v2_metadata else None,
-                    escalated, triage_tier,
-                    datetime.now(timezone.utc),
-                ],
+            result_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_OID,
+                    f"{cycle_id}_{bot_id}_{ticker}_{result.get('config_used', 'C')}",
+                )
             )
+
+            # Compute estimate inline for BUY actions so it persists in DB
+            estimate = None
+            action = result.get("action", "HOLD")
+            confidence = result.get("confidence", 0)
+
+            if action == "BUY" and confidence > 0:
+                try:
+                    from app.cycle.trading_phase import estimate_trade
+                    from app.trading.paper_trader import get_portfolio
+
+                    pf = get_portfolio(bot_id or "default")
+                    cash = pf.get("cash", 0)
+                    price_row = db.execute(
+                        "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+                        [ticker],
+                    ).fetchone()
+                    if price_row and price_row[0] > 0:
+                        estimate = estimate_trade(confidence, cash, price_row[0])
+                except Exception as est_err:
+                    logger.warning(
+                        "[DB] Estimate calc failed for %s: %s", ticker, est_err
+                    )
+
+            # Build the full result payload for the frontend
+            result_payload = {
+                "action": action,
+                "confidence": confidence,
+                "rationale": result.get("rationale", ""),
+                "config_used": result.get("config_used", ""),
+                "escalated": result.get("escalated", False),
+                "human_review": result.get("human_review", False),
+                "agent_tokens": result.get("agent_tokens", 0),
+                "rlm_tokens": result.get("rlm_tokens", 0),
+                "total_tokens": result.get("total_tokens", 0),
+                "total_time_s": result.get("total_time_s"),
+                "agent_results": result.get("agent_results", {}),
+                "c_result": {
+                    "action": result.get("c_result", {}).get("action"),
+                    "confidence": result.get("c_result", {}).get("confidence"),
+                }
+                if result.get("c_result")
+                else None,
+                "d_result": {
+                    "action": result.get("d_result", {}).get("action"),
+                    "confidence": result.get("d_result", {}).get("confidence"),
+                    "original_thesis_status": result.get("d_result", {}).get(
+                        "original_thesis_status", "NOT_HELD"
+                    ),
+                    "original_thesis_explanation": result.get("d_result", {}).get(
+                        "original_thesis_explanation", ""
+                    ),
+                }
+                if result.get("d_result")
+                else None,
+            }
+
+            if estimate:
+                result_payload["estimate"] = estimate
+
+            # Determine if this run should save thesis state
+            _is_thesis_run = result.get("triage_tier") in ("standard", "deep")
+            _thesis_now = datetime.now(timezone.utc) if _is_thesis_run else None
+
+            # Wrap both INSERTs in a transaction for atomicity
+            with db.transaction():
+                # Upsert on (id) to prevent duplicate rows
+                db.execute(
+                    """
+                    INSERT INTO analysis_results
+                    (id, cycle_id, bot_id, ticker, agent_name, result_json, confidence, created_at, triage_tier,
+                     thesis_verdict, thesis_confidence, thesis_summary, thesis_updated_at, thesis_unchanged)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+                    ON CONFLICT (id) DO NOTHING
+                """,
+                    [
+                        result_id,
+                        cycle_id or "manual",
+                        bot_id or "decision-engine",
+                        ticker,
+                        f"hybrid_{result.get('config_used', 'C')}",
+                        json.dumps(result_payload),
+                        confidence,
+                        result.get("timestamp"),
+                        result.get("triage_tier", "standard"),
+                        # Thesis fields — only populated for standard/deep runs
+                        action if _is_thesis_run else None,
+                        confidence if _is_thesis_run else None,
+                        result.get("rationale", "")[:1500] if _is_thesis_run else None,
+                        _thesis_now,
+                    ],
+                )
+
+                # Upsert cycle_summaries to prevent PK violation on (ticker, cycle_id)
+                db.execute(
+                    """
+                    INSERT INTO cycle_summaries
+                    (ticker, cycle_id, cycle_date, agent_name, action, confidence, confidence_tier, rationale_summary, was_correct, outcome_pnl)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (ticker, cycle_id) DO UPDATE SET
+                        action = EXCLUDED.action,
+                        confidence = EXCLUDED.confidence,
+                        confidence_tier = EXCLUDED.confidence_tier,
+                        rationale_summary = EXCLUDED.rationale_summary,
+                        agent_name = EXCLUDED.agent_name
+                    """,
+                    [
+                        ticker,
+                        cycle_id or "manual",
+                        result.get("timestamp"),
+                        f"hybrid_{result.get('config_used', 'C')}",
+                        action,
+                        confidence,
+                        "high"
+                        if confidence >= 70
+                        else "medium"
+                        if confidence >= 40
+                        else "low",
+                        result.get("rationale", "")[:500],
+                        None,  # was_correct
+                        None,  # outcome_pnl
+                    ],
+                )
+
+        # Record BUY/SELL decisions for outcome tracking
+        if action in ("BUY", "SELL"):
+            try:
+                from app.pipeline.analysis.outcome_tracker import record_decision
+
+                _entry_price = None
+                if estimate:
+                    _entry_price = estimate.get("price")
+                record_decision(
+                    cycle_id=cycle_id or "manual",
+                    ticker=ticker,
+                    action=action,
+                    confidence=confidence,
+                    entry_price=_entry_price,
+                    lesson=result.get("rationale", "")[:200],
+                )
+            except Exception as outcome_err:
+                logger.warning(
+                    "[DB] record_decision failed for %s: %s", ticker, outcome_err
+                )
+
         logger.info("[DB] Logged decision for %s: %s@%d%%", ticker, action, confidence)
     except Exception as e:
         logger.error("[DB] Failed to log decision for %s: %s", ticker, e)
