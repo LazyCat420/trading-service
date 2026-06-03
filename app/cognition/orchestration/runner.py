@@ -1651,6 +1651,20 @@ async def execute_open_position_fast_track(
         data={"action": action, "confidence": confidence, "elapsed_ms": int(elapsed * 1000)},
     )
 
+    log_manager.log_v2_cycle(
+        cycle_id,
+        "v2_pipeline_complete",
+        {
+            "ticker": ticker,
+            "action": action,
+            "confidence": confidence,
+            "elapsed_ms": int(elapsed * 1000),
+            "total_tokens": tokens_used,
+            "stages_completed": result["_report_data"]["stages"],
+            "config_used": "v2_position_fast_track",
+        }
+    )
+
     return result
 
 
