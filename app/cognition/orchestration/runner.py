@@ -98,6 +98,23 @@ async def execute_v2_pipeline(
         "position_context": {k: v for k, v in position_context.items() if k != "raw"} if position_context else {},
     })
 
+    # ── Launch Chart Generation in Background ────────────────────────
+    try:
+        from app.agents.technical_analyst_agent import run_technical_analyst
+        import asyncio
+        async def _run_chart():
+            try:
+                success = await run_technical_analyst(ticker=ticker, cycle_id=cycle_id, bot_id=bot_id)
+                if success:
+                    logger.info("[V2] Pre-generated trading chart for %s successfully", ticker)
+                else:
+                    logger.warning("[V2] Pre-generation of trading chart failed for %s", ticker)
+            except Exception as chart_err:
+                logger.warning("[V2] Pre-generation of trading chart failed for %s: %s", ticker, chart_err)
+        asyncio.create_task(_run_chart())
+    except Exception as e:
+        logger.warning("[V2] Failed to initiate chart generation: %s", e)
+
     if held:
         return await execute_open_position_fast_track(
             ticker=ticker,

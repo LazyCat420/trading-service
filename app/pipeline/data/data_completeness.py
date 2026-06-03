@@ -343,23 +343,8 @@ async def check_and_fill(ticker: str, emit=None, enqueue_only: bool = False) -> 
     )
 
     # ── 10. Pre-generate Trading Chart ──
-    try:
-        from app.agents.technical_analyst_agent import run_technical_analyst
-        _emit(f"📊 {ticker}: Pre-generating trading chart overlay...", status="running")
-        async def _run_chart():
-            try:
-                success = await run_technical_analyst(ticker=ticker)
-                if success:
-                    logger.info("[DATA CHECK] Pre-generated trading chart for %s successfully", ticker)
-                else:
-                    logger.warning("[DATA CHECK] Pre-generation of trading chart failed for %s", ticker)
-            except Exception as chart_err:
-                logger.warning("[DATA CHECK] Pre-generation of trading chart failed for %s: %s", ticker, chart_err)
-        chart_task = asyncio.create_task(_run_chart())
-        _running_chart_tasks.add(chart_task)
-        chart_task.add_done_callback(_running_chart_tasks.discard)
-    except Exception as e:
-        logger.warning("[DATA CHECK] Failed to initiate chart generation: %s", e)
+    # Moved to V2 runner to ensure it runs for all tickers (including held positions)
+    # and doesn't get cancelled by the 30s data_completeness timeout.
 
     needs_jit_processing = False
     if filled_count > 0:
