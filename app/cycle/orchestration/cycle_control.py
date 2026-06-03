@@ -94,5 +94,30 @@ class CycleControl:
             raise asyncio.CancelledError("Cycle stopped by user")
 
 
+    async def stop_and_drain(self, drain_seconds: float = 0.5):
+        """Stop all running tasks, give them time to exit, then re-pause for next cycle.
+
+        This prevents the zombie task bug where pause() freezes orphan tasks
+        that were still running after cycle completion.  The sequence is:
+          1. Set is_stopped → unblock any paused tasks so they see the flag.
+          2. Sleep briefly so tasks hit their next wait_if_paused() and raise CancelledError.
+          3. Reset to paused state for next cycle readiness.
+        """
+        # 1. Signal all tasks to stop (unblocks any paused tasks)
+        self.is_stopped = True
+        if self.pause_event:
+            self.pause_event.set()
+        logger.info("[PIPELINE] [CYCLE_CONTROL] Stop-and-drain: signaling all tasks to exit")
+
+        # 2. Give tasks time to see the stop flag and raise CancelledError
+        await asyncio.sleep(drain_seconds)
+
+        # 3. Reset to paused state for next cycle readiness
+        self.is_stopped = False
+        self.is_paused = True
+        self._pause_event = None  # Lazy init on next use
+        logger.info("[PIPELINE] [CYCLE_CONTROL] Stop-and-drain complete — system paused for next cycle")
+
+
 # Singleton
 cycle_control = CycleControl()

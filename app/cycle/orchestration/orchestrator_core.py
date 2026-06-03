@@ -89,6 +89,8 @@ class OrchestratorCoreMixin:
         try:
             await cls._execute_cycle_impl(ctx, bot_id)
         finally:
+            # 1. Cancel all tracked top-level tasks
+            _tasks_to_cancel = []
             for name, task in [
                 ("scout", getattr(cls, "_scout_task", None)),
                 ("consumer", getattr(cls, "_consumer_task", None)),
@@ -99,6 +101,20 @@ class OrchestratorCoreMixin:
             ]:
                 if task and not task.done():
                     task.cancel()
+                    _tasks_to_cancel.append(task)
+
+            # 2. Cancel all tracked chart tasks from the fire-and-forget registry
+            from app.cognition.orchestration.runner import drain_chart_tasks
+            _chart_tasks = drain_chart_tasks()
+            for ct in _chart_tasks:
+                if not ct.done():
+                    ct.cancel()
+                    _tasks_to_cancel.append(ct)
+
+            if _tasks_to_cancel:
+                logger.info("[CYCLE] Cancelling %d orphan tasks before pausing", len(_tasks_to_cancel))
+                await asyncio.gather(*_tasks_to_cancel, return_exceptions=True)
+
             cls._scout_task = None
             cls._consumer_task = None
             cls._checkpoint_task = None
@@ -106,13 +122,12 @@ class OrchestratorCoreMixin:
             cls._analysis_task = None
             cls._autoresearch_task = None
 
-            # Re-pause the system so background tasks go dormant
-            # until the next cycle is explicitly started.
+            # 3. Stop-and-drain: signal zombie tasks to exit, THEN re-pause
             import os as _os
             _start_paused = _os.getenv("START_PAUSED", "true").lower() in ("true", "1", "yes")
             if _start_paused:
-                cycle_control.pause()
-                logger.info("[CYCLE] Cycle ended — re-pausing system (background tasks dormant).")
+                await cycle_control.stop_and_drain(drain_seconds=0.5)
+                logger.info("[CYCLE] Cycle ended — system drained and re-paused.")
 
     @classmethod
     async def _execute_cycle_impl(cls, ctx: CycleContext, bot_id: str) -> None:

@@ -29,6 +29,19 @@ from app.log_manager import log_manager
 
 logger = logging.getLogger(__name__)
 
+# ── Chart task registry ──────────────────────────────────────────────
+# Chart generation tasks are spawned per-ticker and run in the background.
+# This registry lets the orchestrator cancel them cleanly at cycle end,
+# preventing the zombie-freeze bug where pause() traps orphan tasks.
+_chart_tasks: set[asyncio.Task] = set()
+
+
+def drain_chart_tasks() -> list[asyncio.Task]:
+    """Return and clear all tracked chart tasks for cancellation."""
+    tasks = list(_chart_tasks)
+    _chart_tasks.clear()
+    return tasks
+
 
 from app.services.logging.tracer import trace_span
 
@@ -98,10 +111,10 @@ async def execute_v2_pipeline(
         "position_context": {k: v for k, v in position_context.items() if k != "raw"} if position_context else {},
     })
 
-    # ── Launch Chart Generation in Background ────────────────────────
+    # ── Launch Chart Generation in Background (TRACKED) ────────────────
     try:
         from app.agents.technical_analyst_agent import run_technical_analyst
-        import asyncio
+
         async def _run_chart():
             try:
                 success = await run_technical_analyst(ticker=ticker, cycle_id=cycle_id, bot_id=bot_id)
@@ -109,9 +122,14 @@ async def execute_v2_pipeline(
                     logger.info("[V2] Pre-generated trading chart for %s successfully", ticker)
                 else:
                     logger.warning("[V2] Pre-generation of trading chart failed for %s", ticker)
+            except asyncio.CancelledError:
+                logger.info("[V2] Chart generation cancelled for %s (cycle ending)", ticker)
             except Exception as chart_err:
                 logger.warning("[V2] Pre-generation of trading chart failed for %s: %s", ticker, chart_err)
-        asyncio.create_task(_run_chart())
+
+        task = asyncio.create_task(_run_chart())
+        _chart_tasks.add(task)
+        task.add_done_callback(_chart_tasks.discard)
     except Exception as e:
         logger.warning("[V2] Failed to initiate chart generation: %s", e)
 
