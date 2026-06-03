@@ -20,7 +20,15 @@ class ReportService:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         report_dir = "logs/autoresearch"
-        os.makedirs(report_dir, exist_ok=True)
+        try:
+            os.makedirs(report_dir, exist_ok=True)
+            # Test write access
+            _test = os.path.join(report_dir, ".write_test")
+            open(_test, "w").close()
+            os.unlink(_test)
+        except (PermissionError, OSError):
+            report_dir = "logs_local/autoresearch"
+            os.makedirs(report_dir, exist_ok=True)
         # overwrite single file to prevent hundreds of files
         report_path = os.path.join(report_dir, "latest_cycle_report.md")
 

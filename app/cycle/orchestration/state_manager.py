@@ -656,7 +656,39 @@ class PipelineStateMixin:
         #     → zombie cycle, process was killed
         #   - "stopped" → graceful shutdown set this, but checkpoint may exist
         #   - "interrupted" → already flagged from a prior boot, re-validate
-        _terminal_no_checkpoint = ("idle", "done", "error", "stopped")
+        _terminal_no_checkpoint = ("idle", "done")
+
+        # ── Handle "error" and "stopped" states: reset to idle ──────────
+        # Previously these were treated as terminal and left in place,
+        # which caused the frontend to permanently show stale crashed-cycle
+        # data. Now we reset to idle so the next cycle starts cleanly.
+        if prev_status in ("error", "stopped"):
+            stale_cycle_id = cls._state.get("cycle_id")
+            logger.warning(
+                "[CYCLE] Previous cycle ended with '%s' — resetting to idle on boot (cycle: %s)",
+                prev_status,
+                stale_cycle_id,
+            )
+            # Clean up stale pipeline_events for the crashed cycle so the
+            # frontend doesn't show thousands of zombie timeout events.
+            if stale_cycle_id:
+                try:
+                    with connection.get_db() as db:
+                        deleted = db.execute(
+                            "DELETE FROM pipeline_events WHERE cycle_id = %s RETURNING id",
+                            [stale_cycle_id],
+                        ).fetchall()
+                        logger.info(
+                            "[CYCLE] Cleaned up %d stale events for crashed cycle %s",
+                            len(deleted), stale_cycle_id,
+                        )
+                except Exception as e:
+                    logger.error("[CYCLE] Failed to clean up stale events: %s", e)
+
+            cls._state = PipelineStateDB.default_state()
+            cls._state["finished_at"] = datetime.now(timezone.utc).isoformat()
+            cls.save_state()
+            return
 
         if prev_status not in _terminal_no_checkpoint:
             zombie_cycle_id = cls._state.get("cycle_id")

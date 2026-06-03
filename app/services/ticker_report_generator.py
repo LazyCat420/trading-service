@@ -27,7 +27,25 @@ logger = logging.getLogger(__name__)
 class TickerReportGenerator:
     """Generates comprehensive per-ticker markdown reports."""
 
-    REPORT_DIR = Path("logs/autoresearch")
+    _REPORT_DIR_PRIMARY = Path("logs/autoresearch")
+    _REPORT_DIR_FALLBACK = Path("logs_local/autoresearch")
+    _resolved_report_dir: Path | None = None
+
+    @property
+    def REPORT_DIR(self) -> Path:
+        """Lazy-resolve report dir with write-access check."""
+        if self._resolved_report_dir is not None:
+            return self._resolved_report_dir
+        try:
+            self._REPORT_DIR_PRIMARY.mkdir(parents=True, exist_ok=True)
+            test_file = self._REPORT_DIR_PRIMARY / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            self._resolved_report_dir = self._REPORT_DIR_PRIMARY
+        except (PermissionError, OSError):
+            self._REPORT_DIR_FALLBACK.mkdir(parents=True, exist_ok=True)
+            self._resolved_report_dir = self._REPORT_DIR_FALLBACK
+        return self._resolved_report_dir
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -229,8 +247,12 @@ class TickerReportGenerator:
         cycle_summary: dict | None = None,
     ) -> None:
         """Generate and save a single ticker's report to disk and DB."""
-        cycle_dir = self.REPORT_DIR / cycle_id
-        cycle_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            cycle_dir = self.REPORT_DIR / cycle_id
+            cycle_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError):
+            cycle_dir = self._REPORT_DIR_FALLBACK / cycle_id
+            cycle_dir.mkdir(parents=True, exist_ok=True)
 
         md = self.generate_ticker_report(
             ticker=ticker,
@@ -284,8 +306,12 @@ class TickerReportGenerator:
 
         # Generate cycle summary
         summary_saved = False
-        cycle_dir = self.REPORT_DIR / cycle_id
-        cycle_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            cycle_dir = self.REPORT_DIR / cycle_id
+            cycle_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError):
+            cycle_dir = self._REPORT_DIR_FALLBACK / cycle_id
+            cycle_dir.mkdir(parents=True, exist_ok=True)
         try:
             summary_md = self.generate_cycle_summary_report(
                 cycle_id=cycle_id,

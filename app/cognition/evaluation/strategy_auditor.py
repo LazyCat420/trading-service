@@ -16,7 +16,15 @@ from app.trading.portfolio_drawdown import compute_portfolio_drawdown
 logger = logging.getLogger(__name__)
 
 AUDIT_LOG_DIR = Path("logs/audit")
-AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Test write access
+    _test = AUDIT_LOG_DIR / ".write_test"
+    _test.touch()
+    _test.unlink()
+except (PermissionError, OSError):
+    AUDIT_LOG_DIR = Path("logs_local/audit")
+    AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _write_audit_log(audit_id: str, data: dict):
