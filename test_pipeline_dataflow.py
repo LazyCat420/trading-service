@@ -7,7 +7,7 @@ from app.cognition.orchestration.meta_orchestrator import MetaOrchestrator
 from app.cognition.verification.sufficiency_gate import check_data_sufficiency
 from app.agents.task_board import task_board
 from app.cognition.debate.debate_coordinator import run_adversarial_debate
-from app.cognition.debate.thesis_agent import generate_thesis
+from app.agents.debate_agents.thesis_agent import generate_thesis
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

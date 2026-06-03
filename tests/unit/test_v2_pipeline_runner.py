@@ -108,7 +108,7 @@ def _mock_runner_deps():
         "app.cognition.debate.debate_coordinator.run_adversarial_debate": AsyncMock(
             return_value=FakeDebateResult()
         ),
-        "app.cognition.debate.thesis_agent.generate_thesis": AsyncMock(
+        "app.agents.debate_agents.thesis_agent.generate_thesis": AsyncMock(
             return_value=(FakeThesis(), 300)
         ),
         "app.cognition.debate.action_gate.gate_action": MagicMock(
@@ -387,7 +387,7 @@ async def test_execute_v2_pipeline_fast_tracks_open_positions(runner_mocks):
         assert result["config_used"] == "v2_position_fast_track"
 
         # Verify it didn't call the full thesis agent or meta orchestrator
-        runner_mocks["app.cognition.debate.thesis_agent.generate_thesis"].assert_not_called()
+        runner_mocks["app.agents.debate_agents.thesis_agent.generate_thesis"].assert_not_called()
         runner_mocks["app.cognition.orchestration.meta_orchestrator.MetaOrchestrator.orchestrate"].assert_not_called()
         runner_mocks["app.cognition.debate.debate_coordinator.run_adversarial_debate"].assert_not_called()
 

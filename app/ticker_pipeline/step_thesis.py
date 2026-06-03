@@ -23,7 +23,7 @@ MAX_EXTRA_CONTEXT_CHARS = 6000
 
 async def run_thesis_step(ctx: TickerContext) -> TickerContext:
     """Generate thesis via LLM with retry logic."""
-    from app.cognition.debate.thesis_agent import generate_thesis
+    from app.agents.debate_agents.thesis_agent import generate_thesis
     from app.cycle.orchestration.cycle_control import cycle_control
 
     # ── Build extra context ──

@@ -214,7 +214,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         SchedulerService.refresh_job(payload.get("job_id"))
                         result = {"status": "schedule_refreshed"}
                     elif cmd_type == "AUTORESEARCH":
-                        from app.services.logging import run_autoresearch
+                        from app.autoresearch import run_autoresearch
                         track_task(run_autoresearch(payload.get("cycle_id"), payload.get("cycle_summary")))
                         result = {"status": "autoresearch_started"}
                     elif cmd_type == "DEPLOY_FIX":

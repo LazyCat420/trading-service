@@ -91,7 +91,7 @@ def _build_runner_mocks():
     import app.tools.portfolio_tools
     import app.cognition.orchestration.meta_orchestrator
     import app.cognition.debate.debate_coordinator
-    import app.cognition.debate.thesis_agent
+    import app.agents.debate_agents.thesis_agent
     import app.cognition.debate.action_gate
     import app.pipeline.analysis.hallucination_checker
     import app.cognition.memory.reader
@@ -134,7 +134,7 @@ def _build_runner_mocks():
         "app.cognition.debate.debate_coordinator.run_adversarial_debate": AsyncMock(
             return_value=FakeDebateResult()
         ),
-        "app.cognition.debate.thesis_agent.generate_thesis": AsyncMock(
+        "app.agents.debate_agents.thesis_agent.generate_thesis": AsyncMock(
             return_value=(FakeThesis(), 300)
         ),
         "app.cognition.debate.action_gate.gate_action": MagicMock(

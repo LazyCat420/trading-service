@@ -1,0 +1,7 @@
+{
+  "action": "BUY",
+  "confidence": 75,
+  "rationale": "Strong fundamentals",
+  "config_used": "v2_cognition",
+  "escalated": false
+}

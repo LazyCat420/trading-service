@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 async def audit_decision_quality(cycle_id: str) -> str:
     """Audit decision quality for a specific cycle."""
     try:
-        from app.pipeline.analysis.autoresearch import _audit_decisions
+        from app.autoresearch.auditors.decision_audit import _audit_decisions
 
         # Build a minimal cycle_summary from the DB
         from app.db.connection import get_db

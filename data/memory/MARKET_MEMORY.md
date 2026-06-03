@@ -1,1 +1,1 @@
-[OKLO] [MEDIUM] Neutral RSI(52.76) + negative forward P/E (-81.88) signals speculative pricing; hold at entry ($68.70) until a confirmed thesis emerges or price tests $60.46 support.
+mock response

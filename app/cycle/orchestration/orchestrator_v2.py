@@ -18,7 +18,7 @@ class OrchestratorV2Mixin:
         """
         from app.cognition.ontology.ontology_builder import OntologyBuilder
         from app.cognition.evidence.packet_builder import build_evidence_packet
-        from app.cognition.debate.thesis_agent import generate_thesis
+        from app.agents.debate_agents.thesis_agent import generate_thesis
         from app.cognition.memory.rlm_logger import ReflectiveMemoryLogger
         import uuid
 

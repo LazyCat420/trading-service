@@ -22,7 +22,7 @@ from app.services.bot_manager import resolve_bot_id
 from app.utils.trace import set_trace_id
 from app.pipeline.orchestration.cycle_control import cycle_control
 from app.cycle.orchestration.priority_queue import PriorityAnalysisQueue
-from app.services.logging import run_autoresearch
+from app.autoresearch import run_autoresearch
 from app.db.checkpoints import checkpoint_manager
 from app.pipeline.analysis.benchmark import persist_benchmark
 from app.cycle.context import CycleContext

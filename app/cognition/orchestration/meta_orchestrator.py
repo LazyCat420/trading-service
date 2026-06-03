@@ -4,7 +4,7 @@ from typing import Dict
 
 from app.cognition.contracts.evidence import EvidencePacket
 from app.cognition.verification.sufficiency_gate import SufficiencyResult
-from app.cognition.debate.specialized_agents import (
+from app.agents.debate_agents.specialized_agents import (
     analyze_sentiment,
     analyze_macro_risk,
     analyze_fundamentals,
