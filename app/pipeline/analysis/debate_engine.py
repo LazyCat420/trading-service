@@ -28,23 +28,9 @@ from app.utils.pipeline_utils import elapsed_ms
 logger = logging.getLogger(__name__)
 
 
-# ─── Meta-Prompt: generates a dynamic debate persona ───────────────
-META_SYSTEM_PROMPT = """You are an expert at creating specialized analyst personas for stock market debates.
-
-Your job: Given a trader's analysis and market data, create a CUSTOM SYSTEM PROMPT for an analyst who will cross-examine this specific trade thesis.
-
-The persona should:
-- Have a specific analytical framework (e.g., value investor, macro analyst, risk manager, contrarian, quant)
-- Be chosen to be the BEST fit to evaluate THIS particular analysis
-- Stay grounded in stock market trading — no generic debating
-- Actively seek the strongest definitive trade (BUY or SELL). If the thesis is HOLD, the persona should push for a decisive BUY or SELL based on the data.
-
-Respond with ONLY a JSON object:
-{
-  "persona_name": "short title, e.g. 'Macro Risk Analyst'",
-  "persona_rationale": "1 sentence on why this persona fits",
-  "system_prompt": "the full system prompt for the debate persona (2-4 paragraphs)"
-}"""
+# System prompts for Meta Agent and Synthesis Agent have been moved to:
+# - app/agents/custom/debate_meta.py
+# - app/agents/custom/debate_synthesis.py
 
 META_USER_TEMPLATE = """## Trader's Analysis for {ticker}
 
@@ -92,23 +78,7 @@ Respond with JSON:
 }}"""
 
 
-# ─── Synthesis: merge thesis + antithesis into final call ──────────
-_SYNTHESIS_SYSTEM_BASE = """You are a senior portfolio manager making a final trading decision.
-
-You have TWO analyses to consider:
-1. The original analyst's thesis (Config C)
-2. A devil's advocate's counter-thesis (Config D debate)
-
-Your job: weigh both perspectives and make a DEFINITIVE final decision. You MUST pick a winner based on the strongest empirical evidence. Do NOT use HOLD as a safe compromise between two conflicting arguments. You must choose the side (BUY or SELL) with the most asymmetric upside or downside, unless the data is completely neutral.
-
-Respond with ONLY JSON:
-{{
-  "action": "{allowed_actions}",
-  "confidence": 0-100,
-  "rationale": "2-3 sentences explaining your final decision, citing which arguments won and why. You must explicitly declare a winner.",
-  "thesis_won": true/false,
-  "key_risk": "the single biggest risk identified by the debate"
-}}"""
+# Synthesis user template and logic below
 
 SYNTHESIS_USER_TEMPLATE = """## Ticker: {ticker}
 
@@ -198,7 +168,7 @@ async def run_debate(
         meta_response, meta_tokens, meta_ms = await call_prism_agent(
             agent_id="CUSTOM_DEBATE_META_AGENT",
             user_message=meta_user,
-            fallback_system_prompt=META_SYSTEM_PROMPT,
+            fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
             fallback_agent_name="debate_meta",
             temperature=0.7,
             max_tokens=512,
@@ -338,7 +308,6 @@ async def run_debate(
         logger.info("[PIPELINE] [DEBATE] Running Integrity Gate on challenges...")
         try:
             from app.cognition.debate.debate_coordinator import (
-                CROSS_EXAM_SYSTEM_PROMPT,
                 CROSS_EXAM_USER_TEMPLATE,
             )
             import json
@@ -354,7 +323,7 @@ async def run_debate(
             cross_response, _, _ = await call_prism_agent(
                 agent_id="CUSTOM_DEBATE_CROSS_EXAM_AGENT",
                 user_message=cross_user,
-                fallback_system_prompt=CROSS_EXAM_SYSTEM_PROMPT,
+                fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
                 fallback_agent_name="debate_cross_exam",
                 temperature=0.1,
                 max_tokens=512,
@@ -402,7 +371,7 @@ async def run_debate(
         synth_response, synth_tokens, synth_ms = await call_prism_agent(
             agent_id="CUSTOM_DEBATE_SYNTHESIS_AGENT",
             user_message=synthesis_user,
-            fallback_system_prompt=_SYNTHESIS_SYSTEM_BASE.format(allowed_actions=allowed_actions),
+            fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
             fallback_agent_name="debate_synthesis",
             temperature=0.2,
             max_tokens=512,

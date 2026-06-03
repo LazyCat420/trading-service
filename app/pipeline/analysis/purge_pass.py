@@ -28,26 +28,7 @@ from app.utils.pipeline_utils import noop as _noop
 logger = logging.getLogger(__name__)
 
 
-PURGE_SYSTEM_PROMPT = """You are a watchlist manager for an autonomous trading bot.
-Your job: review low-health tickers and decide which ones should be REMOVED from the watchlist.
-
-Rules:
-- Only purge tickers with genuinely poor data quality — no articles, no signals, repeated failures.
-- Keep tickers if they have any upcoming catalyst (earnings, FDA, merger, macro event).
-- Keep tickers the user manually added UNLESS they truly have zero value (0 data across 5+ cycles).
-- Keep tickers mentioned in recent news/reddit even if the health score is low.
-- Purge at most {max_purge} tickers per cycle — be surgical, not reckless.
-- Prefer purging bot-discovered tickers over user-added ones.
-
-Return ONLY valid JSON (no markdown, no commentary):
-{{
-  "purge": ["TICKER1"],
-  "keep": ["TICKER2"],
-  "reasoning": {{
-    "TICKER1": "Short reason for removal",
-    "TICKER2": "Short reason for keeping"
-  }}
-}}"""
+# Purge system prompt moved to app/agents/custom/purge_pass.py
 
 
 def _build_purge_prompt(
@@ -105,7 +86,8 @@ def _build_purge_prompt(
             + "\n\nCURRENT WATCHLIST SIZE: {} tickers".format(watchlist_size)
             + "\nOPEN POSITIONS (immune from purge): "
             + positions_section
-            + "\n\nWhich tickers should be PURGED from the watchlist%s"
+            + f"\nMAXIMUM TICKERS TO PURGE: {settings.WATCHLIST_MAX_PURGE}"
+            + "\n\nWhich tickers should be PURGED from the watchlist?"
         )
         return prompt
 
@@ -248,9 +230,7 @@ async def run_purge_pass(
             except Exception:
                 positions = []
 
-            system_prompt = PURGE_SYSTEM_PROMPT.format(
-                max_purge=settings.WATCHLIST_MAX_PURGE
-            )
+            # System prompt is now loaded dynamically by Prism
             user_prompt = _build_purge_prompt(
                 candidates=candidates,
                 watchlist_size=len(watchlist),
@@ -261,7 +241,7 @@ async def run_purge_pass(
                 content, tokens, elapsed = await call_prism_agent(
                     agent_id="CUSTOM_PURGE_PASS_AGENT",
                     user_message=user_prompt,
-                    fallback_system_prompt=system_prompt,
+                    fallback_system_prompt="",
                     fallback_agent_name="purge_pass",
                     temperature=0.3,
                     max_tokens=512,

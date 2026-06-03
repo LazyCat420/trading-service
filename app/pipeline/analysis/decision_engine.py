@@ -302,19 +302,12 @@ async def analyze_ticker(
                 else "No context available."
             )
 
-            glance_system_prompt = (
-                "You are a fast market change detector. "
-                "Given a stock's last analysis and recent news, determine if anything "
-                "has MATERIALLY changed that would warrant a full re-analysis. "
-                "Respond with EXACTLY one of:\n"
-                "  SKIP — No material change\n"
-                "  CHANGED — Material change detected (explain briefly)\n"
-            )
+            # System prompt is now loaded dynamically by Prism from app/agents/custom/glance_analyst.py
 
             glance_resp, glance_tokens, glance_ms = await call_prism_agent(
                 agent_id="CUSTOM_DECISION_GLANCE_AGENT",
                 user_message=f"Ticker: {ticker}\n\n{_glance_ctx}",
-                fallback_system_prompt=glance_system_prompt,
+                fallback_system_prompt="",
                 fallback_agent_name="glance_detector",
                 temperature=0.1,
                 max_tokens=100,

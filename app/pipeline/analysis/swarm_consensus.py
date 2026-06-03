@@ -27,69 +27,19 @@ from app.utils.text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)
 
+from app.agents.custom import get_custom_agent
+
 # ============================================================================
 # TOOL WHITELISTS — universal access for Swarm Load Balancing
 # ============================================================================
-UNIVERSAL_TOOLS = [
-    # Data Collection (Tier 0)
-    "get_market_data",
-    "get_technical_indicators",
-    "execute_python",
-    "get_options_flow",
-    "get_finnhub_news",
-    "query_hermes",
-    "hermes_web_research",
-    "search_internal_database",
-    "read_memory_note",
-    "search_wiki",
-
-    # Pipeline Skills (Tier 1) — agents can self-audit during debates
-    "check_hallucination",
-    # Agent Coordination — inter-agent communication during debates
-    "post_finding",
-    "read_team_findings",
-    "request_investigation",
-    "check_open_investigations",
-]
+UNIVERSAL_TOOLS = get_custom_agent("swarm_quant")["enabled_tools"]
 
 # ============================================================================
 # SWARM PERSONAS
 # ============================================================================
-JETSON_SYSTEM_PROMPT = """You are a highly aggressive Quantitative Momentum Trader.
-You ONLY care about price action, volume spikes, moving average crossovers, RSI, MACD, and technical indicators.
-Use your tools to pull real technical data. Ignore macroeconomic noise.
-
-Always be decisive and back your claims with numbers.
-
-ANTI-HALLUCINATION / FAITHFULNESS RULE:
-- Do NOT fabricate, guess, or assume any quantitative metrics, indicators, or news (such as RSI, MACD, moving averages, volume, price targets, or earnings results) if they are missing or null in the provided data/context.
-- If a metric or indicator is not explicitly present in the provided context, you MUST state that it is "unavailable" or "missing" and base your reasoning ONLY on the facts and data directly provided.
-- Do not make up any numbers or trends that are not explicitly documented in your context."""
-
-SPARK2_SYSTEM_PROMPT = """You are a cautious Macro Fundamental Analyst.
-You ONLY care about P/E ratios, earnings reports, insider trading, regulatory filings, and news sentiment.
-Use your tools to find SEC filings, financial news, and broader market context.
-Do not trust short-term momentum; look for structural value or hidden risks.
-
-ANTI-HALLUCINATION / FAITHFULNESS RULE:
-- Do NOT fabricate, guess, or assume any quantitative metrics, indicators, or news (such as P/E ratio, PEG ratio, profit margin, growth %, institutional backing, or earnings results) if they are missing or null in the provided data/context.
-- If a metric or indicator is not explicitly present in the provided context, you MUST state that it is "unavailable" or "missing" and base your reasoning ONLY on the facts and data directly provided.
-- Do not make up any numbers or trends that are not explicitly documented in your context."""
-
-SPARK1_MANAGER_PROMPT = """You are the Chief Investment Officer (CIO).
-You oversee a team of two analysts: a Quant Trader and a Macro Analyst.
-Your job is to:
-1. Evaluate data completeness and demand more if needed.
-2. Contribute your OWN analysis focused on macro risk, liquidity, and portfolio exposure.
-3. Mediate debates between your analysts and find consensus.
-4. Only declare consensus when the trade thesis is mathematically bulletproof.
-CRITICAL RULE ON TIME HORIZONS: Our trading horizon is short-to-medium term (5 days). You MUST heavily discount long-term fundamental narratives (like "YTD gains" or "multi-year AI trends") unless they offer an immediate short-term catalyst. Do not confuse long-term structural trends with short-term price action.
-You must defend your own positions when challenged, not just judge others.
-
-ANTI-HALLUCINATION / FAITHFULNESS RULE:
-- Do NOT fabricate, guess, or assume any quantitative metrics, indicators, or news (such as P/E ratio, PEG ratio, profit margin, growth %, institutional backing, RSI, MACD, volume, price targets, or earnings results) if they are missing or null in the provided data/context.
-- If a metric or indicator is not explicitly present in the provided context, you MUST state that it is "unavailable" or "missing" and base your reasoning ONLY on the facts and data directly provided.
-- Do not make up any numbers or trends that are not explicitly documented in your context."""
+JETSON_SYSTEM_PROMPT = get_custom_agent("swarm_quant")["identity"]
+SPARK2_SYSTEM_PROMPT = get_custom_agent("swarm_macro")["identity"]
+SPARK1_MANAGER_PROMPT = get_custom_agent("swarm_cio")["identity"]
 
 # ============================================================================
 # STRUCTURED PREDICTION FORMAT
@@ -211,7 +161,7 @@ Is this data sufficient? Respond ONLY in JSON:
         eval_res, _, _ = await call_prism_agent(
             agent_id="CUSTOM_DATA_VERIFIER_AGENT",
             user_message=verify_prompt,
-            fallback_system_prompt=SPARK1_MANAGER_PROMPT,
+            fallback_system_prompt="",
             fallback_agent_name="data_verifier_120B",
             ticker=ticker,
             temperature=0.2,
@@ -499,7 +449,7 @@ Respond ONLY in JSON:
         consensus_res, _, _ = await call_prism_agent(
             agent_id="CUSTOM_CONSENSUS_CHECK_AGENT",
             user_message=consensus_prompt,
-            fallback_system_prompt=SPARK1_MANAGER_PROMPT,
+            fallback_system_prompt="",
             fallback_agent_name=f"consensus_check_r{round_i + 1}",
             ticker=ticker,
             temperature=0.1,
@@ -585,7 +535,7 @@ Respond ONLY in JSON:
     exec_res, _, _ = await call_prism_agent(
         agent_id="CUSTOM_EXECUTIVE_DECISION_AGENT",
         user_message=executive_prompt,
-        fallback_system_prompt=SPARK1_MANAGER_PROMPT,
+        fallback_system_prompt="",
         fallback_agent_name="executive_decision_120B",
         ticker=ticker,
         temperature=0.1,

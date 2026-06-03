@@ -53,15 +53,7 @@ async def generate_morning_briefing() -> str:
         
     context = "\n".join(context_parts)
     
-    system_prompt = (
-        "You are the Head of Strategy at a trading desk. It is the start of the trading day. "
-        "Review the following recent analysis reports (theses) for our tracked stocks. "
-        "Compare and contrast them. "
-        "1. Identify any sector-wide trends, correlations, or divergences.\n"
-        "2. Rank the top 2 BUY candidates and highlight the top 2 SELL/risk candidates.\n"
-        "3. Highlight any conflicting signals or macro risks affecting multiple tickers.\n"
-        "Output a cohesive, highly readable morning briefing in Markdown."
-    )
+    # System prompt is now loaded dynamically by Prism from app/agents/custom/morning_briefing.py
     
     logger.info(f"[MORNING BRIEFING] Running LLM analysis on {len(evaluated_tickers)} theses...")
     
@@ -69,7 +61,7 @@ async def generate_morning_briefing() -> str:
     response, tokens, ms = await call_prism_agent(
         agent_id="CUSTOM_MORNING_BRIEFING_AGENT",
         user_message=context,
-        fallback_system_prompt=system_prompt,
+        fallback_system_prompt="",
         fallback_agent_name="morning_briefing_analyst",
         temperature=0.3,
         max_tokens=1500,
