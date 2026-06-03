@@ -20,26 +20,8 @@ from app.services.prism_agent_caller import call_prism_agent
 
 logger = logging.getLogger(__name__)
 
-CURATION_SYSTEM_PROMPT = """You are a stock screener for an autonomous trading bot.
-Your job: review discovered tickers and decide which ones deserve deeper analysis.
-
-Rules:
-- Only promote tickers with a clear catalyst, thesis, or actionable signal from the context.
-- Don't duplicate tickers already on the watchlist or in the portfolio.
-- Respect the user's rejection history — if they've been removing penny stocks or specific sectors, don't promote similar ones.
-- Prefer tickers mentioned by multiple sources (reddit + youtube = higher signal than just one mention).
-- Maximum {max_promote} promotions per cycle to keep analysis focused.
-- Be selective. It's better to promote 2 strong picks than 5 mediocre ones.
-
-Return ONLY valid JSON (no markdown, no commentary):
-{{
-  "promote": ["TICKER1", "TICKER2"],
-  "skip": ["TICKER3", "TICKER4"],
-  "reasoning": {{
-    "TICKER1": "Short reason why it's worth tracking",
-    "TICKER3": "Short reason why it's skipped"
-  }}
-}}"""
+# The system prompt has been moved to app/agents/custom/curation_pass.py
+# for a cleaner modular Lego piece architecture.
 
 
 def _build_user_prompt(
@@ -231,7 +213,6 @@ async def curate_discoveries(
     rejections = _fetch_rejections()
     positions = _fetch_positions()
 
-    system_prompt = CURATION_SYSTEM_PROMPT.format(max_promote=max_promote)
     user_prompt = _build_user_prompt(
         discovered=details,
         watchlist=current_watchlist,
@@ -253,7 +234,7 @@ async def curate_discoveries(
             content, tokens, elapsed = await call_prism_agent(
                 agent_id="CUSTOM_CURATION_PASS_AGENT",
                 user_message=user_prompt,
-                fallback_system_prompt=system_prompt,
+                fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
                 fallback_agent_name="curation_pass",
                 temperature=0.3,
                 max_tokens=512,

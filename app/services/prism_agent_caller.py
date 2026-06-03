@@ -65,6 +65,31 @@ async def call_prism_agent(
         try:
             prism_healthy = await llm.prism_client.check_health()
             if prism_healthy:
+                # ── Dynamic Custom Agent (Lego Pieces) Check ──
+                from app.agents.custom import get_custom_agent
+                
+                custom_def = get_custom_agent(fallback_agent_name)
+                dynamic_tools = None
+                if custom_def:
+                    logger.info("[PrismAgentCaller] Loaded custom Lego agent definition for '%s'", fallback_agent_name)
+                    fallback_system_prompt = custom_def["identity"]
+                    dynamic_tools = custom_def["enabled_tools"]
+                    agentic_mode = True  # Custom agents always use the /agent endpoint
+                    
+                    # Dynamically register the agent in Prism to lock in its custom system prompt and tools
+                    try:
+                        agent_id = await llm.prism_client.register_or_update_custom_agent(
+                            name=fallback_agent_name,
+                            identity=fallback_system_prompt,
+                            enabled_tools=dynamic_tools,
+                            project=llm.prism_client.project,
+                        )
+                    except Exception as reg_err:
+                        logger.warning(
+                            "[PrismAgentCaller] Failed to dynamically register custom agent %s: %s. Using default agent_id.",
+                            fallback_agent_name, reg_err
+                        )
+
                 return await _call_via_prism(
                     agent_id=agent_id,
                     user_message=user_message,
@@ -75,6 +100,7 @@ async def call_prism_agent(
                     ticker=ticker,
                     cycle_id=cycle_id,
                     agentic_mode=agentic_mode,
+                    dynamic_tools=dynamic_tools,
                 )
         except Exception as e:
             logger.warning(
@@ -111,6 +137,7 @@ async def _call_via_prism(
     ticker: str,
     cycle_id: str,
     agentic_mode: bool = False,
+    dynamic_tools: list[str] | None = None,
 ) -> tuple[str, int, int]:
     """Execute the actual Prism /agent call.
 
@@ -146,7 +173,7 @@ async def _call_via_prism(
         ticker=ticker,
         cycle_id=cycle_id,
         enable_thinking=False,
-        tools=None,
+        tools=dynamic_tools,
         agentic_mode=agentic_mode,
         provider=provider,
     )
