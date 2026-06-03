@@ -149,7 +149,16 @@ async def execute_ticker_pipeline(
     #  LEGO PIPELINE — Each step is its own file, independently testable
     # ══════════════════════════════════════════════════════════════════
 
-    # Step 0: Data completeness + processors
+    # Step 0: Cache Check (Fast-track recent reports)
+    try:
+        from app.ticker_pipeline.step_cache import run_cache_step
+        cached_result = await run_cache_step(ctx)
+        if cached_result:
+            return cached_result
+    except Exception as e:
+        logger.warning("[V2] Cache step failed for %s: %s", ticker, e)
+
+    # Step 0.5: Data completeness + processors
     ctx = await run_data_step(ctx)
 
     # Step 1: Ontology enrichment

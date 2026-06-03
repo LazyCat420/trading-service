@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     V2_TICKER_CONCURRENCY: int = (
         8  # parallel tickers — parallel ticker analysis worker count
     )
-    VLLM_FUTURE_TIMEOUT: int = 300  # seconds before a hung LLM future is killed (aligned with batch timeout)
+    VLLM_FUTURE_TIMEOUT: int = 600  # seconds before a hung LLM future is killed (aligned with batch timeout)
     ANALYSIS_WORKER_TIMEOUT_SECONDS: int = (
         1500  # 25-min hard cap per ticker — debate skipped when orchestrator fails, saving ~180s
     )
