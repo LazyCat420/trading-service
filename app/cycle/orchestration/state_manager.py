@@ -526,6 +526,27 @@ class PipelineStateMixin:
                     return cached_state
 
         state = PipelineStateDB.get_state(summary_only=summary_only)
+
+        # ── Fix: Use in-memory cycle_id as authoritative source ──────────
+        # The DB cycle_id can become stale due to emit timer race conditions
+        # during container restart + cycle start. The in-memory _state is
+        # updated atomically by start_cycle() and emit(), so it's always
+        # correct. We override the DB cycle_id if the in-memory one exists.
+        mem_cycle_id = cls._state.get("cycle_id")
+        if mem_cycle_id and mem_cycle_id != state.get("cycle_id"):
+            logger.debug(
+                "[get_current_state] Correcting stale DB cycle_id %s → %s",
+                state.get("cycle_id"), mem_cycle_id,
+            )
+            state["cycle_id"] = mem_cycle_id
+
+            # Also sync critical fields from in-memory state
+            for key in ("status", "phase", "step_count", "total_steps", "progress"):
+                mem_val = cls._state.get(key)
+                if mem_val is not None:
+                    state[key] = mem_val
+        # ─────────────────────────────────────────────────────────────────
+
         try:
             from app.services.vllm_client import llm
             from app.monitoring.llm_tracker import tracker
