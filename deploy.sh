@@ -32,6 +32,7 @@ EXTRA_SSH_SYNC() {
   ssh "$DEPLOY_SSH_HOST" "echo 'JETSON_MAX_CONCURRENT=24' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'DGX_MAX_CONCURRENT=8' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' 2>/dev/null || sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/logs'"
+  ssh "$DEPLOY_SSH_HOST" "sudo chown -R 1001:1001 '${DEPLOY_COMPOSE_DIR}/logs'"
 }
 
 source "${SCRIPT_DIR}/../deploy-kit/lib.sh"
