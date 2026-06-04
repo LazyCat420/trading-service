@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     )
     VLLM_FUTURE_TIMEOUT: int = 600  # seconds before a hung LLM future is killed (aligned with batch timeout)
     ANALYSIS_WORKER_TIMEOUT_SECONDS: int = (
-        1500  # 25-min hard cap per ticker — debate skipped when orchestrator fails, saving ~180s
+        1800  # 30-min hard cap per ticker — workers wait patiently for LLM queue
     )
     POST_CYCLE_HOUSEKEEPING_TIMEOUT_SECONDS: int = 300
     BOT_ID: str = "lazy-trader-v4"

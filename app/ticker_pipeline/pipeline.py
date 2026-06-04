@@ -158,15 +158,19 @@ async def execute_ticker_pipeline(
         return await run_persist_step(ctx)
 
     # Step 0.5: Data completeness + processors
+    logger.info("[V2] %s: Step 0.5 - Data Completeness", ticker)
     ctx = await run_data_step(ctx)
 
     # Step 1: Ontology enrichment
+    logger.info("[V2] %s: Step 1 - Ontology", ticker)
     ctx = await run_ontology_step(ctx)
 
     # Step 2: Evidence packet build
+    logger.info("[V2] %s: Step 2 - Evidence Build", ticker)
     ctx = await run_evidence_step(ctx)
 
     # Step 3-4: Sufficiency gate + dynamic retrieval
+    logger.info("[V2] %s: Step 3 - Sufficiency Gate", ticker)
     result_or_ctx = await run_sufficiency_step(ctx)
     if result_or_ctx is None:
         return None  # Ticker rejected (fake/delisted)
@@ -174,21 +178,27 @@ async def execute_ticker_pipeline(
         return result_or_ctx  # ABSTAIN result
 
     # Step 5: Memory context injection
+    logger.info("[V2] %s: Step 5 - Memory Context", ticker)
     ctx = await run_memory_step(ctx)
 
     # Step 5.5: MetaOrchestrator agent routing + team findings
+    logger.info("[V2] %s: Step 5.5 - Agents Routing", ticker)
     ctx = await run_agents_step(ctx)
 
     # Step 5.7: Adversarial debate
+    logger.info("[V2] %s: Step 5.7 - Debate", ticker)
     ctx = await run_debate_step(ctx)
 
     # Step 6: Thesis generation
+    logger.info("[V2] %s: Step 6 - Thesis Generation", ticker)
     ctx = await run_thesis_step(ctx)
 
     # Step 6.5: Hallucination check + rationale enrichment
+    logger.info("[V2] %s: Step 6.5 - Verification", ticker)
     ctx = await run_verify_step(ctx)
 
     # Steps 7-11: Persist to DB, memory, hooks, attention
+    logger.info("[V2] %s: Step 7 - Persist", ticker)
     result = await run_persist_step(ctx)
 
     return result
