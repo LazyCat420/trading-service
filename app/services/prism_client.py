@@ -199,11 +199,20 @@ class PrismClient:
         if not tools:
             return None
         formatted_tools = []
+        built_ins = {
+            "execute_python", "search_web", "read_file", "write_file",
+            "str_replace_file", "file_info", "file_diff", "browser_action",
+            "browser_script", "precise_calculator"
+        }
+        mcp_prefix = "mcp__lazy-tool-service__"
         for t in tools:
             if isinstance(t, dict) and t.get("type") == "function" and "function" in t:
                 func_data = t["function"]
+                name = func_data.get("name")
+                if name and name not in built_ins and not name.startswith(mcp_prefix):
+                    name = f"{mcp_prefix}{name}"
                 formatted_tool = {
-                    "name": func_data.get("name"),
+                    "name": name,
                     "description": func_data.get("description", ""),
                 }
                 if "parameters" in func_data:
@@ -214,6 +223,10 @@ class PrismClient:
                     formatted_tool["_isCustom"] = func_data["_isCustom"]
                 formatted_tools.append(formatted_tool)
             else:
+                if isinstance(t, dict) and "name" in t:
+                    name = t["name"]
+                    if name and name not in built_ins and not name.startswith(mcp_prefix):
+                        t = {**t, "name": f"{mcp_prefix}{name}"}
                 formatted_tools.append(t)
         return formatted_tools
 

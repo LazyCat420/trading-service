@@ -375,8 +375,8 @@ async def start_health_server(shutdown_event: asyncio.Event):
 
     @app.get("/status")
     def status(summary_only: bool = False, token: str = Depends(verify_api_key)):
-        from app.cycle.orchestration.state_manager import PipelineStateMixin
-        return PipelineStateMixin.get_current_state(summary_only=summary_only)
+        from app.services.pipeline_service import PipelineService
+        return PipelineService.get_current_state(summary_only=summary_only)
 
     from app.services.vllm_router import router as vllm_router
     from app.routers.diagnostics_router import router as diag_router

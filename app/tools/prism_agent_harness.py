@@ -294,11 +294,20 @@ async def run_prism_agent(
     # Extract tool names from active_tools
     tool_names = []
     if active_tools:
+        built_ins = {
+            "execute_python", "search_web", "read_file", "write_file",
+            "str_replace_file", "file_info", "file_diff", "browser_action",
+            "browser_script", "precise_calculator"
+        }
+        mcp_prefix = "mcp__lazy-tool-service__"
         for t in active_tools:
             if isinstance(t, dict):
                 name = t.get("name") or t.get("function", {}).get("name")
                 if name:
-                    tool_names.append(name)
+                    if name not in built_ins and not name.startswith(mcp_prefix):
+                        tool_names.append(f"{mcp_prefix}{name}")
+                    else:
+                        tool_names.append(name)
 
     # Dynamically register/update the custom agent persona in Prism
     # to preserve custom system prompts and whitelisted tools.
