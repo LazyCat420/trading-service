@@ -68,9 +68,9 @@ async def run_persist_step(ctx: TickerContext) -> dict[str, Any]:
                 "ticker": ctx.ticker, "action": ctx.final_action,
                 "confidence": ctx.final_confidence,
                 "stages": ctx.stages, "retrieval_retries": ctx.retrieval_retries,
-                "claims_count": len(ctx.packet.claims),
-                "missing_fields": ctx.packet.missing_fields,
-                "sufficiency_status": ctx.sufficiency.status,
+                "claims_count": len(ctx.packet.claims) if ctx.packet else 0,
+                "missing_fields": ctx.packet.missing_fields if ctx.packet else [],
+                "sufficiency_status": ctx.sufficiency.status if ctx.sufficiency else "cache_hit",
             },
         )
         ctx.add_stage("v2_log")

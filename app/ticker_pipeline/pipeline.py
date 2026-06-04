@@ -16,6 +16,7 @@ import uuid
 from typing import Any, Callable
 
 from app.ticker_pipeline.context import TickerContext
+from app.ticker_pipeline.step_cache import run_cache_step
 from app.ticker_pipeline.step_data import run_data_step
 from app.ticker_pipeline.step_ontology import run_ontology_step
 from app.ticker_pipeline.step_evidence import run_evidence_step
@@ -149,14 +150,12 @@ async def execute_ticker_pipeline(
     #  LEGO PIPELINE — Each step is its own file, independently testable
     # ══════════════════════════════════════════════════════════════════
 
-    # Step 0: Cache Check (Fast-track recent reports)
-    try:
-        from app.ticker_pipeline.step_cache import run_cache_step
-        cached_result = await run_cache_step(ctx)
-        if cached_result:
-            return cached_result
-    except Exception as e:
-        logger.warning("[V2] Cache step failed for %s: %s", ticker, e)
+    ctx = await run_cache_step(ctx)
+    if ctx.fast_track_cache:
+        # Cache hit! Skip the heavy lifting and jump straight to persist.
+        # But first run ontology to keep it fresh (non-blocking)
+        asyncio.create_task(run_ontology_step(ctx))
+        return await run_persist_step(ctx)
 
     # Step 0.5: Data completeness + processors
     ctx = await run_data_step(ctx)

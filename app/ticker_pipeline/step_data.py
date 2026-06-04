@@ -16,6 +16,15 @@ from app.log_manager import log_manager
 
 logger = logging.getLogger(__name__)
 
+# Global semaphore to prevent all 8 workers from flooding LLM queue at once
+_DATA_PROCESSOR_SEMAPHORE: asyncio.Semaphore | None = None
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _DATA_PROCESSOR_SEMAPHORE
+    if _DATA_PROCESSOR_SEMAPHORE is None:
+        _DATA_PROCESSOR_SEMAPHORE = asyncio.Semaphore(2)
+    return _DATA_PROCESSOR_SEMAPHORE
+
 
 async def run_data_step(ctx: TickerContext) -> TickerContext:
     """Check data completeness and run ticker processors."""
@@ -59,12 +68,21 @@ async def run_data_step(ctx: TickerContext) -> TickerContext:
 
         ctx.safe_emit(
             "analyzing", f"v2_processors_{ctx.ticker}",
-            f"{ctx.ticker}: Running data processors (Smart Janitor, Summarizer, Consensus, Narrative)...",
+            f"{ctx.ticker}: Waiting for data processor slot...",
             status="running",
         )
-        await asyncio.wait_for(
-            run_ticker_processors(ctx.ticker, ctx.emit), timeout=300.0
-        )
+        
+        sem = _get_semaphore()
+        async with sem:
+            ctx.safe_emit(
+                "analyzing", f"v2_processors_{ctx.ticker}",
+                f"{ctx.ticker}: Running data processors (Smart Janitor, Summarizer, Consensus, Narrative)...",
+                status="running",
+            )
+            await asyncio.wait_for(
+                run_ticker_processors(ctx.ticker, ctx.emit), timeout=300.0
+            )
+            
         ms_proc = ctx.elapsed_ms(t_proc)
         ctx.add_stage("ticker_processors", ms_proc)
         logger.info("[V2] Data processors completed for %s in %dms", ctx.ticker, ms_proc)
