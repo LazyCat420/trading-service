@@ -21,6 +21,50 @@ from app.services.prism_agent_registry import resolve_agent_id
 logger = logging.getLogger(__name__)
 
 
+# ── Prism Circuit Breaker ──────────────────────────────────────────────
+# When Prism fails 3+ times within 5 minutes, stop routing through it
+# to prevent cascading overload of local vLLM. Resets automatically
+# after the cooldown window passes.
+class _PrismCircuitBreaker:
+    def __init__(self, failure_threshold: int = 3, window_seconds: float = 300.0):
+        self._failure_threshold = failure_threshold
+        self._window_seconds = window_seconds
+        self._failures: list[float] = []
+        self._open_until: float = 0.0
+
+    def record_failure(self):
+        now = time.monotonic()
+        self._failures.append(now)
+        # Prune old failures outside the window
+        self._failures = [t for t in self._failures if now - t < self._window_seconds]
+        if len(self._failures) >= self._failure_threshold:
+            self._open_until = now + self._window_seconds
+            logger.warning(
+                "[PrismCircuitBreaker] OPEN — %d failures in %.0fs window, "
+                "bypassing Prism for %.0fs",
+                len(self._failures), self._window_seconds, self._window_seconds,
+            )
+            self._failures.clear()  # Reset count for next window
+
+    def record_success(self):
+        """A successful Prism call resets the failure counter."""
+        self._failures.clear()
+        self._open_until = 0.0
+
+    @property
+    def is_open(self) -> bool:
+        if self._open_until and time.monotonic() < self._open_until:
+            return True
+        if self._open_until and time.monotonic() >= self._open_until:
+            # Auto-reset after cooldown
+            self._open_until = 0.0
+            logger.info("[PrismCircuitBreaker] CLOSED — cooldown expired, retrying Prism")
+        return False
+
+
+_prism_breaker = _PrismCircuitBreaker()
+
+
 async def call_prism_agent(
     agent_id: str,
     user_message: str,
@@ -61,7 +105,7 @@ async def call_prism_agent(
     agent_id = resolve_agent_id(agent_id or fallback_agent_name)
 
     # ── Try Prism /agent routing ──
-    if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
+    if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING and not _prism_breaker.is_open:
         try:
             prism_healthy = await llm.prism_client.check_health()
             if prism_healthy:
@@ -90,7 +134,7 @@ async def call_prism_agent(
                             fallback_agent_name, reg_err
                         )
 
-                return await _call_via_prism(
+                result = await _call_via_prism(
                     agent_id=agent_id,
                     user_message=user_message,
                     fallback_system_prompt=fallback_system_prompt,
@@ -102,7 +146,10 @@ async def call_prism_agent(
                     agentic_mode=agentic_mode,
                     dynamic_tools=dynamic_tools,
                 )
+                _prism_breaker.record_success()
+                return result
         except Exception as e:
+            _prism_breaker.record_failure()
             logger.warning(
                 "[PrismAgentCaller] Prism routing failed for %s (%s), falling back to local: %s",
                 fallback_agent_name, agent_id, e,

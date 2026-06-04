@@ -112,7 +112,7 @@ async def select_tools_for_task(
             ticker=ticker,
             cycle_id=cycle_id,
             priority=priority,
-            max_tokens=256,  # Selection output is tiny
+            max_tokens=512,  # Was 256 — caused truncation fallback to full pool
         )
 
         raw_text = result.get("text", "").strip()

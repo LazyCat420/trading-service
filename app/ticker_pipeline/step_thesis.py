@@ -56,8 +56,11 @@ async def run_thesis_step(ctx: TickerContext) -> TickerContext:
         else:
             return await generate_thesis(**kwargs)
 
-    # ── Retry loop: first 600s, then 300s after 30s cooldown ──
-    _thesis_timeouts = [600.0, 300.0]
+    # ── Retry loop: first 180s, then 120s after 30s cooldown ──
+    # Reduced from 600s/300s to prevent single-ticker stalls from dominating
+    # the cycle (AMD burned 22 min in cycle-1780525250 on a single thesis).
+    # Worst-case: 180s + 30s cooldown + 120s = 5.5 min (was ~15 min).
+    _thesis_timeouts = [180.0, 120.0]
     _max_attempts = len(_thesis_timeouts)
 
     for attempt in range(_max_attempts):
