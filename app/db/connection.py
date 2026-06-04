@@ -85,6 +85,7 @@ class PooledCursor:
 
         self.description: Any = None
         self._closed = False
+        self._in_transaction = False
         self._created_at = time.monotonic()
         # Capture creation callsite for leak detection
         self._origin = "".join(traceback.format_stack(limit=4)[:-1])
@@ -125,13 +126,14 @@ class PooledCursor:
         except Exception:
             # Rollback on error to avoid "in error state" blocking
             try:
-                self._conn.rollback()
+                if not getattr(self, "_in_transaction", False):
+                    self._conn.rollback()
             except Exception:
                 pass
             raise
         else:
             # Auto-commit for write operations
-            if not self._conn.autocommit:
+            if not self._conn.autocommit and not getattr(self, "_in_transaction", False):
                 try:
                     self._conn.commit()
                 except Exception:
@@ -149,12 +151,13 @@ class PooledCursor:
             self.description = self._cursor.description
         except Exception:
             try:
-                self._conn.rollback()
+                if not getattr(self, "_in_transaction", False):
+                    self._conn.rollback()
             except Exception:
                 pass
             raise
         else:
-            if not self._conn.autocommit:
+            if not self._conn.autocommit and not getattr(self, "_in_transaction", False):
                 try:
                     self._conn.commit()
                 except Exception:
@@ -164,8 +167,12 @@ class PooledCursor:
     @contextmanager
     def transaction(self):
         """Standard psycopg transaction management."""
-        with self._conn.transaction():
-            yield
+        self._in_transaction = True
+        try:
+            with self._conn.transaction():
+                yield
+        finally:
+            self._in_transaction = False
 
     def commit(self):
         """No-op: PooledCursor auto-commits after every execute().

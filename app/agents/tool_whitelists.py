@@ -170,6 +170,13 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_market_data",
         "get_technical_indicators",
     ],
+    # ── Execution Agent ──
+    "execution": [
+        "get_portfolio_state",
+        "get_market_data",
+        "buy_stock",
+        "sell_stock",
+    ],
     # ── Post-Mortem Auditor Agent ──
     "post_mortem": [
         "search_web",

@@ -1,0 +1,1500 @@
+2026-06-03 21:04:27,095 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bear_fundamental_t4_agent → ['search_trading_skills', 'post_finding', 'get_sec_filings', 'get_earnings_data', 'query_financial_metrics']
+2026-06-03 21:04:27,096 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_fundamental_t4_agent agentic loop to Prism /agent
+2026-06-03 21:04:27,097 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_fundamental_t4_agent in Prism
+2026-06-03 21:04:27,109 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:04:27,149 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_FUNDAMENTAL_T4_AGENT (db_id: 6a1511a8f623804f353de295)
+2026-06-03 21:04:27,186 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1511a8f623804f353de295 "HTTP/1.1 200 OK"
+2026-06-03 21:04:27,214 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_fundamental_t4_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=GRI)
+2026-06-03 21:04:30,527 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:05:30 PDT)" (scheduled at 2026-06-03 21:04:30.525588-07:00)
+2026-06-03 21:04:30,547 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:05:30 PDT)" executed successfully
+2026-06-03 21:04:30,750 [app.services.vllm_client] WARNING [VLLM] 🛑 Active request cancelled for agent=bull_fundamental_t3_agent ticker=GRI
+2026-06-03 21:04:38,108 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1833s (running)
+2026-06-03 21:04:38,308 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:04:38,309 [app.tools.prism_agent_harness] INFO [PrismHarness] bull_fundamental_t3_agent completed via Prism in 18547ms (0 tokens)
+2026-06-03 21:04:38,397 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bull_fundamental_t3_agent
+2026-06-03 21:04:38,399 [app.services.vllm_client] INFO [PRISM] Agent call for bear_fundamental_t4_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:04:38,402 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:04:38,813 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 16})
+2026-06-03 21:04:39,853 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:04:39,854 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_macro_sentiment_t2_agent completed via Prism in 23818ms (0 tokens)
+2026-06-03 21:04:39,916 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bear_macro_sentiment_t2_agent
+2026-06-03 21:04:39,918 [app.services.vllm_client] INFO [PRISM] Agent call for bull_macro_sentiment_t3_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:04:39,920 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:04:41,613 [app.agents.tool_selector] WARNING [ToolSelector] No JSON found in selector output, falling back to full pool. Raw: ⚠️ The model's response was cut short because the **max_tokens** limit was reached before it could finish generating. Try increasing the **Max Tokens** setting.
+2026-06-03 21:04:41,613 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 8 tools selected for bull_technical_t1_agent → ['get_market_data', 'get_technical_indicators', 'search_trading_skills', 'post_finding', 'read_team_findings', 'get_options_flow', 'get_polygon_price_history', 'query_technical_indicator']
+2026-06-03 21:04:41,615 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bull_technical_t1_agent in Prism
+2026-06-03 21:04:41,622 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:04:41,623 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BULL_TECHNICAL_T1_AGENT (db_id: 6a15063ef623804f353ddd8b)
+2026-06-03 21:04:41,642 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a15063ef623804f353ddd8b "HTTP/1.1 200 OK"
+2026-06-03 21:04:41,669 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bull_technical_t1_agent to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=8, ticker=DKS)
+2026-06-03 21:04:42,180 [app.agents.tool_selector] INFO [ToolSelector] Selected 3/10 tools for 'bear_fundamental_t4_agent_selector' (DKS) — 1030 selector tokens used. Tools: ['get_sec_filings', 'get_earnings_data', 'query_financial_metrics']
+2026-06-03 21:04:42,180 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 3 tools selected for bear_fundamental_t4_agent → ['get_sec_filings', 'get_earnings_data', 'query_financial_metrics']
+2026-06-03 21:04:42,180 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_fundamental_t4_agent agentic loop to Prism /agent
+2026-06-03 21:04:42,181 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_fundamental_t4_agent in Prism
+2026-06-03 21:04:42,188 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:04:42,189 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_FUNDAMENTAL_T4_AGENT (db_id: 6a1511a8f623804f353de295)
+2026-06-03 21:04:42,211 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1511a8f623804f353de295 "HTTP/1.1 200 OK"
+2026-06-03 21:04:42,224 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_fundamental_t4_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=3, ticker=DKS)
+2026-06-03 21:04:42,492 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:04:42,493 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_fundamental_t4_agent completed via Prism in 15397ms (0 tokens)
+2026-06-03 21:04:42,562 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bear_fundamental_t4_agent
+2026-06-03 21:04:43,650 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:04:43,654 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:04:44,896 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/13 tools for 'bull_macro_sentiment_t3_agent_selector' (DKS) — 1114 selector tokens used. Tools: ['get_market_data', 'get_finnhub_news', 'search_web', 'search_trading_skills', 'search_database_facts']
+2026-06-03 21:04:44,896 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bull_macro_sentiment_t3_agent → ['get_market_data', 'get_finnhub_news', 'search_web', 'search_trading_skills', 'search_database_facts']
+2026-06-03 21:04:44,897 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bull_macro_sentiment_t3_agent agentic loop to Prism /agent
+2026-06-03 21:04:44,898 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bull_macro_sentiment_t3_agent in Prism
+2026-06-03 21:04:44,905 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:04:44,909 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BULL_MACRO_SENTIMENT_T3_AGENT (db_id: 6a15078cf623804f353dde2b)
+2026-06-03 21:04:44,972 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a15078cf623804f353dde2b "HTTP/1.1 200 OK"
+2026-06-03 21:04:44,987 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bull_macro_sentiment_t3_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=DKS)
+2026-06-03 21:04:45,006 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:04:45,796 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:04:53,109 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1848s (running)
+2026-06-03 21:05:03,560 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:05:03,562 [app.tools.prism_agent_harness] INFO [PrismHarness] bull_fundamental_t1_agent completed via Prism in 41339ms (0 tokens)
+2026-06-03 21:05:03,616 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 3 tools as active for Prism-routed agent bull_fundamental_t1_agent
+2026-06-03 21:05:03,622 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:05:03,622 [app.services.vllm_client] INFO [PRISM] Agent call for bear_fundamental_t2_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:03,625 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:08,131 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/10 tools for 'bear_fundamental_t2_agent_selector' (SMMT) — 1033 selector tokens used. Tools: ['search_trading_skills', 'get_sec_filings', 'get_earnings_data', 'query_financial_metrics', 'search_database_facts']
+2026-06-03 21:05:08,131 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bear_fundamental_t2_agent → ['search_trading_skills', 'get_sec_filings', 'get_earnings_data', 'query_financial_metrics', 'search_database_facts']
+2026-06-03 21:05:08,131 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1863s (running)
+2026-06-03 21:05:08,132 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_fundamental_t2_agent agentic loop to Prism /agent
+2026-06-03 21:05:08,134 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_fundamental_t2_agent in Prism
+2026-06-03 21:05:08,140 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:05:08,142 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_FUNDAMENTAL_T2_AGENT (db_id: 6a1506c9f623804f353dddf6)
+2026-06-03 21:05:08,166 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1506c9f623804f353dddf6 "HTTP/1.1 200 OK"
+2026-06-03 21:05:08,185 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_fundamental_t2_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=SMMT)
+2026-06-03 21:05:08,344 [app.services.vllm_client] WARNING [VLLM] 🛑 Active request cancelled for agent=bull_fundamental_t3_agent ticker=CRCL
+2026-06-03 21:05:08,832 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 16})
+2026-06-03 21:05:09,649 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:05:09,651 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_fundamental_t4_agent completed via Prism in 27469ms (0 tokens)
+2026-06-03 21:05:09,704 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 3 tools as active for Prism-routed agent bear_fundamental_t4_agent
+2026-06-03 21:05:10,976 [app.agents.tool_selector] WARNING [ToolSelector] No JSON found in selector output, falling back to full pool. Raw: ⚠️ The model's response was cut short because the **max_tokens** limit was reached before it could finish generating. Try increasing the **Max Tokens** setting.
+2026-06-03 21:05:10,976 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 8 tools selected for bull_technical_t1_agent → ['get_market_data', 'get_technical_indicators', 'search_trading_skills', 'post_finding', 'read_team_findings', 'get_options_flow', 'get_polygon_price_history', 'query_technical_indicator']
+2026-06-03 21:05:10,977 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bull_technical_t1_agent agentic loop to Prism /agent
+2026-06-03 21:05:10,978 [app.services.vllm_client] INFO [PRISM] Agent call for bull_technical_t1_agent_selector (via dgx_spark) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:10,982 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:12,373 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:05:12,374 [app.tools.prism_agent_harness] INFO [PrismHarness] bull_macro_sentiment_t1_agent completed via Prism in 48993ms (0 tokens)
+2026-06-03 21:05:12,452 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bull_macro_sentiment_t1_agent
+2026-06-03 21:05:12,454 [app.services.vllm_client] INFO [PRISM] Agent call for bear_macro_sentiment_t2_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:12,456 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:15,031 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:05:15,442 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/13 tools for 'bear_macro_sentiment_t2_agent_selector' (SMMT) — 1102 selector tokens used. Tools: ['get_market_data', 'get_finnhub_news', 'search_web', 'query_hermes', 'search_internal_database']
+2026-06-03 21:05:15,442 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bear_macro_sentiment_t2_agent → ['get_market_data', 'get_finnhub_news', 'search_web', 'query_hermes', 'search_internal_database']
+2026-06-03 21:05:15,443 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_macro_sentiment_t2_agent agentic loop to Prism /agent
+2026-06-03 21:05:15,444 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_macro_sentiment_t2_agent in Prism
+2026-06-03 21:05:15,474 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:05:15,476 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_MACRO_SENTIMENT_T2_AGENT (db_id: 6a1506cff623804f353dddfa)
+2026-06-03 21:05:15,498 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1506cff623804f353dddfa "HTTP/1.1 200 OK"
+2026-06-03 21:05:15,519 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_macro_sentiment_t2_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=SMMT)
+2026-06-03 21:05:15,702 [app.ticker_pipeline.step_debate] WARNING [V2] Adversarial debate failed for EVER (non-fatal): 
+2026-06-03 21:05:15,702 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_debate_fail_EVER: EVER: Debate failed —  (warning)
+2026-06-03 21:05:15,703 [app.ticker_pipeline.pipeline] INFO [V2] EVER: Step 6 - Thesis Generation
+2026-06-03 21:05:15,704 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:05:15,761 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:05:15,762 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:05:15,766 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/autoresearch_EVER: EVER: Injected 2 Autoresearch lessons (ok)
+2026-06-03 21:05:15,766 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_EVER: EVER: Generating thesis via LLM... (running)
+2026-06-03 21:05:15,842 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:05:17,616 [app.ticker_pipeline.step_debate] WARNING [V2] Adversarial debate failed for GRI (non-fatal): 
+2026-06-03 21:05:17,616 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_debate_fail_GRI: GRI: Debate failed —  (warning)
+2026-06-03 21:05:17,617 [app.ticker_pipeline.pipeline] INFO [V2] GRI: Step 6 - Thesis Generation
+2026-06-03 21:05:17,619 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:05:17,645 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:05:17,647 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:05:17,653 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/autoresearch_GRI: GRI: Injected 2 Autoresearch lessons (ok)
+2026-06-03 21:05:17,653 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_GRI: GRI: Generating thesis via LLM... (running)
+{
+    "name": "debate_coordinator.run_adversarial_debate",
+    "context": {
+        "trace_id": "0xb927f75454720364e050c3bc98231e9b",
+        "span_id": "0xfab173c7a17e8fb3",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": "0x3c3619e086217407",
+    "start_time": "2026-06-04T04:00:15.699657Z",
+    "end_time": "2026-06-04T04:05:15.702195Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+{
+    "name": "debate_coordinator.run_adversarial_debate",
+    "context": {
+        "trace_id": "0xd3d74dc5994f7796d2a180d3a98504d5",
+        "span_id": "0xb1cdf83414e9aec6",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": "0x9589f238ac25d96f",
+    "start_time": "2026-06-04T04:00:17.615018Z",
+    "end_time": "2026-06-04T04:05:17.616201Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:05:21,916 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:05:21,918 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_macro_sentiment_t2_agent completed via Prism in 6474ms (0 tokens)
+2026-06-03 21:05:22,006 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bear_macro_sentiment_t2_agent
+2026-06-03 21:05:22,009 [app.services.vllm_client] INFO [PRISM] Agent call for bull_macro_sentiment_t3_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:22,012 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:23,133 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1878s (running)
+2026-06-03 21:05:25,159 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/13 tools for 'bull_macro_sentiment_t3_agent_selector' (SMMT) — 1115 selector tokens used. Tools: ['get_market_data', 'get_finnhub_news', 'search_web', 'search_internal_database', 'search_trading_skills']
+2026-06-03 21:05:25,159 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bull_macro_sentiment_t3_agent → ['get_market_data', 'get_finnhub_news', 'search_web', 'search_internal_database', 'search_trading_skills']
+2026-06-03 21:05:25,159 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bull_macro_sentiment_t3_agent agentic loop to Prism /agent
+2026-06-03 21:05:25,161 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bull_macro_sentiment_t3_agent in Prism
+2026-06-03 21:05:25,173 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:05:25,176 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BULL_MACRO_SENTIMENT_T3_AGENT (db_id: 6a15078cf623804f353dde2b)
+2026-06-03 21:05:25,223 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a15078cf623804f353dde2b "HTTP/1.1 200 OK"
+2026-06-03 21:05:25,243 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bull_macro_sentiment_t3_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=SMMT)
+2026-06-03 21:05:26,792 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:05:26,793 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_fundamental_t2_agent completed via Prism in 18659ms (0 tokens)
+2026-06-03 21:05:26,868 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bear_fundamental_t2_agent
+2026-06-03 21:05:26,869 [app.services.vllm_client] INFO [PRISM] Agent call for bull_fundamental_t3_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:26,873 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:06:30 PDT)" (scheduled at 2026-06-03 21:05:30.525588-07:00)
+2026-06-03 21:05:30,543 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:06:30 PDT)" executed successfully
+2026-06-03 21:05:31,023 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/10 tools for 'bull_fundamental_t3_agent_selector' (SMMT) — 1047 selector tokens used. Tools: ['search_trading_skills', 'read_team_findings', 'get_sec_filings', 'get_earnings_data', 'query_financial_metrics']
+2026-06-03 21:05:31,023 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bull_fundamental_t3_agent → ['search_trading_skills', 'read_team_findings', 'get_sec_filings', 'get_earnings_data', 'query_financial_metrics']
+2026-06-03 21:05:31,023 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bull_fundamental_t3_agent agentic loop to Prism /agent
+2026-06-03 21:05:31,024 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bull_fundamental_t3_agent in Prism
+2026-06-03 21:05:31,032 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:05:31,034 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BULL_FUNDAMENTAL_T3_AGENT (db_id: 6a15079df623804f353dde36)
+2026-06-03 21:05:31,074 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a15079df623804f353dde36 "HTTP/1.1 200 OK"
+2026-06-03 21:05:31,088 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bull_fundamental_t3_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=SMMT)
+2026-06-03 21:05:38,135 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1893s (running)
+2026-06-03 21:05:38,212 [app.cognition.debate.debate_coordinator] ERROR [DEBATE] TURN TIMEOUT: bull_technical_t1 timed out after 150s for Technical/DKS
+2026-06-03 21:05:38,217 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:05:38,217 [app.services.vllm_client] INFO [PRISM] Agent call for bear_technical_t2_agent_selector (via dgx_spark) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:38,221 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:38,848 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 16})
+2026-06-03 21:05:40,721 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:05:40,723 [app.tools.prism_agent_harness] INFO [PrismHarness] bull_fundamental_t3_agent response from Prism is not valid JSON. Attempting fast JSON recovery...
+2026-06-03 21:05:40,723 [app.services.vllm_client] INFO [PRISM] Agent call for bull_fundamental_t3_agent_recovery (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:40,726 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:41,485 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:05:41,486 [app.tools.prism_agent_harness] INFO [PrismHarness] bull_macro_sentiment_t3_agent response from Prism is not valid JSON. Attempting fast JSON recovery...
+2026-06-03 21:05:41,486 [app.services.vllm_client] INFO [PRISM] Agent call for bull_macro_sentiment_t3_agent_recovery (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:41,489 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:45,057 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:05:45,884 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:05:46,048 [app.tools.prism_agent_harness] INFO [PrismHarness] Fast JSON recovery succeeded for bull_fundamental_t3_agent: BUY
+2026-06-03 21:05:46,048 [app.tools.prism_agent_harness] INFO [PrismHarness] bull_fundamental_t3_agent completed via Prism in 14952ms (326 tokens)
+2026-06-03 21:05:46,129 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bull_fundamental_t3_agent
+2026-06-03 21:05:46,166 [app.services.vllm_client] INFO [PRISM] Agent call for bear_fundamental_t4_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:46,215 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:47,754 [app.tools.prism_agent_harness] INFO [PrismHarness] Fast JSON recovery succeeded for bull_macro_sentiment_t3_agent: BUY
+2026-06-03 21:05:47,755 [app.tools.prism_agent_harness] INFO [PrismHarness] bull_macro_sentiment_t3_agent completed via Prism in 22521ms (369 tokens)
+2026-06-03 21:05:47,832 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bull_macro_sentiment_t3_agent
+2026-06-03 21:05:47,866 [app.services.vllm_client] INFO [PRISM] Agent call for bear_macro_sentiment_t4_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:05:47,898 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:05:49,896 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/10 tools for 'bear_fundamental_t4_agent_selector' (SMMT) — 1013 selector tokens used. Tools: ['post_finding', 'get_sec_filings', 'get_earnings_data', 'query_financial_metrics', 'search_database_facts']
+2026-06-03 21:05:49,900 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bear_fundamental_t4_agent → ['post_finding', 'get_sec_filings', 'get_earnings_data', 'query_financial_metrics', 'search_database_facts']
+2026-06-03 21:05:49,901 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_fundamental_t4_agent agentic loop to Prism /agent
+2026-06-03 21:05:49,903 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_fundamental_t4_agent in Prism
+2026-06-03 21:05:49,953 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:05:49,956 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_FUNDAMENTAL_T4_AGENT (db_id: 6a1511a8f623804f353de295)
+2026-06-03 21:05:49,982 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1511a8f623804f353de295 "HTTP/1.1 200 OK"
+2026-06-03 21:05:50,012 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_fundamental_t4_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=SMMT)
+2026-06-03 21:05:50,820 [app.agents.tool_selector] WARNING [ToolSelector] No JSON found in selector output, falling back to full pool. Raw: ⚠️ The model's response was cut short because the **max_tokens** limit was reached before it could finish generating. Try increasing the **Max Tokens** setting.
+2026-06-03 21:05:50,821 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 8 tools selected for bull_technical_t1_agent → ['get_market_data', 'get_technical_indicators', 'search_trading_skills', 'post_finding', 'read_team_findings', 'get_options_flow', 'get_polygon_price_history', 'query_technical_indicator']
+2026-06-03 21:05:50,822 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bull_technical_t1_agent in Prism
+2026-06-03 21:05:50,832 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:05:50,835 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BULL_TECHNICAL_T1_AGENT (db_id: 6a15063ef623804f353ddd8b)
+2026-06-03 21:05:50,859 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a15063ef623804f353ddd8b "HTTP/1.1 200 OK"
+2026-06-03 21:05:50,938 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bull_technical_t1_agent to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=8, ticker=SMMT)
+2026-06-03 21:05:51,800 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/13 tools for 'bear_macro_sentiment_t4_agent_selector' (SMMT) — 1081 selector tokens used. Tools: ['get_market_data', 'get_finnhub_news', 'search_web', 'search_internal_database', 'read_team_findings']
+2026-06-03 21:05:51,800 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bear_macro_sentiment_t4_agent → ['get_market_data', 'get_finnhub_news', 'search_web', 'search_internal_database', 'read_team_findings']
+2026-06-03 21:05:51,801 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_macro_sentiment_t4_agent agentic loop to Prism /agent
+2026-06-03 21:05:51,802 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_macro_sentiment_t4_agent in Prism
+2026-06-03 21:05:51,811 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:05:51,814 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_MACRO_SENTIMENT_T4_AGENT (db_id: 6a1511a8f623804f353de298)
+2026-06-03 21:05:51,853 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1511a8f623804f353de298 "HTTP/1.1 200 OK"
+2026-06-03 21:05:51,881 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_macro_sentiment_t4_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=SMMT)
+2026-06-03 21:05:53,136 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1908s (running)
+2026-06-03 21:06:02,810 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:06:02,812 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_fundamental_t4_agent completed via Prism in 12909ms (0 tokens)
+2026-06-03 21:06:02,956 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bear_fundamental_t4_agent
+2026-06-03 21:06:05,329 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:06:05,331 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_macro_sentiment_t4_agent completed via Prism in 13529ms (0 tokens)
+2026-06-03 21:06:05,431 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bear_macro_sentiment_t4_agent
+2026-06-03 21:06:08,052 [app.services.prism_client] WARNING [PRISM] API call to http://10.0.0.16:7777/chat?stream=false timed out. Raising immediately to trigger fast fallback.
+2026-06-03 21:06:08,052 [app.services.prism_agent_caller] WARNING [PrismAgentCaller] Prism routing failed for thesis_agent (CUSTOM_BULLISH_DEBATER), falling back to local: 
+2026-06-03 21:06:08,053 [app.services.vllm_client] INFO [PRISM] Agent call for thesis_agent (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:06:08,062 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:06:08,138 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1923s (running)
+2026-06-03 21:06:08,877 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 16})
+2026-06-03 21:06:14,752 [app.agents.tool_selector] WARNING [ToolSelector] No JSON found in selector output, falling back to full pool. Raw: ⚠️ The model's response was cut short because the **max_tokens** limit was reached before it could finish generating. Try increasing the **Max Tokens** setting.
+2026-06-03 21:06:14,755 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 8 tools selected for bear_technical_t2_agent → ['get_market_data', 'get_technical_indicators', 'search_trading_skills', 'post_finding', 'read_team_findings', 'get_options_flow', 'get_polygon_price_history', 'query_technical_indicator']
+2026-06-03 21:06:14,762 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:06:14,763 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_technical_t2_agent agentic loop to Prism /agent
+2026-06-03 21:06:14,764 [app.services.vllm_client] INFO [PRISM] Agent call for bear_technical_t2_agent_selector (via dgx_spark) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:06:14,769 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:06:15,088 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:06:15,930 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:06:23,139 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1938s (running)
+2026-06-03 21:06:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:07:30 PDT)" (scheduled at 2026-06-03 21:06:30.525588-07:00)
+2026-06-03 21:06:30,543 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:07:30 PDT)" executed successfully
+2026-06-03 21:06:35,264 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing thesis_agent → Prism /agent (agent=CUSTOM_BULLISH_DEBATER, ticker=EVER, tools=0)
+2026-06-03 21:06:35,297 [app.services.logging.meta_auditor] INFO [MetaAuditor] Running semantic audit for LLY
+2026-06-03 21:06:35,301 [app.ticker_pipeline.step_thesis] WARNING [V2] Meta-auditor failed for LLY: '\n  "quality_score"'
+2026-06-03 21:06:35,301 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_done_LLY: LLY: Thesis → BUY @ 75% (claims: 4, weaknesses: 4) (ok)
+2026-06-03 21:06:35,301 [app.ticker_pipeline.pipeline] INFO [V2] LLY: Step 6.5 - Verification
+2026-06-03 21:06:35,303 [app.ticker_pipeline.pipeline] INFO [V2] LLY: Step 7 - Persist
+2026-06-03 21:06:35,441 [app.cognition.memory.writer] INFO [COGNITION] Wrote episodic memory b93ab89d for LLY
+2026-06-03 21:06:35,441 [app.ticker_pipeline.step_persist] INFO [V2] Wrote episode b93ab89d for LLY
+2026-06-03 21:06:35,443 [app.ticker_pipeline.step_persist] INFO [V2] PIPELINE_COMPLETE ticker=LLY elapsed=849817ms tokens=16096 action=BUY confidence=75 stages=[data_completeness:30003ms, ontology:409ms, evidence_build:60064ms, thesis_generation:147227ms]
+2026-06-03 21:06:35,443 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_decision_LLY: 🟢 LLY: BUY @ 75% | V2 cognition | 849.8s | 16,096 tokens (ok)
+2026-06-03 21:06:35,539 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Recorded BUY LLY @ $1078.78 (conf=75, id=36127b92)
+2026-06-03 21:06:35,539 [app.core.db_writer] INFO [DB] Logged decision for LLY: BUY@75%
+2026-06-03 21:06:35,546 [app.pipeline.snapshot_writer] INFO Saved snapshot for LLY to cycle-1780544044_LLY_20260604_040635.json
+2026-06-03 21:06:35,548 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing post_cycle_learner → Prism /agent (agent=CUSTOM_SYSTEM_JANITOR_AGENT, ticker=LLY, tools=0)
+2026-06-03 21:06:38,141 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1953s (running)
+2026-06-03 21:06:38,891 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 17})
+2026-06-03 21:06:43,668 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:06:43,746 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:06:44,898 [app.cognition.debate.debate_coordinator] WARNING [Debate] Prism routing TIMEOUT for bull_macro_sentiment_t3_agent — falling back to local vLLM
+2026-06-03 21:06:44,903 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:06:44,904 [app.services.vllm_client] INFO [PRISM] Agent call for bull_macro_sentiment_t3_agent (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:06:44,926 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent "HTTP/1.1 200 OK"
+2026-06-03 21:06:45,116 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:06:45,965 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:06:46,049 [app.cognition.debate.debate_coordinator] ERROR [DEBATE] TURN TIMEOUT: bull_technical_t1 timed out after 150s for Technical/SMMT
+2026-06-03 21:06:46,050 [app.services.vllm_client] INFO [PRISM] Agent call for bear_technical_t2_agent_selector (via dgx_spark) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:06:46,123 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:06:53,143 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1968s (running)
+2026-06-03 21:06:59,581 [app.agents.tool_selector] WARNING [ToolSelector] No JSON found in selector output, falling back to full pool. Raw: {"selected_tools": ["query_technical_indicator
+2026-06-03 21:06:59,581 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 8 tools selected for bear_technical_t2_agent → ['get_market_data', 'get_technical_indicators', 'search_trading_skills', 'post_finding', 'read_team_findings', 'get_options_flow', 'get_polygon_price_history', 'query_technical_indicator']
+2026-06-03 21:06:59,583 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_technical_t2_agent in Prism
+2026-06-03 21:06:59,604 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:06:59,608 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_TECHNICAL_T2_AGENT (db_id: 6a1506c2f623804f353dddf1)
+2026-06-03 21:06:59,664 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1506c2f623804f353dddf1 "HTTP/1.1 200 OK"
+2026-06-03 21:06:59,694 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_technical_t2_agent to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=8, ticker=DKS)
+2026-06-03 21:07:08,144 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1983s (running)
+2026-06-03 21:07:08,756 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing thesis_agent → Prism /agent (agent=CUSTOM_BULLISH_DEBATER, ticker=GRI, tools=0)
+2026-06-03 21:07:08,765 [app.services.logging.meta_auditor] INFO [MetaAuditor] Running semantic audit for CRCL
+2026-06-03 21:07:08,766 [app.ticker_pipeline.step_thesis] WARNING [V2] Meta-auditor failed for CRCL: '\n  "quality_score"'
+2026-06-03 21:07:08,766 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_done_CRCL: CRCL: Thesis → SELL @ 78% (claims: 4, weaknesses: 5) (ok)
+2026-06-03 21:07:08,766 [app.ticker_pipeline.pipeline] INFO [V2] CRCL: Step 6.5 - Verification
+2026-06-03 21:07:08,769 [app.ticker_pipeline.pipeline] INFO [V2] CRCL: Step 7 - Persist
+2026-06-03 21:07:08,825 [app.cognition.memory.writer] INFO [COGNITION] Wrote episodic memory 3ebbdc89 for CRCL
+2026-06-03 21:07:08,825 [app.ticker_pipeline.step_persist] INFO [V2] Wrote episode 3ebbdc89 for CRCL
+2026-06-03 21:07:08,826 [app.ticker_pipeline.step_persist] INFO [V2] PIPELINE_COMPLETE ticker=CRCL elapsed=1188092ms tokens=15759 action=SELL confidence=78 stages=[data_completeness:30002ms, ticker_processors:380772ms, ontology:437ms, evidence_build:60048ms, thesis_generation:403190ms]
+2026-06-03 21:07:08,826 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_decision_CRCL: 🔴 CRCL: SELL @ 78% | V2 cognition | 1188.1s | 15,759 tokens (ok)
+2026-06-03 21:07:08,881 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Recorded SELL CRCL @ $100.85 (conf=78, id=f09cdd32)
+2026-06-03 21:07:08,881 [app.core.db_writer] INFO [DB] Logged decision for CRCL: SELL@78%
+2026-06-03 21:07:08,888 [app.pipeline.snapshot_writer] INFO Saved snapshot for CRCL to cycle-1780544044_CRCL_20260604_040708.json
+2026-06-03 21:07:08,889 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing post_cycle_learner → Prism /agent (agent=CUSTOM_SYSTEM_JANITOR_AGENT, ticker=CRCL, tools=0)
+2026-06-03 21:07:08,941 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 18})
+2026-06-03 21:07:09,918 [app.services.vllm_client] WARNING [VLLM] 🛑 Task cancelled while waiting for future | agent=bull_macro_sentiment_t3_agent ticker=DKS endpoint=jetson (chat_with_tools)
+2026-06-03 21:07:09,918 [app.cognition.debate.debate_coordinator] ERROR [DEBATE] TURN TIMEOUT: bull_macro_sentiment_t3 timed out after 150s for Macro_Sentiment/DKS
+2026-06-03 21:07:09,919 [app.services.vllm_client] INFO [PRISM] Agent call for bear_macro_sentiment_t4_agent_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:07:09,925 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:07:12,395 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/13 tools for 'bear_macro_sentiment_t4_agent_selector' (DKS) — 1069 selector tokens used. Tools: ['get_finnhub_news', 'search_web', 'query_hermes', 'search_internal_database', 'post_finding']
+2026-06-03 21:07:12,396 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 5 tools selected for bear_macro_sentiment_t4_agent → ['get_finnhub_news', 'search_web', 'query_hermes', 'search_internal_database', 'post_finding']
+2026-06-03 21:07:12,396 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_macro_sentiment_t4_agent agentic loop to Prism /agent
+2026-06-03 21:07:12,398 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_macro_sentiment_t4_agent in Prism
+2026-06-03 21:07:12,436 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:07:12,439 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_MACRO_SENTIMENT_T4_AGENT (db_id: 6a1511a8f623804f353de298)
+2026-06-03 21:07:12,474 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1511a8f623804f353de298 "HTTP/1.1 200 OK"
+2026-06-03 21:07:12,504 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_macro_sentiment_t4_agent to Prism /agent (model=Kbenkhaled/Qwen3.5-35B-A3B-quantized.w4a16, tools=5, ticker=DKS)
+2026-06-03 21:07:15,141 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:07:16,042 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:07:19,962 [app.services.vllm_client] WARNING [VLLM] 🛑 Active request cancelled for agent=bull_macro_sentiment_t3_agent ticker=DKS
+2026-06-03 21:07:23,117 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:07:23,120 [app.tools.prism_agent_harness] INFO [PrismHarness] bear_macro_sentiment_t4_agent completed via Prism in 10722ms (0 tokens)
+2026-06-03 21:07:23,217 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent bear_macro_sentiment_t4_agent
+2026-06-03 21:07:23,218 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=1998s (running)
+2026-06-03 21:07:30,527 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:08:30 PDT)" (scheduled at 2026-06-03 21:07:30.525588-07:00)
+2026-06-03 21:07:30,547 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:08:30 PDT)" executed successfully
+2026-06-03 21:07:33,516 [app.agents.tool_selector] WARNING [ToolSelector] No JSON found in selector output, falling back to full pool. Raw: ⚠️ The model's response was cut short because the **max_tokens** limit was reached before it could finish generating. Try increasing the **Max Tokens** setting.
+2026-06-03 21:07:33,516 [app.cognition.debate.debate_coordinator] INFO [Debate] Tool selection: 8 tools selected for bear_technical_t2_agent → ['get_market_data', 'get_technical_indicators', 'search_trading_skills', 'post_finding', 'read_team_findings', 'get_options_flow', 'get_polygon_price_history', 'query_technical_indicator']
+2026-06-03 21:07:33,525 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:07:33,526 [app.cognition.debate.debate_coordinator] INFO [Debate] Routing bear_technical_t2_agent agentic loop to Prism /agent
+2026-06-03 21:07:33,526 [app.services.vllm_client] INFO [PRISM] Agent call for bear_technical_t2_agent_selector (via dgx_spark) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:07:33,530 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:07:38,219 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 16 done, 0 errors, queue=8, workers=6/8, elapsed=2013s (running)
+2026-06-03 21:07:38,956 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 18})
+2026-06-03 21:07:45,291 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:07:46,202 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:07:49,501 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:07:49,502 [app.services.prism_agent_caller] INFO [PrismAgentCaller] post_cycle_learner completed via Prism (agent=CUSTOM_SYSTEM_JANITOR_AGENT, tokens=704, 73954ms)
+2026-06-03 21:07:49,502 [app.cognition.trading_memory] INFO [MEMORY] Added to market (44.8% full): [LLY] [MEDIUM] Healthcare stocks above SMA 50/200 with RSI < 65 during geopoliti
+2026-06-03 21:07:49,502 [app.cycle.orchestration.post_cycle_learn] INFO [LEARN] LLY: Stored lesson (704 tokens): [LLY] [MEDIUM] Healthcare stocks above SMA 50/200 with RSI < 65 during geopoliti
+2026-06-03 21:07:49,503 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:07:49,560 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:07:49,561 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:07:49,617 [app.cognition.lesson_store] INFO [cognition] Stored evolution lesson evo_13cfbc6aec26 (session=live_jun04 round=0)
+2026-06-03 21:07:49,645 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created Claim claim_8e for LLY: [LLY] [MEDIUM] Healthcare stocks above SMA 50/200 with RSI <
+2026-06-03 21:07:49,647 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Skipping duplicate BUY decision for LLY in cycle cycle-1780544044
+2026-06-03 21:07:49,665 [app.trading.strategy_tracker] INFO [STRATEGY] Recorded BUY LLY @ $1078.78 (prompt=static_h, id=254455eb)
+2026-06-03 21:07:49,704 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created TradeDecision decision_cyc: BUY LLY @75%
+2026-06-03 21:07:49,705 [app.autoresearch.eval_engine] INFO [EvalWorker] Starting evaluation sweep...
+2026-06-03 21:07:49,707 [app.autoresearch.eval_engine] INFO [EvalWorker] Evaluation sweep complete.
+2026-06-03 21:07:49,724 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 4] Completed LLY → BUY@75% in 924098ms (17/30 done)
+2026-06-03 21:07:49,754 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 4] Saved real-time report for LLY
+2026-06-03 21:07:49,754 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 4] Received sentinel — shutting down after 3 tickers
+2026-06-03 21:07:49,754 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/worker_4_done: Worker 4 finished: 3 tickers processed (ok)
+{
+    "name": "orchestration.execute_v2_pipeline",
+    "context": {
+        "trace_id": "0x9d249948641eb5d440a1bf88c1809a5a",
+        "span_id": "0x394787ff0e048f3e",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": null,
+    "start_time": "2026-06-04T03:52:25.626291Z",
+    "end_time": "2026-06-04T04:07:49.724220Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:07:53,220 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 17 done, 0 errors, queue=8, workers=5/8, elapsed=2028s (running)
+2026-06-03 21:08:08,210 [app.ticker_pipeline.step_debate] WARNING [V2] Adversarial debate failed for DKS (non-fatal): 
+2026-06-03 21:08:08,210 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_debate_fail_DKS: DKS: Debate failed —  (warning)
+2026-06-03 21:08:08,213 [app.ticker_pipeline.pipeline] INFO [V2] DKS: Step 6 - Thesis Generation
+2026-06-03 21:08:08,215 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:08:08,262 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:08:08,263 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:08:08,268 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/autoresearch_DKS: DKS: Injected 2 Autoresearch lessons (ok)
+2026-06-03 21:08:08,269 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_DKS: DKS: Generating thesis via LLM... (running)
+2026-06-03 21:08:08,269 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 17 done, 0 errors, queue=8, workers=5/8, elapsed=2043s (running)
+2026-06-03 21:08:08,974 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 18})
+{
+    "name": "debate_coordinator.run_adversarial_debate",
+    "context": {
+        "trace_id": "0xc6a372fc3642ee9f0289857427cbf5b9",
+        "span_id": "0x1902d5852adc402b",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": "0xd1c1b620458cb043",
+    "start_time": "2026-06-04T04:03:08.208949Z",
+    "end_time": "2026-06-04T04:08:08.210575Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:08:15,318 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:08:16,315 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:08:22,990 [app.agents.tool_selector] WARNING [ToolSelector] No JSON found in selector output, falling back to full pool. Raw: ⚠️ The model's response was cut short because the **max_tokens** limit was reached before it could finish generating. Try increasing the **Max Tokens** setting.
+2026-06-03 21:08:22,991 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 8 tools selected for bear_technical_t2_agent → ['get_market_data', 'get_technical_indicators', 'search_trading_skills', 'post_finding', 'read_team_findings', 'get_options_flow', 'get_polygon_price_history', 'query_technical_indicator']
+2026-06-03 21:08:22,992 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent bear_technical_t2_agent in Prism
+2026-06-03 21:08:23,002 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:08:23,003 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_BEAR_TECHNICAL_T2_AGENT (db_id: 6a1506c2f623804f353dddf1)
+2026-06-03 21:08:23,047 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a1506c2f623804f353dddf1 "HTTP/1.1 200 OK"
+2026-06-03 21:08:23,066 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating bear_technical_t2_agent to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=8, ticker=SMMT)
+2026-06-03 21:08:23,272 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 17 done, 0 errors, queue=8, workers=5/8, elapsed=2058s (running)
+2026-06-03 21:08:23,629 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:08:23,629 [app.services.prism_agent_caller] INFO [PrismAgentCaller] post_cycle_learner completed via Prism (agent=CUSTOM_SYSTEM_JANITOR_AGENT, tokens=702, 74740ms)
+2026-06-03 21:08:23,630 [app.cognition.trading_memory] INFO [MEMORY] Added to market (49.5% full): [CRCL] [MEDIUM] Forward P/E > 40 on unprofitable co (neg margin -2.76%, neg ROE 
+2026-06-03 21:08:23,630 [app.cycle.orchestration.post_cycle_learn] INFO [LEARN] CRCL: Stored lesson (702 tokens): [CRCL] [MEDIUM] Forward P/E > 40 on unprofitable co (neg margin -2.76%, neg ROE 
+2026-06-03 21:08:23,630 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:08:23,676 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:08:23,678 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:08:23,732 [app.cognition.lesson_store] INFO [cognition] Stored evolution lesson evo_872b00371451 (session=live_jun04 round=0)
+2026-06-03 21:08:23,760 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created Claim claim_fa for CRCL: [CRCL] [MEDIUM] Forward P/E > 40 on unprofitable co (neg mar
+2026-06-03 21:08:23,761 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Skipping duplicate SELL decision for CRCL in cycle cycle-1780544044
+2026-06-03 21:08:23,779 [app.trading.strategy_tracker] INFO [STRATEGY] Recorded SELL CRCL @ $100.85 (prompt=static_h, id=2a5336f2)
+2026-06-03 21:08:23,836 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created TradeDecision decision_cyc: SELL CRCL @78%
+2026-06-03 21:08:23,837 [app.autoresearch.eval_engine] INFO [EvalWorker] Starting evaluation sweep...
+2026-06-03 21:08:23,839 [app.autoresearch.eval_engine] INFO [EvalWorker] Evaluation sweep complete.
+2026-06-03 21:08:23,852 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 5] Completed CRCL → SELL@78% in 1263118ms (18/30 done)
+2026-06-03 21:08:23,881 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 5] Saved real-time report for CRCL
+2026-06-03 21:08:23,881 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 5] Received sentinel — shutting down after 2 tickers
+2026-06-03 21:08:23,881 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/worker_5_done: Worker 5 finished: 2 tickers processed (ok)
+{
+    "name": "orchestration.execute_v2_pipeline",
+    "context": {
+        "trace_id": "0xfc3ec0863c700bb7e1a50b5327309f09",
+        "span_id": "0x1d3e7df434a39b65",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": null,
+    "start_time": "2026-06-04T03:47:20.733151Z",
+    "end_time": "2026-06-04T04:08:23.851913Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:08:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:09:30 PDT)" (scheduled at 2026-06-03 21:08:30.525588-07:00)
+2026-06-03 21:08:30,553 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:09:30 PDT)" executed successfully
+2026-06-03 21:08:35,558 [app.services.prism_client] WARNING [PRISM] API call to http://10.0.0.16:7777/chat?stream=false timed out. Raising immediately to trigger fast fallback.
+2026-06-03 21:08:35,558 [app.services.prism_agent_caller] WARNING [PrismAgentCaller] Prism routing failed for thesis_agent (CUSTOM_BULLISH_DEBATER), falling back to local: 
+2026-06-03 21:08:35,562 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:08:35,562 [app.services.vllm_client] INFO [PRISM] Agent call for thesis_agent (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:08:35,570 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:08:38,277 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 18 done, 0 errors, queue=8, workers=4/8, elapsed=2073s (running)
+2026-06-03 21:08:38,999 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 18})
+2026-06-03 21:08:43,762 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:08:43,764 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:08:45,347 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:08:46,354 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:08:53,278 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 18 done, 0 errors, queue=8, workers=4/8, elapsed=2088s (running)
+2026-06-03 21:08:54,922 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing thesis_agent → Prism /agent (agent=CUSTOM_BULLISH_DEBATER, ticker=DKS, tools=0)
+2026-06-03 21:08:54,928 [app.services.logging.meta_auditor] INFO [MetaAuditor] Running semantic audit for EVER
+2026-06-03 21:08:54,929 [app.ticker_pipeline.step_thesis] WARNING [V2] Meta-auditor failed for EVER: '\n  "quality_score"'
+2026-06-03 21:08:54,929 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_done_EVER: EVER: Thesis → BUY @ 75% (claims: 3, weaknesses: 4) (ok)
+2026-06-03 21:08:54,929 [app.ticker_pipeline.pipeline] INFO [V2] EVER: Step 6.5 - Verification
+2026-06-03 21:08:54,931 [app.ticker_pipeline.pipeline] INFO [V2] EVER: Step 7 - Persist
+2026-06-03 21:08:54,994 [app.cognition.memory.writer] INFO [COGNITION] Wrote episodic memory 12ea4dab for EVER
+2026-06-03 21:08:54,994 [app.ticker_pipeline.step_persist] INFO [V2] Wrote episode 12ea4dab for EVER
+2026-06-03 21:08:54,994 [app.ticker_pipeline.step_persist] INFO [V2] PIPELINE_COMPLETE ticker=EVER elapsed=936998ms tokens=15481 action=BUY confidence=75 stages=[data_completeness:30002ms, ticker_processors:304087ms, ontology:485ms, evidence_build:60341ms, thesis_generation:219160ms]
+2026-06-03 21:08:54,995 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_decision_EVER: 🟢 EVER: BUY @ 75% | V2 cognition | 937.0s | 15,481 tokens (ok)
+2026-06-03 21:08:55,044 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Recorded BUY EVER @ $17.96 (conf=75, id=d8db7c49)
+2026-06-03 21:08:55,044 [app.core.db_writer] INFO [DB] Logged decision for EVER: BUY@75%
+2026-06-03 21:08:55,050 [app.pipeline.snapshot_writer] INFO Saved snapshot for EVER to cycle-1780544044_EVER_20260604_040855.json
+2026-06-03 21:08:55,051 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing post_cycle_learner → Prism /agent (agent=CUSTOM_SYSTEM_JANITOR_AGENT, ticker=EVER, tools=0)
+2026-06-03 21:09:08,279 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 18 done, 0 errors, queue=8, workers=4/8, elapsed=2103s (running)
+2026-06-03 21:09:08,947 [app.services.prism_client] WARNING [PRISM] API call to http://10.0.0.16:7777/chat?stream=false timed out. Raising immediately to trigger fast fallback.
+2026-06-03 21:09:08,947 [app.services.prism_agent_caller] WARNING [PrismAgentCaller] Prism routing failed for thesis_agent (CUSTOM_BULLISH_DEBATER), falling back to local: 
+2026-06-03 21:09:08,950 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:09:08,951 [app.services.vllm_client] INFO [PRISM] Agent call for thesis_agent (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:09:08,959 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:09:09,027 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 19})
+2026-06-03 21:09:15,371 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:09:16,086 [app.ticker_pipeline.step_debate] WARNING [V2] Adversarial debate failed for SMMT (non-fatal): 
+2026-06-03 21:09:16,086 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_debate_fail_SMMT: SMMT: Debate failed —  (warning)
+2026-06-03 21:09:16,087 [app.ticker_pipeline.pipeline] INFO [V2] SMMT: Step 6 - Thesis Generation
+2026-06-03 21:09:16,090 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:09:16,127 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:09:16,128 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:09:16,134 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/autoresearch_SMMT: SMMT: Injected 2 Autoresearch lessons (ok)
+2026-06-03 21:09:16,134 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_SMMT: SMMT: Generating thesis via LLM... (running)
+2026-06-03 21:09:16,391 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+{
+    "name": "debate_coordinator.run_adversarial_debate",
+    "context": {
+        "trace_id": "0xfde43fb28d336163344d7644321babf7",
+        "span_id": "0xdd3a98a12709b6ed",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": "0xbc40c4bc64d834df",
+    "start_time": "2026-06-04T04:04:16.041192Z",
+    "end_time": "2026-06-04T04:09:16.086352Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:09:23,280 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 18 done, 0 errors, queue=8, workers=4/8, elapsed=2118s (running)
+2026-06-03 21:09:26,241 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing thesis_agent → Prism /agent (agent=CUSTOM_BULLISH_DEBATER, ticker=SMMT, tools=0)
+2026-06-03 21:09:26,248 [app.services.logging.meta_auditor] INFO [MetaAuditor] Running semantic audit for GRI
+2026-06-03 21:09:26,249 [app.ticker_pipeline.step_thesis] WARNING [V2] Meta-auditor failed for GRI: '\n  "quality_score"'
+2026-06-03 21:09:26,249 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_done_GRI: GRI: Thesis → BUY @ 72% (claims: 3, weaknesses: 4) (ok)
+2026-06-03 21:09:26,252 [app.ticker_pipeline.pipeline] INFO [V2] GRI: Step 6.5 - Verification
+2026-06-03 21:09:26,254 [app.ticker_pipeline.pipeline] INFO [V2] GRI: Step 7 - Persist
+2026-06-03 21:09:26,310 [app.cognition.memory.writer] INFO [COGNITION] Wrote episodic memory 1521f26b for GRI
+2026-06-03 21:09:26,310 [app.ticker_pipeline.step_persist] INFO [V2] Wrote episode 1521f26b for GRI
+2026-06-03 21:09:26,311 [app.ticker_pipeline.step_persist] INFO [V2] PIPELINE_COMPLETE ticker=GRI elapsed=810552ms tokens=13934 action=BUY confidence=72 stages=[data_completeness:61ms, ticker_processors:176787ms, ontology:316ms, evidence_build:60061ms, thesis_generation:248594ms]
+2026-06-03 21:09:26,311 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_decision_GRI: 🟢 GRI: BUY @ 72% | V2 cognition | 810.6s | 13,934 tokens (ok)
+2026-06-03 21:09:26,383 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Recorded BUY GRI @ $2.01 (conf=72, id=4a74bff8)
+2026-06-03 21:09:26,383 [app.core.db_writer] INFO [DB] Logged decision for GRI: BUY@72%
+2026-06-03 21:09:26,389 [app.pipeline.snapshot_writer] INFO Saved snapshot for GRI to cycle-1780544044_GRI_20260604_040926.json
+2026-06-03 21:09:26,390 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing post_cycle_learner → Prism /agent (agent=CUSTOM_SYSTEM_JANITOR_AGENT, ticker=GRI, tools=0)
+2026-06-03 21:09:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:10:30 PDT)" (scheduled at 2026-06-03 21:09:30.525588-07:00)
+2026-06-03 21:09:30,550 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:10:30 PDT)" executed successfully
+2026-06-03 21:09:38,282 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 18 done, 0 errors, queue=8, workers=4/8, elapsed=2133s (running)
+2026-06-03 21:09:39,189 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 20})
+2026-06-03 21:09:45,396 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:09:46,430 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:09:53,283 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 18 done, 0 errors, queue=8, workers=4/8, elapsed=2148s (running)
+2026-06-03 21:09:57,681 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:09:57,682 [app.services.prism_agent_caller] INFO [PrismAgentCaller] post_cycle_learner completed via Prism (agent=CUSTOM_SYSTEM_JANITOR_AGENT, tokens=637, 62630ms)
+2026-06-03 21:09:57,683 [app.cognition.trading_memory] INFO [MEMORY] Added to market (53.8% full): [EVER] [MEDIUM] P/E < 7 + RSI < 50 + Current Ratio > 3 + ROE > 50% = quality val
+2026-06-03 21:09:57,683 [app.cycle.orchestration.post_cycle_learn] INFO [LEARN] EVER: Stored lesson (637 tokens): [EVER] [MEDIUM] P/E < 7 + RSI < 50 + Current Ratio > 3 + ROE > 50% = quality val
+2026-06-03 21:09:57,683 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:09:57,755 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:09:57,757 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:09:57,821 [app.cognition.lesson_store] INFO [cognition] Stored evolution lesson evo_f34bff870296 (session=live_jun04 round=0)
+2026-06-03 21:09:57,855 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created Claim claim_7e for EVER: [EVER] [MEDIUM] P/E < 7 + RSI < 50 + Current Ratio > 3 + ROE
+2026-06-03 21:09:57,858 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Skipping duplicate BUY decision for EVER in cycle cycle-1780544044
+2026-06-03 21:09:57,878 [app.trading.strategy_tracker] INFO [STRATEGY] Recorded BUY EVER @ $17.96 (prompt=static_h, id=4528f188)
+2026-06-03 21:09:57,943 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created TradeDecision decision_cyc: BUY EVER @75%
+2026-06-03 21:09:57,945 [app.autoresearch.eval_engine] INFO [EvalWorker] Starting evaluation sweep...
+2026-06-03 21:09:57,948 [app.autoresearch.eval_engine] INFO [EvalWorker] Evaluation sweep complete.
+2026-06-03 21:09:57,963 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 3] Completed EVER → BUY@75% in 999967ms (19/30 done)
+2026-06-03 21:09:58,003 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 3] Saved real-time report for EVER
+2026-06-03 21:09:58,003 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 3] Received sentinel — shutting down after 3 tickers
+2026-06-03 21:09:58,004 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/worker_3_done: Worker 3 finished: 3 tickers processed (ok)
+{
+    "name": "orchestration.execute_v2_pipeline",
+    "context": {
+        "trace_id": "0xb927f75454720364e050c3bc98231e9b",
+        "span_id": "0x3c3619e086217407",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": null,
+    "start_time": "2026-06-04T03:53:17.996018Z",
+    "end_time": "2026-06-04T04:09:57.962998Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:10:08,284 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 19 done, 0 errors, queue=8, workers=3/8, elapsed=2163s (running)
+2026-06-03 21:10:09,228 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 20})
+2026-06-03 21:10:15,430 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:10:16,638 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:10:23,285 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 19 done, 0 errors, queue=8, workers=3/8, elapsed=2178s (running)
+2026-06-03 21:10:30,527 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:11:30 PDT)" (scheduled at 2026-06-03 21:10:30.525588-07:00)
+2026-06-03 21:10:30,549 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:11:30 PDT)" executed successfully
+2026-06-03 21:10:34,880 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:10:34,882 [app.services.prism_agent_caller] INFO [PrismAgentCaller] post_cycle_learner completed via Prism (agent=CUSTOM_SYSTEM_JANITOR_AGENT, tokens=676, 68491ms)
+2026-06-03 21:10:34,883 [app.cognition.trading_memory] INFO [MEMORY] Added to market (57.7% full): [GRI] [MEDIUM] RSI < 37 + P/E 0.05 + 52-wk low proximity = contrarian BUY signal
+2026-06-03 21:10:34,883 [app.cycle.orchestration.post_cycle_learn] INFO [LEARN] GRI: Stored lesson (676 tokens): [GRI] [MEDIUM] RSI < 37 + P/E 0.05 + 52-wk low proximity = contrarian BUY signal
+2026-06-03 21:10:34,883 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:10:34,945 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:10:34,949 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:10:35,002 [app.cognition.lesson_store] INFO [cognition] Stored evolution lesson evo_8aca4274ca14 (session=live_jun04 round=0)
+2026-06-03 21:10:35,041 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created Claim claim_bb for GRI: [GRI] [MEDIUM] RSI < 37 + P/E 0.05 + 52-wk low proximity = c
+2026-06-03 21:10:35,043 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Skipping duplicate BUY decision for GRI in cycle cycle-1780544044
+2026-06-03 21:10:35,059 [app.trading.strategy_tracker] INFO [STRATEGY] Recorded BUY GRI @ $2.01 (prompt=static_h, id=05c8e7a6)
+2026-06-03 21:10:35,124 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created TradeDecision decision_cyc: BUY GRI @72%
+2026-06-03 21:10:35,126 [app.autoresearch.eval_engine] INFO [EvalWorker] Starting evaluation sweep...
+2026-06-03 21:10:35,129 [app.autoresearch.eval_engine] INFO [EvalWorker] Evaluation sweep complete.
+2026-06-03 21:10:35,144 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 2] Completed GRI → BUY@72% in 879385ms (20/30 done)
+2026-06-03 21:10:35,184 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 2] Saved real-time report for GRI
+2026-06-03 21:10:35,184 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 2] Received sentinel — shutting down after 3 tickers
+2026-06-03 21:10:35,185 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/worker_2_done: Worker 2 finished: 3 tickers processed (ok)
+{
+    "name": "orchestration.execute_v2_pipeline",
+    "context": {
+        "trace_id": "0xd3d74dc5994f7796d2a180d3a98504d5",
+        "span_id": "0x9589f238ac25d96f",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": null,
+    "start_time": "2026-06-04T03:55:55.758846Z",
+    "end_time": "2026-06-04T04:10:35.144419Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:10:38,287 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 20 done, 0 errors, queue=8, workers=2/8, elapsed=2193s (running)
+2026-06-03 21:10:39,247 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 20})
+2026-06-03 21:10:43,776 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:10:43,955 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:10:45,453 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:10:46,736 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:10:53,287 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 20 done, 0 errors, queue=8, workers=2/8, elapsed=2208s (running)
+2026-06-03 21:10:55,091 [app.services.prism_client] WARNING [PRISM] API call to http://10.0.0.16:7777/chat?stream=false timed out. Raising immediately to trigger fast fallback.
+2026-06-03 21:10:55,091 [app.services.prism_agent_caller] WARNING [PrismAgentCaller] Prism routing failed for thesis_agent (CUSTOM_BULLISH_DEBATER), falling back to local: 
+2026-06-03 21:10:55,096 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:10:55,096 [app.services.vllm_client] INFO [PRISM] Agent call for thesis_agent (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:10:55,106 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:11:08,289 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 20 done, 0 errors, queue=8, workers=2/8, elapsed=2223s (running)
+2026-06-03 21:11:09,261 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 20})
+2026-06-03 21:11:11,935 [app.services.logging.meta_auditor] INFO [MetaAuditor] Running semantic audit for DKS
+2026-06-03 21:11:11,935 [app.ticker_pipeline.step_thesis] WARNING [V2] Meta-auditor failed for DKS: '\n  "quality_score"'
+2026-06-03 21:11:11,935 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_done_DKS: DKS: Thesis → BUY @ 75% (claims: 3, weaknesses: 4) (ok)
+2026-06-03 21:11:11,935 [app.ticker_pipeline.pipeline] INFO [V2] DKS: Step 6.5 - Verification
+2026-06-03 21:11:11,937 [app.ticker_pipeline.pipeline] INFO [V2] DKS: Step 7 - Persist
+2026-06-03 21:11:11,971 [app.cognition.memory.writer] INFO [COGNITION] Wrote episodic memory a7a2bc4c for DKS
+2026-06-03 21:11:11,972 [app.ticker_pipeline.step_persist] INFO [V2] Wrote episode a7a2bc4c for DKS
+2026-06-03 21:11:11,972 [app.ticker_pipeline.step_persist] INFO [V2] PIPELINE_COMPLETE ticker=DKS elapsed=967683ms tokens=14932 action=BUY confidence=75 stages=[data_completeness:30002ms, ontology:372ms, evidence_build:112ms, thesis_generation:183664ms]
+2026-06-03 21:11:11,972 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_decision_DKS: 🟢 DKS: BUY @ 75% | V2 cognition | 967.7s | 14,932 tokens (ok)
+2026-06-03 21:11:12,021 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Recorded BUY DKS @ $224.17 (conf=75, id=7e8c5d34)
+2026-06-03 21:11:12,021 [app.core.db_writer] INFO [DB] Logged decision for DKS: BUY@75%
+2026-06-03 21:11:12,037 [app.pipeline.best_result_store] INFO Saved best result for DKS (score 75.0)
+2026-06-03 21:11:12,040 [app.pipeline.snapshot_writer] INFO Saved snapshot for DKS to cycle-1780544044_DKS_20260604_041112.json
+2026-06-03 21:11:12,041 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing post_cycle_learner → Prism /agent (agent=CUSTOM_SYSTEM_JANITOR_AGENT, ticker=DKS, tools=0)
+2026-06-03 21:11:15,570 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:11:16,846 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:11:23,291 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 20 done, 0 errors, queue=8, workers=2/8, elapsed=2238s (running)
+2026-06-03 21:11:26,434 [app.services.prism_client] WARNING [PRISM] API call to http://10.0.0.16:7777/chat?stream=false timed out. Raising immediately to trigger fast fallback.
+2026-06-03 21:11:26,434 [app.services.prism_agent_caller] WARNING [PrismAgentCaller] Prism routing failed for thesis_agent (CUSTOM_BULLISH_DEBATER), falling back to local: 
+2026-06-03 21:11:26,439 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:11:26,440 [app.services.vllm_client] INFO [PRISM] Agent call for thesis_agent (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:11:26,446 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:11:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:12:30 PDT)" (scheduled at 2026-06-03 21:11:30.525588-07:00)
+2026-06-03 21:11:30,538 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:12:30 PDT)" executed successfully
+2026-06-03 21:11:38,303 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 20 done, 0 errors, queue=8, workers=2/8, elapsed=2253s (running)
+2026-06-03 21:11:39,277 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 21})
+2026-06-03 21:11:45,593 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:11:46,416 [app.services.logging.meta_auditor] INFO [MetaAuditor] Running semantic audit for SMMT
+2026-06-03 21:11:46,416 [app.ticker_pipeline.step_thesis] WARNING [V2] Meta-auditor failed for SMMT: '\n  "quality_score"'
+2026-06-03 21:11:46,416 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_thesis_done_SMMT: SMMT: Thesis → BUY @ 45% (claims: 3, weaknesses: 4) (ok)
+2026-06-03 21:11:46,417 [app.ticker_pipeline.pipeline] INFO [V2] SMMT: Step 6.5 - Verification
+2026-06-03 21:11:46,419 [app.ticker_pipeline.pipeline] INFO [V2] SMMT: Step 7 - Persist
+2026-06-03 21:11:46,456 [app.cognition.memory.writer] INFO [COGNITION] Wrote episodic memory 87c23d00 for SMMT
+2026-06-03 21:11:46,456 [app.ticker_pipeline.step_persist] INFO [V2] Wrote episode 87c23d00 for SMMT
+2026-06-03 21:11:46,456 [app.ticker_pipeline.step_persist] INFO [V2] PIPELINE_COMPLETE ticker=SMMT elapsed=840834ms tokens=14210 action=BUY confidence=45 stages=[data_completeness:30000ms, ontology:446ms, evidence_build:31ms, thesis_generation:150280ms]
+2026-06-03 21:11:46,456 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/v2_decision_SMMT: 🟢 SMMT: BUY @ 45% | V2 cognition | 840.8s | 14,210 tokens (ok)
+2026-06-03 21:11:46,494 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Recorded BUY SMMT @ $15.07 (conf=45, id=08c7516e)
+2026-06-03 21:11:46,494 [app.core.db_writer] INFO [DB] Logged decision for SMMT: BUY@45%
+2026-06-03 21:11:46,498 [app.pipeline.snapshot_writer] INFO Saved snapshot for SMMT to cycle-1780544044_SMMT_20260604_041146.json
+2026-06-03 21:11:46,499 [app.cycle.orchestration.post_cycle_hooks] WARNING [REGRESSION] SMMT: confidence dropped 85 → 45 (delta=40)
+2026-06-03 21:11:46,500 [app.services.prism_agent_caller] INFO [PrismAgentCaller] Routing post_cycle_learner → Prism /agent (agent=CUSTOM_SYSTEM_JANITOR_AGENT, ticker=SMMT, tools=0)
+2026-06-03 21:11:46,887 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:11:53,319 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 20 done, 0 errors, queue=8, workers=2/8, elapsed=2268s (running)
+2026-06-03 21:12:08,320 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 20 done, 0 errors, queue=8, workers=2/8, elapsed=2283s (running)
+2026-06-03 21:12:09,298 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: ['collecting'], tickers: {'analyzing': 22})
+2026-06-03 21:12:13,583 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:12:13,584 [app.services.prism_agent_caller] INFO [PrismAgentCaller] post_cycle_learner completed via Prism (agent=CUSTOM_SYSTEM_JANITOR_AGENT, tokens=775, 61542ms)
+2026-06-03 21:12:13,585 [app.cognition.trading_memory] INFO [MEMORY] Added to market (58.6% full): [DKS] [MEDIUM] RSI 52.83
+2026-06-03 21:12:13,585 [app.cycle.orchestration.post_cycle_learn] INFO [LEARN] DKS: Stored lesson (775 tokens): [DKS] [MEDIUM] RSI 52.83
+2026-06-03 21:12:13,586 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:12:13,639 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:12:13,641 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:12:13,705 [app.cognition.lesson_store] INFO [cognition] Stored evolution lesson evo_9e25cea7ada5 (session=live_jun04 round=0)
+2026-06-03 21:12:13,734 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created Claim claim_1d for DKS: [DKS] [MEDIUM] RSI 52.83
+2026-06-03 21:12:13,735 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Skipping duplicate BUY decision for DKS in cycle cycle-1780544044
+2026-06-03 21:12:13,747 [app.trading.strategy_tracker] INFO [STRATEGY] Recorded BUY DKS @ $224.17 (prompt=static_h, id=34b32dfa)
+2026-06-03 21:12:13,802 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created TradeDecision decision_cyc: BUY DKS @75%
+2026-06-03 21:12:13,809 [app.autoresearch.eval_engine] INFO [EvalWorker] Starting evaluation sweep...
+2026-06-03 21:12:13,813 [app.autoresearch.eval_engine] INFO [EvalWorker] Evaluation sweep complete.
+2026-06-03 21:12:13,831 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 1] Completed DKS → BUY@75% in 1029542ms (21/30 done)
+2026-06-03 21:12:13,865 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 1] Saved real-time report for DKS
+2026-06-03 21:12:13,865 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 1] Received sentinel — shutting down after 3 tickers
+2026-06-03 21:12:13,866 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/worker_1_done: Worker 1 finished: 3 tickers processed (ok)
+{
+    "name": "orchestration.execute_v2_pipeline",
+    "context": {
+        "trace_id": "0xc6a372fc3642ee9f0289857427cbf5b9",
+        "span_id": "0xd1c1b620458cb043",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": null,
+    "start_time": "2026-06-04T03:55:04.288948Z",
+    "end_time": "2026-06-04T04:12:13.831111Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:12:15,637 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:12:16,956 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:12:23,321 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/heartbeat: Analysis: 21 done, 0 errors, queue=8, workers=1/8, elapsed=2298s (running)
+2026-06-03 21:12:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:13:30 PDT)" (scheduled at 2026-06-03 21:12:30.525588-07:00)
+2026-06-03 21:12:30,543 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:13:30 PDT)" executed successfully
+2026-06-03 21:12:36,727 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:12:36,728 [app.services.prism_agent_caller] INFO [PrismAgentCaller] post_cycle_learner completed via Prism (agent=CUSTOM_SYSTEM_JANITOR_AGENT, tokens=717, 50228ms)
+2026-06-03 21:12:36,729 [app.cognition.trading_memory] INFO [MEMORY] Added to market (64.9% full): [SMMT] [LOW] RSI oversold (37) on zero-revenue company = unreliable signal; $0 r
+2026-06-03 21:12:36,729 [app.cycle.orchestration.post_cycle_learn] INFO [LEARN] SMMT: Stored lesson (717 tokens): [SMMT] [LOW] RSI oversold (37) on zero-revenue company = unreliable signal; $0 r
+2026-06-03 21:12:36,730 [app.services.embedding_service] INFO Attempting fallback to Prism embedding gateway...
+2026-06-03 21:12:36,790 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/embed "HTTP/1.1 200 OK"
+2026-06-03 21:12:36,791 [app.services.embedding_service] INFO Successfully retrieved fallback embeddings from Prism for batch of size 1.
+2026-06-03 21:12:36,841 [app.cognition.lesson_store] INFO [cognition] Stored evolution lesson evo_24d43025567a (session=live_jun04 round=0)
+2026-06-03 21:12:36,872 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created Claim claim_23 for SMMT: [SMMT] [LOW] RSI oversold (37) on zero-revenue company = unr
+2026-06-03 21:12:36,873 [app.pipeline.analysis.outcome_tracker] INFO [OUTCOME] Skipping duplicate BUY decision for SMMT in cycle cycle-1780544044
+2026-06-03 21:12:36,890 [app.trading.strategy_tracker] INFO [STRATEGY] Recorded BUY SMMT @ $15.07 (prompt=static_h, id=6be07295)
+2026-06-03 21:12:36,934 [app.cognition.ontology.graph_mutations] INFO [GRAPH] Created TradeDecision decision_cyc: BUY SMMT @45%
+2026-06-03 21:12:36,936 [app.autoresearch.eval_engine] INFO [EvalWorker] Starting evaluation sweep...
+2026-06-03 21:12:36,939 [app.autoresearch.eval_engine] INFO [EvalWorker] Evaluation sweep complete.
+2026-06-03 21:12:36,957 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 7] Completed SMMT → BUY@45% in 891335ms (22/30 done)
+2026-06-03 21:12:36,985 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 7] Saved real-time report for SMMT
+2026-06-03 21:12:36,985 [app.cycle.phases.phase4_analysis] INFO [CYCLE] [Worker 7] Received sentinel — shutting down after 3 tickers
+2026-06-03 21:12:36,986 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/worker_7_done: Worker 7 finished: 3 tickers processed (ok)
+2026-06-03 21:12:36,987 [app.monitoring.pipeline_profiler] INFO [PROFILER] analysis_drain: 2291906ms (2291.9s) [ok]
+2026-06-03 21:12:36,987 [app.cycle.phases.phase4_analysis] INFO [CYCLE] Analysis phase complete: 22 analyzed, 0 errors, 2311s elapsed
+2026-06-03 21:12:36,987 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] analyzing/pipeline_done: Analysis complete: 22 analyzed, 0 errors, 2311s elapsed (ok)
+2026-06-03 21:12:36,999 [app.services.logging.cycle_auditor] INFO [AUDITOR] Phase EXIT: analyzing — 22 ok, 0 errors (100%, 0.0s)
+2026-06-03 21:12:36,999 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] gated/trading: Gating analysis results for trade execution (ok)
+2026-06-03 21:12:37,019 [app.services.logging.cycle_auditor] INFO [AUDITOR] Phase ENTRY: trading (22 tickers)
+2026-06-03 21:12:37,020 [app.cycle.orchestration.state_manager] INFO [CYCLE cycle-1780544044] trading/start: Executing trade decisions for 22 tickers (ok)
+2026-06-03 21:12:37,020 [app.cycle.trading_phase] INFO [PIPELINE] TRADING PHASE START | bot_id=lazy-trader-v4 | cycle=cycle-1780544044 | 22 decisions
+2026-06-03 21:12:37,023 [app.cycle.trading_phase] INFO [PIPELINE]   Pre-trade portfolio: $53,151.96 cash | 8 positions | held: ['HIMS', 'UBS', 'LTM', 'GOOGL', 'ADBE', 'SW', 'KKR', 'FCF']
+2026-06-03 21:12:37,023 [app.agents.portfolio_allocator_agent] INFO [PORTFOLIO_ALLOCATOR] Evaluating allocations for: MAS, NDAQ, TMUS, XPO, CME, LLY, EVER, GRI, DKS, SMMT
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT INPUT: portfolio_allocator (_ALLOCATOR_) [STATIC PROMPT]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  System Prompt (2883 chars):
+    You are the Portfolio Sizing Agent ? the SOLE authority for position sizing decisions.
+
+Your job is to evaluate proposed BUY trades as a batch and determine how much capital to allocate to each one.
+You make decisions based on data, not hardcoded rules. You have tools to assess the full risk environment.
+
+## WORKFLOW (follow this EXACTLY):
+
+### Step 1: Assess the Risk Environment
+Call `assess_risk_environment` with the list of tickers you're sizing. This composite tool returns:
+- **Market Regime**: BULL/SIDEWAYS/BEAR classification with a position multiplier
+- **Portfolio State**: Current cash, positions, sector breakdown
+- **Brain Graph**: Sector connections and correlations between tickers
+- **Constitution Rules**: Adaptive sizing parameters (min/max %, confidence thresholds)
+- **Regime-Adjusted Bounds**: Pre-calculated sizing range factoring in the regime multiplier
+
+### Step 2: Apply Regime-Adjusted Sizing
+Use the `regime_adjusted_sizing` section from Step 1. The sizing range is calculated as:
+- `min_pct` to `max_pct` (already regime-adjusted)
+- Scale LINEARLY within this range based on signal confidence
+- Higher confidence ? higher allocation (up to regime-adjusted max)
+- Lower confidence ? lower allocation (down to min)
+
+### Step 3: Check Graph Connections
+Review the brain graph data. If two proposed BUY tickers are highly correlated (>0.70):
+- Reduce the combined allocation to avoid concentration risk
+- Prefer the ticker with higher conviction
+If a proposed ticker is negatively correlated with existing holdings, it may serve as a hedge ? factor this into sizing.
+
+### Step 4: Calculate Exact Sizes
+For each approved ticker, call `calculate_position_size` with the determined risk percentage.
+
+### Step 5: Enforce Constraints
+- Total cost of all BUY orders MUST NOT exceed available cash
+- Single ticker concentration MUST NOT exceed 20% of portfolio value
+- Sector concentration must respect constitution limits
+- If cash is limited, prioritize highest-confidence signals first
+
+## OUTPUT FORMAT:
+Respond with JSON:
+{
+    "allocations": [
+        {
+            "ticker": "AAPL",
+            "decision": "APPROVE|VETO",
+            "adjusted_size_pct": 5.2,
+            "shares": 10,
+            "total_cost": 1505.00,
+            "regime_context": "BULL @ 1.0x multiplier",
+            "veto_reason": null,
+            "rationale": "Why this sizing was chosen based on regime, graph, and constitution data."
+        }
+    ]
+}
+
+CRITICAL RULES:
+1. You MUST call `assess_risk_environment` FIRST. Do not skip this step.
+2. Do NOT do mental math for sizing ? use the calculator tools for exact numbers.
+3. Always explain HOW the regime affected your sizing in the rationale.
+4. If the regime is BEAR, require EXTRA conviction for any BUY approval.
+5. If two tickers share a sector or have high graph correlation, explain how you reduced combined exposure.
+  User Prompt (8549 chars):
+    Evaluate these proposed BUY recommendations and allocate sizing:
+
+- MAS: Action=BUY, Confidence=65%, Rationale=MAS presents a viable entry at $69.56 with an RSI of 54.28, well below the 65 overbought limit, while its P/E of 17.22 appears reasonable relative to the Industrials sector. Given the macro regime of geopolitical instability and oil prices at $94.93, adding exposure to an industrial with strong ROE (84.57%) aligns with a defensive capital allocation strategy. However, the thesis is invalidated if the RSI spikes above 70 or if the missing sector average P/E confirms the stock is significantly overvalued.
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:48 UTC
+- NDAQ: Action=BUY, Confidence=72%, Rationale=NDAQ is a strong BUY candidate because its RSI(14) of 39.06 [technical_data] indicates the stock is oversold and well below the 65 buy threshold, while trading near its 52-week low of $77.09 [technical_data] with a current price of $86.81. In the current macro regime of geopolitical tension and an inverted yield curve (2Y at 4.05% vs 10Y at 4.46%), defensive financials with strong forward earnings (Forward P/E: 19.60 [fundamental_data]) offer value, though the high debt-to-equity of 79.06 [fundamental_data] requires monitoring. This position is invalidated if the RSI rises above 70 or if the price breaks below the $86.50 support level [technical_data].
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:43 UTC
+
+? Memory context: - [2026-06-01] pipeline_run: BUY (conf=65)
+- [2026-05-30] pipeline_run: BUY (conf=65)
+- [2026-05-26] pipeline_run: BUY (conf=72)
+- [2026-05-23] pipeline_run: SELL (conf=0)
+- TMUS: Action=BUY, Confidence=75%, Rationale=TMUS qualifies for a BUY as its RSI(14) of 35.25 is significantly below the 65 threshold, indicating oversold conditions amidst a 'risk-off' macro regime where defensive telecom exposure is favored. The stock trades at $181.45 near its 52-week low of $180.44 with a P/E of 19.30, offering a value entry point compared to its Forward P/E of 12.99. Invalidation condition: The thesis is invalidated if RSI(14) rises above 70 or if the price breaks below the support level of $180.44.
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:51 UTC
+
+? Memory context: - [2026-06-03] pipeline_run: BUY (conf=75)
+- XPO: Action=BUY, Confidence=65%, Rationale=XPO qualifies for entry as its RSI(14) is 58.22, satisfying the strict BUY requirement of RSI < 65 [technical_data]. While the Macro Memo advises caution due to geopolitical tension and an inverted yield curve, the stock's valuation relative to its 52-week high of 231.46 and current price of 218.69 suggests a reasonable entry point before potential resistance at 221.43 [fundamental_data]. However, the thesis is invalidated if the RSI crosses above 70 or if the sector average P/E is confirmed to be significantly lower than XPO's 75.15, which would trigger a sell signal based on the 1.5x multiplier rule [fundamental_data].
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:49 UTC
+
+? Memory context: - [2026-06-02] pipeline_run: SELL (conf=85)
+- [2026-06-01] pipeline_run: BUY (conf=65)
+- [2026-05-30] pipeline_run: BUY (conf=65)
+- [2026-05-29] pipeline_run: SELL (conf=0)
+- [2026-05-25] pipeline_run: BUY (conf=72)
+- CME: Action=BUY, Confidence=78%, Rationale=CME presents a compelling contrarian buy opportunity as it trades at $252.64 with an RSI of 25.57, indicating extreme oversold conditions well below the 65 buy threshold. This aligns with the macro regime of geopolitical volatility where defensive, high-quality financial infrastructure like CME may outperform, especially given the current 1.0% sector exposure leaves ample room for a 10% position size. Invalidation condition: The thesis is invalidated if the RSI rises above 65 or if the price fails to hold above the 52-week low of $244.56.
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:52 UTC
+
+? Memory context: - [2026-06-03] pipeline_run: BUY (conf=75)
+- [2026-05-29] pipeline_run: SELL (conf=0)
+- [2026-05-26] pipeline_run: SELL (conf=0)
+- [2026-05-22] pipeline_run: BUY (conf=75)
+- LLY: Action=BUY, Confidence=75%, Rationale=LLY qualifies for a BUY as its RSI(14) of 61.65 is below the 65 threshold, and it trades above key moving averages (SMA 50: 964.11, SMA 200: 941.97) amidst a macro regime of geopolitical tension where defensive healthcare sectors are favored. The company's 55.5% revenue growth supports the thesis despite a high P/E of 38.31, though the lack of a sector average P/E prevents a definitive valuation comparison. Invalidation Condition: The thesis is invalidated if RSI spikes above 70 or if the stock price breaks below the support level of $943.26.
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:57 UTC
+
+? Memory context: - [2026-06-03] pipeline_run: BUY (conf=78)
+- [2026-05-30] pipeline_run: SELL (conf=85)
+- [2026-05-29] pipeline_run: SELL (conf=0)
+- [2026-05-26] pipeline_run: SELL (conf=85)
+- EVER: Action=BUY, Confidence=75%, Rationale=EVER is a strong BUY candidate as it trades at a deep value with a P/E of 6.1296926 and an RSI of 47.88189598296539, satisfying the 'not overbought' requirement while offering significant margin of safety. In the current 'risk-off' macro regime characterized by geopolitical tension and inverted yield curves, EVER's strong liquidity (Current Ratio: 3.14) and high ROE (56.354%) make it a defensive defensive play compared to the struggling tech sector. Invalidation condition: The thesis is invalidated if the RSI breaches 70 or if the stock price closes below the support level of $17.25.
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:58 UTC
+
+? Memory context: - [2026-06-03] pipeline_run: BUY (conf=75)
+- [2026-05-30] pipeline_run: SELL (conf=65)
+- GRI: Action=BUY, Confidence=72%, Rationale=GRI presents a technical contrarian opportunity with an RSI of 36.57 [technical_data], significantly below the 65 buy requirement, while trading near its 52-week low of $1.97 [structured_facts]. Although the Macro Strategy Memo advises caution due to geopolitical risk and suggests holding cash, GRI's deep value metrics (P/E: 0.05 [fundamental_data]) and proximity to support ($1.97) justify a small speculative position within the available sector capacity. This thesis is invalidated if the price breaks below the $1.97 support level or if the RSI spikes above 70.
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 03:58 UTC
+
+? Memory context: - [2026-06-02] pipeline_run: SELL (conf=85)
+- [2026-05-29] pipeline_run: SELL (conf=0)
+- [2026-05-23] pipeline_run: SELL (conf=85)
+- DKS: Action=BUY, Confidence=75%, Rationale=DKS presents a value opportunity in a volatile market, trading at $224.17 (below the $237.75 52-week high) with a healthy RSI(14) of 52.83, satisfying the <65 buy requirement. The company's robust revenue growth of 62.7% contrasts with the macro regime's 'risk-off' sentiment, suggesting a potential contrarian play if the geopolitical oil spike stabilizes. However, the high debt-to-equity of 138.992 is a concern given the 3.77% risk-free rate, and the thesis is invalidated if the RSI spikes above 70 or if the P/E (21.85) is confirmed to exceed 1.5x the sector average once that data is available.
+
+? Data timeframe: 2025-10-31 00:00 UTC to 2026-06-04 04:02 UTC
+
+? Memory context: - [2026-06-03] pipeline_run: BUY (conf=72)
+- SMMT: Action=BUY, Confidence=45%, Rationale=SMMT qualifies for a BUY based on technical oversold conditions, with an RSI(14) of 37.07 [technical_data] and a price of $15.07 [fundamental_data] hovering near the Bollinger Band lower support of $14.90. However, this thesis is highly speculative given the company's $0 revenue and -$1.2 billion net income [fundamental_data], creating a significant disconnect with the current 'risk-off' macro regime driven by geopolitical tensions. This position should be invalidated if the price breaks below the support level of $14.17 or if the RSI(14) spikes above 70.
+
+? Data timeframe: 2025-09-30 00:00 UTC to 2026-06-04 04:03 UTC
+
+? Memory context: - [2026-06-03] pipeline_run: SELL (conf=85)
+- [2026-06-01] pipeline_run: SELL (conf=85)
+
+Tickers to assess: ["MAS", "NDAQ", "TMUS", "XPO", "CME", "LLY", "EVER", "GRI", "DKS", "SMMT"]
+
+STEP 1: Call `assess_risk_environment` with the tickers list above.
+STEP 2: Use the regime-adjusted sizing bounds from the response.
+STEP 3: Check brain graph correlations between these tickers.
+STEP 4: Call `calculate_position_size` for each approved ticker.
+STEP 5: Output final allocations JSON.
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:12:37,029 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:12:37,030 [app.agents.base_agent] INFO [BaseAgent] Routing portfolio_allocator agentic loop to Prism /agent
+2026-06-03 21:12:37,030 [app.services.vllm_client] INFO [PRISM] Agent call for portfolio_allocator_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:12:37,038 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:12:39,317 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:12:39,428 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/10 tools for 'portfolio_allocator_selector' (_ALLOCATOR_) — 1085 selector tokens used. Tools: ['get_technical_indicators', 'get_portfolio_state', 'calculate_position_size', 'calculate_risk_reward', 'assess_risk_environment']
+2026-06-03 21:12:39,429 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 5 tools selected for portfolio_allocator → ['get_technical_indicators', 'get_portfolio_state', 'calculate_position_size', 'calculate_risk_reward', 'assess_risk_environment']
+2026-06-03 21:12:39,431 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent portfolio_allocator in Prism
+2026-06-03 21:12:39,444 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:12:39,448 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_PORTFOLIO_ALLOCATOR (db_id: 6a151f6ff623804f353de7fc)
+2026-06-03 21:12:39,505 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a151f6ff623804f353de7fc "HTTP/1.1 200 OK"
+2026-06-03 21:12:39,586 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating portfolio_allocator to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=5, ticker=_ALLOCATOR_)
+{
+    "name": "orchestration.execute_v2_pipeline",
+    "context": {
+        "trace_id": "0xfde43fb28d336163344d7644321babf7",
+        "span_id": "0xbc40c4bc64d834df",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.INTERNAL",
+    "parent_id": null,
+    "start_time": "2026-06-04T03:57:45.621577Z",
+    "end_time": "2026-06-04T04:12:36.957074Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {},
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.42.1",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+2026-06-03 21:12:43,968 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:12:44,174 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:12:45,733 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:12:46,993 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:13:09,334 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:13:15,758 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:13:17,065 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:13:30,527 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:14:30 PDT)" (scheduled at 2026-06-03 21:13:30.525588-07:00)
+2026-06-03 21:13:30,546 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:14:30 PDT)" executed successfully
+2026-06-03 21:13:39,361 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:13:45,784 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:13:47,170 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:14:09,380 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:14:15,812 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:14:17,280 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:14:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:15:30 PDT)" (scheduled at 2026-06-03 21:14:30.525588-07:00)
+2026-06-03 21:14:30,543 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:15:30 PDT)" executed successfully
+2026-06-03 21:14:39,399 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:14:44,187 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:14:44,188 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:14:45,833 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:14:47,380 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:15:09,420 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:15:15,858 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:15:17,492 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:15:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:16:30 PDT)" (scheduled at 2026-06-03 21:15:30.525588-07:00)
+2026-06-03 21:15:30,539 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:16:30 PDT)" executed successfully
+2026-06-03 21:15:39,440 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:15:45,971 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:15:47,532 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:16:09,460 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:16:15,998 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:16:17,807 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:16:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:17:30 PDT)" (scheduled at 2026-06-03 21:16:30.525588-07:00)
+2026-06-03 21:16:30,539 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:17:30 PDT)" executed successfully
+2026-06-03 21:16:39,489 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:16:44,202 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:16:44,304 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:16:46,014 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:16:47,866 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:17:09,509 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:17:16,037 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:17:18,016 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:17:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:18:30 PDT)" (scheduled at 2026-06-03 21:17:30.525588-07:00)
+2026-06-03 21:17:30,539 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:18:30 PDT)" executed successfully
+2026-06-03 21:17:39,636 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:17:39,638 [app.tools.prism_agent_harness] ERROR [PrismHarness] portfolio_allocator failed via Prism — falling back to local
+Traceback (most recent call last):
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/opt/venv/lib/python3.11/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/tools/prism_agent_harness.py", line 370, in run_prism_agent
+    response = await asyncio.wait_for(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/tasks.py", line 489, in wait_for
+    return fut.result()
+           ^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_client.py", line 1859, in post
+    return await self.request(
+           ^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/opt/venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+2026-06-03 21:17:39,640 [app.tools.prism_agent_harness] INFO [PrismHarness] Using local executor fallback for portfolio_allocator (ticker=_ALLOCATOR_)
+2026-06-03 21:17:39,643 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:17:39,643 [app.services.vllm_client] INFO [PRISM] Agent call for portfolio_allocator_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:17:39,647 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:17:41,418 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/10 tools for 'portfolio_allocator_selector' (_ALLOCATOR_) — 1066 selector tokens used. Tools: ['get_market_data', 'get_technical_indicators', 'calculate_position_size', 'calculate_risk_reward', 'assess_risk_environment']
+2026-06-03 21:17:41,418 [app.tools.executor] INFO [ToolExecutor] Tool selection: 5 tools selected for portfolio_allocator → ['get_market_data', 'get_technical_indicators', 'calculate_position_size', 'calculate_risk_reward', 'assess_risk_environment']
+2026-06-03 21:17:41,418 [app.services.vllm_client] INFO [PRISM] Agent call for portfolio_allocator (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:17:41,461 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent "HTTP/1.1 200 OK"
+2026-06-03 21:17:46,059 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:17:48,077 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:18:09,654 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:18:16,089 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:18:18,126 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:18:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:19:30 PDT)" (scheduled at 2026-06-03 21:18:30.525588-07:00)
+2026-06-03 21:18:30,540 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:19:30 PDT)" executed successfully
+2026-06-03 21:18:39,705 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:18:44,438 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:18:44,468 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:18:46,187 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:18:48,171 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:19:09,726 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:19:16,304 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:19:18,235 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:19:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:20:30 PDT)" (scheduled at 2026-06-03 21:19:30.525588-07:00)
+2026-06-03 21:19:30,538 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:20:30 PDT)" executed successfully
+2026-06-03 21:19:39,746 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:19:46,400 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:19:48,273 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:20:09,761 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:20:16,513 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:20:18,340 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:20:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:21:30 PDT)" (scheduled at 2026-06-03 21:20:30.525588-07:00)
+2026-06-03 21:20:30,537 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:21:30 PDT)" executed successfully
+2026-06-03 21:20:39,784 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:20:44,541 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:20:44,559 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:20:46,610 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:20:48,379 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:21:09,799 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:21:16,637 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:21:18,455 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:21:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:22:30 PDT)" (scheduled at 2026-06-03 21:21:30.525588-07:00)
+2026-06-03 21:21:30,535 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:22:30 PDT)" executed successfully
+2026-06-03 21:21:39,831 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:21:46,663 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:21:48,566 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:22:09,850 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:22:16,686 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:22:18,605 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:22:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:23:30 PDT)" (scheduled at 2026-06-03 21:22:30.525588-07:00)
+2026-06-03 21:22:30,537 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:23:30 PDT)" executed successfully
+2026-06-03 21:22:39,863 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:22:44,579 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:22:44,663 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:22:46,827 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:22:48,667 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:23:09,883 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:23:16,859 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:23:18,776 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:23:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:24:30 PDT)" (scheduled at 2026-06-03 21:23:30.525588-07:00)
+2026-06-03 21:23:30,535 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:24:30 PDT)" executed successfully
+2026-06-03 21:23:39,895 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:23:46,897 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:23:48,817 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:24:09,915 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:24:17,049 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:24:18,872 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:24:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:25:30 PDT)" (scheduled at 2026-06-03 21:24:30.525588-07:00)
+2026-06-03 21:24:30,536 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:25:30 PDT)" executed successfully
+2026-06-03 21:24:39,928 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:24:44,676 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:24:44,688 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:24:47,150 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:24:48,989 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:25:09,947 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:25:17,180 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:25:19,200 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:25:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:26:30 PDT)" (scheduled at 2026-06-03 21:25:30.525588-07:00)
+2026-06-03 21:25:30,535 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:26:30 PDT)" executed successfully
+2026-06-03 21:25:39,960 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:25:47,267 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:25:49,306 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:26:09,978 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:26:17,371 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:26:19,346 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:26:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:27:30 PDT)" (scheduled at 2026-06-03 21:26:30.525588-07:00)
+2026-06-03 21:26:30,536 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:27:30 PDT)" executed successfully
+2026-06-03 21:26:39,991 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:26:44,699 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:26:44,816 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:26:47,474 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:26:49,379 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:26:59,132 [app.tools.executor] INFO [ToolExecutor] Agent 'portfolio_allocator' finished successfully after 1 turns.
+2026-06-03 21:26:59,133 [app.tools.prism_agent_harness] INFO [PrismHarness] Local fallback response for portfolio_allocator is not valid JSON. Attempting fast JSON recovery on local output...
+2026-06-03 21:26:59,136 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:26:59,136 [app.services.vllm_client] INFO [PRISM] Agent call for portfolio_allocator_recovery (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:26:59,139 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:27:10,009 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:27:17,586 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:27:19,420 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:27:26,595 [app.tools.prism_agent_harness] INFO [PrismHarness] Fast JSON recovery succeeded for portfolio_allocator: allocations
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT OUTPUT: portfolio_allocator (_ALLOCATOR_) [285536 tokens, 585051ms]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    {"allocations": [{"ticker": "CME", "decision": "APPROVE", "adjusted_size_pct": 20.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Highest conviction, defensive financial infrastructure, RSI 25.57 extremely oversold."}, {"ticker": "LLY", "decision": "APPROVE", "adjusted_size_pct": 15.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Strong growth, healthcare defensive in risk-off regime."}, {"ticker": "TMUS", "decision": "APPROVE", "adjusted_size_pct": 12.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Oversold telecom with attractive forward P/E of 12.99."}, {"ticker": "EVER", "decision": "APPROVE", "adjusted_size_pct": 12.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Deep value play with P/E 6.13 and 56% ROE."}, {"ticker": "NDAQ", "decision": "APPROVE", "adjusted_size_pct": 6.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Oversold but high debt-to-equity ratio of 79% warrants moderate position."}, {"ticker": "MAS", "decision": "APPROVE", "adjusted_size_pct": 8.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Reasonable valuation and defensive industrial exposure."}, {"ticker": "XPO", "decision": "APPROVE", "adjusted_size_pct": 3.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Extremely high P/E of 75.15 limits position size to small bet on logistics recovery."}, {"ticker": "GRI", "decision": "APPROVE", "adjusted_size_pct": 2.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Penny stock speculation with P/E of 0.05, small position only."}, {"ticker": "DKS", "decision": "APPROVE", "adjusted_size_pct": 1.0, "shares": 0, "total_cost": 0.0, "veto_reason": null, "rationale": "Revenue growth is good but debt-to-equity of 138.99% in rising rate environment is critical."}, {"ticker": "SMMT", "decision": "VETO", "adjusted_size_pct": 0.0, "shares": 0, "total_cost": 0.0, "veto_reason": "Zero revenue and -$1.2B net income; gambling not investing.", "rationale": "No position due to massive losses and lack of revenue."}]}
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:27:26,596 [app.agents.portfolio_allocator_agent] INFO [PORTFOLIO_ALLOCATOR] Batch allocation complete. Decisions: {'CME': 'APPROVE @ 20.0%', 'LLY': 'APPROVE @ 15.0%', 'TMUS': 'APPROVE @ 12.0%', 'EVER': 'APPROVE @ 12.0%', 'NDAQ': 'APPROVE @ 6.0%', 'MAS': 'APPROVE @ 8.0%', 'XPO': 'APPROVE @ 3.0%', 'GRI': 'APPROVE @ 2.0%', 'DKS': 'APPROVE @ 1.0%', 'SMMT': 'VETO @ 0.0%'}
+2026-06-03 21:27:26,597 [app.agents.trade_execution_agent] INFO [TRADE_EXEC] Running HOLD execution for FCF (confidence=78%)
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT INPUT: trade_execution (FCF) [STATIC PROMPT]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  System Prompt (959 chars):
+    You are the Trade Execution Agent (HOLD mode). Your job is to evaluate
+whether an existing HOLD position needs any adjustments.
+
+## EVALUATION STEPS:
+1. Call `get_portfolio_state` to see current position details.
+2. Call `get_market_data` and `get_technical_indicators` for the current state.
+3. Check:
+   - Should the trailing stop be tightened? (price moved significantly in favor)
+   - Has the original thesis changed? (fundamental shifts)
+   - Should this convert from HOLD to SELL? (deteriorating conditions)
+
+## SECTOR-SPECIFIC GUIDANCE:
+Apply a balanced fundamental + technical analysis approach. Use standard position sizing (Kelly-inspired, 2-10% of portfolio). No sector-specific bias. Focus on value, momentum, and risk/reward fundamentals.
+
+## OUTPUT:
+Respond with JSON:
+{
+    "decision": "HOLD|CONVERT_SELL",
+    "ticker": "FCF",
+    "stop_adjustment": null,
+    "thesis_status": "intact|weakening|invalidated",
+    "rationale": "1-2 sentences"
+}
+  User Prompt (541 chars):
+    Run the trade execution analysis for FCF (HOLD signal).
+Confidence from decision engine: 78%.
+Rationale: FCF remains technically stable with price trading above key moving averages (SMA 20/50/200) and positive MACD momentum, supported by attractive valuation metrics (Forward P/E 9.49, P/B 1.22). I will HOLD the position as long as the price stays above the $17.96 support level and RSI remains below 70; a break below $17.90 or an RSI spike above 75 would trigger a SELL.
+Calculate the appropriate parameters using your tools, then decide.
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:27:26,601 [app.agents.base_agent] INFO [BaseAgent] Routing trade_execution agentic loop to Prism /agent
+2026-06-03 21:27:26,602 [app.services.vllm_client] INFO [PRISM] Agent call for trade_execution_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:27:26,605 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:27:29,357 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/65 tools for 'trade_execution_selector' (FCF) — 2410 selector tokens used. Tools: ['get_market_data', 'get_technical_indicators', 'get_portfolio_state', 'set_price_trigger', 'query_technical_indicator']
+2026-06-03 21:27:29,357 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 5 tools selected for trade_execution → ['get_market_data', 'get_technical_indicators', 'get_portfolio_state', 'set_price_trigger', 'query_technical_indicator']
+2026-06-03 21:27:29,358 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent trade_execution in Prism
+2026-06-03 21:27:29,367 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:27:29,369 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_TRADE_EXECUTION (db_id: 6a178a3be2723cba7503e6f6)
+2026-06-03 21:27:29,386 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a178a3be2723cba7503e6f6 "HTTP/1.1 200 OK"
+2026-06-03 21:27:29,392 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating trade_execution to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=5, ticker=FCF)
+2026-06-03 21:27:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:28:30 PDT)" (scheduled at 2026-06-03 21:27:30.525588-07:00)
+2026-06-03 21:27:30,537 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:28:30 PDT)" executed successfully
+2026-06-03 21:27:40,023 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:27:47,692 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:27:49,458 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:28:10,042 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:28:17,714 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:28:19,496 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:28:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:29:30 PDT)" (scheduled at 2026-06-03 21:28:30.525588-07:00)
+2026-06-03 21:28:30,548 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:29:30 PDT)" executed successfully
+2026-06-03 21:28:40,061 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:28:44,833 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:28:44,907 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:28:47,733 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:28:49,533 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:29:10,080 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:29:17,807 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:29:19,572 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:29:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:30:30 PDT)" (scheduled at 2026-06-03 21:29:30.525588-07:00)
+2026-06-03 21:29:30,541 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:30:30 PDT)" executed successfully
+2026-06-03 21:29:40,098 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:29:47,914 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:29:49,626 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:30:01,881 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:30:01,882 [app.tools.prism_agent_harness] INFO [PrismHarness] trade_execution response from Prism is not valid JSON. Attempting fast JSON recovery...
+2026-06-03 21:30:01,886 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:30:01,887 [app.services.vllm_client] INFO [PRISM] Agent call for trade_execution_recovery (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:30:01,891 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:30:05,012 [app.tools.prism_agent_harness] INFO [PrismHarness] Fast JSON recovery succeeded for trade_execution: BUY
+2026-06-03 21:30:05,012 [app.tools.prism_agent_harness] INFO [PrismHarness] trade_execution completed via Prism in 158348ms (326 tokens)
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT OUTPUT: trade_execution (FCF) [326 tokens, 158348ms]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    {"action": "BUY", "claims": ["The analysis indicates a positive outlook for FCF based on current market data and portfolio state.", "Key parameters calculated support a favorable trading decision for FCF."], "confidence": 75, "key_argument": "Calculated key parameters and current market data for FCF indicate a favorable opportunity for trade execution."}
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:30:05,012 [app.agents.trade_execution_agent] INFO [TRADE_EXEC] HOLD for HOLD FCF | reason=
+2026-06-03 21:30:05,091 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent trade_execution
+2026-06-03 21:30:05,091 [app.cycle.trading_phase] INFO [PIPELINE]   [FCF] DECISION RECEIVED: action=HOLD confidence=78% human_review=False
+2026-06-03 21:30:05,092 [app.cycle.trading_phase] INFO [PIPELINE]   [FCF] EXECUTING HOLD (Confidence: 78%)
+2026-06-03 21:30:05,109 [app.agents.trade_execution_agent] INFO [TRADE_EXEC] Running HOLD execution for GOOGL (confidence=80%)
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT INPUT: trade_execution (GOOGL) [STATIC PROMPT]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  System Prompt (961 chars):
+    You are the Trade Execution Agent (HOLD mode). Your job is to evaluate
+whether an existing HOLD position needs any adjustments.
+
+## EVALUATION STEPS:
+1. Call `get_portfolio_state` to see current position details.
+2. Call `get_market_data` and `get_technical_indicators` for the current state.
+3. Check:
+   - Should the trailing stop be tightened? (price moved significantly in favor)
+   - Has the original thesis changed? (fundamental shifts)
+   - Should this convert from HOLD to SELL? (deteriorating conditions)
+
+## SECTOR-SPECIFIC GUIDANCE:
+Apply a balanced fundamental + technical analysis approach. Use standard position sizing (Kelly-inspired, 2-10% of portfolio). No sector-specific bias. Focus on value, momentum, and risk/reward fundamentals.
+
+## OUTPUT:
+Respond with JSON:
+{
+    "decision": "HOLD|CONVERT_SELL",
+    "ticker": "GOOGL",
+    "stop_adjustment": null,
+    "thesis_status": "intact|weakening|invalidated",
+    "rationale": "1-2 sentences"
+}
+  User Prompt (212 chars):
+    Run the trade execution analysis for GOOGL (HOLD signal).
+Confidence from decision engine: 80%.
+Rationale: Fast-track position monitor executed.
+Calculate the appropriate parameters using your tools, then decide.
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:30:05,113 [app.agents.base_agent] INFO [BaseAgent] Routing trade_execution agentic loop to Prism /agent
+2026-06-03 21:30:05,114 [app.services.vllm_client] INFO [PRISM] Agent call for trade_execution_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:30:05,132 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:30:07,406 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/65 tools for 'trade_execution_selector' (GOOGL) — 2290 selector tokens used. Tools: ['get_market_data', 'get_finnhub_news', 'get_technical_indicators', 'get_portfolio_state', 'get_position_pnl']
+2026-06-03 21:30:07,406 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 5 tools selected for trade_execution → ['get_market_data', 'get_finnhub_news', 'get_technical_indicators', 'get_portfolio_state', 'get_position_pnl']
+2026-06-03 21:30:07,408 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent trade_execution in Prism
+2026-06-03 21:30:07,416 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:30:07,418 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_TRADE_EXECUTION (db_id: 6a178a3be2723cba7503e6f6)
+2026-06-03 21:30:07,444 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a178a3be2723cba7503e6f6 "HTTP/1.1 200 OK"
+2026-06-03 21:30:07,449 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating trade_execution to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=5, ticker=GOOGL)
+2026-06-03 21:30:10,127 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:30:17,941 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:30:19,754 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:30:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:31:30 PDT)" (scheduled at 2026-06-03 21:30:30.525588-07:00)
+2026-06-03 21:30:30,538 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:31:30 PDT)" executed successfully
+2026-06-03 21:30:40,144 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:30:44,919 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:30:44,921 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:30:47,963 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:30:49,884 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:31:10,172 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:31:17,992 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:31:19,965 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:31:22,381 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:31:22,382 [app.tools.prism_agent_harness] INFO [PrismHarness] trade_execution response from Prism is not valid JSON. Attempting fast JSON recovery...
+2026-06-03 21:31:22,390 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:31:22,391 [app.services.vllm_client] INFO [PRISM] Agent call for trade_execution_recovery (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:31:22,397 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:31:25,881 [app.tools.prism_agent_harness] INFO [PrismHarness] Fast JSON recovery succeeded for trade_execution: BUY
+2026-06-03 21:31:25,886 [app.tools.prism_agent_harness] INFO [PrismHarness] trade_execution completed via Prism in 80669ms (343 tokens)
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT OUTPUT: trade_execution (GOOGL) [343 tokens, 80669ms]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    {"action": "BUY", "claims": ["Comprehensive GOOGL data has been gathered including portfolio state, market data, and technical indicators.", "Analysis calculations have been performed on the collected data."], "confidence": 65, "key_argument": "The successful gathering of comprehensive data and execution of analysis calculations indicates a prepared stance for a positive investment decision."}
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:31:25,888 [app.agents.trade_execution_agent] INFO [TRADE_EXEC] HOLD for HOLD GOOGL | reason=
+2026-06-03 21:31:25,981 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent trade_execution
+2026-06-03 21:31:25,982 [app.cycle.trading_phase] INFO [PIPELINE]   [GOOGL] DECISION RECEIVED: action=HOLD confidence=80% human_review=False
+2026-06-03 21:31:25,983 [app.cycle.trading_phase] INFO [PIPELINE]   [GOOGL] EXECUTING HOLD (Confidence: 80%)
+2026-06-03 21:31:26,023 [app.agents.trade_execution_agent] INFO [TRADE_EXEC] Running HOLD execution for ADBE (confidence=80%)
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT INPUT: trade_execution (ADBE) [STATIC PROMPT]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  System Prompt (960 chars):
+    You are the Trade Execution Agent (HOLD mode). Your job is to evaluate
+whether an existing HOLD position needs any adjustments.
+
+## EVALUATION STEPS:
+1. Call `get_portfolio_state` to see current position details.
+2. Call `get_market_data` and `get_technical_indicators` for the current state.
+3. Check:
+   - Should the trailing stop be tightened? (price moved significantly in favor)
+   - Has the original thesis changed? (fundamental shifts)
+   - Should this convert from HOLD to SELL? (deteriorating conditions)
+
+## SECTOR-SPECIFIC GUIDANCE:
+Apply a balanced fundamental + technical analysis approach. Use standard position sizing (Kelly-inspired, 2-10% of portfolio). No sector-specific bias. Focus on value, momentum, and risk/reward fundamentals.
+
+## OUTPUT:
+Respond with JSON:
+{
+    "decision": "HOLD|CONVERT_SELL",
+    "ticker": "ADBE",
+    "stop_adjustment": null,
+    "thesis_status": "intact|weakening|invalidated",
+    "rationale": "1-2 sentences"
+}
+  User Prompt (211 chars):
+    Run the trade execution analysis for ADBE (HOLD signal).
+Confidence from decision engine: 80%.
+Rationale: Fast-track position monitor executed.
+Calculate the appropriate parameters using your tools, then decide.
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:31:26,036 [app.agents.base_agent] INFO [BaseAgent] Routing trade_execution agentic loop to Prism /agent
+2026-06-03 21:31:26,038 [app.services.vllm_client] INFO [PRISM] Agent call for trade_execution_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:31:26,083 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:31:28,261 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/65 tools for 'trade_execution_selector' (ADBE) — 2290 selector tokens used. Tools: ['get_market_data', 'get_finnhub_news', 'get_technical_indicators', 'get_portfolio_state', 'get_position_pnl']
+2026-06-03 21:31:28,261 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 5 tools selected for trade_execution → ['get_market_data', 'get_finnhub_news', 'get_technical_indicators', 'get_portfolio_state', 'get_position_pnl']
+2026-06-03 21:31:28,263 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent trade_execution in Prism
+2026-06-03 21:31:28,275 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:31:28,278 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_TRADE_EXECUTION (db_id: 6a178a3be2723cba7503e6f6)
+2026-06-03 21:31:28,297 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a178a3be2723cba7503e6f6 "HTTP/1.1 200 OK"
+2026-06-03 21:31:28,302 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating trade_execution to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=5, ticker=ADBE)
+2026-06-03 21:31:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:32:30 PDT)" (scheduled at 2026-06-03 21:31:30.525588-07:00)
+2026-06-03 21:31:30,538 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:32:30 PDT)" executed successfully
+2026-06-03 21:31:40,191 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:31:48,018 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:31:50,004 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:32:10,210 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:32:18,047 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:32:20,045 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:32:30,526 [apscheduler.executors.default] INFO Running job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:33:30 PDT)" (scheduled at 2026-06-03 21:32:30.525588-07:00)
+2026-06-03 21:32:30,536 [apscheduler.executors.default] INFO Job "SchedulerService._run_background_stop_loss (trigger: interval[0:01:00], next run at: 2026-06-03 21:33:30 PDT)" executed successfully
+2026-06-03 21:32:40,235 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:32:44,947 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:32:45,050 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/v1/models "HTTP/1.1 200 OK"
+2026-06-03 21:32:48,069 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:32:50,085 [httpx] INFO HTTP Request: GET http://10.0.0.30:8000/metrics "HTTP/1.1 200 OK"
+2026-06-03 21:32:53,363 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/agent?stream=false "HTTP/1.1 200 OK"
+2026-06-03 21:32:53,365 [app.tools.prism_agent_harness] INFO [PrismHarness] trade_execution response from Prism is not valid JSON. Attempting fast JSON recovery...
+2026-06-03 21:32:53,373 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/health "HTTP/1.1 200 OK"
+2026-06-03 21:32:53,374 [app.services.vllm_client] INFO [PRISM] Agent call for trade_execution_recovery (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:32:53,381 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:32:56,636 [app.tools.prism_agent_harness] INFO [PrismHarness] Fast JSON recovery succeeded for trade_execution: BUY
+2026-06-03 21:32:56,636 [app.tools.prism_agent_harness] INFO [PrismHarness] trade_execution completed via Prism in 90538ms (316 tokens)
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT OUTPUT: trade_execution (ADBE) [316 tokens, 90538ms]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    {"action": "BUY", "claims": ["The analysis indicates a favorable market position for ADBE based on gathered data.", "Key parameters calculated suggest a positive trend for the asset."], "confidence": 75, "key_argument": "The calculated key parameters and market data analysis point to a strong upward trend for ADBE."}
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:32:56,637 [app.agents.trade_execution_agent] INFO [TRADE_EXEC] HOLD for HOLD ADBE | reason=
+2026-06-03 21:32:56,707 [app.services.tool_optimizer] INFO [ToolOptimizer] Marked 5 tools as active for Prism-routed agent trade_execution
+2026-06-03 21:32:56,707 [app.cycle.trading_phase] INFO [PIPELINE]   [ADBE] DECISION RECEIVED: action=HOLD confidence=80% human_review=False
+2026-06-03 21:32:56,708 [app.cycle.trading_phase] INFO [PIPELINE]   [ADBE] EXECUTING HOLD (Confidence: 80%)
+2026-06-03 21:32:56,737 [app.agents.trade_execution_agent] INFO [TRADE_EXEC] Running HOLD execution for LTM (confidence=80%)
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  AGENT INPUT: trade_execution (LTM) [STATIC PROMPT]
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  System Prompt (959 chars):
+    You are the Trade Execution Agent (HOLD mode). Your job is to evaluate
+whether an existing HOLD position needs any adjustments.
+
+## EVALUATION STEPS:
+1. Call `get_portfolio_state` to see current position details.
+2. Call `get_market_data` and `get_technical_indicators` for the current state.
+3. Check:
+   - Should the trailing stop be tightened? (price moved significantly in favor)
+   - Has the original thesis changed? (fundamental shifts)
+   - Should this convert from HOLD to SELL? (deteriorating conditions)
+
+## SECTOR-SPECIFIC GUIDANCE:
+Apply a balanced fundamental + technical analysis approach. Use standard position sizing (Kelly-inspired, 2-10% of portfolio). No sector-specific bias. Focus on value, momentum, and risk/reward fundamentals.
+
+## OUTPUT:
+Respond with JSON:
+{
+    "decision": "HOLD|CONVERT_SELL",
+    "ticker": "LTM",
+    "stop_adjustment": null,
+    "thesis_status": "intact|weakening|invalidated",
+    "rationale": "1-2 sentences"
+}
+  User Prompt (210 chars):
+    Run the trade execution analysis for LTM (HOLD signal).
+Confidence from decision engine: 80%.
+Rationale: Fast-track position monitor executed.
+Calculate the appropriate parameters using your tools, then decide.
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-06-03 21:32:56,742 [app.agents.base_agent] INFO [BaseAgent] Routing trade_execution agentic loop to Prism /agent
+2026-06-03 21:32:56,743 [app.services.vllm_client] INFO [PRISM] Agent call for trade_execution_selector (via jetson) | agent=CUSTOM_MARKET_ALPHA
+2026-06-03 21:32:56,774 [httpx] INFO HTTP Request: POST http://10.0.0.16:7777/chat "HTTP/1.1 200 OK"
+2026-06-03 21:32:58,996 [app.agents.tool_selector] INFO [ToolSelector] Selected 5/65 tools for 'trade_execution_selector' (LTM) — 2289 selector tokens used. Tools: ['get_market_data', 'get_finnhub_news', 'get_technical_indicators', 'get_portfolio_state', 'get_position_pnl']
+2026-06-03 21:32:58,996 [app.tools.prism_agent_harness] INFO [PrismHarness] Tool selection: 5 tools selected for trade_execution → ['get_market_data', 'get_finnhub_news', 'get_technical_indicators', 'get_portfolio_state', 'get_position_pnl']
+2026-06-03 21:32:58,998 [app.tools.prism_agent_harness] INFO [PrismHarness] Registering/updating custom agent trade_execution in Prism
+2026-06-03 21:32:59,012 [httpx] INFO HTTP Request: GET http://10.0.0.16:7777/custom-agents "HTTP/1.1 200 OK"
+2026-06-03 21:32:59,015 [app.services.prism_client] INFO [PRISM] Updating existing custom agent CUSTOM_TRADE_EXECUTION (db_id: 6a178a3be2723cba7503e6f6)
+2026-06-03 21:32:59,037 [httpx] INFO HTTP Request: PUT http://10.0.0.16:7777/custom-agents/6a178a3be2723cba7503e6f6 "HTTP/1.1 200 OK"
+2026-06-03 21:32:59,046 [app.tools.prism_agent_harness] INFO [PrismHarness] Delegating trade_execution to Prism /agent (model=cyankiwi/MiniMax-M2.7-AWQ-4bit, tools=5, ticker=LTM)
+2026-06-03 21:33:10,267 [app.cycle.orchestration.state_manager] INFO [CHECKPOINT] Saved checkpoint for cycle-1780544044 (phases: [], tickers: {'analyzing': 22})
+2026-06-03 21:33:18,098 [httpx] INFO HTTP Request: GET http://10.0.0.141:8000/metrics "HTTP/1.1 200 OK"

@@ -64,7 +64,11 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
             "ticker": {
                 "type": "string",
                 "description": "The stock ticker symbol to sell (e.g., AAPL).",
-            }
+            },
+            "qty_pct": {
+                "type": "number",
+                "description": "The percentage of the position to sell (e.g., 1.0 for 100%, 0.5 for 50%). Default is 1.0.",
+            },
         },
         "required": ["ticker"],
     },
@@ -72,9 +76,9 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
     source="paper_trader",
     permission=PermissionLevel.WRITE,  # Paper trading — nothing is irreversible
 )
-async def sell_stock(ticker: str) -> str:
-    """Execute a paper sell order (closes the entire position)."""
-    logger.info("[TradingTools] Executing sell order for %s", ticker)
+async def sell_stock(ticker: str, qty_pct: float = 1.0) -> str:
+    """Execute a paper sell order (closes the entire position or a percentage)."""
+    logger.info("[TradingTools] Executing sell order for %s (qty: %.2f)", ticker, qty_pct)
     ticker = ticker.upper().strip()
     # Use the dynamically resolved active bot_id (not settings.BOT_ID)
     try:
@@ -85,7 +89,7 @@ async def sell_stock(ticker: str) -> str:
         bot_id = settings.BOT_ID
 
     try:
-        result = await sell(bot_id, ticker)
+        result = await sell(bot_id, ticker, qty_pct=qty_pct)
         if "error" in result:
             return json.dumps({"status": "error", "message": result["error"]})
         return json.dumps({"status": "success", "trade": result})

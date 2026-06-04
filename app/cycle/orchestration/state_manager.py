@@ -656,7 +656,7 @@ class PipelineStateMixin:
         #     → zombie cycle, process was killed
         #   - "stopped" → graceful shutdown set this, but checkpoint may exist
         #   - "interrupted" → already flagged from a prior boot, re-validate
-        _terminal_no_checkpoint = ("idle", "done")
+        _terminal_no_checkpoint = ("idle", "done", "persisted")
 
         # ── Handle "error" and "stopped" states: reset to idle ──────────
         # Previously these were treated as terminal and left in place,
