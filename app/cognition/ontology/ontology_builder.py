@@ -588,6 +588,62 @@ class BrainGraph:
             BrainGraph.upsert_edge(ticker, peer, "COMPETES_WITH", weight=0.5)
             count += 2
 
+        with get_db() as db:
+            # ── Congress trades (Person nodes) ────────────────────────────
+            try:
+                congress_rows = db.execute(
+                    "SELECT DISTINCT politician, party, transaction_type "
+                    "FROM congress_trades WHERE ticker = %s "
+                    "ORDER BY trade_date DESC LIMIT 5",
+                    [ticker],
+                ).fetchall()
+            except Exception:
+                congress_rows = []
+
+        for politician, party, txn_type in congress_rows:
+            person_id = f"congress_{politician.lower().replace(' ', '_')[:30]}"
+            BrainGraph.upsert_node(
+                person_id, "Person",
+                label=politician[:60],
+                metadata={"party": party, "role": "congress", "last_txn": txn_type},
+            )
+            BrainGraph.upsert_edge(
+                person_id, ticker, "HELD_BY",
+                weight=0.65,
+                metadata={"transaction_type": txn_type},
+            )
+            count += 2
+
+        with get_db() as db:
+            # ── Fund holdings (Institution nodes) ─────────────────────────
+            try:
+                fund_rows = db.execute(
+                    "SELECT f.filer_name, h.shares, h.value_usd "
+                    "FROM sec_13f_holdings h "
+                    "LEFT JOIN sec_13f_filers f ON h.cik = f.cik "
+                    "WHERE h.ticker = %s "
+                    "ORDER BY h.value_usd DESC LIMIT 3",
+                    [ticker],
+                ).fetchall()
+            except Exception:
+                fund_rows = []
+
+        for filer_name, shares, value_usd in fund_rows:
+            if not filer_name:
+                continue
+            fund_id = f"fund_{filer_name.lower().replace(' ', '_')[:30]}"
+            BrainGraph.upsert_node(
+                fund_id, "Institution",
+                label=filer_name[:60],
+                metadata={"shares": shares, "value_usd": value_usd},
+            )
+            BrainGraph.upsert_edge(
+                fund_id, ticker, "HELD_BY",
+                weight=0.7,
+                metadata={"shares": shares, "value_usd": value_usd},
+            )
+            count += 2
+
         logger.info("[BrainGraph] Seeded %d nodes+edges for %s", count, ticker)
         return count
 

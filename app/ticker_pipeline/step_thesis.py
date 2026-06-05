@@ -17,8 +17,8 @@ from app.log_manager import log_manager
 
 logger = logging.getLogger(__name__)
 
-# Cap extra context to ~1500 tokens (4 chars/token)
-MAX_EXTRA_CONTEXT_CHARS = 6000
+# Cap extra context to ~2000 tokens (4 chars/token)
+MAX_EXTRA_CONTEXT_CHARS = 8000
 
 
 async def run_thesis_step(ctx: TickerContext) -> TickerContext:
@@ -186,6 +186,16 @@ def _build_extra_context(ctx: TickerContext) -> str:
         except Exception:
             pass
 
+    # Ontology / Brain Graph context (high priority — this is the system's
+    # learned intelligence from past cycles, claims, and entity extraction).
+    # Guaranteed a minimum of 1500 chars before anything else can eat the budget.
+    ontology_text = ctx.ontology_ctx.get("ontology_context", "")
+    if ontology_text:
+        ontology_budget = max(1500, MAX_EXTRA_CONTEXT_CHARS - budget_used - 4000)
+        trimmed_onto = ontology_text[:ontology_budget]
+        parts.append(trimmed_onto)
+        budget_used += len(trimmed_onto)
+
     # Trading Constitution
     try:
         from app.pipeline.trading_constitution import format_constitution_for_prompt
@@ -220,14 +230,6 @@ def _build_extra_context(ctx: TickerContext) -> str:
         part = f"# MACRO STRATEGY MEMO\n{ctx.macro_memo}"
         parts.append(part)
         budget_used += len(part)
-
-    # Ontology
-    ontology_text = ctx.ontology_ctx.get("ontology_context", "")
-    if ontology_text:
-        remaining = MAX_EXTRA_CONTEXT_CHARS - budget_used
-        if remaining > 200:
-            parts.append(ontology_text[:remaining])
-            budget_used += min(len(ontology_text), remaining)
 
     # Memory
     mem_brief = ctx.memory_context.get("memory_brief", "")

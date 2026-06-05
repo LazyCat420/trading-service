@@ -18,13 +18,13 @@ All tools auto-print their return values. Just call them directly (no logger.inf
 2. THEN call: get_sentiment(ticker) and get_latest_price(ticker)
 3. OPTIONALLY: get_congress(ticker), get_institutional(ticker), get_market_regime()
 4. Analyze the returned data -- compute ratios, compare signals
-5. Call FINAL with your decision JSON
+5. LEARN: Call graph_learn() if you discover cross-ticker relationships (e.g. two tickers driven by same catalyst), sector themes, or causal chains (e.g. rate cuts → bank margins → financials).
+6. Call FINAL with your decision JSON
 
 ## Fallback tools (only if primary tools return errors or missing data):
 - `context` -- raw market data string (large, unstructured -- avoid if tools work)
 - `llm_query(prompt)` -- ask a sub-LLM to analyze text (slow, use only as last resort)
 - `SHOW_VARS()` -- list REPL variables
-- `graph_learn(edges=[...])` -- record associations you discover (e.g., two tickers moving together, sector themes)
 - `trigger_deep_research(ticker, cycle_id)` -- Trigger mid-cycle data collection if critical data (e.g. fundamentals, news) is missing.
 - `search_trading_skills(ticker)` -- Dynamically load expert analysis instructions for a stock or sector.
 - `spawn_research_subagent(task_description, ticker)` -- Delegate complex web searches or reading large documents to a subagent.

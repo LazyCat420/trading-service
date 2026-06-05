@@ -331,8 +331,10 @@ def extract_and_seed(
                                   relation="BELONGS_TO", weight=0.65)
 
         # ── 5. Risks → Risk nodes + EXPOSED_TO edges ──
+        # Risk IDs are shared across tickers (no ticker in UUID seed) so
+        # multiple tickers exposed to the same risk create natural cross-links.
         for risk_label in risks:
-            risk_id = f"risk_{uuid.uuid5(uuid.NAMESPACE_DNS, f'{ticker}:{risk_label}').hex[:12]}"
+            risk_id = f"risk_{uuid.uuid5(uuid.NAMESPACE_DNS, risk_label).hex[:12]}"
             db.execute(
                 "INSERT INTO ontology_nodes "
                 "(id, node_type, label, activation, "
