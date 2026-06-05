@@ -109,6 +109,7 @@ async def execute_decisions(
     # ── Dispatch to Deterministic Lego Executor ──
     try:
         from app.services.pipeline_service import PipelineService
+        from app.trading.paper_trader import MAX_PRICE_AGE_HOURS
         
         # Sort decisions by confidence descending to prioritize highest conviction trades first
         actionable_decisions.sort(key=lambda x: x.get("confidence", 0), reverse=True)
@@ -119,72 +120,94 @@ async def execute_decisions(
             confidence = d.get("confidence", 0)
             rationale = d.get("rationale", "No rationale provided")
             
-            # Refresh portfolio for accurate constraints
-            current_portfolio = get_portfolio(bot_id)
-            
-            # Lego 1: Risk Manager
-            is_allowed, block_reason = check_portfolio_constraints(current_portfolio, action)
-            if not is_allowed:
-                skipped.append({"ticker": ticker, "action": action, "reason": block_reason})
-                counts["blocked"] += 1
-                logger.info("[TRADING] VETO %s %s: %s", action, ticker, block_reason)
-                continue
+            # Wrap each ticker in its own try/except so one failure doesn't abort all trades
+            try:
+                # Refresh portfolio for accurate constraints
+                current_portfolio = get_portfolio(bot_id)
                 
-            # Execute Trade
-            if action == "BUY":
-                # Lego 2: Position Sizer
-                current_price = await _get_current_price(ticker)
-                sizing = calculate_buy_size(confidence, current_portfolio.get("cash", 0.0), current_price)
-                
-                if sizing["amount"] <= 0:
-                    skipped.append({"ticker": ticker, "action": action, "reason": "Calculated size is 0 (confidence too low or no cash)"})
+                # Lego 1: Risk Manager
+                is_allowed, block_reason = check_portfolio_constraints(current_portfolio, action)
+                if not is_allowed:
+                    skipped.append({"ticker": ticker, "action": action, "reason": block_reason})
                     counts["blocked"] += 1
+                    logger.info("[TRADING] VETO %s %s: %s", action, ticker, block_reason)
                     continue
                     
-                # Call paper trader buy tool natively
-                result = await buy(bot_id, ticker, size_pct=sizing["size_pct"] / 100.0)
-                if "error" in result:
-                    counts["buy_failed"] += 1
-                    skipped.append({"ticker": ticker, "action": action, "reason": result["error"]})
-                else:
-                    counts["buy_executed"] += 1
-                    executed.append({
-                        "ticker": ticker,
-                        "action": "BUY",
-                        "size_pct": sizing["size_pct"],
-                        "rationale": f"Determined by Lego Sizer: {sizing['size_pct']}% of cash.",
-                        "trade_result": result
-                    })
-                    try:
-                        PipelineService.emit("trading", ticker, f"Executed BUY via lego: {rationale}", data=executed[-1])
-                        record_trade(ticker)
-                    except Exception as emit_err:
-                        logger.debug("[TRADE] Failed to emit BUY event: %s", emit_err)
+                # Execute Trade
+                if action == "BUY":
+                    # Lego 2: Position Sizer
+                    # _get_current_price is sync and returns (price, age_hours) tuple
+                    current_price, price_age_hours = _get_current_price(ticker)
+                    if current_price is None:
+                        skipped.append({"ticker": ticker, "action": action, "reason": f"No price data for {ticker}"})
+                        counts["buy_failed"] += 1
+                        logger.warning("[TRADING] SKIP BUY %s: no price data", ticker)
+                        continue
+                    if price_age_hours is not None and price_age_hours > MAX_PRICE_AGE_HOURS:
+                        skipped.append({"ticker": ticker, "action": action, "reason": f"Stale price ({price_age_hours:.0f}h old, max {MAX_PRICE_AGE_HOURS}h)"})
+                        counts["buy_failed"] += 1
+                        logger.warning("[TRADING] SKIP BUY %s: stale price (%.0fh old)", ticker, price_age_hours)
+                        continue
 
-            elif action == "SELL":
-                # Sell 100% of position
-                result = await sell(bot_id, ticker, qty_pct=1.0)
-                if "error" in result:
+                    sizing = calculate_buy_size(confidence, current_portfolio.get("cash", 0.0), current_price)
+                    
+                    if sizing["amount"] <= 0:
+                        skipped.append({"ticker": ticker, "action": action, "reason": "Calculated size is 0 (confidence too low or no cash)"})
+                        counts["blocked"] += 1
+                        continue
+                        
+                    # Call paper trader buy tool natively
+                    result = await buy(bot_id, ticker, size_pct=sizing["size_pct"] / 100.0, cycle_id=cycle_id)
+                    if "error" in result:
+                        counts["buy_failed"] += 1
+                        skipped.append({"ticker": ticker, "action": action, "reason": result["error"]})
+                    else:
+                        counts["buy_executed"] += 1
+                        executed.append({
+                            "ticker": ticker,
+                            "action": "BUY",
+                            "size_pct": sizing["size_pct"],
+                            "rationale": f"Determined by Lego Sizer: {sizing['size_pct']}% of cash.",
+                            "trade_result": result
+                        })
+                        try:
+                            PipelineService.emit("trading", ticker, f"Executed BUY via lego: {rationale}", data=executed[-1])
+                            record_trade(ticker)
+                        except Exception as emit_err:
+                            logger.debug("[TRADE] Failed to emit BUY event: %s", emit_err)
+
+                elif action == "SELL":
+                    # Sell 100% of position
+                    result = await sell(bot_id, ticker, qty_pct=1.0, cycle_id=cycle_id)
+                    if "error" in result:
+                        counts["sell_failed"] += 1
+                        skipped.append({"ticker": ticker, "action": action, "reason": result["error"]})
+                    else:
+                        counts["sell_executed"] += 1
+                        executed.append({
+                            "ticker": ticker,
+                            "action": "SELL",
+                            "size_pct": 100.0,
+                            "rationale": "Closed position 100%",
+                            "trade_result": result
+                        })
+                        try:
+                            PipelineService.emit("trading", ticker, f"Executed SELL via lego: {rationale}", data=executed[-1])
+                            await run_with_timeout(
+                                resolve_outcome(ticker, bot_id, cycle_id=cycle_id),
+                                timeout=30.0,
+                                label=f"resolve_outcome_{ticker}"
+                            )
+                        except Exception as emit_err:
+                            logger.debug("[TRADE] Failed to emit SELL event: %s", emit_err)
+
+            except Exception as ticker_err:
+                logger.error("[TRADING] Trade execution failed for %s %s: %s", action, ticker, ticker_err)
+                skipped.append({"ticker": ticker, "action": action, "reason": f"Execution error: {ticker_err}"})
+                if action == "BUY":
+                    counts["buy_failed"] += 1
+                elif action == "SELL":
                     counts["sell_failed"] += 1
-                    skipped.append({"ticker": ticker, "action": action, "reason": result["error"]})
-                else:
-                    counts["sell_executed"] += 1
-                    executed.append({
-                        "ticker": ticker,
-                        "action": "SELL",
-                        "size_pct": 100.0,
-                        "rationale": "Closed position 100%",
-                        "trade_result": result
-                    })
-                    try:
-                        PipelineService.emit("trading", ticker, f"Executed SELL via lego: {rationale}", data=executed[-1])
-                        await run_with_timeout(
-                            resolve_outcome(ticker, bot_id, cycle_id=cycle_id),
-                            timeout=30.0,
-                            label=f"resolve_outcome_{ticker}"
-                        )
-                    except Exception as emit_err:
-                        logger.debug("[TRADE] Failed to emit SELL event: %s", emit_err)
 
     except Exception as e:
         logger.error("[TRADING] Lego execution pipeline failed entirely: %s", e)
