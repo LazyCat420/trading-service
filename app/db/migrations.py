@@ -1069,3 +1069,49 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Ticker User Notes (per-ticker collaboration comments) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticker_user_notes (
+                    ticker      TEXT PRIMARY KEY,
+                    note        TEXT NOT NULL,
+                    updated_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    # ── User Intents (chat-to-trading intent extraction) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_intents (
+                    id              TEXT PRIMARY KEY,
+                    ticker          TEXT,
+                    intent_type     TEXT NOT NULL,
+                    raw_message     TEXT,
+                    extracted_insight TEXT,
+                    source          TEXT DEFAULT 'chat',
+                    created_at      TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_intents_ticker "
+                "ON user_intents(ticker)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_intents_created "
+                "ON user_intents(created_at DESC)"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
