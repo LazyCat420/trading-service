@@ -282,6 +282,26 @@ def check_ban_patterns(ticker: str) -> str | None:
 # ── Pause / Resume ───────────────────────────────────────────────────
 
 
+def get_paused() -> list[dict]:
+    """Return all paused watchlist tickers."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT ticker, source, notes, added_at, status_reason "
+            "FROM watchlist WHERE status = 'paused' "
+            "ORDER BY added_at DESC"
+        ).fetchall()
+    return [
+        {
+            "ticker": r[0],
+            "source": r[1],
+            "notes": r[2],
+            "added_at": r[3].isoformat() if r[3] else None,
+            "status_reason": r[4],
+        }
+        for r in rows
+    ]
+
+
 def pause_ticker(ticker: str, reason: str = "user paused") -> bool:
     """Temporarily pause a ticker. It won't be scraped this cycle."""
     ticker = ticker.upper().strip()

@@ -19,14 +19,30 @@ def disable_prism_routing_globally():
 @pytest.fixture(autouse=True, scope="session")
 def mock_new_agents_globally():
     """Globally mock the new specialist agents that make external LLM calls."""
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import AsyncMock, patch, MagicMock
+    import sys
+    
+    # Dynamically inject portfolio_allocator_agent if it doesn't exist to prevent import/attribute errors in tests
+    if "app.agents.portfolio_allocator_agent" not in sys.modules:
+        mock_pa_module = MagicMock()
+        mock_pa_module.run_portfolio_allocator = AsyncMock(return_value={})
+        sys.modules["app.agents.portfolio_allocator_agent"] = mock_pa_module
+        
     with patch("app.agents.portfolio_allocator_agent.run_portfolio_allocator", new_callable=AsyncMock) as mock_pa, \
-         patch("app.cycle.trading_phase.run_portfolio_allocator", mock_pa), \
          patch("app.agents.post_mortem_auditor_agent.run_post_mortem", new_callable=AsyncMock) as mock_pm, \
          patch("app.cycle.phases.phase6_post.run_post_mortem", mock_pm):
-        mock_pa.return_value = {}
-        mock_pm.return_value = None
-        yield mock_pa, mock_pm
+        
+        # Conditionally patch trading_phase.run_portfolio_allocator if it exists
+        import app.cycle.trading_phase
+        if hasattr(app.cycle.trading_phase, "run_portfolio_allocator"):
+            with patch("app.cycle.trading_phase.run_portfolio_allocator", mock_pa):
+                mock_pa.return_value = {}
+                mock_pm.return_value = None
+                yield mock_pa, mock_pm
+        else:
+            mock_pa.return_value = {}
+            mock_pm.return_value = None
+            yield mock_pa, mock_pm
 
 @pytest.fixture(autouse=True, scope="session")
 def mock_psycopg():

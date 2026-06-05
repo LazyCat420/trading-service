@@ -9,7 +9,8 @@ from app.trading.watchlist import (
     resume_ticker,
     ban_ticker,
     is_banned,
-    check_ban_patterns
+    check_ban_patterns,
+    get_paused
 )
 
 @pytest.fixture
@@ -64,6 +65,17 @@ def test_pause_resume_ticker(mock_get_db, mock_db):
     
     # Resume
     assert resume_ticker("AAPL") is True
+
+@patch("app.trading.watchlist.get_db")
+def test_get_paused(mock_get_db, mock_db):
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    mock_db.execute.return_value.fetchall.return_value = [
+        ("AAPL", "manual", "Notes", None, "user paused")
+    ]
+    paused = get_paused()
+    assert len(paused) == 1
+    assert paused[0]["ticker"] == "AAPL"
+    assert paused[0]["status_reason"] == "user paused"
 
 @patch("app.trading.watchlist.get_db")
 @patch("app.trading.watchlist._snapshot_market_data", return_value=(None, 0.5, None))
