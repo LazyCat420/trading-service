@@ -541,10 +541,23 @@ class PipelineStateMixin:
             state["cycle_id"] = mem_cycle_id
 
             # Also sync critical fields from in-memory state
-            for key in ("status", "phase", "step_count", "total_steps", "progress"):
+            # NOTE: started_at and finished_at MUST be included here.
+            # Without them the frontend gets a new cycle_id paired with
+            # the old cycle's started_at, causing timer flicker.
+            for key in ("status", "phase", "step_count", "total_steps", "progress", "started_at", "finished_at"):
                 mem_val = cls._state.get(key)
                 if mem_val is not None:
                     state[key] = mem_val
+
+            # Re-fetch events for the correct (in-memory) cycle_id.
+            # The DB query above used the old cycle_id, so events would
+            # be from the previous cycle — causing phantom data.
+            if not summary_only:
+                try:
+                    corrected_events = PipelineStateDB.get_cycle_events(mem_cycle_id)
+                    state["events"] = corrected_events or []
+                except Exception:
+                    state["events"] = []
         # ─────────────────────────────────────────────────────────────────
 
         try:
