@@ -96,11 +96,14 @@ class Settings(BaseSettings):
     MIN_MARKET_CAP: float = 50_000_000  # $50M floor — reject OTC/penny
     CYCLE_TIMEOUT_MINUTES: int = 120  # 2-hour hard cap per cycle
     V2_TICKER_CONCURRENCY: int = (
-        8  # parallel tickers — parallel ticker analysis worker count
+        4  # parallel tickers — reduced from 8; each worker spawns 6-10 LLM calls,
+        # so 8 workers = 48-80 concurrent requests → vLLM saturation → mass thesis timeouts.
+        # 4 workers keeps total LLM load at ~24-40, within adaptive concurrency ceiling.
     )
     VLLM_FUTURE_TIMEOUT: int = 600  # seconds before a hung LLM future is killed (aligned with batch timeout)
     ANALYSIS_WORKER_TIMEOUT_SECONDS: int = (
-        1800  # 30-min hard cap per ticker — workers wait patiently for LLM queue
+        900  # 15-min hard cap per ticker — if thesis already failed 2 retries (5.5min),
+        # don't let the worker sit idle for another 25 min. Fail fast, move on.
     )
     POST_CYCLE_HOUSEKEEPING_TIMEOUT_SECONDS: int = 300
     BOT_ID: str = "lazy-trader-v4"
