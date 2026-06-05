@@ -989,15 +989,30 @@ async def analyze_ticker(
     # Store triage tier in result for audit trail
     result["triage_tier"] = triage_tier
 
-    # Record analysis in attention tracker
+    # Record analysis in attention tracker (with price for material change detection)
     try:
         from app.pipeline.attention_tracker import record_analysis as _record_attn
+
+        # Get current price for material change tracking
+        _analysis_price = None
+        try:
+            from app.db.connection import get_db as _get_attn_db
+            with _get_attn_db() as _adb:
+                _price_row = _adb.execute(
+                    "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+                    [ticker],
+                ).fetchone()
+                if _price_row:
+                    _analysis_price = float(_price_row[0])
+        except Exception:
+            pass
 
         _record_attn(
             ticker,
             action=final_action,
             confidence=final_confidence,
             was_deep=(triage_tier == "deep"),
+            price_at_analysis=_analysis_price,
         )
     except Exception as attn_err:
         logger.warning(
@@ -1196,8 +1211,9 @@ def _log_decision(result: dict, cycle_id: str, bot_id: str) -> None:
                     """
                     INSERT INTO analysis_results
                     (id, cycle_id, bot_id, ticker, agent_name, result_json, confidence, created_at, triage_tier,
-                     thesis_verdict, thesis_confidence, thesis_summary, thesis_updated_at, thesis_unchanged)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+                     thesis_verdict, thesis_confidence, thesis_summary, thesis_updated_at, thesis_unchanged,
+                     price_at_analysis)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s)
                     ON CONFLICT (id) DO NOTHING
                 """,
                     [
@@ -1215,6 +1231,8 @@ def _log_decision(result: dict, cycle_id: str, bot_id: str) -> None:
                         confidence if _is_thesis_run else None,
                         result.get("rationale", "")[:1500] if _is_thesis_run else None,
                         _thesis_now,
+                        # Price at analysis for material change detection
+                        price_row[0] if price_row else None,
                     ],
                 )
 

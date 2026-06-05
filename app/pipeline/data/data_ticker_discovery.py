@@ -262,6 +262,71 @@ async def run_ticker_discovery_and_gates(
                 )
                 logger.info(f"[PIPELINE]   [curation] FALLBACK (error): {e}")
 
+    # ═══════════════════════════════════════════════════════════
+    # PASS 2.8: AUTO-ADD DISCOVERIES TO WATCHLIST
+    # Top N promoted discoveries are automatically added to the
+    # active watchlist so they get analyzed in the next cycle.
+    # ═══════════════════════════════════════════════════════════
+    MAX_AUTO_ADD_PER_CYCLE = 5
+    if discovered_tickers:
+        logger.info("[PIPELINE] \n--- Pass 2.8: Auto-Add Discoveries to Watchlist ---")
+        t0 = time.monotonic()
+        async with pipeline_profiler.phase("pass2_8_watchlist_auto_add"):
+            try:
+                from app.trading.watchlist import add_ticker as wl_add_ticker
+
+                # Fetch scores for ranking
+                ticker_scores = {}
+                with get_db() as db:
+                    for dt in discovered_tickers:
+                        score_row = db.execute(
+                            "SELECT score FROM discovered_tickers WHERE ticker = %s ORDER BY discovered_at DESC LIMIT 1",
+                            [dt],
+                        ).fetchone()
+                        ticker_scores[dt] = float(score_row[0]) if score_row else 0.0
+
+                # Rank by score, take top N
+                ranked = sorted(discovered_tickers, key=lambda t: ticker_scores.get(t, 0), reverse=True)
+                to_add = ranked[:MAX_AUTO_ADD_PER_CYCLE]
+
+                auto_added = []
+                for t in to_add:
+                    score = ticker_scores.get(t, 0)
+                    if wl_add_ticker(t, source="discovery", notes=f"Auto-added: score={score:.1f}"):
+                        auto_added.append(t)
+
+                ms = elapsed_ms(t0)
+                emit(
+                    "collecting",
+                    "watchlist_auto_add",
+                    f"Auto-added {len(auto_added)}/{len(to_add)} discoveries to watchlist: "
+                    f"{', '.join(auto_added) if auto_added else 'none (all already on watchlist)'}",
+                    status="ok",
+                    data={
+                        "auto_added": auto_added,
+                        "attempted": to_add,
+                        "scores": {t: ticker_scores.get(t, 0) for t in to_add},
+                    },
+                    elapsed_ms=ms,
+                )
+                if auto_added:
+                    logger.info(
+                        "[PIPELINE]   [auto-add] Added %d discoveries to watchlist: %s",
+                        len(auto_added), ", ".join(auto_added),
+                    )
+                else:
+                    logger.info("[PIPELINE]   [auto-add] No new tickers added (all already on watchlist)")
+            except Exception as e:
+                ms = elapsed_ms(t0)
+                emit(
+                    "collecting",
+                    "watchlist_auto_add",
+                    f"Watchlist auto-add failed — {e}",
+                    status="error",
+                    elapsed_ms=ms,
+                )
+                logger.warning(f"[PIPELINE]   [auto-add] ERROR: {e}")
+
     return discovered_tickers
 
 

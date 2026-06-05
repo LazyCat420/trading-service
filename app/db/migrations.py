@@ -998,6 +998,42 @@ def _fix_eth_cagr_data(conn):
         except Exception:
             pass
 
+    # ── Smart Ticker Lifecycle: price tracking + decision history ──
+    _safe_add_column(conn, "analysis_results", "price_at_analysis", "DOUBLE PRECISION")
+    _safe_add_column(conn, "ticker_attention", "price_at_analysis", "DOUBLE PRECISION")
+    _safe_add_column(conn, "ticker_attention", "recent_decisions", "JSONB DEFAULT '[]'")
+
+    # ── Watchlist Curation Log (LLM Curator audit trail) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS watchlist_curation_log (
+                    id              TEXT PRIMARY KEY,
+                    ticker          TEXT NOT NULL,
+                    cycle_id        TEXT,
+                    trigger_reason  TEXT NOT NULL,
+                    decision        TEXT NOT NULL,
+                    rationale       TEXT,
+                    suggested_tier  TEXT,
+                    recent_decisions JSONB,
+                    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_curation_log_ticker "
+                "ON watchlist_curation_log(ticker)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_curation_log_created "
+                "ON watchlist_curation_log(created_at DESC)"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── Ticker Reports (Per-Ticker Cycle Audit Reports) ──
     try:
         with conn.cursor() as cur:

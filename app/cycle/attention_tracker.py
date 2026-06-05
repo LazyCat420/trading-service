@@ -9,6 +9,7 @@ Prevents:
 Database table: ticker_attention (auto-created via migration)
 """
 
+import json
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -127,7 +128,11 @@ def record_collection(ticker: str, data_hash: str | None = None) -> None:
 
 
 def record_analysis(
-    ticker: str, action: str, confidence: int, was_deep: bool = False
+    ticker: str,
+    action: str,
+    confidence: int,
+    was_deep: bool = False,
+    price_at_analysis: float | None = None,
 ) -> None:
     """Record that a ticker was analyzed this cycle.
 
@@ -136,6 +141,7 @@ def record_analysis(
         action: BUY/SELL/HOLD from decision engine.
         confidence: 0-100 confidence score.
         was_deep: Whether this was a Deep-tier analysis.
+        price_at_analysis: The ticker's closing price at analysis time.
     """
     try:
         _ensure_table()
@@ -159,8 +165,28 @@ def record_analysis(
             elif action == "HOLD":
                 consecutive_holds = 1
 
-            _upsert_field(
-                ticker,
+            # Build recent_decisions rolling window (last 10)
+            existing_decisions = []
+            try:
+                dec_row = db.execute(
+                    "SELECT recent_decisions FROM ticker_attention WHERE ticker = %s",
+                    [ticker],
+                ).fetchone()
+                if dec_row and dec_row[0]:
+                    existing_decisions = dec_row[0] if isinstance(dec_row[0], list) else json.loads(dec_row[0])
+            except Exception:
+                existing_decisions = []
+
+            new_decision = {
+                "action": action,
+                "confidence": confidence,
+                "at": now.isoformat(),
+            }
+            existing_decisions.append(new_decision)
+            # Keep only the last 10 decisions
+            recent_decisions = existing_decisions[-10:]
+
+            upsert_kwargs = dict(
                 last_analyzed_at=now,
                 consecutive_skips=0,  # Reset skip counter on analysis
                 consecutive_holds=consecutive_holds,
@@ -169,6 +195,19 @@ def record_analysis(
                 neglect_reason=None,
                 last_full_review_at=now,  # Record heartbeat for non-glance runs
             )
+            if price_at_analysis is not None:
+                upsert_kwargs["price_at_analysis"] = price_at_analysis
+
+            _upsert_field(ticker, **upsert_kwargs)
+
+            # Update recent_decisions separately (JSONB needs special handling)
+            try:
+                db.execute(
+                    "UPDATE ticker_attention SET recent_decisions = %s WHERE ticker = %s",
+                    [json.dumps(recent_decisions), ticker],
+                )
+            except Exception as rd_err:
+                logger.warning("[ATTENTION] Failed to update recent_decisions for %s: %s", ticker, rd_err)
             logger.debug(
                 "[ATTENTION] Recorded analysis for %s: %s (%d%%)",
                 ticker,

@@ -11,10 +11,76 @@ positions you have". Remaining slots after positions go to watchlist + discovery
 import logging
 import random
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import List
 from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
+
+# ── Material Change Thresholds ───────────────────────────────────────
+PRICE_CHANGE_THRESHOLD_PCT = 5.0   # >5% price move since last analysis
+NEW_ARTICLES_THRESHOLD = 3          # >=3 new articles since last analysis
+
+
+def _has_material_change(ticker: str, db) -> bool:
+    """Check if a ticker has a material change since its last analysis.
+
+    Material change = price moved >5% OR >=3 new articles published.
+    Used to override the 24h re-analysis cooldown.
+
+    Returns True if re-analysis is warranted despite recent analysis.
+    """
+    try:
+        # Get last analysis price and timestamp
+        row = db.execute(
+            """
+            SELECT price_at_analysis, created_at
+            FROM analysis_results
+            WHERE ticker = %s AND price_at_analysis IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            [ticker],
+        ).fetchone()
+        if not row:
+            return False  # No prior analysis with price data — no comparison possible
+
+        last_price = float(row[0])
+        last_analyzed_at = row[1]
+
+        # 1. Check price delta
+        if last_price and last_price > 0:
+            current_price_row = db.execute(
+                "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+                [ticker],
+            ).fetchone()
+            if current_price_row and current_price_row[0]:
+                current_price = float(current_price_row[0])
+                delta_pct = abs(current_price - last_price) / last_price * 100
+                if delta_pct >= PRICE_CHANGE_THRESHOLD_PCT:
+                    logger.info(
+                        "[SELECTOR] %s: MATERIAL CHANGE — price moved %.1f%% (%.2f → %.2f)",
+                        ticker, delta_pct, last_price, current_price,
+                    )
+                    return True
+
+        # 2. Check new article count since last analysis
+        if last_analyzed_at:
+            news_row = db.execute(
+                "SELECT COUNT(*) FROM news_articles WHERE ticker = %s AND published_at > %s",
+                [ticker, last_analyzed_at],
+            ).fetchone()
+            new_articles = news_row[0] if news_row else 0
+            if new_articles >= NEW_ARTICLES_THRESHOLD:
+                logger.info(
+                    "[SELECTOR] %s: MATERIAL CHANGE — %d new articles since last analysis",
+                    ticker, new_articles,
+                )
+                return True
+
+    except Exception as e:
+        logger.warning("[SELECTOR] Material change check failed for %s: %s", ticker, e)
+
+    return False
 
 
 @dataclass
@@ -104,6 +170,7 @@ class TickerSelector:
 
         # ── 1.5. Fetch 24-Hour Cooldown & Last Completed Cycle Tickers ──
         recent_analyzed: set[str] = set()
+        material_change_overrides: set[str] = set()
         with get_db() as db:
             try:
                 # 24-hour cooldown
@@ -139,6 +206,21 @@ class TickerSelector:
                         "[SELECTOR] Added %d tickers from last completed cycle '%s' to cooldown",
                         len(ticker_rows), last_cycle_id
                     )
+
+                # ── Material Change Override ──
+                # Check each recently-analyzed ticker for material changes
+                # (price >5% move or 3+ new articles). If changed, override cooldown.
+                for cooldown_ticker in list(recent_analyzed):
+                    if _has_material_change(cooldown_ticker, db):
+                        material_change_overrides.add(cooldown_ticker)
+                        recent_analyzed.discard(cooldown_ticker)
+
+                if material_change_overrides:
+                    logger.info(
+                        "[SELECTOR] Material change overrides (re-analyzing despite 24h cooldown): %s",
+                        ", ".join(sorted(material_change_overrides)),
+                    )
+
             except Exception as e:
                 logger.warning("[SELECTOR] Failed to fetch cooldown tickers: %s", e)
 
