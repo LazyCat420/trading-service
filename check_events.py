@@ -1,10 +1,12 @@
-import sys
-sys.path.insert(0, '/app')
-from app.config import settings
 import psycopg
-conn = psycopg.connect(settings.DATABASE_URL)
-cur = conn.cursor()
-cur.execute("SELECT timestamp, phase, step, detail FROM pipeline_events ORDER BY timestamp DESC LIMIT 5;")
-rows = cur.fetchall()
-for r in rows:
-    print(r)
+try:
+    conn = psycopg.connect("postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot")
+    res = conn.execute("SELECT count(*), min(timestamp), max(timestamp) FROM pipeline_events WHERE cycle_id = 'cycle-1780618264'").fetchone()
+    print("pipeline_events for cycle-1780618264:", res)
+    # Also get the latest 5 events
+    rows = conn.execute("SELECT timestamp, phase, step, detail, status FROM pipeline_events WHERE cycle_id = 'cycle-1780618264' ORDER BY timestamp DESC LIMIT 5").fetchall()
+    print("latest events:")
+    for r in rows:
+        print(r)
+except Exception as e:
+    print("Failed to query DB:", e)
