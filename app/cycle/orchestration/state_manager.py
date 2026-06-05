@@ -781,8 +781,6 @@ class PipelineStateMixin:
         cid = cls._state.get("cycle_id") or "no-id"
         logger.info("[CYCLE %s] %s/%s: %s (%s)", cid, phase, step, detail, status)
 
-        state_copy = dict(cls._state)
-
         with cls._emit_lock:
             cls._emit_events.append(event)
             if cls._emit_timer is None:
@@ -797,7 +795,8 @@ class PipelineStateMixin:
                         return
 
                     try:
-                        PipelineStateDB.save_state(state_copy)
+                        current_state = dict(cls._state)
+                        PipelineStateDB.save_state(current_state)
                         PipelineStateDB.append_events(cid, events_to_flush)
                     except Exception as e:
                         logger.error("[PipelineStateMixin] emit flush failed: %s", e)
