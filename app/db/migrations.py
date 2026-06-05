@@ -804,6 +804,21 @@ def _fix_eth_cagr_data(conn):
     _safe_add_column(conn, "tool_usage_stats", "service_source", "TEXT DEFAULT 'trading-service'")
     _safe_add_column(conn, "agent_traces", "service_source", "TEXT DEFAULT 'trading-service'")
 
+    # ── Tool Reputation Index ──
+    # Supports efficient queries for tool reliability stats (success rates by time window)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tool_usage_stats_name_time "
+                "ON tool_usage_stats(tool_name, called_at DESC)"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── Agent Tool Optimization (Highlight & Prune) ──
     try:
         with conn.cursor() as cur:

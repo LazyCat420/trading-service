@@ -455,19 +455,55 @@ async def run_prism_agent(
         )
 
         # Record tool optimization stats for Prism-routed agents.
-        # Prism handles tool execution internally, so tool_usage_stats is never
-        # populated for these runs. We mark all offered tools as "active" to
-        # prevent the ToolOptimizer from pruning them after 4+ cycles.
+        # Prism's JSON response includes toolCalls (names of tools that were called).
+        # We extract actual used tool names for accurate optimization tracking.
         try:
-            from app.services.tool_optimizer import mark_tools_as_used_by_prism
-            asyncio.create_task(
-                mark_tools_as_used_by_prism(
-                    agent_name=agent_name,
-                    offered_tools=active_tools,
+            # Extract tool call names from Prism's response
+            prism_tool_calls = result_data.get("toolCalls", [])
+            used_tool_names = [
+                tc.get("name", "") for tc in prism_tool_calls
+                if isinstance(tc, dict) and tc.get("name")
+            ]
+
+            if used_tool_names:
+                # Log each tool call to tool_usage_stats for reputation tracking
+                from app.services.logging.tool_logging import log_tool_call
+                for tool_name in used_tool_names:
+                    log_tool_call(
+                        tool_name=tool_name,
+                        agent_name=agent_name,
+                        ticker=ticker,
+                        cycle_id=cycle_id,
+                        success=True,  # Prism JSON only reports "calling" status; assume success
+                        execution_ms=0,  # Per-tool latency not available from JSON response
+                        service_source="prism",
+                    )
+                logger.info(
+                    "[PrismHarness] Logged %d Prism tool calls for %s: %s",
+                    len(used_tool_names), agent_name, used_tool_names,
                 )
-            )
+
+                # Data-driven optimization: only mark actually-used tools as active
+                from app.services.tool_optimizer import record_tool_optimization_usage
+                asyncio.create_task(
+                    record_tool_optimization_usage(
+                        agent_name=agent_name,
+                        offered_tools=active_tools,
+                        used_tool_names=used_tool_names,
+                    )
+                )
+            else:
+                # No tool call data available — fall back to marking all as active
+                # to prevent false pruning
+                from app.services.tool_optimizer import mark_tools_as_used_by_prism
+                asyncio.create_task(
+                    mark_tools_as_used_by_prism(
+                        agent_name=agent_name,
+                        offered_tools=active_tools,
+                    )
+                )
         except Exception as rec_err:
-            logger.warning("[PrismHarness] Failed to trigger mark_tools_as_used_by_prism: %s", rec_err)
+            logger.warning("[PrismHarness] Failed to record Prism tool usage: %s", rec_err)
 
         return PrismAgentResult(
             final_text=final_text,

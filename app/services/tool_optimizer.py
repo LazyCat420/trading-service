@@ -8,6 +8,102 @@ logger = logging.getLogger(__name__)
 # Prevents zombie state where agents have 0 tools and hang in Prism.
 MIN_TOOLS_FLOOR = 2
 
+# ── Reputation thresholds ──
+# Tools below these success rates get warnings injected into agent prompts
+REPUTATION_UNRELIABLE_THRESHOLD = 0.6   # success_rate < 60% → warning
+REPUTATION_BROKEN_THRESHOLD = 0.2       # success_rate < 20% → strong warning
+REPUTATION_MIN_CALLS = 3                # Minimum calls before judging
+REPUTATION_WINDOW_HOURS = 24            # Look back window
+
+
+def get_tool_reputation(
+    tool_names: list[str],
+    window_hours: int = REPUTATION_WINDOW_HOURS,
+    min_calls: int = REPUTATION_MIN_CALLS,
+) -> dict[str, dict]:
+    """Query tool reliability stats from recent calls in tool_usage_stats.
+
+    Returns per-tool dict with:
+      - total_calls: int
+      - success_count: int
+      - failure_count: int
+      - success_rate: float (0.0 - 1.0)
+      - avg_latency_ms: float
+      - reliability_tier: "reliable" | "unreliable" | "broken" | "unknown"
+
+    Tiers:
+      - reliable:   success_rate >= 0.6 (or < min_calls total)
+      - unreliable: success_rate 0.2 - 0.6
+      - broken:     success_rate < 0.2
+      - unknown:    fewer than min_calls recorded
+    """
+    if not tool_names:
+        return {}
+
+    reputation: dict[str, dict] = {}
+
+    try:
+        with get_db() as db:
+            placeholders = ", ".join(["%s"] * len(tool_names))
+            db.execute(
+                f"""
+                SELECT
+                    tool_name,
+                    COUNT(*) AS total_calls,
+                    SUM(CASE WHEN success THEN 1 ELSE 0 END) AS success_count,
+                    SUM(CASE WHEN NOT success THEN 1 ELSE 0 END) AS failure_count,
+                    AVG(execution_ms) AS avg_latency_ms
+                FROM tool_usage_stats
+                WHERE tool_name IN ({placeholders})
+                  AND called_at > NOW() - INTERVAL '{int(window_hours)} hours'
+                GROUP BY tool_name
+                """,
+                tool_names,
+            )
+            rows = db.fetchall()
+
+            for row in rows:
+                name, total, successes, failures, avg_ms = row
+                total = int(total)
+                successes = int(successes)
+                failures = int(failures)
+                avg_ms = float(avg_ms) if avg_ms else 0.0
+                rate = successes / total if total > 0 else 1.0
+
+                if total < min_calls:
+                    tier = "unknown"
+                elif rate < REPUTATION_BROKEN_THRESHOLD:
+                    tier = "broken"
+                elif rate < REPUTATION_UNRELIABLE_THRESHOLD:
+                    tier = "unreliable"
+                else:
+                    tier = "reliable"
+
+                reputation[name] = {
+                    "total_calls": total,
+                    "success_count": successes,
+                    "failure_count": failures,
+                    "success_rate": round(rate, 3),
+                    "avg_latency_ms": round(avg_ms, 1),
+                    "reliability_tier": tier,
+                }
+    except Exception as e:
+        logger.warning("[ToolOptimizer] Failed to query tool reputation (non-fatal): %s", e)
+
+    # Fill in tools with no data
+    for name in tool_names:
+        if name not in reputation:
+            reputation[name] = {
+                "total_calls": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "success_rate": 1.0,
+                "avg_latency_ms": 0.0,
+                "reliability_tier": "unknown",
+            }
+
+    return reputation
+
 async def optimize_agent_tools(
     agent_name: str,
     initial_tools: list[dict],
@@ -122,6 +218,56 @@ async def optimize_agent_tools(
             list(pruned_names),
             agent_name,
         )
+
+    # ── Tool Reputation Warnings ──
+    # Query recent success/failure rates and inject warnings for unreliable tools.
+    # Tools are NEVER removed — agents get warnings and decide based on context.
+    remaining_tool_names = [
+        (t.get("name") or t.get("function", {}).get("name")) if isinstance(t, dict) else str(t)
+        for t in optimized_tools
+    ]
+    remaining_tool_names = [n for n in remaining_tool_names if n]
+
+    if remaining_tool_names:
+        reputation = get_tool_reputation(remaining_tool_names)
+        unreliable_warnings = []
+        broken_warnings = []
+
+        for tool_name, stats in reputation.items():
+            tier = stats["reliability_tier"]
+            if tier == "unreliable":
+                pct = int(stats["success_rate"] * 100)
+                fails = stats["failure_count"]
+                total = stats["total_calls"]
+                unreliable_warnings.append(
+                    f"⚠️ {tool_name}: {pct}% success rate "
+                    f"({fails}/{total} calls failed in last {REPUTATION_WINDOW_HOURS}h). "
+                    f"Consider alternative tools if available."
+                )
+            elif tier == "broken":
+                pct = int(stats["success_rate"] * 100)
+                fails = stats["failure_count"]
+                total = stats["total_calls"]
+                broken_warnings.append(
+                    f"🔴 {tool_name}: {pct}% success rate "
+                    f"({fails}/{total} calls failed in last {REPUTATION_WINDOW_HOURS}h). "
+                    f"This tool is highly unreliable — only use as a last resort."
+                )
+
+        if unreliable_warnings or broken_warnings:
+            reputation_block = "\n\n### TOOL RELIABILITY WARNINGS:\n"
+            reputation_block += "\n".join(broken_warnings + unreliable_warnings)
+            reputation_block += (
+                "\n\nUse this information to prioritize more reliable tools. "
+                "Unreliable tools may still work — use your judgement based on the task."
+            )
+            updated_prompt += reputation_block
+            logger.info(
+                "[ToolOptimizer] Injected reputation warnings for %s: %d unreliable, %d broken",
+                agent_name,
+                len(unreliable_warnings),
+                len(broken_warnings),
+            )
 
     return optimized_tools, updated_prompt
 

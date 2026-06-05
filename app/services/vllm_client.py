@@ -1588,6 +1588,7 @@ class VLLMClient:
         thinking = ""
         total_tokens = 0
         tool_calls = []
+        tool_executions = []  # Captures Prism tool_execution SSE events for reputation tracking
 
         import json as _json
         from app.utils.text_utils import sanitize_surrogates
@@ -1652,6 +1653,21 @@ class VLLMClient:
                                 "name": chunk_data.get("name"),
                                 "args": chunk_data.get("args", {}),
                             })
+                        elif ctype == "tool_execution":
+                            # Prism emits tool execution results with name, args, result, status
+                            tool_data = chunk_data.get("tool", {})
+                            exec_status = chunk_data.get("status", "")
+                            result_obj = tool_data.get("result", {})
+                            has_error = exec_status == "error" or (
+                                isinstance(result_obj, dict) and bool(result_obj.get("error"))
+                            )
+                            tool_executions.append({
+                                "name": tool_data.get("name", ""),
+                                "args": tool_data.get("args", {}),
+                                "status": exec_status,
+                                "has_error": has_error,
+                                "result_preview": str(result_obj)[:500],
+                            })
                         elif ctype == "done":
                             usage = chunk_data.get("usage", {})
                             if usage:
@@ -1673,6 +1689,17 @@ class VLLMClient:
 
         if tool_calls:
             payload["_tool_calls_result"] = _normalize_prism_tool_calls(tool_calls)
+
+        # Store tool execution data for reputation tracking
+        if tool_executions:
+            meta["_tool_executions"] = tool_executions
+            logger.info(
+                "[PRISM_TOOLS] Captured %d tool executions (errors=%d) for %s/%s",
+                len(tool_executions),
+                sum(1 for te in tool_executions if te["has_error"]),
+                meta.get("agent_name", "?"),
+                meta.get("ticker", "?"),
+            )
 
         return content, total_tokens, elapsed_ms
 
