@@ -138,6 +138,16 @@ class BrainGraph:
                         "VALUES (%s, %s, %s, 0.0, %s, %s, %s, %s)",
                         [node_id, node_type, label, embedding, meta_json, now, now],
                     )
+                    # Emit event for WebSocket broadcast
+                    try:
+                        db.execute(
+                            "INSERT INTO graph_node_events "
+                            "(event_type, node_id, node_type, label, metadata_json, ticker) "
+                            "VALUES ('node_added', %s, %s, %s, %s, %s)",
+                            [node_id, node_type, label, meta_json, node_id],
+                        )
+                    except Exception:
+                        pass  # Non-fatal: event table may not exist yet
         except Exception as e:
             logger.error("[BrainGraph] upsert_node error: %s", e)
 
@@ -233,6 +243,16 @@ class BrainGraph:
                             now,
                         ],
                     )
+                    # Emit event for WebSocket broadcast
+                    try:
+                        db.execute(
+                            "INSERT INTO graph_node_events "
+                            "(event_type, source_id, target_id, relation, weight, ticker) "
+                            "VALUES ('edge_added', %s, %s, %s, %s, %s)",
+                            [source_id, target_id, relation, weight, source_id],
+                        )
+                    except Exception:
+                        pass  # Non-fatal
         except Exception as e:
             logger.error("[BrainGraph] upsert_edge error: %s", e)
 

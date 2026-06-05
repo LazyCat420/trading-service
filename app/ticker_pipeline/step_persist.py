@@ -191,4 +191,30 @@ async def run_persist_step(ctx: TickerContext) -> dict[str, Any]:
     except Exception as e:
         logger.warning("[V2] Attention tracker failed for %s (non-fatal): %s", ctx.ticker, e)
 
+    # ── Step 12: Entity extraction → Brain Graph enrichment ──
+    try:
+        from app.cognition.ontology.entity_extractor import extract_and_seed
+
+        # Combine all analysis text for entity extraction
+        extraction_text = ctx.final_rationale or ""
+        if ctx.team_findings_summary:
+            extraction_text += "\n" + ctx.team_findings_summary
+        if ctx.agent_insights:
+            for _agent, insight in ctx.agent_insights.items():
+                if isinstance(insight, str):
+                    extraction_text += "\n" + insight[:500]
+
+        if len(extraction_text) > 30:
+            t_extract = time.monotonic()
+            stats = extract_and_seed(ctx.ticker, extraction_text, ctx.cycle_id)
+            ms_extract = ctx.elapsed_ms(t_extract)
+            if stats["total_nodes"] > 0:
+                logger.info(
+                    "[V2] Entity extraction for %s: %d nodes, %d edges (%dms)",
+                    ctx.ticker, stats["total_nodes"], stats["total_edges"], ms_extract,
+                )
+            ctx.add_stage("entity_extraction")
+    except Exception as e:
+        logger.warning("[V2] Entity extraction failed for %s (non-fatal): %s", ctx.ticker, e)
+
     return result

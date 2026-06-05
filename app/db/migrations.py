@@ -129,6 +129,7 @@ def run_migrations(conn):
 
     # ── Ontology Graph: source_cycle_id tracking
     _safe_add_column(conn, "ontology_nodes", "source_cycle_id", "TEXT")
+    _safe_add_column(conn, "ontology_edges", "source_cycle_id", "TEXT")
 
     # ── JIT Scraper / Re-analysis tracking
     _safe_add_column(conn, "news_articles", "analysis_count", "INTEGER DEFAULT 0")
