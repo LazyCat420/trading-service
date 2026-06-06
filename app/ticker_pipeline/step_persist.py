@@ -193,7 +193,7 @@ async def run_persist_step(ctx: TickerContext) -> dict[str, Any]:
 
     # ── Step 12: Entity extraction → Brain Graph enrichment ──
     try:
-        from app.cognition.ontology.entity_extractor import extract_and_seed
+        from app.cognition.ontology.entity_extractor import async_extract_and_seed_deep
 
         # Combine all analysis text for entity extraction
         extraction_text = ctx.final_rationale or ""
@@ -205,15 +205,24 @@ async def run_persist_step(ctx: TickerContext) -> dict[str, Any]:
                     extraction_text += "\n" + insight[:500]
 
         if len(extraction_text) > 30:
-            t_extract = time.monotonic()
-            stats = extract_and_seed(ctx.ticker, extraction_text, ctx.cycle_id)
-            ms_extract = ctx.elapsed_ms(t_extract)
-            if stats["total_nodes"] > 0:
-                logger.info(
-                    "[V2] Entity extraction for %s: %d nodes, %d edges (%dms)",
-                    ctx.ticker, stats["total_nodes"], stats["total_edges"], ms_extract,
-                )
-            ctx.add_stage("entity_extraction")
+            import asyncio
+            
+            async def _bg_extract():
+                t_extract = time.monotonic()
+                try:
+                    stats = await async_extract_and_seed_deep(ctx.ticker, extraction_text, ctx.cycle_id)
+                    ms_extract = ctx.elapsed_ms(t_extract)
+                    if stats["total_nodes"] > 0:
+                        logger.info(
+                            "[V2] Entity extraction for %s: %d nodes, %d edges (%dms)",
+                            ctx.ticker, stats["total_nodes"], stats["total_edges"], ms_extract,
+                        )
+                except Exception as e:
+                    logger.warning("[V2] Background entity extraction failed for %s: %s", ctx.ticker, e)
+
+            # Fire and forget
+            asyncio.create_task(_bg_extract())
+            ctx.add_stage("entity_extraction_queued")
     except Exception as e:
         logger.warning("[V2] Entity extraction failed for %s (non-fatal): %s", ctx.ticker, e)
 

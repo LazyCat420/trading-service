@@ -107,12 +107,18 @@ class NodeType(str, Enum):
     FUNDAMENTAL_PROFILE = "FundamentalProfile"
     SIMULATED_NEWS = "SimulatedNews"
 
+    # ── Custom / Dynamic ──
+    CUSTOM_NODE = "CustomNode"
+
 
 # ── Edge types ──────────────────────────────────────────────────────────
 # Grouped by family.
 
 
 class EdgeType(str, Enum):
+    # ── Custom / Dynamic ──
+    CUSTOM_EDGE = "CUSTOM_EDGE"
+
     # ── Market analysis (original v1) ──
     MENTIONS = "MENTIONS"
     SUPPORTS = "SUPPORTS"
@@ -250,6 +256,9 @@ EPHEMERAL_NODE_TYPES: FrozenSet[NodeType] = frozenset(
         NodeType.TECHNICAL_PROFILE,
         NodeType.FUNDAMENTAL_PROFILE,
         NodeType.SIMULATED_NEWS,
+        
+        # Custom / Dynamic
+        NodeType.CUSTOM_NODE,
     }
 )
 

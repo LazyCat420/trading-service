@@ -282,111 +282,126 @@ class BrainGraph:
                 "stats": {total_activated, hops_used, seed_nodes}
             }
         """
-        with get_db() as db:
-            # Build adjacency from PostgreSQL — filter to edges reachable
-            # from seed nodes within max_hops.  Previous version loaded ALL
-            # edges which caused memory/latency issues with large graphs.
-            from app.cognition.ontology.gnn_engine import GNNEngine
-            import math
+        try:
+            with get_db() as db:
+                # Build adjacency from PostgreSQL — filter to edges reachable
+                # from seed nodes within max_hops.  Previous version loaded ALL
+                # edges which caused memory/latency issues with large graphs.
+                from app.cognition.ontology.gnn_engine import GNNEngine
+                import math
 
-            _seed_ids = list(seed_node_ids)
-            if _seed_ids:
-                # Recursive CTE: find all nodes reachable within max_hops
-                all_edges = db.execute(
-                    """
-                    WITH RECURSIVE reachable AS (
-                        SELECT source_id, target_id, weight, decay, relation, evidence_count, 1 AS depth
-                        FROM ontology_edges
-                        WHERE source_id = ANY(%s) OR target_id = ANY(%s)
-                      UNION
-                        SELECT e.source_id, e.target_id, e.weight, e.decay, e.relation, e.evidence_count, r.depth + 1
-                        FROM ontology_edges e
-                        JOIN reachable r ON (e.source_id = r.target_id OR e.source_id = r.source_id)
-                        WHERE r.depth < %s
+                _seed_ids = list(seed_node_ids)
+                if _seed_ids:
+                    # Recursive CTE: find all nodes reachable within max_hops
+                    all_edges = db.execute(
+                        """
+                        WITH RECURSIVE reachable AS (
+                            SELECT source_id, target_id, weight, decay, relation, evidence_count, 1 AS depth
+                            FROM ontology_edges
+                            WHERE source_id = ANY(%s) OR target_id = ANY(%s)
+                          UNION
+                            SELECT e.source_id, e.target_id, e.weight, e.decay, e.relation, e.evidence_count, r.depth + 1
+                            FROM ontology_edges e
+                            JOIN reachable r ON (e.source_id = r.target_id OR e.source_id = r.source_id)
+                            WHERE r.depth < %s
+                        )
+                        SELECT DISTINCT source_id, target_id, weight, decay, relation, evidence_count
+                        FROM reachable
+                        """,
+                        [_seed_ids, _seed_ids, max_hops],
+                    ).fetchall()
+                else:
+                    all_edges = []
+
+                nodes = list(
+                    set(
+                        [src for src, _, _, _, _, _ in all_edges]
+                        + [tgt for _, tgt, _, _, _, _ in all_edges]
+                        + seed_node_ids
                     )
-                    SELECT DISTINCT source_id, target_id, weight, decay, relation, evidence_count
-                    FROM reachable
-                    """,
-                    [_seed_ids, _seed_ids, max_hops],
-                ).fetchall()
-            else:
-                all_edges = []
-
-            nodes = list(
-                set(
-                    [src for src, _, _, _, _, _ in all_edges]
-                    + [tgt for _, tgt, _, _, _, _ in all_edges]
-                    + seed_node_ids
                 )
-            )
-            # Boost edge weight by evidence_count: effective_w = w * log(1 + evidence_count)
-            graph_edges = [
-                (src, tgt, min(1.0, w * math.log(1 + (ec or 1))))
-                for src, tgt, w, _, _, ec in all_edges
-            ]
+                # Boost edge weight by evidence_count: effective_w = w * log(1 + evidence_count)
+                graph_edges = [
+                    (src, tgt, min(1.0, w * math.log(1 + (ec or 1))))
+                    for src, tgt, w, _, _, ec in all_edges
+                ]
 
-            graph_degraded = False
-            try:
-                gnn = GNNEngine(nodes, graph_edges)
-                # Run graph convolutions
-                activations = gnn.message_passing(
-                    initial_activations={seed: 1.0 for seed in seed_node_ids},
-                    layers=max_hops,
-                    decay=DEFAULT_DECAY,
-                )
-                hops_used = max_hops
-            except Exception as e:
-                logger.error("[BrainGraph] GNNEngine failed, fallback to seed-only: %s", e)
-                activations = {seed: 1.0 for seed in seed_node_ids}
-                hops_used = 1
-                graph_degraded = True
+                graph_degraded = False
+                try:
+                    gnn = GNNEngine(nodes, graph_edges)
+                    # Run graph convolutions
+                    activations = gnn.message_passing(
+                        initial_activations={seed: 1.0 for seed in seed_node_ids},
+                        layers=max_hops,
+                        decay=DEFAULT_DECAY,
+                    )
+                    hops_used = max_hops
+                except Exception as e:
+                    logger.error("[BrainGraph] GNNEngine failed, fallback to seed-only: %s", e)
+                    activations = {seed: 1.0 for seed in seed_node_ids}
+                    hops_used = 1
+                    graph_degraded = True
 
-            # Prune below threshold + limit
-            activated = {
-                nid: act for nid, act in activations.items() if act >= threshold
-            }
-            # Sort by activation descending, take top N
-            top_nodes = sorted(activated.items(), key=lambda x: -x[1])[:max_nodes]
-            top_ids = {nid for nid, _ in top_nodes}
+                # Prune below threshold + limit
+                activated = {
+                    nid: act for nid, act in activations.items() if act >= threshold
+                }
+                # Sort by activation descending, take top N
+                top_nodes = sorted(activated.items(), key=lambda x: -x[1])[:max_nodes]
+                top_ids = {nid for nid, _ in top_nodes}
 
-            # Fetch node details
-            result_nodes = []
-            for nid, act in top_nodes:
-                row = db.execute(
-                    "SELECT node_type, label, metadata_json, "
-                    "validated_count, contradicted_count, disproven "
-                    "FROM ontology_nodes WHERE id = %s",
-                    [nid],
-                ).fetchone()
-                if row:
-                    meta = json.loads(row[2]) if row[2] else {}
-                    # Merge lifecycle columns into metadata for Claim nodes
-                    if row[0] == "Claim":
-                        meta["validated_count"] = row[3] or 0
-                        meta["contradicted_count"] = row[4] or 0
-                        meta["disproven"] = bool(row[5])
-                    result_nodes.append(
+                # Fetch node details
+                result_nodes = []
+                for nid, act in top_nodes:
+                    row = db.execute(
+                        "SELECT node_type, label, metadata_json, "
+                        "validated_count, contradicted_count, disproven "
+                        "FROM ontology_nodes WHERE id = %s",
+                        [nid],
+                    ).fetchone()
+                    if row:
+                        meta = json.loads(row[2]) if row[2] else {}
+                        # Merge lifecycle columns into metadata for Claim nodes
+                        if row[0] == "Claim":
+                            meta["validated_count"] = row[3] or 0
+                            meta["contradicted_count"] = row[4] or 0
+                            meta["disproven"] = bool(row[5])
+                        result_nodes.append(
+                            {
+                                "id": nid,
+                                "type": row[0],
+                                "label": row[1],
+                                "activation": round(act, 4),
+                                "metadata": meta or None,
+                            }
+                        )
+
+            # Fetch relevant edges (both endpoints in subgraph)
+            result_edges = []
+            for src, tgt, w, _d, rel, _ec in all_edges:
+                if src in top_ids and tgt in top_ids:
+                    result_edges.append(
                         {
-                            "id": nid,
-                            "type": row[0],
-                            "label": row[1],
-                            "activation": round(act, 4),
-                            "metadata": meta or None,
+                            "source": src,
+                            "target": tgt,
+                            "relation": rel,
+                            "weight": round(w, 4),
                         }
                     )
+        except Exception as e:
+            logger.error("[BrainGraph] spreading_activation DB/execution error: %s", e)
+            return {
+                "nodes": [],
+                "edges": [],
+                "stats": {
+                    "total_activated": 0,
+                    "hops_used": 0,
+                    "seed_nodes": seed_node_ids,
+                    "graph_degraded": True,
+                },
+            }
 
-        # Fetch relevant edges (both endpoints in subgraph)
-        result_edges = []
-        for src, tgt, w, _d, rel, _ec in all_edges:
-            if src in top_ids and tgt in top_ids:
-                result_edges.append(
-                    {
-                        "source": src,
-                        "target": tgt,
-                        "relation": rel,
-                        "weight": round(w, 4),
-                    }
-                )
+
 
         return {
             "nodes": result_nodes,

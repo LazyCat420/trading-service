@@ -383,3 +383,73 @@ def extract_and_seed(
         )
 
     return stats
+
+
+async def async_extract_and_seed_deep(
+    ticker: str,
+    text: str,
+    cycle_id: str = "",
+    emit_events: bool = True,
+) -> dict:
+    """Run regex extraction AND dynamic LLM extraction (GraphRAG-style)."""
+    # Run the fast regex extractor
+    stats = extract_and_seed(ticker, text, cycle_id, emit_events)
+    
+    # Run the deep LLM extractor
+    from app.cognition.ontology.ontology_generator import OntologyGenerator
+    
+    deep_stats = await OntologyGenerator.generate_and_extract(text)
+    
+    nodes_created = 0
+    edges_created = 0
+    now = datetime.now(timezone.utc)
+    
+    if deep_stats.get("nodes") or deep_stats.get("edges"):
+        with get_db() as db:
+            # Insert dynamic nodes
+            for node in deep_stats.get("nodes", []):
+                try:
+                    node_id = str(node.get("id"))
+                    meta = json.dumps({"dynamic_type": node.get("dynamic_type", "Unknown"), **node.get("metadata", {})})
+                    label = str(node.get("label", node_id))
+                    
+                    db.execute(
+                        "INSERT INTO ontology_nodes "
+                        "(id, node_type, label, activation, metadata_json, "
+                        "source_cycle_id, created_at, updated_at) "
+                        "VALUES (%s, 'CustomNode', %s, 0.0, %s, %s, %s, %s) "
+                        "ON CONFLICT (id) DO UPDATE SET updated_at = %s",
+                        [node_id, label, meta, cycle_id, now, now, now],
+                    )
+                    nodes_created += 1
+                except Exception as e:
+                    logger.warning("[EntityExtractor] Deep node error: %s", e)
+                    
+            # Insert dynamic edges
+            for edge in deep_stats.get("edges", []):
+                try:
+                    src = str(edge.get("source"))
+                    tgt = str(edge.get("target"))
+                    rel = str(edge.get("dynamic_type", "CUSTOM_EDGE"))
+                    weight = float(edge.get("weight", 0.5))
+                    reason = str(edge.get("reason", ""))
+                    
+                    edge_id = f"{src}--{rel}--{tgt}"
+                    
+                    db.execute(
+                        "INSERT INTO ontology_edges "
+                        "(id, source_id, target_id, relation, weight, confidence, "
+                        "evidence_count, source_cycle_id, created_at, updated_at) "
+                        "VALUES (%s, %s, %s, 'CUSTOM_EDGE', %s, 'llm_extracted', 1, %s, %s, %s) "
+                        "ON CONFLICT (id) DO UPDATE SET "
+                        "evidence_count = ontology_edges.evidence_count + 1, updated_at = %s",
+                        [edge_id, src, tgt, weight, cycle_id, now, now, now],
+                    )
+                    edges_created += 1
+                except Exception as e:
+                    logger.warning("[EntityExtractor] Deep edge error: %s", e)
+                    
+    stats["total_nodes"] += nodes_created
+    stats["total_edges"] += edges_created
+    
+    return stats
