@@ -405,6 +405,14 @@ async def analyze_ticker(
             )
             triage_tier = "standard"  # Fallback to full analysis
 
+    # Retrieve ontology context from the brain graph
+    ontology_context = ""
+    try:
+        from app.graph.graph_queries import build_relationship_map
+        ontology_context = build_relationship_map(ticker)
+    except Exception as ont_err:
+        logger.warning("[PIPELINE] Failed to load ontology for agents: %s", ont_err)
+
     # ── Step 1: Run 5 specialist agents in parallel ──
     agent_results = {}
     agent_summaries_text = ""
@@ -422,6 +430,7 @@ async def analyze_ticker(
                 ticker,
                 cycle_id,
                 bot_id,
+                ontology_context=ontology_context,
             )
         except PipelineAbortError as abort_err:
             reason = f"Upstream agent critical failure: {str(abort_err)}"
@@ -513,6 +522,9 @@ async def analyze_ticker(
 
     # Prepend macro memo + agent summaries to context so RLM sees them first
     prefix_sections = []
+
+    if ontology_context:
+        prefix_sections.append(ontology_context)
 
     # ── Thesis-Aware Context (Delta Analysis) ──
     if current_thesis and not current_thesis.unchanged:

@@ -51,6 +51,7 @@ async def run_specialist_agents(
     ticker: str,
     cycle_id: str,
     bot_id: str,
+    ontology_context: str = "",
 ) -> dict:
     """Run specialist agents in sequential role-based order with capsule compression.
 
@@ -65,6 +66,7 @@ async def run_specialist_agents(
     """
     from app.agents.context_compressor import generate_capsule, write_capsule_to_db
     from app.agents.capsule import format_capsule_stack
+    from app.agents.base_agent import run_agent
     from app.agents.base_agent import run_agent
 
     is_alt = ticker.upper() in ALT_ASSET_TICKERS
@@ -87,13 +89,12 @@ async def run_specialist_agents(
     from app.agents.verifier_agent import run_verifier
 
     # Fetch ontology context once — shared by planner as baseline knowledge
-    ontology_context = ""
-    try:
-        from app.graph.graph_queries import build_relationship_map
-        rel_map = await build_relationship_map(ticker)
-        ontology_context = rel_map.get("ontology_context", "") if isinstance(rel_map, dict) else ""
-    except Exception as ont_err:
-        logger.warning("[AGENTS] Failed to load ontology for planner: %s", ont_err)
+    if not ontology_context:
+        try:
+            from app.graph.graph_queries import build_relationship_map
+            ontology_context = build_relationship_map(ticker)
+        except Exception as ont_err:
+            logger.warning("[AGENTS] Failed to load ontology for planner: %s", ont_err)
     
     try:
         # 1. Planner

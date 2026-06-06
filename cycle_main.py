@@ -228,6 +228,11 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         ticker = payload.get("ticker")
                         max_hops = payload.get("max_hops", 3)
                         seeded = BrainGraph.seed_from_ticker_metadata(ticker)
+                        try:
+                            from app.cognition.ontology.market_simulator import MarketSimulator
+                            await MarketSimulator.simulate_market_opinion(ticker, agent_name=f"sim_{ticker}")
+                        except Exception as sim_err:
+                            logger.warning("MarketSimulator failed during manual activate command: %s", sim_err)
                         graph_res = BrainGraph.spreading_activation(seed_node_ids=[ticker], max_hops=max_hops)
                         graph_res["seeded"] = seeded
                         result = graph_res
