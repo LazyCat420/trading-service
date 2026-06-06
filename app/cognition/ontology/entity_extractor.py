@@ -432,13 +432,14 @@ async def async_extract_and_seed_deep(
                         })
                         label = str(node.get("label") or node_id)
                         
+                        dyn_type = str(node.get("dynamic_type") or "CustomNode")
                         db.execute(
                             "INSERT INTO ontology_nodes "
                             "(id, node_type, label, activation, metadata_json, "
                             "source_cycle_id, created_at, updated_at) "
-                            "VALUES (%s, 'CustomNode', %s, 0.0, %s, %s, %s, %s) "
+                            "VALUES (%s, %s, %s, 0.0, %s, %s, %s, %s) "
                             "ON CONFLICT (id) DO UPDATE SET updated_at = %s",
-                            [node_id, label, meta, cycle_id, now, now, now],
+                            [node_id, dyn_type, label, meta, cycle_id, now, now, now],
                         )
                         nodes_created += 1
                     except Exception as e:

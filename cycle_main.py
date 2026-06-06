@@ -244,7 +244,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         update_progress(45, "Running deep LLM relationship extraction & entity simulation...")
                         try:
                             from app.cognition.ontology.market_simulator import MarketSimulator
-                            await MarketSimulator.simulate_market_opinion(ticker, agent_name=f"sim_{ticker}")
+                            await MarketSimulator.simulate_market_opinion(ticker, agent_name=f"sim_{ticker}", cycle_id=job_id)
                         except Exception as sim_err:
                             logger.warning("MarketSimulator failed during manual activate command: %s", sim_err)
                             

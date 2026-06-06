@@ -73,8 +73,8 @@ async def test_simulate_market_opinion_success(mock_db, mock_llm_chat, mock_spre
 
     mock_llm_chat.side_effect = [mock_response_1, mock_response_2]
 
-    # Run simulator
-    res = await MarketSimulator.simulate_market_opinion("AAPL", topic_context="Apple announces new AI features.")
+    # Run simulator with a cycle_id
+    res = await MarketSimulator.simulate_market_opinion("AAPL", topic_context="Apple announces new AI features.", cycle_id="cycle-456")
 
     # Assertions
     assert res["status"] == "success"
@@ -84,6 +84,16 @@ async def test_simulate_market_opinion_success(mock_db, mock_llm_chat, mock_spre
 
     # Verify database updates
     assert mock_conn.execute.called
+    
+    # Verify transcript table insert was called with the correct cycle_id and payload
+    transcript_calls = [
+        call for call in mock_conn.execute.call_args_list
+        if "INSERT INTO simulation_transcripts" in call[0][0]
+    ]
+    assert len(transcript_calls) == 1
+    assert transcript_calls[0][0][1][0] == "AAPL"
+    assert transcript_calls[0][0][1][1] == "cycle-456"
+    assert "We are bullish on AI integration." in transcript_calls[0][0][1][2]
 
 @pytest.mark.asyncio
 async def test_simulate_market_opinion_no_nodes(mock_db, mock_spreading_activation):

@@ -35,7 +35,7 @@ async def run_ontology_step(ctx: TickerContext) -> TickerContext:
             from app.cognition.ontology.market_simulator import MarketSimulator
             # Run simulation based on newly seeded graph state and news context
             sim_res = await asyncio.wait_for(
-                MarketSimulator.simulate_market_opinion(ctx.ticker, agent_name=f"sim_{ctx.ticker}"),
+                MarketSimulator.simulate_market_opinion(ctx.ticker, agent_name=f"sim_{ctx.ticker}", cycle_id=ctx.cycle_id),
                 timeout=45.0
             )
             if sim_res.get("status") == "success":

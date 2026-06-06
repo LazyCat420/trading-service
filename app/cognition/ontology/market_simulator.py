@@ -83,7 +83,8 @@ class MarketSimulator:
         ticker: str,
         topic_context: str = "",
         rounds: int = 2,
-        agent_name: str = "market_simulator"
+        agent_name: str = "market_simulator",
+        cycle_id: str = ""
     ) -> Dict[str, Any]:
         """Runs the simulation loop: generates personas, simulates debate, updates brain graph."""
         logger.info("[MarketSimulator] Initializing simulation for %s", ticker)
@@ -153,10 +154,20 @@ class MarketSimulator:
 
         # 5. Parse relationships and update brain graph
         relationships = debate_data.get("relationships", [])
+        transcript = debate_data.get("transcript", [])
         updated_count = 0
         now = datetime.now(timezone.utc)
         
         with get_db() as db:
+            if transcript:
+                try:
+                    db.execute(
+                        "INSERT INTO simulation_transcripts (ticker, cycle_id, transcript_json) "
+                        "VALUES (%s, %s, %s)",
+                        [ticker, cycle_id or None, json.dumps(transcript)]
+                    )
+                except Exception as tx_err:
+                    logger.warning("[MarketSimulator] Failed to save simulation transcript: %s", tx_err)
             for rel in relationships:
                 src = rel.get("source_id")
                 tgt = rel.get("target_id")

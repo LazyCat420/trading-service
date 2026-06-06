@@ -1120,3 +1120,30 @@ def _fix_eth_cagr_data(conn):
     _safe_add_column(conn, "system_commands", "progress", "INTEGER DEFAULT 0")
     _safe_add_column(conn, "system_commands", "progress_message", "TEXT")
 
+    # ── Simulated Debate Transcripts (MiroFish simulation parity) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS simulation_transcripts (
+                    id                  SERIAL PRIMARY KEY,
+                    ticker              TEXT NOT NULL,
+                    cycle_id            TEXT,
+                    transcript_json     TEXT,
+                    created_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sim_transcripts_ticker "
+                "ON simulation_transcripts(ticker)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sim_transcripts_cycle "
+                "ON simulation_transcripts(cycle_id)"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+

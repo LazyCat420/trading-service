@@ -126,3 +126,62 @@ class TestOntologyAudit:
         # index 3 corresponds to the 'relation' column parameter (rel)
         assert edge_insert_calls[0][0][1][3] == "INFLUENCES"
 
+    @pytest.mark.asyncio
+    @patch("app.cognition.ontology.ontology_generator.OntologyGenerator.generate_and_extract")
+    @patch("app.cognition.ontology.entity_extractor.get_db")
+    async def test_direct_dynamic_node_type_storage(self, mock_db, mock_generate_and_extract):
+        """Verify that the actual dynamic type name is directly saved in node_type column."""
+        from app.cognition.ontology.entity_extractor import async_extract_and_seed_deep
+        
+        mock_conn = MagicMock()
+        mock_db.return_value.__enter__.return_value = mock_conn
+        
+        mock_generate_and_extract.return_value = {
+            "nodes": [
+                {"id": "node-123", "dynamic_type": "GeopoliticalEvent", "metadata": {"region": "US"}}
+            ],
+            "edges": []
+        }
+        
+        await async_extract_and_seed_deep("AAPL", "Long text context...", "cycle-123")
+        
+        # Verify that dynamic_type ('GeopoliticalEvent') is passed as node_type to INSERT statement
+        node_insert_calls = [
+            call for call in mock_conn.execute.call_args_list
+            if "INSERT INTO ontology_nodes" in call[0][0]
+        ]
+        assert len(node_insert_calls) > 0
+        # SQL parameters list: [node_id, dyn_type, label, meta, cycle_id, now, now, now]
+        # index 1 should correspond to dyn_type column
+        assert node_insert_calls[0][0][1][1] == "GeopoliticalEvent"
+
+    @pytest.mark.asyncio
+    @patch("app.cognition.ontology.ontology_generator.llm.chat")
+    async def test_chunk_based_text_extraction(self, mock_llm_chat):
+        """Verify that long texts are chunked and extractions are correctly merged."""
+        from app.cognition.ontology.ontology_generator import OntologyGenerator
+        
+        # Create a text longer than 5000 characters
+        long_text = "Some random content. " * 300
+        assert len(long_text) > 5000
+        
+        # Mock two successful chunk responses
+        mock_resp_1 = MagicMock()
+        mock_resp_1.content = '{"entity_types": [{"name": "CentralBank"}], "nodes": [{"id": "fed", "dynamic_type": "CentralBank", "metadata": {"name": "Federal Reserve"}}], "edges": []}'
+        
+        mock_resp_2 = MagicMock()
+        mock_resp_2.content = '{"entity_types": [{"name": "CentralBank"}], "nodes": [{"id": "fed", "dynamic_type": "CentralBank", "metadata": {"location": "Washington"}}], "edges": []}'
+        
+        mock_llm_chat.side_effect = [mock_resp_1, mock_resp_2]
+        
+        merged_res = await OntologyGenerator.generate_and_extract(long_text, agent_name="test_curator")
+        
+        # Verify the generator split the text and combined the node metadata
+        assert len(merged_res["nodes"]) == 1
+        assert merged_res["nodes"][0]["id"] == "fed"
+        assert merged_res["nodes"][0]["dynamic_type"] == "CentralBank"
+        # Merged metadata keys from both mock responses
+        metadata = merged_res["nodes"][0]["metadata"]
+        assert metadata["name"] == "Federal Reserve"
+        assert metadata["location"] == "Washington"
+
