@@ -400,55 +400,87 @@ async def async_extract_and_seed_deep(
     
     deep_stats = await OntologyGenerator.generate_and_extract(text)
     
+    if not isinstance(deep_stats, dict):
+        deep_stats = {}
+
+    nodes_list = deep_stats.get("nodes")
+    edges_list = deep_stats.get("edges")
+    
     nodes_created = 0
     edges_created = 0
     now = datetime.now(timezone.utc)
     
-    if deep_stats.get("nodes") or deep_stats.get("edges"):
+    if nodes_list or edges_list:
         with get_db() as db:
             # Insert dynamic nodes
-            for node in deep_stats.get("nodes", []):
-                try:
-                    node_id = str(node.get("id"))
-                    meta = json.dumps({"dynamic_type": node.get("dynamic_type", "Unknown"), **node.get("metadata", {})})
-                    label = str(node.get("label", node_id))
-                    
-                    db.execute(
-                        "INSERT INTO ontology_nodes "
-                        "(id, node_type, label, activation, metadata_json, "
-                        "source_cycle_id, created_at, updated_at) "
-                        "VALUES (%s, 'CustomNode', %s, 0.0, %s, %s, %s, %s) "
-                        "ON CONFLICT (id) DO UPDATE SET updated_at = %s",
-                        [node_id, label, meta, cycle_id, now, now, now],
-                    )
-                    nodes_created += 1
-                except Exception as e:
-                    logger.warning("[EntityExtractor] Deep node error: %s", e)
-                    
+            if isinstance(nodes_list, list):
+                for node in nodes_list:
+                    if not isinstance(node, dict):
+                        continue
+                    try:
+                        raw_id = node.get("id")
+                        if not raw_id:
+                            continue
+                        node_id = str(raw_id)
+                        
+                        raw_meta = node.get("metadata")
+                        meta_dict = raw_meta if isinstance(raw_meta, dict) else {}
+                        
+                        meta = json.dumps({
+                            "dynamic_type": str(node.get("dynamic_type", "Unknown")),
+                            **meta_dict
+                        })
+                        label = str(node.get("label") or node_id)
+                        
+                        db.execute(
+                            "INSERT INTO ontology_nodes "
+                            "(id, node_type, label, activation, metadata_json, "
+                            "source_cycle_id, created_at, updated_at) "
+                            "VALUES (%s, 'CustomNode', %s, 0.0, %s, %s, %s, %s) "
+                            "ON CONFLICT (id) DO UPDATE SET updated_at = %s",
+                            [node_id, label, meta, cycle_id, now, now, now],
+                        )
+                        nodes_created += 1
+                    except Exception as e:
+                        logger.warning("[EntityExtractor] Deep node error: %s", e)
+                        
             # Insert dynamic edges
-            for edge in deep_stats.get("edges", []):
-                try:
-                    src = str(edge.get("source"))
-                    tgt = str(edge.get("target"))
-                    rel = str(edge.get("dynamic_type", "CUSTOM_EDGE"))
-                    weight = float(edge.get("weight", 0.5))
-                    reason = str(edge.get("reason", ""))
-                    
-                    edge_id = f"{src}--{rel}--{tgt}"
-                    
-                    db.execute(
-                        "INSERT INTO ontology_edges "
-                        "(id, source_id, target_id, relation, weight, confidence, "
-                        "evidence_count, source_cycle_id, created_at, updated_at) "
-                        "VALUES (%s, %s, %s, 'CUSTOM_EDGE', %s, 'llm_extracted', 1, %s, %s, %s) "
-                        "ON CONFLICT (id) DO UPDATE SET "
-                        "evidence_count = ontology_edges.evidence_count + 1, updated_at = %s",
-                        [edge_id, src, tgt, weight, cycle_id, now, now, now],
-                    )
-                    edges_created += 1
-                except Exception as e:
-                    logger.warning("[EntityExtractor] Deep edge error: %s", e)
-                    
+            if isinstance(edges_list, list):
+                for edge in edges_list:
+                    if not isinstance(edge, dict):
+                        continue
+                    try:
+                        src_raw = edge.get("source")
+                        tgt_raw = edge.get("target")
+                        if not src_raw or not tgt_raw:
+                            continue
+                        src = str(src_raw)
+                        tgt = str(tgt_raw)
+                        rel = str(edge.get("dynamic_type") or "CUSTOM_EDGE")
+                        
+                        raw_weight = edge.get("weight")
+                        try:
+                            weight = float(raw_weight) if raw_weight is not None else 0.5
+                        except (ValueError, TypeError):
+                            weight = 0.5
+                            
+                        reason = str(edge.get("reason") or "")
+                        
+                        edge_id = f"{src}--{rel}--{tgt}"
+                        
+                        db.execute(
+                            "INSERT INTO ontology_edges "
+                            "(id, source_id, target_id, relation, weight, confidence, "
+                            "evidence_count, source_cycle_id, created_at, updated_at) "
+                            "VALUES (%s, %s, %s, 'CUSTOM_EDGE', %s, 'llm_extracted', 1, %s, %s, %s) "
+                            "ON CONFLICT (id) DO UPDATE SET "
+                            "evidence_count = ontology_edges.evidence_count + 1, updated_at = %s",
+                            [edge_id, src, tgt, weight, cycle_id, now, now, now],
+                        )
+                        edges_created += 1
+                    except Exception as e:
+                        logger.warning("[EntityExtractor] Deep edge error: %s", e)
+                        
     stats["total_nodes"] += nodes_created
     stats["total_edges"] += edges_created
     

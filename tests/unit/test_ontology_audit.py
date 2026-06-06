@@ -81,3 +81,38 @@ class TestOntologyAudit:
         # If GNNEngine fails or DB fails, it falls back to seed-only
         assert result["stats"]["total_activated"] == 0
         assert result["stats"]["graph_degraded"] == True
+
+    @pytest.mark.asyncio
+    @patch("app.cognition.ontology.ontology_generator.OntologyGenerator.generate_and_extract")
+    @patch("app.cognition.ontology.entity_extractor.get_db")
+    async def test_async_extract_and_seed_deep_robustness(self, mock_db, mock_generate_and_extract):
+        """Verify async_extract_and_seed_deep behaves robustly under malformed LLM responses."""
+        from app.cognition.ontology.entity_extractor import async_extract_and_seed_deep
+        
+        mock_conn = MagicMock()
+        mock_db.return_value.__enter__.return_value = mock_conn
+        
+        # Test case 1: None/invalid type response
+        mock_generate_and_extract.return_value = None
+        stats = await async_extract_and_seed_deep("AAPL", "Test analysis text content here...", "cycle-123")
+        assert stats["total_nodes"] == 0
+        
+        # Test case 2: Malformed list elements, missing keys, invalid types
+        mock_generate_and_extract.return_value = {
+            "nodes": [
+                "not-a-dict",
+                {"id": ""},  # empty ID
+                {"id": "valid-id", "dynamic_type": "EconomicIndicator", "metadata": "not-a-dict"}
+            ],
+            "edges": [
+                "not-a-dict",
+                {"source": "valid-id"},  # missing target
+                {"source": "valid-id", "target": "other-id", "dynamic_type": "INFLUENCES", "weight": "invalid-float"}
+            ]
+        }
+        
+        stats = await async_extract_and_seed_deep("AAPL", "Test analysis text content here...", "cycle-123")
+        # Should parse the valid-id node and valid-id -> other-id edge safely with fallback weight
+        assert stats["total_nodes"] > 0
+        assert stats["total_edges"] > 0
+

@@ -59,6 +59,9 @@ class OntologyGenerator:
             )
             
             result = json.loads(response.content)
+            if not isinstance(result, dict):
+                logger.error("[OntologyGenerator] LLM output is not a JSON object: %s", response.content)
+                result = {}
             
             # Validate output
             result.setdefault("entity_types", [])
