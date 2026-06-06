@@ -314,7 +314,7 @@ async def run_agent(
                         system_prompt=actual_system_prompt,
                         user_prompt=full_prompt,
                         ticker=ticker,
-                        agent_name=agent_name,
+                        agent_name=f"{agent_name}_{ticker}" if ticker else agent_name,
                         cycle_id=cycle_id,
                         bot_id=bot_id,
                         priority=Priority.NORMAL,
