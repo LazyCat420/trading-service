@@ -115,4 +115,14 @@ class TestOntologyAudit:
         # Should parse the valid-id node and valid-id -> other-id edge safely with fallback weight
         assert stats["total_nodes"] > 0
         assert stats["total_edges"] > 0
+        
+        # Verify that the actual relation ('INFLUENCES') is passed to the INSERT parameter list
+        edge_insert_calls = [
+            call for call in mock_conn.execute.call_args_list
+            if "INSERT INTO ontology_edges" in call[0][0]
+        ]
+        assert len(edge_insert_calls) > 0
+        # params: [edge_id, src, tgt, rel, weight, cycle_id, now, now, now]
+        # index 3 corresponds to the 'relation' column parameter (rel)
+        assert edge_insert_calls[0][0][1][3] == "INFLUENCES"
 

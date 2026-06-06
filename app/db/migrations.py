@@ -1115,3 +1115,8 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Task progress columns on system_commands ──
+    _safe_add_column(conn, "system_commands", "progress", "INTEGER DEFAULT 0")
+    _safe_add_column(conn, "system_commands", "progress_message", "TEXT")
+

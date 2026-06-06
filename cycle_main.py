@@ -227,15 +227,32 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         from app.cognition.ontology.ontology_builder import BrainGraph
                         ticker = payload.get("ticker")
                         max_hops = payload.get("max_hops", 3)
+                        
+                        def update_progress(p: int, m: str):
+                            try:
+                                with get_db() as db:
+                                    db.execute(
+                                        "UPDATE system_commands SET progress = %s, progress_message = %s WHERE id = %s",
+                                        [p, m, job_id]
+                                    )
+                            except Exception as pe:
+                                logger.warning("Failed to update task progress: %s", pe)
+
+                        update_progress(15, "Seeding structural metadata...")
                         seeded = BrainGraph.seed_from_ticker_metadata(ticker)
+                        
+                        update_progress(45, "Running deep LLM relationship extraction & entity simulation...")
                         try:
                             from app.cognition.ontology.market_simulator import MarketSimulator
                             await MarketSimulator.simulate_market_opinion(ticker, agent_name=f"sim_{ticker}")
                         except Exception as sim_err:
                             logger.warning("MarketSimulator failed during manual activate command: %s", sim_err)
+                            
+                        update_progress(80, "Calculating GNN spreading activation...")
                         graph_res = BrainGraph.spreading_activation(seed_node_ids=[ticker], max_hops=max_hops)
                         graph_res["seeded"] = seeded
                         result = graph_res
+                        update_progress(100, "Graph build complete")
                     elif cmd_type == "EVALUATE_STRATEGY":
                         from app.cognition.evaluation.strategy_auditor import evaluate_strategy
                         track_task(evaluate_strategy(cycle_id=payload.get("cycle_id"), refresh_pending=True))

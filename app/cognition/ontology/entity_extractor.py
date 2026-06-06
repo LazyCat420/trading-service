@@ -472,10 +472,10 @@ async def async_extract_and_seed_deep(
                             "INSERT INTO ontology_edges "
                             "(id, source_id, target_id, relation, weight, confidence, "
                             "evidence_count, source_cycle_id, created_at, updated_at) "
-                            "VALUES (%s, %s, %s, 'CUSTOM_EDGE', %s, 'llm_extracted', 1, %s, %s, %s) "
+                            "VALUES (%s, %s, %s, %s, %s, 'llm_extracted', 1, %s, %s, %s) "
                             "ON CONFLICT (id) DO UPDATE SET "
                             "evidence_count = ontology_edges.evidence_count + 1, updated_at = %s",
-                            [edge_id, src, tgt, weight, cycle_id, now, now, now],
+                            [edge_id, src, tgt, rel, weight, cycle_id, now, now, now],
                         )
                         edges_created += 1
                     except Exception as e:
