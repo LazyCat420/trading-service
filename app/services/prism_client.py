@@ -280,7 +280,9 @@ class PrismClient:
             if bi not in enabled_tools:
                 enabled_tools.append(bi)
                 
-        payload["enabledTools"] = enabled_tools
+        payload["enabledTools"] = [
+            t for t in enabled_tools if t != "ask_user_question"
+        ]
         
         # 3. Prefix prompt and messages
         def prefix_text(text: str) -> str:
@@ -561,11 +563,18 @@ class PrismClient:
         # Standardize display name (e.g. "bear_macro_sentiment_t2_agent" -> "Bear Macro Sentiment T2 Agent")
         display_name = name.replace("_", " ").title() if "_" in name else name
 
+        # Filter out Prism built-in tools that block automated cycles
+        _blocked_prism_tools = {"ask_user_question"}
+        _filtered_tools = [
+            t for t in (enabled_tools or [])
+            if t not in _blocked_prism_tools
+        ]
+
         payload = {
             "name": display_name,
             "identity": identity,
             "guidelines": guidelines,
-            "enabledTools": enabled_tools or [],
+            "enabledTools": _filtered_tools,
             "project": project,
             "usesDirectoryTree": False,
             "usesCodingGuidelines": False,

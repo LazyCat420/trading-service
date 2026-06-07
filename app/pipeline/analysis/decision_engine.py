@@ -1156,6 +1156,7 @@ def _log_decision(result: dict, cycle_id: str, bot_id: str) -> None:
 
             # Compute estimate inline for BUY actions so it persists in DB
             estimate = None
+            price_row = None  # Initialize here — referenced later for all actions
             action = result.get("action", "HOLD")
             confidence = result.get("confidence", 0)
 

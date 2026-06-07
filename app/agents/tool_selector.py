@@ -34,12 +34,14 @@ TOOL_SELECTOR_SYSTEM = (
 )
 
 
-def _build_tool_list_text(tool_schemas: list[dict]) -> str:
+def _build_tool_list_text(tool_schemas: list[dict], annotations: dict[str, str] | None = None) -> str:
     """Build a compact text list of tool names and descriptions.
 
     This avoids sending the full JSON schemas (with parameter definitions)
     into the selector's context. Names + descriptions are sufficient for
     the selector to make routing decisions.
+
+    If annotations dict is provided, appends success rate info to each tool.
     """
     lines = []
     for schema in tool_schemas:
@@ -49,7 +51,11 @@ def _build_tool_list_text(tool_schemas: list[dict]) -> str:
         # Truncate long descriptions to keep context tight
         if len(desc) > 150:
             desc = desc[:147] + "..."
-        lines.append(f"- {name}: {desc}")
+        # Append reliability annotation if available
+        annotation = ""
+        if annotations and name in annotations and annotations[name]:
+            annotation = f" {annotations[name]}"
+        lines.append(f"- {name}: {desc}{annotation}")
     return "\n".join(lines)
 
 
@@ -91,12 +97,25 @@ async def select_tools_for_task(
         return available_tool_schemas
 
     # Build the compact tool list (names + descriptions only, no JSON schemas)
-    tools_text = _build_tool_list_text(available_tool_schemas)
+    # Annotate with success rates so the selector can prioritize reliable tools
+    annotations = None
+    try:
+        from app.services.tool_optimizer import get_tool_success_annotations
+        tool_names_list = [
+            s.get("function", {}).get("name", "")
+            for s in available_tool_schemas
+        ]
+        annotations = get_tool_success_annotations(tool_names_list)
+    except Exception as ann_err:
+        logger.debug("[ToolSelector] Failed to get tool annotations (non-fatal): %s", ann_err)
+
+    tools_text = _build_tool_list_text(available_tool_schemas, annotations)
 
     user_prompt = (
         f"Task: {task_description[:2000]}\n\n"
-        f"Available Tools:\n{tools_text}\n\n"
-        f"Select up to {max_tools} tools needed for this task."
+        f"Available Tools (with reliability stats where known):\n{tools_text}\n\n"
+        f"Select up to {max_tools} tools needed for this task. "
+        f"Prefer tools with higher success rates when multiple tools could serve the same purpose."
     )
 
     messages = [

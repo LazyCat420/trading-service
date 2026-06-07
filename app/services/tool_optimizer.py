@@ -104,6 +104,41 @@ def get_tool_reputation(
 
     return reputation
 
+
+def get_tool_success_annotations(
+    tool_names: list[str],
+    window_hours: int = REPUTATION_WINDOW_HOURS,
+    min_calls: int = REPUTATION_MIN_CALLS,
+) -> dict[str, str]:
+    """Return per-tool annotation strings for use in tool selector prompts.
+
+    Returns a dict mapping tool_name -> annotation string like:
+      "get_market_data" -> "[✅ 95% success, 120ms avg]"
+      "scrape_url"      -> "[⚠️ 45% success, 2300ms avg]"
+      "broken_tool"     -> "[🔴 10% success, 800ms avg]"
+
+    Tools with fewer than min_calls get no annotation (empty string).
+    """
+    reputation = get_tool_reputation(tool_names, window_hours, min_calls)
+    annotations: dict[str, str] = {}
+
+    for name, stats in reputation.items():
+        if stats["reliability_tier"] == "unknown":
+            annotations[name] = ""
+            continue
+
+        pct = int(stats["success_rate"] * 100)
+        avg_ms = int(stats["avg_latency_ms"])
+
+        if stats["reliability_tier"] == "broken":
+            annotations[name] = f"[🔴 {pct}% success, {avg_ms}ms avg]"
+        elif stats["reliability_tier"] == "unreliable":
+            annotations[name] = f"[⚠️ {pct}% success, {avg_ms}ms avg]"
+        else:
+            annotations[name] = f"[✅ {pct}% success, {avg_ms}ms avg]"
+
+    return annotations
+
 async def optimize_agent_tools(
     agent_name: str,
     initial_tools: list[dict],

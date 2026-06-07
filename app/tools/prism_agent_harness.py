@@ -299,11 +299,17 @@ async def run_prism_agent(
             "str_replace_file", "file_info", "file_diff", "browser_action",
             "browser_script", "precise_calculator"
         }
+        # Prism built-in tools that must NEVER be enabled during automated cycles.
+        # ask_user_question blocks the agentic loop for 5 minutes waiting for
+        # human input that will never arrive.
+        prism_blocked_tools = {
+            "ask_user_question",
+        }
         mcp_prefix = "mcp__lazy-tool-service__"
         for t in active_tools:
             if isinstance(t, dict):
                 name = t.get("name") or t.get("function", {}).get("name")
-                if name:
+                if name and name not in prism_blocked_tools:
                     if name not in built_ins and not name.startswith(mcp_prefix):
                         tool_names.append(f"{mcp_prefix}{name}")
                     else:
@@ -467,20 +473,34 @@ async def run_prism_agent(
 
             if used_tool_names:
                 # Log each tool call to tool_usage_stats for reputation tracking
+                # Parse per-tool results when Prism provides them
                 from app.services.logging.tool_logging import log_tool_call
+                tool_results_map = {}
+                for tc in prism_tool_calls:
+                    if isinstance(tc, dict) and tc.get("name"):
+                        tc_name = tc["name"]
+                        # Prism may include result/error fields per tool call
+                        tc_success = not bool(tc.get("error"))
+                        tc_ms = int(tc.get("executionMs", 0) or tc.get("duration_ms", 0) or 0)
+                        tool_results_map[tc_name] = (tc_success, tc_ms)
+
                 for tool_name in used_tool_names:
+                    tc_success, tc_ms = tool_results_map.get(tool_name, (True, 0))
                     log_tool_call(
                         tool_name=tool_name,
                         agent_name=agent_name,
                         ticker=ticker,
                         cycle_id=cycle_id,
-                        success=True,  # Prism JSON only reports "calling" status; assume success
-                        execution_ms=0,  # Per-tool latency not available from JSON response
+                        success=tc_success,
+                        execution_ms=tc_ms,
                         service_source="prism",
                     )
+                # Count successes vs failures for logging
+                success_count = sum(1 for n in used_tool_names if tool_results_map.get(n, (True, 0))[0])
+                fail_count = len(used_tool_names) - success_count
                 logger.info(
-                    "[PrismHarness] Logged %d Prism tool calls for %s: %s",
-                    len(used_tool_names), agent_name, used_tool_names,
+                    "[PrismHarness] Logged %d Prism tool calls for %s (%d ok, %d failed): %s",
+                    len(used_tool_names), agent_name, success_count, fail_count, used_tool_names,
                 )
 
                 # Data-driven optimization: only mark actually-used tools as active
