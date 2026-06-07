@@ -284,28 +284,20 @@ class PrismClient:
             t for t in enabled_tools if t != "ask_user_question"
         ]
         
-        # 3. Prefix prompt and messages
-        def prefix_text(text: str) -> str:
-            if not text:
-                return text
-            # Sort by length descending to avoid partial matches
-            sorted_names = sorted(list(tool_names), key=len, reverse=True)
-            for name in sorted_names:
-                pattern = r'\b(?<!' + re.escape(mcp_prefix) + r')' + re.escape(name) + r'\b'
-                text = re.sub(pattern, mcp_prefix + name, text)
-            return text
-            
-        prefixed_system_prompt = prefix_text(system_prompt)
+        # 3. Add MCP instruction to system prompt instead of regex-mangling the text
+        mcp_note = (
+            "\n\n[SYSTEM NOTE]: Your tools are connected via an MCP (Model Context Protocol) server. "
+            "Their names in the schema may be prefixed with 'mcp__lazy-tool-service__'. "
+            "Please call them using their full prefixed names when deciding to use a tool."
+        )
+        prefixed_system_prompt = system_prompt + mcp_note
         payload["systemPrompt"] = prefixed_system_prompt[:15000]
         if "conversationMeta" in payload:
             payload["conversationMeta"]["systemPrompt"] = prefixed_system_prompt[:15000]
             
         prefixed_messages = []
         for msg in messages:
-            content = msg.get("content")
             new_msg = {**msg}
-            if isinstance(content, str):
-                new_msg["content"] = prefix_text(content)
             
             # Prefix name field for tool responses
             if msg.get("role") == "tool":
