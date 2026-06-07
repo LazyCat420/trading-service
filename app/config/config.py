@@ -63,11 +63,11 @@ class Settings(BaseSettings):
     # ── Prism VLLM Providers (Source of Truth from vault-service/projects.json) ──
     PROVIDER_VLLM_1_URL: str = _config.get("PROVIDER_VLLM_1_URL", "http://10.0.0.30:8000")
     PROVIDER_VLLM_1_NICKNAME: str = _config.get("PROVIDER_VLLM_1_NICKNAME", "Jetson")
-    PROVIDER_VLLM_1_CONCURRENCY: int = int(_config.get("PROVIDER_VLLM_1_CONCURRENCY", "32") or "32")
+    PROVIDER_VLLM_1_CONCURRENCY: int = int(_config.get("PROVIDER_VLLM_1_CONCURRENCY", "8") or "8")
 
     PROVIDER_VLLM_2_URL: str = _config.get("PROVIDER_VLLM_2_URL", "http://10.0.0.141:8000")
     PROVIDER_VLLM_2_NICKNAME: str = _config.get("PROVIDER_VLLM_2_NICKNAME", "Gold Spark")
-    PROVIDER_VLLM_2_CONCURRENCY: int = int(_config.get("PROVIDER_VLLM_2_CONCURRENCY", "64") or "64")
+    PROVIDER_VLLM_2_CONCURRENCY: int = int(_config.get("PROVIDER_VLLM_2_CONCURRENCY", "16") or "16")
 
     PROVIDER_VLLM_3_URL: str = _config.get("PROVIDER_VLLM_3_URL", "")
     PROVIDER_VLLM_3_NICKNAME: str = _config.get("PROVIDER_VLLM_3_NICKNAME", "")

@@ -1,6 +1,8 @@
 import logging
 import json
-from app.tools.registry import registry
+import asyncio
+from collections import defaultdict
+from app.tools.registry import registry, current_agent_name
 from app.tools.executor import run_tool_agent, AgentYielded
 from app.services.vllm_client import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
@@ -34,6 +36,11 @@ Output your answer as JSON:
   "note": "What was left unfinished"
 }
 """
+
+# Concurrency limits for research subagents
+_semaphores = defaultdict(lambda: asyncio.Semaphore(2))
+_active_workers = defaultdict(set)
+_locks = defaultdict(asyncio.Lock)
 
 
 @registry.register(
@@ -83,6 +90,51 @@ async def spawn_research_subagent(
                        subagent ONLY gets these tools (intersected with the
                        registry). If omitted, gets all tools minus itself.
     """
+    parent_agent = current_agent_name.get() or "unknown_agent"
+    semaphore = _semaphores[parent_agent]
+
+    logger.info(
+        "[SubagentHarness] [%s] Waiting for research worker slot on ticker %s",
+        parent_agent,
+        ticker,
+    )
+    async with semaphore:
+        async with _locks[parent_agent]:
+            worker_idx = 1
+            if 1 in _active_workers[parent_agent]:
+                worker_idx = 2
+            _active_workers[parent_agent].add(worker_idx)
+
+        agent_id_override = f"{parent_agent}_worker_{worker_idx}"
+        logger.info(
+            "[SubagentHarness] [%s] Acquired worker slot %d. Running subagent as '%s'",
+            parent_agent,
+            worker_idx,
+            agent_id_override,
+        )
+        try:
+            return await _spawn_research_subagent_impl(
+                task_description=task_description,
+                ticker=ticker,
+                enabled_tools=enabled_tools,
+                agent_id_override=agent_id_override,
+            )
+        finally:
+            async with _locks[parent_agent]:
+                _active_workers[parent_agent].discard(worker_idx)
+            logger.info(
+                "[SubagentHarness] [%s] Released worker slot %d",
+                parent_agent,
+                worker_idx,
+            )
+
+
+async def _spawn_research_subagent_impl(
+    task_description: str,
+    ticker: str,
+    enabled_tools: list[str] | None,
+    agent_id_override: str,
+) -> str:
     logger.info(
         "[SubagentHarness] Spawning research subagent for %s. Task: %s... | tools: %s",
         ticker,
@@ -136,7 +188,7 @@ async def spawn_research_subagent(
                 system_prompt=SUBAGENT_SYSTEM_PROMPT,
                 user_prompt=f"Research Task: {task_description}\nTicker: {ticker}\nGather the data and provide the final JSON summary.",
                 ticker=ticker,
-                agent_name="research_subagent",
+                agent_name=agent_id_override,
                 priority=Priority.NORMAL,
                 tools_override=active_schemas,
                 max_tokens=2048,
@@ -156,7 +208,7 @@ async def spawn_research_subagent(
                 user_prompt=f"Research Task: {task_description}\nTicker: {ticker}\nGather the data and provide the final JSON summary.",
                 ticker=ticker,
                 max_loops=8,
-                agent_name="research_subagent",
+                agent_name=agent_id_override,
                 priority=Priority.NORMAL,
                 tools_override=active_schemas,
                 yield_on_limit=True,
@@ -195,7 +247,7 @@ async def spawn_research_subagent(
                 agent_id="CUSTOM_RESEARCH_SUBAGENT_YIELD_AGENT",
                 user_message=YIELD_SUMMARY_PROMPT,
                 fallback_system_prompt="You are summarizing your own partial research. Be factual and concise.",
-                fallback_agent_name="research_subagent_yield",
+                fallback_agent_name=f"{agent_id_override}_yield",
                 temperature=0.2,
                 max_tokens=512,
                 priority=Priority.NORMAL,

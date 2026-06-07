@@ -12,6 +12,7 @@ import inspect
 import json
 import logging
 import time
+import contextvars
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
@@ -19,6 +20,9 @@ from typing import Callable
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
+
+# Context variable to propagate the name of the calling agent executing a tool call
+current_agent_name = contextvars.ContextVar("current_agent_name", default="")
 
 
 # ── Permission Levels (inspired by Claude Code's isReadOnly/isDestructive) ──
@@ -238,6 +242,31 @@ class ToolRegistry:
         return True, f"permission={meta.permission.value}"
 
     async def execute_tool_call(
+        self,
+        tool_call: dict,
+        *,
+        skip_permission_check: bool = False,
+        agent_name: str = "",
+        ticker: str = "",
+        cycle_id: str = "",
+        tool_cache: dict | None = None,
+        enforce_ticker: bool = False,
+    ) -> dict:
+        token = current_agent_name.set(agent_name)
+        try:
+            return await self._execute_tool_call_internal(
+                tool_call,
+                skip_permission_check=skip_permission_check,
+                agent_name=agent_name,
+                ticker=ticker,
+                cycle_id=cycle_id,
+                tool_cache=tool_cache,
+                enforce_ticker=enforce_ticker,
+            )
+        finally:
+            current_agent_name.reset(token)
+
+    async def _execute_tool_call_internal(
         self,
         tool_call: dict,
         *,
