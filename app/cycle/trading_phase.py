@@ -177,6 +177,14 @@ async def execute_decisions(
                             logger.debug("[TRADE] Failed to emit BUY event: %s", emit_err)
 
                 elif action == "SELL":
+                    # Check if the position is actually held
+                    held_tickers = {p["ticker"] for p in current_portfolio.get("positions", [])}
+                    if ticker not in held_tickers:
+                        skipped.append({"ticker": ticker, "action": action, "reason": f"No open position for {ticker}"})
+                        counts["sell_skipped"] += 1
+                        logger.info("[TRADING] SKIP SELL %s: no open position", ticker)
+                        continue
+
                     # Sell 100% of position
                     result = await sell(bot_id, ticker, qty_pct=1.0, cycle_id=cycle_id)
                     if "error" in result:
