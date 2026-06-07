@@ -1270,8 +1270,8 @@ async def validate_unknown_tickers(tickers: list[str]) -> dict[str, bool]:
                 _save_rejected_to_db(sym)
                 continue
 
-            if mcap > 0:
-                # Real stock — add to registry
+            if mcap > 0 or quote_type == "ETF":
+                # Real stock or ETF — add to registry
                 c = Company(
                     symbol=sym,
                     name=name,

@@ -130,20 +130,23 @@ async def run_perticker_collection(
 
     _reg = _get_reg()
     pre_gate = len(tickers)
-    tickers = [
-        t for t in tickers if not _is_hard_blocked(t, _reg) and not _reg.is_rejected(t)
+    dropped_tickers = [
+        t for t in tickers if _is_hard_blocked(t, _reg) or _reg.is_rejected(t)
     ]
-    if len(tickers) < pre_gate:
-        dropped = pre_gate - len(tickers)
-        logger.info(
-            f"[PIPELINE]   [safety] Dropped {dropped} FALSE_TICKERS/rejected before per-ticker collection"
+    tickers = [
+        t for t in tickers if t not in dropped_tickers
+    ]
+    if dropped_tickers:
+        dropped = len(dropped_tickers)
+        logger.warning(
+            f"[PIPELINE]   [safety] Dropped {dropped} FALSE_TICKERS/rejected before per-ticker collection: {dropped_tickers}"
         )
         emit(
             "collecting",
             "safety_gate",
-            f"Dropped {dropped} false-positive tickers before collection",
-            status="ok",
-            data={"dropped": dropped},
+            f"Dropped {dropped} false-positive/rejected tickers before collection: {', '.join(dropped_tickers)}",
+            status="warning",
+            data={"dropped": dropped, "tickers": dropped_tickers},
         )
 
     # Semaphore limits concurrent per-ticker scrapers
