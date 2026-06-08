@@ -282,7 +282,7 @@ def _parse_reddit_json_response(response: str) -> dict:
                 q_reason = "llm rejected"
 
     except Exception as e:
-        q_status = "discarded"
+        q_status = "relevant"
         q_reason = f"llm parse failed: {str(e)[:50]}"
 
     return {
@@ -636,7 +636,7 @@ async def _summarize_news_batch(
                     q_reason = "llm rejected"
 
         except Exception as e:
-            q_status = "discarded"
+            q_status = "relevant"
             q_reason = f"llm parse failed: {str(e)[:50]}"
 
         return {

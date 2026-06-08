@@ -435,8 +435,10 @@ class VLLMClient:
         # At 20+ concurrent requests, vLLM TPS collapses from ~30 to ~3.
         # This semaphore prevents that cliff by capping total dispatched
         # requests. Per-endpoint semaphores still apply within this cap.
-        self._global_slots = asyncio.Semaphore(24)
-        self._global_slots_total = 24
+        self._global_slots_total = sum(ep.max_concurrent for ep in self._endpoints.values())
+        if self._global_slots_total <= 0:
+            self._global_slots_total = 24
+        self._global_slots = asyncio.Semaphore(self._global_slots_total)
 
     # ── Endpoint configuration ─────────────────────────────────────────
 
@@ -779,6 +781,10 @@ class VLLMClient:
                 if loop_changed:
                     logger.warning("[VLLM] Event loop changed from %s to %s — re-initializing global slots and dispatcher tasks", getattr(self, "_dispatcher_loop", None), loop)
                     self._dispatcher_loop = loop
+                    
+                    self._global_slots_total = sum(ep.max_concurrent for ep in self._endpoints.values())
+                    if self._global_slots_total <= 0:
+                        self._global_slots_total = 24
                     self._global_slots = asyncio.Semaphore(self._global_slots_total)
 
                 for ep in self._endpoints.values():
@@ -1700,6 +1706,9 @@ class VLLMClient:
                 meta.get("agent_name", "?"),
                 meta.get("ticker", "?"),
             )
+
+        if content and ("⚠️ The model's response was cut short" in content or "response was cut short" in content):
+            raise RuntimeError(f"Prism response was cut short warning detected: {content[:100]}...")
 
         return content, total_tokens, elapsed_ms
 

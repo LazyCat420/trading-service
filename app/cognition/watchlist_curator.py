@@ -100,10 +100,10 @@ def should_trigger_curation(recent_decisions: list[dict]) -> bool:
     return hold_sell_in_window >= HOLD_SELL_TRIGGER_COUNT
 
 
-def _build_curator_context(ticker: str, recent_decisions: list[dict]) -> str:
+async def _build_curator_context(ticker: str, recent_decisions: list[dict]) -> str:
     """Build the evidence context for the LLM curator.
 
-    Gathers: recent decisions, fundamentals, technicals, news sentiment.
+    Gathers: recent decisions, fundamentals, technicals, news.
     """
     sections = []
 
@@ -117,68 +117,38 @@ def _build_curator_context(ticker: str, recent_decisions: list[dict]) -> str:
         f"# RECENT DECISIONS FOR {ticker}\n" + "\n".join(dec_lines)
     )
 
-    # 2. Fundamentals snapshot
+    # 2 & 3. Fundamentals & Technicals snapshot (build dynamically)
     try:
-        with get_db() as db:
-            fund_row = db.execute(
-                """
-                SELECT pe_ratio, revenue_growth, profit_margin, debt_to_equity,
-                       market_cap, eps
-                FROM market_snapshots
-                WHERE ticker = %s
-                ORDER BY fetched_at DESC LIMIT 1
-                """,
-                [ticker],
-            ).fetchone()
-            if fund_row:
-                sections.append(
-                    f"# FUNDAMENTALS\n"
-                    f"- P/E Ratio: {fund_row[0]}\n"
-                    f"- Revenue Growth: {fund_row[1]}\n"
-                    f"- Profit Margin: {fund_row[2]}\n"
-                    f"- Debt/Equity: {fund_row[3]}\n"
-                    f"- Market Cap: {fund_row[4]}\n"
-                    f"- EPS: {fund_row[5]}"
-                )
-            else:
-                sections.append("# FUNDAMENTALS\nNo fundamental data available.")
+        from app.data.market_data import build_snapshot
+        snapshot = await build_snapshot(ticker)
+        sections.append(
+            f"# FUNDAMENTALS\n"
+            f"- P/E Ratio: {snapshot.pe_ratio}\n"
+            f"- Revenue Growth: {snapshot.revenue_growth}\n"
+            f"- Profit Margin: {snapshot.profit_margin}\n"
+            f"- Debt/Equity: {snapshot.debt_to_equity}\n"
+            f"- Market Cap: {snapshot.market_cap}\n"
+            f"- EPS: {snapshot.eps}"
+        )
+        sections.append(
+            f"# TECHNICALS\n"
+            f"- Current Price: ${snapshot.price}\n"
+            f"- RSI (14): {snapshot.rsi_14}\n"
+            f"- MACD: {snapshot.macd} (Signal: {snapshot.macd_signal})\n"
+            f"- SMA 50: {snapshot.sma_50}\n"
+            f"- SMA 200: {snapshot.sma_200}\n"
+            f"- Returns 1D/5D/20D: {snapshot.returns_1d}% / {snapshot.returns_5d}% / {snapshot.returns_20d}%"
+        )
     except Exception as e:
-        sections.append(f"# FUNDAMENTALS\nFailed to fetch: {e}")
+        logger.warning("Failed to build snapshot for curation of %s: %s", ticker, e)
+        sections.append(f"# FUNDAMENTALS & TECHNICALS\nFailed to fetch market data: {e}")
 
-    # 3. Technicals snapshot
-    try:
-        with get_db() as db:
-            tech_row = db.execute(
-                """
-                SELECT price, rsi_14, macd, macd_signal, sma_50, sma_200,
-                       returns_1d, returns_5d, returns_20d
-                FROM market_snapshots
-                WHERE ticker = %s
-                ORDER BY fetched_at DESC LIMIT 1
-                """,
-                [ticker],
-            ).fetchone()
-            if tech_row:
-                sections.append(
-                    f"# TECHNICALS\n"
-                    f"- Current Price: ${tech_row[0]}\n"
-                    f"- RSI (14): {tech_row[1]}\n"
-                    f"- MACD: {tech_row[2]} (Signal: {tech_row[3]})\n"
-                    f"- SMA 50: {tech_row[4]}\n"
-                    f"- SMA 200: {tech_row[5]}\n"
-                    f"- Returns 1D/5D/20D: {tech_row[6]}% / {tech_row[7]}% / {tech_row[8]}%"
-                )
-            else:
-                sections.append("# TECHNICALS\nNo technical data available.")
-    except Exception as e:
-        sections.append(f"# TECHNICALS\nFailed to fetch: {e}")
-
-    # 4. Recent news sentiment
+    # 4. Recent news
     try:
         with get_db() as db:
             news_rows = db.execute(
                 """
-                SELECT title, sentiment, published_at
+                SELECT title, qualitative_draft->>'impact' AS sentiment, published_at
                 FROM news_articles
                 WHERE ticker = %s
                 ORDER BY published_at DESC LIMIT 5
@@ -214,7 +184,7 @@ async def evaluate_ticker_for_curation(
     Returns:
         Dict with 'decision', 'rationale', 'suggested_tier' keys.
     """
-    context = _build_curator_context(ticker, recent_decisions)
+    context = await _build_curator_context(ticker, recent_decisions)
     user_prompt = (
         f"Evaluate ticker {ticker} for watchlist curation.\n\n"
         f"{context}\n\n"

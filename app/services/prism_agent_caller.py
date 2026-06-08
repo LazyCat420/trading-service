@@ -265,6 +265,9 @@ async def _call_via_prism(
                 if text:
                     break
 
+    if text and ("⚠️ The model's response was cut short" in text or "response was cut short" in text):
+        raise RuntimeError(f"Prism response was cut short warning detected: {text[:100]}...")
+
     # Extract token count
     token_count = 0
     for d in (response_data, data):
