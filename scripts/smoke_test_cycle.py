@@ -103,7 +103,6 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
         # Check state
         state = PipelineService.get_current_state(summary_only=True)
         status = state.get("status", "unknown")
-        step_count = state.get("step_count", 0)
 
         # Check for new events
         with get_db() as db:
@@ -129,7 +128,7 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
                         print(f"  {_emoji} [{_phase}] {_step}: {_detail}{_elapsed_str}")
             else:
                 new = event_count - last_event_count
-                print(f"  [{int(elapsed):>4}s] {status:>12} | events: {event_count} (+{new}) | steps: {step_count}")
+                print(f"  [{int(elapsed):>4}s] {status:>12} | events: {event_count} (+{new})")
 
             last_event_count = event_count
             stale_count = 0

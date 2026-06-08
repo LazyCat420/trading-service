@@ -172,12 +172,6 @@ class LifecycleControllerMixin:
                 n_pos,
             )
 
-            n_tickers = max(len(tickers), 5)
-            collect_steps = (6 * n_tickers + 9) if collect else 0
-            analyze_steps = (9 * n_tickers) if analyze else 0
-            trade_steps = n_tickers if trade else 0
-            total = collect_steps + analyze_steps + trade_steps
-
             from app.cycle.orchestration.cycle_control import cycle_control
 
             cycle_control.reset()
@@ -213,8 +207,8 @@ class LifecycleControllerMixin:
                     "position_tickers": selection.position_tickers,
                     "non_position_tickers": selection.non_position_tickers,
                     "progress": f"Starting cycle {cycle_id} for {len(tickers)} tickers ({n_pos} portfolio + {n_extra} new)",
-                    "step_count": 0,
-                    "total_steps": total,
+                    "step_count": None,
+                    "total_steps": None,
                     "collect_flag": collect,
                     "analyze_flag": analyze,
                     "trade_flag": trade,

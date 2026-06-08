@@ -194,8 +194,8 @@ class PipelineStateDB:
                         state.get("error"),
                         state.get("phase", ""),
                         state.get("operational_phase", ""),
-                        state.get("step_count", 0),
-                        state.get("total_steps", 0),
+                        None, # step_count (removed logic)
+                        None, # total_steps (removed logic)
                         state.get("collect_flag", True),
                         state.get("analyze_flag", True),
                         state.get("trade_flag", False),
@@ -356,8 +356,8 @@ class PipelineStateDB:
             "events": [],
             "phase": "",
             "operational_phase": "",
-            "step_count": 0,
-            "total_steps": 0,
+            "step_count": None,
+            "total_steps": None,
             "collect_flag": True,
             "analyze_flag": True,
             "trade_flag": False,
@@ -544,7 +544,7 @@ class PipelineStateMixin:
             # NOTE: started_at and finished_at MUST be included here.
             # Without them the frontend gets a new cycle_id paired with
             # the old cycle's started_at, causing timer flicker.
-            for key in ("status", "phase", "step_count", "total_steps", "progress", "started_at", "finished_at"):
+            for key in ("status", "phase", "progress", "started_at", "finished_at"):
                 mem_val = cls._state.get(key)
                 if mem_val is not None:
                     state[key] = mem_val
@@ -614,20 +614,8 @@ class PipelineStateMixin:
                 logger.warning("[PipelineStateDB] Failed to load checkpoint for interrupted state: %s", e)
                 state["checkpoint"] = None
 
-        # Dynamically recalculate total_steps based on the actual number of tickers
-        tickers = state.get("tickers") or []
-        n = len(tickers)
-        n_tickers = max(n, 5) if n == 0 else n
-        c_steps = (6 * n_tickers + 9) if state.get("collect_flag", True) else 0
-        a_steps = (9 * n_tickers) if state.get("analyze_flag", True) else 0
-        t_steps = n_tickers if state.get("trade_flag", True) else 0
-
-        # Add 10% buffer to prevent progress bar from hitting 100% too early due to unexpected events
-        dynamic_total = int((c_steps + a_steps + t_steps) * 1.1)
-
-        # Ensure total_steps is never smaller than step_count (to prevent >100% progress)
-        step_count = state.get("step_count", 0)
-        state["total_steps"] = max(dynamic_total, step_count + 1)
+        state["step_count"] = None
+        state["total_steps"] = None
 
         with cls._cache_lock:
             cls._cached_states[summary_only] = (now, state)
@@ -781,10 +769,6 @@ class PipelineStateMixin:
             "data": data or {},
             "elapsed_ms": elapsed_ms,
         }
-
-        cls._state.setdefault("step_count", 0)
-        if status in ("ok", "error", "skipped"):
-            cls._state["step_count"] += 1
 
         cls._state["phase"] = phase
         cls._state["progress"] = f"[{phase}] {step}: {detail}"
