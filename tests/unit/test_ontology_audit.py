@@ -166,13 +166,13 @@ class TestOntologyAudit:
         assert len(long_text) > 5000
         
         # Mock two successful chunk responses
-        mock_resp_1 = MagicMock()
-        mock_resp_1.content = '{"entity_types": [{"name": "CentralBank"}], "nodes": [{"id": "fed", "dynamic_type": "CentralBank", "metadata": {"name": "Federal Reserve"}}], "edges": []}'
+        resp_1_text = '{"entity_types": [{"name": "CentralBank"}], "nodes": [{"id": "fed", "dynamic_type": "CentralBank", "metadata": {"name": "Federal Reserve"}}], "edges": []}'
+        resp_2_text = '{"entity_types": [{"name": "CentralBank"}], "nodes": [{"id": "fed", "dynamic_type": "CentralBank", "metadata": {"location": "Washington"}}], "edges": []}'
         
-        mock_resp_2 = MagicMock()
-        mock_resp_2.content = '{"entity_types": [{"name": "CentralBank"}], "nodes": [{"id": "fed", "dynamic_type": "CentralBank", "metadata": {"location": "Washington"}}], "edges": []}'
-        
-        mock_llm_chat.side_effect = [mock_resp_1, mock_resp_2]
+        mock_llm_chat.side_effect = [
+            (resp_1_text, 100, 200),
+            (resp_2_text, 120, 240)
+        ]
         
         merged_res = await OntologyGenerator.generate_and_extract(long_text, agent_name="test_curator")
         

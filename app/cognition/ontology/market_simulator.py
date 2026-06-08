@@ -113,16 +113,13 @@ class MarketSimulator:
 
         # 3. Generate personas for entities
         try:
-            personas_resp = await llm.chat(
-                messages=[
-                    {"role": "system", "content": PERSONA_PROMPT.format(ticker=ticker)},
-                    {"role": "user", "content": f"Entities to create personas for: {json.dumps(sim_nodes)}"}
-                ],
+            personas_text, _, _ = await llm.chat(
+                system=PERSONA_PROMPT.format(ticker=ticker),
+                user=f"Entities to create personas for: {json.dumps(sim_nodes)}",
                 agent_name=agent_name,
-                temperature=0.2,
-                response_format={"type": "json_object"}
+                temperature=0.2
             )
-            personas_data = json.loads(personas_resp.content)
+            personas_data = json.loads(personas_text)
             personas = personas_data.get("personas", [])
         except Exception as e:
             logger.error("[MarketSimulator] Persona generation failed: %s", e)
@@ -138,16 +135,13 @@ class MarketSimulator:
 
         # 4. Simulate the debate
         try:
-            debate_resp = await llm.chat(
-                messages=[
-                    {"role": "system", "content": DEBATE_PROMPT.format(ticker=ticker, topic_context=topic_context, personas_formatted=personas_formatted, rounds=rounds)},
-                    {"role": "user", "content": f"Start the simulation for {ticker}."}
-                ],
+            debate_text, _, _ = await llm.chat(
+                system=DEBATE_PROMPT.format(ticker=ticker, topic_context=topic_context, personas_formatted=personas_formatted, rounds=rounds),
+                user=f"Start the simulation for {ticker}.",
                 agent_name=agent_name,
-                temperature=0.5,
-                response_format={"type": "json_object"}
+                temperature=0.5
             )
-            debate_data = json.loads(debate_resp.content)
+            debate_data = json.loads(debate_text)
         except Exception as e:
             logger.error("[MarketSimulator] Debate simulation failed: %s", e)
             return {"status": "failed", "reason": "debate_simulation_failed"}

@@ -35,8 +35,7 @@ async def test_simulate_market_opinion_success(mock_db, mock_llm_chat, mock_spre
     mock_conn.execute.return_value.fetchone.return_value = (1,)  # Exist check
 
     # Mock LLM calls (1st: Persona Generator, 2nd: Debate Simulator)
-    mock_response_1 = MagicMock()
-    mock_response_1.content = json.dumps({
+    response_1_text = json.dumps({
         "personas": [
             {
                 "id": "person_tim_cook",
@@ -55,8 +54,7 @@ async def test_simulate_market_opinion_success(mock_db, mock_llm_chat, mock_spre
         ]
     })
 
-    mock_response_2 = MagicMock()
-    mock_response_2.content = json.dumps({
+    response_2_text = json.dumps({
         "transcript": [
             {"round": 1, "speaker_id": "person_tim_cook", "statement": "We are bullish on AI integration."}
         ],
@@ -71,7 +69,10 @@ async def test_simulate_market_opinion_success(mock_db, mock_llm_chat, mock_spre
         ]
     })
 
-    mock_llm_chat.side_effect = [mock_response_1, mock_response_2]
+    mock_llm_chat.side_effect = [
+        (response_1_text, 100, 200),
+        (response_2_text, 150, 300)
+    ]
 
     # Run simulator with a cycle_id
     res = await MarketSimulator.simulate_market_opinion("AAPL", topic_context="Apple announces new AI features.", cycle_id="cycle-456")

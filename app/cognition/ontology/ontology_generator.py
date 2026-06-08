@@ -53,18 +53,14 @@ class OntologyGenerator:
         """Call vLLM to extract graph elements for a single text chunk."""
         prompt = f"Analyze the following text and extract the dynamic knowledge graph:\n\n{chunk_text}"
         try:
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ]
-            response = await llm.chat(
-                messages=messages,
+            response_text, _, _ = await llm.chat(
+                system=SYSTEM_PROMPT,
+                user=prompt,
                 agent_name=agent_name,
                 temperature=0.2,
-                max_tokens=4000,
-                response_format={"type": "json_object"}
+                max_tokens=4000
             )
-            result = json.loads(response.content)
+            result = json.loads(response_text)
             if not isinstance(result, dict):
                 return {}
             return result
