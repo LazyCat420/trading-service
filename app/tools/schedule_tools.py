@@ -123,7 +123,7 @@ def _ensure_default_schedule(
         "Create a new automated trading cycle schedule or update an existing one. "
         "Use this after completing a trading cycle to ensure the bot runs again. "
         "Parameters: name (str), interval_hours (float, 1-168), collect (bool), "
-        "analyze (bool), market_hours_only (bool). "
+        "analyze (bool), market_hours_only (bool), tickers (string[]), max_tickers (number), discovered_tickers (number). "
         "Safety: max 6 active schedules, min 1h interval."
     ),
     parameters={
@@ -157,6 +157,19 @@ def _ensure_default_schedule(
                 "type": "string",
                 "description": "If provided, update this existing schedule instead of creating a new one.",
             },
+            "tickers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional explicit tickers this schedule should always include.",
+            },
+            "max_tickers": {
+                "type": "number",
+                "description": "Hard cap on total tickers processed for this schedule.",
+            },
+            "discovered_tickers": {
+                "type": "number",
+                "description": "Max number of discovery tickers to add per run for this schedule.",
+            },
         },
         "required": ["name"],
     },
@@ -173,6 +186,9 @@ async def create_or_update_schedule(
     analyze: bool = True,
     market_hours_only: bool = True,
     update_schedule_id: str | None = None,
+    tickers: list[str] | None = None,
+    max_tickers: int | None = None,
+    discovered_tickers: int | None = None,
 ) -> str:
     """Create or update a cycle schedule."""
     try:
@@ -198,13 +214,28 @@ async def create_or_update_schedule(
         with get_db() as db:
             if update_schedule_id:
                 # ── UPDATE existing schedule ──
+                # Fetch existing to avoid overriding with None if parameters were not supplied
+                row = db.execute(
+                    "SELECT tickers, max_tickers, discovered_tickers FROM cycle_schedules WHERE id = %s",
+                    [update_schedule_id]
+                ).fetchone()
+                if not row:
+                    return json.dumps({"error": f"Schedule {update_schedule_id} not found."})
+
+                db_tickers, db_max_tickers, db_discovered_tickers = row
+
+                final_tickers_str = json.dumps(tickers) if tickers is not None else db_tickers
+                final_max_tickers = max_tickers if max_tickers is not None else db_max_tickers
+                final_discovered_tickers = discovered_tickers if discovered_tickers is not None else db_discovered_tickers
+
                 now = datetime.now(timezone.utc).isoformat()
                 db.execute(
                     """
                     UPDATE cycle_schedules SET
                         name = %s, schedule_type = %s, cron_expression = %s,
                         interval_hours = %s, collect = %s, "analyze" = %s,
-                        market_hours_only = %s, updated_at = %s
+                        market_hours_only = %s, tickers = %s, max_tickers = %s,
+                        discovered_tickers = %s, updated_at = %s
                     WHERE id = %s
                     """,
                     [
@@ -215,6 +246,9 @@ async def create_or_update_schedule(
                         collect,
                         analyze,
                         market_hours_only,
+                        final_tickers_str,
+                        final_max_tickers,
+                        final_discovered_tickers,
                         now,
                         update_schedule_id,
                     ],
@@ -260,13 +294,17 @@ async def create_or_update_schedule(
                 job_id = f"sch-bot-{uuid.uuid4().hex[:8]}"
                 now = datetime.now(timezone.utc).isoformat()
 
+                final_tickers_str = json.dumps(tickers) if tickers is not None else "[]"
+                final_max_tickers = max_tickers
+                final_discovered_tickers = discovered_tickers
+
                 db.execute(
                     """
                     INSERT INTO cycle_schedules (
                         id, name, schedule_type, cron_expression, interval_hours,
-                        collect, "analyze", trade, tickers, max_tickers,
+                        collect, "analyze", trade, tickers, max_tickers, discovered_tickers,
                         market_hours_only, is_active, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         job_id,
@@ -277,8 +315,9 @@ async def create_or_update_schedule(
                         collect,
                         analyze,
                         None,  # trade = armed
-                        "[]",  # watchlist
-                        None,  # max_tickers
+                        final_tickers_str,
+                        final_max_tickers,
+                        final_discovered_tickers,
                         market_hours_only,
                         True,
                         now,

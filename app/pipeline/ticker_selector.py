@@ -17,12 +17,7 @@ from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
-# ── Material Change Thresholds ───────────────────────────────────────
-PRICE_CHANGE_THRESHOLD_PCT = 5.0   # >5% price move since last analysis
-NEW_ARTICLES_THRESHOLD = 3          # >=3 new articles since last analysis
-
-
-def _has_material_change(ticker: str, db) -> bool:
+def _has_material_change(ticker: str, db, cap: int = 50) -> bool:
     """Check if a ticker has a material change since its last analysis.
 
     Material change = price moved >5% OR >=3 new articles published.
@@ -30,6 +25,18 @@ def _has_material_change(ticker: str, db) -> bool:
 
     Returns True if re-analysis is warranted despite recent analysis.
     """
+    try:
+        from app.config import settings
+        price_threshold = getattr(settings, "PRICE_CHANGE_THRESHOLD_PCT", 5.0)
+        news_threshold = getattr(settings, "NEW_ARTICLES_THRESHOLD", 3)
+    except ImportError:
+        price_threshold = 5.0
+        news_threshold = 3
+
+    if cap is not None and cap < 10:
+        price_threshold *= 2.0  # Make it stricter under small caps (e.g. 10.0%)
+        news_threshold += 2     # Make it stricter under small caps (e.g. 5 articles)
+
     try:
         # Get last analysis price and timestamp
         row = db.execute(
@@ -56,7 +63,7 @@ def _has_material_change(ticker: str, db) -> bool:
             if current_price_row and current_price_row[0]:
                 current_price = float(current_price_row[0])
                 delta_pct = abs(current_price - last_price) / last_price * 100
-                if delta_pct >= PRICE_CHANGE_THRESHOLD_PCT:
+                if delta_pct >= price_threshold:
                     logger.info(
                         "[SELECTOR] %s: MATERIAL CHANGE — price moved %.1f%% (%.2f → %.2f)",
                         ticker, delta_pct, last_price, current_price,
@@ -70,7 +77,7 @@ def _has_material_change(ticker: str, db) -> bool:
                 [ticker, last_analyzed_at],
             ).fetchone()
             new_articles = news_row[0] if news_row else 0
-            if new_articles >= NEW_ARTICLES_THRESHOLD:
+            if new_articles >= news_threshold:
                 logger.info(
                     "[SELECTOR] %s: MATERIAL CHANGE — %d new articles since last analysis",
                     ticker, new_articles,
@@ -185,33 +192,36 @@ class TickerSelector:
                 for r in analysis_rows:
                     recent_analyzed.add(r[0].upper().strip())
 
-                # Last completed cycle cooldown
-                last_cycle = db.execute(
-                    "SELECT cycle_id FROM cycle_benchmarks WHERE status = 'done' ORDER BY finished_at DESC, started_at DESC LIMIT 1"
-                ).fetchone()
-                if last_cycle:
-                    last_cycle_id = last_cycle[0]
-                    logger.info("[SELECTOR] Found last completed cycle: %s", last_cycle_id)
+                # Last completed cycles cooldown (last 5 if cap < 10, else last 1)
+                n_cooldown_cycles = 5 if (cap is not None and cap < 10) else 1
+                last_cycles = db.execute(
+                    "SELECT cycle_id FROM cycle_benchmarks WHERE status = 'done' ORDER BY finished_at DESC, started_at DESC LIMIT %s",
+                    [n_cooldown_cycles]
+                ).fetchall()
+                
+                if last_cycles:
+                    cycle_ids = [r[0] for r in last_cycles]
+                    logger.info("[SELECTOR] Found last %d completed cycles for cooldown: %s", len(cycle_ids), cycle_ids)
                     ticker_rows = db.execute(
                         """
-                        SELECT DISTINCT ticker FROM cycle_ticker_benchmarks WHERE cycle_id = %s
+                        SELECT DISTINCT ticker FROM cycle_ticker_benchmarks WHERE cycle_id = ANY(%s)
                         UNION
-                        SELECT DISTINCT ticker FROM analysis_results WHERE cycle_id = %s
+                        SELECT DISTINCT ticker FROM analysis_results WHERE cycle_id = ANY(%s)
                         """,
-                        [last_cycle_id, last_cycle_id]
+                        [cycle_ids, cycle_ids]
                     ).fetchall()
                     for r in ticker_rows:
                         recent_analyzed.add(r[0].upper().strip())
                     logger.info(
-                        "[SELECTOR] Added %d tickers from last completed cycle '%s' to cooldown",
-                        len(ticker_rows), last_cycle_id
+                        "[SELECTOR] Added %d tickers from last completed cycles to cooldown",
+                        len(ticker_rows)
                     )
 
                 # ── Material Change Override ──
                 # Check each recently-analyzed ticker for material changes
                 # (price >5% move or 3+ new articles). If changed, override cooldown.
                 for cooldown_ticker in list(recent_analyzed):
-                    if _has_material_change(cooldown_ticker, db):
+                    if _has_material_change(cooldown_ticker, db, cap):
                         material_change_overrides.add(cooldown_ticker)
                         recent_analyzed.discard(cooldown_ticker)
 
@@ -271,7 +281,7 @@ class TickerSelector:
         if len(non_position) < non_position_slots:
             remaining_slots = non_position_slots - len(non_position)
             if discovered_tickers is not None:
-                remaining_slots = min(remaining_slots, discovered_tickers)
+                remaining_slots = min(remaining_slots, max(0, discovered_tickers))
 
             large_slots = max(1, int(remaining_slots * 0.40))
             mid_slots = max(1, int(remaining_slots * 0.40))
@@ -356,6 +366,11 @@ class TickerSelector:
                 return picks
 
             discovery: list[str] = []
+            # If slot limits are small, shuffle candidates to ensure discovery diversity
+            if non_position_slots is not None and non_position_slots <= 5:
+                random.shuffle(large_candidates)
+                random.shuffle(mid_small_candidates)
+
             large_picks = fill_bucket(large_candidates, large_slots)
             discovery.extend(large_picks)
             mid_picks = fill_bucket(mid_small_candidates, mid_slots)
@@ -397,6 +412,42 @@ class TickerSelector:
         assert total <= cap, (
             f"[SELECTOR BUG] Total tickers {total} exceeds hard cap {cap}! "
             f"positions={len(position_tickers)}, non_position={len(capped_non_position)}"
+        )
+
+        # Check consecutive cycle overlap for logging
+        if cap is not None and cap < 10:
+            with get_db() as db:
+                try:
+                    last_cycle = db.execute(
+                        "SELECT cycle_id FROM cycle_benchmarks WHERE status = 'done' ORDER BY finished_at DESC, started_at DESC LIMIT 1"
+                    ).fetchone()
+                    if last_cycle:
+                        last_tickers_rows = db.execute(
+                            """
+                            SELECT DISTINCT ticker FROM cycle_ticker_benchmarks WHERE cycle_id = %s
+                            UNION
+                            SELECT DISTINCT ticker FROM analysis_results WHERE cycle_id = %s
+                            """,
+                            [last_cycle[0], last_cycle[0]]
+                        ).fetchall()
+                        last_tickers = {r[0].upper().strip() for r in last_tickers_rows}
+                        overlap = set(position_tickers | set(capped_non_position)) & last_tickers
+                        if overlap:
+                            logger.info(
+                                "[SELECTOR] CONSECUTIVE OVERLAP DETECTED under small cap (%d): %s are appearing in consecutive cycles",
+                                cap, ", ".join(sorted(overlap))
+                            )
+                except Exception as overlap_err:
+                    logger.debug("Overlap check failed (non-fatal): %s", overlap_err)
+
+        logger.info(
+            "[SELECTOR-DETAILED-LOG] cap=%s, discovered_tickers=%s, position_tickers=%s, non_position_tickers=%s, total=%d, material_change_overrides=%s",
+            cap,
+            discovered_tickers,
+            list(position_tickers),
+            capped_non_position,
+            total,
+            list(material_change_overrides),
         )
 
         return TickerSelectionResult(

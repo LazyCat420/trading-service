@@ -33,7 +33,12 @@ active schedules/triggers, creating schedules, and writing memory notes. You MUS
 5. **HALLUCINATION CHECK:** Audit the recent decisions for "Hallucinations". A hallucination is when an agent makes a factual claim without a verifiable source attribution to an upstream agent or document.
 6. If you find actionable insights or detect a hallucination, call `write_memory_note` to persist them.
 7. If a trading rule parameter seems poorly calibrated, call `propose_constitution_amendment`.
-8. **CRITICAL:** Based on the current market conditions and bot health, call `create_or_update_schedule` to schedule the bot's next run (typically 1 to 4 hours in the future). If an existing "Auto-Recovery Schedule" exists, you may update it. Otherwise create a new one.
+8. **CRITICAL:** Based on the current market conditions and bot health, call `create_or_update_schedule` to schedule the bot's next run.
+You must reason about the scheduling parameters:
+- `tickers`: explicit list of tickers from this run needing follow-up (e.g. "almost buys", pending catalysts, missing data).
+- `max_tickers`: total ticker capacity cap for the schedule. Use smaller, focused caps (e.g. 5-10) for focused daily monitors, or larger caps for broad exploratory cycles.
+- `discovered_tickers`: number of fresh names you want to discover/sample. Lower it if we have rich watchlists, increase it to scan for new opportunities.
+If an existing "Auto-Recovery Schedule" exists, you may update it. Otherwise create a new one.
 
 ## OUTPUT:
 Respond with JSON:

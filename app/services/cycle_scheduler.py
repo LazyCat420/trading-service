@@ -160,6 +160,16 @@ class SchedulerService:
                 "discovered_tickers": s.get("discovered_tickers"),
             }
 
+            logger.info(
+                "[SCHEDULER] Execute schedule detail: schedule_id=%s, name=%s, tickers=%s, max_tickers=%s, discovered_tickers=%s, payload=%s",
+                schedule_id,
+                s["name"],
+                s["tickers"],
+                s.get("max_tickers"),
+                s.get("discovered_tickers"),
+                json.dumps(payload),
+            )
+
             run_status = "ok"
             err_msg = ""
             try:

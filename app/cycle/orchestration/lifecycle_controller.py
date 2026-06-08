@@ -133,7 +133,7 @@ class LifecycleControllerMixin:
             )
 
             # Compute hard total cap: max_tickers from UI > MAX_CYCLE_TICKERS > MAX_ANALYSIS_TICKERS
-            if max_tickers is not None:
+            if max_tickers is not None and max_tickers > 0:
                 cap = max_tickers
             elif settings.MAX_CYCLE_TICKERS > 0:
                 cap = settings.MAX_CYCLE_TICKERS
