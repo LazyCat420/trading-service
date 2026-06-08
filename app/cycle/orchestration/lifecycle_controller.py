@@ -133,7 +133,10 @@ class LifecycleControllerMixin:
             )
 
             # Compute hard total cap: max_tickers from UI > MAX_CYCLE_TICKERS > MAX_ANALYSIS_TICKERS
-            if max_tickers is not None and max_tickers > 0:
+            dynamic_selection_mode = (max_tickers == 0 and discovered_tickers == 0)
+            if dynamic_selection_mode:
+                cap = 10000  # Large enough to fetch all candidate tickers
+            elif max_tickers is not None and max_tickers > 0:
                 cap = max_tickers
             elif settings.MAX_CYCLE_TICKERS > 0:
                 cap = settings.MAX_CYCLE_TICKERS
@@ -261,7 +264,8 @@ class LifecycleControllerMixin:
                 cycle_id=cycle_id,
                 trigger_type=trigger_type,
                 schedule_id=schedule_id,
-                max_tickers=cap,
+                max_tickers=0 if dynamic_selection_mode else cap,
+                dynamic_selection_mode=dynamic_selection_mode,
             )
 
             cls._cycle_task = asyncio.create_task(cls._run_cycle(ctx))

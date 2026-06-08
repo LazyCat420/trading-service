@@ -16,3 +16,4 @@ class CycleContext:
     existing_results: list[dict] | None = None
     macro_memo: str = ""
     max_tickers: int | None = None
+    dynamic_selection_mode: bool = False

@@ -21,6 +21,10 @@ async def run_phase2_collection(
     tickers are pushed to analysis as they finish (concurrent pipelining).
     """
     try:
+        max_tickers_val = getattr(ctx, "max_tickers", None)
+        if getattr(ctx, "dynamic_selection_mode", False):
+            max_tickers_val = 10000
+
         data_results = await run_data(
             ctx.tickers,
             emit=emit,
@@ -28,7 +32,7 @@ async def run_phase2_collection(
             position_tickers=state.get("position_tickers", []),
             triage_data=state.get("triage", {}),
             analysis_queue=analysis_queue,
-            max_tickers=getattr(ctx, "max_tickers", None),
+            max_tickers=max_tickers_val,
         )
 
         # Merge updated ticker list (may include discovered tickers)

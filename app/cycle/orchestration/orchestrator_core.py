@@ -277,9 +277,55 @@ class OrchestratorCoreMixin:
                 )
 
                 _collection_start = time.monotonic()
+                
+                # If dynamic selection mode is active, collection must not feed the queue directly
+                collection_queue = None if getattr(ctx, "dynamic_selection_mode", False) else analysis_queue
+                
                 ctx.tickers = await run_phase2_collection(
-                    ctx, cls.emit, cls._state, analysis_queue=analysis_queue
+                    ctx, cls.emit, cls._state, analysis_queue=collection_queue
                 )
+                
+                if getattr(ctx, "dynamic_selection_mode", False):
+                    logger.info("[CYCLE] Dynamic Selection Mode active. Deciding tickers to process...")
+                    cls.emit(
+                        "collecting",
+                        "dynamic_selection_start",
+                        "LLM is deciding how many tickers to process for the day based on latest news...",
+                        status="running"
+                    )
+                    try:
+                        selected_tickers = await cls.decide_tickers_to_process(ctx, bot_id)
+                        
+                        logger.info("[CYCLE] LLM selected %d tickers to process: %s", len(selected_tickers), selected_tickers)
+                        cls.emit(
+                            "collecting",
+                            "dynamic_selection_complete",
+                            f"LLM selected {len(selected_tickers)} tickers to process for the day: {', '.join(selected_tickers)}",
+                            status="ok",
+                            data={"selected_tickers": selected_tickers}
+                        )
+                        
+                        # Update tickers
+                        ctx.tickers = selected_tickers
+                        cls._state["tickers"] = selected_tickers
+                        
+                        # Push them to analysis_queue
+                        if analysis_queue is not None:
+                            for t in selected_tickers:
+                                analysis_queue.put_nowait(t)
+                    except Exception as e:
+                        logger.exception("[CYCLE] Curator agent failed. Falling back to processing all candidate tickers.")
+                        cls.emit(
+                            "collecting",
+                            "dynamic_selection_error",
+                            f"Curator agent failed: {e}. Falling back to processing all candidates.",
+                            status="warning"
+                        )
+                        # Push all collected candidates to analysis_queue
+                        if analysis_queue is not None:
+                            for t in ctx.tickers:
+                                analysis_queue.put_nowait(t)
+
                 _collection_elapsed = int(time.monotonic() - _collection_start)
 
                 _queue_depth = analysis_queue.qsize() if analysis_queue else 0
@@ -631,3 +677,43 @@ class OrchestratorCoreMixin:
         except Exception as e:
             logger.warning("[CYCLE] Failed to persist cycle benchmark: %s", e)
 
+    @classmethod
+    async def decide_tickers_to_process(cls, ctx: CycleContext, bot_id: str) -> list[str]:
+        """Runs the Curator agent to dynamically select which tickers to analyze based on news."""
+        from app.agents.planner_agent import run_ticker_curator
+
+        candidates = list(ctx.tickers)
+        if not candidates:
+            return []
+
+        position_tickers = list(cls._state.get("position_tickers", []))
+
+        result = await run_ticker_curator(
+            candidates=candidates,
+            position_tickers=position_tickers,
+            cycle_id=ctx.cycle_id,
+            bot_id=bot_id
+        )
+
+        response_text = result.get("response", "")
+        if not response_text:
+            raise ValueError("Curator agent returned empty response")
+
+        from app.utils.text_utils import parse_json_response
+        parsed = parse_json_response(response_text)
+
+        selected = parsed.get("selected_tickers", [])
+        if not isinstance(selected, list):
+            raise ValueError(f"Curator agent returned invalid selected_tickers format: {type(selected)}")
+
+        # Normalize and filter
+        candidate_set = {t.upper().strip() for t in candidates}
+        selected_normalized = []
+        for t in selected:
+            if not isinstance(t, str):
+                continue
+            normalized_t = t.upper().strip()
+            if normalized_t in candidate_set and normalized_t not in selected_normalized:
+                selected_normalized.append(normalized_t)
+
+        return selected_normalized
