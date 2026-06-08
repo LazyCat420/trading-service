@@ -120,7 +120,7 @@ def resolve_outcome(
         with get_db() as db:
             row = db.execute(
                 """
-                SELECT id, entry_price, action, confidence FROM decision_outcomes
+                SELECT id, entry_price, action, confidence, cycle_id FROM decision_outcomes
                 WHERE ticker = %s AND action = 'BUY' AND resolved_at IS NULL
                 ORDER BY created_at DESC LIMIT 1
             """,
@@ -134,6 +134,7 @@ def resolve_outcome(
             outcome_id, entry_price = row[0], row[1]
             action = row[2]
             confidence = row[3]
+            cycle_id = row[4]
 
             if entry_price and entry_price > 0:
                 pnl_pct = ((exit_price - entry_price) / entry_price) * 100
@@ -166,6 +167,21 @@ def resolve_outcome(
                 entry_price or 0,
                 exit_price,
             )
+
+            # ── Post-cycle episodic observations tracking ──
+            try:
+                from app.cycle.orchestration.post_cycle_observe import create_outcome_observation
+                create_outcome_observation(
+                    ticker=ticker,
+                    outcome=outcome,
+                    pnl_pct=pnl_pct,
+                    cycle_id=cycle_id or "manual",
+                )
+            except Exception as obs_err:
+                logger.error(
+                    "[PIPELINE] [OBSERVE] Failed outcome observation for %s: %s", ticker, obs_err
+                )
+
 
             # ── Strategy Performance Tracking (Phase 5) ──
             try:

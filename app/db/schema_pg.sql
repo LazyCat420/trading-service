@@ -479,6 +479,21 @@ CREATE TABLE IF NOT EXISTS decision_outcomes (
     resolved_at   TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS episodic_observations (
+    id                     TEXT PRIMARY KEY,
+    created_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    cycle_id               TEXT,
+    ticker                 TEXT,
+    sector                 TEXT,
+    source_type            TEXT,
+    observation_text       TEXT,
+    rationale_excerpt      TEXT,
+    confidence_at_creation DOUBLE PRECISION,
+    outcome_label          TEXT,
+    outcome_score          DOUBLE PRECISION,
+    promoted_to_memory     BOOLEAN DEFAULT FALSE
+);
+
 -- ══════════════════════════════════════════
 -- BOTS & LLM AUDIT
 -- ══════════════════════════════════════════

@@ -1147,3 +1147,30 @@ def _fix_eth_cagr_data(conn):
         except Exception:
             pass
 
+    # ── Episodic Observations (Developer 2 post-cycle learner) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS episodic_observations (
+                    id                      TEXT PRIMARY KEY,
+                    created_at              TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    cycle_id                TEXT,
+                    ticker                  TEXT,
+                    sector                  TEXT,
+                    source_type             TEXT,
+                    observation_text        TEXT,
+                    rationale_excerpt       TEXT,
+                    confidence_at_creation  DOUBLE PRECISION,
+                    outcome_label           TEXT,
+                    outcome_score           DOUBLE PRECISION,
+                    promoted_to_memory      BOOLEAN DEFAULT FALSE
+                )
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+

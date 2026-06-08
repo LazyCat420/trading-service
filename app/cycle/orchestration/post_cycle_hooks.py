@@ -111,6 +111,21 @@ async def run_post_cycle_hooks(
             status="error",
         )
 
+    # ── Post-cycle episodic observations tracking (Developer 2 requirement) ──
+    try:
+        from app.cycle.orchestration.post_cycle_observe import create_decision_observation
+        await create_decision_observation(
+            ticker=ticker,
+            result=result,
+            escalated=escalated,
+            cycle_id=cycle_id,
+        )
+    except Exception as obs_err:
+        logger.error(
+            "[PIPELINE] [OBSERVE] Failed decision observation for %s: %s", ticker, obs_err
+        )
+
+
     # ── Outcome tracking: record BUY/SELL for trade journal validation ──
     try:
         from app.pipeline.analysis.outcome_tracker import record_decision

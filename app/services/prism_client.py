@@ -530,7 +530,10 @@ class PrismClient:
         # Clean agent name to match uppercase identifier slug
         # e.g., "bear_macro_sentiment_t2_agent" -> "BEAR_MACRO_SENTIMENT_T2_AGENT"
         slug = name.upper().replace(" ", "_").replace("-", "_").strip("_")
+        while "__" in slug:
+            slug = slug.replace("__", "_")
         agent_id = f"CUSTOM_{slug}" if not slug.startswith("CUSTOM_") else slug
+
 
         # Fetch list of existing agents to check for duplicates and get the database ID
         client = await self._get_client()

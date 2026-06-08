@@ -353,6 +353,48 @@ def test_prism_client_agent_mapping():
     )
     assert p["agent"] == "CUSTOM_MARKET_ALPHA"
 
+    # Test post_cycle_learner mapping
+    p, _, _ = client.get_chat_payload_and_url(
+        model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
+        agent_name="post_cycle_learner", ticker="", cycle_id="", enable_thinking=False
+    )
+    assert p["agent"] == "CUSTOM_POST_CYCLE_LEARNER_AGENT"
+
+    p, _, _ = client.get_chat_payload_and_url(
+        model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
+        agent_name="CUSTOM_POST_CYCLE_LEARNER_AGENT", ticker="", cycle_id="", enable_thinking=False
+    )
+    assert p["agent"] == "CUSTOM_POST_CYCLE_LEARNER_AGENT"
+
+
+@pytest.mark.asyncio
+async def test_prism_client_slug_normalization():
+    client = PrismClient()
+    mock_http_client = AsyncMock()
+    
+    mock_get = AsyncMock()
+    mock_get.status_code = 200
+    mock_get.json.return_value = []
+    
+    mock_post = AsyncMock()
+    mock_post.status_code = 201
+    
+    mock_http_client.get = AsyncMock(return_value=mock_get)
+    mock_http_client.post = AsyncMock(return_value=mock_post)
+    
+    client._get_client = AsyncMock(return_value=mock_http_client)
+    
+    agent_id = await client.register_or_update_custom_agent(
+        name="CUSTOM_QUANT_RESEARCH__RESEARCH",
+        identity="identity",
+        guidelines="guidelines"
+    )
+    
+    assert agent_id == "CUSTOM_QUANT_RESEARCH_RESEARCH"
+    mock_http_client.post.assert_called_once()
+
+
+
 
 
 
