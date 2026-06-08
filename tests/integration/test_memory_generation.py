@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 import asyncio
 
-from app.pipeline.phases.phase6_post import run_phase6_post
+from app.cycle.phases.phase6_post import run_phase6_post
 from app.pipeline.core import PipelineContext
 
 @pytest.mark.asyncio
