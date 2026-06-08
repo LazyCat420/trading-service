@@ -242,6 +242,28 @@ async def run_prism_agent(
     # Check if Prism is available
     prism_healthy = await prism.check_health()
 
+    # Publish start event to telemetry bus
+    try:
+        from app.telemetry.bus import publish_event
+        from app.telemetry.schema import TelemetryEvent
+        from datetime import datetime, timezone
+
+        use_prism = prism_healthy and settings.PRISM_ENABLED
+        publish_event(TelemetryEvent(
+            ts=datetime.now(timezone.utc).isoformat(),
+            cycle_id=cycle_id,
+            ticker=ticker,
+            kind="llm",
+            source="prism" if use_prism else "local_fallback",
+            status="ok",
+            step="PRISM_AGENT_START",
+            detail=f"Routing agent {agent_name} to Prism /agent" if use_prism else f"Local fallback execution for agent {agent_name}",
+            elapsed_ms=0,
+            data={"agent_name": agent_name, "model": llm._resolve_model(agent_name)}
+        ))
+    except Exception as tel_e:
+        logger.debug("[run_prism_agent] Telemetry start failed: %s", tel_e)
+
     if not prism_healthy or not settings.PRISM_ENABLED:
         logger.info(
             "[PrismHarness] Prism unavailable — falling back to local executor for %s",
@@ -482,6 +504,32 @@ async def run_prism_agent(
                 if isinstance(tc, dict) and tc.get("name")
             ]
 
+            # Publish tool call events to telemetry bus
+            try:
+                from app.telemetry.bus import publish_event
+                from app.telemetry.schema import TelemetryEvent
+                from datetime import datetime, timezone
+                for tc in prism_tool_calls:
+                    if isinstance(tc, dict) and tc.get("name"):
+                        tc_name = tc["name"]
+                        tc_success = not bool(tc.get("error"))
+                        tc_ms = int(tc.get("executionMs", 0) or tc.get("duration_ms", 0) or 0)
+                        
+                        publish_event(TelemetryEvent(
+                            ts=datetime.now(timezone.utc).isoformat(),
+                            cycle_id=cycle_id,
+                            ticker=ticker,
+                            kind="tool",
+                            source="prism",
+                            status="ok" if tc_success else "error",
+                            step="TOOL_CALL",
+                            detail=f"Agent {agent_name} executed tool {tc_name} ({'success' if tc_success else 'failed'})",
+                            elapsed_ms=tc_ms,
+                            data={"tool_name": tc_name, "arguments": tc.get("arguments", {}), "error": tc.get("error")}
+                        ))
+            except Exception as tel_e:
+                logger.debug("[run_prism_agent] Telemetry tool calls failed: %s", tel_e)
+
             if used_tool_names:
                 # Log each tool call to tool_usage_stats for reputation tracking
                 # Parse per-tool results when Prism provides them
@@ -536,6 +584,27 @@ async def run_prism_agent(
         except Exception as rec_err:
             logger.warning("[PrismHarness] Failed to record Prism tool usage: %s", rec_err)
 
+        # Publish success event to telemetry bus
+        try:
+            from app.telemetry.bus import publish_event
+            from app.telemetry.schema import TelemetryEvent
+            from datetime import datetime, timezone
+
+            publish_event(TelemetryEvent(
+                ts=datetime.now(timezone.utc).isoformat(),
+                cycle_id=cycle_id,
+                ticker=ticker,
+                kind="llm",
+                source="prism",
+                status="ok",
+                step="PRISM_AGENT_END",
+                detail=f"Agent {agent_name} finished successfully via Prism",
+                elapsed_ms=elapsed_ms,
+                data={"token_usage": token_usage, "tools_called": used_tool_names}
+            ))
+        except Exception as tel_e:
+            logger.debug("[run_prism_agent] Telemetry success failed: %s", tel_e)
+
         return PrismAgentResult(
             final_text=final_text,
             token_usage=token_usage,
@@ -552,6 +621,25 @@ async def run_prism_agent(
             agent_name,
             timeout_seconds,
         )
+        # Publish timeout event
+        try:
+            from app.telemetry.bus import publish_event
+            from app.telemetry.schema import TelemetryEvent
+            from datetime import datetime, timezone
+            publish_event(TelemetryEvent(
+                ts=datetime.now(timezone.utc).isoformat(),
+                cycle_id=cycle_id,
+                ticker=ticker,
+                kind="llm",
+                source="prism",
+                status="error",
+                step="PRISM_AGENT_END",
+                detail=f"Agent {agent_name} timed out after {timeout_seconds}s, falling back to local",
+                elapsed_ms=elapsed_ms,
+                data={"error": "TimeoutError"}
+            ))
+        except Exception:
+            pass
         return await _fallback_to_local(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -568,6 +656,25 @@ async def run_prism_agent(
             "[PrismHarness] %s failed via Prism — falling back to local",
             agent_name,
         )
+        # Publish failure event
+        try:
+            from app.telemetry.bus import publish_event
+            from app.telemetry.schema import TelemetryEvent
+            from datetime import datetime, timezone
+            publish_event(TelemetryEvent(
+                ts=datetime.now(timezone.utc).isoformat(),
+                cycle_id=cycle_id,
+                ticker=ticker,
+                kind="llm",
+                source="prism",
+                status="error",
+                step="PRISM_AGENT_END",
+                detail=f"Agent {agent_name} failed via Prism, falling back to local: {e}",
+                elapsed_ms=int((time.monotonic() - start) * 1000),
+                data={"error": str(e)}
+            ))
+        except Exception:
+            pass
         return await _fallback_to_local(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -668,6 +775,26 @@ async def _fallback_to_local(
             fallback_text = recovered_text
             token_usage += rec_tokens
             execution_ms += rec_ms
+
+    # Publish local fallback execution end event
+    try:
+        from app.telemetry.bus import publish_event
+        from app.telemetry.schema import TelemetryEvent
+        from datetime import datetime, timezone
+        publish_event(TelemetryEvent(
+            ts=datetime.now(timezone.utc).isoformat(),
+            cycle_id=cycle_id,
+            ticker=ticker,
+            kind="llm",
+            source="local_fallback",
+            status="ok",
+            step="LOCAL_AGENT_END",
+            detail=f"Local fallback execution completed for {agent_name}",
+            elapsed_ms=execution_ms,
+            data={"token_usage": token_usage}
+        ))
+    except Exception as tel_e:
+        logger.debug("[_fallback_to_local] Telemetry fallback end failed: %s", tel_e)
 
     # Normalize to PrismAgentResult shape
     return PrismAgentResult(

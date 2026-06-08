@@ -380,7 +380,7 @@ async def run_worker(
 
 async def start_health_server(shutdown_event: asyncio.Event):
     from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-    from fastapi import Depends, HTTPException, Security
+    from fastapi import Depends, HTTPException, Security, Request
     from app.config import settings
 
     security = HTTPBearer()
@@ -399,6 +399,29 @@ async def start_health_server(shutdown_event: asyncio.Event):
     def status(summary_only: bool = False, token: str = Depends(verify_api_key)):
         from app.services.pipeline_service import PipelineService
         return PipelineService.get_current_state(summary_only=summary_only)
+
+    @app.get("/telemetry/stream")
+    async def telemetry_stream(request: Request, token: str = Depends(verify_api_key)):
+        """Server-Sent Events endpoint streaming real-time TelemetryEvents."""
+        from fastapi.responses import StreamingResponse
+        from app.telemetry.bus import subscribe, unsubscribe
+        import json
+
+        async def event_generator():
+            q = subscribe()
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        event = await asyncio.wait_for(q.get(), timeout=1.0)
+                        yield f"data: {json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
+                        continue
+            finally:
+                unsubscribe(q)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     from app.services.vllm_router import router as vllm_router
     from app.routers.diagnostics_router import router as diag_router

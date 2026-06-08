@@ -525,7 +525,37 @@ class PipelineStateMixin:
                 if now - cache_ts < 0.25:  # 250ms TTL
                     return cached_state
 
-        state = PipelineStateDB.get_state(summary_only=summary_only)
+        # Use telemetry state as primary source
+        cycle_id = cls._state.get("cycle_id")
+        try:
+            from app.telemetry.bus import get_cycle_state
+            tel_state = get_cycle_state(cycle_id)
+        except Exception:
+            tel_state = None
+
+        if tel_state and tel_state.cycle_id:
+            state = {
+                "status": tel_state.status,
+                "cycle_id": tel_state.cycle_id,
+                "phase": tel_state.phase,
+                "progress": tel_state.progress,
+                "tickers": tel_state.tickers,
+                "results": tel_state.results,
+                "events": tel_state.events if not summary_only else [],
+                "started_at": tel_state.started_at,
+                "finished_at": tel_state.finished_at,
+                "error": cls._state.get("error"),
+                "requested_pipeline_version": cls._state.get("requested_pipeline_version", "v2"),
+                "effective_pipeline_version": cls._state.get("effective_pipeline_version", "v2"),
+                "benchmark_group": cls._state.get("benchmark_group", "baseline"),
+                "execution_mode": cls._state.get("execution_mode", "production"),
+                "v2_stage": cls._state.get("v2_stage", 0),
+                "collect_flag": cls._state.get("collect_flag", True),
+                "analyze_flag": cls._state.get("analyze_flag", True),
+                "trade_flag": cls._state.get("trade_flag", False),
+            }
+        else:
+            state = PipelineStateDB.get_state(summary_only=summary_only)
 
         # ── Fix: Use in-memory cycle_id as authoritative source ──────────
         # The DB cycle_id can become stale due to emit timer race conditions
@@ -777,6 +807,32 @@ class PipelineStateMixin:
 
         cid = cls._state.get("cycle_id") or "no-id"
         logger.info("[CYCLE %s] %s/%s: %s (%s)", cid, phase, step, detail, status)
+
+        # Publish event to telemetry bus
+        try:
+            from app.telemetry.bus import publish_event
+            from app.telemetry.schema import TelemetryEvent
+            
+            kind = "pipeline"
+            if step == "heartbeat":
+                kind = "heartbeat"
+            elif phase == "analyzing" and (step.startswith("v2_start") or step.startswith("curator")):
+                kind = "pipeline"
+            
+            publish_event(TelemetryEvent(
+                ts=event["ts"],
+                cycle_id=cid,
+                ticker=data.get("ticker", "") if data else "",
+                kind=kind,
+                source="cycle_runner",
+                status=status,
+                step=step,
+                detail=detail,
+                elapsed_ms=elapsed_ms,
+                data=data or {}
+            ))
+        except Exception as tel_e:
+            logger.debug("[PipelineStateMixin] Failed to publish telemetry event: %s", tel_e)
 
         with cls._emit_lock:
             cls._emit_events.append(event)
