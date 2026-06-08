@@ -53,6 +53,7 @@ async def execute_ticker_pipeline(
     db_semaphore: asyncio.Semaphore | None = None,
     thesis_semaphore: asyncio.Semaphore | None = None,
     is_highly_redundant: bool = False,
+    research_focus: str = "",
 ) -> dict[str, Any] | None:
     """Run the full V2 cognition pipeline for a single ticker.
 
@@ -81,6 +82,7 @@ async def execute_ticker_pipeline(
         db_semaphore=db_semaphore,
         thesis_semaphore=thesis_semaphore,
         is_highly_redundant=is_highly_redundant,
+        research_focus=research_focus,
     )
 
     ctx.safe_emit(
@@ -133,18 +135,18 @@ async def execute_ticker_pipeline(
     except Exception as e:
         logger.warning("[V2] Failed to initiate chart generation: %s", e)
 
-    # ── Fast-track for held positions ──
-    if ctx.held:
-        from app.cognition.orchestration.runner import execute_open_position_fast_track
-        return await execute_open_position_fast_track(
-            ticker=ticker, cycle_id=cycle_id, bot_id=bot_id,
-            emit=emit, macro_memo=macro_memo,
-            position_context=ctx.position_context,
-            portfolio_dashboard=ctx.portfolio_dashboard,
-            thesis_semaphore=thesis_semaphore,
-            db_semaphore=db_semaphore,
-            start_time=ctx.start_time,
-        )
+    # ── Fast-track for held positions (Bypassed: held positions get full multi-agent analysis now) ──
+    # if ctx.held:
+    #     from app.cognition.orchestration.runner import execute_open_position_fast_track
+    #     return await execute_open_position_fast_track(
+    #         ticker=ticker, cycle_id=cycle_id, bot_id=bot_id,
+    #         emit=emit, macro_memo=macro_memo,
+    #         position_context=ctx.position_context,
+    #         portfolio_dashboard=ctx.portfolio_dashboard,
+    #         thesis_semaphore=thesis_semaphore,
+    #         db_semaphore=db_semaphore,
+    #         start_time=ctx.start_time,
+    #     )
 
     # ══════════════════════════════════════════════════════════════════
     #  LEGO PIPELINE — Each step is its own file, independently testable

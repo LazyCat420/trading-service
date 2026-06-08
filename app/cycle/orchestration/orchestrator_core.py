@@ -716,4 +716,12 @@ class OrchestratorCoreMixin:
             if normalized_t in candidate_set and normalized_t not in selected_normalized:
                 selected_normalized.append(normalized_t)
 
+        # Parse and store research focus
+        research_focus = parsed.get("research_focus", {})
+        ctx.research_focus = {}
+        if isinstance(research_focus, dict):
+            for k, v in research_focus.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    ctx.research_focus[k.upper().strip()] = v
+
         return selected_normalized

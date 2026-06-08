@@ -29,7 +29,7 @@ def mock_db_with_news(mock_db):
 def mock_run_agent_curator():
     with patch("app.agents.base_agent.run_agent") as mock_run:
         mock_run.return_value = {
-            "response": '{"selected_tickers": ["TSLA"], "justification": {"TSLA": "Tesla news is hot"}, "skipped_tickers": {"AAPL": "Apple news is quiet"}}',
+            "response": '{"selected_tickers": ["TSLA"], "justification": {"TSLA": "Tesla news is hot"}, "research_focus": {"TSLA": "evaluate EV adoption in China"}, "skipped_tickers": {"AAPL": "Apple news is quiet"}}',
             "agent": "curator",
             "ticker": "global"
         }
@@ -83,6 +83,7 @@ async def test_decide_tickers_to_process_success(mock_db_with_news, mock_run_age
 
     selected = await DummyOrchestrator.decide_tickers_to_process(ctx, "bot-456")
     assert selected == ["TSLA"]
+    assert ctx.research_focus == {"TSLA": "evaluate EV adoption in China"}
 
 @pytest.mark.asyncio
 async def test_decide_tickers_to_process_empty_fallback(mock_db_with_news, monkeypatch):

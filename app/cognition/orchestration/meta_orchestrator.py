@@ -30,6 +30,7 @@ class MetaOrchestrator:
         cycle_id: str,
         bot_id: str,
         is_highly_redundant: bool = False,
+        research_focus: str = "",
     ) -> tuple[Dict[str, str], int]:
         """
         Rule-based router. Dispatches specialized sub-agents based on evidence health.
@@ -40,13 +41,13 @@ class MetaOrchestrator:
 
         # Rule 1: If macro indicator is somewhat intact, check macro risk
         if "regime" not in packet.missing_fields:
-            tasks.append(analyze_macro_risk(entity_id, packet, cycle_id, bot_id))
+            tasks.append(analyze_macro_risk(entity_id, packet, cycle_id, bot_id, research_focus))
             labels.append("macro_risk")
 
         # Rule 1.5: Deep Dive for high redundancy
         if is_highly_redundant:
             logger.info(f"[{entity_id}] MetaOrchestrator: High redundancy detected. Spawning DeepResearchAgent.")
-            tasks.append(analyze_deep_research(entity_id, packet, cycle_id, bot_id))
+            tasks.append(analyze_deep_research(entity_id, packet, cycle_id, bot_id, research_focus))
             labels.append("deep_research")
 
         # Rule 2: If sentiment features are intact, run sentiment agent
@@ -54,7 +55,7 @@ class MetaOrchestrator:
             "sentiment" not in packet.missing_fields
             and "news" not in packet.missing_fields
         ):
-            tasks.append(analyze_sentiment(entity_id, packet, cycle_id, bot_id))
+            tasks.append(analyze_sentiment(entity_id, packet, cycle_id, bot_id, research_focus))
             labels.append("sentiment")
 
         # Rule 3: Run Fundamental agent if basic financials exist
@@ -62,7 +63,7 @@ class MetaOrchestrator:
             "fundamentals" not in packet.missing_fields
             and "pe_ratio" not in packet.missing_fields
         ):
-            tasks.append(analyze_fundamentals(entity_id, packet, cycle_id, bot_id))
+            tasks.append(analyze_fundamentals(entity_id, packet, cycle_id, bot_id, research_focus))
             labels.append("fundamentals")
 
         if not tasks:

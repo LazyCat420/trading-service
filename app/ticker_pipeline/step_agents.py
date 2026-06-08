@@ -35,6 +35,7 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
             MetaOrchestrator.orchestrate(
                 ctx.ticker, ctx.packet, ctx.sufficiency,
                 ctx.cycle_id, ctx.bot_id, ctx.is_highly_redundant,
+                research_focus=ctx.research_focus,
             ),
             timeout=900.0,
         )

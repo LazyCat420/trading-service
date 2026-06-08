@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class CycleContext:
@@ -17,3 +17,4 @@ class CycleContext:
     macro_memo: str = ""
     max_tickers: int | None = None
     dynamic_selection_mode: bool = False
+    research_focus: dict[str, str] = field(default_factory=dict)

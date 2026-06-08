@@ -14,9 +14,13 @@ async def _run_specialized_agent(
     packet: EvidencePacket,
     cycle_id: str,
     bot_id: str,
+    research_focus: str = "",
 ) -> tuple[str, int]:
     """Helper to run a specialized agent."""
-    user_prompt = f"## Entity ID: {entity_id}\n\n## Structured Facts:\n{packet.structured_facts}\n\nAnalyze the data from your unique perspective."
+    user_prompt = f"## Entity ID: {entity_id}\n\n"
+    if research_focus:
+        user_prompt += f"## SPECIFIC RESEARCH DIRECTION:\n{research_focus}\n\n"
+    user_prompt += f"## Structured Facts:\n{packet.structured_facts}\n\nAnalyze the data from your unique perspective."
 
     tokens_used = 0
     try:
@@ -40,7 +44,7 @@ async def _run_specialized_agent(
 
 
 async def analyze_sentiment(
-    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str
+    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = ""
 ) -> tuple[str, int]:
     sys = (
         "You are a Sentiment Agent. Analyze the social and news sentiment purely based on the provided facts.\n"
@@ -57,7 +61,7 @@ async def analyze_sentiment(
         "}"
     )
     raw_response, tokens = await _run_specialized_agent(
-        "sentiment_agent", sys, entity_id, packet, cycle_id, bot_id
+        "sentiment_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus
     )
 
     from app.utils.text_utils import parse_json_response
@@ -101,27 +105,27 @@ async def analyze_sentiment(
 
 
 async def analyze_macro_risk(
-    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str
+    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = ""
 ) -> tuple[str, int]:
     sys = "You are a Macro Risk Agent. Analyze macroeconomic conditions and geopolitical risks based on the provided facts. Be concise (max 3 sentences)."
     return await _run_specialized_agent(
-        "macro_risk_agent", sys, entity_id, packet, cycle_id, bot_id
+        "macro_risk_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus
     )
 
 
 async def analyze_fundamentals(
-    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str
+    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = ""
 ) -> tuple[str, int]:
     sys = "You are a Fundamental Value Agent. Analyze the price multiples, balance sheet, and income statement based on the provided facts. Be concise (max 3 sentences)."
     return await _run_specialized_agent(
-        "fundamental_agent", sys, entity_id, packet, cycle_id, bot_id
+        "fundamental_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus
     )
 
 async def analyze_deep_research(
-    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str
+    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = ""
 ) -> tuple[str, int]:
     sys = "You are a Deep Research Agent. The provided data is highly redundant. Your mission is to find unique, non-obvious catalysts and hidden risks that the consensus is missing. Be concise (max 4 sentences)."
     return await _run_specialized_agent(
-        "deep_research_agent", sys, entity_id, packet, cycle_id, bot_id
+        "deep_research_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus
     )
 

@@ -211,6 +211,9 @@ async def run_phase4_analysis(
 
             _is_highly_redundant = ticker in state.get("highly_redundant_tickers", [])
 
+            # Get dynamic research focus from curator
+            _research_focus = getattr(ctx, "research_focus", {}).get(ticker, "")
+
             # Read the macro memo at analysis time — await readiness (up to 5s)
             # Fix B.1: Workers wait for scout to finish instead of reading partial memo
             current_macro_memo = await _await_macro_memo(timeout_s=5.0)
@@ -230,6 +233,7 @@ async def run_phase4_analysis(
                         macro_memo=current_macro_memo,
                         thesis_semaphore=thesis_semaphore,
                         is_highly_redundant=_is_highly_redundant,
+                        research_focus=_research_focus,
                     ),
                     timeout=_ticker_timeout,
                 )

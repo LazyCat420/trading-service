@@ -54,25 +54,32 @@ async def run_planner(
     return result
 
 
-CURATOR_SYSTEM_PROMPT = """You are the Portfolio Curator agent. Your job is to decide which stock tickers to analyze and process for today's trading cycle based on their recent news and headlines.
-You are given a list of candidate tickers, their recent news, and whether they represent an active position in the portfolio.
+CURATOR_SYSTEM_PROMPT = """You are the Portfolio Curator agent. Your job is to decide which stock tickers to analyze and process for today's trading cycle based on our previous actions, current holdings, candidate theses, and recent news.
 
-Analyze the news for each ticker. Look for:
-1. High-impact material events (earnings releases, product launches, clinical trials, regulatory approvals/rejections, M&A activity, major guidance revisions).
-2. Significant market/price catalysts, high volatility, or strong news sentiment shifts.
-3. For active positions: whether there is news that requires auditing/updating our position strategy.
+Analyze the provided context:
+1. Previous Cycle Report: Look at what decisions we made in the last cycle.
+2. Current Portfolio State: Look at our current positions and available cash.
+3. Candidate Theses: Look at our previous standing reports/verdicts on each ticker.
+4. Recent News: Look for high-impact material events (earnings, FDA decisions, M&A, macro shocks), significant price catalysts, and sentiment shifts.
 
-You must decide which tickers warrant full detailed analysis today. You can select all, some, or none of them. Be selective to optimize analyst resources, focusing on the most actionable and material opportunities.
+Your goals:
+- Decide which tickers warrant detailed multi-agent analysis and debate today (this can include existing holdings if they have significant news or if our prior thesis needs updating, or new candidates with strong catalysts).
+- If a candidate (even a held one) has no new catalysts or material news, and its previous thesis remains perfectly valid, skip it to optimize analyst resources.
+- For each selected ticker, specify a clear research focus or key questions for the specialist agents (e.g., "assess gross margins pressure from the new union contract" or "analyze if the FDA rejection is a permanent setback or temporary delay").
 
 Your response must be valid JSON with the following schema:
 {
   "selected_tickers": ["TICKER1", "TICKER2"],
   "justification": {
-    "TICKER1": "Brief explanation of why this ticker was selected based on its news",
-    "TICKER2": "Brief explanation of why this ticker was selected based on its news"
+    "TICKER1": "Brief explanation of why this ticker was selected based on its news and our portfolio state",
+    "TICKER2": "Brief explanation of why this ticker was selected"
+  },
+  "research_focus": {
+    "TICKER1": "Specific focus area or questions for research (e.g. analyze potential margin compression)",
+    "TICKER2": "Specific focus area or questions for research (e.g. verify if revenue guidance was cut)"
   },
   "skipped_tickers": {
-    "TICKER3": "Brief explanation of why this ticker was skipped (e.g., no material news, low volatility, etc.)"
+    "TICKER3": "Reason for skipping today (e.g. prior thesis remains valid, no new news catalysts)"
   }
 }
 """
@@ -83,45 +90,138 @@ async def run_ticker_curator(
     cycle_id: str,
     bot_id: str,
 ) -> dict:
-    """Run the Curator agent to decide which tickers to process based on news."""
+    """Run the Curator agent to decide which tickers to process based on news and portfolio state."""
     from app.db.connection import get_db
     from app.agents.base_agent import run_agent
+    from app.pipeline.analysis.thesis_store import get_thesis
 
+    last_cycle_id = "None"
+    last_decisions = []
+    cash_balance = 100000.0
+    current_holdings = []
     news_by_ticker = {}
+
     with get_db() as db:
-        for ticker in candidates:
-            rows = db.execute(
-                """
-                SELECT title, publisher, published_at,
-                       COALESCE(llm_summary, summary) AS best_summary
-                FROM news_articles
-                WHERE ticker = %s
-                  AND (quality_status IS NULL OR quality_status != 'discarded')
-                ORDER BY published_at DESC
-                LIMIT 5
-                """,
-                [ticker],
+        # Resolve active bot ID
+        try:
+            from app.services.bot_manager import get_active_bot_id
+            bot_id_val = get_active_bot_id()
+        except Exception:
+            from app.config import settings as _cfg
+            bot_id_val = getattr(_cfg, "BOT_ID", "default")
+
+        # Get latest cycle ID from decision_outcomes
+        try:
+            row_cycle = db.execute(
+                "SELECT cycle_id FROM decision_outcomes ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            if row_cycle:
+                last_cycle_id = row_cycle[0]
+                rows_decisions = db.execute(
+                    """
+                    SELECT ticker, action, confidence, entry_price, exit_price, outcome
+                    FROM decision_outcomes
+                    WHERE cycle_id = %s
+                    """,
+                    [last_cycle_id]
+                ).fetchall()
+                for r in rows_decisions:
+                    last_decisions.append(
+                        f"- {r[0]}: {r[1]} @ {r[2]}% (Entry: {r[3]}, Exit: {r[4]}, Outcome: {r[5]})"
+                    )
+        except Exception as ex:
+            logger.warning("[CURATOR] Failed to query past cycle decisions: %s", ex)
+
+        # Get latest cash balance
+        try:
+            row_portfolio = db.execute(
+                "SELECT cash_balance FROM bots WHERE bot_id = %s",
+                [bot_id_val]
+            ).fetchone()
+            if row_portfolio:
+                cash_balance = row_portfolio[0]
+        except Exception as ex:
+            logger.warning("[CURATOR] Failed to query cash balance: %s", ex)
+
+        # Get positions
+        try:
+            rows_positions = db.execute(
+                "SELECT ticker, qty, avg_entry_price, opened_at FROM positions WHERE bot_id = %s",
+                [bot_id_val]
             ).fetchall()
-
-            news_items = []
-            for r in rows:
-                title, pub, pub_at, summary = r
-                pub_date = pub_at.strftime("%Y-%m-%d %H:%M") if pub_at else "?"
-                news_items.append(
-                    f"Title: {title}\nPublisher: {pub} ({pub_date})\nSummary: {summary or 'N/A'}"
+            for r in rows_positions:
+                opened_str = r[3].strftime("%Y-%m-%d %H:%M") if r[3] else "?"
+                current_holdings.append(
+                    f"- {r[0]}: {r[1]} shares @ avg entry ${r[2]:.2f} (opened: {opened_str})"
                 )
+        except Exception as ex:
+            logger.warning("[CURATOR] Failed to query positions: %s", ex)
 
-            news_by_ticker[ticker] = "\n---\n".join(news_items) if news_items else "No recent news articles found."
+        # Fetch recent news articles
+        for ticker in candidates:
+            try:
+                rows = db.execute(
+                    """
+                    SELECT title, publisher, published_at,
+                           COALESCE(llm_summary, summary) AS best_summary
+                    FROM news_articles
+                    WHERE ticker = %s
+                      AND (quality_status IS NULL OR quality_status != 'discarded')
+                    ORDER BY published_at DESC
+                    LIMIT 5
+                    """,
+                    [ticker],
+                ).fetchall()
+
+                news_items = []
+                for r in rows:
+                    title, pub, pub_at, summary = r
+                    pub_date = pub_at.strftime("%Y-%m-%d %H:%M") if pub_at else "?"
+                    news_items.append(
+                        f"Title: {title}\nPublisher: {pub} ({pub_date})\nSummary: {summary or 'N/A'}"
+                    )
+                news_by_ticker[ticker] = "\n---\n".join(news_items) if news_items else "No recent news articles found."
+            except Exception as ex:
+                logger.warning("[CURATOR] Failed to query news for %s: %s", ticker, ex)
+                news_by_ticker[ticker] = "Failed to fetch news."
+
+    # Fetch theses
+    candidate_theses = {}
+    for ticker in candidates:
+        thesis = get_thesis(ticker)
+        if thesis:
+            candidate_theses[ticker] = (
+                f"Verdict: {thesis.verdict}\n"
+                f"Confidence: {thesis.confidence}%\n"
+                f"Summary: {thesis.summary}\n"
+                f"Last Updated: {thesis.updated_at.strftime('%Y-%m-%d %H:%M UTC')}"
+            )
+        else:
+            candidate_theses[ticker] = "No prior thesis/report exists for this stock."
 
     user_prompt_lines = [
-        "Please review the news for the following candidate tickers and decide which ones to process for the day.",
-        "Candidate Tickers:",
+        "# PORTFOLIO STATE & PREVIOUS CYCLE ACTIONS",
+        f"Available Cash: ${cash_balance:,.2f}",
+        "",
+        "Current Holdings in Portfolio:",
+        "\n".join(current_holdings) if current_holdings else "None",
+        "",
+        f"Decisions & Outcomes from the Previous Cycle (Cycle ID: {last_cycle_id}):",
+        "\n".join(last_decisions) if last_decisions else "None",
+        "",
+        "---",
+        "",
+        "# CANDIDATES FOR TODAY'S CYCLE",
+        "Please review the previous thesis and the latest news for each candidate ticker, and decide which ones we should research today and what focus direction to give.",
     ]
     for ticker in candidates:
         is_pos = ticker in position_tickers
         pos_label = " [ACTIVE PORTFOLIO POSITION]" if is_pos else ""
         user_prompt_lines.append(f"\n### {ticker}{pos_label}")
-        user_prompt_lines.append(news_by_ticker[ticker])
+        user_prompt_lines.append("#### PREVIOUS THESIS / REPORT:")
+        user_prompt_lines.append(candidate_theses[ticker])
+        user_prompt_lines.append("#### TODAY'S NEWS:")
+        user_prompt_lines.append(news_by_ticker.get(ticker, "No news found."))
 
     user_prompt = "\n".join(user_prompt_lines)
 

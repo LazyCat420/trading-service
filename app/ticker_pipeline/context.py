@@ -37,6 +37,7 @@ class TickerContext:
     thesis_semaphore: Any = None  # asyncio.Semaphore
     db_semaphore: Any = None  # asyncio.Semaphore
     is_highly_redundant: bool = False
+    research_focus: str = ""
 
     # ── Step 0: Position context ──
     position_context: dict[str, Any] = field(default_factory=dict)
