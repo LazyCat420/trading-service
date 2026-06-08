@@ -77,6 +77,7 @@ async def call_prism_agent(
     cycle_id: str = "",
     bot_id: str = "",
     agentic_mode: bool = False,
+    actor_label: str | None = None,
 ) -> tuple[str, int, int]:
     """Route an LLM call through Prism /agent or fall back to local llm.chat().
 
@@ -92,6 +93,7 @@ async def call_prism_agent(
         ticker: Ticker symbol for context/logging.
         cycle_id: Cycle ID for context/logging.
         bot_id: Bot ID for context/logging.
+        actor_label: Optional actor label override for username.
 
     Returns:
         Tuple of (response_text, token_count, elapsed_ms).
@@ -145,6 +147,7 @@ async def call_prism_agent(
                     cycle_id=cycle_id,
                     agentic_mode=agentic_mode,
                     dynamic_tools=dynamic_tools,
+                    actor_label=actor_label,
                 )
                 _prism_breaker.record_success()
                 return result
@@ -185,6 +188,7 @@ async def _call_via_prism(
     cycle_id: str,
     agentic_mode: bool = False,
     dynamic_tools: list[str] | None = None,
+    actor_label: str | None = None,
 ) -> tuple[str, int, int]:
     """Execute the actual Prism /agent call.
 
@@ -223,6 +227,7 @@ async def _call_via_prism(
         tools=dynamic_tools,
         agentic_mode=agentic_mode,
         provider=provider,
+        actor_label=actor_label,
     )
     payload["autoApprove"] = settings.PRISM_AUTO_APPROVE
     payload["skipConversation"] = False

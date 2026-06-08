@@ -480,27 +480,54 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register morning briefing job: %s", e
                 )
 
-            # ── Flash Briefing (every 2h during market hours: 6:30 AM - 1:30 PM PT) ──
+            # ── Enriched Live Feed Reports (7:00 AM, 11:00 AM, 1:00 PM, and 6:00 PM Pacific, Weekdays) ──
             try:
+                # 7:00 AM Market Open Report
                 scheduler.add_job(
                     SchedulerService._run_flash_briefing,
-                    trigger=CronTrigger(
-                        hour="8,10,12,14,16",  # Every 2h during trading
-                        minute=30,
-                        day_of_week="mon-fri",
-                        timezone=pt_tz,
-                    ),
-                    id="flash_briefing_job",
+                    trigger=CronTrigger(hour=7, minute=0, day_of_week="mon-fri", timezone=pt_tz),
+                    args=["market_open"],
+                    id="flash_briefing_7am",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                # 11:00 AM Mid-day Report
+                scheduler.add_job(
+                    SchedulerService._run_flash_briefing,
+                    trigger=CronTrigger(hour=11, minute=0, day_of_week="mon-fri", timezone=pt_tz),
+                    args=["mid_day"],
+                    id="flash_briefing_11am",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                # 1:00 PM Late-day/Close Report
+                scheduler.add_job(
+                    SchedulerService._run_flash_briefing,
+                    trigger=CronTrigger(hour=13, minute=0, day_of_week="mon-fri", timezone=pt_tz),
+                    args=["market_close_soon"],
+                    id="flash_briefing_1pm",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                # 6:00 PM After Hours Report
+                scheduler.add_job(
+                    SchedulerService._run_flash_briefing,
+                    trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri", timezone=pt_tz),
+                    args=["after_hours"],
+                    id="flash_briefing_6pm",
                     replace_existing=True,
                     misfire_grace_time=3600,
                     coalesce=True,
                 )
                 logger.info(
-                    "[SCHEDULER] Registered flash briefing (every 2h, market hours)"
+                    "[SCHEDULER] Registered enriched daily live feed briefings (7am, 11am, 1pm, 6pm PT)"
                 )
             except Exception as e:
                 logger.warning(
-                    "[SCHEDULER] Failed to register flash briefing job: %s", e
+                    "[SCHEDULER] Failed to register enriched briefings: %s", e
                 )
 
             # ── LLM Janitor ──
@@ -570,16 +597,16 @@ class SchedulerService:
             logger.error("[SCHEDULER] LLM Janitor execution failed: %s", e)
 
     @staticmethod
-    async def _run_flash_briefing():
-        """Generate an intraday flash briefing."""
+    async def _run_flash_briefing(report_type: str | None = None):
+        """Generate a flash briefing."""
         if cycle_control.is_paused:
-            logger.info("[SCHEDULER] Skipping flash briefing: System is PAUSED.")
+            logger.info(f"[SCHEDULER] Skipping flash briefing ({report_type or 'auto'}): System is PAUSED.")
             return
         try:
             from app.services.flash_briefing import generate_flash_briefing
-            await generate_flash_briefing()
+            await generate_flash_briefing(report_type=report_type)
         except Exception as e:
-            logger.error("[SCHEDULER] Flash briefing generation failed: %s", e)
+            logger.error(f"[SCHEDULER] Flash briefing ({report_type or 'auto'}) generation failed: {e}")
 
     @staticmethod
     def stop():

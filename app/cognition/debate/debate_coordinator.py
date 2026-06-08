@@ -479,6 +479,7 @@ async def _run_biased_agent(
                         tools_override=allowed_tools,
                         temperature=LLM_TEMPERATURES.get(agent_name, 0.4),
                         max_tokens=4096,
+                        actor_label=agent_name,
                     ),
                     timeout=120.0,  # Hard cap: allow time for CoT reasoning
                 )

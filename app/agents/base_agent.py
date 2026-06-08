@@ -132,6 +132,7 @@ async def _generate_dynamic_prompt(
                 ticker=ticker,
                 cycle_id=cycle_id,
                 bot_id=bot_id,
+                actor_label=f"{agent_name}_meta",
             )
 
         response, tokens, ms = await _meta_llm_call()
@@ -314,13 +315,14 @@ async def run_agent(
                         system_prompt=actual_system_prompt,
                         user_prompt=full_prompt,
                         ticker=ticker,
-                        agent_name=f"{agent_name}_{ticker}" if ticker else agent_name,
+                        agent_name=agent_name,
                         cycle_id=cycle_id,
                         bot_id=bot_id,
                         priority=Priority.NORMAL,
                         tools_override=agent_tools,
                         max_tokens=max_tokens,
                         temperature=temperature,
+                        actor_label=agent_name,
                     )
                     return (
                         result.get("final_text", ""),

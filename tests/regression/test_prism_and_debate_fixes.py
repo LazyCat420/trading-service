@@ -419,23 +419,23 @@ class TestCycleSmoke:
     """Fast sanity checks that key configurations are correct."""
 
     def test_debate_timeout_is_reasonable(self):
-        """Debate timeout in the V2 runner should be <= 300s (5 minutes)."""
+        """Debate timeout in step_debate should be <= 300s (5 minutes)."""
         import ast
         import inspect
-        from app.cognition.orchestration import runner
+        from app.ticker_pipeline import step_debate
 
-        source = inspect.getsource(runner.execute_v2_pipeline)
+        source = inspect.getsource(step_debate.run_debate_step)
         # Parse the source to find the wait_for timeout for debate
         # This is a lightweight check — just verify the timeout value in source
         assert "timeout=300.0" in source or "timeout=300" in source, (
-            "Debate timeout in execute_v2_pipeline should be 300s (5 minutes). "
+            "Debate timeout in run_debate_step should be 300s (5 minutes). "
             "Found different value in source."
         )
 
     def test_per_ticker_analysis_timeout_exists(self):
         """Phase 4 should have a per-ticker timeout to prevent hangs."""
         import inspect
-        from app.pipeline.phases import phase4_analysis
+        from app.cycle.phases import phase4_analysis
 
         source = inspect.getsource(phase4_analysis.run_phase4_analysis)
         assert "wait_for" in source, (

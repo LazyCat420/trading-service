@@ -64,6 +64,7 @@ async def run_tool_agent(
                     priority=priority,
                     tools_override=tools_override,
                     temperature=0.3,
+                    actor_label=agent_name,
                 )
         except Exception as pe:
             logger.error("[Executor] Prism routing failed for %s, falling back to local: %s", agent_name, pe)

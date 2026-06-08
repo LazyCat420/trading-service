@@ -1508,6 +1508,7 @@ class VLLMClient:
         meta: dict,
         start: float,
         provider: str = "vllm",
+        actor_label: str | None = None,
     ) -> tuple[str, int, int]:
         """Route through Prism's /agent or /chat endpoint (streaming mode) to collect the response.
         This allows us to capture raw tool calls correctly from the stream (which are ignored
@@ -1518,6 +1519,8 @@ class VLLMClient:
         agent_name = meta.get("agent_name", "pipeline")
         ticker = meta.get("ticker", "")
         cycle_id = meta.get("cycle_id", "")
+        meta_actor_label = meta.get("actor_label") or actor_label
+        resolved_actor_label = meta_actor_label or ("user" if agent_name == "user_chat" else None)
 
         # Build Prism stream payload
         is_interactive = agent_name == "user_chat"
@@ -1536,6 +1539,7 @@ class VLLMClient:
             is_qwen_model=_is_qwen_model(model_id),
             agentic_mode=is_interactive or bool(tools),
             provider=provider,
+            actor_label=resolved_actor_label,
         )
         agent_payload, target_url, headers = prism_payload
 
@@ -1762,6 +1766,7 @@ class VLLMClient:
         history: list[dict] | None = None,
         images: list[str] | None = None,
         tools: list[dict] | None = None,
+        actor_label: str | None = None,
     ) -> tuple[str, int, int]:
         """
         Enqueue a chat completion request routed through Prism.
@@ -1851,6 +1856,7 @@ class VLLMClient:
             "user_prompt": user,
             "priority": priority.name,
             "_enqueue_time": time.monotonic(),
+            "actor_label": actor_label,
         }
 
         loop = asyncio.get_event_loop()
@@ -2674,6 +2680,7 @@ class VLLMClient:
         tools: list[dict] | None = None,
         images: list[str] | None = None,
         bypass_prism: bool = False,
+        actor_label: str | None = None,
     ):
         """Real streaming: connect to vLLM's streaming API and yield tokens live.
 
@@ -2715,11 +2722,14 @@ class VLLMClient:
             if endpoint_override:
                 target_ep = self._find_endpoint_by_name(endpoint_override)
                 if not target_ep:
-                    raise ValueError(f"Endpoint {endpoint_override} not found")
+                    raise ValueError(
+                        f"Endpoint name override '{endpoint_override}' not found"
+                    )
             elif model_override:
-                target_ep = self._pick_best_endpoint(requested_model=model_override)
+                target_ep = self._pick_best_endpoint(requested_model=model_override, agent_name=agent_name)
             else:
-                target_ep = self._pick_best_endpoint()
+                target_ep = self._pick_best_endpoint(agent_name=agent_name)
+
             base_url = target_ep.url
             effective_model = target_ep.model or model_override or self.model
         except Exception as e:
@@ -2735,6 +2745,7 @@ class VLLMClient:
         if prism_is_healthy:
             # Route through Prism proxy for user chat
             provider = self.resolve_provider_for_model(effective_model)
+            resolved_actor_label = actor_label or ("user" if agent_name == "user_chat" else None)
             payload, target_url, headers = self.prism_client.get_stream_payload_and_url(
                 model=effective_model,
                 messages=messages,
@@ -2747,6 +2758,7 @@ class VLLMClient:
                 tools=tools,
                 is_qwen_model=_is_qwen_model(effective_model),
                 provider=provider,
+                actor_label=resolved_actor_label,
             )
         else:
             if self.prism_client.enabled and not bypass_prism:

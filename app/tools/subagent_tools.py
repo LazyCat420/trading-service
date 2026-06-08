@@ -193,6 +193,7 @@ async def _spawn_research_subagent_impl(
                 tools_override=active_schemas,
                 max_tokens=2048,
                 temperature=0.3,
+                actor_label=agent_id_override,
             )
 
             routed_via = result.get("routed_via", "unknown")
@@ -252,6 +253,7 @@ async def _spawn_research_subagent_impl(
                 max_tokens=512,
                 priority=Priority.NORMAL,
                 ticker=ticker,
+                actor_label=f"{agent_id_override}_yield",
             )
 
             partial_tokens = yielded.partial_result.get("token_usage", 0)

@@ -346,6 +346,7 @@ class PrismClient:
         is_qwen_model: bool = False,
         agentic_mode: bool = True,
         provider: str = "vllm",
+        actor_label: str | None = None,
     ) -> tuple[dict, str, dict]:
         """
         Returns (payload, url, headers) formatted for Prism /agent (non-streaming).
@@ -358,6 +359,8 @@ class PrismClient:
                 should pass agentic_mode=False to prevent the coordinator doom loop.
         """
         model = normalize_prism_model(model)
+        if ticker:
+            ticker = ticker.upper()
         title_parts = [agent_name]
         if ticker:
             title_parts.append(ticker)
@@ -383,6 +386,8 @@ class PrismClient:
         else:
             conversation_id = str(uuid.uuid4())
 
+        username = actor_label or self.username
+
         payload: dict[str, Any] = {
             "provider": provider,
             "model": model,
@@ -390,7 +395,7 @@ class PrismClient:
             "temperature": temperature,
             "conversationId": conversation_id,
             "project": self.project,
-            "username": self.username,
+            "username": username,
             "agent": self._resolve_prism_agent_id(agent_name),
             "functionCallingEnabled": agentic_mode or bool(tools),
             "agenticLoopEnabled": agentic_mode,
@@ -426,7 +431,7 @@ class PrismClient:
         headers = {
             "Content-Type": "application/json",
             "x-project": self.project,
-            "x-username": self.username,
+            "x-username": username,
         }
 
         return payload, target_url, headers
@@ -445,12 +450,15 @@ class PrismClient:
         is_qwen_model: bool = False,
         agentic_mode: bool = True,
         provider: str = "vllm",
+        actor_label: str | None = None,
     ) -> tuple[dict, str, dict]:
         """
         Returns (payload, url, headers) formatted for Prism /agent streaming.
         Routes through the configured agent persona (CUSTOM_MARKET_ALPHA).
         """
         model = normalize_prism_model(model)
+        if ticker:
+            ticker = ticker.upper()
         title_parts = [agent_name]
         if ticker:
             title_parts.append(ticker)
@@ -467,6 +475,8 @@ class PrismClient:
         else:
             conversation_id = str(uuid.uuid4())
 
+        username = actor_label or self.username
+
         payload: dict[str, Any] = {
             "provider": provider,
             "model": model,
@@ -474,7 +484,7 @@ class PrismClient:
             "temperature": temperature,
             "conversationId": conversation_id,
             "project": self.project,
-            "username": self.username,
+            "username": username,
             "agent": self._resolve_prism_agent_id(agent_name),
             "functionCallingEnabled": agentic_mode or bool(tools),
             "agenticLoopEnabled": agentic_mode,
@@ -509,7 +519,7 @@ class PrismClient:
         headers = {
             "Content-Type": "application/json",
             "x-project": self.project,
-            "x-username": self.username,
+            "x-username": username,
         }
 
         return payload, target_url, headers
