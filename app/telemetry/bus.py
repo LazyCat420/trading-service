@@ -29,12 +29,32 @@ def get_cycle_state(cycle_id: str) -> CycleState:
         return CycleState(cycle_id="")
 
     if cycle_id not in _cycle_states:
-        # Attempt to populate from the DB or memory cache in PipelineStateMixin
+        # Attempt to populate from memory cache (PipelineService/CycleEngine/Mixin) or fallback to DB
         try:
-            from app.cycle.orchestration.state_manager import PipelineStateMixin, PipelineStateDB
-            
-            # Check if current in-memory mixin state matches the requested cycle_id
-            mem_state = PipelineStateMixin._state
+            mem_state = None
+            try:
+                from app.services.pipeline_service import PipelineService
+                if PipelineService._state and PipelineService._state.get("cycle_id") == cycle_id:
+                    mem_state = PipelineService._state
+            except Exception:
+                pass
+
+            if not mem_state:
+                try:
+                    from cycle_main import CycleEngine
+                    if CycleEngine._state and CycleEngine._state.get("cycle_id") == cycle_id:
+                        mem_state = CycleEngine._state
+                except Exception:
+                    pass
+
+            if not mem_state:
+                try:
+                    from app.cycle.orchestration.state_manager import PipelineStateMixin
+                    if PipelineStateMixin._state and PipelineStateMixin._state.get("cycle_id") == cycle_id:
+                        mem_state = PipelineStateMixin._state
+                except Exception:
+                    pass
+
             if mem_state and mem_state.get("cycle_id") == cycle_id:
                 state = CycleState(
                     cycle_id=cycle_id,
@@ -47,9 +67,10 @@ def get_cycle_state(cycle_id: str) -> CycleState:
                     started_at=mem_state.get("started_at"),
                     finished_at=mem_state.get("finished_at"),
                 )
-                logger.info("[TelemetryBus] Restored cycle state %s from PipelineStateMixin", cycle_id)
+                logger.info("[TelemetryBus] Restored cycle state %s from in-memory state", cycle_id)
             else:
                 # Load from database fallback
+                from app.cycle.orchestration.state_manager import PipelineStateDB
                 db_state = PipelineStateDB.get_state(summary_only=False)
                 if db_state and db_state.get("cycle_id") == cycle_id:
                     state = CycleState(
@@ -97,7 +118,7 @@ def publish_event(event: TelemetryEvent):
             state.status = event.status
         else:
             # Update status for special stages
-            if event.phase in ("started", "collecting", "analyzing", "gated", "traded", "persisted", "evaluated") or event.step == "init":
+            if event.phase in ("started", "collecting", "analyzing", "gated", "traded", "persisted", "evaluated", "resumed") or event.step == "init":
                 state.status = "running"
             elif event.phase in ("done", "closed"):
                 state.status = "done"
@@ -108,6 +129,11 @@ def publish_event(event: TelemetryEvent):
             elif event.phase == "error":
                 state.status = "error"
                 state.finished_at = event.ts
+            elif event.phase == "interrupted":
+                state.status = "interrupted"
+                state.finished_at = event.ts
+            elif event.phase == "paused":
+                state.status = "paused"
         
         if event.phase:
             state.phase = event.phase

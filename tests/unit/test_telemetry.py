@@ -107,3 +107,52 @@ async def test_telemetry_bus_subscription():
     assert received["step"] == "test_step"
 
     bus.unsubscribe(q)
+
+def test_telemetry_bus_phases():
+    cycle_id = "test-cycle-phases"
+    
+    # 1. Pause Phase
+    bus.publish_event(TelemetryEvent(
+        ts="2026-06-08T12:20:00Z",
+        cycle_id=cycle_id,
+        ticker="",
+        phase="paused",
+        kind="pipeline",
+        source="cycle_runner",
+        status="ok",
+        step="user_pause",
+        detail="Paused"
+    ))
+    state = bus.get_cycle_state(cycle_id)
+    assert state.status == "paused"
+
+    # 2. Resume Phase
+    bus.publish_event(TelemetryEvent(
+        ts="2026-06-08T12:21:00Z",
+        cycle_id=cycle_id,
+        ticker="",
+        phase="resumed",
+        kind="pipeline",
+        source="cycle_runner",
+        status="ok",
+        step="user_resume",
+        detail="Resumed"
+    ))
+    state = bus.get_cycle_state(cycle_id)
+    assert state.status == "running"
+
+    # 3. Interrupted Phase
+    bus.publish_event(TelemetryEvent(
+        ts="2026-06-08T12:22:00Z",
+        cycle_id=cycle_id,
+        ticker="",
+        phase="interrupted",
+        kind="pipeline",
+        source="cycle_runner",
+        status="ok",
+        step="user_stop",
+        detail="Interrupted"
+    ))
+    state = bus.get_cycle_state(cycle_id)
+    assert state.status == "interrupted"
+    assert state.finished_at == "2026-06-08T12:22:00Z"
