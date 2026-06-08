@@ -38,8 +38,8 @@ async def run_thesis_step(ctx: TickerContext) -> TickerContext:
     await cycle_control.wait_if_paused()
     t6 = time.monotonic()
 
-    # ── Guarded thesis with semaphore ──
-    async def _guarded_thesis():
+    # ── Guarded execution with semaphore ──
+    async def _run_with_retry():
         kwargs = dict(
             entity_id=ctx.ticker,
             packet=ctx.packet,
@@ -50,80 +50,78 @@ async def run_thesis_step(ctx: TickerContext) -> TickerContext:
             watchlist=ctx.watchlist or [],
             held=ctx.held,
         )
-        if ctx.thesis_semaphore:
-            async with ctx.thesis_semaphore:
-                return await generate_thesis(**kwargs)
-        else:
-            return await generate_thesis(**kwargs)
 
-    # ── Retry loop: first 180s, then 120s after 30s cooldown ──
-    # Reduced from 600s/300s to prevent single-ticker stalls from dominating
-    # the cycle (AMD burned 22 min in cycle-1780525250 on a single thesis).
-    # Worst-case: 180s + 30s cooldown + 120s = 5.5 min (was ~15 min).
-    _thesis_timeouts = [180.0, 120.0]
-    _max_attempts = len(_thesis_timeouts)
+        _thesis_timeouts = [180.0, 120.0]
+        _max_attempts = len(_thesis_timeouts)
 
-    for attempt in range(_max_attempts):
-        timeout = _thesis_timeouts[attempt]
-        try:
-            ctx.thesis, ctx.thesis_tokens = await asyncio.wait_for(
-                _guarded_thesis(), timeout=timeout,
-            )
-
-            # Check for malformed/empty JSON
-            if ctx.thesis.confidence == 0 and not ctx.thesis.core_claims:
-                raise ValueError(
-                    f"LLM returned malformed JSON or EMPTY_SIGNAL: {ctx.thesis.rationale}"
+        for attempt in range(_max_attempts):
+            timeout = _thesis_timeouts[attempt]
+            try:
+                thesis, thesis_tokens = await asyncio.wait_for(
+                    generate_thesis(**kwargs), timeout=timeout,
                 )
 
-            if attempt > 0:
-                logger.info(
-                    "[V2] Thesis generation SUCCEEDED for %s on retry %d/%d",
-                    ctx.ticker, attempt + 1, _max_attempts,
-                )
-            break  # success
+                # Check for malformed/empty JSON
+                if thesis.confidence == 0 and not thesis.core_claims:
+                    raise ValueError(
+                        f"LLM returned malformed JSON or EMPTY_SIGNAL: {thesis.rationale}"
+                    )
 
-        except (asyncio.TimeoutError, ValueError) as err:
-            is_timeout = isinstance(err, asyncio.TimeoutError)
-            err_msg = "TIMEOUT" if is_timeout else "PARSE_ERROR"
+                if attempt > 0:
+                    logger.info(
+                        "[V2] Thesis generation SUCCEEDED for %s on retry %d/%d",
+                        ctx.ticker, attempt + 1, _max_attempts,
+                    )
+                return thesis, thesis_tokens
 
-            if attempt < _max_attempts - 1:
-                logger.warning(
-                    "[V2] Thesis %s for %s (attempt %d/%d, %.0fs) — waiting 30s before retry",
-                    err_msg, ctx.ticker, attempt + 1, _max_attempts, timeout,
-                )
-                log_manager.log_cycle_error(
-                    ctx.cycle_id, f"thesis_{err_msg.lower()}_retry",
-                    ticker=ctx.ticker, error=str(err), stage="thesis_generation",
-                    elapsed_ms=ctx.elapsed_ms(t6),
-                    extra={"attempt": attempt + 1, "max_attempts": _max_attempts, "timeout_s": timeout},
-                )
-                ctx.safe_emit(
-                    "analyzing", f"v2_thesis_retry_{ctx.ticker}",
-                    f"{ctx.ticker}: Thesis {err_msg} (attempt {attempt + 1}/{_max_attempts}) — retrying after 30s",
-                    status="warning",
-                )
-                await asyncio.sleep(30)
-            else:
-                logger.error(
-                    "[V2] Thesis generation %s for %s after %d attempts",
-                    err_msg, ctx.ticker, _max_attempts,
-                )
-                ctx.safe_emit(
-                    "analyzing", f"v2_thesis_timeout_{ctx.ticker}",
-                    f"{ctx.ticker}: Thesis LLM {err_msg} (all {_max_attempts} attempts exhausted)",
-                    status="error",
-                )
-                log_manager.log_v2_cycle(ctx.cycle_id, "v2_error", {
-                    "ticker": ctx.ticker,
-                    "error": f"Thesis generation timed out after {_max_attempts} attempts",
-                    "error_type": "TimeoutError", "stages_completed": ctx.stages,
-                    "elapsed_ms": ctx.elapsed_ms(),
-                    "attempts": _max_attempts,
-                })
-                raise RuntimeError(
-                    f"Thesis generation timed out after {_max_attempts} attempts"
-                ) from None
+            except (asyncio.TimeoutError, ValueError) as err:
+                is_timeout = isinstance(err, asyncio.TimeoutError)
+                err_msg = "TIMEOUT" if is_timeout else "PARSE_ERROR"
+
+                if attempt < _max_attempts - 1:
+                    logger.warning(
+                        "[V2] Thesis %s for %s (attempt %d/%d, %.0fs) — waiting 30s before retry",
+                        err_msg, ctx.ticker, attempt + 1, _max_attempts, timeout,
+                    )
+                    log_manager.log_cycle_error(
+                        ctx.cycle_id, f"thesis_{err_msg.lower()}_retry",
+                        ticker=ctx.ticker, error=str(err), stage="thesis_generation",
+                        elapsed_ms=ctx.elapsed_ms(t6),
+                        extra={"attempt": attempt + 1, "max_attempts": _max_attempts, "timeout_s": timeout},
+                    )
+                    ctx.safe_emit(
+                        "analyzing", f"v2_thesis_retry_{ctx.ticker}",
+                        f"{ctx.ticker}: Thesis {err_msg} (attempt {attempt + 1}/{_max_attempts}) — retrying after 30s",
+                        status="warning",
+                    )
+                    await asyncio.sleep(30)
+                else:
+                    logger.error(
+                        "[V2] Thesis generation %s for %s after %d attempts",
+                        err_msg, ctx.ticker, _max_attempts,
+                    )
+                    ctx.safe_emit(
+                        "analyzing", f"v2_thesis_timeout_{ctx.ticker}",
+                        f"{ctx.ticker}: Thesis LLM {err_msg} (all {_max_attempts} attempts exhausted)",
+                        status="error",
+                    )
+                    log_manager.log_v2_cycle(ctx.cycle_id, "v2_error", {
+                        "ticker": ctx.ticker,
+                        "error": f"Thesis generation timed out after {_max_attempts} attempts",
+                        "error_type": "TimeoutError", "stages_completed": ctx.stages,
+                        "elapsed_ms": ctx.elapsed_ms(),
+                        "attempts": _max_attempts,
+                    })
+                    raise RuntimeError(
+                        f"Thesis generation timed out after {_max_attempts} attempts"
+                    ) from None
+
+    # Wait for the semaphore slot (if configured) before running the retry loop
+    if ctx.thesis_semaphore:
+        async with ctx.thesis_semaphore:
+            ctx.thesis, ctx.thesis_tokens = await _run_with_retry()
+    else:
+        ctx.thesis, ctx.thesis_tokens = await _run_with_retry()
 
     ctx.add_tokens(ctx.thesis_tokens)
     ms6 = ctx.elapsed_ms(t6)
