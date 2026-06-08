@@ -22,7 +22,9 @@ _DATA_PROCESSOR_SEMAPHORE: asyncio.Semaphore | None = None
 def _get_semaphore() -> asyncio.Semaphore:
     global _DATA_PROCESSOR_SEMAPHORE
     if _DATA_PROCESSOR_SEMAPHORE is None:
-        _DATA_PROCESSOR_SEMAPHORE = asyncio.Semaphore(2)
+        from app.config.config import settings
+        concurrency = max(4, settings.V2_TICKER_CONCURRENCY)
+        _DATA_PROCESSOR_SEMAPHORE = asyncio.Semaphore(concurrency)
     return _DATA_PROCESSOR_SEMAPHORE
 
 
