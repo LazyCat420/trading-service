@@ -151,12 +151,12 @@ class TestRedditJsonParsing:
         assert "NVDA" in result["tickers_mentioned"]
 
     def test_parse_garbage_response(self):
-        """Non-JSON LLM response → discarded."""
+        """Non-JSON LLM response → relevant."""
         from app.processors.summarizer import _parse_reddit_json_response
 
         response = "Let me create that agent for you. Looking at this post..."
         result = _parse_reddit_json_response(response)
-        assert result["q_status"] == "discarded"
+        assert result["q_status"] == "relevant"
         assert "parse failed" in result["q_reason"]
 
     def test_parse_short_summary_discarded(self):
