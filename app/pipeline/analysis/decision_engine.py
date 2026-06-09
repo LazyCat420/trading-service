@@ -947,6 +947,23 @@ async def analyze_ticker(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
+    # ── Emit Agent Voice Quote ──
+    try:
+        from app.services.agent_voice_service import generate_agent_quote
+        asyncio.create_task(
+            generate_agent_quote(
+                agent_id="QUANT_RESEARCH_AGENT",
+                archetype="QUANT",
+                context={
+                    "ticker": ticker,
+                    "tool": "synthesis",
+                    "action_result": final_action
+                }
+            )
+        )
+    except Exception as voice_err:
+        logger.debug("Voice event trigger failed: %s", voice_err)
+
     _log_decision(result, cycle_id, bot_id)
 
     # ── Execute Post-cycle Hooks ──

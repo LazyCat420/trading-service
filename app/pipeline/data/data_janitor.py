@@ -157,13 +157,13 @@ async def evaluate_relevance(text: str, context: str = "") -> dict:
 
 
 async def _evaluate_and_tag(
-    item_id: str, content: str, context: str, table_name: str
+    item_id: str, content: str, context: str, table_name: str, ticker: str
 ) -> tuple:
     """Helper to evaluate relevance and return result tuple for bulk processing."""
     eval_data = await evaluate_relevance(content, context)
     status = eval_data.get("status", "relevant")
     reason = eval_data.get("reason", "No reason provided")
-    return (table_name, item_id, status, reason)
+    return (table_name, item_id, status, reason, ticker)
 
 
 TABLE_UPDATE_MAP = {
@@ -197,42 +197,51 @@ async def run_data_janitor(
     # 1. Gather News Articles
     with get_db() as db:
         unflagged_news = db.execute("""
-            SELECT id, COALESCE(summary, title) 
+            SELECT id, COALESCE(summary, title), ticker 
             FROM news_articles 
             WHERE quality_status IS NULL
             ORDER BY published_at DESC LIMIT 20
         """).fetchall()
 
-    for uid, content in unflagged_news:
+    for row in unflagged_news:
+        uid = row[0]
+        content = row[1]
+        ticker = row[2] if len(row) > 2 else None
         if len(content) > 20:
-            tasks.append(_evaluate_and_tag(uid, content, context, "news_articles"))
+            tasks.append(_evaluate_and_tag(uid, content, context, "news_articles", ticker))
 
     # 2. Gather Reddit Posts
     with get_db() as db:
         unflagged_reddit = db.execute("""
-            SELECT id, title || ' ' || body 
+            SELECT id, title || ' ' || body, ticker 
             FROM reddit_posts 
             WHERE quality_status IS NULL OR quality_status = ''
             ORDER BY created_utc DESC LIMIT 20
         """).fetchall()
 
-    for uid, content in unflagged_reddit:
+    for row in unflagged_reddit:
+        uid = row[0]
+        content = row[1]
+        ticker = row[2] if len(row) > 2 else None
         if len(content) > 20 and "LOW_EFFORT_SPAM_PURGED" not in content:
-            tasks.append(_evaluate_and_tag(uid, content, context, "reddit_posts"))
+            tasks.append(_evaluate_and_tag(uid, content, context, "reddit_posts", ticker))
 
     # 3. Gather YouTube Transcripts
     with get_db() as db:
         unflagged_yt = db.execute("""
-            SELECT video_id, COALESCE(summary, title)
+            SELECT video_id, COALESCE(summary, title), ticker
             FROM youtube_transcripts 
             WHERE quality_status IS NULL OR quality_status = ''
             ORDER BY published_at DESC LIMIT 10
         """).fetchall()
 
-    for vid, content in unflagged_yt:
+    for row in unflagged_yt:
+        vid = row[0]
+        content = row[1]
+        ticker = row[2] if len(row) > 2 else None
         if len(content) > 20:
             tasks.append(
-                _evaluate_and_tag(vid, content, context, "youtube_transcripts")
+                _evaluate_and_tag(vid, content, context, "youtube_transcripts", ticker)
             )
 
     if not tasks:
@@ -254,7 +263,7 @@ async def run_data_janitor(
             if not res:
                 continue
 
-            table, item_id, status, reason = res
+            table, item_id, status, reason, ticker = res
             metrics["scanned"] += 1
 
             update_sql = TABLE_UPDATE_MAP.get(table)
@@ -268,6 +277,20 @@ async def run_data_janitor(
                 logger.info(f"[JANITOR] Discarded {table} {item_id}: {reason}")
             else:
                 db.execute(update_sql, [status, None, item_id])
+
+            # Fire-and-forget background voice task
+            from app.services.agent_voice_service import generate_agent_quote
+            asyncio.create_task(
+                generate_agent_quote(
+                    agent_id="DATA_JANITOR_AGENT",
+                    archetype="DATA_JANITOR",
+                    context={
+                        "ticker": ticker or "unknown",
+                        "tool": "data_janitor",
+                        "action_result": status,
+                    }
+                )
+            )
 
     logger.info(
         f"[JANITOR] Pass complete. Scanned {metrics['scanned']}, Discarded {metrics['discarded']}"

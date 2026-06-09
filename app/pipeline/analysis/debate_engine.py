@@ -287,6 +287,24 @@ async def run_debate(
     challenges = debate_parsed.get("challenges", [])
     risk_factors = debate_parsed.get("risk_factors", [])
 
+    try:
+        from app.services.agent_voice_service import generate_agent_quote
+        debater_archetype = "BULL" if d_action == "BUY" else "BEAR"
+        debater_id = "BULLISH_DEBATER" if d_action == "BUY" else "BEARISH_DEBATER"
+        asyncio.create_task(
+            generate_agent_quote(
+                agent_id=debater_id,
+                archetype=debater_archetype,
+                context={
+                    "ticker": ticker,
+                    "tool": "debate_challenge",
+                    "action_result": d_action
+                }
+            )
+        )
+    except Exception as voice_err:
+        logger.debug("Voice event trigger failed: %s", voice_err)
+
     ms2 = elapsed_ms(t2)
     logger.info(
         f"[PIPELINE]   >>> [DEBATE] Step 2/3 done — {persona_name}: {d_action} @ {d_confidence}% ({ms2}ms)"
