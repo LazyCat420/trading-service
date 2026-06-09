@@ -828,6 +828,7 @@ class PipelineStateMixin:
                 status=status,
                 step=step,
                 detail=detail,
+                phase=phase,
                 elapsed_ms=elapsed_ms,
                 data=data or {}
             ))

@@ -102,6 +102,11 @@ def publish_event(event: TelemetryEvent):
         return
 
     state = get_cycle_state(cycle_id)
+    
+    # Auto-fill phase from cycle state if empty
+    if not event.phase and state.phase:
+        event.phase = state.phase
+
     event_dict = event.to_dict()
 
     # De-duplicate events by checking ts and step/detail
