@@ -162,6 +162,19 @@ class LLMTracker:
             if not success:
                 stats["failures"] += 1
 
+        # Send system log
+        try:
+            from app.telemetry import send_system_log
+            tps = round(total_tokens / (latency_ms / 1000.0), 1) if latency_ms > 0 else 0.0
+            msg = f"prompt: {prompt_tokens}tk | gen: {completion_tokens}tk | latency: {latency_ms}ms | {tps} t/s"
+            send_system_log(
+                subsystem="vLLM",
+                message=f"[{endpoint_name or model}] {msg}",
+                level="info" if success else "error"
+            )
+        except Exception as te:
+            logger.debug("[LLMTracker] System log emit failed: %s", te)
+
         # Notify live listeners
         for q in self._listeners:
             try:

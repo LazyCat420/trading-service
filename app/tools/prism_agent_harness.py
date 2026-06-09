@@ -233,6 +233,8 @@ async def run_prism_agent(
         dict with keys: final_text, token_usage, execution_ms,
         conversation_id, routed_via.
     """
+    from app.telemetry import send_system_log
+    send_system_log("AGENT", f"[{agent_name}] Starting agent execution (ticker={ticker})")
     prism = llm.prism_client
     start = time.monotonic()
 
@@ -288,6 +290,8 @@ async def run_prism_agent(
     # we DON'T send saves ~200-500 tokens of context window space.
     if len(active_tools) > 5:
         try:
+            from app.telemetry import send_system_log
+            send_system_log("AGENT", f"[{agent_name}] Selecting optimal tools for task")
             from app.agents.tool_selector import select_tools_for_task
             task_desc = f"{system_prompt[:500]}\n\nTask: {user_prompt[:1500]}"
             active_tools = await select_tools_for_task(
@@ -313,6 +317,8 @@ async def run_prism_agent(
 
     # Phase 0.5: Tool Optimization (Highlight & Pruning)
     try:
+        from app.telemetry import send_system_log
+        send_system_log("AGENT", f"[{agent_name}] Pruning tool context window")
         from app.services.tool_optimizer import optimize_agent_tools
         active_tools, system_prompt = await optimize_agent_tools(agent_name, active_tools, system_prompt)
     except Exception as opt_err:
@@ -411,6 +417,8 @@ async def run_prism_agent(
         len(active_tools),
         ticker,
     )
+    from app.telemetry import send_system_log
+    send_system_log("AGENT", f"[{agent_name}] Delegating agentic loop to Prism (model={model})")
 
     # Execute via Prism
     try:
@@ -492,6 +500,8 @@ async def run_prism_agent(
             elapsed_ms,
             token_usage,
         )
+        from app.telemetry import send_system_log
+        send_system_log("AGENT", f"[{agent_name}] Finished successfully in {elapsed_ms}ms ({token_usage} tokens)")
 
         # Record tool optimization stats for Prism-routed agents.
         # Prism's JSON response includes toolCalls (names of tools that were called).
@@ -514,6 +524,11 @@ async def run_prism_agent(
                         tc_name = tc["name"]
                         tc_success = not bool(tc.get("error"))
                         tc_ms = int(tc.get("executionMs", 0) or tc.get("duration_ms", 0) or 0)
+                        from app.telemetry import send_system_log
+                        send_system_log(
+                            "AGENT",
+                            f"[{agent_name}] Executed tool '{tc_name}' ({'success' if tc_success else 'failed'} in {tc_ms}ms)"
+                        )
                         
                         publish_event(TelemetryEvent(
                             ts=datetime.now(timezone.utc).isoformat(),
@@ -621,6 +636,8 @@ async def run_prism_agent(
             agent_name,
             timeout_seconds,
         )
+        from app.telemetry import send_system_log
+        send_system_log("AGENT", f"[{agent_name}] Execution timed out, falling back to local executor", level="warning")
         # Publish timeout event
         try:
             from app.telemetry.bus import publish_event
@@ -656,6 +673,8 @@ async def run_prism_agent(
             "[PrismHarness] %s failed via Prism — falling back to local",
             agent_name,
         )
+        from app.telemetry import send_system_log
+        send_system_log("AGENT", f"[{agent_name}] Execution failed, falling back to local executor: {e}", level="warning")
         # Publish failure event
         try:
             from app.telemetry.bus import publish_event

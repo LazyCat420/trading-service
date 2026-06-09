@@ -78,6 +78,11 @@ def save_snapshot(snapshot: MarketSnapshot):
                 snapshot.debt_to_equity,
             ],
         )
+        from app.telemetry import send_system_log
+        send_system_log(
+            subsystem="DB",
+            message=f"Upserted market snapshot for {snapshot.ticker} to market_snapshots"
+        )
 
 
 def get_latest_snapshot(

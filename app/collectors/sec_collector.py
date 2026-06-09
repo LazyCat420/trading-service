@@ -186,6 +186,11 @@ async def collect_fund_holdings(
                     ],
                 )
 
+            from app.telemetry import send_system_log
+            send_system_log(
+                subsystem="DB",
+                message=f"[SEC] {filer_name}: Upserted {len(holdings)} holdings rows to sec_13f_holdings"
+            )
             logger.info(
                 f"[sec] {filer_name}: {len(holdings)} holdings written (Q: {filing_quarter})"
             )
@@ -208,6 +213,11 @@ async def collect_all_funds() -> dict:
         results[name] = count
         total_holdings += count
         # Pace between funds to avoid hammering EDGAR
+        from app.telemetry import send_system_log
+        send_system_log(
+            subsystem="SCRAPER",
+            message="SEC Edgar rate limit pause: 2s"
+        )
         await asyncio.sleep(2)
     logger.info(
         f"[sec] Total: {total_holdings} holdings across {len(TRACKED_FUNDS)} funds "
@@ -290,6 +300,11 @@ async def collect_ticker_institutional(ticker: str) -> int:
                 )
                 count += 1
 
+            from app.telemetry import send_system_log
+            send_system_log(
+                subsystem="DB",
+                message=f"[yfinance] {ticker}: Upserted {count} institutional holder rows to sec_13f_holdings"
+            )
             logger.info(f"[sec] {ticker}: {count} institutional holders via yfinance")
             return count
 

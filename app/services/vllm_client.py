@@ -1027,6 +1027,11 @@ class VLLMClient:
         ep.active_count += 1
         semaphore_active = ep.active_count
         semaphore_max = ep.max_concurrent
+        from app.telemetry import send_system_log
+        send_system_log(
+            subsystem="SYSTEM",
+            message=f"Semaphore acquired ({ep.name}): {semaphore_active}/{semaphore_max} slots in use"
+        )
 
         is_high = item.priority <= Priority.HIGH
         if is_high:
@@ -1302,6 +1307,11 @@ class VLLMClient:
                 item.future.set_exception(e)
         finally:
             ep.active_count -= 1
+            from app.telemetry import send_system_log
+            send_system_log(
+                subsystem="SYSTEM",
+                message=f"Semaphore released ({ep.name}): {ep.active_count}/{ep.max_concurrent} slots in use"
+            )
 
     async def _call_endpoint(
         self,
@@ -1890,6 +1900,11 @@ class VLLMClient:
         qs = target_ep.queue.qsize()
         active = target_ep.active_count
         max_c = target_ep.max_concurrent
+        from app.telemetry import send_system_log
+        send_system_log(
+            subsystem="SYSTEM",
+            message=f"Request enqueued on {target_ep.name} (priority={priority.name}, active={active}/{max_c}, queue depth={qs})"
+        )
         if qs > 0 or active >= max_c:
             logger.debug(
                 "[QUEUE] %s enqueued to %s (priority=%s, active=%d/%d, queued=%d)",
@@ -2051,6 +2066,11 @@ class VLLMClient:
         qs = target_ep.queue.qsize()
         active = target_ep.active_count
         max_c = target_ep.max_concurrent
+        from app.telemetry import send_system_log
+        send_system_log(
+            subsystem="SYSTEM",
+            message=f"Request enqueued on {target_ep.name} (priority={priority.name}, active={active}/{max_c}, queue depth={qs})"
+        )
         if qs > 0 or active >= max_c:
             logger.debug(
                 "[QUEUE] %s enqueued to %s (priority=%s, active=%d/%d, queued=%d)",

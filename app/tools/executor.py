@@ -69,6 +69,9 @@ async def run_tool_agent(
         except Exception as pe:
             logger.error("[Executor] Prism routing failed for %s, falling back to local: %s", agent_name, pe)
 
+    from app.telemetry import send_system_log
+    send_system_log("AGENT", f"[{agent_name}] Starting local agent loop (ticker={ticker})")
+
     if previous_messages:
         messages = previous_messages.copy()
         # Ensure we don't duplicate user prompts if they're just appending
@@ -115,6 +118,8 @@ async def run_tool_agent(
     hit_limit_with_pending_tools = False
 
     for i in range(max_loops):
+        from app.telemetry import send_system_log
+        send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Executing LLM reasoning step")
         try:
             result = await llm.chat_with_tools(
                 messages=messages,
@@ -157,6 +162,8 @@ async def run_tool_agent(
             logger.info(
                 f"[ToolExecutor] Turn {i + 1}: Agent requested tool -> {tc.get('function', {}).get('name')}"
             )
+            from app.telemetry import send_system_log
+            send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Requesting tool '{tc.get('function', {}).get('name')}'")
 
         # Execute tool calls
         for tc in tool_calls:
@@ -164,6 +171,8 @@ async def run_tool_agent(
                 tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id
             )
             messages.append(tool_res)
+            from app.telemetry import send_system_log
+            send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Tool executed with status: {'ok' if not tool_res.get('error') else 'error'}")
     else:
         # for/else: the loop completed without break → max_loops exhausted
         # Check if the last turn had tool_calls (meaning the agent wanted to keep going)
@@ -173,6 +182,9 @@ async def run_tool_agent(
                 f"[ToolExecutor] Agent '{agent_name}' hit max_loops={max_loops} "
                 f"with pending tool calls — {'yielding' if yield_on_limit else 'returning partial'}."
             )
+
+    from app.telemetry import send_system_log
+    send_system_log("AGENT", f"[{agent_name}] Completed local agent loop in {total_time_ms}ms ({total_tokens_used} tokens)")
 
     base_result = {
         "final_text": final_content,
