@@ -148,8 +148,10 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
                     archetype=archetype,
                     context={
                         "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
                         "tool": "sentiment_analysis",
                         "action_result": archetype,
+                        "agent_insight": insight,
                     }
                 )
             elif label == "macro_risk":
@@ -158,28 +160,34 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
                     archetype="RISK",
                     context={
                         "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
                         "tool": "macro_risk_analysis",
                         "action_result": "anxious",
+                        "agent_insight": insight,
                     }
                 )
             elif label == "fundamentals":
                 dispatch_agent_quote(
                     agent_id="FUNDAMENTAL_AGENT",
-                    archetype="QUANT",
+                    archetype="RESEARCH",
                     context={
                         "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
                         "tool": "fundamental_analysis",
                         "action_result": "synthesis",
+                        "agent_insight": insight,
                     }
                 )
             elif label == "deep_research":
                 dispatch_agent_quote(
                     agent_id="DEEP_RESEARCH_AGENT",
-                    archetype="RESEARCH",
+                    archetype="QUANT",
                     context={
                         "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
                         "tool": "deep_research",
                         "action_result": "academic",
+                        "agent_insight": insight,
                     }
                 )
     except Exception as voice_err:

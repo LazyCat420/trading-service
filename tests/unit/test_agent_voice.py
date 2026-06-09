@@ -61,9 +61,76 @@ async def test_generate_agent_quote_vllm_failure():
         assert quote == ""
 
 @pytest.mark.asyncio
+async def test_generate_agent_quote_override():
+    # Mock httpx.AsyncClient post method
+    mock_post = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_post.return_value = mock_resp
+
+    with patch("httpx.AsyncClient.post", mock_post):
+        quote = await generate_agent_quote(
+            agent_id="QUANT_AGENT_TEST",
+            archetype="QUANT",
+            context={"ticker": "TSLA", "quote_override": "This is an explicit override quote."}
+        )
+        assert quote == "This is an explicit override quote."
+        mock_post.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_generate_agent_quote_delegation():
+    # Mock httpx.AsyncClient post method
+    mock_post = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_post.return_value = mock_resp
+
+    with patch("httpx.AsyncClient.post", mock_post):
+        quote = await generate_agent_quote(
+            agent_id="QUANT_AGENT_TEST",
+            archetype="QUANT",
+            context={
+                "ticker": "TSLA",
+                "agent_insight": "Blah blah DELEGATION: @Janitor - check the split error on March 4th. Blah blah"
+            }
+        )
+        assert quote == "Ray, check the split error on March 4th."
+        mock_post.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_generate_agent_quote_taskboard_finding():
+    mock_post = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_post.return_value = mock_resp
+    
+    mock_chat = AsyncMock(return_value=("Findings verified successfully.", 0, 0))
+
+    # Mock TaskBoard get_findings
+    mock_get_findings = AsyncMock(return_value=[
+        {"source_agent": "fundamentals_agent", "content": "Company exhibits massive revenue growth."}
+    ])
+
+    with patch("httpx.AsyncClient.post", mock_post), \
+         patch("app.agents.task_board.task_board.get_findings", mock_get_findings), \
+         patch("app.services.agent_voice_service.llm.chat", mock_chat):
+         
+        quote = await generate_agent_quote(
+            agent_id="FUNDAMENTAL_AGENT",
+            archetype="RESEARCH",
+            context={"ticker": "TSLA", "cycle_id": "test-cycle-123", "tool": "test"}
+        )
+        
+        mock_get_findings.assert_called_once_with(ticker="TSLA", cycle_id="test-cycle-123")
+        mock_chat.assert_called_once()
+        user_prompt = mock_chat.call_args[1]["user"]
+        assert "Company exhibits massive revenue growth." in user_prompt
+
+@pytest.mark.asyncio
 async def test_step_data_voice_dispatch():
     ctx = MagicMock()
     ctx.ticker = "AAPL"
+    ctx.cycle_id = "test-cycle-123"
     ctx.emit = MagicMock()
     ctx.elapsed_ms.return_value = 100
     
@@ -82,6 +149,7 @@ async def test_step_data_voice_dispatch():
             archetype="DATA_JANITOR",
             context={
                 "ticker": "AAPL",
+                "cycle_id": "test-cycle-123",
                 "tool": "data_processors",
                 "action_result": "complete",
             }
@@ -91,6 +159,7 @@ async def test_step_data_voice_dispatch():
 async def test_step_agents_voice_dispatch():
     ctx = MagicMock()
     ctx.ticker = "AAPL"
+    ctx.cycle_id = "test-cycle-123"
     insights = {
         "sentiment": "bullish sentiment looks strong",
         "macro_risk": "some macro risks, interest rates are high",
@@ -123,18 +192,24 @@ async def test_step_agents_voice_dispatch():
             
         assert any(c.get("agent_id") == "SENTIMENT_AGENT" and c.get("archetype") == "BULL" for c in calls)
         assert any(c.get("agent_id") == "MACRO_RISK_AGENT" and c.get("archetype") == "RISK" for c in calls)
-        assert any(c.get("agent_id") == "FUNDAMENTAL_AGENT" and c.get("archetype") == "QUANT" for c in calls)
-        assert any(c.get("agent_id") == "DEEP_RESEARCH_AGENT" and c.get("archetype") == "RESEARCH" for c in calls)
+        assert any(c.get("agent_id") == "FUNDAMENTAL_AGENT" and c.get("archetype") == "RESEARCH" for c in calls)
+        assert any(c.get("agent_id") == "DEEP_RESEARCH_AGENT" and c.get("archetype") == "QUANT" for c in calls)
+        
+        for c in calls:
+            assert c["context"]["cycle_id"] == "test-cycle-123"
+            assert "agent_insight" in c["context"]
 
 @pytest.mark.asyncio
 async def test_step_debate_voice_dispatch():
     ctx = MagicMock()
     ctx.ticker = "AAPL"
+    ctx.cycle_id = "test-cycle-123"
     ctx.orchestrator_had_agents = True
     ctx.elapsed_s.return_value = -1000.0
     ctx.debate_result = MagicMock()
     ctx.debate_result.winning_side = "bear"
     ctx.debate_result.judge_action = "SELL"
+    ctx.debate_result.transcript = "### BULL ARGUMENTS\n...\n### BEAR ARGUMENTS\n..."
     
     with patch("app.cognition.debate.debate_coordinator.run_adversarial_debate", new_callable=AsyncMock) as mock_debate_run, \
          patch("app.services.agent_voice_service.dispatch_agent_quote") as mock_dispatch:
@@ -148,8 +223,10 @@ async def test_step_debate_voice_dispatch():
             archetype="BEAR",
             context={
                 "ticker": "AAPL",
+                "cycle_id": "test-cycle-123",
                 "tool": "adversarial_debate",
                 "action_result": "SELL",
+                "agent_insight": "### BULL ARGUMENTS\n...\n### BEAR ARGUMENTS\n...",
             }
         )
 
@@ -157,6 +234,7 @@ async def test_step_debate_voice_dispatch():
 async def test_step_thesis_voice_dispatch():
     ctx = MagicMock()
     ctx.ticker = "AAPL"
+    ctx.cycle_id = "test-cycle-123"
     ctx.final_action = "BUY"
     ctx.portfolio_dashboard = ""
     ctx.position_context = {"held": False}
@@ -188,7 +266,9 @@ async def test_step_thesis_voice_dispatch():
             archetype="QUANT",
             context={
                 "ticker": "AAPL",
+                "cycle_id": "test-cycle-123",
                 "tool": "thesis_generation",
                 "action_result": "BUY",
+                "agent_insight": "rationale",
             }
         )

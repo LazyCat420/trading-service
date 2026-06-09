@@ -70,12 +70,12 @@ def _cap_debate_text(text: str, max_chars: int, label: str = "debate") -> str:
     return truncated + marker
 
 
-# ── Analyst Personas ─────────────────────────────────────────
+from app.config.personas import PERSONAS as CONFIG_PERSONAS
 
 PERSONAS = {
-    "Fundamental": "Focus purely on valuation multiples, earnings trends, balance sheet health, ratios, and margins.",
-    "Technical": "Focus purely on price action, moving averages, relative strength (RSI), volume patterns, and momentum indicators.",
-    "Macro_Sentiment": "Focus purely on the broader macroeconomic regime, interest rates, industry catalysts, and social/news sentiment.",
+    "Fundamental": CONFIG_PERSONAS["FUNDAMENTAL"]["prompt"],
+    "Technical": CONFIG_PERSONAS["QUANT"]["prompt"] + "\nCritique any fundamental arguments mathematically using variance, volatility, and statistics.",
+    "Macro_Sentiment": CONFIG_PERSONAS["BEHAVIORAL"]["prompt"],
 }
 
 # ── Evidence Partitioning — prevent cross-persona fact anchoring ──
@@ -220,7 +220,16 @@ Output exactly this JSON:
   ],
   "confidence": 0-100,
   "key_argument": "single strongest argument for your case"
-}}"""
+}}
+
+[INTERACTION & CONCLUSION RULES]
+1. You are on a strict time budget. Do not pontificate.
+2. You must conclude your analysis within 2 paragraphs.
+3. You may tag ONE other agent to request a follow-up (e.g., "@Risk: Review the downside").
+4. You MUST end your output with a definitive stance using this exact format:
+   - STANCE: [BULLISH / BEARISH / NEUTRAL]
+   - CONFIDENCE: [1-100]
+   - DELEGATION: [Tag another agent or "NONE"]"""
     return base
 
 

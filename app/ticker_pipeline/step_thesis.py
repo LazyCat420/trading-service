@@ -168,8 +168,10 @@ async def run_thesis_step(ctx: TickerContext) -> TickerContext:
             archetype="QUANT",
             context={
                 "ticker": ctx.ticker,
+                "cycle_id": ctx.cycle_id,
                 "tool": "thesis_generation",
                 "action_result": ctx.final_action,
+                "agent_insight": ctx.thesis.rationale if hasattr(ctx, "thesis") and ctx.thesis else "",
             }
         )
     except Exception as voice_err:

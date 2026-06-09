@@ -97,6 +97,7 @@ async def run_data_step(ctx: TickerContext) -> TickerContext:
                 archetype="DATA_JANITOR",
                 context={
                     "ticker": ctx.ticker,
+                    "cycle_id": ctx.cycle_id,
                     "tool": "data_processors",
                     "action_result": "complete",
                 }

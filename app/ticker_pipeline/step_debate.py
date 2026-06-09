@@ -133,8 +133,10 @@ async def run_debate_step(ctx: TickerContext) -> TickerContext:
                     archetype=archetype,
                     context={
                         "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
                         "tool": "adversarial_debate",
                         "action_result": ctx.debate_result.judge_action,
+                        "agent_insight": ctx.debate_result.transcript,
                     }
                 )
             except Exception as voice_err:

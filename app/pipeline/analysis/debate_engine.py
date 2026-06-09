@@ -296,8 +296,10 @@ async def run_debate(
             archetype=debater_archetype,
             context={
                 "ticker": ticker,
+                "cycle_id": cycle_id,
                 "tool": "debate_challenge",
-                "action_result": d_action
+                "action_result": d_action,
+                "agent_insight": debate_response,
             }
         )
     except Exception as voice_err:

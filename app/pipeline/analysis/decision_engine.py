@@ -955,8 +955,10 @@ async def analyze_ticker(
             archetype="QUANT",
             context={
                 "ticker": ticker,
+                "cycle_id": cycle_id,
                 "tool": "synthesis",
-                "action_result": final_action
+                "action_result": final_action,
+                "agent_insight": final_rationale,
             }
         )
     except Exception as voice_err:

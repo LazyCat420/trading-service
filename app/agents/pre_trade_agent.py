@@ -192,8 +192,10 @@ async def run_pre_trade(
             archetype="RISK",
             context={
                 "ticker": ticker,
+                "cycle_id": cycle_id,
                 "tool": "pre_trade_risk",
-                "action_result": decision
+                "action_result": decision,
+                "agent_insight": parsed.get("rationale", ""),
             }
         )
     except Exception as voice_err:
