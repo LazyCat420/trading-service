@@ -236,6 +236,20 @@ async def run_agent_loop(
     scorecard = ToolCallScorecard()
     stop_reason = "success"
 
+    # Ensure system prompt guides the model on HUMAN OVERRIDE messages
+    override_rule = (
+        "\n\n### HUMAN OVERRIDE RULE:\n"
+        "If you receive a message tagged '[HUMAN OVERRIDE]', treat it as a priority directive "
+        "from the human operator. You MUST adjust your strategy, decisions, or parameters "
+        "accordingly, and acknowledge the instruction in your rationale/response."
+    )
+    if messages and messages[0].get("role") == "system":
+        messages[0]["content"] = (messages[0].get("content") or "") + override_rule
+
+    from app.agents.inbox import inbox_manager
+    instance_id = f"{agent_name}_{ticker or 'global'}_{cycle_id or 'jit'}_{id(budget)}"
+    inbox_manager.register_instance(instance_id, agent_name, ticker)
+
     from app.agents.context_compressor import compress_history, summarize_tool_result
     from app.config.context_budget import get_context_budget as _get_ctx_budget
 
@@ -247,6 +261,15 @@ async def run_agent_loop(
     _aggregate_tool_used = 0
 
     while budget.consume_turn():
+        # Check for steering messages in the inbox
+        steering_msgs = inbox_manager.get_messages(agent_name, ticker)
+        for msg_text in steering_msgs:
+            logger.info(f"[AgentLoop] Steering message injected for @{agent_name} ({ticker}): {msg_text}")
+            messages.append({
+                "role": "user",
+                "content": f"[HUMAN OVERRIDE] {msg_text}"
+            })
+
         # ── Pipeline stop check ──────────────────────────────────────
         # Ensures the agent loop halts immediately when the user stops
         # the pipeline, rather than continuing until budget exhausts.
@@ -558,6 +581,7 @@ async def run_agent_loop(
                 "requires_approval": True,
                 "stop_reason": "blocked",
             }
+            inbox_manager.unregister_instance(instance_id)
             raise ApprovalRequiredYield(base_result)
 
     else:
@@ -642,6 +666,7 @@ async def run_agent_loop(
 
 
     if hit_limit_with_pending_tools and yield_on_limit:
+        inbox_manager.unregister_instance(instance_id)
         raise AgentYielded(base_result)
 
     try:
@@ -667,6 +692,7 @@ async def run_agent_loop(
     except Exception as e:
         logger.error(f"[AgentLoop] Failed to save stats: {e}")
 
+    inbox_manager.unregister_instance(instance_id)
     return base_result
 
 

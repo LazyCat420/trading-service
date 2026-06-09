@@ -68,8 +68,32 @@ class AgentRegistry:
                 self._path,
             )
         except FileNotFoundError:
-            logger.warning("[REGISTRY] Registry file not found: %s", self._path)
-            self._loaded = True  # Don't retry
+            logger.warning("[REGISTRY] Registry file not found: %s — loading default specialists", self._path)
+            self._agents = {
+                "planner": {
+                    "skills": ["planning", "strategy"],
+                    "fallback_for": [],
+                    "min_context_required": []
+                },
+                "retriever": {
+                    "skills": ["data_retrieval", "search"],
+                    "fallback_for": [],
+                    "min_context_required": []
+                },
+                "verifier": {
+                    "skills": ["verification", "cross_check"],
+                    "fallback_for": [],
+                    "min_context_required": []
+                },
+                "synthesizer": {
+                    "skills": ["synthesis", "decision_making"],
+                    "fallback_for": [],
+                    "min_context_required": []
+                }
+            }
+            for name, info in self._agents.items():
+                self._health[name] = info.get("health", "ok")
+            self._loaded = True
         except Exception as e:
             logger.error("[REGISTRY] Failed to load registry: %s", e)
             self._loaded = True

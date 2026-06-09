@@ -568,3 +568,28 @@ def strategies_bench_underperformers():
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class AgentInboxMessage(BaseModel):
+    message: str
+    ticker: Optional[str] = None
+
+
+@router.get("/api/v1/agents/active")
+def get_active_agents():
+    try:
+        from app.agents.inbox import inbox_manager
+        return {"instances": inbox_manager.get_active_instances()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/v1/agents/{agent_name}/inbox")
+def post_agent_inbox(agent_name: str, msg: AgentInboxMessage):
+    try:
+        from app.agents.inbox import inbox_manager
+        inbox_manager.add_message(agent_name=agent_name, message=msg.message, ticker=msg.ticker)
+        return {"status": "success", "agent_name": agent_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
