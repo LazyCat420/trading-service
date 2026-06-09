@@ -949,17 +949,15 @@ async def analyze_ticker(
 
     # ── Emit Agent Voice Quote ──
     try:
-        from app.services.agent_voice_service import generate_agent_quote
-        asyncio.create_task(
-            generate_agent_quote(
-                agent_id="QUANT_RESEARCH_AGENT",
-                archetype="QUANT",
-                context={
-                    "ticker": ticker,
-                    "tool": "synthesis",
-                    "action_result": final_action
-                }
-            )
+        from app.services.agent_voice_service import dispatch_agent_quote
+        dispatch_agent_quote(
+            agent_id="QUANT_RESEARCH_AGENT",
+            archetype="QUANT",
+            context={
+                "ticker": ticker,
+                "tool": "synthesis",
+                "action_result": final_action
+            }
         )
     except Exception as voice_err:
         logger.debug("Voice event trigger failed: %s", voice_err)

@@ -279,17 +279,15 @@ async def run_data_janitor(
                 db.execute(update_sql, [status, None, item_id])
 
             # Fire-and-forget background voice task
-            from app.services.agent_voice_service import generate_agent_quote
-            asyncio.create_task(
-                generate_agent_quote(
-                    agent_id="DATA_JANITOR_AGENT",
-                    archetype="DATA_JANITOR",
-                    context={
-                        "ticker": ticker or "unknown",
-                        "tool": "data_janitor",
-                        "action_result": status,
-                    }
-                )
+            from app.services.agent_voice_service import dispatch_agent_quote
+            dispatch_agent_quote(
+                agent_id="DATA_JANITOR_AGENT",
+                archetype="DATA_JANITOR",
+                context={
+                    "ticker": ticker or "unknown",
+                    "tool": "data_janitor",
+                    "action_result": status,
+                }
             )
 
     logger.info(

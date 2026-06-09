@@ -43,6 +43,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict) -> 
     Generate a funny persona quote using vLLM and emit it as an SSE event to trading-client.
     Runs in a fire-and-forget background task to avoid blocking the pipeline.
     """
+    logger.info(f"[AgentVoice] Starting generation for {agent_id} ({archetype})")
     ticker = context.get("ticker", "")
     tool = context.get("tool", "")
     action_result = context.get("action_result", "")
@@ -78,7 +79,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict) -> 
     except Exception as e:
         logger.warning("[AgentVoice] vLLM call failed: %s", e)
         # Use empty quote on failure (handled on frontend via fallback)
-        return ""
+        quote = ""
         
     # Construct the payload
     payload = {
@@ -92,22 +93,37 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict) -> 
     }
     
     # Forward to trading-client to be emitted on the SSE stream
-    async def _emit():
-        from app.config.config import settings
-        hosts = [settings.DEFAULT_HOST, "trading-client", "localhost", "127.0.0.1"]
-        for host in hosts:
-            if not host:
-                continue
-            url = f"http://{host}:8888/api/v1/prism/emit"
-            try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
-                    resp = await client.post(url, json=payload)
-                    if resp.status_code == 200:
-                        logger.info("[AgentVoice] Emitted event for %s: '%s'", agent_id, quote)
-                        break
-            except Exception as exc:
-                logger.debug("[AgentVoice] Failed to emit to %s: %s", host, exc)
-                
-    # Run emission task
-    await _emit()
+    from app.config.config import settings
+    hosts = [settings.DEFAULT_HOST, "trading-client", "10.0.0.16", "localhost", "127.0.0.1"]
+    emitted = False
+    for host in hosts:
+        if not host:
+            continue
+        url = f"http://{host}:8888/api/v1/prism/emit"
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    logger.info("[AgentVoice] Emitted event for %s: '%s' to %s", agent_id, quote, host)
+                    emitted = True
+                    break
+        except Exception as exc:
+            pass
+            
+    if not emitted:
+        logger.warning(f"[AgentVoice] Failed to emit to any host for {agent_id}")
+        
     return quote
+
+# Keep strong references to background tasks to prevent GC
+_voice_tasks = set()
+
+def dispatch_agent_quote(agent_id: str, archetype: str, context: dict):
+    logger.info(f"[AgentVoice] Dispatching task for {agent_id}")
+    try:
+        task = asyncio.create_task(generate_agent_quote(agent_id, archetype, context))
+        _voice_tasks.add(task)
+        task.add_done_callback(_voice_tasks.discard)
+    except Exception as e:
+        logger.error(f"[AgentVoice] Failed to dispatch task: {e}")
+

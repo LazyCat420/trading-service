@@ -186,18 +186,15 @@ async def run_pre_trade(
     )
 
     try:
-        from app.services.agent_voice_service import generate_agent_quote
-        import asyncio
-        asyncio.create_task(
-            generate_agent_quote(
-                agent_id="PRE_TRADE_RISK",
-                archetype="RISK",
-                context={
-                    "ticker": ticker,
-                    "tool": "pre_trade_risk",
-                    "action_result": decision
-                }
-            )
+        from app.services.agent_voice_service import dispatch_agent_quote
+        dispatch_agent_quote(
+            agent_id="PRE_TRADE_RISK",
+            archetype="RISK",
+            context={
+                "ticker": ticker,
+                "tool": "pre_trade_risk",
+                "action_result": decision
+            }
         )
     except Exception as voice_err:
         logger.debug("Voice event trigger failed: %s", voice_err)
