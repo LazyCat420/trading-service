@@ -93,7 +93,11 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict) -> 
     
     # Forward to trading-client to be emitted on the SSE stream
     async def _emit():
-        for host in ["trading-client", "localhost", "127.0.0.1"]:
+        from app.config.config import settings
+        hosts = [settings.DEFAULT_HOST, "trading-client", "localhost", "127.0.0.1"]
+        for host in hosts:
+            if not host:
+                continue
             url = f"http://{host}:8888/api/v1/prism/emit"
             try:
                 async with httpx.AsyncClient(timeout=2.0) as client:

@@ -39,7 +39,7 @@ async def test_generate_agent_quote_success():
         # Verify it attempted to emit
         mock_post.assert_called_once()
         url = mock_post.call_args[0][0]
-        assert "trading-client" in url or "localhost" in url or "127.0.0.1" in url
+        assert "trading-client" in url or "localhost" in url or "127.0.0.1" in url or "10.0.0.16" in url
         payload = mock_post.call_args[1]["json"]
         assert payload["type"] == "agent_voice"
         assert payload["agentId"] == "QUANT_AGENT_TEST"
