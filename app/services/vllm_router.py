@@ -593,3 +593,128 @@ def post_agent_inbox(agent_name: str, msg: AgentInboxMessage):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+def resolve_agent_details(agent_name: str) -> dict:
+    # Normalize name
+    name_clean = agent_name.lower().replace("-", "_")
+
+    # Map synonyms/aliases
+    aliases = {
+        "janitor": "data_janitor",
+        "janitor_agent": "data_janitor",
+        "quant_agent": "quant_research",
+        "quant": "quant_research",
+        "pre_trade_risk": "pre_trade",
+        "allocator": "portfolio_allocator",
+        "sentiment_agent": "sentiment",
+        "fundamental_agent": "fundamental",
+        "macro_risk_agent": "macro_risk",
+    }
+
+    mapped_name = aliases.get(name_clean, name_clean)
+
+    # Try importing prompts dynamically to avoid circular dependencies
+    system_prompt = None
+    if mapped_name == "planner":
+        try:
+            from app.agents.planner_agent import PLANNER_SYSTEM_PROMPT
+            system_prompt = PLANNER_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "verifier":
+        try:
+            from app.agents.verifier_agent import VERIFIER_SYSTEM_PROMPT
+            system_prompt = VERIFIER_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "pre_trade":
+        try:
+            from app.agents.pre_trade_agent import PRE_TRADE_SYSTEM_PROMPT
+            system_prompt = PRE_TRADE_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "retriever":
+        try:
+            from app.agents.retriever_agent import RETRIEVER_SYSTEM_PROMPT
+            system_prompt = RETRIEVER_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "quant_research":
+        try:
+            from app.agents.quant_research_agent import QUANT_RESEARCH_SYSTEM_PROMPT
+            system_prompt = QUANT_RESEARCH_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "technical_analyst":
+        try:
+            from app.agents.technical_analyst_agent import TECHNICAL_ANALYST_SYSTEM_PROMPT
+            system_prompt = TECHNICAL_ANALYST_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "meta_audit":
+        try:
+            from app.agents.meta_audit_agent import META_AUDIT_SYSTEM_PROMPT
+            system_prompt = META_AUDIT_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "post_mortem":
+        try:
+            from app.agents.post_mortem_auditor_agent import POST_MORTEM_SYSTEM_PROMPT
+            system_prompt = POST_MORTEM_SYSTEM_PROMPT
+        except Exception:
+            pass
+    elif mapped_name == "synthesizer":
+        try:
+            from app.agents.debate_agents.thesis_agent import SYNTHESIS_SYSTEM_PROMPT
+            system_prompt = SYNTHESIS_SYSTEM_PROMPT
+        except Exception:
+            pass
+
+    # Fallback prompts if dynamic import failed or agent is a custom debate agent
+    if not system_prompt:
+        fallbacks = {
+            "sentiment": "You are a Sentiment Agent. Analyze social media and news sentiment based on the provided facts. Help the user understand the market sentiment (bullish, bearish, or neutral) and the main sentiment drivers.",
+            "fundamental": "You are a Fundamental Value Agent. Analyze the price multiples, balance sheet strength, cash flows, and income statements based on the provided facts. Help the user assess the fundamental valuation of assets.",
+            "macro_risk": "You are a Macro Risk Agent. Analyze macroeconomic conditions, interest rates, inflation, geopolitical risks, and broader market regime trends.",
+            "bullish_debater": "You are the Bullish Debater agent. Your job is to construct the strongest possible bull case for any asset or ticker mentioned, highlighting growth catalysts, upside potential, and positive news.",
+            "bearish_debater": "You are the Bearish Debater agent. Your job is to construct the strongest possible bear case for any asset or ticker mentioned, highlighting risks, headwinds, and downside catalysts.",
+            "portfolio_allocator": "You are the Portfolio Allocator Agent. Analyze risk environment, market regime, stop-loss levels, and target position sizes to help determine portfolio allocations.",
+            "data_janitor": "You are the Data Janitor Agent. Your job is to answer questions related to database health, cleanup routines, pruning stale records, and maintaining clean tables.",
+        }
+        system_prompt = fallbacks.get(mapped_name)
+
+    if not system_prompt:
+        system_prompt = f"You are the {agent_name} agent. Assist the user with their queries based on your role."
+
+    # Get whitelisted tools
+    from app.agents.tool_whitelists import get_agent_tools
+    whitelist_map = {
+        "technical_analyst": "technical",
+        "fundamental": "fundamental",
+        "sentiment": "sentiment",
+        "macro_risk": "risk",
+    }
+    whitelist_key = whitelist_map.get(mapped_name, mapped_name)
+
+    tools = []
+    try:
+        tools = get_agent_tools(whitelist_key) or []
+    except Exception as e:
+        logger.warning(f"Failed to get tools for agent {agent_name} (key: {whitelist_key}): {e}")
+
+    return {
+        "agent_name": mapped_name,
+        "system_prompt": system_prompt,
+        "tools": tools,
+    }
+
+
+@router.get("/api/v1/agents/{agent_name}/details")
+def get_agent_details(agent_name: str):
+    try:
+        return resolve_agent_details(agent_name)
+    except Exception as e:
+        logger.exception("Error in get_agent_details")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
