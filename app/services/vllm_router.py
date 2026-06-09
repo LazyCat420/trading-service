@@ -594,6 +594,85 @@ def post_agent_inbox(agent_name: str, msg: AgentInboxMessage):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _get_agent_recent_activity_summary(agent_name: str) -> str:
+    """Query recent activity/traces from the database to present as context to the agent."""
+    from app.db.connection import get_db
+    import json
+
+    summary_lines = []
+
+    # If it's the janitor, query janitor_run_log first
+    if agent_name in ("data_janitor", "janitor", "CUSTOM_SYSTEM_JANITOR_AGENT"):
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT run_time, details FROM janitor_run_log ORDER BY run_time DESC LIMIT 3"
+                ).fetchall()
+            if rows:
+                summary_lines.append("### JANITOR CLEANUP RUN LOGS:")
+                for r in rows:
+                    run_time = r[0].strftime("%Y-%m-%d %H:%M:%S") if hasattr(r[0], "strftime") else str(r[0])
+                    details_str = r[1]
+                    try:
+                        details = json.loads(details_str) if isinstance(details_str, str) else details_str
+                        formatted_details = ", ".join(f"{k}: {v}" for k, v in details.items())
+                    except Exception:
+                        formatted_details = str(details_str)
+                    summary_lines.append(f"- Run Time: {run_time} | Stats: {formatted_details}")
+                summary_lines.append("")
+        except Exception as e:
+            logger.warning("Failed to query janitor_run_log: %s", e)
+
+    # Query agent_traces for the agent's recent step executions
+    try:
+        aliases = {
+            "janitor": "CUSTOM_SYSTEM_JANITOR_AGENT",
+            "data_janitor": "CUSTOM_SYSTEM_JANITOR_AGENT",
+            "janitor_agent": "CUSTOM_SYSTEM_JANITOR_AGENT",
+            "bullish_debater": "CUSTOM_BULLISH_DEBATER",
+            "bearish_debater": "CUSTOM_BEARISH_DEBATER",
+        }
+        db_agent_name = aliases.get(agent_name, agent_name)
+
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT created_at, run_id, tool_name, tool_args, tool_result_summary, 
+                       why_tool_was_called, stop_reason
+                FROM agent_traces
+                WHERE agent_name ILIKE %s OR agent_name ILIKE %s
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                [f"%{db_agent_name}%", f"%{agent_name}%", 5]
+            ).fetchall()
+        
+        if rows:
+            summary_lines.append(f"### RECENT {agent_name.upper()} ACTIVITY TRACES:")
+            for r in rows:
+                created_at = r[0].strftime("%Y-%m-%d %H:%M:%S") if hasattr(r[0], "strftime") else str(r[0])
+                run_id = r[1]
+                tool_name = r[2] or "no_tool"
+                tool_args = r[3] or "no_args"
+                result_summary = r[4][:200] + "..." if r[4] and len(r[4]) > 200 else (r[4] or "")
+                why_called = r[5] or "no rationale"
+                stop_reason = r[6]
+                
+                trace_desc = f"- [{created_at}] Run: {run_id} | Tool: {tool_name}({tool_args}) | Goal/Rationale: {why_called}"
+                if result_summary:
+                    trace_desc += f" | Result: {result_summary}"
+                if stop_reason and stop_reason != "success":
+                    trace_desc += f" | Stop Reason: {stop_reason}"
+                summary_lines.append(trace_desc)
+    except Exception as e:
+        logger.warning("Failed to query agent_traces: %s", e)
+
+    if not summary_lines:
+        return "\n### RECENT ACTIVITY:\nNo recent activity logged for this agent this cycle."
+
+    return "\n### RECENT ACTIVITY:\n" + "\n".join(summary_lines)
+
+
 def resolve_agent_details(agent_name: str) -> dict:
     # Normalize name
     name_clean = agent_name.lower().replace("-", "_")
@@ -685,6 +764,10 @@ def resolve_agent_details(agent_name: str) -> dict:
 
     if not system_prompt:
         system_prompt = f"You are the {agent_name} agent. Assist the user with their queries based on your role."
+
+    # Dynamic activity injection
+    activity_summary = _get_agent_recent_activity_summary(mapped_name)
+    system_prompt = f"{system_prompt}\n\n{activity_summary}"
 
     # Get whitelisted tools
     from app.agents.tool_whitelists import get_agent_tools

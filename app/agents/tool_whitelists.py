@@ -146,6 +146,8 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "list_active_schedules",
         "list_active_triggers",
         "add_agent_note",
+        "get_agent_activity_log",
+        "delete_data_item",
     ],
     # ── Quant Research Agent ──
     "quant_research": [
@@ -182,6 +184,16 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "scrape_url",
         "get_market_data",
         "get_finnhub_news",
+        "write_memory_note",
+        "read_memory_note",
+    ],
+    # ── Data Janitor Agent ──
+    "data_janitor": [
+        "search_internal_database",
+        "trigger_database_cleanup",
+        "get_latest_janitor_run_log",
+        "get_agent_activity_log",
+        "delete_data_item",
         "write_memory_note",
         "read_memory_note",
     ],

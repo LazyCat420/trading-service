@@ -3,7 +3,7 @@ Database Tools -- Exposes internal vector search capabilities to LLM agents.
 """
 
 from typing import Dict, Any
-from app.tools.registry import registry
+from app.tools.registry import registry, PermissionLevel
 from app.db.vector_store import vector_store
 
 
@@ -112,5 +112,188 @@ async def update_youtube_channel_handle(
                 "message": f"Handle '{old_handle}' not found in the database.",
             }
 
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@registry.register(
+    name="trigger_database_cleanup",
+    description="Trigger the database cleanup cycle (LLM Janitor). This archives old news/reddit data, prunes old analysis blobs, and purges expired entries.",
+    parameters={"type": "object", "properties": {}},
+    tier=1,
+    source="internal_db",
+)
+async def trigger_database_cleanup() -> dict[str, Any]:
+    """Execute the database cleanup/archive routine."""
+    try:
+        from app.agents.janitor_agent import run_janitor_cleanup
+        await run_janitor_cleanup()
+        return {"status": "success", "message": "Database cleanup completed successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@registry.register(
+    name="get_latest_janitor_run_log",
+    description="Query the latest run details/statistics of the LLM Janitor database cleanup.",
+    parameters={"type": "object", "properties": {}},
+    tier=1,
+    source="internal_db",
+)
+async def get_latest_janitor_run_log() -> dict[str, Any]:
+    """Query the janitor_run_log table for statistics from the most recent cleanup run."""
+    try:
+        from app.db.connection import get_db
+        import json
+        with get_db() as db:
+            row = db.execute(
+                "SELECT run_time, details FROM janitor_run_log ORDER BY run_time DESC LIMIT 1"
+            ).fetchone()
+        if not row:
+            return {"status": "success", "message": "No janitor run log found."}
+        
+        run_time, details_str = row[0], row[1]
+        details = json.loads(details_str) if isinstance(details_str, str) else details_str
+        return {
+            "status": "success",
+            "run_time": run_time.isoformat() if hasattr(run_time, "isoformat") else str(run_time),
+            "details": details
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@registry.register(
+    name="get_agent_activity_log",
+    description="Retrieve recent trace entries showing tool execution, goals, and results processed by agents in current or past cycles.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "target_agent": {
+                "type": "string",
+                "description": "Optional agent name to filter by. Defaults to the calling agent if not provided.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max number of trace logs to return. Default is 5.",
+            },
+        },
+    },
+    tier=1,
+    source="internal_db",
+)
+async def get_agent_activity_log(
+    target_agent: str | None = None,
+    limit: int = 5,
+    _agent_name: str = "unknown_agent",
+) -> dict[str, Any]:
+    """Retrieve the recent actions, tool executions, and goals processed by this agent or other agents."""
+    try:
+        from app.db.connection import get_db
+        agent_to_query = target_agent or _agent_name
+        aliases = {
+            "janitor": "CUSTOM_SYSTEM_JANITOR_AGENT",
+            "data_janitor": "CUSTOM_SYSTEM_JANITOR_AGENT",
+            "janitor_agent": "CUSTOM_SYSTEM_JANITOR_AGENT",
+            "bullish_debater": "CUSTOM_BULLISH_DEBATER",
+            "bearish_debater": "CUSTOM_BEARISH_DEBATER",
+        }
+        query_agent = aliases.get(agent_to_query, agent_to_query)
+
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT run_id, agent_name, tool_name, tool_args, tool_result_summary, 
+                       why_tool_was_called, stop_reason, created_at
+                FROM agent_traces
+                WHERE agent_name ILIKE %s OR agent_name ILIKE %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                [f"%{query_agent}%", f"%{agent_to_query}%", limit]
+            ).fetchall()
+
+        results = []
+        for r in rows:
+            results.append({
+                "run_id": r[0],
+                "agent_name": r[1],
+                "tool_name": r[2],
+                "tool_args": r[3],
+                "tool_result_summary": r[4][:300] + "..." if r[4] and len(r[4]) > 300 else r[4],
+                "why_tool_was_called": r[5],
+                "stop_reason": r[6],
+                "created_at": r[7].isoformat() if hasattr(r[7], "isoformat") else str(r[7]),
+            })
+
+        return {
+            "status": "success",
+            "agent_query": agent_to_query,
+            "resolved_name": query_agent,
+            "traces": results
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@registry.register(
+    name="delete_data_item",
+    description="Delete or deactivate specific data records from the database. Categories: 'note' (deactivates a user feedback note), 'constraint' (deactivates a trading constraint), 'archive' (deletes a data archive item). REQUIRES HUMAN CONFIRMATION.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": ["note", "constraint", "archive"],
+                "description": "Category of data to delete.",
+            },
+            "target_id": {
+                "type": "string",
+                "description": "The unique ID (UUID or serial ID) of the item to delete.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "The reason why this data needs to be deleted.",
+            },
+        },
+        "required": ["category", "target_id", "reason"],
+    },
+    tier=2,
+    source="internal_db",
+    permission=PermissionLevel.DESTRUCTIVE,
+)
+async def delete_data_item(
+    category: str, target_id: str, reason: str
+) -> dict[str, Any]:
+    """Delete or soft-delete specific data items from the database."""
+    try:
+        from app.db.connection import get_db
+        from app.tools.registry import PermissionLevel
+        with get_db() as db:
+            if category in ("note", "constraint"):
+                db.execute(
+                    "UPDATE user_feedback SET is_active = FALSE WHERE id = %s",
+                    [target_id]
+                )
+                affected = db._cursor.rowcount
+            elif category == "archive":
+                db.execute(
+                    "DELETE FROM data_archive WHERE id = %s",
+                    [int(target_id) if target_id.isdigit() else target_id]
+                )
+                affected = db._cursor.rowcount
+            else:
+                return {"status": "error", "message": f"Unknown category: {category}"}
+
+        if affected > 0:
+            return {
+                "status": "success",
+                "message": f"Successfully deleted {category} item {target_id} ({affected} rows affected). Reason: {reason}",
+            }
+          
+        return {
+            "status": "error",
+            "message": f"No active {category} item found with ID {target_id}.",
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
