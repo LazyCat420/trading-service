@@ -307,6 +307,8 @@ class VLLMEndpoint:
     circuit_open_until: float = field(default=0.0, repr=False)
     # Discovery failures tracking
     consecutive_discovery_failures: int = field(default=0, repr=False)
+    # Track last time models were fetched from endpoint url /v1/models
+    last_model_sync: float = field(default=0.0, repr=False)
 
     def init_concurrency(self, reserved_high: int = 1):
         """Initialize queue and semaphores. Safe to call at import time."""
@@ -1050,6 +1052,31 @@ class VLLMClient:
             # ALWAYS ensure the payload uses the endpoint's dynamically discovered model.
             # This prevents 500 errors when hardcoded models (from settings/overrides)
             # don't match the actual model loaded on the target hardware (e.g., Prism Gateway).
+            # To handle manual runtime model switches on Jetson or DGX Spark containers,
+            # dynamically query /v1/models if more than 5 seconds have elapsed since the last sync.
+            now_time = time.monotonic()
+            if now_time - ep.last_model_sync > 5.0:
+                try:
+                    r = await client.get(f"{ep.url}/v1/models", timeout=5.0)
+                    if r.status_code == 200:
+                        data = r.json()
+                        models = data.get("data", [])
+                        if models:
+                            new_model = models[0]["id"]
+                            if ep.model != new_model:
+                                logger.info(
+                                    "[VLLM] Model switch detected on %s: %s -> %s",
+                                    ep.name, ep.model, new_model
+                                )
+                                ep.model = new_model
+                                self._model_endpoint_cache[new_model] = ep.name
+                            ep.last_model_sync = now_time
+                except Exception as e:
+                    logger.warning(
+                        "[VLLM] Failed to dynamically sync model name from %s: %s",
+                        ep.name, repr(e)
+                    )
+
             if ep.model:
                 item.payload["model"] = ep.model
                 
@@ -2127,16 +2154,24 @@ class VLLMClient:
     # ── Model Discovery ────────────────────────────────────────────────
 
     async def list_models(self) -> list[str]:
-        """List models loaded across ALL endpoints."""
+        """List models loaded across ALL endpoints.
+        Also dynamically updates endpoint model caching to support runtime switches.
+        """
         client = await self._get_client()
         all_models: list[str] = []
         for ep in self._endpoints.values():
             try:
                 r = await client.get(f"{ep.url}/v1/models", timeout=10.0)
                 if r.status_code == 200:
-                    for m in r.json().get("data", []):
-                        if m["id"] not in all_models:
-                            all_models.append(m["id"])
+                    data = r.json()
+                    models = data.get("data", [])
+                    if models:
+                        ep.model = models[0]["id"]
+                        self._model_endpoint_cache[models[0]["id"]] = ep.name
+                        ep.last_model_sync = time.monotonic()
+                        for m in models:
+                            if m["id"] not in all_models:
+                                all_models.append(m["id"])
             except Exception:
                 continue
         return all_models
