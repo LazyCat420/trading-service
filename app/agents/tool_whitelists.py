@@ -146,7 +146,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "list_active_schedules",
         "list_active_triggers",
         "add_agent_note",
-        "create_or_update_schedule",
     ],
     # ── Quant Research Agent ──
     "quant_research": [

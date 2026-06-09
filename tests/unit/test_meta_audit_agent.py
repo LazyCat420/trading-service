@@ -17,7 +17,6 @@ def mock_agent_loop_meta():
             "actionable_insights": ["Focus on tech stocks"],
             "notes_written": 1,
             "amendments_proposed": 0,
-            "next_run_scheduled": True,
             "tokens_used": 150
         }
         yield mock_agent
@@ -39,7 +38,6 @@ async def test_meta_audit_agent_success(mock_agent_loop_meta):
     assert result["strategy_drift_detected"] is False
     assert len(result["actionable_insights"]) == 1
     assert result["notes_written"] == 1
-    assert result["next_run_scheduled"] is True
 
 @pytest.mark.asyncio
 async def test_meta_audit_agent_prompt_injection(mock_agent_loop_meta):
