@@ -133,4 +133,56 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
     except Exception as tb_err:
         logger.debug("[V2] TaskBoard read failed for %s: %s", ctx.ticker, tb_err)
 
+    # ── Emit Agent Voice Quotes for run agents ──
+    try:
+        from app.services.agent_voice_service import dispatch_agent_quote
+        for label, insight in ctx.agent_insights.items():
+            if not insight or str(insight).startswith("Failed") or str(insight).startswith("Error"):
+                continue
+            
+            if label == "sentiment":
+                insight_lower = str(insight).lower()
+                archetype = "BULL" if "bullish" in insight_lower else "BEAR" if "bearish" in insight_lower else "QUANT"
+                dispatch_agent_quote(
+                    agent_id="SENTIMENT_AGENT",
+                    archetype=archetype,
+                    context={
+                        "ticker": ctx.ticker,
+                        "tool": "sentiment_analysis",
+                        "action_result": archetype,
+                    }
+                )
+            elif label == "macro_risk":
+                dispatch_agent_quote(
+                    agent_id="MACRO_RISK_AGENT",
+                    archetype="RISK",
+                    context={
+                        "ticker": ctx.ticker,
+                        "tool": "macro_risk_analysis",
+                        "action_result": "anxious",
+                    }
+                )
+            elif label == "fundamentals":
+                dispatch_agent_quote(
+                    agent_id="FUNDAMENTAL_AGENT",
+                    archetype="QUANT",
+                    context={
+                        "ticker": ctx.ticker,
+                        "tool": "fundamental_analysis",
+                        "action_result": "synthesis",
+                    }
+                )
+            elif label == "deep_research":
+                dispatch_agent_quote(
+                    agent_id="DEEP_RESEARCH_AGENT",
+                    archetype="RESEARCH",
+                    context={
+                        "ticker": ctx.ticker,
+                        "tool": "deep_research",
+                        "action_result": "academic",
+                    }
+                )
+    except Exception as voice_err:
+        logger.debug("Voice event trigger failed: %s", voice_err)
+
     return ctx

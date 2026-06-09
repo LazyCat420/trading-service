@@ -160,6 +160,21 @@ async def run_thesis_step(ctx: TickerContext) -> TickerContext:
     # ── Set final decision from thesis ──
     _set_final_decision(ctx)
 
+    # ── Emit Agent Voice Quote for Thesis ──
+    try:
+        from app.services.agent_voice_service import dispatch_agent_quote
+        dispatch_agent_quote(
+            agent_id="QUANT_RESEARCH_AGENT",
+            archetype="QUANT",
+            context={
+                "ticker": ctx.ticker,
+                "tool": "thesis_generation",
+                "action_result": ctx.final_action,
+            }
+        )
+    except Exception as voice_err:
+        logger.debug("Voice event trigger failed: %s", voice_err)
+
     return ctx
 
 

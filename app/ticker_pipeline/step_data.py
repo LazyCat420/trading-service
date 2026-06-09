@@ -88,6 +88,21 @@ async def run_data_step(ctx: TickerContext) -> TickerContext:
         ms_proc = ctx.elapsed_ms(t_proc)
         ctx.add_stage("ticker_processors", ms_proc)
         logger.info("[V2] Data processors completed for %s in %dms", ctx.ticker, ms_proc)
+
+        # ── Emit Agent Voice Quote ──
+        try:
+            from app.services.agent_voice_service import dispatch_agent_quote
+            dispatch_agent_quote(
+                agent_id="DATA_JANITOR_AGENT",
+                archetype="DATA_JANITOR",
+                context={
+                    "ticker": ctx.ticker,
+                    "tool": "data_processors",
+                    "action_result": "complete",
+                }
+            )
+        except Exception as voice_err:
+            logger.debug("Voice event trigger failed: %s", voice_err)
     except Exception as e:
         logger.warning("[V2] Data processors failed for %s (non-fatal): %s", ctx.ticker, e)
 

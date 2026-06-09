@@ -121,6 +121,24 @@ async def run_debate_step(ctx: TickerContext) -> TickerContext:
                 "total_debate_tokens": ctx.debate_result.total_tokens,
                 "elapsed_ms": ms_debate,
             })
+
+            # ── Emit Agent Voice Quote for Debate ──
+            try:
+                from app.services.agent_voice_service import dispatch_agent_quote
+                winner = ctx.debate_result.winning_side.lower()  # "bull" or "bear"
+                agent_id = "BULLISH_DEBATER" if winner == "bull" else "BEARISH_DEBATER"
+                archetype = "BULL" if winner == "bull" else "BEAR"
+                dispatch_agent_quote(
+                    agent_id=agent_id,
+                    archetype=archetype,
+                    context={
+                        "ticker": ctx.ticker,
+                        "tool": "adversarial_debate",
+                        "action_result": ctx.debate_result.judge_action,
+                    }
+                )
+            except Exception as voice_err:
+                logger.debug("Voice event trigger failed: %s", voice_err)
         else:
             ctx.safe_emit(
                 "analyzing", f"v2_debate_skip_{ctx.ticker}",
