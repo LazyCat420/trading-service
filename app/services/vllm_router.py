@@ -644,7 +644,7 @@ def _get_agent_recent_activity_summary(agent_name: str) -> str:
                 ORDER BY created_at DESC
                 LIMIT 5
                 """,
-                [f"%{db_agent_name}%", f"%{agent_name}%", 5]
+                [f"%{db_agent_name}%", f"%{agent_name}%"]
             ).fetchall()
         
         if rows:

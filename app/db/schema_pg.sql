@@ -2222,3 +2222,13 @@ CREATE TABLE IF NOT EXISTS agent_tool_optimization (
     PRIMARY KEY (agent_name, tool_name)
 );
 
+-- ══════════════════════════════════════════
+-- JANITOR RUN LOGS
+-- ══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS janitor_run_log (
+    id SERIAL PRIMARY KEY,
+    run_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    details TEXT
+);
+
+
