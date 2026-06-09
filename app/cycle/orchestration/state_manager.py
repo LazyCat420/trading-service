@@ -789,14 +789,47 @@ class PipelineStateMixin:
         status: str = "ok",
         data: dict | None = None,
         elapsed_ms: int = 0,
+        data_type: str | None = None,
+        room: str | None = None,
     ):
+        data = data or {}
+        if data_type:
+            data["data_type"] = data_type
+        if room:
+            data["room"] = room
+
+        if "data_type" not in data:
+            STEP_TO_DATA_TYPE = {
+                "yfinance": "price_data",
+                "fundamental": "fundamental_data",
+                "technical": "technical_data",
+                "news": "news_data",
+                "reddit": "reddit_data",
+                "youtube": "youtube_data",
+                "sentiment": "news_data",
+                "llm": "llm_analysis",
+                "synthesis": "synthesis",
+                "debate": "debate",
+                "consensus": "consensus",
+                "trade": "trade_execution",
+                "risk": "risk_check",
+                "janitor": "cleanup",
+                "purge": "cleanup",
+            }
+            inferred = next(
+                (v for k, v in STEP_TO_DATA_TYPE.items() if k in (step or "").lower()),
+                None
+            )
+            if inferred:
+                data["data_type"] = inferred
+
         event = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "phase": phase,
             "step": step,
             "detail": detail,
             "status": status,
-            "data": data or {},
+            "data": data,
             "elapsed_ms": elapsed_ms,
         }
 
