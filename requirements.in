@@ -66,3 +66,7 @@ rouge-score>=0.1.2
 urllib3==1.26.18
 chardet==5.2.0
 
+
+# Neural TTS
+piper-tts>=1.2.0
+onnxruntime>=1.15.0

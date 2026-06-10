@@ -40,7 +40,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 # ── Copy backend source ──────────────────────────────────────
 COPY app/ ./app/
 COPY scripts/ ./scripts/
-RUN chmod +x ./scripts/download_piper_models.py && ./scripts/download_piper_models.py --output-dir /app/data/piper_models
 
 # ── Copy the cycle backend entrypoint ────────────────────────
 COPY cycle_main.py ./cycle_main.py
