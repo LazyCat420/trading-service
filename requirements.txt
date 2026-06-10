@@ -497,3 +497,6 @@ yfinance==1.2.0
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
+
+piper-tts==1.2.0
+onnxruntime==1.17.1
