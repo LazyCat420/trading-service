@@ -1050,6 +1050,20 @@ class VLLMClient:
         meta["_queue_wait_ms"] = queue_wait_ms
 
         try:
+            # Check if this is a stream ticket
+            if item.payload and item.payload.get("is_stream_ticket"):
+                logger.info("[QUEUE] Activating stream ticket for %s on %s", meta.get("agent_name"), ep.name)
+                # Signal the stream handler that it can start
+                item.future.set_result(True)
+                # Wait for the stream handler to finish
+                finished_future = item.payload["finished_future"]
+                await finished_future
+                return {
+                    "response": "Stream completed",
+                    "tokens_used": 0,
+                    "execution_ms": int((time.monotonic() - start) * 1000)
+                }
+
             client = await self._get_client()
 
             # ── Model Name Sync ──
@@ -2762,6 +2776,102 @@ class VLLMClient:
             logger.info("[VLLM] Rediscovery changes: %s", " | ".join(changes))
 
     # ── Streaming ──────────────────────────────────────────────────────
+
+    async def stream_prism_agent(
+        self,
+        payload: dict,
+        priority: Priority = Priority.HIGH,
+        agent_name: str = "OMNI",
+    ):
+        """Queue a Prism agentic stream request using the VllmClient PriorityQueue."""
+        if not self._roles_discovered:
+            await self.discover_roles()
+        else:
+            await self._sync_all_endpoints_models()
+
+        self._ensure_dispatcher()
+
+        model_override = payload.get("model")
+        
+        # Pick the best endpoint
+        try:
+            target_ep = self._pick_best_endpoint(requested_model=model_override, agent_name=agent_name)
+            effective_model = target_ep.model or model_override or self.model
+        except Exception as e:
+            logger.error("[STREAM] Failed to resolve endpoint for Prism agent: %s", e)
+            yield f"data: {{\"type\": \"error\", \"message\": \"LLM error: {str(e)[:200]}\"}}\n\n".encode('utf-8')
+            return
+
+        # Build stream tickets
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        finished_future = loop.create_future()
+
+        self._seq += 1
+        metadata = {
+            "agent_name": agent_name,
+            "ticker": payload.get("ticker", ""),
+            "priority": priority.name,
+            "_enqueue_time": time.monotonic(),
+        }
+
+        item = QueueItem(
+            priority=priority,
+            seq=self._seq,
+            future=future,
+            payload={"is_stream_ticket": True, "finished_future": finished_future},
+            metadata=metadata,
+        )
+
+        logger.info("[QUEUE] Enqueuing stream ticket for %s (priority=%s) on %s", agent_name, priority.name, target_ep.name)
+        await target_ep.queue.put(item)
+
+        # Wait for our slot
+        try:
+            await future
+        except asyncio.CancelledError:
+            if not finished_future.done():
+                finished_future.set_result(True)
+            raise
+
+        # Once activated, call the upstream Prism stream
+        logger.info("[QUEUE] Stream ticket activated on %s. Starting proxy to Prism.", target_ep.name)
+
+        try:
+            client = await self._get_client()
+            headers = {
+                "Content-Type": "application/json",
+                "x-project": payload.get("project", "trading-client"),
+                "x-username": payload.get("username", "lazy-trader"),
+            }
+            
+            # Determine provider name and override model in payload
+            provider = self.resolve_provider_for_model(effective_model)
+            payload["provider"] = _url_to_prism_provider(target_ep.url)
+            if target_ep.model:
+                payload["model"] = target_ep.model
+
+            async with client.stream(
+                "POST",
+                f"{self.prism_client.url}/agent",
+                json=payload,
+                headers=headers,
+                timeout=300.0,
+            ) as response:
+                if response.status_code != 200:
+                    err_text = await response.aread()
+                    yield f"data: {{\"type\": \"error\", \"message\": \"Prism returned {response.status_code}: {err_text.decode('utf-8', errors='ignore')}\"}}\n\n".encode('utf-8')
+                    return
+
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+        except Exception as e:
+            logger.exception("[STREAM] Error in stream proxy to Prism")
+            yield f"data: {{\"type\": \"error\", \"message\": \"Stream proxy error: {str(e)}\"}}\n\n".encode('utf-8')
+        finally:
+            # Always notify dispatcher to release the slots
+            if not finished_future.done():
+                finished_future.set_result(True)
 
     async def chat_stream(
         self,

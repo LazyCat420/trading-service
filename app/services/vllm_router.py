@@ -801,3 +801,15 @@ def get_agent_details(agent_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/v1/vllm/prism-agent")
+async def vllm_prism_agent(payload: dict = Body(...)):
+    """Route requests to Prism through the VllmClient PriorityQueue for streaming."""
+    try:
+        generator = llm.stream_prism_agent(payload)
+        return StreamingResponse(generator, media_type="text/event-stream")
+    except Exception as e:
+        logger.exception("Error in /vllm/prism-agent route")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
