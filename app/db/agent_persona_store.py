@@ -36,6 +36,13 @@ def _default_avatar_for_role(role: str) -> dict:
             "accent_color": "#38bdf8",
             "accessory": "glasses",
         },
+        "TECHNICAL": {
+            "skin_color": "#f5deb3",
+            "hair_color": "#2d3748",
+            "outfit_color": "#0891b2",
+            "accent_color": "#06b6d4",
+            "accessory": "glasses",
+        },
         "FUNDAMENTAL": {
             "skin_color": "#c68642",
             "hair_color": "#1a1a2e",

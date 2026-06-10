@@ -47,7 +47,7 @@ class AgentPersonaCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     display_name: str = Field(..., min_length=1, max_length=100)
     role: str = Field(..., min_length=1, max_length=50)
-    system_prompt: str = Field(..., min_length=10, max_length=10000)
+    system_prompt: str = Field(..., min_length=10, max_length=50000)
     voice_pitch: float = Field(1.0, ge=0.5, le=2.0)
     voice_rate: float = Field(1.0, ge=0.5, le=2.0)
     voice_accent: Optional[str] = None
@@ -64,7 +64,7 @@ class AgentPersonaUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     display_name: Optional[str] = Field(None, min_length=1, max_length=100)
     role: Optional[str] = Field(None, min_length=1, max_length=50)
-    system_prompt: Optional[str] = Field(None, min_length=10, max_length=10000)
+    system_prompt: Optional[str] = Field(None, min_length=10, max_length=50000)
     voice_pitch: Optional[float] = Field(None, ge=0.5, le=2.0)
     voice_rate: Optional[float] = Field(None, ge=0.5, le=2.0)
     voice_accent: Optional[str] = None
