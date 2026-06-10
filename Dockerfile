@@ -40,6 +40,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # ── Copy backend source ──────────────────────────────────────
 COPY app/ ./app/
 COPY scripts/ ./scripts/
+COPY tool_schemas.json ./tool_schemas.json
 
 # ── Copy the cycle backend entrypoint ────────────────────────
 COPY cycle_main.py ./cycle_main.py
