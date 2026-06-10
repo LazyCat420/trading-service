@@ -9,11 +9,54 @@ Rod's containers being up.
 import json
 import logging
 import os
-from fastapi import APIRouter
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/agent-tools", tags=["agent-studio"])
+
+security = HTTPBearer()
+
+
+def _verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials.credentials != settings.API_SERVER_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API Server Key")
+    return credentials.credentials
+
+
+class ToolUsagePayload(BaseModel):
+    tool_name: str
+    agent_name: Optional[str] = ""
+    ticker: Optional[str] = ""
+    cycle_id: Optional[str] = ""
+    success: bool = True
+    execution_ms: int = 0
+    error_message: Optional[str] = None
+    service_source: Optional[str] = "trading-service"
+
+
+@router.post("/usage")
+def report_tool_usage(
+    payload: ToolUsagePayload,
+    token: str = Depends(_verify_api_key)
+):
+    """Log a tool usage event from any service/source."""
+    from app.services.logging.tool_logging import log_tool_call
+    log_tool_call(
+        tool_name=payload.tool_name,
+        agent_name=payload.agent_name,
+        ticker=payload.ticker,
+        cycle_id=payload.cycle_id,
+        success=payload.success,
+        execution_ms=payload.execution_ms,
+        error_message=payload.error_message,
+        service_source=payload.service_source,
+    )
+    return {"status": "ok"}
 
 _SCHEMA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "tool_schemas.json"
