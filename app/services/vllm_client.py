@@ -2991,6 +2991,24 @@ class VLLMClient:
             # Route through Prism proxy for user chat
             provider = self.resolve_provider_for_model(effective_model)
             resolved_actor_label = actor_label or ("user" if agent_name == "user_chat" else None)
+
+            # ── Load agent-specific tool whitelist ──────────────────
+            # Without this, enabledTools contains ALL registry tools,
+            # causing Prism to load all 343 MCP tools (~93K tokens).
+            # The whitelist scopes it to the agent's relevant tools.
+            if tools is None:
+                from app.agents.tool_whitelists import get_agent_tools
+                tools = get_agent_tools(agent_name)
+
+            # ── Dynamic context budget gate ─────────────────────────
+            from app.services.context_gate import compute_safe_max_tokens
+            max_tokens = compute_safe_max_tokens(
+                messages, tools,
+                system_prompt_extra=system,
+                model_context=self.get_model_context_window(),
+                requested_max=max_tokens,
+            )
+
             payload, target_url, headers = self.prism_client.get_stream_payload_and_url(
                 model=effective_model,
                 messages=messages,
