@@ -49,13 +49,14 @@ def _load_tools() -> list[dict]:
     tools = []
     for schema in raw:
         tools.append({
-            "id": schema.get("name", ""),
-            "label": schema.get("name", "").replace("_", " ").title(),
+            "name": schema.get("name", ""),
             "description": schema.get("description", ""),
+            "domain": schema.get("domain", "Other"),
+            "labels": schema.get("labels", []),
             "source": schema.get("source", "unknown"),
-            "category": schema.get("category", "general"),
             "tier": schema.get("tier", 0),
             "permission": schema.get("permission", "read_only"),
+            "tags": schema.get("tags", []),
         })
 
     _tool_cache = tools
