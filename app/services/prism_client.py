@@ -292,8 +292,9 @@ class PrismClient:
         )
         prefixed_system_prompt = system_prompt + mcp_note
         payload["systemPrompt"] = prefixed_system_prompt[:15000]
-        if "conversationMeta" in payload:
-            payload["conversationMeta"]["systemPrompt"] = prefixed_system_prompt[:15000]
+        # NOTE: Do NOT re-inject into conversationMeta.systemPrompt — that
+        # was the source of the double system prompt bug. The top-level
+        # systemPrompt field is the canonical one Prism reads.
             
         prefixed_messages = []
         for msg in messages:
