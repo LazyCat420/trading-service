@@ -12,7 +12,7 @@ cognitive role: skeptical data validation during live analysis.
 import logging
 import re
 
-from app.config.personas import PERSONAS
+from app.config.personas import get_persona_prompt
 from app.services.vllm_client import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 from app.config.config_cognition import LLM_TEMPERATURES
@@ -33,7 +33,7 @@ CONCLUSION_RULES_BLOCK = """
 """
 
 DATA_INTEGRITY_SYSTEM_PROMPT = (
-    PERSONAS["DATA_JANITOR"]["prompt"] + "\n\n"
+    get_persona_prompt("DATA_JANITOR") + "\n\n"
     "You are running a PRE-ANALYSIS data integrity check. Your job is to inspect "
     "the structured facts in the evidence packet and flag any data quality issues.\n\n"
     "CHECK FOR:\n"

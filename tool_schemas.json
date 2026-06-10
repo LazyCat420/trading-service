@@ -1,0 +1,1679 @@
+[
+  {
+    "name": "get_market_data",
+    "description": "Get recent price history, fundamentals, financials, and balance sheet for a stock from multiple reliable sources.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol (e.g., AAPL)"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "data_rotator",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_finnhub_news",
+    "description": "Get the latest news articles for a stock from Finnhub.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "finnhub",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_technical_indicators",
+    "description": "Get computed technical indicators (RSI, MACD, SMA, Bollinger Bands).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "computed",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "write_memory_note",
+    "description": "Save or update a markdown note in the shared LLMWiki folder (short/long-term memory). Useful for storing structural knowledge, agent rules, and mind maps.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "The concept, ticker, or structural name of the note (e.g. 'NVDA_strategy')."
+        },
+        "content": {
+          "type": "string",
+          "description": "The markdown-formatted content of the note."
+        }
+      },
+      "required": [
+        "topic",
+        "content"
+      ]
+    },
+    "tier": 0,
+    "source": "wiki",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "memory",
+      "wiki",
+      "note",
+      "persist"
+    ],
+    "domain": "Memory & Knowledge",
+    "labels": [
+      "memory",
+      "knowledge",
+      "wiki"
+    ]
+  },
+  {
+    "name": "read_memory_note",
+    "description": "Read a specific note from the LLMWiki folder into your context.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "The topic of the note to retrieve."
+        }
+      },
+      "required": [
+        "topic"
+      ]
+    },
+    "tier": 0,
+    "source": "wiki",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Memory & Knowledge",
+    "labels": [
+      "memory",
+      "knowledge",
+      "wiki"
+    ]
+  },
+  {
+    "name": "search_wiki",
+    "description": "Search all LLMWiki notes for a specific query string, returns matching filenames and snippets.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Text to search for across the mind map."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "tier": 0,
+    "source": "wiki",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Memory & Knowledge",
+    "labels": [
+      "memory",
+      "knowledge",
+      "wiki"
+    ]
+  },
+  {
+    "name": "query_hermes",
+    "description": "Send a task or query to the local Hermes intelligence model. Subject to guardrails.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "The prompt or task for Hermes to process."
+        }
+      },
+      "required": [
+        "prompt"
+      ]
+    },
+    "tier": 1,
+    "source": "hermes",
+    "permission": "read_only",
+    "fallback_only": true,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Research & Intelligence",
+    "labels": [
+      "research",
+      "scraping",
+      "web-search"
+    ]
+  },
+  {
+    "name": "hermes_web_research",
+    "description": "Use the Hermes browser agent for deep web research on financial topics. Only invoked when structured API tools return empty results. Restricted to financial research domains only.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The financial research query for Hermes to investigate."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "Optional stock ticker for context."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "tier": 1,
+    "source": "hermes",
+    "permission": "read_only",
+    "fallback_only": true,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Research & Intelligence",
+    "labels": [
+      "research",
+      "scraping",
+      "web-search"
+    ]
+  },
+  {
+    "name": "execute_momentum_strategy",
+    "description": "Evaluates the stock using a quantitative momentum strategy. Checks RSI, MACD, and moving averages to output a momentum score and signal.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "computed",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Quant & Analytics",
+    "labels": [
+      "quant",
+      "analytics",
+      "calculations"
+    ]
+  },
+  {
+    "name": "execute_value_strategy",
+    "description": "Evaluates the stock using a quantitative value strategy. Checks P/E, PEG, P/B, and Debt/Equity to output a value score and signal.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "computed",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Quant & Analytics",
+    "labels": [
+      "quant",
+      "analytics",
+      "calculations"
+    ]
+  },
+  {
+    "name": "search_internal_database",
+    "description": "Perform semantic search across all previously scraped news, reddit, and youtube transcripts in the internal database to find specific information.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The exact topic or question to search for (e.g. 'debt restructuring details' or 'CEO resignation reasons')."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "Optional ticker to restrict the search to a specific stock. Leave empty for macro-economic queries."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "tier": 1,
+    "source": "internal_db",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Research & Intelligence",
+    "labels": [
+      "research",
+      "scraping",
+      "web-search"
+    ]
+  },
+  {
+    "name": "update_youtube_channel_handle",
+    "description": "Update the handle for a broken YouTube channel in the PostgreSQL database.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "old_handle": {
+          "type": "string",
+          "description": "The current, broken handle in the database (e.g. 'Bloomberg' or 'FundstratTomLee')."
+        },
+        "new_handle": {
+          "type": "string",
+          "description": "The new, verified working handle (e.g. 'markets' or 'Fundstrat_Direct')."
+        }
+      },
+      "required": [
+        "old_handle",
+        "new_handle"
+      ]
+    },
+    "tier": 1,
+    "source": "internal_db",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Research & Intelligence",
+    "labels": [
+      "research",
+      "scraping",
+      "web-search"
+    ]
+  },
+  {
+    "name": "youtube_test_channel",
+    "description": "Test if a YouTube channel handle is valid and has a videos tab. Returns success or the specific yt-dlp error.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "description": "The YouTube handle to test, must start with @ (e.g., '@markets')."
+        }
+      },
+      "required": [
+        "handle"
+      ]
+    },
+    "tier": 0,
+    "source": "local",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Research & Intelligence",
+    "labels": [
+      "research",
+      "scraping",
+      "web-search"
+    ]
+  },
+  {
+    "name": "audit_decision_quality",
+    "description": "Audit the decision quality for a specific trading cycle. Checks BUY/SELL/HOLD ratios, confidence distribution, and identifies issues like high HOLD ratio or uniform confidence (sign of LLM laziness).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "cycle_id": {
+          "type": "string",
+          "description": "The cycle ID to audit (e.g. 'abc123def456')."
+        }
+      },
+      "required": [
+        "cycle_id"
+      ]
+    },
+    "tier": 1,
+    "source": "internal_db",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "audit",
+      "decision",
+      "confidence",
+      "quality"
+    ],
+    "domain": "System & Autonomy",
+    "labels": [
+      "system",
+      "autonomy",
+      "audit"
+    ]
+  },
+  {
+    "name": "check_hallucination",
+    "description": "Run a hallucination check on an LLM claim by cross-referencing it against the actual data in our database. Useful during debates when one agent suspects another agent is citing fabricated numbers.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker the claim is about."
+        },
+        "claim": {
+          "type": "string",
+          "description": "The specific claim to verify (e.g. 'RSI is 28' or 'P/E ratio is 15.3')."
+        }
+      },
+      "required": [
+        "ticker",
+        "claim"
+      ]
+    },
+    "tier": 2,
+    "source": "internal_db",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "hallucination",
+      "verify",
+      "fact-check",
+      "ground-truth"
+    ],
+    "domain": "System & Autonomy",
+    "labels": [
+      "system",
+      "autonomy",
+      "audit"
+    ]
+  },
+  {
+    "name": "search_trading_skills",
+    "description": "Search and load specific trading skills or sector instructions mid-cycle. Use this to dynamically fetch expert analysis guidelines for a specific stock or sector.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker to load skills for."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 1,
+    "source": "internal_db",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "skills",
+      "instructions",
+      "sector",
+      "strategy"
+    ],
+    "domain": "Memory & Knowledge",
+    "labels": [
+      "memory",
+      "knowledge",
+      "wiki"
+    ]
+  },
+  {
+    "name": "post_finding",
+    "description": "Share a discovered fact, risk, or opportunity with other agents on the team. Other agents can see your findings and use them to strengthen or challenge arguments. Categories: 'fact' (verified data point), 'risk' (potential danger), 'opportunity' (potential upside), 'question' (open question for the team).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "description": "The finding to share (e.g. 'RSI is at 28.5 \u2014 stock is oversold')."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker this finding relates to."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "fact",
+            "risk",
+            "opportunity",
+            "question"
+          ],
+          "description": "Type of finding."
+        },
+        "confidence": {
+          "type": "integer",
+          "description": "How confident you are in this finding (0-100)."
+        }
+      },
+      "required": [
+        "content",
+        "ticker",
+        "category"
+      ]
+    },
+    "tier": 1,
+    "source": "coordination",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "coordinate",
+      "share",
+      "finding",
+      "team",
+      "debate"
+    ],
+    "domain": "Agent Coordination",
+    "labels": [
+      "coordination",
+      "teamwork",
+      "cycle-context"
+    ]
+  },
+  {
+    "name": "read_team_findings",
+    "description": "Read all findings posted by other agents on the team for a specific ticker. Use this to see what your teammates have discovered before formulating your argument. You can filter by category (fact/risk/opportunity/question).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker to read findings for."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "fact",
+            "risk",
+            "opportunity",
+            "question"
+          ],
+          "description": "Optional: filter by finding type."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "coordination",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "coordinate",
+      "read",
+      "findings",
+      "team"
+    ],
+    "domain": "Agent Coordination",
+    "labels": [
+      "coordination",
+      "teamwork",
+      "cycle-context"
+    ]
+  },
+  {
+    "name": "request_investigation",
+    "description": "Ask another agent (or any available agent) to investigate a specific question. Use this when you need a fact-check, additional data, or a different perspective. Set target_agent to '*' to let any agent pick it up, or specify an agent name.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question to investigate (e.g. 'What is NVDA\\'s current P/E ratio compared to sector average?')."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker this investigation relates to."
+        },
+        "target_agent": {
+          "type": "string",
+          "description": "Agent name to investigate, or '*' for any agent. Default '*'."
+        }
+      },
+      "required": [
+        "question",
+        "ticker"
+      ]
+    },
+    "tier": 1,
+    "source": "coordination",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "coordinate",
+      "investigate",
+      "delegate",
+      "question"
+    ],
+    "domain": "Agent Coordination",
+    "labels": [
+      "coordination",
+      "teamwork",
+      "cycle-context"
+    ]
+  },
+  {
+    "name": "check_open_investigations",
+    "description": "Check if any other agents have requested investigations that you can help with. Returns a list of open questions waiting for an answer.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker to check investigations for."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "coordination",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "coordinate",
+      "investigations",
+      "open",
+      "help"
+    ],
+    "domain": "Agent Coordination",
+    "labels": [
+      "coordination",
+      "teamwork",
+      "cycle-context"
+    ]
+  },
+  {
+    "name": "read_profile",
+    "description": "Read the agent's persistent profile, including user preferences, agent notes, and the context of the last trading cycle. Use this to remember past sessions.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "tier": 1,
+    "source": "",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Memory & Knowledge",
+    "labels": [
+      "memory",
+      "knowledge",
+      "wiki"
+    ]
+  },
+  {
+    "name": "update_preference",
+    "description": "Update a specific user preference in the persistent profile.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "tier": 1,
+    "source": "",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Memory & Knowledge",
+    "labels": [
+      "memory",
+      "knowledge",
+      "wiki"
+    ]
+  },
+  {
+    "name": "add_agent_note",
+    "description": "Add a persistent note or memory to the agent's profile. This will be remembered across sessions.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "tier": 1,
+    "source": "",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Memory & Knowledge",
+    "labels": [
+      "memory",
+      "knowledge",
+      "wiki"
+    ]
+  },
+  {
+    "name": "buy_stock",
+    "description": "Execute a buy order for a stock ticker. Requires user confirmation.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol (e.g., AAPL)."
+        },
+        "size_pct": {
+          "type": "number",
+          "description": "The percentage of available cash to use (e.g., 0.10 for 10%, 1.0 for 100%). Default is 0.10."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 1,
+    "source": "paper_trader",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "sell_stock",
+    "description": "Execute a sell order to close a position for a stock ticker. Requires user confirmation.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol to sell (e.g., AAPL)."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 1,
+    "source": "paper_trader",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "add_to_watchlist",
+    "description": "Add a stock ticker (e.g., from the Discovery list) to the user's active watchlist. Do NOT use this tool to add items TO discovery; discovery is automatic. Requires user confirmation.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol to add (e.g., AAPL)."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 1,
+    "source": "watchlist",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "remove_from_watchlist",
+    "description": "Remove a stock ticker from the user's active watchlist. Requires user confirmation.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol to remove (e.g., AAPL)."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 1,
+    "source": "watchlist",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "get_sec_filings",
+    "description": "Fetch recent SEC filings (10-K, 10-Q, 8-K) for a ticker.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "sec",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_options_flow",
+    "description": "Fetch unusual options activity and flow for a ticker.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "options",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_insider_trades",
+    "description": "Fetch recent insider trading activity for a ticker.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "insider",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_congress_trades",
+    "description": "Fetch recent congressional trading activity for a ticker.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "congress",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_earnings_data",
+    "description": "Fetch upcoming or recent earnings dates and estimates for a ticker.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "earnings",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_finviz_fundamentals",
+    "description": "Fetch fundamental data from Finviz.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "finviz",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_polygon_price_history",
+    "description": "Fetch historical OHLCV price data from Polygon.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "polygon",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Market Data",
+    "labels": [
+      "market-data",
+      "stock-analysis"
+    ]
+  },
+  {
+    "name": "get_portfolio_state",
+    "description": "Get the bot's full portfolio state including cash balance, all open positions with P&L, sector breakdown, and position count. Use this to understand portfolio health and make informed BUY/SELL decisions.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "tier": 1,
+    "source": "paper_trader",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "portfolio",
+      "positions",
+      "cash",
+      "pnl"
+    ],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "get_position_pnl",
+    "description": "Check the P&L and health of a specific held position. Returns entry price, current price, unrealized P&L, holding duration, and stop-loss proximity. Use this during debates to evaluate whether to hold or sell.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker to check."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "tier": 1,
+    "source": "paper_trader",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "position",
+      "pnl",
+      "health",
+      "stop-loss"
+    ],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "get_performance_metrics",
+    "description": "Get bot's historical trading performance metrics over the last N trades or N days. Includes win rate, average profit, average loss, and average holding duration. Useful for benchmarking and suggesting strategy improvements.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "days_back": {
+          "type": "integer",
+          "description": "Number of days back to look. Default 30."
+        }
+      },
+      "required": []
+    },
+    "tier": 1,
+    "source": "paper_trader",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "performance",
+      "metrics",
+      "win-rate",
+      "benchmark"
+    ],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "propose_constitution_amendment",
+    "description": "Propose an amendment to a Trading Constitution parameter. This triggers the Evolution Router to debate and potentially approve the change. Use this when performance data suggests a rule parameter is causing poor outcomes (e.g. max_positions is too high, holding_days is too long).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "description": "The ID of the rule to amend (e.g., 'position_limit_v1')."
+        },
+        "param_name": {
+          "type": "string",
+          "description": "The parameter to change (e.g., 'max_positions')."
+        },
+        "proposed_value": {
+          "type": "number",
+          "description": "The new numeric value proposed for the parameter."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "A strong justification based on performance metrics for why this change is needed."
+        }
+      },
+      "required": [
+        "rule_id",
+        "param_name",
+        "proposed_value",
+        "rationale"
+      ]
+    },
+    "tier": 2,
+    "source": "benchmark_agent",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "constitution",
+      "amendment",
+      "evolution",
+      "rules"
+    ],
+    "domain": "System & Autonomy",
+    "labels": [
+      "system",
+      "autonomy",
+      "audit"
+    ]
+  },
+  {
+    "name": "create_or_update_schedule",
+    "description": "Create a new automated trading cycle schedule or update an existing one. Use this after completing a trading cycle to ensure the bot runs again. Parameters: name (str), interval_hours (float, 1-168), collect (bool), analyze (bool), market_hours_only (bool). Safety: max 6 active schedules, min 1h interval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name for the schedule (e.g. 'Post-Trade Follow-Up')"
+        },
+        "interval_hours": {
+          "type": "number",
+          "description": "Hours between runs (1-168). Default: 4"
+        },
+        "cron_expression": {
+          "type": "string",
+          "description": "Cron expression (e.g. '30 9 * * 1-5'). Use INSTEAD of interval_hours for clock-based scheduling."
+        },
+        "collect": {
+          "type": "boolean",
+          "description": "Whether to collect fresh data. Default: true"
+        },
+        "analyze": {
+          "type": "boolean",
+          "description": "Whether to run analysis. Default: true"
+        },
+        "market_hours_only": {
+          "type": "boolean",
+          "description": "Only run during US market hours. Default: true"
+        },
+        "update_schedule_id": {
+          "type": "string",
+          "description": "If provided, update this existing schedule instead of creating a new one."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "tier": 2,
+    "source": "scheduler",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "schedule",
+      "autonomy",
+      "self-management"
+    ],
+    "domain": "System & Autonomy",
+    "labels": [
+      "system",
+      "autonomy",
+      "audit"
+    ]
+  },
+  {
+    "name": "list_active_schedules",
+    "description": "List all active cycle schedules. Shows schedule name, type, interval, last run time, and next run time. Use this to inspect the bot's current scheduling state before creating or modifying schedules.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    },
+    "tier": 0,
+    "source": "scheduler",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "schedule",
+      "autonomy",
+      "status"
+    ],
+    "domain": "System & Autonomy",
+    "labels": [
+      "system",
+      "autonomy",
+      "audit"
+    ]
+  },
+  {
+    "name": "set_price_trigger",
+    "description": "Set a price-based trigger for automated trade execution. Use this to protect positions with stop-losses, lock in profits, or set limit orders. Types: stop_loss (sell when price drops below), take_profit (sell when price rises above), buy_limit (buy when price drops to), sell_limit (sell when price rises to), trailing_stop (sell when price drops X% from peak). Parameters: ticker (str), trigger_type (str), trigger_price (float), action (BUY|SELL), qty_pct (float 0-1, default 1.0), trailing_pct (float, required for trailing_stop), reason (str).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "Ticker symbol (e.g., 'AAPL')"
+        },
+        "trigger_type": {
+          "type": "string",
+          "enum": [
+            "stop_loss",
+            "take_profit",
+            "buy_limit",
+            "sell_limit",
+            "trailing_stop"
+          ],
+          "description": "Type of trigger"
+        },
+        "trigger_price": {
+          "type": "number",
+          "description": "Price at which to trigger the action"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "BUY",
+            "SELL"
+          ],
+          "description": "Action to execute when triggered. Default: SELL"
+        },
+        "qty_pct": {
+          "type": "number",
+          "description": "Fraction of position (0.0-1.0). Default: 1.0 (full position)"
+        },
+        "trailing_pct": {
+          "type": "number",
+          "description": "For trailing_stop: percentage drop from peak to trigger (e.g., 0.05 for 5%)"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why this trigger is being set"
+        }
+      },
+      "required": [
+        "ticker",
+        "trigger_type",
+        "trigger_price"
+      ]
+    },
+    "tier": 2,
+    "source": "trading",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "trigger",
+      "stop_loss",
+      "take_profit",
+      "automation"
+    ],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "list_active_triggers",
+    "description": "List all active price triggers for the current bot. Shows trigger type, price, ticker, and status.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    },
+    "tier": 0,
+    "source": "trading",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "trigger",
+      "status"
+    ],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "cancel_price_trigger",
+    "description": "Cancel (deactivate) a specific price trigger by its ID.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "trigger_id": {
+          "type": "string",
+          "description": "ID of the trigger to cancel"
+        }
+      },
+      "required": [
+        "trigger_id"
+      ]
+    },
+    "tier": 2,
+    "source": "trading",
+    "permission": "write",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [
+      "trigger",
+      "cancel"
+    ],
+    "domain": "Trading & Execution",
+    "labels": [
+      "trading",
+      "execution",
+      "portfolio"
+    ]
+  },
+  {
+    "name": "calculate_position_size",
+    "description": "Calculate the number of shares to buy based on risk management rules. Uses the fixed-risk method: risk_amount = cash * risk_percent, shares = risk_amount / (entry_price - stop_loss_price).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "cash_available": {
+          "type": "number",
+          "description": "Total cash available for trading (e.g., 100000)"
+        },
+        "risk_percent": {
+          "type": "number",
+          "description": "Max percentage of cash to risk on this trade (e.g., 0.02 for 2%)"
+        },
+        "entry_price": {
+          "type": "number",
+          "description": "Planned entry price per share (e.g., 150.50)"
+        },
+        "stop_loss_price": {
+          "type": "number",
+          "description": "Planned stop-loss price per share (e.g., 142.00)"
+        }
+      },
+      "required": [
+        "cash_available",
+        "risk_percent",
+        "entry_price",
+        "stop_loss_price"
+      ]
+    },
+    "tier": 0,
+    "source": "computed",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Quant & Analytics",
+    "labels": [
+      "quant",
+      "analytics",
+      "calculations"
+    ]
+  },
+  {
+    "name": "calculate_stop_loss",
+    "description": "Calculate a stop-loss price based on ATR (Average True Range) volatility. stop_loss = entry_price - (ATR * multiplier).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "entry_price": {
+          "type": "number",
+          "description": "Planned entry price per share"
+        },
+        "atr": {
+          "type": "number",
+          "description": "Current ATR (Average True Range) value"
+        },
+        "multiplier": {
+          "type": "number",
+          "description": "ATR multiplier (default 2.0, higher = wider stop)"
+        }
+      },
+      "required": [
+        "entry_price",
+        "atr"
+      ]
+    },
+    "tier": 0,
+    "source": "computed",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Quant & Analytics",
+    "labels": [
+      "quant",
+      "analytics",
+      "calculations"
+    ]
+  },
+  {
+    "name": "calculate_risk_reward",
+    "description": "Calculate the risk-to-reward ratio for a trade setup. A ratio >= 2.0 is generally considered favorable.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "entry_price": {
+          "type": "number",
+          "description": "Planned entry price per share"
+        },
+        "target_price": {
+          "type": "number",
+          "description": "Price target for profit taking"
+        },
+        "stop_loss_price": {
+          "type": "number",
+          "description": "Stop-loss price for the trade"
+        }
+      },
+      "required": [
+        "entry_price",
+        "target_price",
+        "stop_loss_price"
+      ]
+    },
+    "tier": 0,
+    "source": "computed",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Quant & Analytics",
+    "labels": [
+      "quant",
+      "analytics",
+      "calculations"
+    ]
+  },
+  {
+    "name": "calculate_portfolio_allocation",
+    "description": "Calculate how much capital to allocate to the next trade based on portfolio diversification rules (max position size, remaining slots).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "total_portfolio_value": {
+          "type": "number",
+          "description": "Total portfolio value (cash + positions)"
+        },
+        "max_position_pct": {
+          "type": "number",
+          "description": "Max percentage per position (e.g., 0.10 for 10%)"
+        },
+        "current_positions": {
+          "type": "integer",
+          "description": "Number of positions currently held"
+        },
+        "max_positions": {
+          "type": "integer",
+          "description": "Maximum number of positions allowed (e.g., 10)"
+        }
+      },
+      "required": [
+        "total_portfolio_value"
+      ]
+    },
+    "tier": 0,
+    "source": "computed",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "Quant & Analytics",
+    "labels": [
+      "quant",
+      "analytics",
+      "calculations"
+    ]
+  },
+  {
+    "name": "get_cycle_context",
+    "description": "Expand a capsule source reference to get the full raw agent findings from a prior step. Use this when the compressed capsule summary is insufficient for your analysis. The ref_id is found in the '\u2192 Expand: ref:capsule:<id>' line of each capsule summary.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ref_id": {
+          "type": "string",
+          "description": "The reference ID to expand. Extract from the capsule's source_refs. Format: either the full 'ref:capsule:<uuid>' or just the UUID portion."
+        }
+      },
+      "required": [
+        "ref_id"
+      ]
+    },
+    "tier": 0,
+    "source": "internal",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 10000,
+    "tags": [
+      "context",
+      "capsule",
+      "expand",
+      "lazy_fetch"
+    ],
+    "domain": "Agent Coordination",
+    "labels": [
+      "coordination",
+      "teamwork",
+      "cycle-context"
+    ]
+  },
+  {
+    "name": "get_cycle_context_all",
+    "description": "Get ALL capsule summaries for the current cycle and ticker. Returns Layer 1 summaries from every agent that ran this cycle. Use this to re-ground yourself on what all agents found without needing individual ref_ids. Does NOT return full raw responses \u2014 use get_cycle_context(ref_id) for that.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "cycle_id": {
+          "type": "string",
+          "description": "The current cycle ID."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "The ticker symbol being analyzed."
+        }
+      },
+      "required": [
+        "cycle_id",
+        "ticker"
+      ]
+    },
+    "tier": 0,
+    "source": "internal",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 5000,
+    "tags": [
+      "context",
+      "capsule",
+      "cycle",
+      "summary"
+    ],
+    "domain": "Agent Coordination",
+    "labels": [
+      "coordination",
+      "teamwork",
+      "cycle-context"
+    ]
+  },
+  {
+    "name": "save_trading_chart",
+    "description": "Render and save an HTML chart and JSON overlay data from the technical analyst agent.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "The stock ticker symbol"
+        },
+        "overlays": {
+          "type": "array",
+          "description": "JSON overlays array from the agent"
+        },
+        "period": {
+          "type": "string",
+          "description": "Timeframe of historical data to fetch (e.g., '1mo', '3mo', '6mo', '1y')"
+        }
+      },
+      "required": [
+        "ticker",
+        "overlays"
+      ]
+    },
+    "tier": 1,
+    "source": "data_sink",
+    "permission": "read_only",
+    "fallback_only": false,
+    "concurrency_safe": true,
+    "max_result_chars": 50000,
+    "tags": [],
+    "domain": "General",
+    "labels": [
+      "tool"
+    ]
+  }
+]

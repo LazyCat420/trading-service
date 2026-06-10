@@ -66,3 +66,55 @@ PERSONAS = {
         )
     }
 }
+
+
+# ── Dynamic persona lookup (Agent Studio integration) ──────────────────────
+
+
+def get_persona_prompt(role: str) -> str:
+    """Get the system prompt for a role, preferring the JSON store over hardcoded.
+
+    Falls back to the hardcoded PERSONAS dict if the store is unavailable
+    or the role doesn't exist in the store.
+    """
+    try:
+        from app.db.agent_persona_store import _load_store
+        store = _load_store()
+        for persona in store.values():
+            if persona.get("role") == role and persona.get("is_active", True):
+                return persona.get("system_prompt", "")
+    except Exception:
+        pass
+
+    # Fallback to hardcoded
+    if role in PERSONAS:
+        return PERSONAS[role]["prompt"]
+    return ""
+
+
+def get_persona_config(role: str) -> dict | None:
+    """Get the full persona config for a role from the JSON store.
+
+    Returns None if the store is unavailable or the role isn't found.
+    """
+    try:
+        from app.db.agent_persona_store import _load_store
+        store = _load_store()
+        for persona in store.values():
+            if persona.get("role") == role and persona.get("is_active", True):
+                return persona
+    except Exception:
+        pass
+
+    # Fallback to hardcoded
+    if role in PERSONAS:
+        return {
+            "name": PERSONAS[role]["name"],
+            "role": role,
+            "system_prompt": PERSONAS[role]["prompt"],
+            "voice_pitch": 1.0,
+            "voice_rate": 1.0,
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+    return None

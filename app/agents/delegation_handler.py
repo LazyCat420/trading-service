@@ -14,7 +14,7 @@ import asyncio
 import logging
 import re
 
-from app.config.personas import PERSONAS
+from app.config.personas import PERSONAS, get_persona_prompt, get_persona_config
 from app.services.vllm_client import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 from app.config.config_cognition import LLM_TEMPERATURES
@@ -98,15 +98,25 @@ async def handle_delegation(
 
     # Resolve persona
     persona_key = _TARGET_TO_PERSONA.get(target_name.upper())
-    if not persona_key or persona_key not in PERSONAS:
+    if not persona_key:
         logger.warning(
             "[DELEGATION] Unknown target agent @%s — skipping", target_name,
         )
         return None
 
-    persona = PERSONAS[persona_key]
-    persona_prompt = persona["prompt"]
-    persona_human_name = persona["name"]
+    persona_config = get_persona_config(persona_key)
+    if not persona_config:
+        # Fall back to checking if the key exists in PERSONAS
+        if persona_key not in PERSONAS:
+            logger.warning(
+                "[DELEGATION] No persona config for @%s — skipping", target_name,
+            )
+            return None
+        persona_prompt = PERSONAS[persona_key]["prompt"]
+        persona_human_name = PERSONAS[persona_key]["name"]
+    else:
+        persona_prompt = persona_config.get("system_prompt", get_persona_prompt(persona_key))
+        persona_human_name = persona_config.get("name", target_name)
 
     system_prompt = (
         f"{persona_prompt}\n\n"

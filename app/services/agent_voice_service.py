@@ -2,47 +2,83 @@ import asyncio
 import logging
 import httpx
 from app.services.vllm_client import llm, Priority
+from app.config.personas import get_persona_prompt
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPTS = {
+# Voice-specific suffixes appended to the base persona prompt for quote generation.
+# These are NOT full system prompts — they extend the persona prompt from the store.
+_VOICE_SUFFIXES = {
+    "QUANT": "Provide a single dry, math-obsessed quote. You MUST mention the ticker symbol if provided. Max 8 words.",
+    "DATA_JANITOR": "Provide a single funny, cynical quote about dirty/clean data. You MUST mention the ticker symbol if provided. Max 8 words.",
+    "BULL": "Provide a single contrarian, hype-cynical quote about buying. You MUST mention the ticker symbol if provided. Max 8 words.",
+    "BEAR": "Provide a single contrarian, doom-filled quote about selling or crashes. You MUST mention the ticker symbol if provided. Max 8 words.",
+    "RISK": "Provide a single anxiety-ridden, risk-obsessed quote. You MUST mention the ticker symbol if provided. Max 8 words.",
+    "RESEARCH": "Provide a single fundamental-focused academic quote. You MUST mention the ticker symbol if provided. Max 8 words.",
+}
+
+# Map voice archetypes to persona roles
+_ARCHETYPE_TO_ROLE = {
+    "QUANT": "QUANT",
+    "DATA_JANITOR": "DATA_JANITOR",
+    "BULL": "BEHAVIORAL",
+    "BEAR": "BEHAVIORAL",
+    "RISK": "RISK",
+    "RESEARCH": "FUNDAMENTAL",
+}
+
+# Fallback hardcoded prompts (used when store is unavailable)
+_FALLBACK_PROMPTS = {
     "QUANT": (
         "You are Dr. Aris, the Quantitative Mathematician. "
         "You focus purely on price action, moving averages, relative strength (RSI), Bollinger Bands, ATR, volume patterns, and mathematical models. "
         "You are cold, math-driven, and ignore news entirely. You believe human emotion is just variance and noise. "
-        "Provide a single dry, math-obsessed quote. You MUST mention the ticker symbol if provided. Max 8 words."
     ),
     "DATA_JANITOR": (
         "You are Ray, the Data Janitor. "
         "You filter financial spam, duplicate records, and corrupted feeds. "
         "You speak in a gruff, cynical garbage-man slang. You assume data feeds are dirty or broken. "
-        "Provide a single funny, cynical quote about dirty/clean data. You MUST mention the ticker symbol if provided. Max 8 words."
     ),
     "BULL": (
         "You are Vance, the Behavioral/Sentiment Trader. "
         "You analyze retail hype, social sentiment, and news sentiment. "
         "You are a contrarian. You assume the crowd is always wrong. If retail is euphoric, you assume a rug-pull is coming. "
-        "Provide a single contrarian, hype-cynical quote about buying. You MUST mention the ticker symbol if provided. Max 8 words."
     ),
     "BEAR": (
         "You are Vance, the Behavioral/Sentiment Trader. "
         "You analyze retail hype, social sentiment, and news sentiment. "
         "You are a contrarian. You assume the crowd is always wrong. If retail is euphoric, you assume a rug-pull is coming. "
-        "Provide a single contrarian, doom-filled quote about selling or crashes. You MUST mention the ticker symbol if provided. Max 8 words."
     ),
     "RISK": (
         "You are Helen, the Risk Manager. "
         "You are paranoid and terrified of compliance audits, drawdowns, and margin calls. "
         "You focus entirely on downside protection, stop-losses, and risk-adjusted positioning. "
-        "Provide a single anxiety-ridden, risk-obsessed quote. You MUST mention the ticker symbol if provided. Max 8 words."
     ),
     "RESEARCH": (
         "You are Priya, the Fundamental Value Analyst. "
         "You read news, earnings transcripts, balance sheets, and SEC filings. "
         "You believe technical charts are just noise. True value comes from product moats, competitive advantages, and revenue/FCF growth. "
-        "Provide a single fundamental-focused academic quote. You MUST mention the ticker symbol if provided. Max 8 words."
     ),
 }
+
+
+def _build_voice_prompt(archetype: str) -> str:
+    """Build the full voice system prompt for a given archetype.
+
+    Tries the persona store first, falls back to hardcoded prompts.
+    """
+    role = _ARCHETYPE_TO_ROLE.get(archetype, archetype)
+    base_prompt = get_persona_prompt(role)
+
+    if not base_prompt:
+        base_prompt = _FALLBACK_PROMPTS.get(archetype, "")
+
+    suffix = _VOICE_SUFFIXES.get(archetype, "Provide a single short quote. Max 8 words.")
+    return base_prompt + " " + suffix
+
+
+# Backwards-compatible dict interface for any code that still reads SYSTEM_PROMPTS
+SYSTEM_PROMPTS = {key: _build_voice_prompt(key) for key in _VOICE_SUFFIXES}
 
 async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quote_override: str | None = None) -> str:
     """

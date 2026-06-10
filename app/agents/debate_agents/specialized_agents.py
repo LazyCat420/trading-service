@@ -3,7 +3,7 @@ from app.services.vllm_client import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 from app.config.config_cognition import LLM_TEMPERATURES
 from app.cognition.contracts.evidence import EvidencePacket
-from app.config.personas import PERSONAS
+from app.config.personas import get_persona_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ async def _run_specialized_agent(
 async def analyze_sentiment(
     entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = "", team_findings: str = ""
 ) -> tuple[str, int]:
-    p_prompt = PERSONAS["BEHAVIORAL"]["prompt"]
+    p_prompt = get_persona_prompt("BEHAVIORAL")
     sys = (
         f"{p_prompt}\n\n"
         "Analyze the social and news sentiment purely based on the provided facts.\n"
@@ -128,7 +128,7 @@ async def analyze_sentiment(
 async def analyze_macro_risk(
     entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = "", team_findings: str = ""
 ) -> tuple[str, int]:
-    sys = PERSONAS["RISK"]["prompt"] + CONCLUSION_RULES_BLOCK
+    sys = get_persona_prompt("RISK") + CONCLUSION_RULES_BLOCK
     return await _run_specialized_agent(
         "macro_risk_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus, team_findings
     )
@@ -137,7 +137,7 @@ async def analyze_macro_risk(
 async def analyze_fundamentals(
     entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = "", team_findings: str = ""
 ) -> tuple[str, int]:
-    sys = PERSONAS["FUNDAMENTAL"]["prompt"] + CONCLUSION_RULES_BLOCK
+    sys = get_persona_prompt("FUNDAMENTAL") + CONCLUSION_RULES_BLOCK
     return await _run_specialized_agent(
         "fundamental_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus, team_findings
     )
@@ -146,7 +146,7 @@ async def analyze_quantitative_critique(
     entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = "", team_findings: str = ""
 ) -> tuple[str, int]:
     """Dr. Aris's quantitative critique — reads Priya/Vance's findings and critiques them mathematically."""
-    p_prompt = PERSONAS["QUANT"]["prompt"]
+    p_prompt = get_persona_prompt("QUANT")
     sys = (
         f"{p_prompt}\n\n"
         "You have just read the Fundamental Analyst's (Priya) and Sentiment Trader's (Vance) findings "

@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"name": "sun",
+			"path": "../../.."
+		}
+	],
+	"settings": {
+		"git.scanRepositories": [
+			"treesearch-service",
+			"treesearch-client"
+		]
+	}
+}

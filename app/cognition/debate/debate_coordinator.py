@@ -70,12 +70,12 @@ def _cap_debate_text(text: str, max_chars: int, label: str = "debate") -> str:
     return truncated + marker
 
 
-from app.config.personas import PERSONAS as CONFIG_PERSONAS
+from app.config.personas import get_persona_prompt
 
 PERSONAS = {
-    "Fundamental": CONFIG_PERSONAS["FUNDAMENTAL"]["prompt"],
-    "Technical": CONFIG_PERSONAS["QUANT"]["prompt"] + "\nCritique any fundamental arguments mathematically using variance, volatility, and statistics.",
-    "Macro_Sentiment": CONFIG_PERSONAS["BEHAVIORAL"]["prompt"],
+    "Fundamental": get_persona_prompt("FUNDAMENTAL"),
+    "Technical": get_persona_prompt("QUANT") + "\nCritique any fundamental arguments mathematically using variance, volatility, and statistics.",
+    "Macro_Sentiment": get_persona_prompt("BEHAVIORAL"),
 }
 
 # ── Evidence Partitioning — prevent cross-persona fact anchoring ──
