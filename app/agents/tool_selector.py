@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 TOOL_SELECTOR_SYSTEM = (
     "You are an expert Tool Routing Agent for a financial trading system. "
     "Given a task and a list of available tools, select the tools needed to "
-    "complete the task. Choose only what is necessary (maximum 5 tools). "
+    "complete the task. Select all tools needed to complete the task thoroughly and do not under-select. "
     "Output ONLY a JSON object with no explanation. Format:\n"
     '{"selected_tools": ["tool_a", "tool_b"]}'
 )
@@ -131,7 +131,7 @@ async def select_tools_for_task(
             ticker=ticker,
             cycle_id=cycle_id,
             priority=priority,
-            max_tokens=512,  # Was 256 — caused truncation fallback to full pool
+            max_tokens=2048,
         )
 
         raw_text = result.get("text", "").strip()

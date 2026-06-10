@@ -110,7 +110,6 @@ def _normalize_prism_tool_calls(prism_tool_calls: list) -> list:
     return normalized
 
 
-
 def _parse_parameter_size(model_id: str) -> float | None:
     """Parse parameter size from model ID (e.g. Qwen3.6-35B -> 35.0, Qwen3.5-122B -> 122.0)"""
     if not model_id:
@@ -1508,6 +1507,7 @@ class VLLMClient:
         raw_text = data["choices"][0]["message"].get("content") or ""
         content, think_content = strip_think_tags(raw_text, return_think_content=True)
         meta["_think_content"] = think_content
+        
         total_tokens = usage.get("total_tokens", 0)
 
         # Store usage in metadata for tracker
@@ -1775,7 +1775,7 @@ class VLLMClient:
         system: str,
         user: str,
         temperature: float = 0.3,
-        max_tokens: int = 1024,
+        max_tokens: int = 128000,
         enable_thinking: bool = False,
         priority: Priority = Priority.NORMAL,
         # Monitoring metadata — passed by callers
@@ -1862,6 +1862,7 @@ class VLLMClient:
         payload: dict[str, Any] = {
             "model": effective_model,
             "messages": messages,
+            "max_tokens": max_tokens,
             "temperature": temperature,
         }
         if tools:
@@ -1962,7 +1963,7 @@ class VLLMClient:
         messages: list[dict],
         tools: list[dict] | None = None,
         temperature: float = 0.3,
-        max_tokens: int = 1024,
+        max_tokens: int = 128000,
         enable_thinking: bool = False,
         priority: Priority = Priority.NORMAL,
         # Monitoring metadata — passed by callers
@@ -2020,6 +2021,7 @@ class VLLMClient:
         payload: dict[str, Any] = {
             "model": effective_model,
             "messages": sanitized_messages,
+            "max_tokens": max_tokens,
             "temperature": temperature,
         }
         if tools:

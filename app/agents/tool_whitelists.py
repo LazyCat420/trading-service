@@ -241,15 +241,7 @@ Risk/validation agents get 5 turns (need to call calculators AFTER getting data)
 Audit agents get 10 turns (need to review multiple performance dimensions).
 """
 
-AGENT_BUDGET_OVERRIDES: dict[str, int] = {
-    "risk": 5,
-    "verifier": 5,
-    "retriever": 8,
-    "pre_trade": 12,
-    "meta_audit": 10,
-    "portfolio_allocator": 10,
-    "post_mortem": 10,
-}
+AGENT_BUDGET_OVERRIDES: dict[str, int] = {}
 
 
 def get_agent_budget_turns(agent_name: str, enable_tools: bool) -> int:
@@ -262,6 +254,4 @@ def get_agent_budget_turns(agent_name: str, enable_tools: bool) -> int:
     Returns:
         Number of max turns for the agent's budget.
     """
-    if not enable_tools:
-        return 2  # Non-tool agents only need 1 turn for answer + 1 for potential REPAIR
-    return AGENT_BUDGET_OVERRIDES.get(agent_name, 3)
+    return 9999

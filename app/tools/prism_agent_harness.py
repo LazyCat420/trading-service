@@ -285,44 +285,7 @@ async def run_prism_agent(
     # Build the tools list — apply Brain-Action tool selection to reduce context
     active_tools = tools_override if tools_override is not None else registry.schemas
 
-    # Phase 0: Tool Selection — reduce the tool pool before sending to Prism
-    # Prism embeds tool schemas as text in the system prompt, so every tool
-    # we DON'T send saves ~200-500 tokens of context window space.
-    if len(active_tools) > 5:
-        try:
-            from app.telemetry import send_system_log
-            send_system_log("AGENT", f"[{agent_name}] Selecting optimal tools for task")
-            from app.agents.tool_selector import select_tools_for_task
-            task_desc = f"{system_prompt[:500]}\n\nTask: {user_prompt[:1500]}"
-            active_tools = await select_tools_for_task(
-                task_description=task_desc,
-                available_tool_schemas=active_tools,
-                agent_name=f"{agent_name}_selector",
-                ticker=ticker,
-                cycle_id=cycle_id,
-                priority=priority,
-                max_tools=5,
-            )
-            logger.info(
-                "[PrismHarness] Tool selection: %d tools selected for %s → %s",
-                len(active_tools),
-                agent_name,
-                [t["function"]["name"] for t in active_tools],
-            )
-        except Exception as sel_err:
-            logger.warning(
-                "[PrismHarness] Tool selection failed for %s, using full pool: %s",
-                agent_name, sel_err,
-            )
 
-    # Phase 0.5: Tool Optimization (Highlight & Pruning)
-    try:
-        from app.telemetry import send_system_log
-        send_system_log("AGENT", f"[{agent_name}] Pruning tool context window")
-        from app.services.tool_optimizer import optimize_agent_tools
-        active_tools, system_prompt = await optimize_agent_tools(agent_name, active_tools, system_prompt)
-    except Exception as opt_err:
-        logger.warning("[PrismHarness] Tool optimization failed for %s: %s", agent_name, opt_err)
 
     # Extract tool names from active_tools
     tool_names = []

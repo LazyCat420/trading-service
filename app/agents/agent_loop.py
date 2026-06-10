@@ -189,47 +189,7 @@ async def run_agent_loop(
 
     active_tools = tools_override if tools_override is not None else registry.schemas
 
-    # Brain-Action Split: select only needed tools when pool is large.
-    # SKIP when tools_override was explicitly provided — the caller (e.g.
-    # run_split_agent_loop) already performed selection.  Re-selecting
-    # wastes an LLM call and can over-prune the already-filtered set.
-    if tools_override is None and active_tools and len(active_tools) > 5:
-        try:
-            from app.agents.tool_selector import select_tools_for_task
-            task_desc = f"{system_prompt[:500]}\n\nTask: {user_prompt[:1500]}"
-            active_tools = await select_tools_for_task(
-                task_description=task_desc,
-                available_tool_schemas=active_tools,
-                agent_name=f"{agent_name}_selector",
-                ticker=ticker,
-                cycle_id=cycle_id,
-                priority=priority,
-                max_tools=5,
-            )
-            logger.info(
-                "[AgentLoop] Tool selection: %d tools selected for %s → %s",
-                len(active_tools),
-                agent_name,
-                [t["function"]["name"] for t in active_tools],
-            )
-        except Exception as sel_err:
-            logger.warning(
-                "[AgentLoop] Tool selection failed for %s, using full pool: %s",
-                agent_name, sel_err,
-            )
 
-    # Phase 0.5: Tool Optimization (Highlight & Pruning)
-    try:
-        from app.services.tool_optimizer import optimize_agent_tools
-        if messages and messages[0].get("role") == "system":
-            opt_tools, opt_prompt = await optimize_agent_tools(agent_name, active_tools, messages[0]["content"])
-            active_tools = opt_tools
-            messages[0]["content"] = opt_prompt
-        else:
-            opt_tools, _ = await optimize_agent_tools(agent_name, active_tools, "")
-            active_tools = opt_tools
-    except Exception as opt_err:
-        logger.warning("[AgentLoop] Tool optimization failed for %s: %s", agent_name, opt_err)
 
     final_content = ""
     hit_limit_with_pending_tools = False
@@ -296,7 +256,7 @@ async def run_agent_loop(
                 cycle_id=cycle_id,
                 bot_id=bot_id,
                 priority=priority,
-                max_tokens=2048,
+                max_tokens=128000,
                 model_override=model_override,
             )
         except Exception as e:
@@ -462,15 +422,15 @@ async def run_agent_loop(
                         registry.execute_tool_call(
                             tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id
                         ),
-                        timeout=45.0
+                        timeout=120.0
                     )
                 except asyncio.TimeoutError:
-                    logger.error(f"[AgentLoop] Tool execution timed out after 45s for {tool_name}")
+                    logger.error(f"[AgentLoop] Tool execution timed out after 120s for {tool_name}")
                     tool_res = {
                         "role": "tool",
                         "name": tool_name,
                         "tool_call_id": tc.get("id", "") or "unknown_id",
-                        "content": json.dumps({"error": f"Tool '{tool_name}' timed out after 45 seconds."})
+                        "content": json.dumps({"error": f"Tool '{tool_name}' timed out after 120 seconds."})
                     }
 
             latency_ms = int((time.monotonic() - start_time) * 1000)
@@ -545,8 +505,6 @@ async def run_agent_loop(
             logger.warning(
                 f"[AgentLoop] Agent '{agent_name}' reached consecutive empty/error threshold ({scorecard.consecutive_empty}). Aborting loop to protect Jetson model server."
             )
-            stop_reason = "error_threshold"
-            break
 
         if requires_approval:
             logger.warning(
@@ -711,7 +669,7 @@ async def run_split_agent_loop(
     yield_on_limit: bool = False,
     require_json_schema: bool = False,
     critique_rounds: int = 0,
-    max_selector_tools: int = 5,
+    max_selector_tools: int = 9999,
 ) -> dict[str, Any]:
     """Brain-Action Split Agent Loop.
 

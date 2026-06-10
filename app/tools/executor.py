@@ -28,7 +28,7 @@ async def run_tool_agent(
     system_prompt: str,
     user_prompt: str,
     ticker: str,
-    max_loops: int = 5,
+    max_loops: int = 9999,
     agent_name: str = "tool_analyst",
     cycle_id: str = "",
     bot_id: str = "",
@@ -88,31 +88,7 @@ async def run_tool_agent(
     # Use restricted tool set if provided, otherwise full registry
     active_tools = tools_override if tools_override is not None else registry.schemas
 
-    # Brain-Action Split: select only the needed tools when pool is large
-    if len(active_tools) > 5:
-        try:
-            from app.agents.tool_selector import select_tools_for_task
-            task_desc = f"{system_prompt[:500]}\n\nTask: {user_prompt[:1500]}"
-            active_tools = await select_tools_for_task(
-                task_description=task_desc,
-                available_tool_schemas=active_tools,
-                agent_name=f"{agent_name}_selector",
-                ticker=ticker,
-                cycle_id=cycle_id,
-                priority=priority,
-                max_tools=5,
-            )
-            logger.info(
-                "[ToolExecutor] Tool selection: %d tools selected for %s → %s",
-                len(active_tools),
-                agent_name,
-                [t["function"]["name"] for t in active_tools],
-            )
-        except Exception as sel_err:
-            logger.warning(
-                "[ToolExecutor] Tool selection failed for %s, using full pool: %s",
-                agent_name, sel_err,
-            )
+
 
     total_tokens_used = 0
     total_time_ms = 0
@@ -149,32 +125,7 @@ async def run_tool_agent(
         total_time_ms += result.get("elapsed_ms", 0)
         final_content = content
 
-        # Check for repetition loops (Hardstop after 6 identical actions)
-        turn_sig_data = {
-            "content": content,
-            "tool_calls": []
-        }
-        if tool_calls:
-            for tc in tool_calls:
-                turn_sig_data["tool_calls"].append({
-                    "name": tc.get("function", {}).get("name"),
-                    "arguments": tc.get("function", {}).get("arguments")
-                })
-        turn_sig = hashlib.sha256(json.dumps(turn_sig_data, sort_keys=True).encode("utf-8")).hexdigest()
-        
-        if last_action_signature == turn_sig:
-            repetition_count += 1
-        else:
-            last_action_signature = turn_sig
-            repetition_count = 0
-            
-        if repetition_count >= 5:  # 1 original + 5 repetitions = 6 times
-            logger.error(f"[ToolExecutor] Agent '{agent_name}' is stuck in a repetition loop. Hard-stopping.")
-            from app.telemetry import send_system_log
-            send_system_log("AGENT", f"[{agent_name}] Hard-stopped due to repeating the exact same output 6 times", level="error")
-            if tool_calls:
-                hit_limit_with_pending_tools = True
-            break
+
 
         # Append assistant message
         assistant_msg = {"role": "assistant"}

@@ -129,8 +129,8 @@ def _effective_from_raw(raw_tokens: int) -> int:
     This triggers earlier compression and head-tail truncation, which is
     strictly better than letting the model silently degrade or timeout.
     """
-    EFFECTIVE_RATIO = 0.50       # 50% of raw context
-    MAX_BUDGET_CEILING = 65536   # 64K tokens hard cap
+    EFFECTIVE_RATIO = 1.0       # Expand to 100% of raw context
+    MAX_BUDGET_CEILING = 128000   # 128K tokens ceiling
     return min(int(raw_tokens * EFFECTIVE_RATIO), MAX_BUDGET_CEILING)
 
 
@@ -196,16 +196,16 @@ def register_model_context(model_id: str, raw_context_tokens: int) -> ContextBud
 # Default budget scaled to 50% of a 32K raw model (16K effective).
 _DEFAULT_BUDGET = ContextBudget(
     model_id="default",
-    raw_context_tokens=32768,
-    effective_context_tokens=16384,
-    system_prompt_budget=1638,   # 10%
-    data_context_budget=6553,    # 40%
-    tool_result_budget=3276,     # 20%
-    rag_budget=1310,             # 8%
-    memory_budget=819,           # 5%
-    history_budget=1966,         # 12%
-    war_context_budget=491,      # 3%
-    capsule_budget=327,          # 2%
+    raw_context_tokens=128000,
+    effective_context_tokens=128000,
+    system_prompt_budget=12800,   # 10%
+    data_context_budget=51200,    # 40%
+    tool_result_budget=25600,     # 20%
+    rag_budget=10240,             # 8%
+    memory_budget=6400,           # 5%
+    history_budget=15360,         # 12%
+    war_context_budget=3840,      # 3%
+    capsule_budget=2560,          # 2%
 )
 
 
