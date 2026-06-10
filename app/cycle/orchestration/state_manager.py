@@ -70,7 +70,7 @@ class PipelineStateDB:
                             d[jcol] = []
 
                     # Stringify timestamps for API compatibility
-                    for tcol in ("started_at", "finished_at"):
+                    for tcol in ("started_at", "finished_at", "updated_at"):
                         if d.get(tcol):
                             d[tcol] = _stringify_timestamp(d[tcol])
 
@@ -149,13 +149,15 @@ class PipelineStateDB:
                         benchmark_group, execution_mode, v2_stage,
                         tickers, progress, error, phase,
                         operational_phase, step_count, total_steps,
-                        collect_flag, analyze_flag, trade_flag
+                        collect_flag, analyze_flag, trade_flag,
+                        updated_at
                     ) VALUES (
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         %s::jsonb, %s, %s, %s,
                         %s, %s, %s,
-                        %s, %s, %s
+                        %s, %s, %s,
+                        CURRENT_TIMESTAMP
                     )
                 ON CONFLICT (singleton_id) DO UPDATE SET
                     status = EXCLUDED.status,
@@ -176,7 +178,8 @@ class PipelineStateDB:
                     total_steps = EXCLUDED.total_steps,
                     collect_flag = EXCLUDED.collect_flag,
                     analyze_flag = EXCLUDED.analyze_flag,
-                    trade_flag = EXCLUDED.trade_flag
+                    trade_flag = EXCLUDED.trade_flag,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                     [
                         cls.SINGLETON_ID,

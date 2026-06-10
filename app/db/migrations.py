@@ -124,6 +124,9 @@ def run_migrations(conn):
     _safe_add_column(conn, "pipeline_state", "execution_mode", "TEXT")
     _safe_add_column(conn, "pipeline_state", "v2_stage", "INTEGER")
 
+    # ── Pipeline state staleness detection
+    _safe_add_column(conn, "pipeline_state", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+
     # ── Strategy Evaluations: persist scope cycle_id
     _safe_add_column(conn, "strategy_evaluations", "cycle_id", "TEXT")
 

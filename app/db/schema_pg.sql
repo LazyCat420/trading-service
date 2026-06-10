@@ -1540,7 +1540,8 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
     total_steps INTEGER,
     collect_flag BOOLEAN,
     analyze_flag BOOLEAN,
-    trade_flag BOOLEAN
+    trade_flag BOOLEAN,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ══════════════════════════════════════════

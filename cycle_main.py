@@ -427,6 +427,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
     from app.routers.verdict_router import router as verdict_router
     from app.routers.agent_persona_router import router as persona_router
     from app.routers.agent_tools_router import router as tools_router
+    from app.routers.node_health_router import router as node_health_router
     
     # Actually wait, app/services/vllm_router.py is the path.
     from app.services.vllm_router import router as vllm_router
@@ -435,6 +436,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
     app.include_router(verdict_router)
     app.include_router(persona_router)
     app.include_router(tools_router)
+    app.include_router(node_health_router)
 
     config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="error")
     server = uvicorn.Server(config)

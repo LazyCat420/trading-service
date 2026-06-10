@@ -94,6 +94,9 @@ class LifecycleControllerMixin:
             )
         )
 
+        # Watchdog: if status is still 'starting' after 30s, force error
+        loop.create_task(cls._starting_state_watchdog(cycle_id))
+
         return {
             "status": "starting",
             "cycle_id": cycle_id,
@@ -285,6 +288,43 @@ class LifecycleControllerMixin:
                 f"Failed to initialize cycle: {e}",
                 status="error",
             )
+
+    @classmethod
+    async def _starting_state_watchdog(cls, cycle_id: str, timeout_s: int = 30):
+        """Watchdog: if status is still 'starting' after timeout, force error.
+
+        Prevents the UI from hanging indefinitely when _background_start_cycle
+        fails silently or takes too long.
+        """
+        try:
+            await asyncio.sleep(timeout_s)
+            current_status = cls._state.get("status")
+            current_cycle = cls._state.get("cycle_id")
+            if current_status == "starting" and current_cycle == cycle_id:
+                logger.error(
+                    "[CYCLE] WATCHDOG: status still 'starting' after %ds for cycle %s. "
+                    "Forcing error state.",
+                    timeout_s,
+                    cycle_id,
+                )
+                cls._state.update(
+                    {
+                        "status": "error",
+                        "error": f"Worker did not acknowledge START_CYCLE within {timeout_s}s",
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                cls.save_state()
+                cls.emit(
+                    "error",
+                    "watchdog_timeout",
+                    f"Cycle startup timed out after {timeout_s}s",
+                    status="error",
+                )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug("[CYCLE] Watchdog error (non-fatal): %s", e)
 
     @classmethod
     async def stop_cycle(cls) -> dict:
