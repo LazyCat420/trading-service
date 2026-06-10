@@ -330,9 +330,10 @@ async def run_prism_agent(
         )
 
 
-    # Build messages
+    # Build messages — system prompt is sent separately via Prism's
+    # systemPrompt field (in get_chat_payload_and_url), so we do NOT
+    # include it in the messages array to avoid triple-injection.
     messages = [
-        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -344,11 +345,22 @@ async def run_prism_agent(
     # from defaulting to the Jetson endpoint, which causes execution failures.
     provider = llm.resolve_provider_for_model(model)
 
+    # ── Dynamic context budget gate ──────────────────────────────────
+    # Measure actual input cost (including system_prompt which will be
+    # sent via Prism's systemPrompt field) and compute safe max_tokens.
+    from app.services.context_gate import compute_safe_max_tokens
+    safe_max = compute_safe_max_tokens(
+        messages, active_tools,
+        system_prompt_extra=system_prompt,
+        model_context=llm.get_model_context_window(),
+        requested_max=max_tokens,
+    )
+
     # Build Prism payload — agentic_mode=True so Prism runs the loop
     payload, url, headers = prism.get_chat_payload_and_url(
         model=model,
         messages=messages,
-        max_tokens=max_tokens,
+        max_tokens=safe_max,
         temperature=temperature,
         system_prompt=system_prompt,
         agent_name=resolved_agent_id,
@@ -550,8 +562,38 @@ async def run_prism_agent(
                     )
                 )
             else:
-                # No tool call data available — fall back to marking all as active
-                # to prevent false pruning
+                # No tool call data available from Prism.
+                # This is a DATA LOSS scenario — the agent likely used tools but
+                # Prism didn't return toolCalls metadata. Log prominently so
+                # operators can detect and investigate.
+                logger.warning(
+                    "[PrismHarness] Prism returned NO toolCalls data for %s/%s (cycle=%s). "
+                    "Tool usage stats will be incomplete for this agent run. "
+                    "Check Prism logs for conversation %s.",
+                    agent_name, ticker, cycle_id, conversation_id,
+                )
+                # Emit telemetry event so the dashboard can surface this gap
+                try:
+                    from app.telemetry.bus import publish_event
+                    from app.telemetry.schema import TelemetryEvent
+                    from datetime import datetime, timezone
+                    publish_event(TelemetryEvent(
+                        ts=datetime.now(timezone.utc).isoformat(),
+                        cycle_id=cycle_id,
+                        ticker=ticker,
+                        kind="tool",
+                        source="prism",
+                        status="warning",
+                        step="TOOL_CALLS_MISSING",
+                        detail=f"Prism returned no toolCalls for {agent_name} — stats gap",
+                        elapsed_ms=0,
+                        data={"agent_name": agent_name, "conversation_id": conversation_id},
+                    ))
+                except Exception:
+                    pass
+
+                # Fall back to marking all offered tools as active
+                # to prevent false pruning in the optimizer
                 from app.services.tool_optimizer import mark_tools_as_used_by_prism
                 asyncio.create_task(
                     mark_tools_as_used_by_prism(
