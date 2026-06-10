@@ -31,6 +31,7 @@ class AgentPersona(BaseModel):
     system_prompt: str = Field(..., description="Full system prompt for LLM calls")
     voice_pitch: float = Field(1.0, ge=0.5, le=2.0, description="TTS voice pitch multiplier")
     voice_rate: float = Field(1.0, ge=0.5, le=2.0, description="TTS voice rate multiplier")
+    voice_accent: Optional[str] = Field(None, description="BCP-47 language tag (e.g. en-GB) for TTS voice selection")
     avatar_config: AvatarConfig = Field(default_factory=AvatarConfig, description="Visual customization")
     allowed_tools: list[str] = Field(default_factory=list, description="Tool IDs this agent can use")
     execution_order: int = Field(1, ge=1, le=10, description="Pipeline execution priority (1=first)")
@@ -49,6 +50,7 @@ class AgentPersonaCreate(BaseModel):
     system_prompt: str = Field(..., min_length=10, max_length=10000)
     voice_pitch: float = Field(1.0, ge=0.5, le=2.0)
     voice_rate: float = Field(1.0, ge=0.5, le=2.0)
+    voice_accent: Optional[str] = None
     avatar_config: Optional[AvatarConfig] = None
     allowed_tools: list[str] = Field(default_factory=list)
     execution_order: int = Field(1, ge=1, le=10)
@@ -65,6 +67,7 @@ class AgentPersonaUpdate(BaseModel):
     system_prompt: Optional[str] = Field(None, min_length=10, max_length=10000)
     voice_pitch: Optional[float] = Field(None, ge=0.5, le=2.0)
     voice_rate: Optional[float] = Field(None, ge=0.5, le=2.0)
+    voice_accent: Optional[str] = None
     avatar_config: Optional[AvatarConfig] = None
     allowed_tools: Optional[list[str]] = None
     execution_order: Optional[int] = Field(None, ge=1, le=10)
