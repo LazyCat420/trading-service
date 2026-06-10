@@ -142,6 +142,39 @@ async def analyze_fundamentals(
         "fundamental_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus, team_findings
     )
 
+async def analyze_quantitative_critique(
+    entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = "", team_findings: str = ""
+) -> tuple[str, int]:
+    """Dr. Aris's quantitative critique — reads Priya/Vance's findings and critiques them mathematically."""
+    p_prompt = PERSONAS["QUANT"]["prompt"]
+    sys = (
+        f"{p_prompt}\n\n"
+        "You have just read the Fundamental Analyst's (Priya) and Sentiment Trader's (Vance) findings "
+        "from the TaskBoard. Your job is to CRITIQUE their analysis mathematically.\n\n"
+        "SPECIFICALLY:\n"
+        "- If Priya argues the fundamentals are strong, check if the moving averages, RSI, "
+        "and volatility (ATR/Bollinger) support or contradict her thesis.\n"
+        "- If Vance argues sentiment is bullish/bearish, check if the price action and volume "
+        "patterns confirm or deny the crowd's mood.\n"
+        "- Point out any statistical anomalies: variance outside 3σ, broken support/resistance, "
+        "divergences between price and indicators.\n"
+        "- Be direct. If the math says the fundamental thesis is wrong, say so.\n\n"
+        "Example: \"Priya, your fundamental thesis is cute, but the 200-day moving average is broken "
+        "and variance is outside 3 standard deviations. It's a bad trade.\"\n\n"
+        "Output exactly this JSON:\n"
+        "{\n"
+        '  "critique_of_fundamental": "your mathematical critique of Priya\'s thesis",\n'
+        '  "critique_of_sentiment": "your mathematical critique of Vance\'s thesis",\n'
+        '  "mathematical_assessment": "1-2 sentence quantitative summary",\n'
+        '  "key_indicators": {"rsi": "value", "atr": "value", "sma_200": "value"}\n'
+        "}\n"
+        + CONCLUSION_RULES_BLOCK
+    )
+    return await _run_specialized_agent(
+        "quant_critique_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus, team_findings
+    )
+
+
 async def analyze_deep_research(
     entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = "", team_findings: str = ""
 ) -> tuple[str, int]:

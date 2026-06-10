@@ -140,7 +140,19 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
             if not insight or str(insight).startswith("Failed") or str(insight).startswith("Error"):
                 continue
             
-            if label == "sentiment":
+            if label == "data_integrity":
+                dispatch_agent_quote(
+                    agent_id="DATA_JANITOR_AGENT",
+                    archetype="DATA_JANITOR",
+                    context={
+                        "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
+                        "tool": "data_integrity_check",
+                        "action_result": "data_health",
+                        "agent_insight": insight,
+                    }
+                )
+            elif label == "sentiment":
                 insight_lower = str(insight).lower()
                 archetype = "BULL" if "bullish" in insight_lower else "BEAR" if "bearish" in insight_lower else "QUANT"
                 dispatch_agent_quote(
@@ -154,18 +166,6 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
                         "agent_insight": insight,
                     }
                 )
-            elif label == "macro_risk":
-                dispatch_agent_quote(
-                    agent_id="MACRO_RISK_AGENT",
-                    archetype="RISK",
-                    context={
-                        "ticker": ctx.ticker,
-                        "cycle_id": ctx.cycle_id,
-                        "tool": "macro_risk_analysis",
-                        "action_result": "anxious",
-                        "agent_insight": insight,
-                    }
-                )
             elif label == "fundamentals":
                 dispatch_agent_quote(
                     agent_id="FUNDAMENTAL_AGENT",
@@ -175,6 +175,30 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
                         "cycle_id": ctx.cycle_id,
                         "tool": "fundamental_analysis",
                         "action_result": "synthesis",
+                        "agent_insight": insight,
+                    }
+                )
+            elif label == "quant_critique":
+                dispatch_agent_quote(
+                    agent_id="QUANT_CRITIQUE_AGENT",
+                    archetype="QUANT",
+                    context={
+                        "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
+                        "tool": "quantitative_critique",
+                        "action_result": "critique",
+                        "agent_insight": insight,
+                    }
+                )
+            elif label == "macro_risk":
+                dispatch_agent_quote(
+                    agent_id="MACRO_RISK_AGENT",
+                    archetype="RISK",
+                    context={
+                        "ticker": ctx.ticker,
+                        "cycle_id": ctx.cycle_id,
+                        "tool": "macro_risk_analysis",
+                        "action_result": "anxious",
                         "agent_insight": insight,
                     }
                 )
@@ -194,3 +218,4 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
         logger.debug("Voice event trigger failed: %s", voice_err)
 
     return ctx
+
