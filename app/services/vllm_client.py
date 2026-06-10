@@ -2375,6 +2375,9 @@ class VLLMClient:
                     name, ep.url,
                 )
 
+        self._roles_discovered = True
+        self._ensure_dispatcher()
+
         if len(self._endpoints) > 0 and successful_endpoints == 0:
             # Check if any endpoints are loading (not truly dead)
             loading_count = sum(1 for ep in self._endpoints.values() if ep.loading)
@@ -2390,9 +2393,6 @@ class VLLMClient:
                     "All configured vLLM endpoints failed to respond or returned connection errors. "
                     "Please verify the inference servers are running."
                 )
-
-        self._roles_discovered = True
-        self._ensure_dispatcher()
 
         # ALWAYS set self.model from discovery — the ACTIVE_MODEL env var
         # is only a seed value and must NOT override what's actually loaded

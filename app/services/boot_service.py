@@ -186,6 +186,13 @@ class BootService:
         Tasks are run in sequence to avoid overwhelming external APIs
         during startup.
         """
+        # Run vLLM model discovery first so that endpoints and models are resolved
+        try:
+            from app.services.startup_tasks import startup_vllm_discovery
+            await startup_vllm_discovery()
+        except Exception as e:
+            logger.warning("[startup] vLLM model discovery failed: %s", e)
+
         try:
             await cls._startup_fred_refresh()
         except Exception as e:

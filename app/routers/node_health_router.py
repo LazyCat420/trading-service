@@ -24,13 +24,22 @@ def _verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security
 
 
 @router.get("/node-health")
-def node_health(token: str = Depends(_verify_api_key)):
+async def node_health(token: str = Depends(_verify_api_key)):
     """Return per-node LLM endpoint health, independent of cycle state."""
     try:
+        import asyncio
         from app.services.vllm_client import llm
         from app.monitoring.llm_tracker import tracker
 
         endpoints = getattr(llm, "_endpoints", {})
+
+        # Dynamically sync/probe model names from all enabled endpoints before reporting stats
+        await asyncio.gather(*[
+            llm._sync_endpoint_model(ep, force=False)
+            for ep in endpoints.values()
+            if ep is not None and getattr(ep, "enabled", False)
+        ], return_exceptions=True)
+
         tps_by_endpoint = tracker.get_recent_tps_by_endpoint(window_seconds=60)
 
         result = {}

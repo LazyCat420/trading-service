@@ -78,8 +78,8 @@ async def test_pipeline_abort_mid_analysis():
     # Also test the VLLMClient stop gate
     from app.services.vllm_client import VLLMClient
     
-    with patch("app.services.vllm_client.settings.JETSON_MAX_CONCURRENT", 10):
-        with patch("app.services.vllm_client.settings.DGX_MAX_CONCURRENT", 10):
+    with patch("app.services.vllm_client.settings.PROVIDER_VLLM_1_CONCURRENCY", 10):
+        with patch("app.services.vllm_client.settings.PROVIDER_VLLM_2_CONCURRENCY", 10):
             client = VLLMClient()
                 
             # Test that new pipeline requests are rejected after stop

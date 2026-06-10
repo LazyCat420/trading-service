@@ -8,14 +8,14 @@ def _make_client():
     with patch("app.services.vllm_client.settings") as mock_settings:
         mock_settings.PROVIDER_VLLM_1_URL = "http://10.0.0.30:8000"
         mock_settings.PROVIDER_VLLM_2_URL = "http://10.0.0.141:8000"
-        mock_settings.JETSON_MAX_CONCURRENT = 10
-        mock_settings.DGX_MAX_CONCURRENT = 10
+        mock_settings.PROVIDER_VLLM_3_URL = ""
+        mock_settings.PROVIDER_VLLM_1_CONCURRENCY = 10
+        mock_settings.PROVIDER_VLLM_2_CONCURRENCY = 10
+        mock_settings.PROVIDER_VLLM_3_CONCURRENCY = 0
         mock_settings.ACTIVE_MODEL = "qwen-3.5-7b"
         mock_settings.PRISM_AGENT_ROUTING = False
         mock_settings.BATCH_TIMEOUT = 10.0
         mock_settings.BATCH_CIRCUIT_BREAKER_THRESHOLD = 3
-        mock_settings.JETSON_BATCH_SIZE = 10
-        mock_settings.DGX_BATCH_SIZE = 10
         mock_settings.VLLM_FUTURE_TIMEOUT = 60
         client = VLLMClient()
     

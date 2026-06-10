@@ -9,14 +9,12 @@ from app.services.vllm_client import VLLMClient, Priority
 def mocked_vllm_cb(monkeypatch):
     monkeypatch.setattr("app.services.vllm_client.settings.PROVIDER_VLLM_1_URL", "http://10.0.0.30:8000")
     monkeypatch.setattr("app.services.vllm_client.settings.PROVIDER_VLLM_2_URL", "http://10.0.0.141:8000")
-    monkeypatch.setattr("app.services.vllm_client.settings.JETSON_MAX_CONCURRENT", 10)
-    monkeypatch.setattr("app.services.vllm_client.settings.DGX_MAX_CONCURRENT", 10)
+    monkeypatch.setattr("app.services.vllm_client.settings.PROVIDER_VLLM_1_CONCURRENCY", 10)
+    monkeypatch.setattr("app.services.vllm_client.settings.PROVIDER_VLLM_2_CONCURRENCY", 10)
     monkeypatch.setattr("app.services.vllm_client.settings.ACTIVE_MODEL", "test-model")
     monkeypatch.setattr("app.services.vllm_client.settings.PRISM_AGENT_ROUTING", False)
     monkeypatch.setattr("app.services.vllm_client.settings.BATCH_TIMEOUT", 5.0)
     monkeypatch.setattr("app.services.vllm_client.settings.BATCH_CIRCUIT_BREAKER_THRESHOLD", 3)
-    monkeypatch.setattr("app.services.vllm_client.settings.JETSON_BATCH_SIZE", 10)
-    monkeypatch.setattr("app.services.vllm_client.settings.DGX_BATCH_SIZE", 10)
     monkeypatch.setattr("app.services.vllm_client.settings.VLLM_FUTURE_TIMEOUT", 60.0)
     
     client = VLLMClient()
@@ -48,8 +46,16 @@ async def test_circuit_breaker_race_conditions(mocked_vllm_cb):
     from httpx import RequestError, Request
     
     # 50 simultaneous requests hitting a network error
-    async def fail_post(*args, **kwargs):
-        await asyncio.sleep(0.01)
+    async def fail_post(url, json=None, headers=None, timeout=None):
+        user_msg = json["messages"][1]["content"] if json and "messages" in json and len(json["messages"]) > 1 else ""
+        try:
+            idx = int(user_msg.split()[-1])
+        except Exception:
+            idx = 0
+        # Stagger the first 5 requests by 0.25s each so their complete failures
+        # cross the 0.2s deduplication window and trip the circuit breaker.
+        stagger = idx * 0.25 if idx < 5 else 0.0
+        await asyncio.sleep(0.01 + stagger)
         raise RequestError("Connection reset", request=Request("POST", "http://test"))
 
     mock_http.post.side_effect = fail_post
@@ -75,8 +81,9 @@ async def test_circuit_breaker_race_conditions(mocked_vllm_cb):
         results = await asyncio.gather(*tasks, return_exceptions=True)
         print(f"[DEBUG] Gathering complete. Results size: {len(results)}")
         dispatcher_task.cancel()
-        # Yield control to let the background run_and_release tasks finish processing their errors
-        await asyncio.sleep(0.2)
+        # Await all background run_and_release tasks to guarantee all failure recording has finished
+        if client._active_tasks:
+            await asyncio.gather(*client._active_tasks, return_exceptions=True)
         
         # All 50 should be RequestError (raised up from the dispatcher)
         for r in results:
