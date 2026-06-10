@@ -27,10 +27,7 @@ class AgentPersona(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique persona ID")
     name: str = Field(..., description="Internal agent name (e.g., 'Dr. Aris')")
     display_name: str = Field(..., description="Display name shown in UI")
-    role: Literal[
-        "QUANT", "FUNDAMENTAL", "BEHAVIORAL", "RISK",
-        "DATA_JANITOR", "PM",
-    ] = Field(..., description="Agent role key")
+    role: str = Field(..., max_length=50, description="Agent role key (e.g. QUANT, CUSTOM_AUDITOR)")
     system_prompt: str = Field(..., description="Full system prompt for LLM calls")
     voice_pitch: float = Field(1.0, ge=0.5, le=2.0, description="TTS voice pitch multiplier")
     voice_rate: float = Field(1.0, ge=0.5, le=2.0, description="TTS voice rate multiplier")
@@ -48,10 +45,7 @@ class AgentPersonaCreate(BaseModel):
     """Request body for creating a new persona."""
     name: str = Field(..., min_length=1, max_length=100)
     display_name: str = Field(..., min_length=1, max_length=100)
-    role: Literal[
-        "QUANT", "FUNDAMENTAL", "BEHAVIORAL", "RISK",
-        "DATA_JANITOR", "PM",
-    ]
+    role: str = Field(..., min_length=1, max_length=50)
     system_prompt: str = Field(..., min_length=10, max_length=10000)
     voice_pitch: float = Field(1.0, ge=0.5, le=2.0)
     voice_rate: float = Field(1.0, ge=0.5, le=2.0)
@@ -67,10 +61,7 @@ class AgentPersonaUpdate(BaseModel):
     """Request body for updating an existing persona (all fields optional)."""
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     display_name: Optional[str] = Field(None, min_length=1, max_length=100)
-    role: Optional[Literal[
-        "QUANT", "FUNDAMENTAL", "BEHAVIORAL", "RISK",
-        "DATA_JANITOR", "PM",
-    ]] = None
+    role: Optional[str] = Field(None, min_length=1, max_length=50)
     system_prompt: Optional[str] = Field(None, min_length=10, max_length=10000)
     voice_pitch: Optional[float] = Field(None, ge=0.5, le=2.0)
     voice_rate: Optional[float] = Field(None, ge=0.5, le=2.0)
