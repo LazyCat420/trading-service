@@ -247,6 +247,28 @@ async def run_agent_loop(
         # Compress history if it gets too large (threshold is model-aware via context_budget)
         messages = await compress_history(messages)
 
+        # ── Dynamic context budget gate ──────────────────────────────
+        # Measure actual input cost, enforce budget with graceful
+        # degradation, and compute safe max_tokens for output.
+        from app.services.context_gate import enforce_budget, ContextBudgetExceeded
+        try:
+            messages, active_tools, safe_max = await enforce_budget(
+                messages, active_tools,
+                model_context=128000,
+                agent_name=agent_name,
+            )
+        except ContextBudgetExceeded as cbe:
+            logger.error("[AgentLoop] %s", cbe)
+            final_content = json.dumps({
+                "error": "context_budget_exceeded",
+                "detail": str(cbe),
+                "action": "HOLD",
+                "confidence": 0,
+                "rationale": "Unable to process — context budget exceeded after all trimming attempts."
+            })
+            stop_reason = "context_overflow"
+            break
+
         try:
             result = await llm.chat_with_tools(
                 messages=messages,
@@ -256,7 +278,7 @@ async def run_agent_loop(
                 cycle_id=cycle_id,
                 bot_id=bot_id,
                 priority=priority,
-                max_tokens=128000,
+                max_tokens=safe_max,
                 model_override=model_override,
             )
         except Exception as e:

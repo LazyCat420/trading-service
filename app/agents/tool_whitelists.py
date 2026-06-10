@@ -197,6 +197,49 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "write_memory_note",
         "read_memory_note",
     ],
+    # ── OmniAgent / User Chat ──
+    # Curated set for interactive chat — keeps context budget lean
+    # while covering all common user needs (market data, research,
+    # portfolio, memory, database queries).
+    "user_chat": [
+        # Core market data
+        "get_market_data",
+        "get_technical_indicators",
+        "get_polygon_price_history",
+        "get_finviz_fundamentals",
+        "get_options_flow",
+        "get_finnhub_news",
+        "get_insider_trades",
+        "get_earnings_data",
+        "get_sec_filings",
+        "get_congress_trades",
+        # Research
+        "search_web",
+        "scrape_url",
+        "query_hermes",
+        "search_internal_database",
+        "search_trading_skills",
+        "youtube_transcript",
+        # Portfolio & trading
+        "get_portfolio_state",
+        "get_position_pnl",
+        "calculate_position_size",
+        "calculate_risk_reward",
+        "calculate_stop_loss",
+        "calculate_portfolio_allocation",
+        # Memory
+        "write_memory_note",
+        "read_memory_note",
+        "upsert_memory",
+        # Context & database
+        "get_cycle_context",
+        "search_database_facts",
+        "run_sql_query",
+        "check_hallucination",
+        # Performance
+        "get_performance_metrics",
+        "audit_decision_quality",
+    ],
 }
 
 

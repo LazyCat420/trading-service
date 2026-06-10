@@ -388,10 +388,18 @@ class PrismClient:
 
         username = actor_label or self.username
 
+        # Deduplicate: strip role=system messages from the messages array
+        # since the systemPrompt field already delivers it to Prism.
+        # This prevents the system prompt from being injected multiple
+        # times into the LLM context (triple-injection bug fix).
+        deduplicated_messages = [
+            m for m in messages if m.get("role") != "system"
+        ]
+
         payload: dict[str, Any] = {
             "provider": provider,
             "model": model,
-            "messages": messages,
+            "messages": deduplicated_messages,
             "maxTokens": max_tokens,
             "temperature": temperature,
             "conversationId": conversation_id,
@@ -404,7 +412,6 @@ class PrismClient:
             "systemPrompt": system_prompt[:15000],
             "conversationMeta": {
                 "title": title,
-                "systemPrompt": system_prompt[:15000],
                 "settings": {
                     "provider": provider,
                     "model": model,
@@ -478,10 +485,16 @@ class PrismClient:
 
         username = actor_label or self.username
 
+        # Deduplicate: strip role=system messages from the messages array
+        # since the systemPrompt field already delivers it to Prism.
+        deduplicated_messages = [
+            m for m in messages if m.get("role") != "system"
+        ]
+
         payload: dict[str, Any] = {
             "provider": provider,
             "model": model,
-            "messages": messages,
+            "messages": deduplicated_messages,
             "maxTokens": max_tokens,
             "temperature": temperature,
             "conversationId": conversation_id,
@@ -494,7 +507,6 @@ class PrismClient:
             "systemPrompt": system_prompt[:15000],
             "conversationMeta": {
                 "title": title,
-                "systemPrompt": system_prompt[:15000],
                 "settings": {
                     "provider": provider,
                     "model": model,

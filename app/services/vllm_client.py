@@ -441,6 +441,25 @@ class VLLMClient:
             self._global_slots_total = 24
         self._global_slots = asyncio.Semaphore(self._global_slots_total)
 
+    # ── Model Context Discovery ────────────────────────────────────────
+
+    def get_model_context_window(self) -> int:
+        """Return the discovered model context window, or 128K default.
+
+        Uses the max_model_len discovered from vLLM's /v1/models endpoint
+        during discover_roles(). Falls back to context_budget registry.
+        """
+        for ep in self._endpoints.values():
+            if ep.enabled and ep.max_model_len and ep.max_model_len > 0:
+                return ep.max_model_len
+        # Fallback to context_budget system
+        try:
+            from app.config.context_budget import get_context_budget
+            budget = get_context_budget()
+            return budget.raw_context_tokens or 128000
+        except Exception:
+            return 128000
+
     # ── Endpoint configuration ─────────────────────────────────────────
 
     def _active_endpoints(self) -> list[VLLMEndpoint]:
@@ -1789,7 +1808,7 @@ class VLLMClient:
         system: str,
         user: str,
         temperature: float = 0.3,
-        max_tokens: int = 128000,
+        max_tokens: int = 8192,
         enable_thinking: bool = False,
         priority: Priority = Priority.NORMAL,
         # Monitoring metadata — passed by callers
@@ -1872,6 +1891,14 @@ class VLLMClient:
             messages.append({"role": "user", "content": user_content})
         else:
             messages.append({"role": "user", "content": user})
+
+        # ── Dynamic context budget gate ──
+        from app.services.context_gate import compute_safe_max_tokens
+        max_tokens = compute_safe_max_tokens(
+            messages, tools,
+            model_context=self.get_model_context_window(),
+            requested_max=max_tokens,
+        )
 
         payload: dict[str, Any] = {
             "model": effective_model,
@@ -1977,7 +2004,7 @@ class VLLMClient:
         messages: list[dict],
         tools: list[dict] | None = None,
         temperature: float = 0.3,
-        max_tokens: int = 128000,
+        max_tokens: int = 8192,
         enable_thinking: bool = False,
         priority: Priority = Priority.NORMAL,
         # Monitoring metadata — passed by callers
@@ -2031,6 +2058,14 @@ class VLLMClient:
                 sanitized_messages.append(clean_msg)
             else:
                 sanitized_messages.append(msg)
+
+        # ── Dynamic context budget gate ──
+        from app.services.context_gate import compute_safe_max_tokens
+        max_tokens = compute_safe_max_tokens(
+            sanitized_messages, tools,
+            model_context=self.get_model_context_window(),
+            requested_max=max_tokens,
+        )
 
         payload: dict[str, Any] = {
             "model": effective_model,

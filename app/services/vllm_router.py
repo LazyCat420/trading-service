@@ -20,7 +20,7 @@ class ChatRequest(BaseModel):
     system: str
     user: str
     temperature: float = 0.3
-    max_tokens: int = 128000
+    max_tokens: int = 8192
     enable_thinking: bool = False
     priority: int = 1  # Priority.NORMAL
     agent_name: str = "unknown"
@@ -39,7 +39,7 @@ class ChatStreamRequest(BaseModel):
     system: str
     user: str
     temperature: float = 0.3
-    max_tokens: int = 128000
+    max_tokens: int = 8192
     enable_thinking: bool = False
     agent_name: str = "user_chat"
     ticker: str = ""
@@ -56,7 +56,7 @@ class ChatWithToolsRequest(BaseModel):
     messages: List[Dict[str, Any]]
     tools: Optional[List[Dict[str, Any]]] = None
     temperature: float = 0.3
-    max_tokens: int = 128000
+    max_tokens: int = 8192
     enable_thinking: bool = False
     priority: int = 1  # Priority.NORMAL
     agent_name: str = "unknown"
