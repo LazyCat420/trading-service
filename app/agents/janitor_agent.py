@@ -258,6 +258,56 @@ async def _write_janitor_run_log(run_details: dict):
         logger.warning("[JANITOR] Failed to write run log: %s", e)
 
 
+async def _deduplicate_data():
+    """JAN-08: Clean up duplicate data and consolidate stale data."""
+    total_dupes = 0
+    try:
+        with get_db() as db:
+            # Deduplicate news articles (same ticker and title) keeping the newest
+            res_news = db.execute(
+                """
+                DELETE FROM news_articles 
+                WHERE id IN (
+                    SELECT id 
+                    FROM (
+                        SELECT id, 
+                               ROW_NUMBER() OVER (PARTITION BY ticker, title ORDER BY published_at DESC) as rnum 
+                        FROM news_articles
+                    ) t 
+                    WHERE t.rnum > 1
+                )
+                RETURNING id
+                """
+            ).fetchall()
+            news_dupes = len(res_news)
+            total_dupes += news_dupes
+            
+            # Deduplicate reddit posts (same ticker and title) keeping the newest
+            res_reddit = db.execute(
+                """
+                DELETE FROM reddit_posts 
+                WHERE id IN (
+                    SELECT id 
+                    FROM (
+                        SELECT id, 
+                               ROW_NUMBER() OVER (PARTITION BY ticker, title ORDER BY created_utc DESC) as rnum 
+                        FROM reddit_posts
+                    ) t 
+                    WHERE t.rnum > 1
+                )
+                RETURNING id
+                """
+            ).fetchall()
+            reddit_dupes = len(res_reddit)
+            total_dupes += reddit_dupes
+
+            if total_dupes > 0:
+                logger.info("[JANITOR] Deduplicated data: %d news, %d reddit", news_dupes, reddit_dupes)
+    except Exception as e:
+        logger.warning("[JANITOR] Failed to deduplicate data: %s", e)
+    return total_dupes
+
+
 async def run_janitor_cleanup():
     """Main execution function for the Janitor."""
     logger.info("[JANITOR] Starting database cleanup cycle...")
@@ -271,12 +321,15 @@ async def run_janitor_cleanup():
         traces_deleted = await _purge_agent_traces()
         stats_deleted = await _purge_agent_loop_stats()
         approvals_deleted = await _purge_pending_approvals()
+        
+        dupes_deleted = await _deduplicate_data()
 
         run_details = {
             "archived_items": archived,
             "traces_deleted": traces_deleted,
             "stats_deleted": stats_deleted,
             "approvals_deleted": approvals_deleted,
+            "dupes_deleted": dupes_deleted,
             "status": "success"
         }
         await _write_janitor_run_log(run_details)
