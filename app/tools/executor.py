@@ -1,4 +1,6 @@
 import logging
+import json
+import hashlib
 from typing import Any
 from app.services.vllm_client import llm, Priority
 from app.tools.registry import registry
@@ -116,6 +118,10 @@ async def run_tool_agent(
     total_time_ms = 0
     final_content = ""
     hit_limit_with_pending_tools = False
+    
+    # State for repetition hardstop
+    last_action_signature = None
+    repetition_count = 0
 
     for i in range(max_loops):
         from app.telemetry import send_system_log
@@ -142,6 +148,33 @@ async def run_tool_agent(
         total_tokens_used += result.get("total_tokens", 0)
         total_time_ms += result.get("elapsed_ms", 0)
         final_content = content
+
+        # Check for repetition loops (Hardstop after 6 identical actions)
+        turn_sig_data = {
+            "content": content,
+            "tool_calls": []
+        }
+        if tool_calls:
+            for tc in tool_calls:
+                turn_sig_data["tool_calls"].append({
+                    "name": tc.get("function", {}).get("name"),
+                    "arguments": tc.get("function", {}).get("arguments")
+                })
+        turn_sig = hashlib.sha256(json.dumps(turn_sig_data, sort_keys=True).encode("utf-8")).hexdigest()
+        
+        if last_action_signature == turn_sig:
+            repetition_count += 1
+        else:
+            last_action_signature = turn_sig
+            repetition_count = 0
+            
+        if repetition_count >= 5:  # 1 original + 5 repetitions = 6 times
+            logger.error(f"[ToolExecutor] Agent '{agent_name}' is stuck in a repetition loop. Hard-stopping.")
+            from app.telemetry import send_system_log
+            send_system_log("AGENT", f"[{agent_name}] Hard-stopped due to repeating the exact same output 6 times", level="error")
+            if tool_calls:
+                hit_limit_with_pending_tools = True
+            break
 
         # Append assistant message
         assistant_msg = {"role": "assistant"}
