@@ -56,7 +56,7 @@ ENV SHARED_CODEBASE_PATH="/app"
 
 USER appusr
 
-HEALTHCHECK --interval=60s --timeout=5s --start-period=60s --retries=3 \
-  CMD python -c "print('cycle-backend alive')" || exit 1
+HEALTHCHECK --interval=60s --timeout=5s --start-period=120s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3031/api/v1/vllm/health || exit 1
 
 CMD ["./entrypoint.sh"]
