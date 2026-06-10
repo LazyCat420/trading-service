@@ -38,7 +38,7 @@ class AgentPersona(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list, description="Tool IDs this agent can use")
     execution_order: int = Field(1, ge=1, le=10, description="Pipeline execution priority (1=first)")
     is_active: bool = Field(True, description="Whether agent participates in cycles")
-    max_tokens: int = Field(2048, ge=128, le=16384, description="Max LLM response tokens")
+    max_tokens: int = Field(8192, ge=128, le=65536, description="Max LLM response tokens")
     temperature: float = Field(0.7, ge=0.0, le=2.0, description="LLM temperature")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -59,7 +59,7 @@ class AgentPersonaCreate(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     execution_order: int = Field(1, ge=1, le=10)
     is_active: bool = True
-    max_tokens: int = Field(2048, ge=128, le=16384)
+    max_tokens: int = Field(8192, ge=128, le=65536)
     temperature: float = Field(0.7, ge=0.0, le=2.0)
 
 
@@ -78,5 +78,5 @@ class AgentPersonaUpdate(BaseModel):
     allowed_tools: Optional[list[str]] = None
     execution_order: Optional[int] = Field(None, ge=1, le=10)
     is_active: Optional[bool] = None
-    max_tokens: Optional[int] = Field(None, ge=128, le=16384)
+    max_tokens: Optional[int] = Field(None, ge=128, le=65536)
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
