@@ -132,8 +132,18 @@ async def run(
     else:
         intensity = "full"
 
+    # Override intensity for small debug caps — no point running full RSS scraping
+    # when we only need a handful of tickers. This makes max_tickers=3 actually fast.
+    _small_cap_mode = max_tickers is not None and 0 < max_tickers <= 5
+    if _small_cap_mode and intensity != "micro":
+        logger.info(
+            "[PIPELINE] Overriding intensity from '%s' to 'micro' due to small cap (max_tickers=%d)",
+            intensity, max_tickers,
+        )
+        intensity = "micro"
+
     logger.info(
-        f"[PIPELINE] Global Collection intensity: {intensity} (target volume: {num_t})"
+        f"[PIPELINE] Global Collection intensity: {intensity} (target volume: {num_t}, max_tickers={max_tickers})"
     )
 
     from app.services.api_rate_limiter import rate_limiter
@@ -169,8 +179,8 @@ async def run(
                 logger.error(f"[PIPELINE]   [Janitor] Failed: {e}")
     curation_task = None
     janitor_task = None
-    if len(tickers) == 1:
-        logger.info("[PIPELINE] [DATA PHASE] Single-ticker mode detected: skipping database curation")
+    if len(tickers) == 1 or _small_cap_mode:
+        logger.info("[PIPELINE] [DATA PHASE] Small cap / single-ticker mode: skipping database curation")
     else:
         curation_task = asyncio.create_task(_run_curation_bg())
         # Simple janitor background task disabled to prevent duplicate LLM calls; smart_janitor handles filtering and extraction
@@ -466,8 +476,23 @@ async def run(
         status="running",
     )
 
-    if len(tickers) == 1:
-        logger.info("[PIPELINE] [DATA PHASE] Single-ticker mode detected: skipping background global collection and discovery (Track A)")
+    # Skip global collection + discovery when ticker count is small OR
+    # when max_tickers is a small debug cap (<=5). Running full RSS/Reddit/YouTube
+    # scraping + discovery is wasted work when you only need 3-5 tickers.
+    _skip_track_a = len(tickers) == 1 or _small_cap_mode
+    if _skip_track_a:
+        _reason = "single-ticker mode" if len(tickers) == 1 else f"small-cap debug mode (max_tickers={max_tickers})"
+        logger.info(
+            "[PIPELINE] [DATA PHASE] %s detected: skipping background global collection and discovery (Track A)",
+            _reason,
+        )
+        emit(
+            "collecting",
+            "track_a_skip",
+            f"Skipping global collection + discovery ({_reason}) — only per-ticker collection will run",
+            status="ok",
+            data={"reason": _reason, "max_tickers": max_tickers, "ticker_count": len(tickers)},
+        )
         await _track_b_perticker()
     else:
         await asyncio.gather(
