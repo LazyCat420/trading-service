@@ -178,15 +178,25 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
                 system=system_prompt,
                 user=user_prompt,
                 temperature=0.9,
-                max_tokens=20,
+                max_tokens=40,
                 priority=Priority.LOW,
                 agent_name=f"voice_{archetype.lower()}",
                 ticker=ticker
             )
             
-            # Hard strip output to 8 words max
-            words = response.strip().split()
-            quote = " ".join(words[:8])
+            response_str = response.strip()
+            # Find the last punctuation mark (. ? !) to ensure we don't end mid-sentence
+            import re
+            sentence_ends = [m.start() for m in re.finditer(r'[.!?]', response_str)]
+            if sentence_ends:
+                quote = response_str[:sentence_ends[-1] + 1]
+            else:
+                quote = response_str
+            
+            # Limit the quote to a maximum of 16 words to prevent overly long speech on the floor
+            words = quote.split()
+            if len(words) > 16:
+                quote = " ".join(words[:16]) + "..."
         except Exception as e:
             logger.warning("[AgentVoice] vLLM call failed: %s", e)
             # Use empty quote on failure (handled on frontend via fallback)
