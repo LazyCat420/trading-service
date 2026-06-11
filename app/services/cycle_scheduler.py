@@ -65,7 +65,8 @@ class SchedulerService:
                         "[SCHEDULER] Job %s next_run_at synced: %s", job_id, nrt
                     )
             else:
-                logger.warning("[SCHEDULER] Job %s has no next_run_time", job_id)
+                if scheduler.running:
+                    logger.warning("[SCHEDULER] Job %s has no next_run_time", job_id)
         except Exception as e:
             logger.warning(
                 "[SCHEDULER] Failed to sync next_run_at for %s: %s", job_id, e
