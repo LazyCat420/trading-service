@@ -276,6 +276,38 @@ def get_agent_tools(agent_name: str) -> Optional[list[dict]]:
         len(tool_names),
     )
     return schemas if schemas else None
+
+
+def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
+    """Return the whitelist tool names for an agent, merged with Prism's
+    dynamic tool discovery meta-tools.
+
+    Used when building the ``enabledTools`` list for Prism /agent payloads.
+    The meta-tools (``discover_and_enable_tools``, ``enable_tools``, etc.)
+    are Prism-local tools that allow agents to dynamically expand their
+    toolset mid-loop.
+
+    Returns:
+        A list of tool name strings. If the agent has no whitelist, returns
+        all registry tool names + meta-tools.
+    """
+    from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
+
+    if agent_name in AGENT_TOOL_WHITELISTS:
+        base_names = list(AGENT_TOOL_WHITELISTS[agent_name])
+    else:
+        # No whitelist — agent gets all registered tools
+        from app.tools.registry import registry
+        base_names = list(registry.tools.keys())
+
+    # Merge Prism dynamic discovery meta-tools (deduplicated)
+    for meta_tool in PRISM_DYNAMIC_META_TOOLS:
+        if meta_tool not in base_names:
+            base_names.append(meta_tool)
+
+    return base_names
+
+
 """
 Deterministic budget overrides per agent role.
 

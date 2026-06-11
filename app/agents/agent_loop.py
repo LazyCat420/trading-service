@@ -10,6 +10,7 @@ from typing import Any
 
 from app.services.vllm_client import llm, Priority
 from app.tools.registry import registry
+from app.config import settings
 from app.agents.agent_budget import AgentBudget
 from app.recovery.engine import RecoveryEngine
 from app.recovery.failure_types import (
@@ -173,7 +174,14 @@ async def run_agent_loop(
         dynamic_instructions += "\n\n### WORKING MEMORY RULE:\nAfter every tool call, before taking your next action, you MUST output a compressed structured memory object summarizing the evidence. Include: evidence type, freshness, confidence, contradiction flags, decision relevance, and source reference."
         
         dynamic_instructions += "\n\n### TOOL USE RULE:\nBefore calling any tool, you MUST briefly state your rationale for calling it (why you need it) and your planned next action after receiving the data."
-            
+
+        # Inject dynamic tool discovery guidance when Prism routing is active.
+        # This teaches agents they can call discover_and_enable_tools mid-loop
+        # to expand their toolset beyond the initial whitelist.
+        if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
+            from app.agents.dynamic_tool_prompt import DYNAMIC_TOOL_DISCOVERY_PROMPT
+            dynamic_instructions += DYNAMIC_TOOL_DISCOVERY_PROMPT
+
         messages = [{"role": "system", "content": enhanced_system_prompt}]
     else:
         spotlight = []  # We only have spotlight tools on the first message

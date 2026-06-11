@@ -311,6 +311,14 @@ async def run_prism_agent(
                     else:
                         tool_names.append(name)
 
+    # Add Prism-native dynamic tool discovery meta-tools.
+    # These are Prism-local tools (NOT MCP-prefixed) that allow agents
+    # to discover and enable additional tools mid-loop.
+    from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
+    for meta_tool in PRISM_DYNAMIC_META_TOOLS:
+        if meta_tool not in tool_names:
+            tool_names.append(meta_tool)
+
     # Dynamically register/update the custom agent persona in Prism
     # to preserve custom system prompts and whitelisted tools.
     resolved_agent_id = agent_name
@@ -484,6 +492,65 @@ async def run_prism_agent(
         try:
             # Extract tool call names from Prism's response
             prism_tool_calls = result_data.get("toolCalls", [])
+
+            # ── Dynamic Tool Discovery Telemetry ──
+            # Detect when agents used discover_and_enable_tools, enable_tools,
+            # or disable_tools to dynamically modify their toolset mid-loop.
+            _dynamic_meta_names = {
+                "discover_and_enable_tools", "enable_tools",
+                "disable_tools", "search_tools",
+            }
+            for tc in prism_tool_calls:
+                if isinstance(tc, dict):
+                    tc_name = tc.get("name", "")
+                    if tc_name in _dynamic_meta_names:
+                        tc_result = tc.get("result", {})
+                        enabled_list = []
+                        if isinstance(tc_result, dict):
+                            enabled_list = tc_result.get("auto_enabled", []) or tc_result.get("activated", [])
+                        logger.info(
+                            "[PrismHarness] DYNAMIC TOOL EVENT: %s called %s — enabled: %s",
+                            agent_name, tc_name, enabled_list,
+                        )
+                        try:
+                            from app.telemetry.bus import publish_event
+                            from app.telemetry.schema import TelemetryEvent
+                            from datetime import datetime, timezone
+                            publish_event(TelemetryEvent(
+                                ts=datetime.now(timezone.utc).isoformat(),
+                                cycle_id=cycle_id,
+                                ticker=ticker,
+                                kind="tool",
+                                source="prism_dynamic",
+                                status="ok",
+                                step="DYNAMIC_TOOL_ENABLED",
+                                detail=f"Agent {agent_name} dynamically {tc_name}: {enabled_list}",
+                                elapsed_ms=int(tc.get("executionMs", 0) or 0),
+                                data={
+                                    "meta_tool": tc_name,
+                                    "tools_affected": enabled_list,
+                                    "query": tc.get("args", {}).get("query") if isinstance(tc.get("args"), dict) else None,
+                                    "domain": tc.get("args", {}).get("domain") if isinstance(tc.get("args"), dict) else None,
+                                }
+                            ))
+                        except Exception as dyn_tel_e:
+                            logger.debug("[PrismHarness] Dynamic tool telemetry failed: %s", dyn_tel_e)
+
+                        # Log dynamic tool events to tool_usage_stats
+                        # with service_source = "prism_dynamic" for analytics
+                        try:
+                            from app.services.logging.tool_logging import log_tool_call
+                            log_tool_call(
+                                tool_name=tc_name,
+                                agent_name=agent_name,
+                                ticker=ticker,
+                                cycle_id=cycle_id,
+                                success=True,
+                                execution_ms=int(tc.get("executionMs", 0) or 0),
+                                service_source="prism_dynamic",
+                            )
+                        except Exception as dyn_log_e:
+                            logger.debug("[PrismHarness] Dynamic tool DB log failed: %s", dyn_log_e)
             used_tool_names = [
                 tc.get("name", "") for tc in prism_tool_calls
                 if isinstance(tc, dict) and tc.get("name")

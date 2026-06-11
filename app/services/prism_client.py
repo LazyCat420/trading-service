@@ -279,7 +279,15 @@ class PrismClient:
         for bi in built_ins:
             if bi not in enabled_tools:
                 enabled_tools.append(bi)
-                
+
+        # Add Prism-local dynamic tool discovery meta-tools.
+        # These are NOT MCP-prefixed — they run inside Prism's process and
+        # allow agents to discover and enable additional tools mid-loop.
+        from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
+        for meta_tool in PRISM_DYNAMIC_META_TOOLS:
+            if meta_tool not in enabled_tools:
+                enabled_tools.append(meta_tool)
+
         payload["enabledTools"] = [
             t for t in enabled_tools if t != "ask_user_question"
         ]
