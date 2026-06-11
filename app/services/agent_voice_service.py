@@ -23,12 +23,12 @@ async def _get_emit_client() -> httpx.AsyncClient:
 # Voice-specific suffixes appended to the base persona prompt for quote generation.
 # These are NOT full system prompts — they extend the persona prompt from the store.
 _VOICE_SUFFIXES = {
-    "QUANT": "Provide a single dry, math-obsessed quote. You MUST mention the ticker symbol if provided.",
-    "DATA_JANITOR": "Provide a single funny, cynical quote about dirty/clean data. You MUST mention the ticker symbol if provided.",
-    "BULL": "Provide a single contrarian, hype-cynical quote about buying. You MUST mention the ticker symbol if provided.",
-    "BEAR": "Provide a single contrarian, doom-filled quote about selling or crashes. You MUST mention the ticker symbol if provided.",
-    "RISK": "Provide a single anxiety-ridden, risk-obsessed quote. You MUST mention the ticker symbol if provided.",
-    "RESEARCH": "Provide a single fundamental-focused academic quote. You MUST mention the ticker symbol if provided.",
+    "QUANT": "Speak directly to your team members (Priya, Vance, Helen, Ray) about your quantitative findings. Address them to coordinate, debate, or ask questions based on the data. You MUST mention the ticker symbol if provided.",
+    "DATA_JANITOR": "Speak directly to your team members (Priya, Vance, Helen, Aris) about data integrity. Address them to warn them about data issues or confirm data cleanliness. You MUST mention the ticker symbol if provided.",
+    "BULL": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to hype up the data or debate their bearishness. You MUST mention the ticker symbol if provided.",
+    "BEAR": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to point out flaws or doom-post their bullishness. You MUST mention the ticker symbol if provided.",
+    "RISK": "Speak directly to your team members (Priya, Vance, Aris, Ray) about your risk assessment. Address them to coordinate on position sizing or issue warnings. You MUST mention the ticker symbol if provided.",
+    "RESEARCH": "Speak directly to your team members (Aris, Vance, Helen, Ray) about your fundamental analysis. Address them to coordinate on long-term value or debate the technicals. You MUST mention the ticker symbol if provided.",
 }
 
 # Map voice archetypes to persona roles
@@ -182,7 +182,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
             f"Tool/Action: {tool}\n"
             f"Result: {action_result}\n"
             f"{finding_context}\n"
-            f"Say a funny one-liner observation about this.{ticker_instr}"
+            f"Translate your actual finding into a peer-to-peer spoken message addressed directly to your team members. Coordinate with them based on your data.{ticker_instr}"
         )
         
         quote = ""
