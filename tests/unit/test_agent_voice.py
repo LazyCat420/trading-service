@@ -35,10 +35,8 @@ async def test_generate_agent_quote_success():
         assert "QUANT_AGENT_TEST" in kwargs["user"]
         assert "TSLA" in kwargs["user"]
         
-        # The sentence-end truncation finds the last '.' and then the 16-word limit applies.
-        # Mock response has a '.' at the end, so full sentence is kept, then truncated to 16 words.
-        words = quote.split()
-        assert len(words) <= 17  # 16 words + possible "..."
+        # Ensure the generated quote matches the mock response since the word limit was removed.
+        assert quote == mock_response
         
         # Verify it attempted to emit
         mock_post.assert_called_once()

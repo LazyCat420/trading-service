@@ -80,12 +80,12 @@ async def list_registered_tools():
     from app.tools.registry import registry
     tools = []
     for name, func in registry.tools.items():
-        meta = registry.tool_metadata.get(name, {})
+        meta = registry.get_tool_meta(name)
         tools.append({
             "name": name,
-            "tier": meta.get("tier", "unknown"),
-            "source": meta.get("source", "unknown"),
-            "tags": meta.get("tags", []),
+            "tier": meta.tier if meta else "unknown",
+            "source": meta.source if meta else "unknown",
+            "tags": meta.tags if meta else [],
         })
     return {"total": len(tools), "tools": tools}
 

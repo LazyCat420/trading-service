@@ -12,15 +12,15 @@ import pytest
 
 
 @pytest.mark.parametrize("agent_name, enable_tools, expected_turns", [
-    ("risk", True, 9999),
-    ("verifier", True, 9999),
-    ("retriever", True, 9999),
-    ("pre_trade", True, 9999),
-    ("meta_audit", True, 9999),
-    ("sentiment", True, 9999),
+    ("risk", True, 8),
+    ("verifier", True, 5),
+    ("retriever", True, 5),
+    ("pre_trade", True, 8),
+    ("meta_audit", True, 12),
+    ("sentiment", True, 8),
     ("unknown_agent_xyz", True, 9999),
-    ("risk", False, 9999),
-    ("meta_audit", False, 9999),
+    ("risk", False, 1),
+    ("meta_audit", False, 1),
 ])
 def test_agent_budget_turns(agent_name, enable_tools, expected_turns):
     """Verify that agent role and tool availability determine their turn budget."""
