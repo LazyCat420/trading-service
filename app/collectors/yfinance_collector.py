@@ -16,6 +16,18 @@ import yfinance as yf
 from app.db.connection import get_db
 
 
+def _is_blocked_ticker(ticker: str) -> bool:
+    """Pre-collection guard: reject tickers in the FALSE_TICKERS blocklist."""
+    try:
+        from app.processors.ticker_extractor import FALSE_TICKERS
+        if ticker.upper() in FALSE_TICKERS:
+            logger.warning("[yfinance] BLOCKED ticker '%s' — in FALSE_TICKERS", ticker)
+            return True
+    except ImportError:
+        pass
+    return False
+
+
 async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
     """Fetch OHLCV history as a DataFrame without writing to DB."""
     stock = yf.Ticker(ticker)
@@ -35,6 +47,8 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
     Fetch OHLCV history and upsert into price_history table.
     Returns number of rows inserted.
     """
+    if _is_blocked_ticker(ticker):
+        return 0
     df = await fetch_ohlcv_dataframe(ticker, period)
     if df is None:
         return 0
@@ -374,6 +388,8 @@ async def collect_balance_sheet(ticker: str) -> int:
 
 async def collect_all(ticker: str) -> dict:
     """Run all yfinance collectors for a single ticker."""
+    if _is_blocked_ticker(ticker):
+        return {"ticker": ticker, "price_rows": 0, "fundamentals": False, "financial_rows": 0, "balance_rows": 0}
     prices = await collect_price_history(ticker)
     fundies = await collect_fundamentals(ticker)
     financials = await collect_financials(ticker)

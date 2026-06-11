@@ -249,6 +249,9 @@ class TickerSelector:
         # ── 2. Build non-position set (requested + watchlist), capped ──
         non_position: set[str] = set()
 
+        # Import blocklist for filtering all entry points
+        from app.processors.ticker_extractor import FALSE_TICKERS as _BLOCKED
+
         if non_position_slots <= 0:
             logger.info(
                 "[SELECTOR] All %d cap slots filled by positions — no room for non-position tickers",
@@ -257,6 +260,9 @@ class TickerSelector:
         else:
             # Add manually requested tickers (minus any that are already positions)
             for t in requested:
+                if t in _BLOCKED:
+                    logger.info("[SELECTOR] Blocking requested ticker %s — in FALSE_TICKERS", t)
+                    continue
                 if t not in position_tickers and len(non_position) < non_position_slots:
                     non_position.add(t)
 
@@ -269,6 +275,9 @@ class TickerSelector:
                     ).fetchall()
                     for r in wl_rows:
                         t_val = r[0]
+                        if t_val in _BLOCKED:
+                            logger.info("[SELECTOR] Blocking watchlist ticker %s — in FALSE_TICKERS", t_val)
+                            continue
                         if t_val not in position_tickers and len(non_position) < non_position_slots:
                             if t_val not in recent_analyzed:
                                 non_position.add(t_val)
