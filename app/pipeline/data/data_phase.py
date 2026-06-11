@@ -192,6 +192,19 @@ async def run(
     _effective_cap = max_tickers if max_tickers is not None else settings.MAX_ANALYSIS_TICKERS
     _protected = set(position_tickers) if position_tickers else set()
 
+    # ── Initial Safety net: guarantee TOTAL invariant BEFORE collection ──
+    if len(tickers) > _effective_cap:
+        logger.warning(
+            "[PIPELINE]   [SAFETY NET] Initial ticker count %d exceeds hard cap %d — "
+            "hard-truncating to enforce invariant",
+            len(tickers),
+            _effective_cap,
+        )
+        _kept_positions = [t for t in tickers if t in _protected][:_effective_cap]
+        _remaining = _effective_cap - len(_kept_positions)
+        _kept_non_pos = [t for t in tickers if t not in _protected][:_remaining]
+        tickers = _kept_positions + _kept_non_pos
+
     # ═══════════════════════════════════════════════════════════
     # STREAMING ARCHITECTURE: Two parallel tracks
     #

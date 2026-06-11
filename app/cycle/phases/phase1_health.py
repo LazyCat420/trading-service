@@ -135,6 +135,14 @@ async def run_phase1_health(
 
             existing_set = set(ctx.tickers)
             added = [t for t in orphaned if t not in existing_set]
+            
+            # Respect max_tickers cap if defined and not dynamic mode
+            if getattr(ctx, "max_tickers", None) is not None and ctx.max_tickers > 0:
+                available_slots = max(0, ctx.max_tickers - len(ctx.tickers))
+                if len(added) > available_slots:
+                    logger.warning("[PHASE1] Truncating %d orphaned positions to fit max_tickers=%d", len(added) - available_slots, ctx.max_tickers)
+                    added = added[:available_slots]
+
             if added:
                 ctx.tickers.extend(added)
                 state["tickers"] = ctx.tickers
