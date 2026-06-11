@@ -14,6 +14,17 @@ os.environ["EXECUTION_MODE"] = "staging"
 # Ensure project root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Configure yfinance cache location early to prevent race conditions and permission errors in tests
+try:
+    import yfinance as yf
+    _test_local_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cache_dir = "/app/memory" if os.path.isdir("/app/memory") else os.path.join(_test_local_dir, "memory")
+    yf_cache = os.path.join(cache_dir, "py-yfinance")
+    os.makedirs(yf_cache, exist_ok=True)
+    yf.set_tz_cache_location(yf_cache)
+except Exception:
+    pass
+
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 

@@ -469,6 +469,16 @@ def main():
     # Ensure stdout is unbuffered so Docker sees logs immediately
     sys.stdout.reconfigure(line_buffering=True)
 
+    # Configure yfinance cache location early to prevent race conditions and permission errors in docker
+    try:
+        import yfinance as yf
+        cache_dir = "/app/memory" if os.path.isdir("/app/memory") else os.path.join(local_dir, "memory")
+        yf_cache = os.path.join(cache_dir, "py-yfinance")
+        os.makedirs(yf_cache, exist_ok=True)
+        yf.set_tz_cache_location(yf_cache)
+    except Exception as e:
+        logger.warning("[cycle_backend] Failed to set yfinance cache location: %s", e)
+
     # Startup banner — helps identify which code version is running
     logger.info("=" * 60)
     logger.info("[cycle_backend] Trading Cycle Backend starting...")
