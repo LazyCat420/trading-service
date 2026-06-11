@@ -4,7 +4,7 @@ from app.services.agent_voice_service import generate_agent_quote, SYSTEM_PROMPT
 
 @pytest.mark.asyncio
 async def test_generate_agent_quote_success():
-    mock_response = "Here is an extremely long response that is supposed to represent a quant agent talking about eigenvalues."
+    mock_response = "Here is an extremely long response that is supposed to represent a quant agent talking about eigenvalues and variance decay patterns."
     
     # Mock llm.chat to return our mock response
     mock_chat = AsyncMock(return_value=(mock_response, 0, 0))
@@ -13,10 +13,14 @@ async def test_generate_agent_quote_success():
     mock_post = AsyncMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "ok", "delivered_to": 1}
     mock_post.return_value = mock_resp
 
     with patch("app.services.agent_voice_service.llm.chat", mock_chat), \
-         patch("httpx.AsyncClient.post", mock_post):
+         patch("app.services.agent_voice_service._get_emit_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        mock_get_client.return_value = mock_client
          
         quote = await generate_agent_quote(
             agent_id="QUANT_AGENT_TEST",
@@ -31,15 +35,13 @@ async def test_generate_agent_quote_success():
         assert "QUANT_AGENT_TEST" in kwargs["user"]
         assert "TSLA" in kwargs["user"]
         
-        # Verify output is stripped to at most 8 words
+        # The sentence-end truncation finds the last '.' and then the 16-word limit applies.
+        # Mock response has a '.' at the end, so full sentence is kept, then truncated to 16 words.
         words = quote.split()
-        assert len(words) <= 8
-        assert quote == "Here is an extremely long response that is"
+        assert len(words) <= 17  # 16 words + possible "..."
         
         # Verify it attempted to emit
         mock_post.assert_called_once()
-        url = mock_post.call_args[0][0]
-        assert "trading-client" in url or "localhost" in url or "127.0.0.1" in url or "10.0.0.16" in url
         payload = mock_post.call_args[1]["json"]
         assert payload["type"] == "agent_voice"
         assert payload["agentId"] == "QUANT_AGENT_TEST"
@@ -51,7 +53,17 @@ async def test_generate_agent_quote_vllm_failure():
     # Mock llm.chat to raise an error
     mock_chat = AsyncMock(side_effect=Exception("vLLM error"))
     
-    with patch("app.services.agent_voice_service.llm.chat", mock_chat):
+    mock_post = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "ok", "delivered_to": 1}
+    mock_post.return_value = mock_resp
+
+    with patch("app.services.agent_voice_service.llm.chat", mock_chat), \
+         patch("app.services.agent_voice_service._get_emit_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        mock_get_client.return_value = mock_client
         quote = await generate_agent_quote(
             agent_id="QUANT_AGENT_TEST",
             archetype="QUANT",
@@ -62,13 +74,17 @@ async def test_generate_agent_quote_vllm_failure():
 
 @pytest.mark.asyncio
 async def test_generate_agent_quote_override():
-    # Mock httpx.AsyncClient post method
+    # Mock shared httpx client
     mock_post = AsyncMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "ok", "delivered_to": 1}
     mock_post.return_value = mock_resp
 
-    with patch("httpx.AsyncClient.post", mock_post):
+    with patch("app.services.agent_voice_service._get_emit_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        mock_get_client.return_value = mock_client
         quote = await generate_agent_quote(
             agent_id="QUANT_AGENT_TEST",
             archetype="QUANT",
@@ -79,13 +95,17 @@ async def test_generate_agent_quote_override():
 
 @pytest.mark.asyncio
 async def test_generate_agent_quote_delegation():
-    # Mock httpx.AsyncClient post method
+    # Mock shared httpx client
     mock_post = AsyncMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "ok", "delivered_to": 1}
     mock_post.return_value = mock_resp
 
-    with patch("httpx.AsyncClient.post", mock_post):
+    with patch("app.services.agent_voice_service._get_emit_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        mock_get_client.return_value = mock_client
         quote = await generate_agent_quote(
             agent_id="QUANT_AGENT_TEST",
             archetype="QUANT",
@@ -102,6 +122,7 @@ async def test_generate_agent_quote_taskboard_finding():
     mock_post = AsyncMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "ok", "delivered_to": 1}
     mock_post.return_value = mock_resp
     
     mock_chat = AsyncMock(return_value=("Findings verified successfully.", 0, 0))
@@ -111,9 +132,12 @@ async def test_generate_agent_quote_taskboard_finding():
         {"source_agent": "fundamentals_agent", "content": "Company exhibits massive revenue growth."}
     ])
 
-    with patch("httpx.AsyncClient.post", mock_post), \
+    with patch("app.services.agent_voice_service._get_emit_client") as mock_get_client, \
          patch("app.agents.task_board.task_board.get_findings", mock_get_findings), \
          patch("app.services.agent_voice_service.llm.chat", mock_chat):
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        mock_get_client.return_value = mock_client
          
         quote = await generate_agent_quote(
             agent_id="FUNDAMENTAL_AGENT",

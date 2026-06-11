@@ -6,6 +6,20 @@ from app.config.personas import get_persona_prompt
 
 logger = logging.getLogger(__name__)
 
+# Shared httpx client — avoids TCP connection setup/teardown per emit.
+# Created lazily on first use and reused for the lifetime of the process.
+_emit_client: httpx.AsyncClient | None = None
+
+
+async def _get_emit_client() -> httpx.AsyncClient:
+    global _emit_client
+    if _emit_client is None or _emit_client.is_closed:
+        _emit_client = httpx.AsyncClient(
+            timeout=5.0,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _emit_client
+
 # Voice-specific suffixes appended to the base persona prompt for quote generation.
 # These are NOT full system prompts — they extend the persona prompt from the store.
 _VOICE_SUFFIXES = {
@@ -215,24 +229,42 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
     
     # Forward to trading-client to be emitted on the SSE stream
     from app.config.config import settings
-    hosts = [settings.DEFAULT_HOST, "trading-client", "10.0.0.16", "localhost", "127.0.0.1"]
+    hosts = [settings.DEFAULT_HOST, "trading-client", "10.0.0.16"]
     emitted = False
+    client = await _get_emit_client()
     for host in hosts:
         if not host:
             continue
         url = f"http://{host}:8888/api/v1/prism/emit"
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    logger.info("[AgentVoice] Emitted event for %s: '%s' to %s", agent_id, quote, host)
-                    emitted = True
-                    break
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                body = resp.json()
+                delivered = body.get("delivered_to", 0)
+                logger.info(
+                    "[AgentVoice] Emitted event for %s: '%s' to %s (delivered_to=%d)",
+                    agent_id, quote, host, delivered,
+                )
+                if delivered == 0:
+                    logger.warning(
+                        "[AgentVoice] Event emitted but 0 SSE subscribers on %s — voice may be lost",
+                        host,
+                    )
+                emitted = True
+                break
+            else:
+                logger.warning(
+                    "[AgentVoice] Emit to %s returned status %d", host, resp.status_code
+                )
+        except httpx.TimeoutException:
+            logger.warning("[AgentVoice] Emit to %s timed out (5s)", host)
+        except httpx.ConnectError as exc:
+            logger.warning("[AgentVoice] Emit to %s connection refused: %s", host, exc)
         except Exception as exc:
-            pass
+            logger.warning("[AgentVoice] Emit to %s failed: %s", host, exc)
             
     if not emitted:
-        logger.warning(f"[AgentVoice] Failed to emit to any host for {agent_id}")
+        logger.error("[AgentVoice] Failed to emit to ANY host for %s — all %d hosts failed", agent_id, len(hosts))
         
     return quote
 
