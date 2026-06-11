@@ -114,6 +114,9 @@ FALSE_TICKERS = {
     "READY",
     "YOU",
     "FOR",
+    "END",
+    "MISSING",
+    "START",
     # Common English words that appear as bare caps
     "ON",
     "OR",
