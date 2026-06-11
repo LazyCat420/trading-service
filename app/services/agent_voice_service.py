@@ -227,7 +227,15 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
         }
     }
     
-    # Forward to trading-client to be emitted on the SSE stream
+    # Forward to trading-client to be emitted on the SSE stream.
+    # First, send a system log so the office-client's system log SSE
+    # creates the 3D agent BEFORE the voice event arrives.
+    try:
+        from app.telemetry import send_system_log
+        send_system_log("AGENT", f"[{agent_id}] Requesting tool 'agent_voice' (ticker={ticker})")
+    except Exception:
+        pass
+
     from app.config.config import settings
     hosts = [settings.DEFAULT_HOST, "trading-client", "10.0.0.16"]
     emitted = False
