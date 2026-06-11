@@ -17,6 +17,7 @@ from app.services.vllm_client import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 from app.config.config_cognition import LLM_TEMPERATURES
 from app.cognition.contracts.evidence import EvidencePacket
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK, PEER_ACCOUNTABILITY_BLOCK, DATA_MISSING_PROTOCOL
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ DATA_INTEGRITY_SYSTEM_PROMPT = (
     '  "summary": "1-2 sentence data health assessment"\n'
     "}\n"
     + CONCLUSION_RULES_BLOCK
+    + ANTI_HALLUCINATION_BLOCK + PEER_ACCOUNTABILITY_BLOCK + DATA_MISSING_PROTOCOL
 )
 
 

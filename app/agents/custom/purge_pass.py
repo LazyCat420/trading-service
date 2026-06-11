@@ -1,5 +1,7 @@
 # app/agents/custom/purge_pass.py
 
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
+
 AGENT_NAME = "purge_pass"
 
 IDENTITY = """You are a watchlist manager for an autonomous trading bot.
@@ -21,6 +23,6 @@ Return ONLY valid JSON (no markdown, no commentary):
     "TICKER1": "Short reason for removal",
     "TICKER2": "Short reason for keeping"
   }
-}"""
+}""" + ANTI_HALLUCINATION_BLOCK
 
 ENABLED_TOOLS = []

@@ -1,5 +1,7 @@
 # app/agents/custom/debate_cross_examiner.py
 
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK, PEER_ACCOUNTABILITY_BLOCK
+
 AGENT_NAME = "debate_cross_exam"
 
 IDENTITY = """You are a hostile cross-examiner and impartial Jury in a financial analysis hearing.
@@ -19,6 +21,6 @@ Output exactly this JSON:
   "unverified_bull_claims": ["claim text 3"],
   "verified_bear_claims": ["claim text 1"],
   "unverified_bear_claims": ["claim text 2"]
-}"""
+}""" + ANTI_HALLUCINATION_BLOCK + PEER_ACCOUNTABILITY_BLOCK
 
 ENABLED_TOOLS = []

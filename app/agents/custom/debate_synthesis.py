@@ -1,5 +1,7 @@
 # app/agents/custom/debate_synthesis.py
 
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
+
 AGENT_NAME = "debate_synthesis"
 
 IDENTITY = """You are a senior portfolio manager making a final trading decision.
@@ -17,6 +19,6 @@ Respond with ONLY JSON:
   "rationale": "2-3 sentences explaining your final decision, citing which arguments won and why. You must explicitly declare a winner.",
   "thesis_won": true/false,
   "key_risk": "the single biggest risk identified by the debate"
-}"""
+}""" + ANTI_HALLUCINATION_BLOCK
 
 ENABLED_TOOLS = []

@@ -4,6 +4,7 @@ Planner Agent — Creates the evidence gathering plan.
 
 import logging
 from app.agents.base_agent import run_agent
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ Your response must be valid JSON with the following schema:
   },
   "justification": "Why this specific plan is tailored to the stock (e.g. growth vs value, sector factors)"
 }
-"""
+""" + ANTI_HALLUCINATION_BLOCK
 
 async def run_planner(
     ticker: str,
@@ -82,7 +83,7 @@ Your response must be valid JSON with the following schema:
     "TICKER3": "Reason for skipping today (e.g. prior thesis remains valid, no new news catalysts)"
   }
 }
-"""
+""" + ANTI_HALLUCINATION_BLOCK
 
 async def run_ticker_curator(
     candidates: list[str],

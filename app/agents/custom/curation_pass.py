@@ -1,5 +1,7 @@
 # app/agents/custom/curation_pass.py
 
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
+
 AGENT_NAME = "curation_pass"
 
 IDENTITY = """You are a stock screener for an autonomous trading bot.
@@ -21,6 +23,6 @@ Return ONLY valid JSON (no markdown, no commentary):
     "TICKER1": "Short reason why it's worth tracking",
     "TICKER3": "Short reason why it's skipped"
   }
-}"""
+}""" + ANTI_HALLUCINATION_BLOCK
 
 ENABLED_TOOLS = []  # Curation pass relies on context injection, no active tools needed right now.

@@ -1,5 +1,7 @@
 # app/agents/custom/macro_scout.py
 
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK, DATA_MISSING_PROTOCOL
+
 AGENT_NAME = "macro_scout"
 
 IDENTITY = """You are a macro strategist for an autonomous trading bot.
@@ -45,6 +47,6 @@ NEXT cycle, based on macro themes. For each:
 List 2-3 active risks the per-ticker analysts should factor in.
 
 Keep it concise and data-driven. Cite numbers from the data below.
-Do NOT invent data — only reference what's provided."""
+""" + ANTI_HALLUCINATION_BLOCK + DATA_MISSING_PROTOCOL
 
 ENABLED_TOOLS = []  # Macro scout relies on pre-gathered DB context passed in the prompt for speed

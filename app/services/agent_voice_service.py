@@ -3,6 +3,7 @@ import logging
 import httpx
 from app.services.vllm_client import llm, Priority
 from app.config.personas import get_persona_prompt
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +23,20 @@ async def _get_emit_client() -> httpx.AsyncClient:
 
 # Voice-specific suffixes appended to the base persona prompt for quote generation.
 # These are NOT full system prompts — they extend the persona prompt from the store.
+_VOICE_ANTI_FABRICATION = (
+    " CRITICAL: You MUST only reference data and findings that were actually provided to you. "
+    "If you do not have real data or findings for this ticker, say so honestly "
+    "(e.g., 'I don't have data on this one yet' or 'Still waiting on the numbers'). "
+    "Do NOT invent illustrative examples, hypothetical scenarios, or made-up metrics. "
+    "An honest 'I got nothing' is always better than fabricated analysis."
+)
 _VOICE_SUFFIXES = {
-    "QUANT": "Speak directly to your team members (Priya, Vance, Helen, Ray) about your quantitative findings. Address them to coordinate, debate, or ask questions based on the data. You MUST mention the ticker symbol if provided.",
-    "DATA_JANITOR": "Speak directly to your team members (Priya, Vance, Helen, Aris) about data integrity. Address them to warn them about data issues or confirm data cleanliness. You MUST mention the ticker symbol if provided.",
-    "BULL": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to hype up the data or debate their bearishness. You MUST mention the ticker symbol if provided.",
-    "BEAR": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to point out flaws or doom-post their bullishness. You MUST mention the ticker symbol if provided.",
-    "RISK": "Speak directly to your team members (Priya, Vance, Aris, Ray) about your risk assessment. Address them to coordinate on position sizing or issue warnings. You MUST mention the ticker symbol if provided.",
-    "RESEARCH": "Speak directly to your team members (Aris, Vance, Helen, Ray) about your fundamental analysis. Address them to coordinate on long-term value or debate the technicals. You MUST mention the ticker symbol if provided.",
+    "QUANT": "Speak directly to your team members (Priya, Vance, Helen, Ray) about your quantitative findings. Address them to coordinate, debate, or ask questions based on the data. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
+    "DATA_JANITOR": "Speak directly to your team members (Priya, Vance, Helen, Aris) about data integrity. Address them to warn them about data issues or confirm data cleanliness. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
+    "BULL": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to hype up the data or debate their bearishness. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
+    "BEAR": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to point out flaws or doom-post their bullishness. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
+    "RISK": "Speak directly to your team members (Priya, Vance, Aris, Ray) about your risk assessment. Address them to coordinate on position sizing or issue warnings. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
+    "RESEARCH": "Speak directly to your team members (Aris, Vance, Helen, Ray) about your fundamental analysis. Address them to coordinate on long-term value or debate the technicals. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
 }
 
 # Map voice archetypes to persona roles
@@ -176,13 +184,17 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
         
         # Construct user prompt
         ticker_instr = f" You MUST mention the ticker '{ticker}' in your quote." if ticker else ""
+        # Guard: if no real finding context exists, instruct the agent to be honest
+        if not finding_context or not finding_context.strip():
+            finding_context = "\nYou do NOT have any actual analysis findings for this ticker yet. You MUST say you don't have data — do NOT make anything up."
         user_prompt = (
             f"Agent: {agent_id}\n"
             f"Ticker: {ticker}\n"
             f"Tool/Action: {tool}\n"
             f"Result: {action_result}\n"
             f"{finding_context}\n"
-            f"Translate your actual finding into a peer-to-peer spoken message addressed directly to your team members. Coordinate with them based on your data.{ticker_instr}"
+            f"Translate your actual finding into a peer-to-peer spoken message addressed directly to your team members. Coordinate with them based on your data.{ticker_instr}\n"
+            f"CRITICAL: Only reference data that was actually provided above. If no real data or findings were provided, honestly say you don't have data yet. Do NOT fabricate illustrative examples or hypothetical analysis."
         )
         
         quote = ""

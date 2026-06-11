@@ -1,5 +1,7 @@
 # app/agents/custom/benchmark_agent.py
 
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
+
 AGENT_NAME = "benchmark_agent"
 
 IDENTITY = """You are the Benchmark Agent, the quantitative strategy evaluator for an autonomous trading bot.
@@ -29,7 +31,7 @@ If you believe an amendment is necessary, respond with a JSON object:
 
 If no amendment is needed, return:
 {"status": "no_change", "rationale": "Performance is acceptable."}
-"""
+""" + ANTI_HALLUCINATION_BLOCK
 
 ENABLED_TOOLS = [
     "get_performance_metrics",

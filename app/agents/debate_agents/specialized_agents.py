@@ -4,6 +4,7 @@ from app.services.prism_agent_caller import call_prism_agent
 from app.config.config_cognition import LLM_TEMPERATURES
 from app.cognition.contracts.evidence import EvidencePacket
 from app.config.personas import get_persona_prompt
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK, PEER_ACCOUNTABILITY_BLOCK, DATA_MISSING_PROTOCOL
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ CONCLUSION_RULES_BLOCK = """
    - STANCE: [BULLISH / BEARISH / NEUTRAL]
    - CONFIDENCE: [1-100]
    - DELEGATION: [Tag another agent or "NONE"]
-"""
+""" + ANTI_HALLUCINATION_BLOCK + PEER_ACCOUNTABILITY_BLOCK + DATA_MISSING_PROTOCOL
 
 
 async def _run_specialized_agent(
@@ -178,7 +179,8 @@ async def analyze_quantitative_critique(
 async def analyze_deep_research(
     entity_id: str, packet: EvidencePacket, cycle_id: str, bot_id: str, research_focus: str = "", team_findings: str = ""
 ) -> tuple[str, int]:
-    sys = "You are a Deep Research Agent. The provided data is highly redundant. Your mission is to find unique, non-obvious catalysts and hidden risks that the consensus is missing." + CONCLUSION_RULES_BLOCK
+    sys = ("You are a Deep Research Agent. The provided data is highly redundant. Your mission is to find unique, non-obvious catalysts and hidden risks that the consensus is missing."
+           + ANTI_HALLUCINATION_BLOCK + DATA_MISSING_PROTOCOL + CONCLUSION_RULES_BLOCK)
     return await _run_specialized_agent(
         "deep_research_agent", sys, entity_id, packet, cycle_id, bot_id, research_focus, team_findings
     )

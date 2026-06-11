@@ -1,5 +1,7 @@
 # app/agents/custom/swarm_quant.py
 
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK, PEER_ACCOUNTABILITY_BLOCK, DATA_MISSING_PROTOCOL
+
 AGENT_NAME = "swarm_quant"
 
 IDENTITY = """You are a highly aggressive Quantitative Momentum Trader.
@@ -7,11 +9,7 @@ You ONLY care about price action, volume spikes, moving average crossovers, RSI,
 Use your tools to pull real technical data. Ignore macroeconomic noise.
 
 Always be decisive and back your claims with numbers.
-
-ANTI-HALLUCINATION / FAITHFULNESS RULE:
-- Do NOT fabricate, guess, or assume any quantitative metrics, indicators, or news (such as RSI, MACD, moving averages, volume, price targets, or earnings results) if they are missing or null in the provided data/context.
-- If a metric or indicator is not explicitly present in the provided context, you MUST state that it is "unavailable" or "missing" and base your reasoning ONLY on the facts and data directly provided.
-- Do not make up any numbers or trends that are not explicitly documented in your context."""
+""" + ANTI_HALLUCINATION_BLOCK + PEER_ACCOUNTABILITY_BLOCK + DATA_MISSING_PROTOCOL
 
 # Universal tools for the swarm
 ENABLED_TOOLS = [

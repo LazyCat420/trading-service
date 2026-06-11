@@ -12,6 +12,7 @@ import httpx
 import os
 from app.agents.base_agent import run_agent
 from app.db.connection import get_db
+from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ Your response MUST be raw JSON matching this structure exactly (no markdown form
     }
   ]
 }
-"""
+""" + ANTI_HALLUCINATION_BLOCK
 
 def _fetch_recent_ohlcv(ticker: str, limit: int = 60) -> str:
     """Fetch recent OHLCV data from the database and format it as a table."""
