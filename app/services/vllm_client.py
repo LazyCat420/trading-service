@@ -38,7 +38,7 @@ import time
 import uuid
 from enum import IntEnum
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -1655,6 +1655,10 @@ class VLLMClient:
         tool_calls = []
         tool_executions = []  # Captures Prism tool_execution SSE events for reputation tracking
 
+        stream_callback = meta.get("stream_callback")
+        from app.services.streaming_observer import DoomLoopDetector, DoomLoopException
+        detector = DoomLoopDetector() if stream_callback else None
+
         import json as _json
         from app.utils.text_utils import sanitize_surrogates
         agent_payload = sanitize_surrogates(agent_payload)
@@ -1689,63 +1693,71 @@ class VLLMClient:
                 raise RuntimeError(f"Prism returned non-SSE response: {error_msg}")
 
             buffer = ""
-            async for raw_chunk in response.aiter_text():
-                buffer += raw_chunk
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data_str = line[6:].strip()
-                    if data_str == "[DONE]":
-                        continue
-                    try:
-                        chunk_data = _json.loads(data_str)
-                    except _json.JSONDecodeError:
-                        continue
+            try:
+                async for raw_chunk in response.aiter_text():
+                    buffer += raw_chunk
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            continue
+                        try:
+                            chunk_data = _json.loads(data_str)
+                        except _json.JSONDecodeError:
+                            continue
 
-                    if "type" in chunk_data:
-                        ctype = chunk_data.get("type")
-                        chunk_content = chunk_data.get("content", "")
+                        if "type" in chunk_data:
+                            ctype = chunk_data.get("type")
+                            chunk_content = chunk_data.get("content", "")
 
-                        if ctype == "thinking" and chunk_content:
-                            thinking += chunk_content
-                        elif ctype == "chunk" and chunk_content:
-                            content += chunk_content
-                        elif ctype == "toolCall":
-                            tool_calls.append({
-                                "id": chunk_data.get("id"),
-                                "name": chunk_data.get("name"),
-                                "args": chunk_data.get("args", {}),
-                            })
-                        elif ctype == "tool_execution":
-                            # Prism emits tool execution results with name, args, result, status
-                            tool_data = chunk_data.get("tool", {})
-                            exec_status = chunk_data.get("status", "")
-                            result_obj = tool_data.get("result", {})
-                            has_error = exec_status == "error" or (
-                                isinstance(result_obj, dict) and bool(result_obj.get("error"))
-                            )
-                            tool_executions.append({
-                                "name": tool_data.get("name", ""),
-                                "args": tool_data.get("args", {}),
-                                "status": exec_status,
-                                "has_error": has_error,
-                                "result_preview": str(result_obj)[:500],
-                            })
-                        elif ctype == "done":
-                            usage = chunk_data.get("usage", {})
-                            if usage:
-                                total_tokens = (
-                                    usage.get("totalTokens")
-                                    or usage.get("total_tokens")
-                                    or (usage.get("inputTokens", 0) + usage.get("outputTokens", 0))
-                                    or 0
+                            if ctype == "thinking" and chunk_content:
+                                thinking += chunk_content
+                            elif ctype == "chunk" and chunk_content:
+                                content += chunk_content
+                                if stream_callback:
+                                    stream_callback(chunk_content)
+                                if detector:
+                                    detector.on_chunk(chunk_content)
+                            elif ctype == "toolCall":
+                                tool_calls.append({
+                                    "id": chunk_data.get("id"),
+                                    "name": chunk_data.get("name"),
+                                    "args": chunk_data.get("args", {}),
+                                })
+                            elif ctype == "tool_execution":
+                                # Prism emits tool execution results with name, args, result, status
+                                tool_data = chunk_data.get("tool", {})
+                                exec_status = chunk_data.get("status", "")
+                                result_obj = tool_data.get("result", {})
+                                has_error = exec_status == "error" or (
+                                    isinstance(result_obj, dict) and bool(result_obj.get("error"))
                                 )
-                                meta["_usage"] = {
-                                    "prompt_tokens": usage.get("inputTokens", usage.get("prompt_tokens", 0)),
-                                    "completion_tokens": usage.get("outputTokens", usage.get("completion_tokens", 0)),
-                                }
+                                tool_executions.append({
+                                    "name": tool_data.get("name", ""),
+                                    "args": tool_data.get("args", {}),
+                                    "status": exec_status,
+                                    "has_error": has_error,
+                                    "result_preview": str(result_obj)[:500],
+                                })
+                            elif ctype == "done":
+                                usage = chunk_data.get("usage", {})
+                                if usage:
+                                    total_tokens = (
+                                        usage.get("totalTokens")
+                                        or usage.get("total_tokens")
+                                        or (usage.get("inputTokens", 0) + usage.get("outputTokens", 0))
+                                        or 0
+                                    )
+                                    meta["_usage"] = {
+                                        "prompt_tokens": usage.get("inputTokens", usage.get("prompt_tokens", 0)),
+                                        "completion_tokens": usage.get("outputTokens", usage.get("completion_tokens", 0)),
+                                    }
+            except DoomLoopException as e:
+                logger.warning(f"[PRISM] Stream cut short due to DoomLoopDetector: {e}")
+                # We retain the content we've gathered so far.
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -1822,6 +1834,7 @@ class VLLMClient:
         images: list[str] | None = None,
         tools: list[dict] | None = None,
         actor_label: str | None = None,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> tuple[str, int, int]:
         """
         Enqueue a chat completion request routed through Prism.
@@ -1923,6 +1936,7 @@ class VLLMClient:
             "priority": priority.name,
             "_enqueue_time": time.monotonic(),
             "actor_label": actor_label,
+            "stream_callback": stream_callback,
         }
 
         loop = asyncio.get_event_loop()
@@ -2014,6 +2028,7 @@ class VLLMClient:
         bot_id: str = "",
         model_override: str | None = None,
         endpoint_override: str | None = None,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> dict:
         """
         Enqueue a chat completion request with tool support and raw messages array.
@@ -2098,6 +2113,7 @@ class VLLMClient:
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
             "priority": priority.name,
+            "stream_callback": stream_callback,
         }
 
         loop = asyncio.get_event_loop()

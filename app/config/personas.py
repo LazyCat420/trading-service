@@ -132,7 +132,7 @@ def get_persona_config(role: str) -> dict | None:
             "role": role,
             "system_prompt": PERSONAS[role]["prompt"],
             "voice_pitch": 1.0,
-            "voice_rate": 1.0,
+            "voice_rate": 1.15,
             "max_tokens": 2048,
             "temperature": 0.7,
         }

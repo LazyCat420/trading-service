@@ -17,6 +17,7 @@ All LLM calls go through app.services.vllm_client (Rule 2).
 
 import asyncio
 import logging
+from typing import Callable
 from datetime import datetime, timezone
 
 from app.services.vllm_client import llm, Priority
@@ -318,6 +319,7 @@ async def _run_biased_agent(
     position_block: str = "",
     debate_cache: dict[str, str] | None = None,
     portfolio_dashboard: str = "",
+    stream_callback: Callable[[str], None] | None = None,
 ) -> tuple[str, int, list[str]]:
     """Run a single biased analyst agent with tool usage capability."""
     if override_user_prompt:
@@ -504,6 +506,7 @@ async def _run_biased_agent(
                 bot_id=bot_id,
                 model_override=model_override,
                 endpoint_override=endpoint_override,
+                stream_callback=stream_callback,
             )
             total_tokens += result.get("total_tokens", 0)
             ms = result.get("elapsed_ms", 0)
@@ -632,6 +635,7 @@ async def _run_biased_agent(
                         bot_id=bot_id,
                         model_override=model_override,
                         endpoint_override=endpoint_override,
+                        stream_callback=stream_callback,
                     )
                     total_tokens += forced_result.get("total_tokens", 0)
                     final_response = forced_result.get("text", "")
@@ -676,6 +680,7 @@ async def _run_biased_agent(
                     bot_id=bot_id,
                     model_override=model_override,
                     endpoint_override=endpoint_override,
+                    stream_callback=stream_callback,
                 )
                 total_tokens += forced_result.get("total_tokens", 0)
                 final_response = forced_result.get("text", "")
@@ -825,6 +830,7 @@ async def run_adversarial_debate(
     agent_insights: dict[str, str] | None = None,
     position_context: dict | None = None,
     portfolio_dashboard: str = "",
+    ctx: "PipelineContext | None" = None,
 ) -> DebateResult | None:
     """Run the full adversarial debate pipeline.
 
@@ -1001,6 +1007,7 @@ async def run_adversarial_debate(
                 position_block=_pos_block,
                 debate_cache=_debate_cache,
                 portfolio_dashboard=portfolio_dashboard,
+                stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bull_t1", chunk, status="streaming", append=True) if ctx else None,
             )
             b_tok += tok1
 
@@ -1017,9 +1024,9 @@ async def run_adversarial_debate(
                     model_override=bear_model,
                     endpoint_override=bear_ep,
                     agent_insights=agent_insights,
-                    override_user_prompt=bear_prompt,
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
+                    stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t2", chunk, status="streaming", append=True) if ctx else None,
                 )
                 br_tok += tok2
 
@@ -1041,6 +1048,7 @@ async def run_adversarial_debate(
                     override_user_prompt=bull_prompt,
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
+                    stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bull_t3", chunk, status="streaming", append=True) if ctx else None,
                 )
                 b_tok += tok3
 
@@ -1062,6 +1070,7 @@ async def run_adversarial_debate(
                     override_user_prompt=bear_prompt_t4,
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
+                    stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t4", chunk, status="streaming", append=True) if ctx else None,
                 )
                 br_tok += tok4
 
@@ -1084,9 +1093,9 @@ async def run_adversarial_debate(
                     model_override=bear_model,
                     endpoint_override=bear_ep,
                     agent_insights=agent_insights,
-                    override_user_prompt=bear_prompt,
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
+                    stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t2", chunk, status="streaming", append=True) if ctx else None,
                 )
                 br_tok += tok2
 
@@ -1108,6 +1117,7 @@ async def run_adversarial_debate(
                     override_user_prompt=bull_prompt,
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
+                    stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bull_t3", chunk, status="streaming", append=True) if ctx else None,
                 )
                 b_tok += tok3
 
@@ -1129,6 +1139,7 @@ async def run_adversarial_debate(
                     override_user_prompt=bear_prompt,
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
+                    stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t4", chunk, status="streaming", append=True) if ctx else None,
                 )
                 br_tok += tok4
 
@@ -1327,6 +1338,7 @@ async def run_adversarial_debate(
                             ticker=ticker,
                             cycle_id=cycle_id,
                             bot_id=bot_id,
+                            stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{p_name}_cross_examiner", chunk, status="streaming", append=True) if ctx else None,
                         ),
                         timeout=120.0,
                     )
