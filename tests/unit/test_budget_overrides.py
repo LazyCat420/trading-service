@@ -2,10 +2,10 @@
 Test: Budget Overrides — Verify role-differentiated turn budgets.
 
 Validates that:
-1. Risk agent gets max_turns=5
-2. Meta audit agent gets max_turns=10
-3. Default agents still get max_turns=3
-4. Non-tool agents get max_turns=2
+1. Risk agent gets max_turns=8
+2. Meta audit agent gets max_turns=12
+3. Default agents get max_turns=9999
+4. Non-tool agents get max_turns=1
 """
 
 import pytest

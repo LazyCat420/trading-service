@@ -234,5 +234,10 @@ async def generate_thesis(
         weaknesses=data.get("weaknesses", []),
         rationale=data.get("rationale", data.get("error", "Failed to parse thesis")),
         iteration=0,
+        conviction=data.get("conviction", ""),
+        management_quality=data.get("management_quality", ""),
+        competitive_moat=data.get("competitive_moat", ""),
+        devils_advocate=data.get("devils_advocate", ""),
+        invalidation_condition=data.get("invalidation_condition", ""),
     )
     return draft, tokens_used

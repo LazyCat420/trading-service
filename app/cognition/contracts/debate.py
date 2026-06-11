@@ -27,6 +27,12 @@ class ThesisDraft(BaseModel):
     weaknesses: List[str] = Field(default_factory=list)
     rationale: str
     iteration: int = 0
+    # Baron Funds / Da Vinci evaluation fields (added for long-term philosophy)
+    conviction: str = ""  # "WATCH" | "LOW" | "MODERATE" | "HIGH" | "EXTREME"
+    management_quality: str = ""
+    competitive_moat: str = ""
+    devils_advocate: str = ""
+    invalidation_condition: str = ""
 
 
 class ArgumentDraft(BaseModel):

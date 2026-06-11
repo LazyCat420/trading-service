@@ -7,7 +7,7 @@ When an agent outputs DELEGATION: @Agent - message, this handler:
 3. Posts the response to the TaskBoard as a completed investigation
 4. Emits a voice event so the UI shows the inter-agent dialogue
 
-Budget cap: max 2 delegation follow-ups per ticker per cycle.
+Budget cap: max 8 delegation follow-ups per ticker per cycle.
 """
 
 import asyncio
