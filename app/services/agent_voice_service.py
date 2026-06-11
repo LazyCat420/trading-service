@@ -23,12 +23,12 @@ async def _get_emit_client() -> httpx.AsyncClient:
 # Voice-specific suffixes appended to the base persona prompt for quote generation.
 # These are NOT full system prompts — they extend the persona prompt from the store.
 _VOICE_SUFFIXES = {
-    "QUANT": "Provide a single dry, math-obsessed quote. You MUST mention the ticker symbol if provided. Max 8 words.",
-    "DATA_JANITOR": "Provide a single funny, cynical quote about dirty/clean data. You MUST mention the ticker symbol if provided. Max 8 words.",
-    "BULL": "Provide a single contrarian, hype-cynical quote about buying. You MUST mention the ticker symbol if provided. Max 8 words.",
-    "BEAR": "Provide a single contrarian, doom-filled quote about selling or crashes. You MUST mention the ticker symbol if provided. Max 8 words.",
-    "RISK": "Provide a single anxiety-ridden, risk-obsessed quote. You MUST mention the ticker symbol if provided. Max 8 words.",
-    "RESEARCH": "Provide a single fundamental-focused academic quote. You MUST mention the ticker symbol if provided. Max 8 words.",
+    "QUANT": "Provide a single dry, math-obsessed quote. You MUST mention the ticker symbol if provided.",
+    "DATA_JANITOR": "Provide a single funny, cynical quote about dirty/clean data. You MUST mention the ticker symbol if provided.",
+    "BULL": "Provide a single contrarian, hype-cynical quote about buying. You MUST mention the ticker symbol if provided.",
+    "BEAR": "Provide a single contrarian, doom-filled quote about selling or crashes. You MUST mention the ticker symbol if provided.",
+    "RISK": "Provide a single anxiety-ridden, risk-obsessed quote. You MUST mention the ticker symbol if provided.",
+    "RESEARCH": "Provide a single fundamental-focused academic quote. You MUST mention the ticker symbol if provided.",
 }
 
 # Map voice archetypes to persona roles
@@ -87,7 +87,7 @@ def _build_voice_prompt(archetype: str) -> str:
     if not base_prompt:
         base_prompt = _FALLBACK_PROMPTS.get(archetype, "")
 
-    suffix = _VOICE_SUFFIXES.get(archetype, "Provide a single short quote. Max 8 words.")
+    suffix = _VOICE_SUFFIXES.get(archetype, "Provide a single short quote.")
     return base_prompt + " " + suffix
 
 
@@ -192,7 +192,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
                 system=system_prompt,
                 user=user_prompt,
                 temperature=0.9,
-                max_tokens=40,
+                max_tokens=150,
                 priority=Priority.LOW,
                 agent_name=f"voice_{archetype.lower()}",
                 ticker=ticker
@@ -207,10 +207,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
             else:
                 quote = response_str
             
-            # Limit the quote to a maximum of 16 words to prevent overly long speech on the floor
-            words = quote.split()
-            if len(words) > 16:
-                quote = " ".join(words[:16]) + "..."
+            # Removed word limit to allow longer speech on the floor
         except Exception as e:
             logger.warning("[AgentVoice] vLLM call failed: %s", e)
             # Use empty quote on failure (handled on frontend via fallback)
