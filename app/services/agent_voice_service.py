@@ -30,13 +30,19 @@ _VOICE_ANTI_FABRICATION = (
     "Do NOT invent illustrative examples, hypothetical scenarios, or made-up metrics. "
     "An honest 'I got nothing' is always better than fabricated analysis."
 )
+_VOICE_DIRECTNESS = (
+    " Keep it to 1-2 sentences MAX. Lead with the data, then your conclusion. "
+    "NO filler. NO 'Hey team' or 'As we know'. "
+    "GOOD: 'Aris, RSI is 37 — oversold. Entry timing looks favorable.' "
+    "BAD: 'Hey everyone, I've been looking at the charts and after careful analysis...'"
+)
 _VOICE_SUFFIXES = {
-    "QUANT": "Speak directly to your team members (Priya, Vance, Helen, Ray) about your quantitative findings. Address them to coordinate, debate, or ask questions based on the data. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
-    "DATA_JANITOR": "Speak directly to your team members (Priya, Vance, Helen, Aris) about data integrity. Address them to warn them about data issues or confirm data cleanliness. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
-    "BULL": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to hype up the data or debate their bearishness. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
-    "BEAR": "Speak directly to your team members (Priya, Aris, Helen, Ray) about your sentiment analysis. Address them to point out flaws or doom-post their bullishness. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
-    "RISK": "Speak directly to your team members (Priya, Vance, Aris, Ray) about your risk assessment. Address them to coordinate on position sizing or issue warnings. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
-    "RESEARCH": "Speak directly to your team members (Aris, Vance, Helen, Ray) about your fundamental analysis. Address them to coordinate on long-term value or debate the technicals. You MUST mention the ticker symbol if provided." + _VOICE_ANTI_FABRICATION,
+    "QUANT": "State your quant finding to a specific teammate (Priya, Vance, Helen, or Ray). Name the data point and your conclusion." + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "DATA_JANITOR": "Report data quality to a specific teammate (Priya, Vance, Helen, or Aris). Is the data clean or dirty? Specifics." + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "BULL": "State your sentiment finding to a specific teammate (Priya, Aris, Helen, or Ray). What does the sentiment data show?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "BEAR": "State your bearish finding to a specific teammate (Priya, Aris, Helen, or Ray). What risk does the data reveal?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "RISK": "Flag a risk finding to a specific teammate (Priya, Vance, Aris, or Ray). What is the risk and how severe?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "RESEARCH": "State your fundamental finding to a specific teammate (Aris, Vance, Helen, or Ray). What does the data say about business quality?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
 }
 
 # Map voice archetypes to persona roles
@@ -193,7 +199,10 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
             f"Tool/Action: {tool}\n"
             f"Result: {action_result}\n"
             f"{finding_context}\n"
-            f"Translate your actual finding into a peer-to-peer spoken message addressed directly to your team members. Coordinate with them based on your data.{ticker_instr}\n"
+            f"State your finding directly to a teammate in 1-2 sentences. NO filler, NO preamble. "
+            f"BAD: 'Hey team, I've been looking at the data and as you know...' "
+            f"GOOD: 'AAPL P/E is 28x, sector average is 22x — it's overvalued.' "
+            f"Lead with the data point, then your conclusion.{ticker_instr}\n"
             f"CRITICAL: Only reference data that was actually provided above. If no real data or findings were provided, honestly say you don't have data yet. Do NOT fabricate illustrative examples or hypothetical analysis."
         )
         

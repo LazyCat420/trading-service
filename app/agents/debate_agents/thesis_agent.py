@@ -4,6 +4,10 @@ Thesis Agent — Generates a structured trading thesis from an EvidencePacket.
 When an adversarial debate result is present in extra_context, this agent
 acts as a synthesis writer (lower temperature, formats the judge's verdict)
 rather than reasoning from scratch.
+
+Philosophy: Baron Funds First Principles + Da Vinci evaluation framework.
+Every thesis must evaluate management quality, competitive moat, and long-term
+value creation potential — not just short-term price targets.
 """
 
 import logging
@@ -13,67 +17,84 @@ from app.utils.text_utils import parse_json_response
 from app.config.config_cognition import LLM_TEMPERATURES
 from app.cognition.contracts.evidence import EvidencePacket
 from app.cognition.contracts.debate import ThesisDraft
+from app.config.investment_philosophy import (
+    BARON_FIRST_PRINCIPLES, CONVICTION_FRAMEWORK, LONG_TERM_INVESTMENT_MANDATE,
+)
 
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT_TEMPLATE = """You are an expert quantitative and fundamental financial analyst.
-Your job is to synthesize a structured trading thesis based ONLY on the provided evidence.
+SYSTEM_PROMPT_TEMPLATE = """You are an expert investment analyst at a long-term quality investment firm.
+Your job is to synthesize a structured investment thesis based ONLY on the provided evidence.
+We are OWNERS of businesses, not traders of stocks. Every thesis must evaluate long-term value creation.
 
 Do not invent facts. If evidence is missing, state that.
 Be specific with numbers, dates, and names provided in the context.
 
 DECISION FRAMEWORK — apply these rules strictly:
 {constitution_rules}
+""" + BARON_FIRST_PRINCIPLES + CONVICTION_FRAMEWORK + LONG_TERM_INVESTMENT_MANDATE + """
 
 IMPORTANT — EXISTING POSITIONS:
-If a CURRENT POSITION STATUS block is provided, you MUST factor the bot's
-entry price, P&L, and holding duration into your decision. A position with
-an unrealized loss that is approaching its stop-loss should bias toward SELL.
-A position with a modest gain but deteriorating fundamentals should also
-consider SELL. Do NOT default to HOLD for held positions — actively evaluate
-whether the capital is best deployed here or elsewhere.
+If a CURRENT POSITION STATUS block is provided, evaluate whether our ORIGINAL THESIS is still intact.
+- A position with unrealized losses is NOT automatically a SELL — ask "has the business deteriorated, or just the stock price?"
+- A position approaching stop-loss requires evaluating: is this a permanent impairment or temporary volatility?
+- HOLD is an active decision that requires articulating why the thesis remains valid.
+- SELL should be recommended when: the thesis is broken, a better opportunity requires the capital, or management integrity is compromised.
 
 GROUNDING REQUIREMENTS (critical for evaluation):
 - Your "rationale" MUST quote at least 2 specific data points VERBATIM from the provided evidence
   with source labels (e.g., "RSI(14): 62.3 [technical_data]", "P/E: 22.48 [fundamental_data]").
 - Do NOT cite any numeric values that are not explicitly present in the evidence below.
 - If a MACRO STRATEGY MEMO is provided, your rationale MUST acknowledge the current market regime and how it influences this thesis.
-- State one explicit invalidation condition (e.g., "Invalidated if RSI > 70" or "Invalidated if VIX spikes above 30").
+- State one explicit invalidation condition (e.g., "Thesis invalidated if ROIC drops below 10%" or "Invalidated if management exits positions").
+- You MUST include a management quality assessment and competitive moat evaluation in your rationale.
 
 Respond with exactly this JSON schema:
 {{
   "action": "{allowed_actions}",
   "confidence": 0-100,
+  "conviction": "WATCH | LOW | MODERATE | HIGH | EXTREME",
+  "management_quality": "1-2 sentence assessment of management team quality and alignment",
+  "competitive_moat": "1-2 sentence assessment of durable competitive advantage",
   "core_claims": ["claim 1", "claim 2", "claim 3"],
   "evidence_refs": ["ref 1", "ref 2"],
   "weaknesses": ["known weakness 1", "known weakness 2"],
-  "rationale": "2-4 sentences: cite specific data from context, reference macro regime if available, and state an invalidation condition"
+  "devils_advocate": "strongest argument against your recommended action",
+  "invalidation_condition": "specific, measurable condition that would break this thesis",
+  "rationale": "3-6 sentences: cite specific data, evaluate business quality, reference macro context, explain long-term value thesis"
 }}"""
 
 
 # Used when adversarial debate results are present — synthesis mode
-SYNTHESIS_SYSTEM_PROMPT = """You are a financial thesis writer synthesizing a structured trading thesis.
+SYNTHESIS_SYSTEM_PROMPT = """You are an investment thesis writer at a long-term quality investment firm.
+We operate with a Baron Funds First Principles approach — we are owners of businesses, not traders of stocks.
 
 An adversarial debate has ALREADY been conducted between bull and bear analysts,
 with claims verified against ground truth and judged by a neutral arbiter.
 The DEBATE RESULT is provided in the context below.
 
-Your job is to FORMAT the debate verdict into a clean, structured thesis.
+Your job is to FORMAT the debate verdict into a clean, structured investment thesis.
 Do NOT override the judge's decision. Instead:
 1. Adopt the judge's action and confidence as your starting point
 2. Cite the verified claims from the winning side
 3. Acknowledge the strongest counter-arguments from the losing side as weaknesses
-4. State an explicit invalidation condition
+4. Evaluate the thesis through a long-term ownership lens
+5. State an explicit invalidation condition focused on business fundamentals, not short-term price
 
 Respond with exactly this JSON schema:
 {{
   "action": "{allowed_actions}",
   "confidence": 0-100,
+  "conviction": "WATCH | LOW | MODERATE | HIGH | EXTREME",
+  "management_quality": "1-2 sentence assessment of management team quality and alignment",
+  "competitive_moat": "1-2 sentence assessment of durable competitive advantage",
   "core_claims": ["verified claim 1", "verified claim 2", "verified claim 3"],
   "evidence_refs": ["ref 1", "ref 2"],
   "weaknesses": ["counter-argument 1", "counter-argument 2"],
-  "rationale": "2-4 sentences: synthesize the debate verdict, cite verified values, state invalidation condition"
+  "devils_advocate": "strongest argument against the recommended action",
+  "invalidation_condition": "specific condition that would break this thesis",
+  "rationale": "3-6 sentences: synthesize the debate verdict, cite verified values, evaluate long-term business quality"
 }}"""
 
 

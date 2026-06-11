@@ -41,7 +41,7 @@ _TARGET_TO_PERSONA = {
 
 # Track delegation budget per (ticker, cycle_id)
 _delegation_counts: dict[str, int] = {}
-MAX_DELEGATIONS_PER_TICKER = 2
+MAX_DELEGATIONS_PER_TICKER = 8  # Increased from 2 to allow meaningful multi-round debates
 
 
 def extract_delegation(text: str) -> tuple[str, str] | None:

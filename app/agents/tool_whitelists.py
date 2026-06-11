@@ -73,6 +73,14 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_portfolio_state",
         "get_position_pnl",
         "get_options_flow",
+        # Coordination — risk MUST be able to communicate with other agents
+        "post_finding",
+        "read_team_findings",
+        "request_investigation",
+        "check_open_investigations",
+        # Memory — risk needs to track historical risk assessments
+        "write_memory_note",
+        "read_memory_note",
     ],
     "fund_flow": [
         "get_sec_filings",
@@ -134,6 +142,14 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "sell_stock",
         "get_cycle_context",
         "get_cycle_context_all",
+        # Coordination — pre_trade needs to see team findings before executing
+        "post_finding",
+        "read_team_findings",
+        "request_investigation",
+        "check_open_investigations",
+        # Memory — track execution decisions
+        "write_memory_note",
+        "read_memory_note",
     ],
     # ── Meta Audit Agent ──
     "meta_audit": [
@@ -148,6 +164,11 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "add_agent_note",
         "get_agent_activity_log",
         "delete_data_item",
+        # Coordination — meta_audit reviews team performance
+        "post_finding",
+        "read_team_findings",
+        "request_investigation",
+        "check_open_investigations",
     ],
     # ── Quant Research Agent ──
     "quant_research": [
@@ -316,7 +337,36 @@ Risk/validation agents get 5 turns (need to call calculators AFTER getting data)
 Audit agents get 10 turns (need to review multiple performance dimensions).
 """
 
-AGENT_BUDGET_OVERRIDES: dict[str, int] = {}
+AGENT_BUDGET_OVERRIDES: dict[str, int] = {
+    # Data collectors — fetch and format, no deep reasoning needed
+    "retriever": 5,
+    "data_janitor": 5,
+    "comparative": 3,
+    # Specialist analysts — need tool calls + reasoning
+    "sentiment": 8,
+    "technical": 6,
+    "fundamental": 8,
+    "risk": 8,
+    "fund_flow": 6,
+    "quant_research": 8,
+    # Debate agents — need multiple rounds of tool calls for evidence
+    "bull_agent": 10,
+    "bear_agent": 10,
+    # Decision / synthesis agents — need to review everything
+    "synthesizer": 8,
+    "pre_trade": 8,
+    "portfolio_allocator": 8,
+    "execution": 5,
+    # Audit / meta agents — review multiple dimensions
+    "meta_audit": 12,
+    "post_mortem": 10,
+    "verifier": 5,
+    # User chat — generous budget for interactive sessions
+    "user_chat": 20,
+}
+
+# Default budget for agents not in the override dict
+_DEFAULT_BUDGET = 9999
 
 
 def get_agent_budget_turns(agent_name: str, enable_tools: bool) -> int:
@@ -329,4 +379,6 @@ def get_agent_budget_turns(agent_name: str, enable_tools: bool) -> int:
     Returns:
         Number of max turns for the agent's budget.
     """
-    return 9999
+    if not enable_tools:
+        return 1  # No tools = single generation turn
+    return AGENT_BUDGET_OVERRIDES.get(agent_name, _DEFAULT_BUDGET)

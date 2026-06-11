@@ -4,21 +4,33 @@ from app.services.prism_agent_caller import call_prism_agent
 from app.config.config_cognition import LLM_TEMPERATURES
 from app.cognition.contracts.evidence import EvidencePacket
 from app.config.personas import get_persona_prompt
-from app.config.guardrails import ANTI_HALLUCINATION_BLOCK, PEER_ACCOUNTABILITY_BLOCK, DATA_MISSING_PROTOCOL
+from app.config.guardrails import (
+    ANTI_HALLUCINATION_BLOCK, PEER_ACCOUNTABILITY_BLOCK, DATA_MISSING_PROTOCOL,
+    DEPTH_OF_ANALYSIS_BLOCK, DEVIL_ADVOCATE_BLOCK,
+)
+from app.config.investment_philosophy import LONG_TERM_INVESTMENT_MANDATE
 
 logger = logging.getLogger(__name__)
 
 CONCLUSION_RULES_BLOCK = """
 
 [INTERACTION & CONCLUSION RULES]
-1. You are on a strict time budget. Do not pontificate.
-2. You must conclude your analysis within 2 paragraphs.
-3. You may tag ONE other agent to request a follow-up (e.g., "@Risk: Review the downside").
-4. You MUST end your output with a definitive stance using this exact format:
+1. You are on a strict time budget. Conclude within 2 paragraphs MAX.
+   CRITICAL: Do NOT waste words on filler. No "Hey team, here's what I found" or "As we all know".
+   Get straight to the data: "RSI is 37.8, stock is oversold." "P/E at 22x vs sector 18x — overvalued."
+   Every sentence must contain a data point, a conclusion, or a challenge. Zero fluff.
+2. You may tag agents to challenge or coordinate. Use these formats:
+   - @Agent: [CHALLENGE] Your specific challenge to their claim
+   - @Agent: [REQUEST_DATA] What specific data you need from them
+   - @Agent: [DEFEND] Defending your position with data
+   - DELEGATION: @Agent - a follow-up question or request
+3. You MUST end your output with a definitive stance using this exact format:
    - STANCE: [BULLISH / BEARISH / NEUTRAL]
    - CONFIDENCE: [1-100]
+   - CONVICTION: [WATCH / LOW / MODERATE / HIGH / EXTREME]
+   - DEVIL_ADVOCATE: [Strongest argument against your stance, in one sentence]
    - DELEGATION: [Tag another agent or "NONE"]
-""" + ANTI_HALLUCINATION_BLOCK + PEER_ACCOUNTABILITY_BLOCK + DATA_MISSING_PROTOCOL
+""" + LONG_TERM_INVESTMENT_MANDATE + ANTI_HALLUCINATION_BLOCK + PEER_ACCOUNTABILITY_BLOCK + DATA_MISSING_PROTOCOL + DEPTH_OF_ANALYSIS_BLOCK + DEVIL_ADVOCATE_BLOCK
 
 
 async def _run_specialized_agent(
