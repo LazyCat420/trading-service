@@ -87,11 +87,10 @@ Summary/Snippet: {summary or "No summary content."}
             ticker=ticker,
         )
         
-        cleaned = response.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("```json")[-1].split("```")[0].strip()
-            
-        draft_data = json.loads(cleaned)
+        from app.utils.text_utils import parse_json_response
+        draft_data = parse_json_response(response)
+        if not draft_data or "decision" not in draft_data:
+            raise ValueError(f"Failed to parse valid Janitor decision JSON from response: {response!r}")
         
         decision = draft_data.get("decision", "keep")
         actual_tickers = draft_data.get("actual_tickers", [ticker])
@@ -227,11 +226,10 @@ Body: {body or "No body content."}
             ticker=ticker,
         )
         
-        cleaned = response.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("```json")[-1].split("```")[0].strip()
-            
-        draft_data = json.loads(cleaned)
+        from app.utils.text_utils import parse_json_response
+        draft_data = parse_json_response(response)
+        if not draft_data or "decision" not in draft_data:
+            raise ValueError(f"Failed to parse valid Janitor decision JSON from response: {response!r}")
         
         decision = draft_data.get("decision", "keep")
         actual_tickers = draft_data.get("actual_tickers", [ticker])

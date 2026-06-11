@@ -469,11 +469,10 @@ Active Narrative Themes:
                 ),
                 timeout=60.0,
             )
-            cleaned = response.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("```json")[-1].split("```")[0].strip()
-                
-            adj_data = json.loads(cleaned)
+            from app.utils.text_utils import parse_json_response
+            adj_data = parse_json_response(response)
+            if not adj_data or "pillars" not in adj_data:
+                raise ValueError(f"Failed to parse valid pillars JSON from response: {response!r}")
             adj_pillars = adj_data.get("pillars", {})
             for pk in ["edge", "risk", "regime"]:
                 if pk in adj_pillars:
