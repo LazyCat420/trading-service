@@ -492,6 +492,7 @@ async def run_prism_agent(
         # Record tool optimization stats for Prism-routed agents.
         # Prism's JSON response includes toolCalls (names of tools that were called).
         # We extract actual used tool names for accurate optimization tracking.
+        _prism_tool_history = []
         try:
             # Extract tool call names from Prism's response
             prism_tool_calls = result_data.get("toolCalls", [])
@@ -558,6 +559,22 @@ async def run_prism_agent(
                 tc.get("name", "") for tc in prism_tool_calls
                 if isinstance(tc, dict) and tc.get("name")
             ]
+
+            # Build tool_history for cross-examiner (matches local executor format)
+            _prism_tool_history = []
+            for tc in prism_tool_calls:
+                if isinstance(tc, dict) and tc.get("name"):
+                    tc_name = tc.get("name", "unknown")
+                    tc_args = json.dumps(tc.get("arguments", tc.get("args", {})))
+                    tc_output = ""
+                    tc_result_data = tc.get("result", tc.get("output", ""))
+                    if isinstance(tc_result_data, dict):
+                        tc_output = json.dumps(tc_result_data)
+                    elif isinstance(tc_result_data, str):
+                        tc_output = tc_result_data
+                    _prism_tool_history.append(
+                        f"### Tool Call: {tc_name}({tc_args})\n{tc_output[:5000]}"
+                    )
 
             # Publish tool call events to telemetry bus
             try:
@@ -701,6 +718,7 @@ async def run_prism_agent(
             execution_ms=elapsed_ms,
             conversation_id=conversation_id,
             routed_via="prism",
+            tool_history=_prism_tool_history,
         ).to_dict()
 
 

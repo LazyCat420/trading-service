@@ -242,12 +242,13 @@ class TestDebateToolBudget:
     """Ensure debate agents respect reduced tool turn budgets."""
 
     def test_debate_max_tool_turns_default(self):
-        """DEBATE_MAX_TOOL_TURNS should default to 1 (reduced from 3)."""
+        """DEBATE_MAX_TOOL_TURNS should default to 3 (enough for verify, counter, conclude)."""
         from app.config.config_cognition import cognition_settings
 
-        assert cognition_settings.DEBATE_MAX_TOOL_TURNS <= 2, (
+        assert cognition_settings.DEBATE_MAX_TOOL_TURNS <= 5, (
             f"DEBATE_MAX_TOOL_TURNS is {cognition_settings.DEBATE_MAX_TOOL_TURNS}. "
-            "This should be 1-2 to prevent excessive LLM calls in debates."
+            "This should be 3-5 to allow agents to verify claims with tools "
+            "without running excessive LLM calls."
         )
 
     def test_fast_debate_mode_enabled(self):
