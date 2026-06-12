@@ -48,6 +48,9 @@ pytz==2026.1.post1
 # Math / Scientific Computing (Brain Graph)
 numpy>=1.26.0
 
+# Token Counting (accurate context window budgeting)
+tiktoken>=0.7.0
+
 # Runtime Toolbelt
 tenacity>=8.5.0
 structlog>=24.4.0

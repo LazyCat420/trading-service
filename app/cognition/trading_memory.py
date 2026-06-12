@@ -137,6 +137,17 @@ class TradingMemory:
         if content in self._entries[target]:
             return {"success": False, "message": "Duplicate entry"}
 
+        # Guard: reject entries that are actually error/warning messages
+        # (e.g., "⚠️ The model's response was cut short because max_tokens...")
+        from app.utils.poison_guard import is_poisoned_response
+        if is_poisoned_response(content):
+            logger.warning(
+                "[MEMORY] Rejected poisoned entry for %s: %s",
+                target,
+                content[:100],
+            )
+            return {"success": False, "message": "Rejected: error/warning text, not real content"}
+
         new_size = self._char_count(target)
         if new_size > 0:
             new_size += len(f" {ENTRY_DELIMITER}\n") + len(content)

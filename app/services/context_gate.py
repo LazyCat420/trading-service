@@ -22,13 +22,15 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 # ── Token Estimation Constants ─────────────────────────────────────────
-# Rough heuristic: 1 token ≈ 4 characters for English text.
-# Consistent with context_budget.py's CHARS_PER_TOKEN = 4.
+# Fallback heuristic: 1 token ≈ 4 characters for English text.
+# Used only when tiktoken is unavailable.
 CHARS_PER_TOKEN = 4
 
 # Safety margin to account for tokenizer variance, Prism's own overhead
 # (session metadata, tool call formatting, MCP prefixes, enabledTools list, etc.)
-SAFETY_MARGIN_TOKENS = 2000
+# Raised from 2,000 → 10,000 to absorb Prism Gateway's invisible overhead
+# which can add 2-4K tokens that our pre-flight measurement cannot see.
+SAFETY_MARGIN_TOKENS = 10000
 
 # Maximum output tokens we'll ever request, even if budget allows more.
 # Most agent responses are well under 4K tokens; 8,192 is generous.
@@ -36,6 +38,35 @@ OUTPUT_CEILING = 8192
 
 # Minimum output tokens — if we can't afford this, the request is too big.
 OUTPUT_FLOOR = 512
+
+# ── tiktoken Encoder (lazy-loaded singleton) ───────────────────────────
+# o200k_base is a good general-purpose BPE encoding that closely
+# approximates Qwen's tokenizer (within ~5-10% for English/JSON text).
+# Falls back to the chars heuristic if tiktoken isn't installed.
+_tiktoken_encoder = None
+_tiktoken_available = None
+
+
+def _get_tiktoken_encoder():
+    """Lazy-load the tiktoken encoder singleton."""
+    global _tiktoken_encoder, _tiktoken_available
+    if _tiktoken_available is None:
+        try:
+            import tiktoken
+            _tiktoken_encoder = tiktoken.get_encoding("o200k_base")
+            _tiktoken_available = True
+            logger.info("[CONTEXT_GATE] tiktoken o200k_base encoder loaded — using accurate token counting")
+        except ImportError:
+            _tiktoken_available = False
+            logger.warning(
+                "[CONTEXT_GATE] tiktoken not installed — falling back to %d chars/token heuristic. "
+                "Install tiktoken>=0.7.0 for accurate token counting.",
+                CHARS_PER_TOKEN,
+            )
+        except Exception as e:
+            _tiktoken_available = False
+            logger.warning("[CONTEXT_GATE] tiktoken init failed: %s — using heuristic", e)
+    return _tiktoken_encoder
 
 
 # ── Data Structures ────────────────────────────────────────────────────
@@ -80,10 +111,22 @@ class ContextBudgetExceeded(Exception):
 # ── Core Measurement Functions ─────────────────────────────────────────
 
 def estimate_tokens(text: str) -> int:
-    """Fast heuristic token estimation (~4 chars per token)."""
+    """Estimate token count using tiktoken (accurate) or chars heuristic (fallback).
+
+    tiktoken's o200k_base encoding gives ~5-10% accuracy for Qwen models,
+    versus the 4-chars heuristic which can be off by 20-40% for financial
+    data with lots of numbers, JSON brackets, and special characters.
+    """
     if not text:
         return 0
-    return max(1, len(str(text)) // CHARS_PER_TOKEN)
+    text = str(text)
+    enc = _get_tiktoken_encoder()
+    if enc is not None:
+        try:
+            return len(enc.encode(text, disallowed_special=()))
+        except Exception:
+            pass  # Fall through to heuristic
+    return max(1, len(text) // CHARS_PER_TOKEN)
 
 
 def measure_messages(messages: list[dict]) -> tuple[int, int, int]:

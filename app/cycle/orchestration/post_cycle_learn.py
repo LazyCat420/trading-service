@@ -76,6 +76,17 @@ async def maybe_learn(
             logger.debug("[LEARN] %s: LLM returned SKIP", ticker)
             return
 
+        # Guard: reject responses that are actually error/warning messages
+        # (e.g., "response was cut short because max_tokens limit was reached")
+        from app.utils.poison_guard import is_poisoned_response
+        if is_poisoned_response(cleaned):
+            logger.warning(
+                "[LEARN] %s: Rejected poisoned response (error text, not a real lesson): %s",
+                ticker,
+                cleaned[:100],
+            )
+            return
+
         # Truncate to 400 chars
         lesson = cleaned[:400]
 

@@ -200,6 +200,15 @@ async def _llm_consolidate(lesson_texts: list[str]) -> str | None:
 
         unified = response_text.strip() if response_text else ""
         if len(unified) > 5:
+            # Guard: reject consolidated text that is actually an error message
+            from app.utils.poison_guard import is_poisoned_response
+            if is_poisoned_response(unified):
+                logger.warning(
+                    "[CONSOLIDATION] Rejected poisoned consolidation output: %s",
+                    unified[:100],
+                )
+                return None
+
             logger.info(
                 "[CONSOLIDATION] Unified %d lessons → '%s'",
                 len(lesson_texts),

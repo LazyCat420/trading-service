@@ -231,5 +231,14 @@ def get_context_budget(model_id: str | None = None) -> ContextBudget:
 
 
 def estimate_tokens(text: str) -> int:
-    """Fast heuristic token estimation (~4 chars per token)."""
-    return len(str(text)) // CHARS_PER_TOKEN
+    """Fast token estimation — delegates to context_gate's tiktoken-based counter.
+
+    Uses tiktoken o200k_base when available (~5ms for 100K chars),
+    falling back to the 4-chars-per-token heuristic.
+    """
+    try:
+        from app.services.context_gate import estimate_tokens as _gate_estimate
+        return _gate_estimate(text)
+    except ImportError:
+        # Fallback if context_gate has a circular import issue
+        return len(str(text)) // CHARS_PER_TOKEN
