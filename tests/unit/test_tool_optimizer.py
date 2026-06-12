@@ -66,3 +66,42 @@ async def test_record_tool_optimization_usage():
         
         # Verify db insert/update was called
         assert mock_db.execute.call_count > 0
+
+
+@pytest.mark.asyncio
+async def test_record_tool_optimization_usage_mcp_normalization():
+    mock_db = MagicMock()
+    mock_db.fetchall.return_value = [
+        ("get_market_data", 1, "active"),
+        ("get_financial_ratios", 3, "highlighted")
+    ]
+    
+    offered_tools = [
+        {"function": {"name": "get_market_data"}},
+        {"function": {"name": "get_financial_ratios"}},
+    ]
+    
+    # Used names come from Prism-routed tool calls and have MCP prefixes
+    used_tool_names = [
+        "mcp__lazy-tool-service__get_market_data",
+        "mcp__lazy-tools__get_financial_ratios"
+    ]
+    
+    with patch("app.services.tool_optimizer.get_db") as mock_get_db:
+        mock_get_db.return_value.__enter__.return_value = mock_db
+        
+        await record_tool_optimization_usage(
+            agent_name="test_agent",
+            offered_tools=offered_tools,
+            used_tool_names=used_tool_names
+        )
+        
+        # Verify that both tools were treated as "used" (reset to unused_count=0, status=active)
+        calls = mock_db.execute.call_args_list
+        upsert_params = [c[0][1] for c in calls if len(c[0]) > 1 and "INSERT INTO agent_tool_optimization" in c[0][0]]
+        assert len(upsert_params) == 2
+        for params in upsert_params:
+            # params = (agent_name, tool_name, new_unused_count, new_status)
+            assert params[2] == 0  # unused_count reset
+            assert params[3] == "active"  # status reset to active
+
