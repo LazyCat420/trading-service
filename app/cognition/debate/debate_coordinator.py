@@ -35,6 +35,7 @@ from app.services.logging.tracer import trace_span
 from app.config.investment_philosophy import (
     BARON_FIRST_PRINCIPLES, CONVICTION_FRAMEWORK, LONG_TERM_INVESTMENT_MANDATE,
 )
+from app.agents.custom.debate_cross_examiner import IDENTITY as CROSS_EXAM_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +321,7 @@ async def _run_biased_agent(
     debate_cache: dict[str, str] | None = None,
     portfolio_dashboard: str = "",
     stream_callback: Callable[[str], None] | None = None,
+    temperature: float = 0.4,
 ) -> tuple[str, int, list[str]]:
     """Run a single biased analyst agent with tool usage capability."""
     if override_user_prompt:
@@ -465,17 +467,22 @@ async def _run_biased_agent(
             if prism_healthy:
                 from app.tools.prism_agent_harness import run_prism_agent
                 logger.info("[Debate] Routing %s agentic loop to Prism /agent", agent_name)
+                # Inject debate_cache into user_prompt so Prism agents see prior research
+                prism_user_prompt = user_prompt
+                if debate_cache:
+                    prior_research = "\n".join(f"### {k}\n{v}" for k, v in debate_cache.items())
+                    prism_user_prompt = f"{user_prompt}\n\n## Prior Research From This Debate:\n{prior_research}\n\nContinue your analysis."
                 result = await asyncio.wait_for(
                     run_prism_agent(
                         system_prompt=system_prompt,
-                        user_prompt=user_prompt,
+                        user_prompt=prism_user_prompt,
                         ticker=entity_id,
                         agent_name=agent_name,
                         cycle_id=cycle_id,
                         bot_id=bot_id,
                         priority=Priority.NORMAL,
                         tools_override=allowed_tools,
-                        temperature=LLM_TEMPERATURES.get(agent_name, 0.4),
+                        temperature=temperature,
                         max_tokens=4096,
                         actor_label=agent_name,
                     ),
@@ -484,7 +491,7 @@ async def _run_biased_agent(
                 return (
                     result.get("final_text", "").strip(),
                     result.get("token_usage", 0),
-                    [],  # tool_history is not populated for Prism-delegated runs
+                    result.get("tool_history", []),
                 )
         except asyncio.TimeoutError:
             logger.warning("[Debate] Prism routing TIMEOUT for %s — falling back to local vLLM", agent_name)
@@ -497,7 +504,7 @@ async def _run_biased_agent(
             result = await llm.chat_with_tools(
                 messages=messages,
                 tools=allowed_tools,
-                temperature=LLM_TEMPERATURES.get(agent_name, 0.4),
+                temperature=temperature,
                 max_tokens=4096,
                 priority=Priority.NORMAL,
                 agent_name=agent_name,
@@ -549,7 +556,8 @@ async def _run_biased_agent(
                 return final_response.strip(), total_tokens, tool_history
 
             # Early-warning on second-to-last turn
-            if turn_idx == max_tool_turns - 2:
+            # Only fire when there are 3+ turns (avoids firing on first turn when max=2)
+            if max_tool_turns >= 3 and turn_idx == max_tool_turns - 2:
                 messages.append(
                     {
                         "role": "user",
@@ -626,7 +634,7 @@ async def _run_biased_agent(
                     forced_result = await llm.chat_with_tools(
                         messages=messages,
                         tools=None,
-                        temperature=LLM_TEMPERATURES.get(agent_name, 0.4),
+                        temperature=temperature,
                         max_tokens=2048,
                         priority=Priority.NORMAL,
                         agent_name=agent_name,
@@ -671,7 +679,7 @@ async def _run_biased_agent(
                 forced_result = await llm.chat_with_tools(
                     messages=messages,
                     tools=None,  # No tools — force text output
-                    temperature=LLM_TEMPERATURES.get(agent_name, 0.4),
+                    temperature=temperature,
                     max_tokens=2048,
                     priority=Priority.NORMAL,
                     agent_name=agent_name,
@@ -964,8 +972,10 @@ async def run_adversarial_debate(
                 len(packet.structured_facts),
             )
 
-            # Resolve persona-specific temperature
+            # Resolve persona-specific temperature (includes confirmation loop boost)
             _p_temps = PERSONA_TEMPERATURES.get(persona_name, {})
+            _bull_temp = min(_p_temps.get("bull", 0.4) + _temp_boost, 1.0)
+            _bear_temp = min(_p_temps.get("bear", 0.4) + _temp_boost, 1.0)
 
             # Enforce rule: Agents MUST use tools in debate!
             tool_enforcement = (
@@ -1008,6 +1018,7 @@ async def run_adversarial_debate(
                 debate_cache=_debate_cache,
                 portfolio_dashboard=portfolio_dashboard,
                 stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bull_t1", chunk, status="streaming", append=True) if ctx else None,
+                temperature=_bull_temp,
             )
             b_tok += tok1
 
@@ -1027,6 +1038,7 @@ async def run_adversarial_debate(
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
                     stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t2", chunk, status="streaming", append=True) if ctx else None,
+                    temperature=_bear_temp,
                 )
                 br_tok += tok2
 
@@ -1049,6 +1061,7 @@ async def run_adversarial_debate(
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
                     stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bull_t3", chunk, status="streaming", append=True) if ctx else None,
+                    temperature=_bull_temp,
                 )
                 b_tok += tok3
 
@@ -1071,6 +1084,7 @@ async def run_adversarial_debate(
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
                     stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t4", chunk, status="streaming", append=True) if ctx else None,
+                    temperature=_bear_temp,
                 )
                 br_tok += tok4
 
@@ -1096,6 +1110,7 @@ async def run_adversarial_debate(
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
                     stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t2", chunk, status="streaming", append=True) if ctx else None,
+                    temperature=_bear_temp,
                 )
                 br_tok += tok2
 
@@ -1118,6 +1133,7 @@ async def run_adversarial_debate(
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
                     stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bull_t3", chunk, status="streaming", append=True) if ctx else None,
+                    temperature=_bull_temp,
                 )
                 b_tok += tok3
 
@@ -1140,6 +1156,7 @@ async def run_adversarial_debate(
                     debate_cache=_debate_cache,
                     portfolio_dashboard=portfolio_dashboard,
                     stream_callback=lambda chunk: ctx.safe_emit("analyzing", f"v2_debate_{ticker}_{persona_name}_bear_t4", chunk, status="streaming", append=True) if ctx else None,
+                    temperature=_bear_temp,
                 )
                 br_tok += tok4
 

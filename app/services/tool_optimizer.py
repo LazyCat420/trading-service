@@ -8,6 +8,14 @@ logger = logging.getLogger(__name__)
 # Prevents zombie state where agents have 0 tools and hang in Prism.
 MIN_TOOLS_FLOOR = 2
 
+# ── MCP prefixes to strip for canonical tool names ──
+# Must stay in sync with app/services/logging/tool_logging.py
+_MCP_PREFIXES = (
+    "mcp__lazy-tool-service__",
+    "mcp__lazy-tools__",
+    "mcp_",
+)
+
 # ── Reputation thresholds ──
 # Tools below these success rates get warnings injected into agent prompts
 REPUTATION_UNRELIABLE_THRESHOLD = 0.6   # success_rate < 60% → warning
@@ -336,12 +344,15 @@ async def record_tool_optimization_usage(
     if not offered_names:
         return
 
-    # Clean/normalize used tool names (in case of prefixes like mcp__lazy-tool-service__)
+    # Clean/normalize used tool names — strip ALL known MCP prefixes
+    # so Prism-routed tool calls match the canonical offered tool names.
     cleaned_used_names = set()
     for name in used_tool_names:
         clean_name = name
-        if "mcp__lazy-tool-service__" in name:
-            clean_name = name.replace("mcp__lazy-tool-service__", "")
+        for prefix in _MCP_PREFIXES:
+            if clean_name.startswith(prefix):
+                clean_name = clean_name[len(prefix):]
+                break
         cleaned_used_names.add(clean_name)
 
     try:
@@ -447,15 +458,19 @@ def reset_all_pruned() -> int:
     """
     try:
         with get_db() as db:
+            # Count pruned rows BEFORE updating so we report the actual number reset
             db.execute(
-                "UPDATE agent_tool_optimization SET status = 'active', unused_count = 0 "
-                "WHERE status = 'pruned'"
+                "SELECT COUNT(*) FROM agent_tool_optimization WHERE status = 'pruned'"
             )
-            # Get count of affected rows
-            db.execute("SELECT COUNT(*) FROM agent_tool_optimization WHERE status = 'active' AND unused_count = 0")
             row = db.fetchone()
             count = row[0] if row else 0
-            logger.info("[ToolOptimizer] Reset pruned tools → all set to 'active' (affected ~%d rows)", count)
+
+            if count > 0:
+                db.execute(
+                    "UPDATE agent_tool_optimization SET status = 'active', unused_count = 0 "
+                    "WHERE status = 'pruned'"
+                )
+            logger.info("[ToolOptimizer] Reset %d pruned tools → 'active'", count)
             return count
     except Exception as e:
         logger.warning("[ToolOptimizer] Failed to reset pruned tools: %s", e)

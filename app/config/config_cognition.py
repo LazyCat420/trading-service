@@ -21,7 +21,7 @@ class CognitionSettings(BaseSettings):
     # Layer 3: Debate & Adjudication (Dev 3)
     ENABLE_DEBATE_REFINEMENT: bool = True
     DEBATE_ENABLED: bool = True  # toggle adversarial bull/bear debate
-    DEBATE_MAX_TOOL_TURNS: int = 1  # max tool-calling turns per debate agent (reduced from 3 — agents already have evidence packet)
+    DEBATE_MAX_TOOL_TURNS: int = 3  # max tool-calling turns per debate agent (allows verify, counter, conclude)
     CLAIM_REJECT_THRESHOLD: int = 8  # max unverified claims before LOW_INTEGRITY (3 personas × 4 turns = 24 agent turns)
     FAST_DEBATE_MODE: bool = True  # Halve debate latency with capped prompt sizes
     MAX_DEBATE_HISTORY_AGE_HOURS: int = 4  # Don't use debates older than this for context
@@ -39,15 +39,16 @@ class CognitionSettings(BaseSettings):
 cognition_settings = CognitionSettings()
 
 # Static Data - Not overridable via environment variables
+# NOTE: Per-persona debate temperatures are defined in PERSONA_TEMPERATURES
+# (debate_coordinator.py) and passed explicitly — not looked up by agent_name.
 LLM_TEMPERATURES = {
     "thesis_generation": 0.5,
     "debate": 0.7,
     "creative": 0.8,
     "factual": 0.0,
-    # Adversarial debate agents
-    "bull_agent": 0.4,
-    "bear_agent": 0.4,
+    # Adversarial debate support agents (not persona agents — those use PERSONA_TEMPERATURES)
     "cross_examiner": 0.2,
     "debate_judge": 0.2,
     "thesis_synthesis": 0.3,
 }
+

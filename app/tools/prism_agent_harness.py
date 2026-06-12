@@ -46,12 +46,14 @@ class PrismAgentResult:
         execution_ms: int,
         conversation_id: str,
         routed_via: str,  # "prism" or "local_fallback"
+        tool_history: list[str] | None = None,
     ):
         self.final_text = final_text
         self.token_usage = token_usage
         self.execution_ms = execution_ms
         self.conversation_id = conversation_id
         self.routed_via = routed_via
+        self.tool_history = tool_history or []
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +62,7 @@ class PrismAgentResult:
             "execution_ms": self.execution_ms,
             "conversation_id": self.conversation_id,
             "routed_via": self.routed_via,
+            "tool_history": self.tool_history,
         }
 
 
