@@ -1,13 +1,52 @@
+# ─── Python ───────────────────────────────────────────────────
 __pycache__/
 *.pyc
+*.pyo
 .env
 .venv/
 venv/
-.deploy-logs/
-d:
 .pytest_cache/
 .deepeval/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# ─── Node ─────────────────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ─── Build / Deploy ──────────────────────────────────────────
+.deploy-logs/
+dist/
+build/
+
+# ─── Logs & Output ───────────────────────────────────────────
+*.log
+*_logs.txt
+*_tail.txt
+*_out.txt
+docker_logs.txt
+out.txt
 cycle_run.log
+
+# ─── Data / Runtime Artifacts ────────────────────────────────
 scratch/
 logs/
+logs_local/
 data/
+memory/
+plans/
+reports/
+test_mkdir_exist/
+
+# ─── Debug & Query Scripts (local-only utilities) ────────────
+scripts/debug/
+scripts/migrations/
+
+# ─── Generated Files ────────────────────────────────────────
+tool_schemas.json
+
+# ─── OS / IDE ────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
