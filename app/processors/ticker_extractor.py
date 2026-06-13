@@ -506,6 +506,13 @@ FINANCIAL_CONTEXT = {
     "volume",
     "report",
     "reporting",
+    "beat",
+    "beats",
+    "expectations",
+    "miss",
+    "misses",
+    "estimate",
+    "estimates",
 }
 
 # ─────────────────────────────────────────────

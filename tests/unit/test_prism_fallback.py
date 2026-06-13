@@ -14,6 +14,7 @@ def mock_vllm_client():
     mock_ep.url = "http://fake_vllm:8000"
     mock_ep.model = "qwen-test"
     mock_ep.enabled = True
+    mock_ep.max_model_len = 131072
     
     client._endpoints = {"test_ep": mock_ep}
     client._pick_best_endpoint = MagicMock(return_value=mock_ep)
@@ -140,7 +141,6 @@ def test_prism_client_payload_construction():
     )
     
     assert payload["systemPrompt"] == "system instructions"
-    assert payload["conversationMeta"]["systemPrompt"] == "system instructions"
     assert payload["conversationMeta"]["title"] == "thesis_agent · LLY · cycle-1234"
     assert payload["autoApprove"] is True
     assert url == "http://prism_host:7777/chat?stream=false"

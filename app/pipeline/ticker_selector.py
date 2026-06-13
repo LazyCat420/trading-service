@@ -175,6 +175,15 @@ class TickerSelector:
             except Exception as e:
                 logger.warning("[SELECTOR] Failed to fetch open positions: %s", e)
 
+        # ── 1.2. Fetch banned tickers from database ──
+        banned_tickers: set[str] = set()
+        with get_db() as db:
+            try:
+                banned_rows = db.execute("SELECT ticker FROM ticker_bans").fetchall()
+                banned_tickers = {r[0].upper().strip() for r in banned_rows}
+            except Exception as e:
+                logger.warning("[SELECTOR] Failed to fetch banned tickers: %s", e)
+
         # ── 1.5. Fetch 24-Hour Cooldown & Last Completed Cycle Tickers ──
         recent_analyzed: set[str] = set()
         material_change_overrides: set[str] = set()
@@ -263,6 +272,9 @@ class TickerSelector:
                 if t in _BLOCKED:
                     logger.info("[SELECTOR] Blocking requested ticker %s — in FALSE_TICKERS", t)
                     continue
+                if t in banned_tickers:
+                    logger.info("[SELECTOR] Blocking requested ticker %s — in ticker_bans", t)
+                    continue
                 if t not in position_tickers and len(non_position) < non_position_slots:
                     non_position.add(t)
 
@@ -277,6 +289,9 @@ class TickerSelector:
                         t_val = r[0]
                         if t_val in _BLOCKED:
                             logger.info("[SELECTOR] Blocking watchlist ticker %s — in FALSE_TICKERS", t_val)
+                            continue
+                        if t_val in banned_tickers:
+                            logger.info("[SELECTOR] Blocking watchlist ticker %s — in ticker_bans", t_val)
                             continue
                         if t_val not in position_tickers and len(non_position) < non_position_slots:
                             if t_val not in recent_analyzed:
@@ -332,7 +347,7 @@ class TickerSelector:
                 with get_db() as db:
                     candidates = db.execute(query, params).fetchall()
             except Exception as e:
-                logger.warning("[SELECTOR] Failed to query discovered_tickers: %s", e)
+                logger.warning("[SELECTOR] Failed to query DB for candidates: %s", e)
                 candidates = []
 
             # Fast Ticker Validation (Discovery Only) ──
@@ -347,6 +362,8 @@ class TickerSelector:
                 if bool(re.search(r"[0-9\-]", t)):
                     return False
                 if t in FALSE_TICKERS:
+                    return False
+                if t in banned_tickers:
                     return False
                 return True
 

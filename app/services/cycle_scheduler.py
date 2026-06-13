@@ -549,6 +549,24 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register LLM Janitor job: %s", e
                 )
 
+            # ── Background Ticker Validation ──
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_background_validation,
+                    trigger=IntervalTrigger(minutes=5, timezone=local_tz),
+                    id="background_validation",
+                    replace_existing=True,
+                    misfire_grace_time=300,
+                    coalesce=True,
+                )
+                logger.info(
+                    "[SCHEDULER] Registered background ticker validation (interval: 5m)"
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register background ticker validation: %s", e
+                )
+
     @staticmethod
     async def _run_background_stop_loss():
         """Run stop loss, take profit, and custom trigger checks for the active bot."""
@@ -608,6 +626,18 @@ class SchedulerService:
             await generate_flash_briefing(report_type=report_type)
         except Exception as e:
             logger.error(f"[SCHEDULER] Flash briefing ({report_type or 'auto'}) generation failed: {e}")
+
+    @staticmethod
+    async def _run_background_validation():
+        """Run validation on pending tickers."""
+        if cycle_control.is_paused:
+            logger.info("[SCHEDULER] Skipping background ticker validation: System is PAUSED.")
+            return
+        try:
+            from app.validation.runner import run_validation_batch
+            await run_validation_batch()
+        except Exception as e:
+            logger.error("[SCHEDULER] Background ticker validation failed: %s", e)
 
     @staticmethod
     def stop():

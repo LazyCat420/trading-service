@@ -278,3 +278,36 @@ def test_ticker_selector_small_cap_tuning_and_multi_cycle_cooldown(mock_get_acti
     assert "LIMIT 1" in limit_queries[2]
 
 
+@patch("app.pipeline.ticker_selector.get_db")
+@patch("app.services.bot_manager.get_active_bot_id")
+def test_ticker_selector_ban_filtering(mock_get_active_bot_id, mock_get_db):
+    """Verify that tickers in ticker_bans are filtered out by TickerSelector."""
+    mock_get_active_bot_id.return_value = "test-bot"
+    mock_db = MagicMock()
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    
+    def side_effect_execute(query, params=None):
+        mock_cursor = MagicMock()
+        if "information_schema" in query:
+            mock_cursor.fetchone.return_value = (1,)
+        elif "position_lots" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "watchlist" in query:
+            mock_cursor.fetchall.return_value = [("GOOG",), ("TSLA",)]
+        elif "ticker_bans" in query:
+            mock_cursor.fetchall.return_value = [("TSLA",)]
+        elif "discovered_tickers" in query:
+            mock_cursor.fetchall.return_value = [("NVDA", 100, "large", True, "2000-01-01")]
+        else:
+            mock_cursor.fetchall.return_value = []
+        return mock_cursor
+
+    mock_db.execute.side_effect = side_effect_execute
+    
+    res = TickerSelector.select_tickers_for_cycle_v2([], cap=50)
+    
+    assert "GOOG" in res.non_position_tickers
+    assert "NVDA" in res.non_position_tickers
+    assert "TSLA" not in res.non_position_tickers # TSLA is banned, should be filtered out!
+
+

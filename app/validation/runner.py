@@ -9,7 +9,7 @@ from app.validation.models import ValidationResult, ValidationStatus, Quarantine
 
 logger = logging.getLogger(__name__)
 
-def run_validation_batch(batch_size: int = 50):
+async def run_validation_batch(batch_size: int = 50):
     """Run validation on a batch of pending tickers."""
     tickers = get_pending_retries()
     
@@ -19,7 +19,7 @@ def run_validation_batch(batch_size: int = 50):
     
     for ticker in tickers_to_process:
         try:
-            result = validate_ticker(ticker)
+            result = await validate_ticker(ticker)
             
             # Handle rate limiting logic
             if result.status == ValidationStatus.PENDING and result.reason == QuarantineReason.RATE_LIMIT_EXCEEDED:

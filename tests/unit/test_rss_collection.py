@@ -17,8 +17,14 @@ import datetime
 import hashlib
 import re
 from unittest.mock import MagicMock, AsyncMock, patch
-
 import pytest
+from app.processors.ticker_extractor import _registry
+
+@pytest.fixture(autouse=True)
+def setup_registry():
+    _registry.load()
+    yield
+
 
 
 # ---------------------------------------------------------------------------
