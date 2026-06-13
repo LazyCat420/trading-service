@@ -128,7 +128,102 @@ def parse_json_response(text: str) -> dict:
     except (json.JSONDecodeError, TypeError):
         pass
 
+    # Extract malformed text response
+    try:
+        fallback_data = parse_malformed_text_response(cleaned)
+        if fallback_data and "action" in fallback_data:
+            logger.info("[TEXT_UTILS] Successfully extracted malformed text response fields: %s", list(fallback_data.keys()))
+            return fallback_data
+    except Exception as e:
+        logger.debug("[TEXT_UTILS] Fallback text parser failed: %s", e)
+
     return {}
+
+
+def parse_malformed_text_response(text: str) -> dict:
+    """Fallback parser that extracts keys from markdown or plain text responses
+    when standard JSON parsing fails.
+    """
+    res = {}
+    text_lower = text.lower()
+    
+    # Extract action/decision
+    action_patterns = [
+        r"(?:bias|recommendation|action|decision|verdict)\s*\|?\s*\*?\*?\s*([^|\n:]+)",
+        r"(?:bias|recommendation|action|decision|verdict)\s*:\s*([^|\n]+)",
+    ]
+    for pattern in action_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            val = match.group(1).strip().upper()
+            val = re.sub(r"[.!\*`#]", "", val).strip()
+            if "/" in val:
+                val = val.split("/")[0].strip()
+            if val in ("BUY", "SELL", "HOLD"):
+                res["action"] = val
+                break
+                
+    # Extract confidence
+    confidence_patterns = [
+        r"confidence\s*\|?\s*\*?\*?\s*(\d+)\s*%",
+        r"confidence\s*:\s*(\d+)",
+        r"(\d+)\s*%\s*confidence",
+    ]
+    for pattern in confidence_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            res["confidence"] = int(match.group(1))
+            break
+            
+    # Extract other text fields
+    fields = {
+        "rationale": ["rationale", "investment thesis", "synthesis"],
+        "conviction": ["conviction"],
+        "management_quality": ["management_quality", "management quality", "management assessment"],
+        "competitive_moat": ["competitive_moat", "competitive moat", "moat"],
+        "invalidation_condition": ["invalidation_condition", "invalidation condition", "invalidation"],
+        "devils_advocate": ["devils_advocate", "devils advocate", "devil's advocate", "bear case", "counter-argument"],
+    }
+    
+    for key, markers in fields.items():
+        for marker in markers:
+            table_match = re.search(r"(?:^|\n)\s*\|\s*\*?\*?" + re.escape(marker) + r"\*?\*?\s*\|\s*([^|\n]+)", text, re.IGNORECASE)
+            if table_match:
+                res[key] = table_match.group(1).strip()
+                break
+            header_match = re.search(r"(?:^|\n)\s*#+\s*" + re.escape(marker) + r"\s*\n+([^#]+)", text, re.IGNORECASE)
+            if header_match:
+                res[key] = header_match.group(1).strip()
+                break
+            colon_match = re.search(r"(?:^|\n)\s*(?:\*\*|\*)?" + re.escape(marker) + r"(?:\*\*|\*)?\s*:\s*([^\n]+)", text, re.IGNORECASE)
+            if colon_match:
+                res[key] = colon_match.group(1).strip()
+                break
+
+    # Extract list fields
+    list_fields = {
+        "core_claims": ["core_claims", "core claims", "claims", "verified claims", "key points"],
+        "weaknesses": ["weaknesses", "risks", "counter-arguments"],
+        "evidence_refs": ["evidence_refs", "evidence refs", "references", "refs"],
+    }
+    
+    for key, markers in list_fields.items():
+        for marker in markers:
+            header_match = re.search(r"(?:^|\n)\s*#+\s*" + re.escape(marker) + r"\s*\n+([^#]+)", text, re.IGNORECASE)
+            if header_match:
+                block = header_match.group(1).strip()
+                items = re.findall(r"^\s*[-*•\d\.]+\s*(.+)$", block, re.MULTILINE)
+                if items:
+                    res[key] = [item.strip() for item in items]
+                    break
+            json_list_match = re.search(r"\"" + re.escape(marker) + r"\"\s*:\s*\[([^\]]+)\]", text, re.IGNORECASE)
+            if json_list_match:
+                items = re.findall(r"\"([^\"]+)\"", json_list_match.group(1))
+                if items:
+                    res[key] = [item.strip() for item in items]
+                    break
+
+    return res
 
 
 def sanitize_ascii(text: str) -> str:
