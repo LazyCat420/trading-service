@@ -31,9 +31,9 @@ _VOICE_ANTI_FABRICATION = (
     "An honest 'I got nothing' is always better than fabricated analysis."
 )
 _VOICE_DIRECTNESS = (
-    " Keep it to 1-2 sentences MAX. Lead with the data, then your conclusion. "
+    " Be conversational but thorough. Lead with the data, then your conclusion. "
     "NO filler. NO 'Hey team' or 'As we know'. "
-    "GOOD: 'Aris, RSI is 37 — oversold. Entry timing looks favorable.' "
+    "GOOD: 'Aris, RSI is 37 — oversold. Entry timing looks favorable. Given the macroeconomic headwinds, we should...' "
     "BAD: 'Hey everyone, I've been looking at the charts and after careful analysis...'"
 )
 _VOICE_SUFFIXES = {
@@ -199,7 +199,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
             f"Tool/Action: {tool}\n"
             f"Result: {action_result}\n"
             f"{finding_context}\n"
-            f"State your finding directly to a teammate in 1-2 sentences. NO filler, NO preamble. "
+            f"State your finding directly to a teammate in a conversational manner. NO filler, NO preamble. "
             f"BAD: 'Hey team, I've been looking at the data and as you know...' "
             f"GOOD: 'AAPL P/E is 28x, sector average is 22x — it's overvalued.' "
             f"Lead with the data point, then your conclusion.{ticker_instr}\n"
@@ -213,7 +213,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
                 system=system_prompt,
                 user=user_prompt,
                 temperature=0.9,
-                max_tokens=150,
+                max_tokens=1024,
                 priority=Priority.LOW,
                 agent_name=f"voice_{archetype.lower()}",
                 ticker=ticker
