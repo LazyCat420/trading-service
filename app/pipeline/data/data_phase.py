@@ -287,6 +287,9 @@ async def run(
         elif discovered_tickers:
             # Add discovered tickers not already in watchlist
             new_tickers = [t for t in discovered_tickers if t not in tickers]
+            from app.processors.ticker_extractor import _is_hard_blocked, get_registry
+            _reg = get_registry()
+            new_tickers = [t for t in new_tickers if not _is_hard_blocked(t, _reg) and not _reg.is_rejected(t)]
             if new_tickers:
                 _discovery_merged_tickers.extend(new_tickers)
                 emit(

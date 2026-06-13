@@ -100,12 +100,12 @@ Summary/Snippet: {summary or "No summary content."}
 
         validated_tickers = []
         if decision == "keep":
-            from app.processors.ticker_extractor import get_registry, validate_unknown_tickers
+            from app.processors.ticker_extractor import get_registry, validate_unknown_tickers, _is_hard_blocked
             from app.trading.watchlist import is_banned
             
             registry = get_registry()
             for t in actual_tickers:
-                if is_banned(t):
+                if is_banned(t) or _is_hard_blocked(t, registry):
                     continue
                 if registry.is_known(t):
                     validated_tickers.append(t)
@@ -239,12 +239,12 @@ Body: {body or "No body content."}
 
         validated_tickers = []
         if decision == "keep":
-            from app.processors.ticker_extractor import get_registry, validate_unknown_tickers
+            from app.processors.ticker_extractor import get_registry, validate_unknown_tickers, _is_hard_blocked
             from app.trading.watchlist import is_banned
             
             registry = get_registry()
             for t in actual_tickers:
-                if is_banned(t):
+                if is_banned(t) or _is_hard_blocked(t, registry):
                     continue
                 if registry.is_known(t):
                     validated_tickers.append(t)

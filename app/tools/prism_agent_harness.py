@@ -495,7 +495,7 @@ async def run_prism_agent(
         _prism_tool_history = []
         try:
             # Extract tool call names from Prism's response
-            prism_tool_calls = result_data.get("toolCalls", [])
+            prism_tool_calls = result_data.get("toolCalls") or []
 
             # ── Dynamic Tool Discovery Telemetry ──
             # Detect when agents used discover_and_enable_tools, enable_tools,

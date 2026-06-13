@@ -199,6 +199,23 @@ async def run_phase4_analysis(
                     continue
                 _seen_tickers.add(ticker)
 
+            # ── Safety Gate: skip if ticker is hard-blocked or rejected ──
+            from app.processors.ticker_extractor import _is_hard_blocked, get_registry
+            _reg = get_registry()
+            if _is_hard_blocked(ticker, _reg) or _reg.is_rejected(ticker):
+                logger.warning(
+                    "[CYCLE] [Worker %d] Dropping false/rejected ticker %s at analysis gate",
+                    worker_id, ticker,
+                )
+                emit(
+                    "analyzing",
+                    f"worker_drop_{ticker}",
+                    f"Worker {worker_id}: Dropped false/rejected ticker {ticker} at analysis gate",
+                    status="warning",
+                )
+                work_queue.task_done()
+                continue
+
             await cycle_control.wait_if_paused()
 
             # Check triage tier

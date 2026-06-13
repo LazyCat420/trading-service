@@ -447,6 +447,10 @@ FINANCIAL_CONTEXT = {
     "buy",
     "sell",
     "hold",
+    "bought",
+    "sold",
+    "buying",
+    "selling",
     "target",
     "analyst",
     "upgrade",
@@ -1163,6 +1167,47 @@ def extract_tickers(
 
         tm.confidence = min(1.0, tm.confidence + boost + anti_penalty)
 
+        # ── Bidirectional Company Name Cross-Validation Gate ──
+        # If the ticker was matched via bare caps (registry or bare_caps sources),
+        # verify that either the company name appears in the text, or there is strong nearby context.
+        # Bypass if:
+        #   - The symbol was matched using direct financial syntax (has_direct_syntax is True)
+        #   - The document contains at least one explicit cashtag (e.g. $AAPL)
+        has_cashtag = bool(DOLLAR_TICKER.search(full_text))
+        if tm.source in ("registry", "bare_caps") and not has_direct_syntax and not has_cashtag:
+            company = registry.lookup_symbol(sym)
+            if company:
+                name_words = re.findall(r"\b\w+\b", company.name.lower())
+                suffixes = {
+                    "inc", "corp", "ltd", "co", "group", "holdings", "services", 
+                    "financial", "corporation", "limited", "plc", "sa", "ag", 
+                    "trust", "properties", "technologies", "solutions", "systems", 
+                    "insurance", "intl", "international", "company", "companies",
+                    "of", "and", "the", "in", "for"
+                }
+                sig_words = [w for w in name_words if w not in suffixes and len(w) > 1]
+                
+                if sig_words:
+                    has_company_mention = any(w in text_lower for w in sig_words)
+                else:
+                    has_company_mention = company.name.lower() in text_lower
+                
+                if not has_company_mention:
+                    # Company name is not mentioned. Require strong nearby financial context to pass.
+                    has_nearby_context = False
+                    for m in re.finditer(rf"\b{re.escape(sym)}\b", full_text):
+                        start_idx = max(0, m.start() - 100)
+                        end_idx = min(len(full_text), m.end() + 100)
+                        window = full_text[start_idx:end_idx].lower()
+                        context_hits = sum(1 for kw in FINANCIAL_CONTEXT if re.search(rf"\b{kw}\b", window))
+                        if context_hits >= 2:
+                            has_nearby_context = True
+                            break
+                    
+                    if not has_nearby_context:
+                        logger.debug("[ticker_extractor] Bidirectional gate rejected %s: no company mention and no nearby context", sym)
+                        tm.confidence = 0.10  # Drop confidence below 0.40 rejection threshold
+
     # ── Filter: reject < 0.40 and excluded ──
     results = [tm for tm in candidates.values() if tm.confidence >= 0.40]
 
@@ -1199,6 +1244,9 @@ async def validate_unknown_tickers(tickers: list[str]) -> dict[str, bool]:
 
         # Skip if already known
         if registry.is_known(sym):
+            if _is_hard_blocked(sym, registry):
+                results[sym] = False
+                continue
             results[sym] = True
             continue
         if registry.is_rejected(sym):
@@ -1274,6 +1322,18 @@ async def validate_unknown_tickers(tickers: list[str]) -> dict[str, bool]:
                 continue
 
             if mcap > 0 or quote_type == "ETF":
+                # If it is in FALSE_TICKERS, it must meet the MIN_MARKET_CAP_OVERRIDE
+                if sym in FALSE_TICKERS and not (quote_type == "ETF" or mcap >= MIN_MARKET_CAP_OVERRIDE):
+                    registry.add_rejected(sym)
+                    results[sym] = False
+                    logger.info(
+                        "[ticker_extractor] yfinance rejected: %s (in FALSE_TICKERS and market cap $%.1fM < $1B)",
+                        sym,
+                        mcap / 1e6,
+                    )
+                    _save_rejected_to_db(sym)
+                    continue
+
                 # Real stock or ETF — add to registry
                 c = Company(
                     symbol=sym,
