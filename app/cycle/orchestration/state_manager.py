@@ -794,6 +794,7 @@ class PipelineStateMixin:
         elapsed_ms: int = 0,
         data_type: str | None = None,
         room: str | None = None,
+        **kwargs: Any,
     ):
         data = data or {}
         if data_type:
@@ -826,18 +827,36 @@ class PipelineStateMixin:
             if inferred:
                 data["data_type"] = inferred
 
-        event = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "phase": phase,
-            "step": step,
-            "detail": detail,
-            "status": status,
-            "data": data,
-            "elapsed_ms": elapsed_ms,
-        }
+        # Check if we should append to the last event in memory (for streaming chunks)
+        appended = False
+        with cls._emit_lock:
+            if kwargs.get("append") and cls._emit_events:
+                last_evt = cls._emit_events[-1]
+                if (
+                    last_evt["phase"] == phase
+                    and last_evt["step"] == step
+                    and last_evt["status"] == status
+                ):
+                    last_evt["detail"] += detail
+                    if data:
+                        last_evt["data"].update(data)
+                    last_evt["elapsed_ms"] += elapsed_ms
+                    appended = True
+                    event = last_evt
+
+        if not appended:
+            event = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "phase": phase,
+                "step": step,
+                "detail": detail,
+                "status": status,
+                "data": data,
+                "elapsed_ms": elapsed_ms,
+            }
 
         cls._state["phase"] = phase
-        cls._state["progress"] = f"[{phase}] {step}: {detail}"
+        cls._state["progress"] = f"[{phase}] {step}: {event['detail']}"
         if phase in _OPERATIONAL_PHASES:
             cls._state["operational_phase"] = phase
 
@@ -871,28 +890,29 @@ class PipelineStateMixin:
         except Exception as tel_e:
             logger.debug("[PipelineStateMixin] Failed to publish telemetry event: %s", tel_e)
 
-        with cls._emit_lock:
-            cls._emit_events.append(event)
-            if cls._emit_timer is None:
+        if not appended:
+            with cls._emit_lock:
+                cls._emit_events.append(event)
+                if cls._emit_timer is None:
 
-                def flush():
-                    with cls._emit_lock:
-                        events_to_flush = list(cls._emit_events)
-                        cls._emit_events.clear()
-                        cls._emit_timer = None
+                    def flush():
+                        with cls._emit_lock:
+                            events_to_flush = list(cls._emit_events)
+                            cls._emit_events.clear()
+                            cls._emit_timer = None
 
-                    if not events_to_flush:
-                        return
+                        if not events_to_flush:
+                            return
 
-                    try:
-                        current_state = dict(cls._state)
-                        PipelineStateDB.save_state(current_state)
-                        PipelineStateDB.append_events(cid, events_to_flush)
-                    except Exception as e:
-                        logger.error("[PipelineStateMixin] emit flush failed: %s", e)
+                        try:
+                            current_state = dict(cls._state)
+                            PipelineStateDB.save_state(current_state)
+                            PipelineStateDB.append_events(cid, events_to_flush)
+                        except Exception as e:
+                            logger.error("[PipelineStateMixin] emit flush failed: %s", e)
 
-                cls._emit_timer = threading.Timer(0.1, flush)
-                cls._emit_timer.start()
+                    cls._emit_timer = threading.Timer(0.1, flush)
+                    cls._emit_timer.start()
 
     @classmethod
     def flush_events(cls):
