@@ -119,7 +119,16 @@ def publish_event(event: TelemetryEvent):
     
     # Update state fields
     if event.kind == "pipeline":
-        if event.status and event.status != "ok":
+        # Only allow known lifecycle statuses to overwrite the cycle-level status.
+        # Event-level statuses like "streaming", "cached", "skipped", "warning"
+        # are metadata for individual events and must NOT contaminate the cycle
+        # status — otherwise the frontend sees an unknown status, treats it as
+        # idle, and hides the Stop button (causing 409 errors on re-start).
+        _LIFECYCLE_STATUSES = {
+            "running", "done", "stopped", "error", "interrupted",
+            "paused", "starting", "stopping", "idle",
+        }
+        if event.status and event.status != "ok" and event.status in _LIFECYCLE_STATUSES:
             state.status = event.status
         else:
             # Update status for special stages
