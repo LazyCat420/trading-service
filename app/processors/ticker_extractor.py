@@ -1005,6 +1005,10 @@ def extract_tickers(
         sym = match.group(1).upper()
         if sym in {"I", "A", "IT", "IS", "IF", "AM", "PM", "BY", "MY", "US", "UK"}:
             continue
+        if registry.is_rejected(sym):
+            continue
+        if _is_hard_blocked(sym, registry):
+            continue
         company = registry.lookup_symbol(sym)
         name = company.name if company else sym
         snippet = full_text[max(0, match.start() - 30) : match.end() + 30]

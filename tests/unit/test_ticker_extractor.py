@@ -17,6 +17,7 @@ def setup_registry():
     ("What are you waiting FOR?", [], ["F", "FOR"]),
     ("Are YOU READY for AI and the NEW world order?", [], ["YOU", "READY", "AI", "NEW"]),
     ("Bought $AAPL, MSFT, and NVDA!", ["AAPL", "MSFT", "NVDA"], []),
+    ("Let's $START the engine and buy some stock.", [], ["START"]),
 ])
 def test_ticker_extraction_cases(text, expected_symbols, excluded_symbols):
     """Verify ticker extraction, aliases, and exclusion lists using parameterized cases."""
