@@ -208,8 +208,8 @@ async def generate_thesis(
         )
         tokens_used = tokens or 0
         data = parse_json_response(response)
-        if not data or "action" not in data:
-            logger.warning("[THESIS] parse_json_response returned empty/invalid dict for %s. Raw response: %r", entity_id, response)
+        if not data or "action" not in data or int(data.get("confidence", 0)) == 0 or not data.get("core_claims"):
+            logger.warning("[THESIS] parse_json_response returned empty/invalid/degenerate dict for %s. Data: %r. Raw response: %r", entity_id, data, response)
     except Exception as e:
         logger.error("[THESIS] Failed to generate thesis: %s", e)
         # Attempt to salvage the response if it was just a parsing error

@@ -17,9 +17,9 @@ from app.log_manager import log_manager
 
 logger = logging.getLogger(__name__)
 
-# Thesis retry loop worst-case: 600s + 30s cooldown + 300s = 930s
+# Thesis retry loop worst-case: 180s + 30s cooldown + 120s = 330s
 # Hallucination check + memory write + DB log ≈ 30s
-_THESIS_BUDGET_SECONDS = 960
+_THESIS_BUDGET_SECONDS = 360
 
 
 async def run_debate_step(ctx: TickerContext) -> TickerContext:

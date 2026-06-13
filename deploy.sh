@@ -32,6 +32,7 @@ EXTRA_SSH_SYNC() {
   ssh "$DEPLOY_SSH_HOST" "echo 'V2_TICKER_CONCURRENCY=1' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'JETSON_MAX_CONCURRENT=6' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'DGX_MAX_CONCURRENT=8' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  ssh "$DEPLOY_SSH_HOST" "echo 'ANALYSIS_WORKER_TIMEOUT_SECONDS=1800' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' 2>/dev/null || sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/logs'"
   ssh "$DEPLOY_SSH_HOST" "sudo chown -R 1001:1001 '${DEPLOY_COMPOSE_DIR}/logs'"
 }
