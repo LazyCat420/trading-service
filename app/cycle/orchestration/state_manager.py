@@ -794,7 +794,7 @@ class PipelineStateMixin:
         elapsed_ms: int = 0,
         data_type: str | None = None,
         room: str | None = None,
-        **kwargs: Any,
+        **kwargs,
     ):
         data = data or {}
         if data_type:
