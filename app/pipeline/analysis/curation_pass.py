@@ -269,8 +269,11 @@ async def curate_discoveries(
 
             parse_result = _parse_curation_response(content, discovered_tickers)
             if parse_result.get("status") == "DATA_MISSING":
-                logger.warning("[PIPELINE] curation: DATA_MISSING status returned from LLM parsing.")
-                promoted = []
+                if "json_parse_failure" in parse_result.get("missing_fields", []):
+                    raise ValueError("Failed to parse JSON response from LLM")
+                else:
+                    logger.warning("[PIPELINE] curation: DATA_MISSING status returned from LLM parsing.")
+                    promoted = []
             else:
                 promoted = parse_result.get("promote", [])
 

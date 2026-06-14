@@ -23,7 +23,7 @@ You must identify:
 2. Two resistance zones (min/max price ranges).
 3. One overarching trendline (start date/price and end date/price).
 
-Your response MUST be raw JSON matching this structure exactly (no markdown formatting, no backticks, no text outside the JSON):
+Your response MUST be a single raw JSON object matching this structure exactly (no markdown formatting, no backticks, no text outside the JSON, no 'memory' objects or preamble):
 {
   "overlays": [
     {

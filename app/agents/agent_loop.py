@@ -585,6 +585,21 @@ async def run_agent_loop(
             )
         hit_limit_with_pending_tools = True
 
+        if require_json_schema:
+            fail_event = FailureEvent(
+                failure_type=FailureType.DEGRADED,
+                agent_name=agent_name,
+                step_name="budget_exhausted",
+                ticker=ticker,
+                cycle_id=cycle_id,
+                exception_type="BudgetExhausted",
+                exception_msg="Agent hit turn limit. Returning degraded JSON fallback.",
+            )
+            recovery_engine.handle(fail_event)
+            # Synthesize a safe JSON fallback so downstream parsers don't crash
+            if not final_content or not final_content.strip().startswith("{"):
+                final_content = '{"status": "DATA_MISSING", "action": "HOLD", "confidence": 0, "error": "BudgetExhausted"}'
+
     base_result = {
         "final_text": final_content,
         "token_usage": budget.current_tokens,

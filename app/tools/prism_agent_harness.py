@@ -295,6 +295,16 @@ async def run_prism_agent(
     if DYNAMIC_TOOL_DISCOVERY_PROMPT not in system_prompt:
         system_prompt = system_prompt + "\n\n" + DYNAMIC_TOOL_DISCOVERY_PROMPT
 
+    # Inject strict JSON enforcement guardrail for all Prism-routed agents
+    JSON_GUARDRAIL = (
+        "\n\n### OUTPUT DIRECTIVE\n"
+        "You MUST output ONLY ONE valid JSON object. "
+        "Do NOT output multiple JSON blocks. Do NOT include conversational preamble or postamble. "
+        "Your entire response MUST be parsable by a standard JSON parser."
+    )
+    if "OUTPUT DIRECTIVE" not in system_prompt:
+        system_prompt = system_prompt + JSON_GUARDRAIL
+
     # Extract tool names from active_tools
     tool_names = []
     built_ins = {
