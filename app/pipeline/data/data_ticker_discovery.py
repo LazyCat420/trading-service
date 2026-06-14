@@ -378,7 +378,7 @@ async def _run_ticker_discovery(emit: Callable) -> tuple[int, list[str]]:
             news_tickers = set()
             for title, summary in rows:
                 text = f"{title} {summary}"[:2000]
-                matches = extract_and_validate(
+                matches = await extract_and_validate(
                     text, title=title, source="news"
                 )
                 for m in matches:
@@ -426,7 +426,7 @@ async def _run_ticker_discovery(emit: Callable) -> tuple[int, list[str]]:
             reddit_tickers = set()
             for title, body in rows:
                 text = f"{title} {body}"[:2000]
-                matches = extract_and_validate(
+                matches = await extract_and_validate(
                     text, title=title, source="reddit"
                 )
                 for m in matches:
@@ -474,7 +474,7 @@ async def _run_ticker_discovery(emit: Callable) -> tuple[int, list[str]]:
             yt_tickers = set()
             for title, snippet in rows:
                 text = f"{title} {snippet}"[:3000]
-                matches = extract_and_validate(
+                matches = await extract_and_validate(
                     text, title=title, source="youtube"
                 )
                 for m in matches:

@@ -501,7 +501,7 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                 detected = set(article.tickers)
             else:
                 full_text = f"{article.title} {summary}"
-                detected = _detect_tickers_in_text(full_text)
+                detected = await _detect_tickers_in_text(full_text)
 
             base_id = hashlib.md5(
                 f"{article.title}{article.published_at.isoformat()}".encode()

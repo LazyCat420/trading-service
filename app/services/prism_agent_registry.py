@@ -151,6 +151,8 @@ AGENT_ID_MAP: dict[str, str] = {
     "benchmark_agent": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "curation_pass": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "macro_scout": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
+    "ticker_validator": "CUSTOM_SYSTEM_JANITOR_AGENT",
+    "CUSTOM_TICKER_VALIDATOR_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
 }
 
 # Agent names that map to CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT (catch-all for standard analysis)

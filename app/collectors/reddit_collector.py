@@ -179,7 +179,7 @@ async def collect_subreddit(
                 full_text = f"{title} {body}"
 
                 # Extract ticker mentions (shared extractor)
-                tickers_found = set(get_ticker_symbols(full_text, title=title))
+                tickers_found = set(await get_ticker_symbols(full_text, title=title))
 
                 # If filtering by ticker, skip posts without it
                 if ticker_filter and ticker_filter.upper() not in tickers_found:
@@ -263,7 +263,7 @@ async def search_subreddit_for_ticker(
                     title = post.get("title", "")
                     body = post.get("body", post.get("selftext", ""))
                     full_text = f"{title} {body}"
-                    tickers_found = set(get_ticker_symbols(full_text, title=title))
+                    tickers_found = set(await get_ticker_symbols(full_text, title=title))
                     tickers_found.add(ticker.upper())
 
                     actual_sub = post.get("subreddit", subreddits[0] if subreddits else "")

@@ -297,7 +297,7 @@ async def _process_video(
 
     raw_transcript = _strip_promo_content(raw_transcript)
 
-    primary_ticker = force_ticker or _extract_primary_ticker(
+    primary_ticker = force_ticker or await _extract_primary_ticker(
         title + " " + raw_transcript[:1000]
     )
     ticker_suffix = primary_ticker.upper() if primary_ticker else "NONE"
@@ -332,7 +332,7 @@ async def _process_video(
         ],
     )
 
-    tickers = _extract_tickers(raw_transcript[:5000])
+    tickers = await _extract_tickers(raw_transcript[:5000])
     for t in tickers:
         if t in SHARED_FALSE_TICKERS or len(t) < 2:
             continue
@@ -433,14 +433,15 @@ def _strip_promo_content(transcript: str) -> str:
     return result
 
 
-def _extract_tickers(text: str) -> set[str]:
+async def _extract_tickers(text: str) -> set[str]:
     """Extract tickers from text using shared ticker_extractor."""
-    return set(get_ticker_symbols(text))
+    symbols = await get_ticker_symbols(text)
+    return set(symbols)
 
 
-def _extract_primary_ticker(text: str) -> str | None:
+async def _extract_primary_ticker(text: str) -> str | None:
     """Get the most relevant ticker from title + beginning of transcript."""
-    syms = get_ticker_symbols(text)
+    syms = await get_ticker_symbols(text)
     return syms[0] if syms else None
 
 

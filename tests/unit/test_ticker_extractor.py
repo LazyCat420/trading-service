@@ -19,7 +19,8 @@ def setup_registry():
     ("Bought $AAPL, MSFT, and NVDA!", ["AAPL", "MSFT", "NVDA"], []),
     ("Let's $START the engine and buy some stock.", [], ["START"]),
 ])
-def test_ticker_extraction_cases(text, expected_symbols, excluded_symbols):
+@pytest.mark.asyncio
+async def test_ticker_extraction_cases(text, expected_symbols, excluded_symbols):
     """Verify ticker extraction, aliases, and exclusion lists using parameterized cases."""
     matches = extract_tickers(text)
     # Most valid matches in these sentences should have high confidence
@@ -29,7 +30,7 @@ def test_ticker_extraction_cases(text, expected_symbols, excluded_symbols):
         assert sym in found_symbols
     
     # get_ticker_symbols is the public API which filters out low confidence
-    final_tickers = get_ticker_symbols(text)
+    final_tickers = await get_ticker_symbols(text)
     for sym in excluded_symbols:
         assert sym not in final_tickers
 

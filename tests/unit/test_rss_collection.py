@@ -137,31 +137,35 @@ class TestGetArticleId:
 class TestDetectTickers:
     """Ticker detection from article text."""
 
-    def test_detects_company_name(self):
+    @pytest.mark.asyncio
+    async def test_detects_company_name(self):
         from app.collectors.news_collector import _detect_tickers_in_text
 
-        tickers = _detect_tickers_in_text("Apple announces new iPhone")
+        tickers = await _detect_tickers_in_text("Apple announces new iPhone")
         assert "AAPL" in tickers
 
-    def test_detects_ticker_symbol(self):
+    @pytest.mark.asyncio
+    async def test_detects_ticker_symbol(self):
         from app.collectors.news_collector import _detect_tickers_in_text
 
-        tickers = _detect_tickers_in_text("NVDA beat earnings expectations")
+        tickers = await _detect_tickers_in_text("NVDA beat earnings expectations")
         assert "NVDA" in tickers
 
-    def test_empty_on_gibberish(self):
+    @pytest.mark.asyncio
+    async def test_empty_on_gibberish(self):
         from app.collectors.news_collector import _detect_tickers_in_text
 
-        tickers = _detect_tickers_in_text("lorem ipsum dolor sit amet")
+        tickers = await _detect_tickers_in_text("lorem ipsum dolor sit amet")
         # Should not detect any real tickers
         assert len(tickers) == 0 or all(
             t not in {"AAPL", "NVDA", "TSLA"} for t in tickers
         )
 
-    def test_multiple_tickers(self):
+    @pytest.mark.asyncio
+    async def test_multiple_tickers(self):
         from app.collectors.news_collector import _detect_tickers_in_text
 
-        tickers = _detect_tickers_in_text(
+        tickers = await _detect_tickers_in_text(
             "Apple and Tesla both reporting earnings this week"
         )
         assert "AAPL" in tickers

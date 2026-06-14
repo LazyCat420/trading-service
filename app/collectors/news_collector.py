@@ -169,9 +169,10 @@ def _extract_text_from_html(html: str, max_chars: int = 15000) -> str:
         return text[:max_chars]
 
 
-def _detect_tickers_in_text(text: str) -> set[str]:
+async def _detect_tickers_in_text(text: str) -> set[str]:
     """Detect stock tickers mentioned in article text."""
-    return set(get_ticker_symbols(text))
+    symbols = await get_ticker_symbols(text)
+    return set(symbols)
 
 
 def _is_article_relevant_to_ticker(ticker: str, text: str) -> bool:
@@ -293,7 +294,7 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
 
                 # Detect tickers in title + summary
                 full_text = f"{title} {summary}"
-                detected_tickers = _detect_tickers_in_text(full_text)
+                detected_tickers = await _detect_tickers_in_text(full_text)
 
                 # Relevance gate: for short/ambiguous tickers, verify the article
                 # actually discusses the stock (not just uses the letters as English).
@@ -506,7 +507,7 @@ async def collect_finnhub_news(
                     continue
 
                 full_text = f"{headline} {summary}"
-                detected_tickers = _detect_tickers_in_text(full_text)
+                detected_tickers = await _detect_tickers_in_text(full_text)
                 if detected_tickers:
                     detected_tickers = {
                         t for t in detected_tickers
@@ -620,7 +621,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     continue
 
                 full_text = f"{title} {summary}"
-                detected_tickers = _detect_tickers_in_text(full_text)
+                detected_tickers = await _detect_tickers_in_text(full_text)
                 if detected_tickers:
                     detected_tickers = {
                         t for t in detected_tickers

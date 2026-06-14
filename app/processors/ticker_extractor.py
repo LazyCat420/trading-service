@@ -1437,7 +1437,7 @@ def _save_rejected_to_db(sym: str):
 # ─────────────────────────────────────────────
 
 
-def extract_and_validate(
+async def extract_and_validate(
     text: str,
     title: str | None = None,
     source: str = "unknown",
@@ -1455,11 +1455,64 @@ def extract_and_validate(
     """
     matches = extract_tickers(text, title=title, source=source)
 
-    # Final filter: only return >= 0.40
-    return [m for m in matches if m.confidence >= 0.40]
+    # Filter out extremely low confidence before calling LLM
+    candidates = [m for m in matches if m.confidence >= 0.40]
+    
+    # Layer 2.5: LLM Context Validation
+    # We maintain an in-memory cache to avoid calling LLM for the exact same snippet+ticker.
+    if not hasattr(extract_and_validate, "_llm_cache"):
+        extract_and_validate._llm_cache = {}
+        
+    valid_matches = []
+    from app.services.prism_agent_caller import call_prism_agent
+    from app.services.vllm_client import Priority
+    from app.utils.text_utils import parse_json_response
+    
+    for m in candidates:
+        cache_key = f"{m.symbol}::{m.context_snippet}"
+        
+        # If it's a very clear S&P 500 stock with no anti-pattern penalty, skip LLM to save time
+        registry = get_registry()
+        company = registry.lookup_symbol(m.symbol)
+        if company and company.is_sp500 and not company.single_letter and m.confidence >= 0.8:
+            valid_matches.append(m)
+            continue
+            
+        # Check cache
+        if cache_key in extract_and_validate._llm_cache:
+            if extract_and_validate._llm_cache[cache_key]:
+                valid_matches.append(m)
+            continue
+            
+        # Call LLM Validator
+        user_msg = f"TICKER CANDIDATE: {m.symbol}\nSNIPPET: {m.context_snippet}"
+        try:
+            content, _, _ = await call_prism_agent(
+                agent_id="TICKER_VALIDATION_AGENT",
+                user_message=user_msg,
+                fallback_system_prompt="See app.agents.custom.ticker_validator_agent",
+                fallback_agent_name="ticker_validator",
+                temperature=0.1,
+                max_tokens=64,
+                priority=Priority.LOW,
+            )
+            data = parse_json_response(content)
+            is_stock = data.get("is_stock", True)  # default to true if parse fails
+            
+            extract_and_validate._llm_cache[cache_key] = is_stock
+            
+            if is_stock:
+                valid_matches.append(m)
+            else:
+                logger.debug(f"[ticker_extractor] LLM rejected '{m.symbol}': {data.get('reason', 'no reason')}")
+        except Exception as e:
+            logger.warning(f"LLM validation failed for {m.symbol}: {e}")
+            valid_matches.append(m) # fallback to allowing it
+
+    return valid_matches
 
 
-def get_ticker_symbols(text: str, title: str | None = None) -> list[str]:
+async def get_ticker_symbols(text: str, title: str | None = None) -> list[str]:
     """Simple wrapper: returns just the symbol strings (no metadata)."""
-    matches = extract_tickers(text, title=title)
+    matches = await extract_and_validate(text, title=title)
     return [m.symbol for m in matches if m.confidence >= 0.60]
