@@ -276,7 +276,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     "v3_worker_news": [
         "get_finnhub_news",
-        
+        "search_web",
         "search_database_facts",
         "search_internal_database",
     ],

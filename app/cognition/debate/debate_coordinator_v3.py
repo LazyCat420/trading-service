@@ -43,11 +43,13 @@ logger = logging.getLogger(__name__)
 
 # ── Which PMs run in the initial parallel analysis ──────────────────────
 ANALYSIS_PMS = [
-    ManagerRole.FUNDAMENTAL_PM,
-    ManagerRole.GROWTH_PM,
-    ManagerRole.MACRO_PM,
-    ManagerRole.RISK_MANAGER,
-    ManagerRole.MEMORY_PM,
+    ManagerRole.IMHOTEP,
+    ManagerRole.PYTHAGORAS,
+    ManagerRole.ARCHIMEDES,
+    ManagerRole.CAESAR,
+    ManagerRole.AL_KHWARIZMI,
+    ManagerRole.BRAHMAGUPTA,
+    ManagerRole.NEWTON_LEIBNIZ,
 ]
 
 
@@ -415,11 +417,13 @@ async def run_family_office_debate(
                     "confidence": 0,
                     "conviction": "",
                     "key_argument": "",
+                    "direction": "neutral",
                 }
             manager_outcomes[role_key]["claims_count"] += len(arg.claims)
             manager_outcomes[role_key]["confidence"] = arg.confidence
             manager_outcomes[role_key]["conviction"] = arg.conviction
             manager_outcomes[role_key]["key_argument"] = arg.key_argument
+            manager_outcomes[role_key]["direction"] = arg.direction
 
     fo_result = FamilyOfficeResult(
         ticker=ticker,
@@ -509,6 +513,34 @@ async def run_family_office_debate(
             )
     except Exception as db_err:
         logger.error("[V3] Failed to log debate history: %s", db_err)
+
+    try:
+        from app.db.mongo import get_mongo_db
+        mongo_db = get_mongo_db()
+        mongo_db["debate_transcripts"].update_one(
+            {"ticker": ticker, "cycle_id": cycle_id or "manual"},
+            {
+                "$set": {
+                    "ticker": ticker,
+                    "cycle_id": cycle_id or "manual",
+                    "timestamp": datetime.now(timezone.utc),
+                    "verdict": {
+                        "action": final_verdict.action if final_verdict else "NONE",
+                        "confidence": final_verdict.confidence if final_verdict else 0,
+                        "winning_side": final_verdict.winning_side if final_verdict else "split",
+                        "conviction": final_verdict.conviction if final_verdict else "",
+                        "rationale": final_verdict.rationale if final_verdict else "",
+                    },
+                    "manager_outcomes": manager_outcomes,
+                    "total_tokens": total_tokens,
+                    "total_rounds": len(debate_rounds)
+                }
+            },
+            upsert=True
+        )
+        logger.info("[V3] Persisted debate transcript to MongoDB")
+    except Exception as mongo_err:
+        logger.error("[V3] Failed to log debate transcript to MongoDB: %s", mongo_err)
 
     logger.info(
         "[V3] VERDICT: %s @ %d%% | Rounds: %d | Tokens: %d | Time: %.1fs",

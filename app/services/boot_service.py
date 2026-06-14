@@ -96,8 +96,10 @@ class BootService:
     @classmethod
     def _init_database(cls):
         from app.db.connection import get_db
+        from app.db.mongo import init_mongo_schema
 
         get_db()
+        init_mongo_schema()
 
     @classmethod
     def _init_vector_indices(cls):

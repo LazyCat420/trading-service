@@ -272,6 +272,21 @@ def resolve_outcome(
                     lesson_err,
                 )
 
+            # ── Trust Score Updates (Civilization Council) ──
+            try:
+                from app.governance.trust_score_manager import update_trust_scores_on_outcome
+                update_trust_scores_on_outcome(
+                    ticker=ticker,
+                    cycle_id=cycle_id or "manual",
+                    action=action,
+                    outcome=outcome,
+                    pnl_pct=pnl_pct
+                )
+            except Exception as trust_err:
+                logger.error(
+                    "[PIPELINE] [OUTCOME] Failed to update trust scores for %s: %s", ticker, trust_err
+                )
+
             return {
                 "id": outcome_id,
                 "ticker": ticker,

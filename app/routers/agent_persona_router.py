@@ -55,6 +55,37 @@ async def reset_defaults():
     return {"agents": personas, "count": len(personas), "status": "reset_complete"}
 
 
+@router.get("/trust-scores")
+async def get_trust_scores():
+    """Retrieve current trust scores for all Civilization Council agent personas."""
+    try:
+        from app.governance.trust_score_manager import get_all_trust_scores
+        scores = get_all_trust_scores()
+        return {"scores": scores, "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch trust scores: {e}")
+
+
+@router.get("/debate-transcripts")
+async def get_debate_transcripts(ticker: str = None, cycle_id: str = None):
+    """Retrieve debate transcripts for Civilization Council debates."""
+    try:
+        from app.db.mongo import get_mongo_db
+        db = get_mongo_db()
+        query = {}
+        if ticker:
+            query["ticker"] = ticker.upper().strip()
+        if cycle_id:
+            query["cycle_id"] = cycle_id
+        
+        # Exclude _id to make it JSON serializable easily
+        cursor = db["debate_transcripts"].find(query, {"_id": 0}).sort("timestamp", -1).limit(50)
+        transcripts = list(cursor)
+        return {"transcripts": transcripts, "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch debate transcripts: {e}")
+
+
 @router.get("/{persona_id}")
 async def get_persona(persona_id: str):
     """Get a single persona by ID."""

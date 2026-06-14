@@ -27,8 +27,8 @@ from app.cognition.contracts.family_office import (
 class TestManagerRole:
     """Test ManagerRole enum values and membership."""
 
-    def test_all_8_roles_defined(self):
-        assert len(ManagerRole) == 8
+    def test_all_15_roles_defined(self):
+        assert len(ManagerRole) == 15
 
     def test_role_values(self):
         assert ManagerRole.CIO.value == "cio"
@@ -439,3 +439,62 @@ class TestWorkerWhitelists:
             tools = AGENT_TOOL_WHITELISTS[worker_key]
             assert "buy_stock" not in tools
             assert "sell_stock" not in tools
+
+
+class TestCivilizationCouncilTrustScores:
+    """Test Civilization Council trust score tracking and calculations."""
+
+    @patch("app.governance.trust_score_manager.get_mongo_db")
+    def test_get_agent_trust_score(self, mock_get_db):
+        from app.governance.trust_score_manager import get_agent_trust_score
+        
+        # 1. Default fallback
+        mock_get_db.return_value["agent_trust_scores"].find_one.return_value = None
+        assert get_agent_trust_score("imhotep") == 1.0
+
+        # 2. Existing score
+        mock_get_db.return_value["agent_trust_scores"].find_one.return_value = {"trust_score": 0.85}
+        assert get_agent_trust_score("imhotep") == 0.85
+
+    @patch("app.governance.trust_score_manager.get_mongo_db")
+    def test_update_trust_scores_on_outcome(self, mock_get_db):
+        from app.governance.trust_score_manager import update_trust_scores_on_outcome
+        from unittest.mock import MagicMock
+        
+        # Separate mocks for different collections to avoid MagicMock __getitem__ return_value sharing
+        db = mock_get_db.return_value
+        collections = {
+            "debate_transcripts": MagicMock(),
+            "agent_trust_scores": MagicMock(),
+        }
+        db.__getitem__.side_effect = lambda name: collections[name]
+        
+        # Mock debate transcripts lookup
+        collections["debate_transcripts"].find_one.return_value = {
+            "ticker": "AAPL",
+            "cycle_id": "cycle_1",
+            "manager_outcomes": {
+                "imhotep": {
+                    "direction": "bull",
+                    "confidence": 80,
+                    "conviction": "HIGH"
+                },
+                "caesar": {
+                    "direction": "bear",
+                    "confidence": 70,
+                    "conviction": "MODERATE"
+                }
+            }
+        }
+        
+        # Mock current trust scores in database
+        collections["agent_trust_scores"].find_one.side_effect = [
+            {"role": "imhotep", "trust_score": 1.0, "consecutive_correct": 0, "consecutive_wrong": 0},
+            {"role": "caesar", "trust_score": 1.0, "consecutive_correct": 0, "consecutive_wrong": 0}
+        ]
+        
+        # Run update for a WIN outcome on a BUY action (Imhotep was right, Caesar was wrong)
+        update_trust_scores_on_outcome("AAPL", "cycle_1", "BUY", "WIN", 5.5)
+        
+        # Verify update calls
+        assert collections["agent_trust_scores"].update_one.call_count == 2

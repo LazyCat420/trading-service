@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 
 class ManagerRole(str, Enum):
-    """The 8 persistent Manager roles in the Family Office."""
+    """The 8 persistent Manager roles in the Family Office + 7 Civilization Council archetypes."""
     CIO = "cio"
     FUNDAMENTAL_PM = "fundamental_pm"
     GROWTH_PM = "growth_pm"
@@ -29,6 +29,14 @@ class ManagerRole(str, Enum):
     CROSS_EXAMINER = "cross_examiner"
     MEMORY_PM = "memory_pm"
     WORKER_ORCHESTRATOR = "worker_orchestrator"
+
+    IMHOTEP = "imhotep"
+    PYTHAGORAS = "pythagoras"
+    ARCHIMEDES = "archimedes"
+    CAESAR = "caesar"
+    AL_KHWARIZMI = "al_khwarizmi"
+    BRAHMAGUPTA = "brahmagupta"
+    NEWTON_LEIBNIZ = "newton_leibniz"
 
 
 class WorkerType(str, Enum):
@@ -82,6 +90,7 @@ class ManagerArgument(BaseModel):
     claims: List[str] = Field(default_factory=list)
     confidence: int = 0  # 0-100
     conviction: str = ""  # WATCH | LOW | MODERATE | HIGH | EXTREME
+    direction: str = "neutral"  # bull | bear | neutral
     key_argument: str = ""
     devils_advocate: str = ""  # Strongest argument AGAINST their own case
     data_requests: List[DataRequest] = Field(default_factory=list)  # What more data they need
@@ -190,9 +199,10 @@ class FamilyOfficeResult(BaseModel):
 
         for rnd in self.debate_rounds:
             for arg in rnd.pm_arguments:
-                # Risk Manager and arguments against → bear side
-                # Everyone else → bull side (simplified mapping)
-                side = "bear" if arg.role == ManagerRole.RISK_MANAGER else "bull"
+                # Check explicit direction, fallback to role-based logic if not set or neutral
+                side = arg.direction
+                if side not in ("bull", "bear"):
+                    side = "bear" if arg.role in (ManagerRole.RISK_MANAGER, ManagerRole.CAESAR) else "bull"
                 for claim in arg.claims:
                     entry = {
                         "claim": claim,

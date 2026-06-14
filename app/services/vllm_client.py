@@ -236,6 +236,10 @@ AGENT_ROLE_ROUTING = {
     "judge_evaluator": "analyst",
     "debate": "analyst",
     "action_executor": "analyst",  # Brain-Action split: tool execution worker
+    "cio": "trader",
+    "swarm_cio": "trader",
+    "synthesis": "analyst",
+    "synthesizer": "analyst",
 }
 
 
