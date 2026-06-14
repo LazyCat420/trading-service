@@ -28,7 +28,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     "sentiment": [
         "get_market_data",
         "get_finnhub_news",
-        "search_web",
+        
         "query_hermes",
         "scrape_url",
         "search_internal_database",
@@ -103,7 +103,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_technical_indicators",
         "get_finviz_fundamentals",
         "get_polygon_price_history",
-        "search_web",
+        
         "query_hermes",
         "scrape_url",
         "get_sec_filings",
@@ -117,7 +117,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     "verifier": [
         "check_hallucination",
-        "search_web",
+        
         "get_market_data",
         "get_cycle_context",
     ],
@@ -172,7 +172,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     # ── Quant Research Agent ──
     "quant_research": [
-        "search_web",
+        
         "scrape_url",
         "search_wiki",
         "write_memory_note",
@@ -201,7 +201,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     # ── Post-Mortem Auditor Agent ──
     "post_mortem": [
-        "search_web",
+        
         "scrape_url",
         "get_market_data",
         "get_finnhub_news",
@@ -235,7 +235,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
         "get_congress_trades",
         # Research
-        "search_web",
+        
         "scrape_url",
         "query_hermes",
         "search_internal_database",
@@ -279,7 +279,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     "v3_worker_news": [
         "get_finnhub_news",
-        "search_web",
+        
         "search_database_facts",
         "search_internal_database",
         "query_hermes",

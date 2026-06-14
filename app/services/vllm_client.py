@@ -203,7 +203,7 @@ VALID_ROLES = ("collector", "analyst", "trader", "training")
 # MetaOrchestrator fallback because all agents queued on DGX.
 AGENT_ROLE_ROUTING = {
     # Lightweight tasks -> Jetson
-    "hermes_research": "collector",
+
     "summarizer": "collector",
     "data_janitor": "collector",
     "data_curator": "collector",
@@ -1275,7 +1275,7 @@ class VLLMClient:
                     and meta.get("ticker", "UNKNOWN") != "UNKNOWN"
                 ):
                     step_map = {
-                        "hermes_research": "collection",
+
                         "technical": "analysis",
                         "fundamental": "analysis",
                         "sentiment": "analysis",

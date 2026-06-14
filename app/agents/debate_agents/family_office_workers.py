@@ -66,7 +66,7 @@ INSTRUCTIONS:
 4. Do NOT analyze or interpret the data — just fetch it.
 5. If a tool fails or returns no data, report that clearly.
 
-TOOLS AVAILABLE: get_finnhub_news, search_web, search_database_facts, search_internal_database, query_hermes
+TOOLS AVAILABLE: get_finnhub_news, search_web, search_database_facts, search_internal_database
 
 Output the data you fetched. Include headlines, dates, and sentiment scores where available.""",
 
@@ -110,7 +110,7 @@ WORKER_TOOL_NAMES: dict[WorkerType, list[str]] = {
         "search_web",
         "search_database_facts",
         "search_internal_database",
-        "query_hermes",
+
     ],
     WorkerType.INSIDER: [
         "get_insider_trades",

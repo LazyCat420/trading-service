@@ -250,16 +250,7 @@ class Settings(BaseSettings):
     # ── Tool Calling Bypass ──
     USE_TOOL_CALLING: bool = False
 
-    # ── Hermes Agent (Hub-and-Spoke) ──
-    JETSON_HERMES_HOST: str = _config.get("JETSON_HERMES_HOST", "10.0.0.30")
-    JETSON_HERMES_PORT: int = 8642
 
-    DGX_SPARK_HERMES_HOST: str = _config.get("DGX_SPARK_HERMES_HOST", "10.0.0.141")
-    DGX_SPARK_HERMES_PORT: int = 8642
-
-    # Dedicated Hermes API key — independent from API_SERVER_KEY.
-    # When empty, Hermes requests skip the Authorization header entirely.
-    HERMES_API_KEY: str = _config.get("HERMES_API_KEY", "")
 
     API_SERVER_KEY: str = "change-me-local-dev"
 
@@ -279,19 +270,7 @@ class Settings(BaseSettings):
                 )
         return self
 
-    @property
-    def HERMES_ENDPOINT_MAP(self) -> dict[str, str]:
-        """Map endpoint keys (jetson, dgx_spark) to their Hermes URLs."""
-        mapping = {}
-        if self.JETSON_HERMES_HOST:
-            mapping["jetson"] = (
-                f"http://{self.JETSON_HERMES_HOST}:{self.JETSON_HERMES_PORT}/v1/chat/completions"
-            )
-        if self.DGX_SPARK_HERMES_HOST:
-            mapping["dgx_spark"] = (
-                f"http://{self.DGX_SPARK_HERMES_HOST}:{self.DGX_SPARK_HERMES_PORT}/v1/chat/completions"
-            )
-        return mapping
+
 
     # ── JIT Scraper Queue ──
     SCRAPER_MAX_QUEUE_SIZE: int = 1000

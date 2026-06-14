@@ -144,12 +144,7 @@ async def run_all_probes() -> list[dict]:
             f"{settings.PROVIDER_VLLM_3_URL}/v1/models",
         ))
 
-    # 4. Hermes endpoints
-    hermes_map = settings.HERMES_ENDPOINT_MAP
-    for key, url in hermes_map.items():
-        # Replace /v1/chat/completions with /health for the probe
-        base_url = url.rsplit("/v1/", 1)[0] if "/v1/" in url else url
-        probes.append(_probe_http(f"hermes-{key}", f"{base_url}/health"))
+
 
     # 5. PostgreSQL
     probes.append(_probe_postgres())

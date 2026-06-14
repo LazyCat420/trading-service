@@ -742,68 +742,7 @@ class EvolutionDebateCouncil:
         except Exception as ddg_err:
             logger.warning("[EVO-DEBATE] DDG search failed: %s", ddg_err)
 
-        # ── Tier 2: Hermes deep research (if DDG was thin) ──
-        # Guardrails: 30s hard timeout, repetition detection, mock-response filter
-        if len(ddg_results) < 2:
-            try:
-                import asyncio as _aio
-                from app.tools.web_tools import hermes_web_research
 
-                hermes_query = (
-                    f"Research how to fix a {target_type} issue in an autonomous "
-                    f"trading system. Target: {target_name}. "
-                    f"Issue: {issue_description[:200]}. "
-                    f"Provide specific Python code patterns and best practices."
-                )
-
-                # Hard 30s timeout — evidence gathering should be fast,
-                # not block the debate for 10 minutes if Hermes is stuck
-                hermes_raw = await _aio.wait_for(
-                    hermes_web_research(hermes_query), timeout=30.0
-                )
-
-                # Parse the JSON response from hermes
-                import json as _json
-
-                hermes_data = _json.loads(hermes_raw)
-                hermes_text = hermes_data.get("response", "")
-                hermes_status = hermes_data.get("status", "")
-
-                # Filter: skip mock/empty responses
-                if hermes_status == "mock_success" or not hermes_text:
-                    logger.info("[EVO-DEBATE] Hermes returned mock/empty — skipping")
-                elif hermes_status == "blocked":
-                    logger.info(
-                        "[EVO-DEBATE] Hermes blocked by guardrails: %s",
-                        hermes_data.get("reason", "unknown"),
-                    )
-                elif hermes_status == "success":
-                    # Doom-loop detection: check for excessive repetition
-                    # If >40% of sentences repeat, Hermes is stuck
-                    sentences = [
-                        s.strip() for s in hermes_text.split(".") if len(s.strip()) > 20
-                    ]
-                    unique = set(sentences)
-                    if sentences and len(unique) / len(sentences) < 0.6:
-                        logger.warning(
-                            "[EVO-DEBATE] Hermes doom-loop detected: %d/%d unique "
-                            "sentences — discarding output",
-                            len(unique),
-                            len(sentences),
-                        )
-                    else:
-                        evidence_parts.append("\n── HERMES DEEP RESEARCH ──")
-                        evidence_parts.append(hermes_text[:2000])
-                        logger.info(
-                            "[EVO-DEBATE] Hermes evidence: %d chars", len(hermes_text)
-                        )
-
-            except _aio.TimeoutError:
-                logger.warning(
-                    "[EVO-DEBATE] Hermes evidence timed out after 30s — skipping"
-                )
-            except Exception as hermes_err:
-                logger.warning("[EVO-DEBATE] Hermes research failed: %s", hermes_err)
 
         if not evidence_parts:
             return ""

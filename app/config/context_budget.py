@@ -15,7 +15,7 @@ SCOPE:
       - context_compressor.py (history compression)
 
     It does NOT affect:
-      - Hermes Gateway (app/routers/hermes.py) — passes raw messages through
+
       - Strategy Chat (app/routers/collaboration.py) — calls llm.chat() directly
       - Any external consumer that hits the vLLM /v1/chat/completions API
 
