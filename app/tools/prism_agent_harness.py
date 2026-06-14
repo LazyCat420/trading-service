@@ -286,18 +286,22 @@ async def run_prism_agent(
         )
 
     # Build the tools list — apply Brain-Action tool selection to reduce context
-    active_tools = tools_override if tools_override is not None else registry.schemas
-
-
+    # If tools_override is None, we set active_tools = None to avoid passing
+    # all 64 schemas. They will default to core built-in tools.
+    active_tools = tools_override
 
     # Extract tool names from active_tools
     tool_names = []
-    if active_tools:
-        built_ins = {
-            "execute_python", "search_web", "read_file", "write_file",
-            "str_replace_file", "file_info", "file_diff", "browser_action",
-            "browser_script", "precise_calculator"
-        }
+    built_ins = {
+        "execute_python", "search_web", "read_file", "write_file",
+        "str_replace_file", "file_info", "file_diff", "browser_action",
+        "browser_script", "precise_calculator"
+    }
+
+    if active_tools is None:
+        # Default to core built-in tools when no specific override is set
+        tool_names = list(built_ins)
+    else:
         # Prism built-in tools that must NEVER be enabled during automated cycles.
         # ask_user_question blocks the agentic loop for 5 minutes waiting for
         # human input that will never arrive.

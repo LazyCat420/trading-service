@@ -265,10 +265,8 @@ class PrismClient:
                 enabled_tools.append(name)
                 enabled_tools.append(f"{mcp_prefix}{name}")
         else:
-            # Fall back to all registry tools
-            for name in tool_names:
-                enabled_tools.append(name)
-                enabled_tools.append(f"{mcp_prefix}{name}")
+            # Fall back to only core tools (let the agent dynamically acquire other tools)
+            pass
             
         # Add core built-in tools
         built_ins = [

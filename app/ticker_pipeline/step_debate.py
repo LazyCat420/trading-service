@@ -74,15 +74,18 @@ async def run_debate_step(ctx: TickerContext) -> TickerContext:
         await cycle_control.wait_if_paused()
         t_debate = time.monotonic()
 
-        ctx.debate_result = await run_adversarial_debate(
-            ticker=ctx.ticker,
-            packet=ctx.packet,
-            cycle_id=ctx.cycle_id,
-            bot_id=ctx.bot_id,
-            agent_insights=ctx.agent_insights,
-            position_context=ctx.position_context,
-            portfolio_dashboard=ctx.portfolio_dashboard,
-            ctx=ctx,
+        ctx.debate_result = await asyncio.wait_for(
+            run_adversarial_debate(
+                ticker=ctx.ticker,
+                packet=ctx.packet,
+                cycle_id=ctx.cycle_id,
+                bot_id=ctx.bot_id,
+                agent_insights=ctx.agent_insights,
+                position_context=ctx.position_context,
+                portfolio_dashboard=ctx.portfolio_dashboard,
+                ctx=ctx,
+            ),
+            timeout=300.0
         )
         ms_debate = ctx.elapsed_ms(t_debate)
 

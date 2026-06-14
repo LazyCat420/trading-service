@@ -387,7 +387,7 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "post_mortem": 10,
     "verifier": 5,
     # User chat — generous budget for interactive sessions
-    "user_chat": 20,
+    "user_chat": 15,
 }
 
 # Default budget for agents not in the override dict
