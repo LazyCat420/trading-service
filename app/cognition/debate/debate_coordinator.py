@@ -961,11 +961,11 @@ async def run_adversarial_debate(
         # ── Step 2: N-Turn Sequence per Persona ──
 
         # To reduce latency, we run the personas concurrently, but within each persona it's sequential.
-        # Pre-allocate per-persona caches — no cross-persona contamination
-        persona_caches: dict[str, dict[str, str]] = {name: {} for name in PERSONAS}
+        # Shared debate cache so personas can see each other's data and cross-examiner gets full context
+        shared_debate_cache: dict[str, str] = {}
 
         async def run_persona_debate(persona_name, persona_instr):
-            _debate_cache = persona_caches[persona_name]
+            _debate_cache = shared_debate_cache
             b_tok = 0
             br_tok = 0
 
@@ -1428,7 +1428,7 @@ async def run_adversarial_debate(
                         p_name,
                         pcm["bull"],
                         pcm["bear"],
-                        persona_caches.get(p_name, {}),
+                        shared_debate_cache,
                     )
                 )
                 cross_persona_names.append(p_name)

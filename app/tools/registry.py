@@ -545,6 +545,7 @@ class ToolRegistry:
 
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             self._log_usage(func_name, agent_name, ticker, cycle_id, True, elapsed_ms, service_source=service_source)
+            self._cache_debate_tool_output(cycle_id, ticker, func_name, cache_key, result)
 
             return {
                 "role": "tool",
@@ -603,6 +604,26 @@ class ToolRegistry:
         except Exception as e:
             # Never let usage tracking break tool execution
             logger.debug("[ToolRegistry] Usage log failed (non-fatal): %s", e)
+
+    def _cache_debate_tool_output(
+        self, cycle_id: str, ticker: str, tool_name: str, cache_key: str, tool_output: str
+    ) -> None:
+        """Persist tool output to the database for debate consistency and auditing."""
+        if not cycle_id or not ticker:
+            return
+        try:
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                db.execute(
+                    "INSERT INTO debate_tool_cache "
+                    "(cycle_id, ticker, tool_name, cache_key, tool_output) "
+                    "VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (cycle_id, ticker, cache_key) DO NOTHING",
+                    [cycle_id, ticker, tool_name, cache_key, tool_output],
+                )
+        except Exception as e:
+            logger.debug("[ToolRegistry] Debate cache persist failed (non-fatal): %s", e)
 
     def get_registry_snapshot(self) -> list[dict]:
         """Return a snapshot of all registered tools with their metadata.

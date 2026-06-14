@@ -2232,4 +2232,17 @@ CREATE TABLE IF NOT EXISTS janitor_run_log (
     details TEXT
 );
 
-
+-- ══════════════════════════════════════════
+-- DEBATE TOOL CACHE
+-- Centralized tool outputs for debate personas
+-- ══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS debate_tool_cache (
+    id              SERIAL PRIMARY KEY,
+    cycle_id        TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    tool_name       TEXT NOT NULL,
+    cache_key       TEXT NOT NULL,
+    tool_output     TEXT NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(cycle_id, ticker, cache_key)
+);

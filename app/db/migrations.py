@@ -1176,4 +1176,24 @@ def _fix_eth_cagr_data(conn):
         except Exception:
             pass
 
-
+    # ── Debate Tool Cache (Centralized Tool Results) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS debate_tool_cache (
+                    id              SERIAL PRIMARY KEY,
+                    cycle_id        TEXT NOT NULL,
+                    ticker          TEXT NOT NULL,
+                    tool_name       TEXT NOT NULL,
+                    cache_key       TEXT NOT NULL,
+                    tool_output     TEXT NOT NULL,
+                    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(cycle_id, ticker, cache_key)
+                )
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
