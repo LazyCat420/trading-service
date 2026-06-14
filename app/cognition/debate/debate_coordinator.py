@@ -859,6 +859,30 @@ async def run_adversarial_debate(
         logger.info("[DEBATE] Debate disabled via DEBATE_ENABLED=False")
         return None
 
+    # ── V3 Family Office Routing ─────────────────────────────────────
+    # When V3 is enabled, delegate to the CIO-driven dynamic debate
+    # system. V2 code below is preserved as fallback.
+    if getattr(cognition_settings, "V3_FAMILY_OFFICE_ENABLED", False):
+        logger.info("[DEBATE] V3 Family Office mode ACTIVE for %s — routing to CIO-driven debate", ticker)
+        try:
+            from app.cognition.debate.debate_coordinator_v3 import run_family_office_debate
+            return await run_family_office_debate(
+                ticker=ticker,
+                packet=packet,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+                agent_insights=agent_insights,
+                position_context=position_context,
+                portfolio_dashboard=portfolio_dashboard,
+                ctx=ctx,
+            )
+        except Exception as v3_err:
+            logger.error(
+                "[DEBATE] V3 Family Office failed for %s — falling back to V2: %s",
+                ticker, v3_err,
+            )
+            # Fall through to V2 below
+
     if ticker in ("USDC", "USDT", "DAI", "USD"):
         logger.info(
             "[DEBATE] Skipping debate for stablecoin/cash equivalent: %s", ticker

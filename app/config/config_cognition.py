@@ -33,6 +33,13 @@ class CognitionSettings(BaseSettings):
     # Specific Feature Flags for Dev 2
     ENABLE_LLM_CLAIM_ENRICHMENT: bool = True
 
+    # V3 Family Office Architecture (Baron Funds Model)
+    V3_FAMILY_OFFICE_ENABLED: bool = False  # Feature flag — enables CIO-driven dynamic debate
+    V3_MAX_CIO_LOOPS: int = 3               # Hard-stop guardrail — max debate rounds
+    V3_PM_TIMEOUT_SECONDS: int = 120        # Per-PM analysis timeout
+    V3_WORKER_TIMEOUT_SECONDS: int = 60     # Per-worker data fetch timeout
+    V3_ABSTAIN_ON_MAX_LOOPS: bool = True    # ABSTAIN vs forced decision on max loops
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

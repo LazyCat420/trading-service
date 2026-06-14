@@ -261,6 +261,35 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_performance_metrics",
         "audit_decision_quality",
     ],
+    # ── V3 Family Office Worker Agents ──
+    "v3_worker_quant": [
+        "get_market_data",
+        "get_technical_indicators",
+        "get_polygon_price_history",
+        "get_options_flow",
+        "query_technical_indicator",
+    ],
+    "v3_worker_fundamental": [
+        "get_market_data",
+        "get_finviz_fundamentals",
+        "get_sec_filings",
+        "get_earnings_data",
+        "query_financial_metrics",
+        "search_database_facts",
+    ],
+    "v3_worker_news": [
+        "get_finnhub_news",
+        "search_web",
+        "search_database_facts",
+        "search_internal_database",
+        "query_hermes",
+    ],
+    "v3_worker_insider": [
+        "get_insider_trades",
+        "get_congress_trades",
+        "get_sec_filings",
+        "search_database_facts",
+    ],
 }
 
 
