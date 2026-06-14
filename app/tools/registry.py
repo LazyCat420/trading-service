@@ -21,6 +21,40 @@ from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
 
+class SimpleTTLCache:
+    def __init__(self, maxsize=1000, ttl=3600):
+        self.maxsize = maxsize
+        self.ttl = ttl
+        self.cache = {}
+        
+    def __getitem__(self, key):
+        if key in self.cache:
+            val, expiry = self.cache[key]
+            if expiry > time.time():
+                return val
+            else:
+                del self.cache[key]
+        raise KeyError(key)
+        
+    def __setitem__(self, key, value):
+        now = time.time()
+        expired = [k for k, (v, exp) in self.cache.items() if exp <= now]
+        for k in expired:
+            del self.cache[k]
+        if len(self.cache) >= self.maxsize:
+            oldest = next(iter(self.cache))
+            del self.cache[oldest]
+        self.cache[key] = (value, now + self.ttl)
+        
+    def __contains__(self, key):
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+_search_web_cache = SimpleTTLCache(maxsize=1000, ttl=3600)
+
 # Context variable to propagate the name of the calling agent executing a tool call
 current_agent_name = contextvars.ContextVar("current_agent_name", default="")
 
@@ -342,6 +376,25 @@ class ToolRegistry:
             
             normalized_args = json.dumps(kwargs, sort_keys=True, separators=(',', ':'))
             cache_key = f"{func_name}:{normalized_args}"
+            
+            # Check search_web cache
+            if func_name == "search_web":
+                query = kwargs.get("query", "")
+                if query:
+                    cache_search_key = (cycle_id, query)
+                    if cache_search_key in _search_web_cache:
+                        logger.info(f"[ToolRegistry] search_web cache hit for query '{query}' in cycle {cycle_id}")
+                        cached_result = _search_web_cache[cache_search_key]
+                        self._log_usage(
+                            func_name, agent_name, ticker, cycle_id, True, 0, "Cache Hit"
+                        )
+                        return {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": func_name,
+                            "content": cached_result,
+                            "service_source": "cache",
+                        }
         except Exception as e:
             logger.error(
                 "[ToolRegistry] Failed to parse JSON arguments for %s: %s | raw: %s",
@@ -546,6 +599,11 @@ class ToolRegistry:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             self._log_usage(func_name, agent_name, ticker, cycle_id, True, elapsed_ms, service_source=service_source)
             self._cache_debate_tool_output(cycle_id, ticker, func_name, cache_key, result)
+
+            if func_name == "search_web" and result:
+                query = kwargs.get("query", "")
+                if query:
+                    _search_web_cache[(cycle_id, query)] = result
 
             return {
                 "role": "tool",

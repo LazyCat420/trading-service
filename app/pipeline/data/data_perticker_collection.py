@@ -382,8 +382,8 @@ async def run_perticker_collection(
             # Cancellation signal: set when yfinance detects a delisted ticker
             _ticker_rejected = asyncio.Event()
 
-            # ── Source 1: yfinance (prices + fundamentals + financials + balance sheet) ──
-            async def _src_yfinance():
+            # ── Source 1: Market Data Rotator (prices + fundamentals + financials + balance sheet) ──
+            async def _src_market_data():
                 t0 = time.monotonic()
                 try:
                     # Force collection when ticker has no price data yet,
@@ -399,19 +399,19 @@ async def run_perticker_collection(
                         "fundamentals", ticker
                     )
 
-                    if needs_collection:
-                        emit(
-                            "collecting",
-                            f"yfinance_{ticker}",
-                            f"{ticker}: Fetching prices, fundamentals, financials...",
-                            status="running",
-                        )
-                        from app.collectors.data_rotator import (
-                            fetch_price_history,
-                            fetch_fundamentals,
-                            fetch_financials,
-                            fetch_balance_sheet,
-                        )
+                        if needs_collection:
+                            emit(
+                                "collecting",
+                                f"market_data_{ticker}",
+                                f"{ticker}: Fetching prices, fundamentals, financials...",
+                                status="running",
+                            )
+                            from app.collectors.data_rotator import (
+                                fetch_price_history,
+                                fetch_fundamentals,
+                                fetch_financials,
+                                fetch_balance_sheet,
+                            )
 
                         # Retry wrapper for transient network errors (Fix #2)
                         @retry(
@@ -441,13 +441,13 @@ async def run_perticker_collection(
                         # or untradeable. Auto-reject and cancel sibling sources.
                         if prices == 0 and existing_prices < 5:
                             logger.warning(
-                                "[PIPELINE] [yfinance] %s: 0 price rows — "
+                                "[PIPELINE] [market_data] %s: 0 price rows — "
                                 "likely delisted/untradeable. Auto-rejecting.",
                                 ticker,
                             )
                             emit(
                                 "collecting",
-                                f"yfinance_{ticker}",
+                                f"market_data_{ticker}",
                                 f"{ticker}: NO PRICE DATA — likely delisted or untradeable",
                                 status="error",
                             )
@@ -465,7 +465,7 @@ async def run_perticker_collection(
                                 _reject_db(ticker)
                             except Exception as rej_err:
                                 logger.debug(
-                                    "[PIPELINE] [yfinance] auto-reject write failed for %s: %s",
+                                    "[PIPELINE] [market_data] auto-reject write failed for %s: %s",
                                     ticker,
                                     rej_err,
                                 )
@@ -475,7 +475,7 @@ async def run_perticker_collection(
                             "fundamentals", ticker, rows=prices + fundies + fins + bs
                         )
                         ms = elapsed_ms(t0)
-                        local[f"{ticker}_yfinance"] = {
+                        local[f"{ticker}_market_data"] = {
                             "prices": prices,
                             "fundamentals": fundies,
                             "financials": fins,
@@ -489,7 +489,7 @@ async def run_perticker_collection(
                         )
                         emit(
                             "collecting",
-                            f"yfinance_{ticker}",
+                            f"market_data_{ticker}",
                             detail,
                             status="ok",
                             data={
@@ -501,43 +501,43 @@ async def run_perticker_collection(
                             elapsed_ms=ms,
                         )
                         logger.info(
-                            f"[PIPELINE]   [yfinance] {ticker}: {ms}ms -- prices={prices}, fins={fins}"
+                            f"[PIPELINE]   [market_data] {ticker}: {ms}ms -- prices={prices}, fins={fins}"
                         )
                     else:
                         ms = elapsed_ms(t0)
                         emit(
                             "collecting",
-                            f"yfinance_{ticker}",
+                            f"market_data_{ticker}",
                             f"{ticker}: fresh, skipping",
                             status="skipped",
                             elapsed_ms=ms,
                         )
-                        logger.info(f"[PIPELINE]   [yfinance] {ticker} fresh, skipping")
+                        logger.info(f"[PIPELINE]   [market_data] {ticker} fresh, skipping")
                 except asyncio.TimeoutError:
                     ms = elapsed_ms(t0)
                     emit(
                         "collecting",
-                        f"yfinance_{ticker}",
-                        f"{ticker}: yfinance TIMEOUT ({SOURCE_TIMEOUT}s)",
+                        f"market_data_{ticker}",
+                        f"{ticker}: Market Data TIMEOUT ({SOURCE_TIMEOUT}s)",
                         status="timeout",
                         elapsed_ms=ms,
                     )
                     logger.error(
-                        f"[PIPELINE]   [yfinance] {ticker} TIMEOUT after {SOURCE_TIMEOUT}s — removing from cycle"
+                        f"[PIPELINE]   [market_data] {ticker} TIMEOUT after {SOURCE_TIMEOUT}s — removing from cycle"
                     )
                     _ticker_rejected.set()
                 except Exception as e:
-                    _log_err("yfinance", e, ticker)
+                    _log_err("market_data", e, ticker)
                     ms = elapsed_ms(t0)
                     emit(
                         "collecting",
-                        f"yfinance_{ticker}",
+                        f"market_data_{ticker}",
                         f"{ticker}: Failed -- {e}",
                         status="error",
                         elapsed_ms=ms,
                     )
                     logger.info(
-                        f"[PIPELINE]   [yfinance] {ticker} FAILED: {e} — removing from cycle"
+                        f"[PIPELINE]   [market_data] {ticker} FAILED: {e} — removing from cycle"
                     )
                     _ticker_rejected.set()
 
@@ -813,12 +813,12 @@ async def run_perticker_collection(
 
             # ── Fire all 5 sources in parallel (rate limiters prevent overloading) ──
             # NOTE: CancelledError propagates from gather() automatically.
-            # yfinance runs first and can signal rejection via _ticker_rejected.
+            # market_data runs first and can signal rejection via _ticker_rejected.
             # Due to the gather, sibling sources check the event at their start.
             # For already-running siblings, they complete but the results are
             # discarded below when _ticker_rejected is checked.
             await asyncio.gather(
-                _src_yfinance(),
+                _src_market_data(),
                 _src_finnhub(),
                 _src_reddit(),
                 _src_youtube(),

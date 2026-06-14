@@ -125,9 +125,9 @@ async def check_and_fill(ticker: str, emit=None, enqueue_only: bool = False) -> 
                 status="running",
             )
             try:
-                from app.collectors.yfinance_collector import collect_price_history
+                from app.collectors.data_rotator import fetch_price_history
 
-                rows = await collect_price_history(ticker, period="3mo")
+                rows = await fetch_price_history(ticker, days_back=90)
                 report["filled"].append(f"price_history: {rows} rows")
                 report["available"]["price_history"] = rows
                 _emit(f"📈 {ticker}: Collected {rows} price rows ✓")
@@ -173,9 +173,10 @@ async def check_and_fill(ticker: str, emit=None, enqueue_only: bool = False) -> 
         else:
             _emit(f"📊 {ticker}: Collecting fundamentals...", status="running")
             try:
-                from app.collectors.yfinance_collector import collect_fundamentals
+                from app.collectors.data_rotator import fetch_fundamentals
 
-                rows = await collect_fundamentals(ticker)
+                success = await fetch_fundamentals(ticker)
+                rows = 1 if success else 0
                 report["filled"].append(f"fundamentals: {rows} rows")
                 report["available"]["fundamentals"] = rows
                 _emit(f"📊 {ticker}: Collected fundamentals ✓")

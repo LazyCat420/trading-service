@@ -66,6 +66,12 @@ def init_mongo_schema():
         # 5. dissent_log
         db["dissent_log"].create_index([("ticker", pymongo.ASCENDING), ("cycle_id", pymongo.ASCENDING)])
 
+        # 6. agent_configs
+        db["agent_configs"].create_index([("role", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
+
+        # 7. post_mortems
+        db["post_mortems"].create_index([("role", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
+
         logger.info("[Mongo] Civilization Council collections initialized successfully.")
     except Exception as e:
         logger.error(f"[Mongo] Failed to initialize MongoDB collections: {e}")

@@ -274,6 +274,19 @@ async def run_family_office_debate(
             sum(len(a.claims) for a in pm_arguments),
         )
 
+        # Apply probation vote weight cap
+        from app.governance.trust_score_manager import get_agent_trust_score
+        capped_pm_arguments = []
+        for arg in pm_arguments:
+            role_str = arg.role.value if hasattr(arg.role, "value") else str(arg.role)
+            trust = get_agent_trust_score(role_str)
+            if trust < 0.9:
+                logger.info(f"[Probation] Capping vote weight for {role_str} (trust={trust})")
+                capped_pm_arguments.append(arg.model_copy(update={"confidence": int(arg.confidence * 0.7)}))
+            else:
+                capped_pm_arguments.append(arg)
+        pm_arguments = capped_pm_arguments
+
         # ── Step 2: Cross-Examination ────────────────────────────────────
         cross_findings = ""
         try:
@@ -331,9 +344,26 @@ async def run_family_office_debate(
         
         # Apply interim fractional trust score deltas based on debate logic
         update_trust_scores_from_debate(rnd, ticker, cycle_id)
+        from app.governance.trust_score_manager import resolve_challenges_and_update_trust
+        resolve_challenges_and_update_trust(ticker, cycle_id)
 
         # ── If CIO rendered a verdict, we're done ────────────────────────
         if final_verdict:
+            # Check quorum: minimum 5 of 8 agents must respond.
+            responding_count = sum(
+                1 for a in pm_arguments 
+                if len(a.claims) > 0 and not (getattr(a, "raw_response", "") or "").startswith("PM ") and not (getattr(a, "raw_response", "") or "").endswith("failed")
+            )
+            if responding_count < 5 and final_verdict.conviction in ("HIGH", "EXTREME"):
+                old_conv = final_verdict.conviction
+                new_rationale = final_verdict.rationale + f" [Downgraded conviction from {old_conv} due to lack of quorum: only {responding_count}/8 responded]"
+                try:
+                    final_verdict.conviction = "MODERATE"
+                    final_verdict.rationale = new_rationale
+                except Exception:
+                    final_verdict = final_verdict.model_copy(update={"conviction": "MODERATE", "rationale": new_rationale})
+                logger.warning(f"[V3] Quorum not met ({responding_count}/8). Downgraded conviction on {ticker} from {old_conv} to MODERATE.")
+
             logger.info(
                 "[V3] CIO rendered verdict in round %d: %s @ %d%%",
                 round_num, final_verdict.action, final_verdict.confidence,
@@ -536,6 +566,11 @@ async def run_family_office_debate(
                         "winning_side": final_verdict.winning_side if final_verdict else "split",
                         "conviction": final_verdict.conviction if final_verdict else "",
                         "rationale": final_verdict.rationale if final_verdict else "",
+                        "council_vote_breakdown": {
+                            "bull_count": sum(1 for a in pm_arguments if a.direction == "bull") if 'pm_arguments' in locals() else 0,
+                            "bear_count": sum(1 for a in pm_arguments if a.direction == "bear") if 'pm_arguments' in locals() else 0,
+                            "neutral_count": sum(1 for a in pm_arguments if a.direction == "neutral") if 'pm_arguments' in locals() else 0,
+                        }
                     },
                     "manager_outcomes": manager_outcomes,
                     "total_tokens": total_tokens,

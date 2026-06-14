@@ -153,6 +153,10 @@ def update_trust_scores_on_outcome(ticker: str, cycle_id: str, action: str, outc
                         "history": {
                             "$each": [history_entry],
                             "$slice": -100 # keep last 100 history entries
+                        },
+                        "score_history": {
+                            "$each": [{"timestamp": datetime.now(timezone.utc), "score": round(new_score, 4)}],
+                            "$slice": -50 # keep last 50 score history entries
                         }
                     }
                 },
@@ -161,10 +165,44 @@ def update_trust_scores_on_outcome(ticker: str, cycle_id: str, action: str, outc
             
             logger.info(f"[TrustScore] {role}: {current_score:.4f} -> {new_score:.4f} (cc={consecutive_correct}, cw={consecutive_wrong})")
             
-            # Trigger Cold Streak Watchdog warnings if streak >= 5
-            if consecutive_wrong >= 5:
-                logger.warning(f"⚠️ [WATCHDOG] Agent {role} is on a COLD STREAK of {consecutive_wrong} consecutive wrong calls! Demotion/Hiring triggered.")
-                trigger_hiring_agent(role, consecutive_wrong, ticker, cycle_id)
+             # Trigger Cold Streak Watchdog warnings if streak >= 5
+             if consecutive_wrong >= 5:
+                 logger.warning(f"⚠️ [WATCHDOG] Agent {role} is on a COLD STREAK of {consecutive_wrong} consecutive wrong calls! Demotion/Hiring triggered.")
+                 trigger_hiring_agent(role, consecutive_wrong, ticker, cycle_id)
+                 
+        # 3. Process dissent accuracy tracking
+        try:
+            dissent_cursor = db["dissent_log"].find({"ticker": ticker, "cycle_id": cycle_id})
+            for dissent in dissent_cursor:
+                role = dissent.get("manager_role")
+                if not role:
+                    continue
+                # If the verdict lost money, the dissenter was right!
+                if outcome == "LOSS":
+                    agent_doc = col_scores.find_one({"role": role})
+                    if agent_doc:
+                        current_score = agent_doc.get("trust_score", 1.0)
+                        # Reward bonus +0.02
+                        new_score = min(1.0, current_score + 0.02)
+                        
+                        col_scores.update_one(
+                            {"role": role},
+                            {
+                                "$set": {
+                                    "trust_score": round(new_score, 4),
+                                    "last_updated": datetime.now(timezone.utc)
+                                },
+                                "$push": {
+                                    "score_history": {
+                                        "$each": [{"timestamp": datetime.now(timezone.utc), "score": round(new_score, 4)}],
+                                        "$slice": -50
+                                    }
+                                }
+                            }
+                        )
+                        logger.info(f"[TrustScore] Dissenter {role} rewarded: {current_score:.4f} -> {new_score:.4f} (verdict was wrong on {ticker})")
+        except Exception as dissent_err:
+            logger.error(f"[TrustScore] Failed to reconcile dissenter accuracy: {dissent_err}")
                 
     except Exception as e:
         logger.error(f"[TrustScore] Failed to update trust scores on outcome: {e}", exc_info=True)
@@ -179,23 +217,80 @@ def update_trust_scores_from_debate(rnd: Any, ticker: str, cycle_id: str):
         col_scores = db["agent_trust_scores"]
         
         # We assume rnd is a DebateRound object
-        if not hasattr(rnd, "pm_arguments"):
+        if not hasattr(rnd, "pm_arguments") or not rnd.pm_arguments:
+            logger.warning("[TrustScore] Debate round missing pm_arguments — skipping interim delta")
             return
             
+        conviction_weights = {"EXTREME": 2.0, "HIGH": 1.5, "MODERATE": 1.0, "LOW": 0.5, "WATCH": 0.25}
+
         for arg in rnd.pm_arguments:
             role = arg.role.value if hasattr(arg.role, "value") else str(arg.role)
-            # Example small delta logic based on claims
-            delta = 0.005 if len(arg.claims) > 0 else -0.005
+            conv_str = arg.conviction.upper() if getattr(arg, "conviction", None) else "MODERATE"
+            weight = conviction_weights.get(conv_str, 1.0)
+            delta = 0.002 * weight * min(len(arg.claims), 5) if len(arg.claims) > 0 else -0.005
             
             agent_doc = col_scores.find_one({"role": role})
-            if agent_doc:
-                current_score = agent_doc.get("trust_score", 1.0)
-                new_score = max(0.1, min(1.0, current_score + delta))
+            if not agent_doc:
+                # Seed with default trust score 0.8
+                current_score = 0.8
+            else:
+                current_score = agent_doc.get("trust_score", 0.8)
                 
-                col_scores.update_one(
-                    {"role": role},
-                    {"$set": {"trust_score": round(new_score, 4), "last_updated": datetime.now(timezone.utc)}}
-                )
+            new_score = max(0.1, min(1.0, current_score + delta))
+            
+            col_scores.update_one(
+                {"role": role},
+                {
+                    "$set": {"trust_score": round(new_score, 4), "last_updated": datetime.now(timezone.utc)},
+                    "$push": {
+                        "score_history": {
+                            "$each": [{"timestamp": datetime.now(timezone.utc), "score": round(new_score, 4)}],
+                            "$slice": -50
+                        }
+                    }
+                },
+                upsert=True
+            )
     except Exception as e:
         logger.error(f"[TrustScore] Failed to apply interim debate trust score deltas: {e}", exc_info=True)
+
+
+def resolve_challenges_and_update_trust(ticker: str, cycle_id: str):
+    """
+    Query challenge_log for the given ticker and cycle_id, and update
+    challenges_raised and challenges_upheld counters for each agent.
+    """
+    try:
+        db = get_mongo_db()
+        col_scores = db["agent_trust_scores"]
+        
+        # Aggregate challenges by challenged_agent_role
+        challenges = db["challenge_log"].find({"ticker": ticker, "cycle_id": cycle_id})
+        
+        updates = {} # role -> {raised: int, upheld: int}
+        for c in challenges:
+            role = c.get("challenged_agent_role")
+            if not role or role == "unknown":
+                continue
+            if role not in updates:
+                updates[role] = {"raised": 0, "upheld": 0}
+            updates[role]["raised"] += 1
+            if c.get("upheld", False):
+                updates[role]["upheld"] += 1
+                
+        for role, counts in updates.items():
+            col_scores.update_one(
+                {"role": role},
+                {
+                    "$inc": {
+                        "challenges_raised": counts["raised"],
+                        "challenges_upheld": counts["upheld"]
+                    }
+                },
+                upsert=True
+            )
+            logger.info(f"[TrustScore] Resolved challenges for {role} (cycle={cycle_id}): raised={counts['raised']}, upheld={counts['upheld']}")
+            
+    except Exception as e:
+        logger.error(f"[TrustScore] Failed to resolve challenges and update trust: {e}", exc_info=True)
 

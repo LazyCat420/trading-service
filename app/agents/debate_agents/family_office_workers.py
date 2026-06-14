@@ -27,8 +27,55 @@ from app.services.vllm_client import llm, Priority
 
 logger = logging.getLogger(__name__)
 
+import time
+
+class SimpleTTLCache:
+    def __init__(self, maxsize=1000, ttl=3600):
+        self.maxsize = maxsize
+        self.ttl = ttl
+        self.cache = {}
+        
+    def __getitem__(self, key):
+        if key in self.cache:
+            val, expiry = self.cache[key]
+            if expiry > time.time():
+                return val
+            else:
+                del self.cache[key]
+        raise KeyError(key)
+        
+    def __setitem__(self, key, value):
+        now = time.time()
+        expired = [k for k, (v, exp) in self.cache.items() if exp <= now]
+        for k in expired:
+            del self.cache[k]
+        if len(self.cache) >= self.maxsize:
+            oldest = next(iter(self.cache))
+            del self.cache[oldest]
+        self.cache[key] = (value, now + self.ttl)
+        
+    def __contains__(self, key):
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+            
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+            
+    def pop(self, key, default=None):
+        try:
+            val, _ = self.cache.pop(key)
+            return val
+        except KeyError:
+            return default
+
 # State to track rate limits per cycle
-_search_web_calls: dict[str, int] = {}
+_search_web_calls = SimpleTTLCache(maxsize=1000, ttl=3600)
 
 
 # ── Worker System Prompts ───────────────────────────────────────────────

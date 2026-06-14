@@ -67,6 +67,9 @@ async def run_data_step(ctx: TickerContext) -> TickerContext:
     t_proc = time.monotonic()
     try:
         # Check if price history has 0 rows, if so, skip data processors and flag the report
+        if "available" not in ctx.data_report:
+            ctx.data_report["available"] = {}
+            
         price_count = ctx.data_report.get("available", {}).get("price_history", 0)
         if price_count == 0:
             from app.db.connection import get_db
@@ -77,12 +80,10 @@ async def run_data_step(ctx: TickerContext) -> TickerContext:
                     ).fetchone()[0]
             except Exception:
                 price_count = 0
+            ctx.data_report["available"]["price_history"] = price_count
 
         if price_count == 0:
             logger.warning("[V2] %s has 0 price history rows. Skipping data processors.", ctx.ticker)
-            if "available" not in ctx.data_report:
-                ctx.data_report["available"] = {}
-            ctx.data_report["available"]["price_history"] = 0
             ctx.add_stage("ticker_processors", ctx.elapsed_ms(t_proc))
             return ctx
 

@@ -947,15 +947,54 @@ For each claim, mark it as VERIFIED or UNVERIFIED with a brief explanation."""
             import uuid
             
             db = get_mongo_db()
-            db["challenge_log"].insert_one({
-                "challenge_id": f"cl-{uuid.uuid4().hex[:8]}",
-                "timestamp": datetime.now(timezone.utc),
-                "ticker": ticker,
-                "cycle_id": cycle_id,
-                "unverified_count": response.count("UNVERIFIED"),
-                "verified_count": response.count("VERIFIED"),
-                "raw_findings": response
-            })
+            
+            try:
+                parsed = parse_json_response(response)
+                challenges = parsed.get("challenges", [])
+                unverified_count = sum(1 for c in challenges if c.get("status") == "UNVERIFIED")
+                verified_count = sum(1 for c in challenges if c.get("status") == "VERIFIED")
+            except Exception as parse_err:
+                logger.warning("[V3] Failed to parse JSON from cross-examiner: %s", parse_err)
+                challenges = []
+                unverified_count = response.count("UNVERIFIED")
+                verified_count = response.count("VERIFIED")
+                
+            challenge_docs = []
+            if challenges:
+                for c in challenges:
+                    role_str = c.get("role", "unknown")
+                    status_str = c.get("status", "VERIFIED")
+                    upheld_val = (status_str == "UNVERIFIED")
+                    
+                    challenge_docs.append({
+                        "challenge_id": f"cl-{uuid.uuid4().hex[:8]}",
+                        "timestamp": datetime.now(timezone.utc),
+                        "ticker": ticker,
+                        "cycle_id": cycle_id,
+                        "challenged_agent_role": role_str,
+                        "claim": c.get("claim", ""),
+                        "status": status_str,
+                        "upheld": upheld_val,
+                        "reason": c.get("reason", "")
+                    })
+            else:
+                challenge_docs.append({
+                    "challenge_id": f"cl-{uuid.uuid4().hex[:8]}",
+                    "timestamp": datetime.now(timezone.utc),
+                    "ticker": ticker,
+                    "cycle_id": cycle_id,
+                    "challenged_agent_role": "unknown",
+                    "claim": "raw text findings",
+                    "status": "UNVERIFIED" if unverified_count > 0 else "VERIFIED",
+                    "upheld": unverified_count > 0,
+                    "unverified_count": unverified_count,
+                    "verified_count": verified_count,
+                    "raw_findings": response
+                })
+                
+            if challenge_docs:
+                db["challenge_log"].insert_many(challenge_docs)
+                
         except Exception as e:
             logger.error(f"[V3] Failed to log cross-examination challenges: {e}")
 
@@ -976,11 +1015,12 @@ Your specialists have posted their analyses on the TaskBoard. Your job is to mak
 {CONVICTION_FRAMEWORK}
 
 ## YOUR DECISION PROCESS:
-1. Review each PM's argument, confidence, and conviction level
+1. Review each PM's argument, confidence, conviction, and trust score (indicated in headers)
 2. Review the Cross-Examiner's findings — discount claims that were UNVERIFIED
 3. Weigh the Risk Manager's concerns seriously — permanent capital loss is unacceptable
 4. Check Memory PM's historical context — have we seen this pattern before?
-5. DECIDE: Do you have enough evidence to render a verdict, or do you need more data?
+5. Weigh each PM's argument according to their trust score (higher trust score = higher credibility)
+6. DECIDE: Do you have enough evidence to render a verdict, or do you need more data?
 
 ## TWO POSSIBLE OUTPUTS:
 
@@ -1061,9 +1101,12 @@ async def run_cio_evaluation(
         )
 
     # Build user prompt with all PM arguments
+    from app.governance.trust_score_manager import get_agent_trust_score
     pm_sections = []
     for arg in pm_arguments:
-        section = f"### {arg.role.value.upper()} (confidence: {arg.confidence}%, conviction: {arg.conviction})\n"
+        role_str = arg.role.value if hasattr(arg.role, "value") else str(arg.role)
+        trust_val = get_agent_trust_score(role_str)
+        section = f"### {arg.role.value.upper()} (trust score: {trust_val:.2f}, confidence: {arg.confidence}%, conviction: {arg.conviction})\n"
         section += f"Key argument: {arg.key_argument}\n"
         section += f"Devil's advocate: {arg.devils_advocate}\n"
         section += "Claims:\n"

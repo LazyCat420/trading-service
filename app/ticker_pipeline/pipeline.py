@@ -165,15 +165,6 @@ async def execute_ticker_pipeline(
 
     # Check if ticker should be aborted early due to empty price data
     price_count = ctx.data_report.get("available", {}).get("price_history", 0)
-    if price_count == 0:
-        from app.db.connection import get_db
-        try:
-            with get_db() as db:
-                price_count = db.execute(
-                    "SELECT COUNT(*) FROM price_history WHERE ticker = %s", [ticker]
-                ).fetchone()[0]
-        except Exception:
-            price_count = 0
 
     if price_count == 0:
         logger.warning("[V2] %s has 0 price history rows. Aborting pipeline early.", ticker)

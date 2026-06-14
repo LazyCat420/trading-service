@@ -38,8 +38,8 @@ _COLLECTOR_REGISTRY: dict[str, str] = {
     "news": "app.collectors.news_collector",
     "reddit": "app.collectors.reddit_collector",
     "youtube": "app.collectors.youtube_collector",
-    "price": "app.collectors.yfinance_collector",
-    "fundamentals": "app.collectors.yfinance_collector",
+    "price": "app.collectors.data_rotator",
+    "fundamentals": "app.collectors.data_rotator",
     "options": "app.collectors.yfinance_collector",
     "technicals": "app.processors.technical_calculator",
 }
@@ -49,8 +49,8 @@ _COLLECTOR_FUNCTIONS: dict[str, str] = {
     "news": "collect_news",
     "reddit": "collect_reddit",
     "youtube": "collect_youtube_for_ticker",
-    "price": "collect_price_history",
-    "fundamentals": "collect_fundamentals",
+    "price": "fetch_price_history",
+    "fundamentals": "fetch_fundamentals",
     "options": "collect_options_chain",
     "technicals": "compute_technicals",
 }
