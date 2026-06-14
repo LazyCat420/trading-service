@@ -288,6 +288,42 @@ async def collect_fundamentals(ticker: str) -> bool:
         return True
 
 
+async def collect_analyst_targets(ticker: str) -> bool:
+    """Fetch analyst price targets from FMP."""
+    try:
+        api_key = _get_key()
+    except ValueError:
+        return False
+
+    url = f"https://financialmodelingprep.com/api/v4/price-target"
+
+    from app.services.request_utils import SmartClient
+
+    async with SmartClient(base_delay=1.0, max_retries=3) as client:
+        resp = await client.get(url, params={"symbol": ticker, "apikey": api_key})
+        if resp.status_code != 200:
+            logger.info(f"[fmp] Error fetching analyst targets for {ticker}: HTTP {resp.status_code}")
+            return False
+        data = resp.json()
+
+    if not data:
+        logger.info(f"[fmp] No analyst targets for {ticker}")
+        return False
+
+    target = data[0] if isinstance(data, list) else data
+    if "priceTarget" not in target and "targetHigh" not in target:
+        return False
+
+    logger.info(
+        f"[fmp] {ticker}: analyst targets — "
+        f"target={target.get('priceTarget')}, "
+        f"high={target.get('targetHigh')}, "
+        f"low={target.get('targetLow')}, "
+        f"mean={target.get('targetMedian') or target.get('targetMean')}"
+    )
+    return True
+
+
 async def collect_financials(ticker: str) -> int:
     """Fetch income statement (quarterly) and upsert into financial_history."""
     try:

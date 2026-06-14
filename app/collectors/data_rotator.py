@@ -172,8 +172,19 @@ async def fetch_analyst_targets(ticker: str) -> bool:
             f"[rotator] Finnhub raised error for {ticker} analyst targets: {e}"
         )
 
-    # Currently we don't have an FMP fallback written for analyst targets yet,
-    # but this is where it would plug in.
+    # 2. Fallback to FMP
+    logger.warning(
+        f"[rotator] Finnhub failed for {ticker} analyst targets. Falling back to FMP..."
+    )
+    try:
+        success = await fmp_collector.collect_analyst_targets(ticker)
+        if success:
+            return True
+    except Exception as e:
+        logger.warning(f"[rotator] FMP raised error for {ticker} analyst targets: {e}")
+
+    if not success:
+        logger.error(f"[rotator] ALL providers failed to fetch analyst targets for {ticker}.")
     return success
 
 
