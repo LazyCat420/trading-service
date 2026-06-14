@@ -165,10 +165,10 @@ def update_trust_scores_on_outcome(ticker: str, cycle_id: str, action: str, outc
             
             logger.info(f"[TrustScore] {role}: {current_score:.4f} -> {new_score:.4f} (cc={consecutive_correct}, cw={consecutive_wrong})")
             
-             # Trigger Cold Streak Watchdog warnings if streak >= 5
-             if consecutive_wrong >= 5:
-                 logger.warning(f"⚠️ [WATCHDOG] Agent {role} is on a COLD STREAK of {consecutive_wrong} consecutive wrong calls! Demotion/Hiring triggered.")
-                 trigger_hiring_agent(role, consecutive_wrong, ticker, cycle_id)
+            # Trigger Cold Streak Watchdog warnings if streak >= 5
+            if consecutive_wrong >= 5:
+                logger.warning(f"⚠️ [WATCHDOG] Agent {role} is on a COLD STREAK of {consecutive_wrong} consecutive wrong calls! Demotion/Hiring triggered.")
+                trigger_hiring_agent(role, consecutive_wrong, ticker, cycle_id)
                  
         # 3. Process dissent accuracy tracking
         try:

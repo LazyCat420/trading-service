@@ -399,19 +399,19 @@ async def run_perticker_collection(
                         "fundamentals", ticker
                     )
 
-                        if needs_collection:
-                            emit(
-                                "collecting",
-                                f"market_data_{ticker}",
-                                f"{ticker}: Fetching prices, fundamentals, financials...",
-                                status="running",
-                            )
-                            from app.collectors.data_rotator import (
-                                fetch_price_history,
-                                fetch_fundamentals,
-                                fetch_financials,
-                                fetch_balance_sheet,
-                            )
+                    if needs_collection:
+                        emit(
+                            "collecting",
+                            f"market_data_{ticker}",
+                            f"{ticker}: Fetching prices, fundamentals, financials...",
+                            status="running",
+                        )
+                        from app.collectors.data_rotator import (
+                            fetch_price_history,
+                            fetch_fundamentals,
+                            fetch_financials,
+                            fetch_balance_sheet,
+                        )
 
                         # Retry wrapper for transient network errors (Fix #2)
                         @retry(
