@@ -79,7 +79,7 @@ async def run_meta_audit(cycle_id: str, bot_id: str) -> dict:
             "strategy outcomes, and decision quality. "
             "Write any actionable insights to memory."
         ),
-        max_tokens=1024,
+        max_tokens=8192,
         enable_tools=True,
     )
 

@@ -124,7 +124,7 @@ async def run_pre_trade(
             f"Calculate the appropriate position size, stop-loss, and risk/reward "
             f"ratio using your calculator tools. Then decide: APPROVE or VETO."
         ),
-        max_tokens=1024,
+        max_tokens=8192,
         enable_tools=True,
     )
 

@@ -8,6 +8,7 @@ import json
 import logging
 import datetime
 from app.db.connection import get_db
+from app.config import settings
 from app.services.prism_agent_caller import call_prism_agent
 from app.services.vllm_client import Priority
 
@@ -82,7 +83,7 @@ Summary/Snippet: {summary or "No summary content."}
             fallback_system_prompt=SMART_JANITOR_SYSTEM_PROMPT,
             fallback_agent_name="smart_janitor",
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=settings.JANITOR_MAX_TOKENS,
             priority=Priority.NORMAL,
             ticker=ticker,
         )
@@ -221,7 +222,7 @@ Body: {body or "No body content."}
             fallback_system_prompt=SMART_JANITOR_SYSTEM_PROMPT,
             fallback_agent_name="smart_janior",
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=settings.JANITOR_MAX_TOKENS,
             priority=Priority.NORMAL,
             ticker=ticker,
         )

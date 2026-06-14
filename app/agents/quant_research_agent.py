@@ -63,7 +63,7 @@ async def run_quant_research(cycle_id: str, bot_id: str) -> dict:
             "Pick ONE specific quantitative trading strategy or mathematical indicator to research online. "
             "Search for recent papers or articles, extract the core trading rules, and write an actionable note to memory."
         ),
-        max_tokens=1024,
+        max_tokens=16384,
         enable_tools=True,
     )
 

@@ -218,7 +218,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
                 system=system_prompt,
                 user=user_prompt,
                 temperature=0.9,
-                max_tokens=1024,
+                max_tokens=4096,
                 priority=Priority.LOW,
                 agent_name=f"voice_{archetype.lower()}",
                 ticker=ticker

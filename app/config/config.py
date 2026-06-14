@@ -183,6 +183,7 @@ class Settings(BaseSettings):
     STARTING_CASH: float = 100000.0
 
     # ── Janitor Agent (Data Hygiene) ──
+    JANITOR_MAX_TOKENS: int = 4096
     AUDIT_LOG_TTL_DAYS: int = 14  # Delete llm_audit_logs older than this
     NEWS_DUPLICATE_TTL_DAYS: int = 30  # Delete duplicate news older than this
     LESSON_CONSOLIDATION_THRESHOLD: int = 50  # Consolidate when lessons exceed this

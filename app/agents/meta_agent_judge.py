@@ -231,7 +231,7 @@ Rules:
             bot_id="meta-judge",
             system_prompt=mutation_system,
             user_prompt=user_msg,
-            max_tokens=1024,
+            max_tokens=8192,
             temperature=0.7,  # Higher temp for creative variation
         )
 

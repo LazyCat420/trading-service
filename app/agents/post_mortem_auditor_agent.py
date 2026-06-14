@@ -105,7 +105,7 @@ async def run_post_mortem(
             f"{news_context}\n\n"
             f"Identify if the exit was optimal and formulate the key lesson learned. Return the required JSON schema."
         ),
-        max_tokens=1024,
+        max_tokens=8192,
         enable_tools=True,
     )
 
