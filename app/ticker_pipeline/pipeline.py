@@ -163,6 +163,29 @@ async def execute_ticker_pipeline(
     logger.info("[V2] %s: Step 0.5 - Data Completeness", ticker)
     ctx = await run_data_step(ctx)
 
+    # Check if ticker should be aborted early due to empty price data
+    price_count = ctx.data_report.get("available", {}).get("price_history", 0)
+    if price_count == 0:
+        from app.db.connection import get_db
+        try:
+            with get_db() as db:
+                price_count = db.execute(
+                    "SELECT COUNT(*) FROM price_history WHERE ticker = %s", [ticker]
+                ).fetchone()[0]
+        except Exception:
+            price_count = 0
+
+    if price_count == 0:
+        logger.warning("[V2] %s has 0 price history rows. Aborting pipeline early.", ticker)
+        from app.ticker_pipeline.step_sufficiency import _handle_abstain
+        class DummySufficiency:
+            status = "critical_gap"
+            blockers = ["Missing critical price history data."]
+            warnings = []
+        ctx.sufficiency = DummySufficiency()
+        ctx.packet = type("DummyPacket", (), {"missing_fields": ["price"]})()
+        return await _handle_abstain(ctx)
+
     # Step 1: Ontology enrichment
     logger.info("[V2] %s: Step 1 - Ontology", ticker)
     ctx = await run_ontology_step(ctx)

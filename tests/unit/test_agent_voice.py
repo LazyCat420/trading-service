@@ -160,7 +160,7 @@ async def test_step_data_voice_dispatch():
          patch("app.pipeline.data.data_perticker_collection.run_ticker_processors", new_callable=AsyncMock) as mock_proc, \
          patch("app.services.agent_voice_service.dispatch_agent_quote") as mock_dispatch:
         
-        mock_fill.return_value = {"filled": []}
+        mock_fill.return_value = {"filled": [], "available": {"price_history": 250}}
         mock_proc.return_value = None
         
         from app.ticker_pipeline.step_data import run_data_step

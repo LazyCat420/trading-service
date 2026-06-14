@@ -66,6 +66,26 @@ async def run_data_step(ctx: TickerContext) -> TickerContext:
     # ── Ticker Processors (Smart Janitor, Summarizer, Consensus, Narrative) ──
     t_proc = time.monotonic()
     try:
+        # Check if price history has 0 rows, if so, skip data processors and flag the report
+        price_count = ctx.data_report.get("available", {}).get("price_history", 0)
+        if price_count == 0:
+            from app.db.connection import get_db
+            try:
+                with get_db() as db:
+                    price_count = db.execute(
+                        "SELECT COUNT(*) FROM price_history WHERE ticker = %s", [ctx.ticker]
+                    ).fetchone()[0]
+            except Exception:
+                price_count = 0
+
+        if price_count == 0:
+            logger.warning("[V2] %s has 0 price history rows. Skipping data processors.", ctx.ticker)
+            if "available" not in ctx.data_report:
+                ctx.data_report["available"] = {}
+            ctx.data_report["available"]["price_history"] = 0
+            ctx.add_stage("ticker_processors", ctx.elapsed_ms(t_proc))
+            return ctx
+
         from app.pipeline.data.data_perticker_collection import run_ticker_processors
 
         ctx.safe_emit(
