@@ -57,6 +57,6 @@ ENV SHARED_CODEBASE_PATH="/app"
 USER appusr
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=120s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+  CMD wget --no-verbose --tries=1 --output-document=/dev/null http://localhost:8080/health || exit 1
 
 CMD ["./entrypoint.sh"]
