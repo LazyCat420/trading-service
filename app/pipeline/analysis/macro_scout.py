@@ -238,29 +238,41 @@ async def _call_llm_for_memo(data_snapshot: str, emit: Callable) -> str:
 def _extract_watchlist_suggestions(memo: str) -> list[str]:
     """Parse ticker suggestions from the memo text.
 
-    Looks for lines like "- TICKER:" or "- **TICKER**:" in the
-    WATCHLIST SUGGESTIONS section.
+    Handles various LLM output patterns:
+    - NVDA: reason
+    - **NVDA**: reason
+    - NVDA — reason
+    - NVDA (reason)
+    - 1. NVDA - reason
     """
     import re
 
     tickers: list[str] = []
     in_section = False
 
+    # Patterns that match a ticker at the start of a list item
+    _TICKER_PATTERNS = [
+        r"^\s*[-*•]\s*\**([A-Z]{1,5})\**\s*[:\-\u2014\(]",   # - NVDA: or - **NVDA** —
+        r"^\s*\d+\.\s*\**([A-Z]{1,5})\**\s*[:\-\u2014\(]",   # 1. NVDA: or 1. **NVDA**:
+        r"^\s*[-*•]\s*\**([A-Z]{1,5})\**\s*$",                # - NVDA (alone on line)
+        r"^\s*\**([A-Z]{1,5})\**\s*[:\-\u2014]\s",            # NVDA: reason (no bullet)
+    ]
+
     for line in memo.split("\n"):
         upper = line.strip().upper()
-        if "WATCHLIST SUGGESTIONS" in upper:
+        if "WATCHLIST" in upper and ("SUGGESTION" in upper or "RECOMMEND" in upper):
             in_section = True
             continue
         if in_section and line.strip().startswith("###"):
             break  # hit the next section
-        if in_section and line.strip().startswith("-"):
-            # Try to extract a ticker from patterns like "- NVDA:" or "- **NVDA**:"
-            match = re.match(
-                r"^\s*-\s*\**([A-Z]{1,5})\**\s*[:\-—]",
-                line.strip(),
-            )
-            if match:
-                tickers.append(match.group(1))
+        if in_section and line.strip():
+            for pattern in _TICKER_PATTERNS:
+                match = re.match(pattern, line.strip())
+                if match:
+                    sym = match.group(1)
+                    if sym not in tickers and len(sym) <= 5:
+                        tickers.append(sym)
+                    break
 
     return tickers
 
@@ -277,8 +289,10 @@ def _save_watchlist_suggestions(tickers: list[str]) -> int:
                     """
                     INSERT INTO discovered_tickers
                     (ticker, source, context, score, discovered_at)
-                    VALUES (%s, 'macro_scout', 'Suggested by macro strategy scout', 0.6, CURRENT_TIMESTAMP)
-                    ON CONFLICT (ticker) DO NOTHING
+                    VALUES (%s, 'macro_scout', 'Suggested by macro strategy scout', 0.75, CURRENT_TIMESTAMP)
+                    ON CONFLICT (ticker) DO UPDATE SET
+                        score = GREATEST(discovered_tickers.score, 0.75),
+                        discovered_at = CURRENT_TIMESTAMP
                 """,
                     [ticker],
                 )

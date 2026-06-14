@@ -148,9 +148,29 @@ class LifecycleControllerMixin:
 
             logger.info("[CYCLE] Hard cap on TOTAL tickers: %d", cap)
 
+            # ── Phase 0: News-Driven Ticker Discovery ──
+            # Scan news/reddit/congress data already in DB and use LLM to
+            # extract fresh ticker opportunities BEFORE the selector runs.
+            try:
+                from app.pipeline.analysis.news_discovery import run_news_discovery
+                phase0_discovered = await run_news_discovery(emit=cls.emit)
+                if phase0_discovered:
+                    logger.info(
+                        "[CYCLE] Phase 0 discovered %d new tickers: %s",
+                        len(phase0_discovered), ", ".join(phase0_discovered),
+                    )
+                    cls.emit(
+                        "starting", "phase0_done",
+                        f"Phase 0: Discovered {len(phase0_discovered)} new tickers from today's news",
+                        status="ok",
+                        data={"discovered": phase0_discovered},
+                    )
+                else:
+                    logger.info("[CYCLE] Phase 0: No new tickers discovered from news data")
+            except Exception as disc_err:
+                logger.warning("[CYCLE] Phase 0 discovery failed (non-fatal): %s", disc_err)
+
             from app.pipeline.ticker_selector import TickerSelector
-
-
 
             selection = TickerSelector.select_tickers_for_cycle_v2(tickers, cap, discovered_tickers=discovered_tickers)
             tickers = selection.all_tickers

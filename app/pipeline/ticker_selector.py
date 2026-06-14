@@ -326,14 +326,29 @@ class TickerSelector:
 
             base_query = """
                 SELECT d.ticker, d.score, m.market_cap_tier, m.sp500,
-                       COALESCE(MAX(a.created_at), '2000-01-01') as last_analyzed
+                       COALESCE(MAX(a.created_at), '2000-01-01') as last_analyzed,
+                       d.source, d.discovered_at
                 FROM discovered_tickers d
                 LEFT JOIN ticker_metadata m ON d.ticker = m.ticker
                 LEFT JOIN analysis_results a ON d.ticker = a.ticker
                 WHERE d.ticker NOT IN ({placeholders})
                   AND (d.validation_status IS NULL OR d.validation_status != 'quarantine')
-                GROUP BY d.ticker, d.score, m.market_cap_tier, m.sp500
+                GROUP BY d.ticker, d.score, m.market_cap_tier, m.sp500, d.source, d.discovered_at
                 ORDER BY
+                     /* Freshly discovered (last 24h) tickers get top priority */
+                     CASE
+                        WHEN d.discovered_at > CURRENT_TIMESTAMP - INTERVAL '24 hours' THEN 2
+                        WHEN d.discovered_at > CURRENT_TIMESTAMP - INTERVAL '72 hours' THEN 1
+                        ELSE 0
+                     END DESC,
+                     /* High-value sources rank higher */
+                     CASE
+                        WHEN d.source LIKE 'news_discovery%%' THEN 3
+                        WHEN d.source = 'macro_scout' THEN 2
+                        WHEN d.source LIKE 'congress%%' THEN 1
+                        ELSE 0
+                     END DESC,
+                     /* Skip recently-analyzed tickers */
                      CASE
                         WHEN COALESCE(MAX(a.created_at), '2000-01-01') > CURRENT_TIMESTAMP - INTERVAL '24 hours' THEN 0
                         ELSE 1
