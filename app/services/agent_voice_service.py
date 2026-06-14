@@ -171,6 +171,7 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
                 "MACRO_RISK_AGENT": "macro_risk_agent",
                 "DEEP_RESEARCH_AGENT": "deep_research_agent",
                 "DATA_JANITOR_AGENT": "data_janitor_agent",
+                "QUANT_CRITIQUE_AGENT": "quant_critique_agent",
             }
             target_source = agent_to_source.get(agent_id.upper())
             if target_source:
@@ -190,9 +191,13 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
         
         # Construct user prompt
         ticker_instr = f" You MUST mention the ticker '{ticker}' in your quote." if ticker else ""
-        # Guard: if no real finding context exists, instruct the agent to be honest
+        # Guard: if no real finding context exists from TaskBoard, try the raw insight.
         if not finding_context or not finding_context.strip():
-            finding_context = "\nYou do NOT have any actual analysis findings for this ticker yet. You MUST say you don't have data — do NOT make anything up."
+            if agent_insight and not str(agent_insight).startswith("Failed") and not str(agent_insight).startswith("Error"):
+                finding_context = f"\nYour actual analysis/finding for this ticker is: {agent_insight}"
+                logger.info(f"[AgentVoice] Injected raw agent_insight as fallback for {agent_id}")
+            else:
+                finding_context = "\nWarning: You do not have data for this ticker. Explicitly state that you need more data or are waiting for a retry."
         user_prompt = (
             f"Agent: {agent_id}\n"
             f"Ticker: {ticker}\n"

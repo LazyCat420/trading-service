@@ -43,33 +43,57 @@ async def _run_specialized_agent(
     research_focus: str = "",
     team_findings: str = "",
 ) -> tuple[str, int]:
-    """Helper to run a specialized agent."""
-    user_prompt = f"## Entity ID: {entity_id}\n\n"
+    """Helper to run a specialized agent with an auto-recovery loop."""
+    base_user_prompt = f"## Entity ID: {entity_id}\n\n"
     if research_focus:
-        user_prompt += f"## SPECIFIC RESEARCH DIRECTION:\n{research_focus}\n\n"
+        base_user_prompt += f"## SPECIFIC RESEARCH DIRECTION:\n{research_focus}\n\n"
     if team_findings:
-        user_prompt += f"## TEAM FINDINGS FROM OTHER AGENTS:\n{team_findings}\n\n"
-    user_prompt += f"## Structured Facts:\n{packet.structured_facts}\n\nAnalyze the data from your unique perspective."
+        base_user_prompt += f"## TEAM FINDINGS FROM OTHER AGENTS:\n{team_findings}\n\n"
+    base_user_prompt += f"## Structured Facts:\n{packet.structured_facts}\n\nAnalyze the data from your unique perspective."
 
-    tokens_used = 0
-    try:
-        response, tokens, ms = await call_prism_agent(
-            agent_id=f"CUSTOM_{agent_name.upper()}",
-            user_message=user_prompt,
-            fallback_system_prompt=system_prompt,
-            fallback_agent_name=agent_name,
-            temperature=LLM_TEMPERATURES.get(agent_name, 0.3),
-            max_tokens=2048,
-            priority=Priority.NORMAL,
-            ticker=entity_id,
-            cycle_id=cycle_id,
-            bot_id=bot_id,
+    total_tokens_used = 0
+    current_prompt = base_user_prompt
+
+    for attempt in range(2):
+        try:
+            response, tokens, ms = await call_prism_agent(
+                agent_id=f"CUSTOM_{agent_name.upper()}",
+                user_message=current_prompt,
+                fallback_system_prompt=system_prompt,
+                fallback_agent_name=agent_name,
+                temperature=LLM_TEMPERATURES.get(agent_name, 0.3),
+                max_tokens=2048,
+                priority=Priority.NORMAL,
+                ticker=entity_id,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+            )
+            tokens = tokens or 0
+            total_tokens_used += tokens
+            
+            resp_str = response.strip()
+            # Success check
+            if resp_str and not resp_str.lower().startswith("failed") and not resp_str.lower().startswith("error"):
+                return resp_str, total_tokens_used
+                
+            logger.warning(f"[{agent_name.upper()}] Attempt {attempt+1} yielded empty/failed response. Retrying...")
+            
+        except Exception as e:
+            logger.error(f"[{agent_name.upper()}] Attempt {attempt+1} Failed: {e}")
+            if attempt == 1:
+                return f"Failed: {e}", total_tokens_used
+                
+        # Inject the recovery prompt for the second attempt
+        current_prompt = (
+            base_user_prompt + 
+            "\n\n[RECOVERY PROTOCOL ACTIVATED]\n"
+            "Your previous attempt to analyze this data failed or returned no useful findings. "
+            "You MUST force a deeper analysis using the provided structured facts. "
+            "Do not give up. Provide the best possible analysis even if the data is sparse. "
+            "It is critical you return a valid JSON or structured conclusion instead of failing."
         )
-        tokens_used = tokens or 0
-        return response.strip(), tokens_used
-    except Exception as e:
-        logger.error(f"[{agent_name.upper()}] Failed: {e}")
-        return f"Failed: {e}", 0
+
+    return "Failed: Agent was unable to generate a finding after recovery attempts.", total_tokens_used
 
 
 async def analyze_sentiment(
