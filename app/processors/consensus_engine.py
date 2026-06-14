@@ -66,17 +66,12 @@ async def generate_consensus(ticker: str, articles: list[dict]) -> dict:
             priority=Priority.NORMAL,
         )
         
-        import re
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL | re.IGNORECASE)
-        if match:
-            response = match.group(1)
-        else:
-            start = response.find('{')
-            end = response.rfind('}')
-            if start != -1 and end != -1:
-                response = response[start:end+1]
-                
-        return json.loads(response)
+        from app.utils.text_utils import parse_json_response
+        parsed = parse_json_response(response)
+        if parsed is None:
+            logger.warning("[CONSENSUS] parse_json_response returned None for %s", ticker)
+            return {}
+        return parsed
     except Exception as e:
         logger.error(f"[CONSENSUS] LLM generation failed for {ticker}: {e}")
         return {}

@@ -4,6 +4,7 @@ import pytest
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts", "debug"))
 
 from self_improvement_minimax_test import load_prism_url
 

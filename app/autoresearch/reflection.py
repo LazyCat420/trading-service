@@ -79,14 +79,13 @@ async def _reflect(audit_bundle: dict) -> dict:
             ticker="_system",
             priority=Priority.LOW
         )
-        cleaned = response.strip()
-        if "```json" in cleaned:
-            cleaned = cleaned.split("```json")[1].split("```")[0].strip()
-        elif "```" in cleaned:
-            cleaned = cleaned.split("```")[1].split("```")[0].strip()
-        result = json.loads(cleaned)
-        result["tokens_used"] = tokens
-        return result
+        from app.utils.text_utils import parse_json_response
+        parsed = parse_json_response(response)
+        if parsed is None:
+            logger.warning("[AUTORESEARCH] parse_json_response returned None, falling back to rule-based")
+            return _rule_based_reflection(audit_bundle)
+        parsed["tokens_used"] = tokens
+        return parsed
     except Exception as e:
         logger.warning("[AUTORESEARCH] LLM reflection failed: %s", e)
         return _rule_based_reflection(audit_bundle)
@@ -110,8 +109,12 @@ def _store_lessons(reflection: dict, cycle_id: str):
     if not recs: return
     try:
         from app.cognition.lesson_store import add_lesson
+        from app.utils.poison_guard import is_poisoned
         for rec in recs[:3]:
             if not rec or len(rec) < 10: continue
+            if is_poisoned(rec):
+                logger.warning("[AUTORESEARCH] Poison guard blocked lesson: %.60s…", rec)
+                continue
             add_lesson(
                 text=rec[:120],
                 metadata={
@@ -122,3 +125,4 @@ def _store_lessons(reflection: dict, cycle_id: str):
             )
     except Exception as e:
         logger.debug("Lesson store write failed: %s", e)
+

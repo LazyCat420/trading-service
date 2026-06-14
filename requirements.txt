@@ -428,6 +428,8 @@ tqdm==4.67.3
     #   nltk
     #   openai
     #   portkey-ai
+tiktoken>=0.7.0
+    # via -r requirements.in
 truststore==0.10.4
     # via edgartools
 typeguard==4.5.2
