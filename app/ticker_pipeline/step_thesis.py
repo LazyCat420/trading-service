@@ -18,7 +18,7 @@ from app.log_manager import log_manager
 logger = logging.getLogger(__name__)
 
 # Cap extra context to ~2000 tokens (4 chars/token)
-MAX_EXTRA_CONTEXT_CHARS = 8000
+MAX_EXTRA_CONTEXT_CHARS = 4000
 
 
 async def run_thesis_step(ctx: TickerContext) -> TickerContext:

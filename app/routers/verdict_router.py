@@ -37,11 +37,11 @@ class TickerNoteUpsert(BaseModel):
 
 @router.get("/api/v1/verdicts/latest")
 def verdicts_latest(limit: int = Query(default=100, le=500)):
-    """Latest verdict per ticker — persistent DB-backed view."""
-    from app.services.verdict_service import get_latest_verdicts
+    """Latest debate verdict per ticker — persistent DB-backed view."""
+    from app.services.debate_service import get_latest_debates
 
     try:
-        return get_latest_verdicts(limit=limit)
+        return get_latest_debates(limit=limit)
     except Exception as e:
         logger.exception("Error in /verdicts/latest")
         raise HTTPException(status_code=500, detail=str(e))
