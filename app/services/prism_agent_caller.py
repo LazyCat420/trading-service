@@ -17,6 +17,12 @@ from typing import Any
 
 from app.config import settings
 from app.services.prism_agent_registry import resolve_agent_id
+from app.monitoring.audit_middleware import (
+    log_audit_event,
+    hash_prompt,
+    check_context_overflow,
+    check_response_truncation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +220,30 @@ async def call_prism_agent(
                     logger.debug("[call_prism_agent] Telemetry end failed: %s", tel_e)
                     
                 _prism_breaker.record_success()
+
+                # ── Audit: successful Prism call ──
+                is_truncated = check_response_truncation(result[0])
+                check_context_overflow(
+                    token_count=result[1],
+                    agent_name=fallback_agent_name,
+                    endpoint="/agent",
+                )
+                log_audit_event(
+                    endpoint="/agent",
+                    agent_name=fallback_agent_name,
+                    model_used=agent_id,
+                    system_prompt_hash=hash_prompt(fallback_system_prompt),
+                    inference_ms=result[2],
+                    tokens_total=result[1],
+                    is_truncated=is_truncated,
+                    fallback_triggered=False,
+                    circuit_breaker_open=False,
+                    ticker=ticker,
+                    cycle_id=cycle_id,
+                    status="ok",
+                    detail=f"{fallback_agent_name} completed via Prism in {result[2]}ms",
+                )
+
                 return result
         except Exception as e:
             # Publish error/fallback event
@@ -235,8 +265,23 @@ async def call_prism_agent(
                 ))
             except Exception as tel_e:
                 logger.debug("[call_prism_agent] Telemetry error failed: %s", tel_e)
-                
+
             _prism_breaker.record_failure()
+
+            # ── Audit: Prism fallback triggered ──
+            log_audit_event(
+                endpoint="/agent",
+                agent_name=fallback_agent_name,
+                model_used=agent_id,
+                system_prompt_hash=hash_prompt(fallback_system_prompt),
+                fallback_triggered=True,
+                circuit_breaker_open=_prism_breaker.is_open,
+                ticker=ticker,
+                cycle_id=cycle_id,
+                status="fallback",
+                detail=f"Prism failed for {fallback_agent_name}: {type(e).__name__}: {str(e)[:200]}",
+            )
+
             logger.warning(
                 "[PrismAgentCaller] Prism routing failed for %s (%s), falling back to local: %s",
                 fallback_agent_name, agent_id, e,
@@ -259,6 +304,23 @@ async def call_prism_agent(
         bot_id=bot_id,
     )
     
+    # ── Audit: local fallback call completed ──
+    is_truncated = check_response_truncation(response)
+    log_audit_event(
+        endpoint="/agent/local_fallback",
+        agent_name=fallback_agent_name,
+        model_used=agent_id,
+        system_prompt_hash=hash_prompt(fallback_system_prompt),
+        inference_ms=elapsed_ms,
+        tokens_total=tokens,
+        is_truncated=is_truncated,
+        fallback_triggered=True,
+        ticker=ticker,
+        cycle_id=cycle_id,
+        status="ok",
+        detail=f"{fallback_agent_name} completed via local fallback in {elapsed_ms}ms",
+    )
+
     # Publish fallback end event
     try:
         from app.telemetry.bus import publish_event

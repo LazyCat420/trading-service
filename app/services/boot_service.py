@@ -59,6 +59,13 @@ class BootService:
         except Exception as e:
             logger.warning("[Boot] vLLM client close: %s", e)
 
+        # Stop audit worker
+        try:
+            from app.monitoring.audit_worker import stop_audit_worker
+            await stop_audit_worker()
+        except Exception as e:
+            logger.warning("[Boot] Audit worker shutdown: %s", e)
+
         # Close PostgreSQL connection pool
         try:
             from app.db.connection import close_db
@@ -207,6 +214,13 @@ class BootService:
             await cls._startup_sp500_seed()
         except Exception as e:
             logger.warning("[startup] SP500 task failed: %s", e)
+
+        # --- Agent Audit Worker ---
+        try:
+            from app.monitoring.audit_worker import start_audit_worker
+            await start_audit_worker()
+        except Exception as e:
+            logger.warning("[startup] Audit worker failed to start (non-fatal): %s", e)
 
     @staticmethod
     def _sync_collect_fred():

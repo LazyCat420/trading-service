@@ -234,3 +234,83 @@ async def monitor_concurrency():
     except Exception as e:
         return {"error": str(e)}
 
+
+# ── Agent Audit Endpoints ──────────────────────────────────────────────
+
+
+@router.get("/audit")
+async def monitor_audit(limit: int = Query(default=50, le=200)):
+    """Agent audit summary + recent events."""
+    from app.monitoring.audit_middleware import (
+        get_audit_summary,
+        get_audit_buffer,
+    )
+    summary = get_audit_summary()
+    summary["recent_events"] = get_audit_buffer(limit=limit)
+    return summary
+
+
+@router.get("/audit/warnings")
+async def monitor_audit_warnings(limit: int = Query(default=50, le=200)):
+    """Recent audit warnings (slow DB, truncation, fallback, overflow)."""
+    from app.monitoring.audit_middleware import get_audit_warnings
+    return {"warnings": get_audit_warnings(limit=limit)}
+
+
+@router.get("/audit/db")
+async def monitor_audit_db(
+    limit: int = Query(default=50, le=500),
+    agent: str | None = Query(default=None),
+    endpoint: str | None = Query(default=None),
+    hours: int = Query(default=24, le=168),
+):
+    """Query persisted audit events from the database."""
+    try:
+        query = (
+            "SELECT request_id, endpoint, agent_name, model_used, "
+            "system_prompt_hash, context_build_ms, inference_ms, "
+            "tokens_input, tokens_output, tokens_total, "
+            "is_truncated, fallback_triggered, circuit_breaker_open, "
+            "ticker, cycle_id, status, detail, created_at "
+            "FROM agent_audit_log "
+            "WHERE created_at >= NOW() - INTERVAL '1 hour' * %s"
+        )
+        params: list = [hours]
+
+        if agent:
+            query += " AND agent_name = %s"
+            params.append(agent)
+        if endpoint:
+            query += " AND endpoint = %s"
+            params.append(endpoint)
+
+        query += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+
+        with get_db() as db:
+            rows = db.execute(query, params).fetchall()
+            cols = [
+                "request_id", "endpoint", "agent_name", "model_used",
+                "system_prompt_hash", "context_build_ms", "inference_ms",
+                "tokens_input", "tokens_output", "tokens_total",
+                "is_truncated", "fallback_triggered", "circuit_breaker_open",
+                "ticker", "cycle_id", "status", "detail", "created_at",
+            ]
+            return {
+                "count": len(rows),
+                "events": [dict(zip(cols, r)) for r in rows],
+            }
+    except Exception as e:
+        logger.error("[Monitor] Audit DB query failed: %s", e)
+        return {"count": 0, "events": [], "error": str(e)}
+
+
+@router.get("/audit/worker")
+async def monitor_audit_worker():
+    """Background audit worker status (memory, connections, distribution)."""
+    try:
+        from app.monitoring.audit_worker import get_worker_status
+        return get_worker_status()
+    except Exception as e:
+        return {"error": str(e)}
+

@@ -162,6 +162,41 @@ def run_auto_migrations():
         except Exception as e:
             logger.warning("taskboard_investigations migration check: %s", e)
 
+        # ── Auto-migrate: add agent_audit_log table if missing ──
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_audit_log (
+                    id                  SERIAL PRIMARY KEY,
+                    request_id          TEXT NOT NULL,
+                    endpoint            TEXT NOT NULL DEFAULT '',
+                    agent_name          TEXT NOT NULL DEFAULT '',
+                    model_used          TEXT DEFAULT '',
+                    system_prompt_hash  TEXT DEFAULT '',
+                    context_build_ms    INTEGER DEFAULT 0,
+                    inference_ms        INTEGER DEFAULT 0,
+                    tokens_input        INTEGER DEFAULT 0,
+                    tokens_output       INTEGER DEFAULT 0,
+                    tokens_total        INTEGER DEFAULT 0,
+                    is_truncated        BOOLEAN DEFAULT FALSE,
+                    fallback_triggered  BOOLEAN DEFAULT FALSE,
+                    circuit_breaker_open BOOLEAN DEFAULT FALSE,
+                    ticker              TEXT DEFAULT '',
+                    cycle_id            TEXT DEFAULT '',
+                    status              TEXT DEFAULT 'ok',
+                    detail              TEXT DEFAULT '',
+                    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_audit_log_created
+                    ON agent_audit_log (created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_agent_audit_log_agent
+                    ON agent_audit_log (agent_name);
+                CREATE INDEX IF NOT EXISTS idx_agent_audit_log_endpoint
+                    ON agent_audit_log (endpoint);
+            """)
+            logger.info("Migrated: ensured agent_audit_log table exists.")
+        except Exception as e:
+            logger.warning("agent_audit_log migration check: %s", e)
+
 
 if __name__ == "__main__":
     run_auto_migrations()
