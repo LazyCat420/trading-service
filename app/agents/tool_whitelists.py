@@ -29,7 +29,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_market_data",
         "get_finnhub_news",
         
-        "query_hermes",
         "scrape_url",
         "search_internal_database",
         "search_trading_skills",
@@ -104,7 +103,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_finviz_fundamentals",
         "get_polygon_price_history",
         
-        "query_hermes",
         "scrape_url",
         "get_sec_filings",
         "get_options_flow",
@@ -172,7 +170,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     # ── Quant Research Agent ──
     "quant_research": [
-        
+        "search_web",
         "scrape_url",
         "search_wiki",
         "write_memory_note",
@@ -237,7 +235,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         # Research
         
         "scrape_url",
-        "query_hermes",
         "search_internal_database",
         "search_trading_skills",
         "youtube_transcript",
@@ -282,7 +279,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         
         "search_database_facts",
         "search_internal_database",
-        "query_hermes",
     ],
     "v3_worker_insider": [
         "get_insider_trades",

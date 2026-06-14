@@ -31,7 +31,7 @@ def test_all_whitelisted_tools_exist_in_registry():
         )
 
     # Ignore remote tools not expected to be in the local registry
-    remote_tools = {"youtube_transcript", "upsert_memory", "run_sql_query"}
+    remote_tools = {"youtube_transcript", "upsert_memory", "run_sql_query", "search_web"}
 
     missing = {
         agent: [t for t in tool_list if t not in registered_names and t not in remote_tools]

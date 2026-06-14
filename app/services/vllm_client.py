@@ -1580,6 +1580,9 @@ class VLLMClient:
         # Build Prism stream payload
         is_interactive = agent_name == "user_chat"
         tools = payload.get("tools")
+        if tools is None:
+            from app.agents.tool_whitelists import get_agent_tools
+            tools = get_agent_tools(agent_name)
         prism_payload = self.prism_client.get_chat_payload_and_url(
             model=model_id,
             messages=payload.get("messages", []),

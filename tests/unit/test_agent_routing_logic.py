@@ -6,7 +6,7 @@ from app.agents.task_board import task_board
 from app.tools.coordination_tools import request_investigation
 
 @pytest.fixture(autouse=True)
-def setup_teardown():
+def setup_teardown(patch_real_get_db):
     """Ensure the task board is clean before and after tests."""
     task_board.clear_board("TEST_ROUTING")
     yield
