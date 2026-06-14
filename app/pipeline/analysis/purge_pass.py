@@ -14,9 +14,7 @@ Why not just purge by score alone%s
 Runs as the final pass in the pipeline cycle.
 """
 
-import json
 import logging
-import re
 from typing import Callable
 
 from app.config import settings
@@ -93,27 +91,20 @@ def _build_purge_prompt(
 
 
 def _parse_purge_response(content: str, valid_tickers: list[str]) -> list[str]:
-    """Parse LLM JSON response, return validated purge list."""
-    # Handle markdown code block wrapping
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
-    if json_match:
-        content = json_match.group(1)
+    """Parse LLM JSON response, return validated purge list.
 
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        brace_match = re.search(r"\{.*\}", content, re.DOTALL)
-        if brace_match:
-            try:
-                data = json.loads(brace_match.group(0))
-            except json.JSONDecodeError:
-                logger.warning(
-                    "[PIPELINE] purge_pass: could not parse LLM response as JSON"
-                )
-                return []
-        else:
-            logger.warning("[PIPELINE] purge_pass: no JSON found in LLM response")
-            return []
+    Uses the battle-tested parse_json_response from text_utils which handles:
+    - <think> tag stripping (Qwen3 models)
+    - Markdown code block extraction
+    - Balanced brace-counting for nested JSON
+    - Multiple fallback strategies
+    """
+    from app.utils.text_utils import parse_json_response
+
+    data = parse_json_response(content)
+    if not data:
+        logger.warning("[PIPELINE] purge_pass: no JSON found in LLM response")
+        return []
 
     purged = data.get("purge", [])
     if not isinstance(purged, list):

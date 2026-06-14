@@ -6,6 +6,8 @@ from typing import Dict, List, Any, Optional
 logger = logging.getLogger(__name__)
 
 class AgentInboxManager:
+    MAX_MESSAGES_PER_INBOX = 100  # prevent unbounded memory growth
+
     def __init__(self):
         # Maps agent_name (lowercase) -> list of message dicts
         self._inboxes: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
@@ -44,7 +46,16 @@ class AgentInboxManager:
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "consumed": False
         }
-        self._inboxes[agent_key].append(msg_payload)
+        inbox = self._inboxes[agent_key]
+        inbox.append(msg_payload)
+        # Evict oldest messages if cap exceeded
+        if len(inbox) > self.MAX_MESSAGES_PER_INBOX:
+            evicted = len(inbox) - self.MAX_MESSAGES_PER_INBOX
+            self._inboxes[agent_key] = inbox[-self.MAX_MESSAGES_PER_INBOX:]
+            logger.warning(
+                "[INBOX] Evicted %d oldest messages for @%s (cap=%d)",
+                evicted, agent_name, self.MAX_MESSAGES_PER_INBOX,
+            )
         logger.info(
             "[INBOX] Added steering message for @%s (ticker: %s): %s",
             agent_name, ticker or "all", message
@@ -72,6 +83,17 @@ class AgentInboxManager:
                 len(msgs), agent_name, ticker or "none"
             )
         return msgs
+
+    def clear_all(self):
+        """Clear all inboxes and active instances for a clean cycle reset."""
+        inbox_count = sum(len(v) for v in self._inboxes.values())
+        instance_count = len(self._active_instances)
+        self._inboxes.clear()
+        self._active_instances.clear()
+        logger.info(
+            "[INBOX] Cleared all inboxes (%d messages, %d instances)",
+            inbox_count, instance_count,
+        )
 
     def get_active_instances(self) -> List[Dict[str, Any]]:
         """List currently active running agent instances (pruning stale ones)."""

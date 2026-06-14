@@ -149,6 +149,9 @@ class Settings(BaseSettings):
     WATCHLIST_PURGE_MIN_SCORE: int = 30  # only purge below this health score
     WATCHLIST_GRACE_CYCLES: int = 3  # new tickers get N cycles before scoring
 
+    # ── Morning Briefing ──
+    MORNING_BRIEFING_ENABLED: bool = True  # toggle on/off
+
     # ── Smart Ticker Triage ──
     TRIAGE_ENABLED: bool = True  # toggle triage on/off (flat list if disabled)
     TRIAGE_GLANCE_HOURS: int = 24  # analyzed within N hours → Glance tier
