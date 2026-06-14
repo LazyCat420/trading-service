@@ -163,6 +163,16 @@ async def generate_thesis(
     if extra_context:
         user_prompt = extra_context.strip() + "\n\n" + user_prompt
 
+    # Fix: Reinforce JSON output requirement at the END of the user prompt.
+    # This is the last thing the LLM sees before generating, making it more
+    # likely to comply with the JSON schema even when the Prism persona
+    # encourages writing markdown analysis reports.
+    user_prompt += (
+        "\n\n---\nCRITICAL OUTPUT FORMAT REQUIREMENT: You MUST respond with ONLY a valid JSON object "
+        "matching the schema described in your system prompt. Do NOT write a markdown report, "
+        "do NOT use headers or tables, do NOT wrap in code fences. Output ONLY the raw JSON object."
+    )
+
     # Inject watchlist peer context so the LLM knows what other tickers
     # are being analysed in the same cycle.
     if watchlist:
@@ -208,8 +218,23 @@ async def generate_thesis(
         )
         tokens_used = tokens or 0
         data = parse_json_response(response)
-        if not data or "action" not in data or int(data.get("confidence", 0)) == 0 or not data.get("core_claims"):
-            logger.warning("[THESIS] parse_json_response returned empty/invalid/degenerate dict for %s. Data: %r. Raw response: %r", entity_id, data, response)
+        if not data or "action" not in data:
+            # JSON parse failed completely — the LLM likely returned markdown.
+            # Log the warning but don't treat as a hard failure yet;
+            # parse_json_response already tried parse_malformed_text_response.
+            logger.warning(
+                "[THESIS] parse_json_response returned empty/invalid dict for %s. "
+                "Data: %r. Raw response preview: %.300r",
+                entity_id, data, response[:300] if response else "",
+            )
+        elif int(data.get("confidence", 0)) == 0 and not data.get("core_claims"):
+            # Got an action but degenerate signal — log as info, not warning.
+            # This may still be a valid HOLD from a markdown report extraction.
+            logger.info(
+                "[THESIS] Parsed response has action=%s but confidence=0 and no claims for %s. "
+                "May be a markdown-extracted fallback.",
+                data.get('action'), entity_id,
+            )
     except Exception as e:
         logger.error("[THESIS] Failed to generate thesis: %s", e)
         # Attempt to salvage the response if it was just a parsing error

@@ -91,7 +91,16 @@ Summary/Snippet: {summary or "No summary content."}
         from app.utils.text_utils import parse_json_response
         draft_data = parse_json_response(response)
         if not draft_data or "decision" not in draft_data:
-            raise ValueError(f"Failed to parse valid Janitor decision JSON from response: {response!r}")
+            # Graceful fallback: try to extract keep/discard from the response text.
+            # Preserving data (keep) is safer than discarding — if the LLM wrote a
+            # full analysis, the article clearly has signal.
+            response_lower = (response or "").lower()
+            if "discard" in response_lower and "noise" in response_lower:
+                draft_data = {"decision": "discard", "justification": "LLM indicated noise (parse fallback)"}
+                logger.warning("[JANITOR] JSON parse failed for article %s — extracted 'discard' from text fallback", article_id)
+            else:
+                draft_data = {"decision": "keep", "justification": "LLM wrote analysis (JSON parse failed, defaulting to keep)"}
+                logger.warning("[JANITOR] JSON parse failed for article %s — defaulting to 'keep' (data preservation)", article_id)
         
         decision = draft_data.get("decision", "keep")
         actual_tickers = draft_data.get("actual_tickers", [ticker])
@@ -230,7 +239,13 @@ Body: {body or "No body content."}
         from app.utils.text_utils import parse_json_response
         draft_data = parse_json_response(response)
         if not draft_data or "decision" not in draft_data:
-            raise ValueError(f"Failed to parse valid Janitor decision JSON from response: {response!r}")
+            response_lower = (response or "").lower()
+            if "discard" in response_lower and "noise" in response_lower:
+                draft_data = {"decision": "discard", "justification": "LLM indicated noise (parse fallback)"}
+                logger.warning("[JANITOR] JSON parse failed for Reddit post %s — extracted 'discard' from text fallback", post_id)
+            else:
+                draft_data = {"decision": "keep", "justification": "LLM wrote analysis (JSON parse failed, defaulting to keep)"}
+                logger.warning("[JANITOR] JSON parse failed for Reddit post %s — defaulting to 'keep' (data preservation)", post_id)
         
         decision = draft_data.get("decision", "keep")
         actual_tickers = draft_data.get("actual_tickers", [ticker])

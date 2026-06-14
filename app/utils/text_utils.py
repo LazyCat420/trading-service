@@ -142,80 +142,175 @@ def parse_json_response(text: str) -> dict:
 def parse_malformed_text_response(text: str) -> dict:
     """Fallback parser that extracts keys from markdown or plain text responses
     when standard JSON parsing fails.
+
+    Enhanced to handle the common case where the LLM returns a full markdown
+    analysis report (with ## headers, tables, bullet points) instead of JSON.
+    This happens when the Prism agent persona overrides the JSON instruction.
     """
     res = {}
     text_lower = text.lower()
-    
-    # Extract action/decision
-    action_patterns = [
+
+    # ── Extract action/decision ──
+    # Priority 1: "## Recommendation: **HOLD**" or "## Final Verdict: **HOLD**"
+    # These are the most common patterns in the markdown reports we've seen.
+    action_header_patterns = [
+        r"#+\s*(?:final\s+)?(?:recommendation|verdict|decision)\s*[:\s]*\*?\*?\s*(BUY|SELL|HOLD)",
+        r"(?:final\s+)?(?:recommendation|verdict|decision)\s*[:\s]*\s*\*?\*?\s*(BUY|SELL|HOLD)",
+        r"\*?\*?\s*(BUY|SELL|HOLD)\s+(?:recommendation|verdict|decision)",
         r"(?:bias|recommendation|action|decision|verdict)\s*\|?\s*\*?\*?\s*([^|\n:]+)",
         r"(?:bias|recommendation|action|decision|verdict)\s*:\s*([^|\n]+)",
+        # "Recommendation: **HOLD** —" or "**Recommendation: HOLD**"
+        r"\*\*(?:recommendation|verdict|decision)\s*:\s*\*?\*?\s*(BUY|SELL|HOLD)",
+        # "HOLD DKS" or "HOLD PNC" at start of sentence after ## header
+        r"#+\s*\d*\.?\s*(?:recommendation|verdict|decision)\s*:\s*\*?\*?\s*(BUY|SELL|HOLD)",
+        # Standalone bold action: "**HOLD**" or "**BUY**" appearing as a heading-level element
+        r"(?:^|\n)\s*#{1,3}\s+(?:\d+\.\s+)?(?:recommendation|verdict).*?\*\*\s*(BUY|SELL|HOLD)\s*\*\*",
     ]
-    for pattern in action_patterns:
-        match = re.search(pattern, text_lower)
+    for pattern in action_header_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
         if match:
             val = match.group(1).strip().upper()
-            val = re.sub(r"[.!\*`#]", "", val).strip()
+            val = re.sub(r"[.!\*`#→—]", "", val).strip()
             if "/" in val:
                 val = val.split("/")[0].strip()
-            if val in ("BUY", "SELL", "HOLD"):
-                res["action"] = val
+            # Extract only the action keyword
+            for action_word in ("BUY", "SELL", "HOLD"):
+                if action_word in val:
+                    res["action"] = action_word
+                    break
+            if "action" in res:
                 break
-                
-    # Extract confidence
+
+    # Fallback: scan for "**HOLD**" or "**BUY**" or "**SELL**" anywhere as last resort
+    if "action" not in res:
+        bold_action = re.search(r"\*\*(BUY|SELL|HOLD)\s*\w*\*\*", text, re.IGNORECASE)
+        if bold_action:
+            res["action"] = bold_action.group(1).strip().upper()
+
+    # ── Extract confidence ──
     confidence_patterns = [
         r"confidence\s*\|?\s*\*?\*?\s*(\d+)\s*(?:%|/100)?",
         r"confidence\s*:\s*(\d+)\s*(?:%|/100)?",
         r"(\d+)\s*(?:%|/100)?\s*confidence",
+        # Table cell: "| **Confidence** | 65 |" or "| Confidence | 65% |"
+        r"\|\s*\*?\*?confidence\*?\*?\s*\|\s*(\d+)",
     ]
     for pattern in confidence_patterns:
         match = re.search(pattern, text_lower)
         if match:
-            res["confidence"] = int(match.group(1))
+            val = int(match.group(1))
+            if 0 <= val <= 100:
+                res["confidence"] = val
+                break
+
+    # ── Extract conviction ──
+    conviction_patterns = [
+        r"\|\s*\*?\*?conviction\*?\*?\s*\|\s*\*?\*?(\w+)\*?\*?\s*\|",
+        r"conviction\s*:\s*\*?\*?(\w+)\*?\*?",
+    ]
+    for pattern in conviction_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            val = re.sub(r"[\*`]", "", match.group(1)).strip().upper()
+            if val in ("WATCH", "LOW", "MODERATE", "HIGH", "EXTREME"):
+                res["conviction"] = val
+                break
+
+    # ── Extract rationale ──
+    # Priority: Executive Summary > Rationale section > Recommendation section
+    rationale_sections = [
+        "executive summary", "rationale", "investment thesis",
+        "synthesis", "recommendation rationale", "key takeaway",
+    ]
+    for section_name in rationale_sections:
+        if "rationale" in res:
             break
-            
-    # Extract other text fields
+        # Match ## Executive Summary\n...content until next ## header
+        header_match = re.search(
+            r"(?:^|\n)\s*#{1,3}\s*(?:\d+\.?\s*)?" + re.escape(section_name) + r"\s*\n+([\s\S]*?)(?=\n\s*#{1,3}\s|\Z)",
+            text, re.IGNORECASE
+        )
+        if header_match:
+            content = header_match.group(1).strip()
+            # Clean markdown formatting
+            content = re.sub(r"\*\*([^*]+)\*\*", r"\1", content)
+            content = re.sub(r"\|[^\n]+\|", "", content)  # Remove table rows
+            content = re.sub(r"\n{3,}", "\n\n", content)
+            content = content.strip()
+            if len(content) > 30:  # Must have meaningful content
+                res["rationale"] = content[:2000]  # Cap length
+
+    # ── Extract other text fields ──
     fields = {
-        "rationale": ["rationale", "investment thesis", "synthesis"],
-        "conviction": ["conviction"],
-        "management_quality": ["management_quality", "management quality", "management assessment"],
-        "competitive_moat": ["competitive_moat", "competitive moat", "moat"],
-        "invalidation_condition": ["invalidation_condition", "invalidation condition", "invalidation"],
-        "devils_advocate": ["devils_advocate", "devils advocate", "devil's advocate", "bear case", "counter-argument"],
+        "management_quality": ["management_quality", "management quality", "management assessment", "management"],
+        "competitive_moat": ["competitive_moat", "competitive moat", "moat", "competitive advantage"],
+        "invalidation_condition": ["invalidation_condition", "invalidation condition", "invalidation", "thesis invalidated if"],
+        "devils_advocate": ["devils_advocate", "devils advocate", "devil's advocate", "bear case", "counter-argument", "strongest argument against"],
     }
-    
+
     for key, markers in fields.items():
+        if key in res:
+            continue
         for marker in markers:
             # Support full tables, tables missing the trailing pipe, and tables with markdown formatting
             table_match = re.search(r"(?:^|\n)\s*\|\s*\*?\*?" + re.escape(marker) + r"\*?\*?\s*\|\s*([^|\n]+)(?:\||\n|$)", text, re.IGNORECASE)
             if table_match:
                 res[key] = table_match.group(1).strip()
                 break
-            header_match = re.search(r"(?:^|\n)\s*#+\s*" + re.escape(marker) + r"\s*\n+([^#]+)", text, re.IGNORECASE)
+            header_match = re.search(r"(?:^|\n)\s*#+\s*(?:\d+\.?\s*)?" + re.escape(marker) + r"\s*\n+([^#]+)", text, re.IGNORECASE)
             if header_match:
-                res[key] = header_match.group(1).strip()
+                res[key] = header_match.group(1).strip()[:500]
                 break
-            colon_match = re.search(r"(?:^|\n)\s*(?:\*\*|\*)?" + re.escape(marker) + r"(?:\*\*|\*)?\s*:\s*([^\n]+)", text, re.IGNORECASE)
+            colon_match = re.search(r"(?:^|\n)\s*(?:\*\*|\*)?-?\s*" + re.escape(marker) + r"(?:\*\*|\*)?\s*:\s*([^\n]+)", text, re.IGNORECASE)
             if colon_match:
                 res[key] = colon_match.group(1).strip()
                 break
 
-    # Extract list fields
+    # ── Extract list fields ──
     list_fields = {
-        "core_claims": ["core_claims", "core claims", "claims", "verified claims", "key points"],
-        "weaknesses": ["weaknesses", "risks", "counter-arguments"],
+        "core_claims": [
+            "core_claims", "core claims", "claims", "verified claims", "key points",
+            "strengths", "fundamental strengths", "bullish case", "key findings",
+        ],
+        "weaknesses": [
+            "weaknesses", "risks", "counter-arguments", "risk factors",
+            "risk assessment", "missing data", "weaknesses / missing data",
+        ],
         "evidence_refs": ["evidence_refs", "evidence refs", "references", "refs"],
     }
-    
+
     for key, markers in list_fields.items():
+        if key in res:
+            continue
         for marker in markers:
-            header_match = re.search(r"(?:^|\n)\s*#+\s*" + re.escape(marker) + r"\s*\n+([^#]+)", text, re.IGNORECASE)
+            # Match ## Section Name\n...content until next ## header
+            header_match = re.search(
+                r"(?:^|\n)\s*#{1,3}\s*(?:\d+\.?\s*)?" + re.escape(marker) + r"[^\n]*\n+([\s\S]*?)(?=\n\s*#{1,3}\s|\Z)",
+                text, re.IGNORECASE
+            )
             if header_match:
                 block = header_match.group(1).strip()
-                items = re.findall(r"^\s*[-*•\d\.]+\s*(.+)$", block, re.MULTILINE)
+                # Extract bullet items
+                items = re.findall(r"^\s*[-*•✅⚠️🔴🟡🟢]\s*\*?\*?(.+?)(?:\*\*)?$", block, re.MULTILINE)
+                if not items:
+                    items = re.findall(r"^\s*\d+[.)]\s*(.+)$", block, re.MULTILINE)
+                if not items:
+                    # Try table rows: "| Metric | Value |"
+                    items = re.findall(r"\|\s*\*?\*?([^|]+?)\*?\*?\s*\|", block)
+                    # Filter out header separators
+                    items = [i.strip() for i in items if i.strip() and not re.match(r"^[-:]+$", i.strip())]
                 if items:
-                    res[key] = [item.strip() for item in items]
-                    break
+                    # Clean markdown formatting from items
+                    cleaned = []
+                    for item in items[:10]:  # Cap at 10 items
+                        item = re.sub(r"\*\*([^*]+)\*\*", r"\1", item).strip()
+                        item = re.sub(r"^[✅⚠️🔴🟡🟢❌]+\s*", "", item).strip()
+                        if len(item) > 5:  # Skip very short/empty items
+                            cleaned.append(item)
+                    if cleaned:
+                        res[key] = cleaned
+                        break
+            # Fallback: JSON-style list in text
             json_list_match = re.search(r"\"" + re.escape(marker) + r"\"\s*:\s*\[([^\]]+)\]", text, re.IGNORECASE)
             if json_list_match:
                 items = re.findall(r"\"([^\"]+)\"", json_list_match.group(1))
