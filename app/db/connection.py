@@ -372,6 +372,13 @@ def _seed_and_migrate():
     except Exception as e:
         logger.warning(f"[DB] Migration setup warning: {e}")
 
+    # ── Run additional auto migrations ──
+    try:
+        from app.db.init_db import run_auto_migrations
+        run_auto_migrations()
+    except Exception as e:
+        logger.warning(f"[DB] Inline auto-migrations warning: {e}")
+
 
 def close_db():
     """Close the connection pool (for cleanup)."""

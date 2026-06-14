@@ -119,5 +119,49 @@ def run_auto_migrations():
         except Exception as e:
             logger.warning("llm_audit_logs migration check: %s", e)
 
+        # ── Auto-migrate: add taskboard_findings table if missing ──
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS taskboard_findings (
+                    id              SERIAL PRIMARY KEY,
+                    finding_id      TEXT NOT NULL,
+                    cycle_id        TEXT NOT NULL,
+                    ticker          TEXT NOT NULL,
+                    source_agent    TEXT NOT NULL,
+                    content         TEXT NOT NULL,
+                    category        TEXT NOT NULL,
+                    confidence      INTEGER DEFAULT 75,
+                    responses       JSONB DEFAULT '[]'::jsonb,
+                    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(cycle_id, ticker, finding_id)
+                );
+            """)
+            logger.info("Migrated: ensured taskboard_findings table exists.")
+        except Exception as e:
+            logger.warning("taskboard_findings migration check: %s", e)
+
+        # ── Auto-migrate: add taskboard_investigations table if missing ──
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS taskboard_investigations (
+                    id              SERIAL PRIMARY KEY,
+                    investigation_id TEXT NOT NULL,
+                    cycle_id        TEXT NOT NULL,
+                    ticker          TEXT NOT NULL,
+                    requester       TEXT NOT NULL,
+                    target_agent    TEXT NOT NULL,
+                    question        TEXT NOT NULL,
+                    status          TEXT DEFAULT 'open',
+                    claimed_by      TEXT,
+                    result          TEXT,
+                    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(cycle_id, ticker, investigation_id)
+                );
+            """)
+            logger.info("Migrated: ensured taskboard_investigations table exists.")
+        except Exception as e:
+            logger.warning("taskboard_investigations migration check: %s", e)
+
+
 if __name__ == "__main__":
     run_auto_migrations()
