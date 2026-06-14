@@ -285,10 +285,15 @@ async def run_prism_agent(
             tools_override=tools_override,
         )
 
-    # Build the tools list — apply Brain-Action tool selection to reduce context
-    # If tools_override is None, we set active_tools = None to avoid passing
-    # all 64 schemas. They will default to core built-in tools.
-    active_tools = tools_override
+    # Build the tools list — force dynamic tool discovery mode.
+    # By passing None for tools, we only provide core built-ins and
+    # Prism meta-tools, forcing the agent to use discover_and_enable_tools.
+    active_tools = None
+
+    # Inject dynamic tool prompt into system prompt
+    from app.agents.dynamic_tool_prompt import DYNAMIC_TOOL_DISCOVERY_PROMPT
+    if DYNAMIC_TOOL_DISCOVERY_PROMPT not in system_prompt:
+        system_prompt = system_prompt + "\n\n" + DYNAMIC_TOOL_DISCOVERY_PROMPT
 
     # Extract tool names from active_tools
     tool_names = []
