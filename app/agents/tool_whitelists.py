@@ -286,6 +286,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
         "search_database_facts",
     ],
+    "ticker_validator": [],
 }
 
 
