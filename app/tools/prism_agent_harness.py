@@ -261,7 +261,7 @@ async def run_prism_agent(
             kind="llm",
             source="prism" if use_prism else "local_fallback",
             status="ok",
-            step="PRISM_AGENT_START",
+            step="prism_agent_start",
             detail=f"Routing agent {agent_name} to Prism /agent" if use_prism else f"Local fallback execution for agent {agent_name}",
             elapsed_ms=0,
             data={"agent_name": agent_name, "model": llm._resolve_model(agent_name)}
@@ -527,7 +527,7 @@ async def run_prism_agent(
                                 kind="tool",
                                 source="prism_dynamic",
                                 status="ok",
-                                step="DYNAMIC_TOOL_ENABLED",
+                                step="dynamic_tool_enabled",
                                 detail=f"Agent {agent_name} dynamically {tc_name}: {enabled_list}",
                                 elapsed_ms=int(tc.get("executionMs", 0) or 0),
                                 data={
@@ -599,7 +599,7 @@ async def run_prism_agent(
                             kind="tool",
                             source="prism",
                             status="ok" if tc_success else "error",
-                            step="TOOL_CALL",
+                            step="tool_call",
                             detail=f"Agent {agent_name} executed tool {tc_name} ({'success' if tc_success else 'failed'})",
                             elapsed_ms=tc_ms,
                             data={"tool_name": tc_name, "arguments": tc.get("arguments", {}), "error": tc.get("error")}
@@ -671,7 +671,7 @@ async def run_prism_agent(
                         kind="tool",
                         source="prism",
                         status="warning",
-                        step="TOOL_CALLS_MISSING",
+                        step="tool_calls_missing",
                         detail=f"Prism returned no toolCalls for {agent_name} — stats gap",
                         elapsed_ms=0,
                         data={"agent_name": agent_name, "conversation_id": conversation_id},
@@ -704,7 +704,7 @@ async def run_prism_agent(
                 kind="llm",
                 source="prism",
                 status="ok",
-                step="PRISM_AGENT_END",
+                step="prism_agent_end",
                 detail=f"Agent {agent_name} finished successfully via Prism",
                 elapsed_ms=elapsed_ms,
                 data={"token_usage": token_usage, "tools_called": used_tool_names}
@@ -743,7 +743,7 @@ async def run_prism_agent(
                 kind="llm",
                 source="prism",
                 status="error",
-                step="PRISM_AGENT_END",
+                step="prism_agent_end",
                 detail=f"Agent {agent_name} timed out after {timeout_seconds}s, falling back to local",
                 elapsed_ms=elapsed_ms,
                 data={"error": "TimeoutError"}
@@ -780,7 +780,7 @@ async def run_prism_agent(
                 kind="llm",
                 source="prism",
                 status="error",
-                step="PRISM_AGENT_END",
+                step="prism_agent_end",
                 detail=f"Agent {agent_name} failed via Prism, falling back to local: {e}",
                 elapsed_ms=int((time.monotonic() - start) * 1000),
                 data={"error": str(e)}
@@ -900,7 +900,7 @@ async def _fallback_to_local(
             kind="llm",
             source="local_fallback",
             status="ok",
-            step="LOCAL_AGENT_END",
+            step="local_agent_end",
             detail=f"Local fallback execution completed for {agent_name}",
             elapsed_ms=execution_ms,
             data={"token_usage": token_usage}

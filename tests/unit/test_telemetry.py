@@ -14,7 +14,7 @@ def test_telemetry_event_serialization():
         kind="llm",
         source="prism",
         status="ok",
-        step="PRISM_AGENT_START",
+        step="prism_agent_start",
         detail="Testing event",
         elapsed_ms=100,
         data={"some_key": "some_value"}
@@ -74,7 +74,7 @@ def test_telemetry_bus_publish_and_get():
         kind="pipeline",
         source="cycle_runner",
         status="ok",
-        step="RESULT",
+        step="result",
         detail="AAPL analyzed",
         data={"result": {"ticker": "AAPL", "decision": "BUY"}}
     )

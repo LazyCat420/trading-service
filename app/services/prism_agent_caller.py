@@ -120,7 +120,7 @@ async def call_prism_agent(
             kind="llm",
             source="prism" if use_prism else "local_fallback",
             status="ok",
-            step="PRISM_AGENT_START",
+            step="prism_agent_start",
             detail=f"Routing {fallback_agent_name} to Prism" if use_prism else f"Local fallback for {fallback_agent_name}",
             elapsed_ms=0,
             data={"agent_id": agent_id, "agent_name": fallback_agent_name}
@@ -184,7 +184,7 @@ async def call_prism_agent(
                         kind="llm",
                         source="prism",
                         status="ok",
-                        step="PRISM_AGENT_END",
+                        step="prism_agent_end",
                         detail=f"{fallback_agent_name} completed via Prism",
                         elapsed_ms=result[2],
                         data={"token_usage": result[1]}
@@ -207,7 +207,7 @@ async def call_prism_agent(
                     kind="llm",
                     source="prism",
                     status="error",
-                    step="PRISM_AGENT_END",
+                    step="prism_agent_end",
                     detail=f"{fallback_agent_name} failed via Prism, falling back to local: {e}",
                     elapsed_ms=0,
                     data={"error": str(e)}
@@ -250,7 +250,7 @@ async def call_prism_agent(
             kind="llm",
             source="local_fallback",
             status="ok",
-            step="LOCAL_AGENT_END",
+            step="local_agent_end",
             detail=f"{fallback_agent_name} completed via local fallback",
             elapsed_ms=elapsed_ms,
             data={"token_usage": tokens}
