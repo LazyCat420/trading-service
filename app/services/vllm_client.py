@@ -1863,6 +1863,23 @@ class VLLMClient:
 
         self._ensure_dispatcher()
 
+        # ── Dynamic Token Constraint Conversion ──
+        if max_tokens < 4096:
+            if max_tokens <= 128:
+                sentences = "1 or 2 sentences max"
+            elif max_tokens <= 256:
+                sentences = "under 4 sentences"
+            elif max_tokens <= 512:
+                sentences = "under 8 sentences"
+            elif max_tokens <= 1024:
+                sentences = "under 15 sentences"
+            else:
+                sentences = "concise"
+                
+            instruction = f"\n\n[SYSTEM DIRECTIVE: Keep your response concise, {sentences}.]"
+            system = (system or "") + instruction
+            max_tokens = 8192
+
         if not self._roles_discovered:
             await self.discover_roles()
         else:
@@ -2048,6 +2065,26 @@ class VLLMClient:
                 pass
 
         self._ensure_dispatcher()
+
+        # ── Dynamic Token Constraint Conversion ──
+        if max_tokens < 4096:
+            if max_tokens <= 128:
+                sentences = "1 or 2 sentences max"
+            elif max_tokens <= 256:
+                sentences = "under 4 sentences"
+            elif max_tokens <= 512:
+                sentences = "under 8 sentences"
+            elif max_tokens <= 1024:
+                sentences = "under 15 sentences"
+            else:
+                sentences = "concise"
+                
+            instruction = f"\n\n[SYSTEM DIRECTIVE: Keep your response concise, {sentences}.]"
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = (messages[0].get("content", "") or "") + instruction
+            else:
+                messages.insert(0, {"role": "system", "content": instruction.strip()})
+            max_tokens = 8192
 
         if not self._roles_discovered:
             await self.discover_roles()
@@ -2926,6 +2963,23 @@ class VLLMClient:
         Yields: str chunks — either raw text tokens or __THINK__<text> or __META__<json>
         """
         import json as _json
+
+        # ── Dynamic Token Constraint Conversion ──
+        if max_tokens < 4096:
+            if max_tokens <= 128:
+                sentences = "1 or 2 sentences max"
+            elif max_tokens <= 256:
+                sentences = "under 4 sentences"
+            elif max_tokens <= 512:
+                sentences = "under 8 sentences"
+            elif max_tokens <= 1024:
+                sentences = "under 15 sentences"
+            else:
+                sentences = "concise"
+                
+            instruction = f"\n\n[SYSTEM DIRECTIVE: Keep your response concise, {sentences}.]"
+            system = (system or "") + instruction
+            max_tokens = 8192
 
         if not self._roles_discovered:
             await self.discover_roles()

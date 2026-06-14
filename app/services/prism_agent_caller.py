@@ -103,6 +103,27 @@ async def call_prism_agent(
     if priority is None:
         priority = Priority.NORMAL
 
+    # ── Dynamic Token Constraint Conversion ──
+    # Prevent aggressive mid-word truncation by converting tight max_tokens
+    # bounds into explicit sentence limits in the system prompt.
+    if max_tokens < 4096:
+        if max_tokens <= 128:
+            sentences = "1 or 2 sentences max"
+        elif max_tokens <= 256:
+            sentences = "under 4 sentences"
+        elif max_tokens <= 512:
+            sentences = "under 8 sentences"
+        elif max_tokens <= 1024:
+            sentences = "under 15 sentences"
+        else:
+            sentences = "concise"
+            
+        instruction = f"\n\n[SYSTEM DIRECTIVE: Keep your response concise, {sentences}.]"
+        fallback_system_prompt = (fallback_system_prompt or "") + instruction
+        
+        # Override the hardware ceiling to prevent abrupt cut-offs
+        max_tokens = 8192
+
     # Always resolve the agent ID via registry mapping to ensure it maps to one of the 8 valid Prism custom agent IDs
     agent_id = resolve_agent_id(agent_id or fallback_agent_name)
 

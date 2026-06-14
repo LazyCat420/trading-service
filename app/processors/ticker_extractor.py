@@ -1018,7 +1018,7 @@ def extract_tickers(
             continue
         company = registry.lookup_symbol(sym)
         name = company.name if company else sym
-        snippet = full_text[max(0, match.start() - 30) : match.end() + 30]
+        snippet = full_text[max(0, match.start() - 150) : match.end() + 150]
         candidates[sym] = TickerMatch(
             symbol=sym,
             company_name=name,
@@ -1033,7 +1033,7 @@ def extract_tickers(
             sym = company.symbol
             if sym not in candidates or candidates[sym].confidence < 0.90:
                 idx = text_lower.index(name_key)
-                snippet = full_text[max(0, idx - 20) : idx + len(name_key) + 20]
+                snippet = full_text[max(0, idx - 150) : idx + len(name_key) + 150]
                 candidates[sym] = TickerMatch(
                     symbol=sym,
                     company_name=company.name,
@@ -1047,7 +1047,7 @@ def extract_tickers(
             sym = company.symbol
             if sym not in candidates or candidates[sym].confidence < 0.90:
                 idx = text_lower.index(alias_key)
-                snippet = full_text[max(0, idx - 20) : idx + len(alias_key) + 20]
+                snippet = full_text[max(0, idx - 150) : idx + len(alias_key) + 150]
                 candidates[sym] = TickerMatch(
                     symbol=sym,
                     company_name=company.name,
@@ -1075,7 +1075,7 @@ def extract_tickers(
                 base = 0.40
             else:
                 base = 0.85
-            snippet = full_text[max(0, match.start() - 30) : match.end() + 30]
+            snippet = full_text[max(0, match.start() - 150) : match.end() + 150]
             candidates[sym] = TickerMatch(
                 symbol=sym,
                 company_name=company.name,
@@ -1092,7 +1092,7 @@ def extract_tickers(
         if registry.is_rejected(sym):
             continue
         if not registry.is_known(sym) and len(sym) >= 2:
-            snippet = full_text[max(0, match.start() - 30) : match.end() + 30]
+            snippet = full_text[max(0, match.start() - 150) : match.end() + 150]
             candidates[sym] = TickerMatch(
                 symbol=sym,
                 company_name=sym,
