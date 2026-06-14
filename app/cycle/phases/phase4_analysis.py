@@ -309,6 +309,12 @@ async def run_phase4_analysis(
                     errors.append(ticker)
                     results.append(fallback_result)
                 _log_ticker_result(ctx.cycle_id, ticker, fallback_result, _ticker_elapsed_ms)
+                try:
+                    from app.services.ticker_report_generator import report_generator
+                    report_generator.save_ticker_report(ticker, fallback_result, ctx.cycle_id)
+                    logger.info("[CYCLE] [Worker %d] Saved fallback report for %s (timeout)", worker_id, ticker)
+                except Exception as r_err:
+                    logger.warning("[CYCLE] [Worker %d] Failed to save fallback report for %s (timeout): %s", worker_id, ticker, r_err)
             except Exception as e:
                 _ticker_elapsed_ms = int((time.monotonic() - _ticker_start) * 1000)
                 err_str = str(e)
@@ -343,6 +349,12 @@ async def run_phase4_analysis(
                     errors.append(ticker)
                     results.append(fallback_result)
                 _log_ticker_result(ctx.cycle_id, ticker, fallback_result, _ticker_elapsed_ms)
+                try:
+                    from app.services.ticker_report_generator import report_generator
+                    report_generator.save_ticker_report(ticker, fallback_result, ctx.cycle_id)
+                    logger.info("[CYCLE] [Worker %d] Saved fallback report for %s (crash)", worker_id, ticker)
+                except Exception as r_err:
+                    logger.warning("[CYCLE] [Worker %d] Failed to save fallback report for %s (crash): %s", worker_id, ticker, r_err)
             finally:
                 work_queue.task_done()
 

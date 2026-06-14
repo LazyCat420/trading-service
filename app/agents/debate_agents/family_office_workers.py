@@ -27,6 +27,9 @@ from app.services.vllm_client import llm, Priority
 
 logger = logging.getLogger(__name__)
 
+# State to track rate limits per cycle
+_search_web_calls: dict[str, int] = {}
+
 
 # ── Worker System Prompts ───────────────────────────────────────────────
 
@@ -121,11 +124,19 @@ WORKER_TOOL_NAMES: dict[WorkerType, list[str]] = {
 }
 
 
-def _get_worker_tool_schemas(worker_type: WorkerType) -> list[dict]:
+def _get_worker_tool_schemas(worker_type: WorkerType, cycle_id: str) -> list[dict]:
     """Resolve tool schemas for a worker type from the registry."""
     from app.tools.registry import registry
 
-    tool_names = WORKER_TOOL_NAMES.get(worker_type, [])
+    tool_names = WORKER_TOOL_NAMES.get(worker_type, []).copy()
+    
+    # Rate limit search_web (max 3 per cycle)
+    if "search_web" in tool_names:
+        calls = _search_web_calls.get(cycle_id, 0)
+        if calls >= 3:
+            logger.warning(f"[V3] Rate limiting search_web for cycle {cycle_id} (calls: {calls})")
+            tool_names.remove("search_web")
+
     schemas = registry.get_schemas_by_names(tool_names)
     return schemas if schemas else []
 
@@ -161,7 +172,7 @@ Specific metrics needed: {', '.join(request.specific_metrics) if request.specifi
 
 Fetch this data using your tools and return the results."""
 
-    tool_schemas = _get_worker_tool_schemas(worker_type)
+    tool_schemas = _get_worker_tool_schemas(worker_type, cycle_id)
     if not tool_schemas:
         logger.warning("[V3] Worker %s has no tool schemas — cannot fetch data", worker_type.value)
         return WorkerResult(
@@ -205,7 +216,10 @@ Fetch this data using your tools and return the results."""
         # Track which tools were called
         for step in result.get("steps", []):
             if isinstance(step, dict) and step.get("tool_name"):
-                tool_calls_made.append(step["tool_name"])
+                tool_name = step["tool_name"]
+                tool_calls_made.append(tool_name)
+                if tool_name == "search_web":
+                    _search_web_calls[cycle_id] = _search_web_calls.get(cycle_id, 0) + 1
 
         logger.info(
             "[V3] Worker %s fetched data for %s: %d tokens, %d tools called",

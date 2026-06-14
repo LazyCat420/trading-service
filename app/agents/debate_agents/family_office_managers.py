@@ -656,7 +656,7 @@ MANAGER_EVIDENCE_FILTER: dict[ManagerRole, list[str]] = {
         "rsi", "sma", "ema", "volume", "macd", "bollinger", "atr",
         "moving_average", "momentum", "price", "close", "open", "high",
         "low", "support", "resistance", "trend", "technical", "indicator",
-        "rate_of_change", "acceleration",
+        "rate_of_change", "acceleration", "earnings_acceleration", "revenue_acceleration"
     ],
 }
 
@@ -691,8 +691,11 @@ def filter_packet_for_manager(
     Managers with empty filter lists (Risk, Memory) see the full packet.
     """
     allowed_keys = MANAGER_EVIDENCE_FILTER.get(role)
+    
+    # If the allowed_keys is None or an empty list [], they get full access to all data.
+    # This explicitly ensures Archimedes, Caesar, and Brahmagupta are not "flying blind".
     if not allowed_keys:
-        return packet  # Full access for Risk, Memory, etc.
+        return packet  # Full access for Risk, Memory, Stats, etc.
 
     filtered_facts = [
         f for f in packet.structured_facts
@@ -936,6 +939,26 @@ For each claim, mark it as VERIFIED or UNVERIFIED with a brief explanation."""
             bot_id=bot_id,
         )
         logger.info("[V3] Cross-examiner for %s: %d tokens, %dms", ticker, tokens or 0, ms)
+        
+        # Log findings to MongoDB challenge_log
+        try:
+            from app.db.mongo import get_mongo_db
+            from datetime import datetime, timezone
+            import uuid
+            
+            db = get_mongo_db()
+            db["challenge_log"].insert_one({
+                "challenge_id": f"cl-{uuid.uuid4().hex[:8]}",
+                "timestamp": datetime.now(timezone.utc),
+                "ticker": ticker,
+                "cycle_id": cycle_id,
+                "unverified_count": response.count("UNVERIFIED"),
+                "verified_count": response.count("VERIFIED"),
+                "raw_findings": response
+            })
+        except Exception as e:
+            logger.error(f"[V3] Failed to log cross-examination challenges: {e}")
+
         return response
     except Exception as e:
         logger.error("[V3] Cross-examiner failed for %s: %s", ticker, e)

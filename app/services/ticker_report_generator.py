@@ -94,6 +94,11 @@ class TickerReportGenerator:
 
         # ── 3. Pipeline Failure Diagnosis (if applicable) ──────────
         failure_diag = report_data.get("failure_diagnosis")
+        if not failure_diag and "error" in result:
+            failure_diag = {
+                "failure_type": result.get("error_type", "CRASH"),
+                "error_chain": [result.get("error", "Unknown error")]
+            }
         if failure_diag:
             sections.append(self._section_failure_diagnosis(failure_diag))
 

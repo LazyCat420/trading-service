@@ -202,8 +202,13 @@ def measure_payload(
 
     total_input = sys_tokens + extra_sys_tokens + tool_tokens + hist_tokens + user_tokens
 
+    # Dynamic safety margin to prevent starving smaller context budgets
+    safety_margin = SAFETY_MARGIN_TOKENS
+    if model_context < 32000:
+        safety_margin = max(2000, model_context // 4)
+
     # Dynamic max_tokens: whatever's left after input, capped at ceiling
-    available = model_context - total_input - SAFETY_MARGIN_TOKENS
+    available = model_context - total_input - safety_margin
     computed_max = max(OUTPUT_FLOOR, min(available, OUTPUT_CEILING))
 
     needs_trimming = available < OUTPUT_FLOOR

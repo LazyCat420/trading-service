@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from app.db.mongo import get_mongo_db
+from app.governance.hiring_agent import trigger_hiring_agent
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,38 @@ def update_trust_scores_on_outcome(ticker: str, cycle_id: str, action: str, outc
             # Trigger Cold Streak Watchdog warnings if streak >= 5
             if consecutive_wrong >= 5:
                 logger.warning(f"⚠️ [WATCHDOG] Agent {role} is on a COLD STREAK of {consecutive_wrong} consecutive wrong calls! Demotion/Hiring triggered.")
+                trigger_hiring_agent(role, consecutive_wrong, ticker, cycle_id)
                 
     except Exception as e:
         logger.error(f"[TrustScore] Failed to update trust scores on outcome: {e}", exc_info=True)
+
+
+def update_trust_scores_from_debate(rnd: Any, ticker: str, cycle_id: str):
+    """
+    Apply intermediate, fractional trust score deltas immediately after a debate round based on performance.
+    """
+    try:
+        db = get_mongo_db()
+        col_scores = db["agent_trust_scores"]
+        
+        # We assume rnd is a DebateRound object
+        if not hasattr(rnd, "pm_arguments"):
+            return
+            
+        for arg in rnd.pm_arguments:
+            role = arg.role.value if hasattr(arg.role, "value") else str(arg.role)
+            # Example small delta logic based on claims
+            delta = 0.005 if len(arg.claims) > 0 else -0.005
+            
+            agent_doc = col_scores.find_one({"role": role})
+            if agent_doc:
+                current_score = agent_doc.get("trust_score", 1.0)
+                new_score = max(0.1, min(1.0, current_score + delta))
+                
+                col_scores.update_one(
+                    {"role": role},
+                    {"$set": {"trust_score": round(new_score, 4), "last_updated": datetime.now(timezone.utc)}}
+                )
+    except Exception as e:
+        logger.error(f"[TrustScore] Failed to apply interim debate trust score deltas: {e}", exc_info=True)
+

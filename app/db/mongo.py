@@ -44,7 +44,7 @@ def init_mongo_schema():
             if col_scores.count_documents({"role": role.value}) == 0:
                 col_scores.insert_one({
                     "role": role.value,
-                    "trust_score": 1.0,
+                    "trust_score": 0.8,
                     "consecutive_correct": 0,
                     "consecutive_wrong": 0,
                     "challenges_raised": 0,

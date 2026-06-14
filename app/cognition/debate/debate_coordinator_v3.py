@@ -50,6 +50,7 @@ ANALYSIS_PMS = [
     ManagerRole.AL_KHWARIZMI,
     ManagerRole.BRAHMAGUPTA,
     ManagerRole.NEWTON_LEIBNIZ,
+    ManagerRole.MEMORY_PM,
 ]
 
 
@@ -156,6 +157,7 @@ async def run_family_office_debate(
     """
     from app.config.config_cognition import cognition_settings
     from app.cognition.debate.action_gate import gate_action
+    from app.governance.trust_score_manager import update_trust_scores_from_debate
     from app.agents.debate_agents.family_office_managers import (
         run_manager_analysis,
         run_cross_examination,
@@ -326,6 +328,9 @@ async def run_family_office_debate(
         )
         debate_rounds.append(rnd)
         total_tokens += round_tokens
+        
+        # Apply interim fractional trust score deltas based on debate logic
+        update_trust_scores_from_debate(rnd, ticker, cycle_id)
 
         # ── If CIO rendered a verdict, we're done ────────────────────────
         if final_verdict:
@@ -526,6 +531,7 @@ async def run_family_office_debate(
                     "timestamp": datetime.now(timezone.utc),
                     "verdict": {
                         "action": final_verdict.action if final_verdict else "NONE",
+                        "direction": "bull" if final_verdict and final_verdict.action == "BUY" else ("bear" if final_verdict and final_verdict.action == "SELL" else "neutral"),
                         "confidence": final_verdict.confidence if final_verdict else 0,
                         "winning_side": final_verdict.winning_side if final_verdict else "split",
                         "conviction": final_verdict.conviction if final_verdict else "",
@@ -539,6 +545,20 @@ async def run_family_office_debate(
             upsert=True
         )
         logger.info("[V3] Persisted debate transcript to MongoDB")
+        
+        # Write dissent log
+        if final_verdict and final_verdict.dissenting_managers:
+            import uuid
+            for manager in final_verdict.dissenting_managers:
+                mongo_db["dissent_log"].insert_one({
+                    "dissent_id": f"dl-{uuid.uuid4().hex[:8]}",
+                    "timestamp": datetime.now(timezone.utc),
+                    "ticker": ticker,
+                    "cycle_id": cycle_id,
+                    "manager_role": manager,
+                    "winning_side": final_verdict.winning_side,
+                    "verdict_action": final_verdict.action
+                })
     except Exception as mongo_err:
         logger.error("[V3] Failed to log debate transcript to MongoDB: %s", mongo_err)
 
