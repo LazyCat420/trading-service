@@ -181,7 +181,22 @@ async def run_debate(
         logger.error("[PIPELINE] [DEBATE] Meta-prompt failed: %s", e)
         return _fallback_result(config_c_result, f"Meta-prompt failed: {e}", held)
 
+    from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
     meta_parsed = parse_json_response(meta_response)
+    
+    # Meta agent output validation
+    try:
+        # Check for DATA_MISSING protocol from meta agent response
+        if meta_parsed.get("status") == "DATA_MISSING" or meta_parsed.get("proceed") is False:
+            raise InsufficientDataError("debate_meta", meta_parsed.get("missing_fields", ["system_prompt"]))
+        if not meta_parsed.get("system_prompt"):
+            raise InsufficientDataError("debate_meta", ["system_prompt"])
+        log_transition("debate_meta", "debate_challenge", {"ticker": ticker, "persona": meta_parsed.get("persona_name")}, "ok")
+    except InsufficientDataError as e:
+        log_transition("debate_meta", "debate_challenge", {"ticker": ticker}, "blocked")
+        logger.warning("[DEBATE] Meta agent output failed sufficiency checks: %s", e)
+        return _fallback_result(config_c_result, f"Meta-prompt output gated: {e}", held)
+
     persona_name = meta_parsed.get("persona_name", "Devil's Advocate")
     persona_prompt = meta_parsed.get("system_prompt", "")
     persona_rationale = meta_parsed.get("persona_rationale", "")
@@ -280,12 +295,29 @@ async def run_debate(
         logger.error("[PIPELINE] [DEBATE] Debate call failed: %s", e)
         return _fallback_result(config_c_result, f"Debate call failed: {e}", held)
 
+    from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
     debate_parsed = parse_json_response(debate_response)
+    
     d_action = gate_action(debate_parsed.get("counter_action", "HOLD"), held)
     d_confidence = int(debate_parsed.get("counter_confidence", 0))
     d_rationale = debate_parsed.get("counter_rationale", debate_response[:300])
     challenges = debate_parsed.get("challenges", [])
     risk_factors = debate_parsed.get("risk_factors", [])
+
+    # Validate debate output using gate_check
+    debate_gate_payload = {
+        "bull_case": c_rationale,
+        "bear_case": d_rationale,
+        "status": "ok" if (d_rationale and not debate_parsed.get("status") == "DATA_MISSING") else "DATA_MISSING",
+        "missing_fields": debate_parsed.get("missing_fields", ["counter_rationale"])
+    }
+    try:
+        gate_check(debate_gate_payload, "debate")
+        log_transition("debate_challenge", "debate_synthesis", debate_gate_payload, "ok")
+    except InsufficientDataError as e:
+        log_transition("debate_challenge", "debate_synthesis", debate_gate_payload, "blocked")
+        logger.warning("[DEBATE] Debate challenge output failed sufficiency checks: %s", e)
+        return _fallback_result(config_c_result, f"Debate challenge gated: {e}", held)
 
     try:
         from app.services.agent_voice_service import dispatch_agent_quote
@@ -409,12 +441,31 @@ async def run_debate(
     except Exception as e:
         logger.warning(f"[DEBATE] Audit divergence failed: {e}")
 
+    from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
     synth_parsed = parse_json_response(synth_response)
+    
     final_action = gate_action(synth_parsed.get("action", c_action), held)
     final_confidence = int(synth_parsed.get("confidence", c_confidence))
     final_rationale = synth_parsed.get("rationale", synth_response[:300])
     thesis_won = synth_parsed.get("thesis_won", True)
     key_risk = synth_parsed.get("key_risk", "")
+
+    # Validate synthesis output using gate_check
+    synthesis_gate_payload = {
+        "net_signal": final_action,
+        "confidence": final_confidence,
+        "bull_case": c_rationale,
+        "bear_case": d_rationale,
+        "status": "ok" if (final_action and not synth_parsed.get("status") == "DATA_MISSING") else "DATA_MISSING",
+        "missing_fields": synth_parsed.get("missing_fields", ["rationale"])
+    }
+    try:
+        gate_check(synthesis_gate_payload, "synthesis")
+        log_transition("debate_synthesis", "decision_outcome", synthesis_gate_payload, "ok")
+    except InsufficientDataError as e:
+        log_transition("debate_synthesis", "decision_outcome", synthesis_gate_payload, "blocked")
+        logger.warning("[DEBATE] Synthesis output failed sufficiency checks: %s", e)
+        return _fallback_result(config_c_result, f"Synthesis gated: {e}", held)
 
     ms3 = elapsed_ms(t3)
     logger.info("[DEBATE] RAW SYNTHESIS RESPONSE:\n%s", synth_response)

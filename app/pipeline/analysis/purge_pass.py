@@ -90,8 +90,8 @@ def _build_purge_prompt(
         return prompt
 
 
-def _parse_purge_response(content: str, valid_tickers: list[str]) -> list[str]:
-    """Parse LLM JSON response, return validated purge list.
+def _parse_purge_response(content: str, valid_tickers: list[str]) -> dict:
+    """Parse LLM JSON response, return validated purge dict.
 
     Uses the battle-tested parse_json_response from text_utils which handles:
     - <think> tag stripping (Qwen3 models)
@@ -100,16 +100,37 @@ def _parse_purge_response(content: str, valid_tickers: list[str]) -> list[str]:
     - Multiple fallback strategies
     """
     from app.utils.text_utils import parse_json_response
+    import re
+
+    # Check for raw DATA_MISSING pattern in content string
+    if "DATA_MISSING" in content:
+        matches = re.findall(r"DATA_MISSING:\s*([\w_, ]+)", content)
+        missing_fields = []
+        if matches:
+            for m in matches:
+                missing_fields.extend([f.strip() for f in m.split(",")])
+        return {
+            "status": "DATA_MISSING",
+            "purge": [],
+            "missing_fields": missing_fields or ["context"]
+        }
 
     data = parse_json_response(content)
     if not data:
         logger.warning("[PIPELINE] purge_pass: no JSON found in LLM response")
-        return []
+        return {"status": "DATA_MISSING", "purge": [], "missing_fields": ["json_parse_failure"]}
+
+    if data.get("status") == "DATA_MISSING" or data.get("proceed") is False:
+        return {
+            "status": "DATA_MISSING",
+            "purge": [],
+            "missing_fields": data.get("missing_fields", ["context"])
+        }
 
     purged = data.get("purge", [])
     if not isinstance(purged, list):
         logger.warning("[PIPELINE] purge_pass: 'purge' is not a list")
-        return []
+        return {"status": "DATA_MISSING", "purge": [], "missing_fields": ["purge_not_a_list"]}
 
     valid_set = {t.upper() for t in valid_tickers}
     validated = [t.upper().strip() for t in purged if t.upper().strip() in valid_set]
@@ -120,7 +141,11 @@ def _parse_purge_response(content: str, valid_tickers: list[str]) -> list[str]:
         for ticker, reason in reasoning.items():
             logger.info("[PIPELINE] purge_pass: %s -- %s", ticker, reason)
 
-    return validated
+    return {
+        "status": "ok",
+        "purge": validated,
+        "missing_fields": []
+    }
 
 
 async def run_purge_pass(
@@ -241,7 +266,12 @@ async def run_purge_pass(
                 )
 
                 candidate_tickers = [c["ticker"] for c in candidates]
-                purge_list = _parse_purge_response(content, candidate_tickers)
+                parse_result = _parse_purge_response(content, candidate_tickers)
+                if parse_result.get("status") == "DATA_MISSING":
+                    logger.warning("[PIPELINE] purge_pass: DATA_MISSING status returned from LLM parsing.")
+                    purge_list = []
+                else:
+                    purge_list = parse_result.get("purge", [])
 
                 emit(
                     "purge",

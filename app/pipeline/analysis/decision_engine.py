@@ -240,12 +240,26 @@ async def analyze_ticker(
 
     # ── Data sufficiency gate: quarantine if critical data still missing ──
     from app.pipeline.data.data_completeness import check_data_sufficiency
+    from app.data.market_data_store import get_latest_snapshot
+    import dataclasses
+    from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
 
+    # 1. Check structural sufficiency via metadata report
     sufficiency = check_data_sufficiency(data_report)
     if not sufficiency["sufficient"]:
         gap_names = ", ".join(g["category"] for g in sufficiency["gaps"])
         reason = f"Critical data missing after collection: {gap_names}"
         return _execute_quarantine(ticker, reason, cycle_id, bot_id, triage_tier, held, emit, source="data_sufficiency_gate")
+
+    # 2. Hard gate check via payload_gate
+    snapshot = get_latest_snapshot(ticker)
+    market_data_dict = dataclasses.asdict(snapshot) if snapshot else {"ticker": ticker}
+    try:
+        gate_check(market_data_dict, "market_data")
+        log_transition("data_collection", "specialist_agents", market_data_dict, "ok")
+    except InsufficientDataError as e:
+        log_transition("data_collection", "specialist_agents", market_data_dict, "blocked")
+        return _execute_quarantine(ticker, str(e), cycle_id, bot_id, triage_tier, held, emit, source="market_data_gate")
 
     # ── GLANCE TIER: Lightweight change-detection check ──
     if triage_tier == "glance":
@@ -687,9 +701,25 @@ async def analyze_ticker(
     c_ms = int(c_time * 1000)
     
     from app.cognition.debate.action_gate import gate_action
+    from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
     c_action = gate_action(c_result.get("action", "HOLD"), held)
     c_confidence = c_result.get("confidence", 0)
     c_tokens = c_result.get("tokens_used", 0)
+
+    # Validate Config C synthesis output
+    synthesis_gate_payload = {
+        "net_signal": c_action,
+        "confidence": c_confidence,
+        "bull_case": c_result.get("rationale", ""),
+        "bear_case": c_result.get("rationale", ""),
+        "status": "ok" if c_action else "DATA_MISSING",
+    }
+    try:
+        gate_check(synthesis_gate_payload, "synthesis")
+        log_transition("config_c", "decision_outcome", synthesis_gate_payload, "ok")
+    except InsufficientDataError as e:
+        log_transition("config_c", "decision_outcome", synthesis_gate_payload, "blocked")
+        return _execute_quarantine(ticker, f"Config C gated: {e}", cycle_id, bot_id, triage_tier, held, emit, source="config_c_gate")
 
     # B5: Constraint acknowledgment check — advisory only, never re-prompts
     if c_action == "BUY":
@@ -832,6 +862,22 @@ async def analyze_ticker(
         final_rationale = d_result.get("rationale", "")
         config_used = "C+D_recursive"
         human_review = False
+
+        # Validate Config D synthesis output
+        from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
+        synthesis_gate_payload = {
+            "net_signal": final_action,
+            "confidence": final_confidence,
+            "bull_case": c_result.get("rationale", ""),
+            "bear_case": final_rationale,
+            "status": "ok" if final_action else "DATA_MISSING",
+        }
+        try:
+            gate_check(synthesis_gate_payload, "synthesis")
+            log_transition("config_d", "decision_outcome", synthesis_gate_payload, "ok")
+        except InsufficientDataError as e:
+            log_transition("config_d", "decision_outcome", synthesis_gate_payload, "blocked")
+            return _execute_quarantine(ticker, f"Config D gated: {e}", cycle_id, bot_id, triage_tier, held, emit, source="config_d_gate")
 
         logger.info(
             "[RECURSIVE RLM] Finished deep analysis for %s with action %s",

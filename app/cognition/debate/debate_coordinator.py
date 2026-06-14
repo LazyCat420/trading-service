@@ -706,6 +706,36 @@ async def _run_biased_agent(
                     force_err,
                 )
 
+        # Gate check the biased agent output
+        try:
+            from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
+            parsed = parse_json_response(final_response)
+            bull_bear_payload = {
+                "ticker": entity_id,
+                "thesis": parsed.get("key_argument") or parsed.get("rationale") or parsed.get("devils_advocate"),
+                "confidence": parsed.get("confidence"),
+                "supporting_data": parsed.get("claims"),
+                "status": "ok" if (parsed and not parsed.get("status") == "DATA_MISSING") else "DATA_MISSING",
+                "missing_fields": parsed.get("missing_fields", ["claims"])
+            }
+            gate_check(bull_bear_payload, "bull_bear")
+            log_transition(agent_name, "debate_coordinator", bull_bear_payload, "ok")
+        except InsufficientDataError as e:
+            log_transition(agent_name, "debate_coordinator", {"ticker": entity_id}, "blocked")
+            logger.warning("[DEBATE] %s output failed sufficiency checks: %s", agent_name, e)
+            return (
+                json.dumps({
+                    "status": "DATA_MISSING",
+                    "proceed": False,
+                    "missing_fields": e.missing,
+                    "action": "HOLD",
+                    "claims": [],
+                    "confidence": 0,
+                }),
+                0,
+                [],
+            )
+
         return final_response.strip(), total_tokens, tool_history
     except Exception as e:
         logger.error("[DEBATE] %s agent failed for %s: %s", bias.upper(), entity_id, e)
@@ -887,6 +917,31 @@ async def run_adversarial_debate(
         logger.info(
             "[DEBATE] Skipping debate for stablecoin/cash equivalent: %s", ticker
         )
+        return None
+
+    # Run input gate check on the evidence packet
+    from app.utils.payload_gate import gate_check, InsufficientDataError, log_transition
+    facts_dict = {f.fact_type: f.value for f in packet.structured_facts} if packet.structured_facts else {}
+    market_data_dict = {
+        "ticker": ticker,
+        "price": facts_dict.get("price") or getattr(packet, "price", None) or facts_dict.get("close"),
+        "volume": facts_dict.get("volume") or getattr(packet, "volume", None),
+    }
+    # Try to find price/volume from other locations if missing to be resilient
+    if not market_data_dict["price"] or not market_data_dict["volume"]:
+        for f in facts_dict.values():
+            if isinstance(f, dict):
+                if not market_data_dict["price"] and "price" in f:
+                    market_data_dict["price"] = f["price"]
+                if not market_data_dict["volume"] and "volume" in f:
+                    market_data_dict["volume"] = f["volume"]
+
+    try:
+        gate_check(market_data_dict, "market_data")
+        log_transition("evidence_packet", "adversarial_debate", market_data_dict, "ok")
+    except InsufficientDataError as e:
+        log_transition("evidence_packet", "adversarial_debate", market_data_dict, "blocked")
+        logger.warning("[DEBATE] Adversarial debate for %s aborted at input gate: %s", ticker, e)
         return None
 
     logger.info("[DEBATE] " + "═" * 50)

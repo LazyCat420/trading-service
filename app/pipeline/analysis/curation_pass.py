@@ -128,8 +128,8 @@ def _fetch_positions() -> list[str]:
             return []
 
 
-def _parse_curation_response(content: str, valid_tickers: list[str]) -> list[str]:
-    """Parse LLM JSON response, return validated promote list.
+def _parse_curation_response(content: str, valid_tickers: list[str]) -> dict:
+    """Parse LLM JSON response, return validated promote dict.
 
     Uses the battle-tested parse_json_response from text_utils which handles:
     - <think> tag stripping (Qwen3 models)
@@ -138,16 +138,37 @@ def _parse_curation_response(content: str, valid_tickers: list[str]) -> list[str
     - Multiple fallback strategies
     """
     from app.utils.text_utils import parse_json_response
+    import re
+
+    # Check for raw DATA_MISSING pattern in content string
+    if "DATA_MISSING" in content:
+        matches = re.findall(r"DATA_MISSING:\s*([\w_, ]+)", content)
+        missing_fields = []
+        if matches:
+            for m in matches:
+                missing_fields.extend([f.strip() for f in m.split(",")])
+        return {
+            "status": "DATA_MISSING",
+            "promote": [],
+            "missing_fields": missing_fields or ["context"]
+        }
 
     data = parse_json_response(content)
     if not data:
         logger.warning("[PIPELINE] curation: no JSON found in LLM response")
-        return []
+        return {"status": "DATA_MISSING", "promote": [], "missing_fields": ["json_parse_failure"]}
+
+    if data.get("status") == "DATA_MISSING" or data.get("proceed") is False:
+        return {
+            "status": "DATA_MISSING",
+            "promote": [],
+            "missing_fields": data.get("missing_fields", ["context"])
+        }
 
     promoted = data.get("promote", [])
     if not isinstance(promoted, list):
         logger.warning("[PIPELINE] curation: 'promote' is not a list")
-        return []
+        return {"status": "DATA_MISSING", "promote": [], "missing_fields": ["promote_not_a_list"]}
 
     # Validate: only return tickers that were in the discovered list
     valid_set = {t.upper() for t in valid_tickers}
@@ -159,7 +180,11 @@ def _parse_curation_response(content: str, valid_tickers: list[str]) -> list[str
         for ticker, reason in reasoning.items():
             logger.info("[PIPELINE] curation: %s — %s", ticker, reason)
 
-    return validated
+    return {
+        "status": "ok",
+        "promote": validated,
+        "missing_fields": []
+    }
 
 
 async def curate_discoveries(
@@ -242,7 +267,12 @@ async def curate_discoveries(
                 cycle_id=cycle_id,
             )
 
-            promoted = _parse_curation_response(content, discovered_tickers)
+            parse_result = _parse_curation_response(content, discovered_tickers)
+            if parse_result.get("status") == "DATA_MISSING":
+                logger.warning("[PIPELINE] curation: DATA_MISSING status returned from LLM parsing.")
+                promoted = []
+            else:
+                promoted = parse_result.get("promote", [])
 
             # Enforce max promote limit
             if len(promoted) > max_promote:
@@ -267,7 +297,7 @@ async def curate_discoveries(
                                 "[PIPELINE] curation: failed to add %s to watchlist: %s",
                                 ticker,
                                 e,
-                            )
+                              )
                     logger.info(
                         "[PIPELINE] curation: promoted %d tickers to watchlist",
                         len(promoted),
@@ -315,4 +345,49 @@ async def curate_discoveries(
                 return discovered_tickers
             else:
                 return []
+
+
+async def run_curation(ticker: str, cycle_id: str, bot_id: str) -> dict:
+    """Worker entry point for LLM curation pass of a single ticker."""
+    from app.utils.payload_gate import gate_check, InsufficientDataError
+
+    logger.info("[PIPELINE] curation_pass: running curation for %s", ticker)
+    try:
+        # Fetch details to validate input
+        details = _fetch_discovered_details([ticker])
+        if not details or not details[0].get("ticker"):
+            raise InsufficientDataError("curation_input", ["ticker"])
+
+        # Validate the detail structure
+        gate_check(details[0], "market_data")  # validate basic fields if any
+
+        promoted = await curate_discoveries(
+            discovered_tickers=[ticker],
+            current_watchlist=[],
+            emit=lambda *a, **kw: None,
+            cycle_id=cycle_id,
+        )
+        return {
+            "status": "ok",
+            "promote": promoted,
+            "missing_fields": [],
+        }
+    except InsufficientDataError as e:
+        logger.warning("[PIPELINE] curation_pass: gate blocked for %s: %s", ticker, e)
+        return {
+            "status": "ABORTED",
+            "reason": str(e),
+            "missing_fields": e.missing,
+            "agent": "curation_pass",
+            "cio_called": False,
+        }
+    except Exception as e:
+        logger.error("[PIPELINE] curation_pass: execution error for %s: %s", ticker, e)
+        return {
+            "status": "ABORTED",
+            "reason": f"Execution error: {e}",
+            "missing_fields": ["execution_error"],
+            "agent": "curation_pass",
+            "cio_called": False,
+        }
 

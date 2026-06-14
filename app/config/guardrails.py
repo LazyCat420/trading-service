@@ -38,10 +38,11 @@ DATA_MISSING_PROTOCOL = """
 [DATA MISSING PROTOCOL — MANDATORY]
 When you encounter missing data, you MUST follow this exact protocol:
 1. State clearly: "DATA_MISSING: [field name] is not available in the provided context."
-2. Do NOT attempt to fill the gap with estimates, examples, or fabricated values.
-3. Adjust your confidence score downward to reflect the missing data.
-4. Continue your analysis using only the data you DO have.
-5. List all missing data points in your output so downstream agents and the pipeline can account for gaps.
+2. Set "status" to "DATA_MISSING" in your JSON response if you are returning JSON, and list all missing fields in a "missing_fields" array. Set "proceed" to false in the JSON response.
+3. Do NOT attempt to fill the gap with estimates, examples, or fabricated values.
+4. Adjust your confidence score downward to reflect the missing data.
+5. Continue your analysis using only the data you DO have.
+6. List all missing data points in your output so downstream agents and the pipeline can account for gaps.
 """
 
 DEPTH_OF_ANALYSIS_BLOCK = """
