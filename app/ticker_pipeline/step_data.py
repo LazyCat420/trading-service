@@ -83,7 +83,40 @@ async def run_data_step(ctx: TickerContext) -> TickerContext:
             ctx.data_report["available"]["price_history"] = price_count
 
         if price_count == 0:
-            logger.warning("[V2] %s has 0 price history rows. Skipping data processors.", ctx.ticker)
+            logger.warning("[V2] %s has 0 price history rows. Invoking validation agent...", ctx.ticker)
+            from app.services.prism_agent_caller import call_prism_agent
+            
+            validation_prompt = (
+                f"The symbol '{ctx.ticker}' was fed into the trading pipeline but has 0 price history records. "
+                "Use your knowledge to determine what this string is. "
+                "Is it a valid US equity that is missing data? A delisted stock? An OTC/pink slip stock? "
+                "An international stock (e.g., ends with .L, .TO)? Or just a random conversational word/fake ticker? "
+                "Reply with a very brief explanation and categorize it as one of: "
+                "[VALID_US, DELISTED, OTC, INTERNATIONAL, INVALID_WORD, OTHER]."
+            )
+            try:
+                reply, tokens, _ = await call_prism_agent(
+                    agent_id="VALIDATION_AGENT",
+                    user_message=validation_prompt,
+                    fallback_system_prompt="You are a financial market data validation assistant.",
+                    fallback_agent_name="VALIDATION_AGENT",
+                    ticker=ctx.ticker,
+                    cycle_id=ctx.cycle_id,
+                )
+                logger.warning("[V2] Validation Agent for %s: %s", ctx.ticker, reply)
+                ctx.safe_emit(
+                    "analyzing", f"v2_validation_{ctx.ticker}",
+                    f"{ctx.ticker} Validation (0 price data): {reply}",
+                    status="warning",
+                )
+                
+                # Store the validation finding so it can be seen downstream
+                if not hasattr(ctx, "agent_insights"):
+                    ctx.agent_insights = {}
+                ctx.agent_insights["validation"] = reply
+            except Exception as e:
+                logger.debug("[V2] Validation Agent failed for %s: %s", ctx.ticker, e)
+
             ctx.add_stage("ticker_processors", ctx.elapsed_ms(t_proc))
             return ctx
 

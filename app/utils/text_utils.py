@@ -95,11 +95,10 @@ def parse_json_response(text: str) -> dict:
             "LLM response is empty after stripping <think> tags (model failed to output JSON)."
         )
 
-    # Try markdown JSON block first (greedy to capture full JSON)
-    json_block = re.search(r"```(?:json)?\s*(\{.+\})\s*```", cleaned, re.DOTALL)
-    if json_block:
+    # Try markdown JSON block first (find all code blocks, non-greedy to avoid capturing across multiple blocks)
+    for match in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL):
         try:
-            return json.loads(json_block.group(1))
+            return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
 
@@ -165,9 +164,9 @@ def parse_malformed_text_response(text: str) -> dict:
                 
     # Extract confidence
     confidence_patterns = [
-        r"confidence\s*\|?\s*\*?\*?\s*(\d+)\s*%",
-        r"confidence\s*:\s*(\d+)",
-        r"(\d+)\s*%\s*confidence",
+        r"confidence\s*\|?\s*\*?\*?\s*(\d+)\s*(?:%|/100)?",
+        r"confidence\s*:\s*(\d+)\s*(?:%|/100)?",
+        r"(\d+)\s*(?:%|/100)?\s*confidence",
     ]
     for pattern in confidence_patterns:
         match = re.search(pattern, text_lower)
@@ -187,7 +186,8 @@ def parse_malformed_text_response(text: str) -> dict:
     
     for key, markers in fields.items():
         for marker in markers:
-            table_match = re.search(r"(?:^|\n)\s*\|\s*\*?\*?" + re.escape(marker) + r"\*?\*?\s*\|\s*([^|\n]+)", text, re.IGNORECASE)
+            # Support full tables, tables missing the trailing pipe, and tables with markdown formatting
+            table_match = re.search(r"(?:^|\n)\s*\|\s*\*?\*?" + re.escape(marker) + r"\*?\*?\s*\|\s*([^|\n]+)(?:\||\n|$)", text, re.IGNORECASE)
             if table_match:
                 res[key] = table_match.group(1).strip()
                 break

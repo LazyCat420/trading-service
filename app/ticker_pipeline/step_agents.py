@@ -44,16 +44,39 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
             "[V2] MetaOrchestrator TIMEOUT for %s (900s) — injecting fallback context",
             ctx.ticker,
         )
+        
+        fallback_text = (
+            "# ORCHESTRATOR TIMEOUT — PARTIAL EVIDENCE MODE\n"
+            "The specialist agent orchestrator timed out. You MUST base your analysis "
+            "on the structured facts in the evidence packet, along with any partial "
+            "specialist team findings below.\n"
+            "Do NOT output zero claims or zero confidence."
+        )
+
+        try:
+            from app.agents.task_board import task_board
+            partial_findings = await task_board.get_findings(
+                ticker=ctx.ticker, cycle_id=ctx.cycle_id,
+            )
+            if partial_findings:
+                finding_lines = []
+                for f in partial_findings[:10]:
+                    src = f.get("source_agent", "?")
+                    cat = f.get("category", "fact")
+                    content = f.get("content", "")[:200]
+                    conf = f.get("confidence", 0)
+                    finding_lines.append(f"- [{cat.upper()}] ({src}, conf={conf}): {content}")
+                
+                fallback_text += (
+                    "\n\n## PARTIAL TEAM FINDINGS (from before timeout)\n"
+                    + "\n".join(finding_lines)
+                )
+                logger.info("[V2] Injected %d partial findings during timeout", len(partial_findings))
+        except Exception as err:
+            logger.debug("Failed to get partial findings during timeout: %s", err)
+
         agent_insights = {
-            "orchestrator_fallback": (
-                "# ORCHESTRATOR TIMEOUT — EVIDENCE-ONLY MODE\n"
-                "The specialist agent orchestrator timed out. You MUST base your analysis "
-                "ENTIRELY on the structured facts, claims, and source summaries in the "
-                "evidence packet. Weigh the data carefully and produce a well-reasoned "
-                "thesis despite the lack of specialist agent insights.\n"
-                "Do NOT output zero claims or zero confidence — the evidence packet contains "
-                "real data that should be analyzed."
-            ),
+            "orchestrator_fallback": fallback_text,
         }
         orch_tokens = 0
         ctx.safe_emit(
