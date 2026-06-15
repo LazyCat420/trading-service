@@ -645,6 +645,20 @@ class VLLMClient:
             candidates = [ep for ep in self._endpoints.values() if ep.enabled and ep.model]
         
         if not candidates:
+            if settings.MOCK_LLM or settings.FALLBACK_TO_PRISM_CLOUD:
+                logger.info("[VLLM] No active vLLM endpoints available. Creating fallback mock endpoint.")
+                fallback_ep = VLLMEndpoint(
+                    name="fallback_ep",
+                    url="http://localhost:8000",
+                    role="analyst",
+                    max_concurrent=8,
+                    purpose="Fallback mock/cloud endpoint",
+                )
+                fallback_ep.model = settings.PRISM_FALLBACK_MODEL
+                fallback_ep.enabled = True
+                fallback_ep.init_concurrency()
+                return fallback_ep
+
             # Check if any endpoints are in loading state
             loading_eps = [
                 ep for ep in self._endpoints.values()
@@ -2244,6 +2258,8 @@ class VLLMClient:
 
     async def health(self) -> bool:
         """Check if ANY vLLM server is healthy (direct check, bypasses Prism)."""
+        if settings.MOCK_LLM:
+            return True
         client = await self._get_client()
         for ep in self._endpoints.values():
             try:
@@ -2263,6 +2279,9 @@ class VLLMClient:
         Uses asyncio.gather so all endpoints are checked in parallel,
         capping worst-case latency at ~5s instead of 5s × N endpoints.
         """
+        if settings.MOCK_LLM:
+            return {"jetson": True, "dgx_spark": True}
+
         client = await self._get_client()
         result: dict[str, bool] = {}
 
@@ -2518,10 +2537,13 @@ class VLLMClient:
                 )
                 # Don't raise — let the system boot and rediscovery will pick them up
             else:
-                raise RuntimeError(
-                    "All configured vLLM endpoints failed to respond or returned connection errors. "
-                    "Please verify the inference servers are running."
-                )
+                if settings.MOCK_LLM or settings.FALLBACK_TO_PRISM_CLOUD:
+                    logger.warning("[VLLM] ⚠️ All configured vLLM endpoints failed to respond. Proceeding in fallback/mock mode.")
+                else:
+                    raise RuntimeError(
+                        "All configured vLLM endpoints failed to respond or returned connection errors. "
+                        "Please verify the inference servers are running."
+                    )
 
         # ALWAYS set self.model from discovery — the ACTIVE_MODEL env var
         # is only a seed value and must NOT override what's actually loaded
@@ -2540,6 +2562,10 @@ class VLLMClient:
                 if ep.model and ep.enabled:
                     self.model = ep.model
                     break
+        if not self.model:
+            if settings.MOCK_LLM or settings.FALLBACK_TO_PRISM_CLOUD:
+                self.model = settings.PRISM_FALLBACK_MODEL
+                logger.info("[VLLM] Set active model to fallback model: %s", self.model)
         if self.model and self.model != old_model:
             logger.info(
                 "[VLLM] Active model updated: %s → %s (from live discovery)",

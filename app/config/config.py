@@ -258,7 +258,10 @@ class Settings(BaseSettings):
     # ── Tool Calling Bypass ──
     USE_TOOL_CALLING: bool = False
 
-
+    # ── Mock & Fallback LLM ──
+    MOCK_LLM: bool = False
+    FALLBACK_TO_PRISM_CLOUD: bool = True
+    PRISM_FALLBACK_MODEL: str = "gemini-3.5-flash"
 
     API_SERVER_KEY: str = "change-me-local-dev"
 
