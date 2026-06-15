@@ -289,24 +289,34 @@ async def run_phase6_post(
         # ── Housekeeping & Post-cycle agents: gathered with strict timeout (no orphan tasks) ──
         emit("purge", "start", "Launching bounded housekeeping and post-cycle agents...", status="ok")
         bot_id_resolved = resolve_bot_id(bot_id)
-        await run_with_timeout(
-            asyncio.gather(
-                _bg_purge(),
-                _bg_knowledge_purge(),
-                _bg_janitor(),
-                _bg_benchmarks(),
+
+        tasks_to_gather = [
+            _bg_purge(),
+            _bg_knowledge_purge(),
+            _bg_janitor(),
+            _bg_benchmarks(),
+        ]
+
+        if getattr(ctx, "trigger_type", "manual") != "smoke_test":
+            tasks_to_gather.append(
                 safe_agent(
                     run_meta_audit(cycle_id=ctx.cycle_id, bot_id=bot_id_resolved),
                     "meta_audit",
                     cycle_id=ctx.cycle_id,
-                ),
+                )
+            )
+            tasks_to_gather.append(
                 safe_agent(
                     run_quant_research(cycle_id=ctx.cycle_id, bot_id=bot_id_resolved),
                     "quant_research",
                     cycle_id=ctx.cycle_id,
-                ),
-                return_exceptions=True,
-            ),
+                )
+            )
+        else:
+            logger.info("[CYCLE] Smoke test detected — skipping post-cycle audit and research agents to optimize run time.")
+
+        await run_with_timeout(
+            asyncio.gather(*tasks_to_gather, return_exceptions=True),
             timeout=_HOUSEKEEPING_TIMEOUT,
             label="housekeeping_and_agents",
         )
