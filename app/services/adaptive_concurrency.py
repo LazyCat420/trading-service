@@ -163,19 +163,26 @@ class AdaptiveConcurrencyController:
         """Re-evaluate the limit if enough time has passed."""
         now = time.monotonic()
         if now - self._last_eval >= _REEVALUATE_INTERVAL:
-            new_limit = self._compute_limit()
+            total_cap = self._total_capacity()
+            min_bound = min(self.min_concurrency, total_cap) if total_cap > 0 else self.min_concurrency
+            max_bound = min(self.max_concurrency, total_cap) if total_cap > 0 else self.max_concurrency
+
+            raw_limit = self._compute_limit()
+            new_limit = max(min_bound, min(max_bound, raw_limit))
+
             if new_limit != self._current_limit:
                 cache_pct = self._avg_cache_usage() * 100
                 waiting = self._total_waiting()
                 running = self._total_running()
                 logger.info(
                     "[CONCURRENCY] Limit adjusted %d → %d "
-                    "(cache=%.1f%%, running=%d, waiting=%d)",
+                    "(cache=%.1f%%, running=%d, waiting=%d, max_capacity=%d)",
                     self._current_limit,
                     new_limit,
                     cache_pct,
                     running,
                     waiting,
+                    total_cap,
                 )
             self._current_limit = new_limit
             self._last_eval = now

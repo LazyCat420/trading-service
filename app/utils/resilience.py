@@ -142,6 +142,10 @@ def _classify_exception(exc: Exception) -> FailureType:
     if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
         return FailureType.TRANSIENT
 
+    # ── DoomLoopException → FATAL ──
+    if type(exc).__name__ == "DoomLoopException":
+        return FailureType.FATAL
+
     # ── JSON/parse errors → DEGRADED (LLM output was malformed) ──
     if isinstance(exc, (json.JSONDecodeError, KeyError)):
         return FailureType.DEGRADED
@@ -272,10 +276,10 @@ def aresilient_call(
                         )
                         raise
 
-                    # Don't retry FATAL failures — they won't recover
-                    if failure_type == FailureType.FATAL and attempt > 1:
+                    # Don't retry FATAL failures — they won't recover. Bypassed immediately for DoomLoopException.
+                    if (failure_type == FailureType.FATAL and attempt > 1) or type(exc).__name__ == "DoomLoopException":
                         logger.warning(
-                            "[RESILIENCE] %s attempt %d/%d: FATAL %s — stopping retries",
+                            "[RESILIENCE] %s attempt %d/%d: FATAL/DoomLoop %s — stopping retries",
                             func_name,
                             attempt,
                             retries,
@@ -423,7 +427,7 @@ def resilient_call(
                     if retryable_types and not isinstance(exc, retryable_types):
                         raise
 
-                    if failure_type == FailureType.FATAL and attempt > 1:
+                    if (failure_type == FailureType.FATAL and attempt > 1) or type(exc).__name__ == "DoomLoopException":
                         attempts.append(
                             AttemptRecord(
                                 attempt=attempt,

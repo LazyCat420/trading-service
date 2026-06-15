@@ -27,20 +27,31 @@ from app.db.connection import get_db
 logger = logging.getLogger(__name__)
 
 
-def _ensure_row(ticker: str) -> None:
+def _ensure_row(ticker: str, db=None) -> None:
     """Ensure a ticker_health row exists (INSERT OR IGNORE)."""
-    with get_db() as db:
+    def _execute(cursor):
+        cursor.execute(
+            "INSERT INTO ticker_health (ticker, first_seen_at, updated_at) "
+            "VALUES (%s, %s, %s) "
+            "ON CONFLICT (ticker) DO NOTHING",
+            (ticker, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+        )
+
+    if db is not None:
         try:
-            db.execute(
-                "INSERT INTO ticker_health (ticker, first_seen_at, updated_at) "
-                "VALUES (%s, %s, %s) "
-                "ON CONFLICT (ticker) DO NOTHING",
-                (ticker, datetime.now(timezone.utc), datetime.now(timezone.utc)),
-            )
+            _execute(db)
         except Exception as e:
             logger.warning(
                 "[PIPELINE] ticker_health: ensure_row %s failed: %s", ticker, e
             )
+    else:
+        with get_db() as local_db:
+            try:
+                _execute(local_db)
+            except Exception as e:
+                logger.warning(
+                    "[PIPELINE] ticker_health: ensure_row %s failed: %s", ticker, e
+                )
 
 
 def update_signals_from_collection(ticker: str, counts: dict) -> None:
@@ -158,25 +169,32 @@ def update_signals_from_analysis(ticker: str, result: dict) -> None:
             )
 
 
-def compute_health_score(ticker: str) -> dict:
+def compute_health_score(ticker: str, db=None) -> dict:
     """Compute the 0-100 health score for a ticker.
 
     Returns:
         {"ticker": str, "score": int, "tier": str, "breakdown": dict}
     """
     ticker = ticker.upper().strip()
-    _ensure_row(ticker)
-    with get_db() as db:
-        row = db.execute(
+    _ensure_row(ticker, db=db)
+
+    def _get_row(cursor):
+        return cursor.execute(
             """
             SELECT total_cycles, news_article_count, reddit_post_count,
                    youtube_count, zero_news_streak, collection_failures,
                    total_analyses, avg_confidence, hold_streak,
                    buy_count, sell_count
             FROM ticker_health WHERE ticker = %s
-        """,
+            """,
             (ticker,),
         ).fetchone()
+
+    if db is not None:
+        row = _get_row(db)
+    else:
+        with get_db() as local_db:
+            row = _get_row(local_db)
 
     if not row:
         return {"ticker": ticker, "score": 50, "tier": "new", "breakdown": {}}
@@ -305,28 +323,39 @@ def compute_health_score(ticker: str) -> dict:
     }
 
     # Persist score
-    now = datetime.now(timezone.utc)
-    with get_db() as db:
-        try:
-            db.execute(
-                """
-                UPDATE ticker_health SET
-                    health_score = %s, health_tier = %s,
-                    last_scored_at = %s, updated_at = %s
-                WHERE ticker = %s
+    def _persist(cursor):
+        now = datetime.now(timezone.utc)
+        cursor.execute(
+            """
+            UPDATE ticker_health SET
+                health_score = %s, health_tier = %s,
+                last_scored_at = %s, updated_at = %s
+            WHERE ticker = %s
             """,
-                (total_score, tier, now, now, ticker),
-            )
+            (total_score, tier, now, now, ticker),
+        )
 
-            # Denormalize to watchlist for fast API reads
-            db.execute(
-                "UPDATE watchlist SET health_score = %s WHERE ticker = %s",
-                (total_score, ticker),
-            )
+        # Denormalize to watchlist for fast API reads
+        cursor.execute(
+            "UPDATE watchlist SET health_score = %s WHERE ticker = %s",
+            (total_score, ticker),
+        )
+
+    if db is not None:
+        try:
+            _persist(db)
         except Exception as e:
             logger.warning(
                 "[PIPELINE] ticker_health: persist score %s failed: %s", ticker, e
             )
+    else:
+        with get_db() as local_db:
+            try:
+                _persist(local_db)
+            except Exception as e:
+                logger.warning(
+                    "[PIPELINE] ticker_health: persist score %s failed: %s", ticker, e
+                )
 
     return {
         "ticker": ticker,
@@ -339,17 +368,18 @@ def compute_health_score(ticker: str) -> dict:
 def score_all_active() -> list[dict]:
     """Score all active watchlist tickers. Returns sorted list (worst first)."""
     with get_db() as db:
-        try:
-            rows = db.execute(
-                "SELECT ticker FROM watchlist WHERE status = 'active'"
-            ).fetchall()
-        except Exception:
-            return []
+        with db.transaction():
+            try:
+                rows = db.execute(
+                    "SELECT ticker FROM watchlist WHERE status = 'active'"
+                ).fetchall()
+            except Exception:
+                return []
 
-    results = []
-    for (ticker,) in rows:
-        r = compute_health_score(ticker)
-        results.append(r)
+            results = []
+            for (ticker,) in rows:
+                r = compute_health_score(ticker, db=db)
+                results.append(r)
 
     # Sort worst first
     results.sort(key=lambda x: x["score"])
@@ -369,6 +399,7 @@ def score_all_active() -> list[dict]:
 def get_purge_candidates(
     max_purge: int | None = None,
     min_score: int | None = None,
+    precomputed_scores: list[dict] | None = None,
 ) -> list[dict]:
     """Get tickers eligible for purge.
 
@@ -406,7 +437,10 @@ def get_purge_candidates(
             logger.warning("[watchlist_health] Failed to fetch active position tickers: %s", e)
             positions = set()
 
-    all_scores = score_all_active()
+    if precomputed_scores is not None:
+        all_scores = precomputed_scores
+    else:
+        all_scores = score_all_active()
 
     candidates = []
     for item in all_scores:

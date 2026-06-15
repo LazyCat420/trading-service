@@ -137,10 +137,10 @@ COMPANY_TICKERS = {
 
 
 async def _scrape_article_body_via_service(url: str, max_chars: int = 15000) -> str:
-    """Scrape article body using the http engine on scraper-service."""
+    """Scrape article body using the auto engine on scraper-service."""
     from app.services.scraper_client import scraper_client
 
-    res = await scraper_client.scrape(url, engine="http", options={"max_chars": max_chars})
+    res = await scraper_client.scrape(url, engine="auto", options={"max_chars": max_chars})
     if res and res.get("success") and res.get("content"):
         return res["content"]
     return ""

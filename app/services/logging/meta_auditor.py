@@ -1,5 +1,5 @@
 import logging
-from app.services import vllm_client
+from app.services.vllm_client import llm
 from app.utils.text_utils import parse_json_response
 from app.services.logging.cycle_auditor import auditor
 
@@ -37,12 +37,12 @@ async def audit_thesis_quality(ticker: str, packet: str, thesis: str, cycle_id: 
     )
     
     try:
-        response, _, _ = await vllm_client.llm.chat(
+        response, _, _ = await llm.chat(
             system="You are a strict financial auditor.",
             user=prompt,
             temperature=0.1,
             max_tokens=8192,
-            priority=vllm_client.Priority.NORMAL,
+            priority=llm.Priority.NORMAL,
             agent_name="meta_auditor",
             ticker=ticker,
             cycle_id=cycle_id,

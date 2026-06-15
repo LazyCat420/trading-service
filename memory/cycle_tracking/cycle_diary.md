@@ -295,3 +295,7 @@
 - [2026-06-08] pipeline_run: SELL (conf=72)
 - [202...
 
+## 2026-06-15 18:22:18 - AAPL
+- **Action:** HOLD @ 75%
+- **Rationale:** {"technical_analysis": {"rsi_status": "The RSI(14) is 44.05, which is neutral-to-weak, contradicting the 'Brain Graph' claims of RSI > 70. This indicates the stock is not currently overbought, removin...
+

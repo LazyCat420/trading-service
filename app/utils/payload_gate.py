@@ -8,7 +8,7 @@ import datetime
 logger = logging.getLogger(__name__)
 
 MINIMUM_FIELDS = {
-    "market_data": ["ticker", "price", "volume"],
+    "market_data": ["ticker", "price"],
     "bull_bear":   ["ticker", "thesis", "confidence", "supporting_data"],
     "debate":      ["bull_case", "bear_case"],
     "synthesis":   ["net_signal", "confidence", "bull_case", "bear_case"],

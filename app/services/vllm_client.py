@@ -214,6 +214,7 @@ AGENT_ROLE_ROUTING = {
     "user_chat": "collector",
     "collector": "collector",
     "tool_selector": "collector",  # Brain-Action split: lightweight tool routing
+    "news_discovery": "collector",
 
     # Specialist agents -> Jetson (short 256-token outputs, don't need 120B)
     "sentiment": "collector",
@@ -1564,6 +1565,9 @@ class VLLMClient:
         # Capture finish_reason for truncation detection
         payload["_finish_reason"] = data["choices"][0].get("finish_reason", "")
 
+        from app.services.streaming_observer import DoomLoopDetector
+        DoomLoopDetector().check_text(content)
+
         return content, total_tokens, elapsed_ms
 
     async def _call_prism_agent(
@@ -1660,6 +1664,8 @@ class VLLMClient:
             tool_calls = data.get("toolCalls")
             if tool_calls:
                 payload["_tool_calls_result"] = _normalize_prism_tool_calls(tool_calls)
+            from app.services.streaming_observer import DoomLoopDetector
+            DoomLoopDetector().check_text(content)
             return content, total_tokens, elapsed_ms
 
         content = ""
@@ -1668,9 +1674,8 @@ class VLLMClient:
         tool_calls = []
         tool_executions = []  # Captures Prism tool_execution SSE events for reputation tracking
 
-        stream_callback = meta.get("stream_callback")
         from app.services.streaming_observer import DoomLoopDetector, DoomLoopException
-        detector = DoomLoopDetector() if stream_callback else None
+        detector = DoomLoopDetector()
 
         import json as _json
         from app.utils.text_utils import sanitize_surrogates
@@ -1769,8 +1774,8 @@ class VLLMClient:
                                         "completion_tokens": usage.get("outputTokens", usage.get("completion_tokens", 0)),
                                     }
             except DoomLoopException as e:
-                logger.warning(f"[PRISM] Stream cut short due to DoomLoopDetector: {e}")
-                # We retain the content we've gathered so far.
+                logger.error(f"[PRISM] Stream cut short due to DoomLoopDetector: {e}")
+                raise
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -2491,6 +2496,13 @@ class VLLMClient:
                     "requests will cross-route to other boxes until model is ready.",
                     name, ep.url,
                 )
+
+        # Scale global slots to only active/enabled endpoints
+        self._global_slots_total = sum(ep.max_concurrent for ep in self._endpoints.values() if ep.enabled)
+        if self._global_slots_total <= 0:
+            self._global_slots_total = 24
+        self._global_slots = asyncio.Semaphore(self._global_slots_total)
+        logger.info("[VLLM] Dynamically adjusted global slots limit to: %d", self._global_slots_total)
 
         self._roles_discovered = True
         self._ensure_dispatcher()

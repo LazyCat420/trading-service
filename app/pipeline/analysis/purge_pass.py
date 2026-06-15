@@ -190,7 +190,7 @@ async def run_purge_pass(
     )
 
     all_scores = score_all_active()
-    candidates = get_purge_candidates()
+    candidates = get_purge_candidates(precomputed_scores=all_scores)
 
     if not candidates:
         msg = "Watchlist health: all {} tickers above {}/100 -- no purge needed".format(
