@@ -218,11 +218,11 @@ class OrchestratorCoreMixin:
             # ── Analysis Queue (tickers flow from collection → analysis) ──
             # Priority queue ensures portfolio holdings are analyzed first.
             analysis_queue = None
-            if ctx.analyze and not _skip_analyze and not _skip_collect:
+            if ctx.analyze and not _skip_analyze and ctx.collect and not _skip_collect:
                 _triage = cls._state.get("triage", {})
                 analysis_queue = PriorityAnalysisQueue(
                     position_tickers=set(cls._state.get("position_tickers", [])),
-                    deep_tickers=set(_triage.get("deep", [])),
+                    deep_tickers=set(_triage.get("deep", []),),
                     glance_tickers=set(_triage.get("glance", [])),
                 )
 
