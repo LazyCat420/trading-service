@@ -110,6 +110,20 @@ def _check_degradation(deploy_cycle_id: str, current_cycle_id: str) -> bool:
     """
     with get_db() as db:
         try:
+            # Check if current cycle crashed/failed
+            db.execute(
+                "SELECT status, error FROM pipeline_state WHERE cycle_id = %s",
+                [current_cycle_id]
+            )
+            state_row = db.fetchone()
+            if state_row and state_row[0] == "error":
+                logger.warning(
+                    "[ROLLBACK-MONITOR] Post-deploy cycle %s has status='error' (error: %s). Triggering immediate rollback.",
+                    current_cycle_id,
+                    state_row[1]
+                )
+                return True
+
             # Get the pre-deploy score (the cycle that triggered the fix)
             before = db.execute(
                 "SELECT overall_score, data_quality_score, decision_quality_score "

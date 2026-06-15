@@ -176,6 +176,48 @@ def has_consecutive_failures(target_type: str, target_name: str) -> bool:
             return True
     return False
 
+def get_historical_fixes_context(target_name: str) -> str:
+    """Parse verified_fixes_history.md for previous attempts on target_name."""
+    path = "reports/verified_fixes_history.md"
+    if not os.path.exists(path):
+        return ""
+    
+    context_lines = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        # Scan table rows for target_name references
+        for line in lines:
+            if target_name in line and "|" in line:
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 7:
+                    ref = parts[1]
+                    status = parts[3]
+                    failed = parts[5]
+                    fixed = parts[6]
+                    context_lines.append(
+                        f"- Reference: {ref}\n"
+                        f"  Status: {status}\n"
+                        f"  Failed Attempts: {failed}\n"
+                        f"  What Worked: {fixed}\n"
+                    )
+    except Exception as e:
+        logger.warning(f"Failed to parse history ledger: {e}")
+        
+    if context_lines:
+        return "\n── HISTORICAL REGRESSION LEDGER (Do NOT repeat failed attempts) ──\n" + "\n".join(context_lines)
+    return ""
+
+def run_syntax_check(file_path: str) -> bool:
+    """Compile the Python file to ensure it has no syntax errors."""
+    try:
+        subprocess.run([sys.executable, "-m", "py_compile", file_path], check=True, capture_output=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Syntax compile check failed for {file_path}:\n{e.stderr.decode('utf-8')}")
+        return False
+
 def push_git_changes() -> bool:
     """Push code changes to GitHub."""
     try:
@@ -218,7 +260,7 @@ def run_smoke_test(ticker: str = "AAPL") -> bool:
     try:
         logger.info(f"Running single-ticker smoke test for {ticker}...")
         res = subprocess.run(
-            ["python", "scripts/smoke_test_cycle.py", ticker, "--timeout", "300"],
+            ["python", "scripts/smoke_test_cycle.py", ticker, "--timeout", "600"],
             capture_output=True, text=True
         )
         logger.info(f"Smoke test stdout:\n{res.stdout}")
@@ -367,8 +409,14 @@ async def run_healing_cycle():
 
         # ── 3. Generate Patch via Debate Council ──
         logger.info("Triggering Evolution Debate Council...")
-        issue_desc = f"EXCEPTION / ERROR DETAIL:\n{error_msg}\n\nTRACEBACK:\n{traceback_text or 'Not available'}"
         
+        # Pull historical fixes context for this target name
+        history_context = get_historical_fixes_context(target_name)
+        issue_desc = f"EXCEPTION / ERROR DETAIL:\n{error_msg}\n\nTRACEBACK:\n{traceback_text or 'Not available'}"
+        if history_context:
+            issue_desc += f"\n\n{history_context}"
+            logger.info("Injected historical regression memory context into the debate coordinator prompt.")
+
         council = EvolutionDebateCouncil()
         debate_res = await council.run_debate(
             cycle_id=cycle_id,
@@ -390,6 +438,21 @@ async def run_healing_cycle():
             logger.error(f"Deployment to local disk failed: {deploy_res['error']}")
             return
         logger.info(f"Patch deployed locally. Backup saved at {deploy_res.get('backup_path')}")
+
+        # ── 4b. Syntax Compile Check ──
+        file_path = deploy_res.get("file_path")
+        if file_path and file_path.endswith(".py"):
+            if not run_syntax_check(file_path):
+                logger.error("🔴 Syntax compile check FAILED for the proposed patch. Rolling back to backup immediately.")
+                from app.cognition.evolution.deployer import rollback_fix
+                rollback_fix(fix_id)
+                with get_db() as db:
+                    db.execute(
+                        "UPDATE pending_evolution_fixes SET status = 'rejected', failure_reason = %s WHERE id = %s",
+                        ["SyntaxError: Proposed patch failed syntax compile check", fix_id]
+                    )
+                return
+            logger.info("🟢 Syntax compile check passed for the proposed patch.")
 
         # ── 5. Git Push and NAS Re-deploy ──
         if not push_git_changes():

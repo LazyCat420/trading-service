@@ -34,11 +34,12 @@ def parse_args():
     parser.add_argument("--timeout", type=int, default=600, help="Max seconds to wait for cycle completion (default: 600)")
     parser.add_argument("--skip-collection", action="store_true", help="Skip data collection phase")
     parser.add_argument("--skip-trade", action="store_true", help="Skip trading phase")
+    parser.add_argument("--resume", action="store_true", help="Resume interrupted cycle instead of starting fresh")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print all events as they appear")
     return parser.parse_args()
 
 
-async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_trade: bool, verbose: bool):
+async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_trade: bool, resume: bool, verbose: bool):
     """Run a single-ticker cycle and monitor progress."""
 
     # Force test-friendly settings
@@ -49,7 +50,7 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
 
     print("=" * 70)
     print(f"  SMOKE TEST: {ticker}")
-    print(f"  Timeout: {timeout}s | Skip collection: {skip_collection} | Skip trade: {skip_trade}")
+    print(f"  Timeout: {timeout}s | Skip collection: {skip_collection} | Skip trade: {skip_trade} | Resume: {resume}")
     print(f"  DB: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else 'local'}")
     print("=" * 70)
     print()
@@ -77,6 +78,7 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
             trade=not skip_trade,
             trigger_type="smoke_test",
             max_tickers=1,
+            start_fresh=not resume,
         )
         cycle_id = result.get("cycle_id", "unknown")
         print(f"  ✅ Cycle started: {cycle_id}")
@@ -231,6 +233,7 @@ if __name__ == "__main__":
             timeout=args.timeout,
             skip_collection=args.skip_collection,
             skip_trade=args.skip_trade,
+            resume=args.resume,
             verbose=args.verbose,
         )
     )
