@@ -10,6 +10,7 @@ import logging
 import json
 import httpx
 import os
+import re
 from app.agents.base_agent import run_agent
 from app.db.connection import get_db
 from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
@@ -76,6 +77,49 @@ def _fetch_recent_ohlcv(ticker: str, limit: int = 60) -> str:
         logger.error(f"Failed to fetch OHLCV for {ticker}: {e}")
         return "Failed to fetch price history."
 
+def parse_malformed_overlays(content: str) -> dict:
+    """Extract support/resistance levels from unstructured text when JSON parsing fails."""
+    overlays = []
+    for line in content.split("\n"):
+        line_lower = line.lower()
+        if "support" in line_lower:
+            nums = [float(x) for x in re.findall(r"\d+\.?\d*", line)]
+            if len(nums) >= 2:
+                overlays.append({
+                    "type": "support",
+                    "y0": min(nums[:2]),
+                    "y1": max(nums[:2]),
+                    "color": "green",
+                    "reasoning": f"Extracted from support text: {line.strip()}"
+                })
+            elif len(nums) == 1:
+                overlays.append({
+                    "type": "support",
+                    "y0": round(nums[0] * 0.99, 2),
+                    "y1": round(nums[0] * 1.01, 2),
+                    "color": "green",
+                    "reasoning": f"Extracted from support level: {line.strip()}"
+                })
+        elif "resistance" in line_lower:
+            nums = [float(x) for x in re.findall(r"\d+\.?\d*", line)]
+            if len(nums) >= 2:
+                overlays.append({
+                    "type": "resistance",
+                    "y0": min(nums[:2]),
+                    "y1": max(nums[:2]),
+                    "color": "red",
+                    "reasoning": f"Extracted from resistance text: {line.strip()}"
+                })
+            elif len(nums) == 1:
+                overlays.append({
+                    "type": "resistance",
+                    "y0": round(nums[0] * 0.99, 2),
+                    "y1": round(nums[0] * 1.01, 2),
+                    "color": "red",
+                    "reasoning": f"Extracted from resistance level: {line.strip()}"
+                })
+    return {"overlays": overlays}
+
 async def run_technical_analyst(ticker: str, cycle_id: str = "JIT", bot_id: str = "system") -> bool:
     """
     Harness function: 
@@ -118,8 +162,11 @@ async def run_technical_analyst(ticker: str, cycle_id: str = "JIT", bot_id: str 
         if not overlays or "overlays" not in overlays:
             raise ValueError("Parsed JSON is empty or missing 'overlays' key")
     except Exception as e:
-        logger.error("[TECHNICAL_ANALYST] Failed to parse JSON from agent: %s | Output: %s", e, content)
-        return False
+        logger.warning("[TECHNICAL_ANALYST] Failed to parse JSON from agent: %s. Attempting fallback text extraction...", e)
+        overlays = parse_malformed_overlays(content)
+        if not overlays.get("overlays"):
+            logger.warning("[TECHNICAL_ANALYST] Fallback extraction yielded no overlays. Defaulting to empty overlays list.")
+            overlays = {"overlays": []}
         
     # 3. Post to Lazy-Tool-Service
     LAZY_TOOL_URL = os.getenv("LAZY_TOOL_SERVICE_URL", "http://10.0.0.16:5591")
