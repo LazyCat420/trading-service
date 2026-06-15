@@ -227,6 +227,10 @@ class Settings(BaseSettings):
     # ── AISStream (real-time vessel tracking) ──
     AISSTREAM_API_KEY: str = ""
 
+    # ── New Data Sources API Keys ──
+    TIINGO_API_KEY: str = ""
+    BLS_API_KEY: str = ""
+
     # ── War/Oil Intelligence Map ──
     GDELT_POLL_INTERVAL_MIN: int = 15
     AIS_POLL_INTERVAL_MIN: int = 5
