@@ -231,6 +231,8 @@ class TestCollectFeed:
         """Create a mock DB context manager."""
         cursor = MagicMock()
         cursor.execute.return_value = cursor
+        cursor.fetchone.return_value = None
+        cursor.fetchall.return_value = []
         cursor.__enter__ = MagicMock(return_value=cursor)
         cursor.__exit__ = MagicMock(return_value=False)
         return cursor
