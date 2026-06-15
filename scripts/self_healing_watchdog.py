@@ -188,7 +188,11 @@ def push_git_changes() -> bool:
             return True
             
         subprocess.run(["git", "commit", "-m", "chore: auto-applied self-healing code patch"], check=True)
-        subprocess.run(["git", "push", "origin", "main"], check=True)
+        # Dynamically detect active branch
+        branch_res = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, check=True)
+        active_branch = branch_res.stdout.strip() or "master"
+        logger.info(f"Pushing to origin {active_branch}...")
+        subprocess.run(["git", "push", "origin", active_branch], check=True)
         return True
     except Exception as e:
         logger.error(f"Git push failed: {e}")
