@@ -52,8 +52,11 @@ PROMPT_MAP: dict[str, str] = {
     "debate": "app/cognition/debate/debate_coordinator.py",
     "debate_coordinator": "app/cognition/debate/debate_coordinator.py",
     "debate_judge": "app/cognition/debate/debate_judge.py",
-    "thesis_agent": "app/cognition/debate/thesis_agent.py",
-    "specialized_agents": "app/cognition/debate/specialized_agents.py",
+    "thesis_agent": "app/agents/debate_agents/thesis_agent.py",
+    "specialized_agents": "app/agents/debate_agents/specialized_agents.py",
+    "technical_analyst_agent": "app/agents/technical_analyst_agent.py",
+    "step_thesis": "app/ticker_pipeline/step_thesis.py",
+    "step_cache": "app/ticker_pipeline/step_cache.py",
     # Decision / trading prompts
     "decision_engine": "app/services/pipeline_service.py",
     "trading_phase": "app/services/pipeline_service.py",

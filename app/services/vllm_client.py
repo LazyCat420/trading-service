@@ -3465,7 +3465,7 @@ class VLLMClient:
             if analyst_model:
                 return analyst_model
             # Fallback to default heavy model
-            return "Qwen/Qwen3.5-122B-A10B-FP8"
+            return "cyankiwi/MiniMax-M2.7-AWQ-4bit"
 
     async def close(self):
         """Shutdown the persistent HTTP client and dispatchers."""
