@@ -296,13 +296,13 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                 summary = ""
                 if url and (len(api_summary) < 150 or "..." in api_summary):
                     body = await _scrape_article_body_via_service(url)
-                    if body:
+                    if body and len(body) >= 150:
                         summary = body
 
-                if (not summary or len(summary) < 150) and len(api_summary) >= 150:
+                if not summary:
                     summary = api_summary
 
-                if len(summary) < 150:
+                if len(summary) < 50:
                     continue
 
                 # Detect tickers in title + summary
