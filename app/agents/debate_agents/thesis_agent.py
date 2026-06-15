@@ -227,6 +227,17 @@ async def generate_thesis(
                 "Data: %r. Raw response preview: %.300r",
                 entity_id, data, response[:300] if response else "",
             )
+            # Persist raw LLM output for post-mortem debugging
+            try:
+                from app.log_manager import log_manager
+                log_manager.log_cycle_error(
+                    cycle_id, "thesis_json_parse_failure",
+                    ticker=entity_id, error="parse_json_response returned empty/invalid dict",
+                    stage="thesis_generation",
+                    extra={"raw_llm_response": (response[:2000] if response else "")},
+                )
+            except Exception:
+                pass
         elif int(data.get("confidence", 0)) == 0 and not data.get("core_claims"):
             # Got an action but degenerate signal — log as info, not warning.
             # This may still be a valid HOLD from a markdown report extraction.
@@ -244,6 +255,17 @@ async def generate_thesis(
         data = {
             "error": f"Failed to parse thesis. Reason: {e}. Raw: {raw_text[:250]}..."
         }
+        # Persist raw LLM output for post-mortem debugging
+        try:
+            from app.log_manager import log_manager
+            log_manager.log_cycle_error(
+                cycle_id, "thesis_generation_exception",
+                ticker=entity_id, error=str(e),
+                stage="thesis_generation",
+                extra={"raw_llm_response": (raw_text[:2000] if raw_text else "")},
+            )
+        except Exception:
+            pass
 
     # If parsing returned an empty dict but no exception was thrown
     if not data and "response" in locals() and isinstance(response, str):

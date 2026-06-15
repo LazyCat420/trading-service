@@ -163,6 +163,17 @@ async def run_technical_analyst(ticker: str, cycle_id: str = "JIT", bot_id: str 
             raise ValueError("Parsed JSON is empty or missing 'overlays' key")
     except Exception as e:
         logger.warning("[TECHNICAL_ANALYST] Failed to parse JSON from agent: %s. Attempting fallback text extraction...", e)
+        # Persist raw LLM output for post-mortem debugging
+        try:
+            from app.log_manager import log_manager
+            log_manager.log_cycle_error(
+                cycle_id, "technical_analyst_json_parse_failure",
+                ticker=ticker, error=str(e),
+                stage="technical_analysis",
+                extra={"raw_llm_response": (content[:2000] if content else "")},
+            )
+        except Exception:
+            pass
         overlays = parse_malformed_overlays(content)
         if not overlays.get("overlays"):
             logger.warning("[TECHNICAL_ANALYST] Fallback extraction yielded no overlays. Defaulting to empty overlays list.")

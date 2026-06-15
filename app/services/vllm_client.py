@@ -1230,6 +1230,9 @@ class VLLMClient:
                     "tool_calls": item.payload.get(
                         "_tool_calls_result"
                     ),  # Extracted in _call_vllm_direct
+                    "finish_reason": item.payload.get(
+                        "_finish_reason", ""
+                    ),  # For truncation detection
                     "total_tokens": total_tokens,
                     "elapsed_ms": elapsed_ms,
                     "endpoint_name": ep.name,
@@ -1557,6 +1560,9 @@ class VLLMClient:
         tool_calls = data["choices"][0]["message"].get("tool_calls")
         if tool_calls:
             payload["_tool_calls_result"] = tool_calls
+
+        # Capture finish_reason for truncation detection
+        payload["_finish_reason"] = data["choices"][0].get("finish_reason", "")
 
         return content, total_tokens, elapsed_ms
 

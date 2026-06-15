@@ -121,11 +121,56 @@ async def run_tool_agent(
 
         content = result.get("text", "")
         tool_calls = result.get("tool_calls")
-        total_tokens_used += result.get("total_tokens", 0)
-        total_time_ms += result.get("elapsed_ms", 0)
+        turn_tokens = result.get("total_tokens", 0)
+        turn_ms = result.get("elapsed_ms", 0)
+        finish_reason = result.get("finish_reason", "")
+        total_tokens_used += turn_tokens
+        total_time_ms += turn_ms
         final_content = content
 
+        # ── Structured turn tracing ──
+        try:
+            from app.log_manager import log_manager
+            if tool_calls:
+                log_manager.log_agent_turn(
+                    cycle_id, agent_name, i,
+                    action_type="tool_request",
+                    ticker=ticker,
+                    content_preview=content,
+                    tool_calls=tool_calls,
+                    tokens_used=turn_tokens,
+                    elapsed_ms=turn_ms,
+                    finish_reason=finish_reason,
+                )
+            else:
+                log_manager.log_agent_turn(
+                    cycle_id, agent_name, i,
+                    action_type="reasoning",
+                    ticker=ticker,
+                    content_preview=content,
+                    tokens_used=turn_tokens,
+                    elapsed_ms=turn_ms,
+                    finish_reason=finish_reason,
+                )
+        except Exception:
+            pass  # Turn tracing must never crash the pipeline
 
+        # ── LLM truncation detection ──
+        if finish_reason == "length":
+            logger.warning(
+                "[ToolExecutor] LLM output TRUNCATED for %s/%s (finish_reason=length, turn=%d)",
+                agent_name, ticker, i + 1,
+            )
+            try:
+                from app.log_manager import log_manager
+                log_manager.log_truncation_warning(
+                    cycle_id, agent_name,
+                    ticker=ticker,
+                    finish_reason=finish_reason,
+                    response_preview=content,
+                )
+            except Exception:
+                pass
 
         # Append assistant message
         assistant_msg = {"role": "assistant"}
@@ -150,13 +195,27 @@ async def run_tool_agent(
             send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Requesting tool '{tc.get('function', {}).get('name')}'")
 
         # Execute tool calls
+        tool_results_for_log = []
         for tc in tool_calls:
             tool_res = await registry.execute_tool_call(
                 tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id
             )
             messages.append(tool_res)
+            tool_results_for_log.append(tool_res)
             from app.telemetry import send_system_log
             send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Tool executed with status: {'ok' if not tool_res.get('error') else 'error'}")
+
+        # Log tool execution results
+        try:
+            from app.log_manager import log_manager
+            log_manager.log_agent_turn(
+                cycle_id, agent_name, i,
+                action_type="tool_result",
+                ticker=ticker,
+                tool_results=tool_results_for_log,
+            )
+        except Exception:
+            pass  # Turn tracing must never crash the pipeline
     else:
         # for/else: the loop completed without break → max_loops exhausted
         # Check if the last turn had tool_calls (meaning the agent wanted to keep going)

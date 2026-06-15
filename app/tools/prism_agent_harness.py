@@ -419,7 +419,7 @@ async def run_prism_agent(
         "[PrismHarness] Delegating %s to Prism /agent (model=%s, tools=%d, ticker=%s)",
         agent_name,
         model,
-        len(active_tools),
+        len(active_tools) if active_tools is not None else 0,
         ticker,
     )
     from app.telemetry import send_system_log
@@ -459,6 +459,16 @@ async def run_prism_agent(
         )
         conversation_id = payload.get("conversationId", "")
 
+        # ── Detect Prism-level finish reason for truncation alerting ──
+        prism_finish_reason = ""
+        try:
+            # Prism wraps the final choice; try to extract finish_reason
+            choices = result_data.get("choices") or []
+            if choices and isinstance(choices, list):
+                prism_finish_reason = choices[0].get("finish_reason", "") or ""
+        except Exception:
+            pass
+
         # All base/analytical agents require valid JSON outputs.
         # Fallback to local if the response does not parse into a valid JSON object.
         from app.utils.text_utils import parse_json_response
@@ -469,6 +479,18 @@ async def run_prism_agent(
                 "[PrismHarness] %s response from Prism is not valid JSON. Attempting fast JSON recovery...",
                 agent_name
             )
+            # Log raw response on parse failure for post-mortem debugging
+            try:
+                from app.log_manager import log_manager
+                log_manager.log_cycle_error(
+                    cycle_id, "prism_json_parse_failure",
+                    ticker=ticker, error=f"{agent_name} returned non-JSON from Prism",
+                    stage="prism_agent",
+                    extra={"raw_llm_response": (final_text[:2000] if final_text else "")},
+                )
+            except Exception:
+                pass
+
             parsed, recovered_text, rec_tokens, rec_ms = await recover_json_output(
                 final_text=final_text,
                 agent_name=agent_name,
@@ -498,6 +520,41 @@ async def run_prism_agent(
                 priority=priority,
                 tools_override=tools_override,
             )
+
+        # ── Structured turn tracing for Prism-routed agents ──
+        try:
+            from app.log_manager import log_manager
+            prism_tool_calls_raw = result_data.get("toolCalls") or []
+            log_manager.log_agent_turn(
+                cycle_id, agent_name, 0,
+                action_type="reasoning",
+                ticker=ticker,
+                content_preview=final_text,
+                tool_calls=[{"function": {"name": tc.get("name", "?"), "arguments": str(tc.get("input", ""))}} for tc in prism_tool_calls_raw[:10]] if prism_tool_calls_raw else None,
+                tokens_used=token_usage,
+                elapsed_ms=elapsed_ms,
+                finish_reason=prism_finish_reason,
+                extra={"routed_via": "prism", "conversation_id": conversation_id},
+            )
+        except Exception:
+            pass  # Turn tracing must never crash the pipeline
+
+        # ── LLM truncation detection ──
+        if prism_finish_reason == "length":
+            logger.warning(
+                "[PrismHarness] LLM output TRUNCATED for %s/%s (finish_reason=length)",
+                agent_name, ticker,
+            )
+            try:
+                from app.log_manager import log_manager
+                log_manager.log_truncation_warning(
+                    cycle_id, agent_name,
+                    ticker=ticker,
+                    finish_reason=prism_finish_reason,
+                    response_preview=final_text,
+                )
+            except Exception:
+                pass
 
         logger.info(
             "[PrismHarness] %s completed via Prism in %dms (%d tokens)",

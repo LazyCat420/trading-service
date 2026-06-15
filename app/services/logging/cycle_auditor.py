@@ -273,6 +273,131 @@ class CycleAuditor:
         )
         logger.error("[AUDITOR] ANOMALY in %s: %s", phase, message)
 
+    # ── Data Staleness Check ─────────────────────────────────────────
+
+    def data_staleness_check(
+        self,
+        cycle_id: str,
+        ticker: str,
+        phase: str = "data_collection",
+        max_age_days: int = 3,
+    ) -> list[str]:
+        """Check if the latest price_history data for a ticker is stale.
+
+        Returns a list of issue strings (empty if data is fresh).
+        A warning audit record is written if data is older than max_age_days.
+        """
+        issues = []
+        try:
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                row = db.execute(
+                    "SELECT MAX(date) FROM price_history WHERE ticker = %s",
+                    (ticker,),
+                ).fetchone()
+
+            if not row or not row[0]:
+                issues.append(f"No price_history data found for {ticker}")
+                self._write(
+                    cycle_id=cycle_id,
+                    audit_type="data_staleness",
+                    phase=phase,
+                    ticker=ticker,
+                    severity="critical",
+                    message=f"No price_history data found for {ticker}",
+                    data={"max_date": None},
+                )
+                return issues
+
+            from datetime import timedelta
+            max_date = row[0]
+            # Handle date vs datetime
+            if hasattr(max_date, "date"):
+                max_date = max_date.date()
+            today = datetime.now(timezone.utc).date()
+            age_days = (today - max_date).days
+
+            if age_days > max_age_days:
+                msg = (
+                    f"Price data for {ticker} is {age_days} days stale "
+                    f"(latest: {max_date}, threshold: {max_age_days}d)"
+                )
+                issues.append(msg)
+                severity = "critical" if age_days > max_age_days * 2 else "warning"
+                self._write(
+                    cycle_id=cycle_id,
+                    audit_type="data_staleness",
+                    phase=phase,
+                    ticker=ticker,
+                    severity=severity,
+                    message=msg,
+                    data={
+                        "max_date": str(max_date),
+                        "age_days": age_days,
+                        "threshold_days": max_age_days,
+                    },
+                )
+                logger.warning("[AUDITOR] STALE DATA: %s", msg)
+        except Exception as e:
+            logger.debug("[AUDITOR] Staleness check failed (non-fatal): %s", e)
+
+        return issues
+
+    # ── Data Completeness Check ──────────────────────────────────────
+
+    def data_completeness_check(
+        self,
+        cycle_id: str,
+        ticker: str,
+        expected_fields: list[str] | None = None,
+        phase: str = "data_collection",
+    ) -> list[str]:
+        """Check if essential data fields exist for a ticker in the DB.
+
+        Returns a list of issue strings (empty if all fields are populated).
+        """
+        if expected_fields is None:
+            expected_fields = ["price_history", "financial_data"]
+
+        issues = []
+        try:
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                if "price_history" in expected_fields:
+                    count = db.execute(
+                        "SELECT COUNT(*) FROM price_history WHERE ticker = %s",
+                        (ticker,),
+                    ).fetchone()
+                    if not count or count[0] == 0:
+                        issues.append(f"Missing price_history rows for {ticker}")
+
+                if "financial_data" in expected_fields:
+                    count = db.execute(
+                        "SELECT COUNT(*) FROM financial_data WHERE ticker = %s",
+                        (ticker,),
+                    ).fetchone()
+                    if not count or count[0] == 0:
+                        issues.append(f"Missing financial_data rows for {ticker}")
+
+            if issues:
+                self._write(
+                    cycle_id=cycle_id,
+                    audit_type="data_completeness",
+                    phase=phase,
+                    ticker=ticker,
+                    severity="warning",
+                    message=f"Data completeness issues for {ticker}: {'; '.join(issues)}",
+                    data={"missing_fields": issues},
+                )
+                logger.warning("[AUDITOR] DATA INCOMPLETE: %s — %s", ticker, "; ".join(issues))
+
+        except Exception as e:
+            logger.debug("[AUDITOR] Completeness check failed (non-fatal): %s", e)
+
+        return issues
+
     # ── Retrieve Audit Trail ─────────────────────────────────────────
 
     def get_audit_trail(self, cycle_id: str) -> list[dict]:
