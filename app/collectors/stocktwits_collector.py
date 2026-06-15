@@ -33,10 +33,8 @@ async def collect_for_ticker(ticker: str, limit: int = 30) -> int:
         sentiment = item.get("sentiment")
         created_at_str = item.get("created_at")
 
-        if not post_id or not body:
-            continue
-
-        if dedup.is_duplicate(body):
+        is_dup = dedup.is_duplicate(body)
+        if is_dup:
             continue
 
         content_hash = dedup.compute_hash(body)

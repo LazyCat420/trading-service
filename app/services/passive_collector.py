@@ -90,31 +90,34 @@ def _set_state(state: str, next_rotation_at: datetime | None = None) -> None:
 
 
 async def _passive_collect_ticker(ticker: str):
-    """Collect news and reddit for a single ticker (no prices — too noisy)."""
+    """Collect news, reddit, twitter, and stocktwits for a single ticker (no prices — too noisy)."""
     _collector_status["current_ticker"] = ticker
     try:
         from app.collectors.news_collector import collect_for_ticker as collect_news
         from app.collectors.reddit_collector import collect_for_ticker as collect_reddit
         from app.collectors.twitter_collector import collect_for_ticker as collect_twitter
+        from app.collectors.stocktwits_collector import collect_for_ticker as collect_stocktwits
 
         logger.debug("[PASSIVE] Collecting for %s...", ticker)
 
-        # Run news, reddit, and twitter concurrently per ticker
+        # Run news, reddit, twitter, and stocktwits concurrently per ticker
         results = await asyncio.gather(
             collect_news(ticker),
             collect_reddit(ticker),
             collect_twitter(ticker),
+            collect_stocktwits(ticker),
             return_exceptions=True,
         )
 
         news_count = results[0] if isinstance(results[0], int) else 0
         reddit_count = results[1] if isinstance(results[1], int) else 0
         twitter_count = results[2] if isinstance(results[2], int) else 0
+        stocktwits_count = results[3] if isinstance(results[3], int) else 0
 
-        if news_count or reddit_count or twitter_count:
+        if news_count or reddit_count or twitter_count or stocktwits_count:
             logger.info(
-                "[PASSIVE] %s: %d news, %d reddit, %d twitter",
-                ticker, news_count, reddit_count, twitter_count,
+                "[PASSIVE] %s: %d news, %d reddit, %d twitter, %d stocktwits",
+                ticker, news_count, reddit_count, twitter_count, stocktwits_count,
             )
     except Exception as e:
         logger.warning("[PASSIVE] Failed to collect for %s: %s", ticker, e)
@@ -200,6 +203,60 @@ async def run_passive_collector_loop():
                         logger.info("[PASSIVE] Twitter FinTwit sweep: %d tweets", twitter_count)
                 except Exception as e:
                     logger.warning("[PASSIVE] Twitter FinTwit sweep failed: %s", e)
+                await asyncio.sleep(5)
+
+                # DefiLlama (TVL, Stablecoins, Yields)
+                try:
+                    from app.collectors.defillama_collector import collect_all as collect_defillama
+                    llama_res = await collect_defillama()
+                    logger.info("[PASSIVE] DefiLlama sweep: %s", llama_res)
+                except Exception as e:
+                    logger.warning("[PASSIVE] DefiLlama sweep failed: %s", e)
+                await asyncio.sleep(5)
+
+                # OpenInsider (Cluster Purchases)
+                try:
+                    from app.collectors.openinsider_collector import collect_all as collect_openinsider
+                    insider_res = await collect_openinsider()
+                    logger.info("[PASSIVE] OpenInsider sweep: %s", insider_res)
+                except Exception as e:
+                    logger.warning("[PASSIVE] OpenInsider sweep failed: %s", e)
+                await asyncio.sleep(5)
+
+                # BLS (US Economic Macro Indicators)
+                try:
+                    from app.collectors.bls_collector import collect_all as collect_bls
+                    bls_res = await collect_bls()
+                    logger.info("[PASSIVE] BLS sweep: %s", bls_res)
+                except Exception as e:
+                    logger.warning("[PASSIVE] BLS sweep failed: %s", e)
+                await asyncio.sleep(5)
+
+                # TradingEconomics (Economic Calendar Scraper)
+                try:
+                    from app.collectors.tradingeconomics_collector import collect_all as collect_tradingeconomics
+                    te_res = await collect_tradingeconomics()
+                    logger.info("[PASSIVE] TradingEconomics sweep: %s", te_res)
+                except Exception as e:
+                    logger.warning("[PASSIVE] TradingEconomics sweep failed: %s", e)
+                await asyncio.sleep(5)
+
+                # World Bank (Global Macro Indicators)
+                try:
+                    from app.collectors.worldbank_collector import collect_all as collect_worldbank
+                    wb_res = await collect_worldbank()
+                    logger.info("[PASSIVE] World Bank sweep: %s", wb_res)
+                except Exception as e:
+                    logger.warning("[PASSIVE] World Bank sweep failed: %s", e)
+                await asyncio.sleep(5)
+
+                # GDELT (Conflict/Geopolitical News Scraper)
+                try:
+                    from app.collectors.gdelt_collector import collect_all as collect_gdelt
+                    gdelt_res = await collect_gdelt()
+                    logger.info("[PASSIVE] GDELT sweep: %s", gdelt_res)
+                except Exception as e:
+                    logger.warning("[PASSIVE] GDELT sweep failed: %s", e)
                 await asyncio.sleep(5)
             else:
                 logger.info("[PASSIVE] Skipping RSS and Reddit Purge sweeps (runs every %d rotations)",

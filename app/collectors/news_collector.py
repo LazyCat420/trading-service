@@ -47,6 +47,11 @@ RSS_FEEDS = {
     # ── Crypto ──
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "Cointelegraph": "https://cointelegraph.com/rss",
+    # ── Newsletters / Macro Blogs ──
+    "Calculated Risk": "https://www.calculatedriskblog.com/feeds/posts/default",
+    "Marginal Revolution": "https://marginalrevolution.com/feed",
+    "Visual Capitalist": "https://www.visualcapitalist.com/feed/",
+    "ZeroHedge": "https://feeds.feedburner.com/zerohedge/feed",
 }
 
 # Company name -> ticker mapping
