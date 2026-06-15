@@ -1517,6 +1517,55 @@ class VLLMClient:
             f"Model '{model_id}' is not hosted on any available vLLM endpoint."
         )
 
+    def _generate_mock_llm_response(self, agent_name: str, ticker: str) -> str:
+        """Generate a simulated JSON response for the given agent."""
+        import json
+        name_lower = agent_name.lower() if agent_name else ""
+        ticker_val = (ticker or "AAPL").upper()
+        if "pre_trade" in name_lower:
+            return json.dumps({
+                "decision": "APPROVE",
+                "ticker": ticker_val,
+                "shares": 100,
+                "entry_price": 150.0,
+                "stop_loss": 140.0,
+                "risk_reward_ratio": 2.0,
+                "position_pct": 5.0,
+                "total_cost": 15000.0,
+                "veto_reason": None,
+                "rationale": "Strong fundamentals and positive sentiment in mock mode."
+            })
+        elif "portfolio" in name_lower or "allocator" in name_lower:
+            return json.dumps({
+                "allocations": [
+                    {
+                        "ticker": ticker_val,
+                        "decision": "APPROVE",
+                        "adjusted_size_pct": 5.0,
+                        "shares": 100,
+                        "total_cost": 15000.0,
+                        "veto_reason": None,
+                        "rationale": "Allocated 5% based on mock validation."
+                    }
+                ]
+            })
+        else:
+            # Standard BUY/SELL/HOLD decision json
+            action = "BUY"
+            if "sell" in name_lower:
+                action = "SELL"
+            elif "hold" in name_lower:
+                action = "HOLD"
+            return json.dumps({
+                "action": action,
+                "claims": [
+                    f"Asset {ticker_val} is displaying mock positive trends.",
+                    "Mock indicator indicates healthy momentum."
+                ],
+                "confidence": 85,
+                "key_argument": f"Favorable momentum and alignment in {agent_name}."
+            })
+
     async def _call_vllm_direct(
         self,
         client: httpx.AsyncClient,
@@ -1531,6 +1580,16 @@ class VLLMClient:
         was already selected — we use its URL directly instead of re-resolving.
         This eliminates redundant GET /v1/models queries.
         """
+        if settings.MOCK_LLM:
+            agent_name = meta.get("agent_name", "unknown")
+            ticker = meta.get("ticker", "")
+            mock_text = self._generate_mock_llm_response(agent_name, ticker)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            meta["_think_content"] = ""
+            meta["_usage"] = {"prompt_tokens": 100, "completion_tokens": 100}
+            payload["_finish_reason"] = "stop"
+            return mock_text, 200, elapsed_ms
+
         if ep:
             # Use the endpoint's URL directly — no re-resolution needed
             base_url = ep.url
@@ -1597,10 +1656,19 @@ class VLLMClient:
         This allows us to capture raw tool calls correctly from the stream (which are ignored
         by Prism's non-streaming JSON response when functionCallingEnabled is False).
         """
-        model_id = payload.get("model", self.model)
-        system_prompt = meta.get("system_prompt", "")
         agent_name = meta.get("agent_name", "pipeline")
         ticker = meta.get("ticker", "")
+
+        if settings.MOCK_LLM:
+            mock_text = self._generate_mock_llm_response(agent_name, ticker)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            meta["_think_content"] = ""
+            meta["_usage"] = {"prompt_tokens": 100, "completion_tokens": 100}
+            payload["_finish_reason"] = "stop"
+            return mock_text, 200, elapsed_ms
+
+        model_id = payload.get("model", self.model)
+        system_prompt = meta.get("system_prompt", "")
         cycle_id = meta.get("cycle_id", "")
         meta_actor_label = meta.get("actor_label") or actor_label
         resolved_actor_label = meta_actor_label or ("user" if agent_name == "user_chat" else None)
@@ -2410,6 +2478,21 @@ class VLLMClient:
             return await self._discover_roles_unlocked()
 
     async def _discover_roles_unlocked(self) -> dict:
+        if settings.MOCK_LLM:
+            roles = {}
+            for name, ep in self._endpoints.items():
+                ep.model = settings.PRISM_FALLBACK_MODEL
+                ep.enabled = True
+                ep.loading = False
+                ep.init_concurrency(self.RESERVED_HIGH_SLOTS)
+                roles[f"{name}_model"] = ep.model
+                roles[f"{name}_url"] = ep.url
+            self.model = settings.PRISM_FALLBACK_MODEL
+            self._roles_discovered = True
+            self._ensure_dispatcher()
+            logger.info("[VLLM] Mock role discovery completed instantly.")
+            return roles
+
         client = await self._get_client()
         roles = {}
         successful_endpoints = 0

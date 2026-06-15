@@ -238,8 +238,21 @@ async def run_prism_agent(
     """
     from app.telemetry import send_system_log
     send_system_log("AGENT", f"[{agent_name}] Starting agent execution (ticker={ticker})")
-    prism = llm.prism_client
     start = time.monotonic()
+
+    if settings.MOCK_LLM:
+        mock_text = llm._generate_mock_llm_response(agent_name, ticker)
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        return PrismAgentResult(
+            final_text=mock_text,
+            token_usage=200,
+            execution_ms=elapsed_ms,
+            conversation_id="mock-conv-id",
+            routed_via="mock",
+            tool_history=[],
+        ).to_dict()
+
+    prism = llm.prism_client
 
     if ticker:
         ticker = ticker.upper()
