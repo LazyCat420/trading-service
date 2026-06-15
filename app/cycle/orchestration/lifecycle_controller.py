@@ -186,9 +186,13 @@ class LifecycleControllerMixin:
             except Exception as disc_err:
                 logger.warning("[CYCLE] Phase 0 discovery failed (non-fatal): %s", disc_err)
 
-            from app.pipeline.ticker_selector import TickerSelector
+            from app.pipeline.ticker_selector import TickerSelector, TickerSelectionResult
 
-            selection = TickerSelector.select_tickers_for_cycle_v2(tickers, cap, discovered_tickers=discovered_tickers)
+            if trigger_type == "smoke_test":
+                logger.info("[CYCLE] Smoke test trigger detected — bypassing TickerSelector to run exactly: %s", tickers)
+                selection = TickerSelectionResult(non_position_tickers=tickers)
+            else:
+                selection = TickerSelector.select_tickers_for_cycle_v2(tickers, cap, discovered_tickers=discovered_tickers)
             tickers = selection.all_tickers
 
             if not tickers:
