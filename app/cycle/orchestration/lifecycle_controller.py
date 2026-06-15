@@ -94,8 +94,8 @@ class LifecycleControllerMixin:
             )
         )
 
-        # Watchdog: if status is still 'starting' after 30s, force error
-        loop.create_task(cls._starting_state_watchdog(cycle_id))
+        # Watchdog: if status is still 'starting' after 180s, force error
+        loop.create_task(cls._starting_state_watchdog(cycle_id, timeout_s=180))
 
         return {
             "status": "starting",
@@ -310,7 +310,7 @@ class LifecycleControllerMixin:
             )
 
     @classmethod
-    async def _starting_state_watchdog(cls, cycle_id: str, timeout_s: int = 30):
+    async def _starting_state_watchdog(cls, cycle_id: str, timeout_s: int = 180):
         """Watchdog: if status is still 'starting' after timeout, force error.
 
         Prevents the UI from hanging indefinitely when _background_start_cycle
