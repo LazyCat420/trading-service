@@ -16,18 +16,20 @@ from app.collectors.yfinance_collector import (
 def mock_db():
     with patch("app.collectors.yfinance_collector.get_db") as mock_get_db_yf:
         with patch("app.collectors.news_collector.get_db") as mock_get_db_news:
-            db = MagicMock()
-            db.fetchone.return_value = None
-            db.fetchall.return_value = []
-            # Also mock execute return value for chained calls
-            cursor = MagicMock()
-            cursor.fetchone.return_value = None
-            cursor.fetchall.return_value = []
-            db.execute.return_value = cursor
-            
-            mock_get_db_yf.return_value.__enter__.return_value = db
-            mock_get_db_news.return_value.__enter__.return_value = db
-            yield db
+            with patch("app.processors.dedup_engine.get_db") as mock_get_db_dedup:
+                db = MagicMock()
+                db.fetchone.return_value = None
+                db.fetchall.return_value = []
+                # Also mock execute return value for chained calls
+                cursor = MagicMock()
+                cursor.fetchone.return_value = None
+                cursor.fetchall.return_value = []
+                db.execute.return_value = cursor
+                
+                mock_get_db_yf.return_value.__enter__.return_value = db
+                mock_get_db_news.return_value.__enter__.return_value = db
+                mock_get_db_dedup.return_value.__enter__.return_value = db
+                yield db
 
 @pytest.mark.asyncio
 @patch("app.collectors.yfinance_collector.yf.Ticker")

@@ -260,10 +260,11 @@ class TestCollectFeed:
             }
         ]
 
-        # Patch at BOTH the module-level AND the re-import location inside collect_feed
+        # Patch at module-levels, re-import location, and deduplication engine
         with patch("app.db.connection.get_db", return_value=mock_db_ctx):
             with patch("app.collectors.news_collector.get_db", return_value=mock_db_ctx):
-                count = await collect_feed("Test Feed", "https://example.com/rss")
+                with patch("app.processors.dedup_engine.get_db", return_value=mock_db_ctx):
+                    count = await collect_feed("Test Feed", "https://example.com/rss")
 
         # Should have processed both entries
         assert count >= 2
