@@ -66,7 +66,7 @@ AGENT_ID_MAP: dict[str, str] = {
     "budget": "CUSTOM_AGENT_BUDGET_MANAGER",
 
     # ── Bullish Debater & Debate Agents ──
-    "CUSTOM_THESIS_AGENT": "CUSTOM_BULLISH_DEBATER",
+    "CUSTOM_THESIS_AGENT": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "CUSTOM_DEBATE_META_AGENT": "CUSTOM_BULLISH_DEBATER",
     "CUSTOM_DEBATE_CHALLENGE_AGENT": "CUSTOM_BULLISH_DEBATER",
     "CUSTOM_DEBATE_CROSS_EXAM_AGENT": "CUSTOM_BULLISH_DEBATER",
@@ -89,7 +89,7 @@ AGENT_ID_MAP: dict[str, str] = {
     "debate_meta": "CUSTOM_BULLISH_DEBATER",
     "debate_cross_examiner": "CUSTOM_BULLISH_DEBATER",
     "debate_synthesizer": "CUSTOM_BULLISH_DEBATER",
-    "thesis_agent": "CUSTOM_BULLISH_DEBATER",
+    "thesis_agent": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "debate_judge": "CUSTOM_BULLISH_DEBATER",
     "debate_critic": "CUSTOM_BULLISH_DEBATER",
     "debate_coordinator": "CUSTOM_BULLISH_DEBATER",
