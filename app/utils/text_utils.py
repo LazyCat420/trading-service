@@ -187,6 +187,15 @@ def parse_malformed_text_response(text: str) -> dict:
         if bold_action:
             res["action"] = bold_action.group(1).strip().upper()
 
+    # Look for key-value patterns in plain text, e.g. "action: HOLD" or "action = HOLD" or '"action": "HOLD"'
+    if "action" not in res:
+        for marker in ["action", "recommendation", "verdict", "decision"]:
+            pattern = r"(?:\"" + marker + r"\"|(?:\*\*|\*)?" + marker + r"(?:\*\*|\*)?)\s*[:=]\s*[\"\']?\*?\*?(BUY|SELL|HOLD)\*?\*?[\"\']?"
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                res["action"] = match.group(1).strip().upper()
+                break
+
     # ── Extract confidence ──
     confidence_patterns = [
         r"confidence\s*\|?\s*\*?\*?\s*(\d+)\s*(?:%|/100)?",
@@ -203,10 +212,18 @@ def parse_malformed_text_response(text: str) -> dict:
                 res["confidence"] = val
                 break
 
+    # Look for key-value patterns for confidence in plain text, e.g. "confidence: 75" or '"confidence": 75'
+    if "confidence" not in res:
+        match = re.search(r"(?:\"confidence\"|(?:\*\*|\*)?confidence(?:\*\*|\*)?)\s*[:=]\s*[\"\']?(\d+)[\"\']?", text_lower)
+        if match:
+            val = int(match.group(1))
+            if 0 <= val <= 100:
+                res["confidence"] = val
+
     # ── Extract conviction ──
     conviction_patterns = [
         r"\|\s*\*?\*?conviction\*?\*?\s*\|\s*\*?\*?(\w+)\*?\*?\s*\|",
-        r"conviction\s*:\s*\*?\*?(\w+)\*?\*?",
+        r"(?:\"conviction\"|(?:\*\*|\*)?conviction(?:\*\*|\*)?)\s*[:=]\s*\*?\*?(\w+)\*?\*?",
     ]
     for pattern in conviction_patterns:
         match = re.search(pattern, text, re.IGNORECASE)
@@ -310,6 +327,30 @@ def parse_malformed_text_response(text: str) -> dict:
                     if cleaned:
                         res[key] = cleaned
                         break
+
+            # Fallback for non-header sections like "**Core Claims**:" or "Core Claims -"
+            if key not in res:
+                non_header_match = re.search(
+                    r"(?:^|\n)\s*(?:\*\*|\*)?(?:\d+\.?\s*)?" + re.escape(marker) + r"(?:\*\*|\*)?[:\-\s]*\n+([\s\S]*?)(?=\n\s*(?:\*\*|\*)?[A-Za-z_]+|\Z)",
+                    text, re.IGNORECASE
+                )
+                if non_header_match:
+                    block = non_header_match.group(1).strip()
+                    # Extract bullet items using same logic
+                    items = re.findall(r"^\s*[-*•✅⚠️🔴🟡🟢]\s*\*?\*?(.+?)(?:\*\*)?$", block, re.MULTILINE)
+                    if not items:
+                        items = re.findall(r"^\s*\d+[.)]\s*(.+)$", block, re.MULTILINE)
+                    if items:
+                        cleaned = []
+                        for item in items[:10]:
+                            item = re.sub(r"\*\*([^*]+)\*\*", r"\1", item).strip()
+                            item = re.sub(r"^[✅⚠️🔴🟡🟢❌]+\s*", "", item).strip()
+                            if len(item) > 5:
+                                cleaned.append(item)
+                        if cleaned:
+                            res[key] = cleaned
+                            break
+
             # Fallback: JSON-style list in text
             json_list_match = re.search(r"\"" + re.escape(marker) + r"\"\s*:\s*\[([^\]]+)\]", text, re.IGNORECASE)
             if json_list_match:

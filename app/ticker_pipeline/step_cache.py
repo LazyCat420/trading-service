@@ -28,9 +28,9 @@ async def run_cache_step(ctx: TickerContext) -> TickerContext:
             # 1. Get the most recent analysis
             latest = db.execute(
                 """
-                SELECT id, action, confidence, thesis_summary, result_json, created_at 
+                SELECT id, thesis_verdict, thesis_confidence, thesis_summary, result_json, created_at 
                 FROM analysis_results 
-                WHERE ticker = %s AND action IS NOT NULL
+                WHERE ticker = %s AND thesis_verdict IS NOT NULL
                 ORDER BY created_at DESC LIMIT 1
                 """,
                 [ctx.ticker],
