@@ -180,8 +180,17 @@ async def run_passive_collector_loop():
                 except Exception as e:
                     logger.warning("[PASSIVE] RSS sweep failed: %s", e)
                 await asyncio.sleep(5)
+
+                try:
+                    from app.collectors.reddit_collector import run_reddit_purge_discovery
+                    tickers_discovered = await run_reddit_purge_discovery(limit=15)
+                    if tickers_discovered:
+                        logger.info("[PASSIVE] Reddit Purge discovered: %d tickers", tickers_discovered)
+                except Exception as e:
+                    logger.warning("[PASSIVE] Reddit Purge sweep failed: %s", e)
+                await asyncio.sleep(5)
             else:
-                logger.info("[PASSIVE] Skipping RSS sweep (runs every %d rotations)",
+                logger.info("[PASSIVE] Skipping RSS and Reddit Purge sweeps (runs every %d rotations)",
                             RSS_SWEEP_CADENCE)
 
             # 3. Per-ticker collection with gentle pacing + freshness gate

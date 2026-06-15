@@ -413,3 +413,74 @@ async def collect_all(
         await asyncio.sleep(2.0)
     logger.info(f"[reddit] Total: {total} posts across {len(SUBREDDITS)} subreddits")
     return total
+
+
+async def run_reddit_purge_discovery(limit: int = 15, use_llm: bool = False) -> int:
+    """Runs general sweep Reddit ticker discovery using the scraper-service's reddit-purge endpoint.
+    
+    Extracts trending ticker symbols and matches them, writing back to:
+      - reddit_posts (raw post data matching the tickers)
+      - discovered_tickers (discovered ticker signals)
+    """
+    from app.services.scraper_client import scraper_client
+    
+    logger.info("[reddit-purge] Running Reddit purge discovery sweep...")
+    try:
+        items = await scraper_client.collect(
+            source="reddit-purge",
+            req_data={
+                "limit": limit,
+                "use_llm": use_llm,
+            }
+        )
+        
+        if not items:
+            logger.info("[reddit-purge] No tickers discovered.")
+            return 0
+            
+        logger.info(f"[reddit-purge] Discovered {len(items)} tickers from Reddit sweep.")
+        
+        with get_db() as db:
+            stored_posts = 0
+            stored_tickers = 0
+            
+            for item in items:
+                ticker = item.get("ticker", "").upper().strip()
+                score = item.get("score", 0)
+                posts = item.get("posts", [])
+                
+                # Insert ticker into discovered_tickers
+                try:
+                    confidence = min(round(score / 30.0, 2), 1.0) if score else 0.5
+                    db.execute(
+                        """
+                        INSERT INTO discovered_tickers
+                        (ticker, source, context, score, discovered_at)
+                        VALUES (%s, 'reddit-purge', %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (ticker, source) DO UPDATE SET
+                            score = EXCLUDED.score,
+                            context = EXCLUDED.context,
+                            discovered_at = CURRENT_TIMESTAMP
+                        """,
+                        [ticker, f"Reddit Purge score: {score}", confidence]
+                    )
+                    stored_tickers += 1
+                except Exception as e:
+                    logger.warning(f"[reddit-purge] Failed to save discovered ticker {ticker}: {e}")
+                
+                # Save associated posts
+                for post in posts:
+                    stored_posts += _store_post(
+                        db,
+                        post,
+                        ticker,
+                        post.get("subreddit", "reddit"),
+                        {ticker}
+                    )
+                    
+            logger.info(f"[reddit-purge] Stored {stored_tickers} tickers and {stored_posts} post associations.")
+            return stored_tickers
+            
+    except Exception as e:
+        logger.error(f"[reddit-purge] Error running Reddit purge discovery: {e}", exc_info=True)
+        return 0
