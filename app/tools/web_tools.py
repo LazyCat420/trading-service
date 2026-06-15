@@ -56,6 +56,40 @@ async def scrape_url(url: str) -> str:
         return json.dumps({"status": "error", "message": str(e)})
 
 
+@registry.register(
+    name="search_web",
+    description="Search the web for news and information. Returns a list of titles, URLs, and snippets.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "The search query."},
+            "num_results": {"type": "integer", "description": "Number of results to return.", "default": 3}
+        },
+        "required": ["query"],
+    },
+    tier=0,
+    source="ddg",
+)
+async def search_web(query: str, num_results: int = 3) -> str:
+    """
+    Search the web for news and information.
+    """
+    from app.services.web_search import searcher
+    logger.info(f"[WebTools] Searching web for: {query}")
+    try:
+        results = await searcher.search(query, max_results=num_results)
+        if not results:
+            return "No results found."
+        
+        formatted = []
+        for i, r in enumerate(results, 1):
+            formatted.append(f"[{i}] {r.title}\nURL: {r.url}\nSnippet: {r.snippet}\n")
+        return "\n".join(formatted)
+    except Exception as e:
+        logger.error(f"[WebTools] Search failed for '{query}': {e}")
+        return f"Error: {e}"
+
+
 
 
 

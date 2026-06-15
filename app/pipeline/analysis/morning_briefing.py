@@ -141,7 +141,7 @@ async def generate_morning_briefing() -> str:
                 INSERT INTO morning_briefings (report_content, tickers_evaluated)
                 VALUES (%s, %s)
                 """,
-                [response, json.dumps(evaluated_tickers)],
+                [response, evaluated_tickers],
             )
         logger.info("[MORNING BRIEFING] Saved to database successfully.")
     except Exception as e:

@@ -285,3 +285,13 @@
 - [2026-06-07] pipeline_run: SELL (conf=72)
 - [202...
 
+## 2026-06-15 17:10:59 - NVDA
+- **Action:** SELL @ 68%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2026-01-31 00:00 UTC to 2026-06-15 17:07 UTC
+
+📝 Memory context: - [2026-06-15] pipeline_run: SELL (conf=74)
+- [2026-06-08] pipeline_run: SELL (conf=72)
+- [202...
+

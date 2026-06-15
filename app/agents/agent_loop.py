@@ -714,7 +714,7 @@ async def run_split_agent_loop(
     yield_on_limit: bool = False,
     require_json_schema: bool = False,
     critique_rounds: int = 0,
-    max_selector_tools: int = 9999,
+    max_selector_tools: int = 5,
 ) -> dict[str, Any]:
     """Brain-Action Split Agent Loop.
 

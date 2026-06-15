@@ -24,7 +24,17 @@ async def test_run_adversarial_debate_persistence(patch_llm, patch_get_db, mock_
     from unittest.mock import AsyncMock, patch
     
     from app.cognition.contracts.evidence import EvidencePacket
-    packet = EvidencePacket(entity_id="TEST", ticker="TEST", structured_facts=[])
+    from app.cognition.contracts.retrieval import StructuredFact
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    packet = EvidencePacket(
+        entity_id="TEST",
+        ticker="TEST",
+        structured_facts=[
+            StructuredFact(fact_type="price", value=150.0, timestamp=now),
+            StructuredFact(fact_type="volume", value=1000000.0, timestamp=now)
+        ]
+    )
     
     mock_run_biased = AsyncMock()
     mock_run_biased.side_effect = [

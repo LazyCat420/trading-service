@@ -84,7 +84,7 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
 
         # ── Volume indicators ──
         df["obv"] = ta.volume.on_balance_volume(df["close"], df["volume"].astype(float))
-        df["vwap"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
+        df["vwap"] = (df["close"] * df["volume"]).rolling(window=20, min_periods=1).sum() / df["volume"].rolling(window=20, min_periods=1).sum()
 
         # ── Support / Resistance (simple: recent swing low/high) ──
         lookback = min(20, len(df))

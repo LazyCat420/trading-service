@@ -6,7 +6,7 @@ from app.tools.finance_tools import (
 
 )
 from app.tools.wiki_tools import write_memory_note, read_memory_note, search_wiki
-from app.tools.web_tools import scrape_url
+from app.tools.web_tools import scrape_url, search_web
 from app.tools.quant_tools import execute_momentum_strategy, execute_value_strategy
 
 from app.tools.db_tools import search_internal_database, update_youtube_channel_handle
@@ -109,6 +109,7 @@ __all__ = [
     "read_memory_note",
     "search_wiki",
     "scrape_url",
+    "search_web",
     "search_internal_database",
     "update_youtube_channel_handle",
     "run_local_command",

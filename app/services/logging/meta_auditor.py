@@ -19,12 +19,12 @@ THESIS TO AUDIT:
 {thesis}
 
 Respond in STRICT JSON format:
-{
+{{
   "quality_score": 0-100,
   "is_hallucination": true/false,
   "logic_flaws": ["list of flaws", "or empty"],
   "final_verdict": "PASS" or "FAIL"
-}
+}}
 """
 
 async def audit_thesis_quality(ticker: str, packet: str, thesis: str, cycle_id: str, bot_id: str) -> dict:

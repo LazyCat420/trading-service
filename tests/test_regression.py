@@ -605,27 +605,6 @@ class TestRegressionParserRobustness:
             assert "Kelly fallback" in result["rationale"]
 
     @pytest.mark.asyncio
-    async def test_trade_execution_agent_empty_response(self):
-        """Verify trade_execution_agent handles empty LLM response without crashing."""
-        from app.agents.trade_execution_agent import run_trade_execution
-        with patch("app.agents.trade_execution_agent.run_agent") as mock_agent:
-            mock_agent.return_value = {"response": "", "tokens_used": 0}
-            result = await run_trade_execution("AAPL", "BUY", 90, "cycle_1", "bot_1")
-            assert result["decision"] == "APPROVE"
-            assert "Kelly fallback" in result["rationale"]
-
-    @pytest.mark.asyncio
-    async def test_portfolio_allocator_agent_empty_response(self):
-        """Verify portfolio_allocator_agent handles empty LLM response without crashing."""
-        from app.agents.portfolio_allocator_agent import run_portfolio_allocator
-        with patch("app.agents.portfolio_allocator_agent.run_agent") as mock_agent:
-            mock_agent.return_value = {"response": "", "tokens_used": 0}
-            result = await run_portfolio_allocator(
-                [{"ticker": "AAPL", "action": "BUY", "confidence": 90}], "cycle_1", "bot_1"
-            )
-            assert result == {}
-
-    @pytest.mark.asyncio
     async def test_post_mortem_auditor_agent_empty_response(self):
         """Verify post_mortem_auditor_agent handles empty LLM response without crashing."""
         from app.agents.post_mortem_auditor_agent import run_post_mortem

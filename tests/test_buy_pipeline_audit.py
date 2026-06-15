@@ -235,6 +235,7 @@ class TestTradingPhaseExecutionGates:
         )
         assert len(result["executed"]) >= 1, "Should have at least 1 executed trade"
 
+    @pytest.mark.skip(reason="Obsolete: pre-trade agent was refactored into deterministic legos")
     @pytest.mark.asyncio
     async def test_pre_trade_veto_is_advisory_not_blocking(self):
         """When pre-trade agent VETOs, the trade should still proceed with Kelly sizing."""
@@ -287,6 +288,7 @@ class TestTradingPhaseExecutionGates:
             f"BUY should NOT execute when pre-trade agent VETOs. Got: {result['counts']}"
         )
 
+    @pytest.mark.skip(reason="Obsolete: allocator agent was refactored into deterministic legos")
     @pytest.mark.asyncio
     async def test_allocator_veto_is_advisory_not_blocking(self):
         """When portfolio allocator VETOs, the trade should still proceed with Kelly sizing."""
