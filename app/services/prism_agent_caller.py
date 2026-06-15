@@ -109,6 +109,15 @@ async def call_prism_agent(
     if priority is None:
         priority = Priority.NORMAL
 
+    start = time.monotonic()
+    if settings.MOCK_LLM:
+        mock_text = llm._generate_mock_llm_response(fallback_agent_name, ticker)
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        return mock_text, 200, elapsed_ms
+
+    if max_tokens is None:
+        max_tokens = 8192
+
     # ── Dynamic Token Constraint Conversion ──
     # Prevent aggressive mid-word truncation by converting tight max_tokens
     # bounds into explicit sentence limits in the system prompt.

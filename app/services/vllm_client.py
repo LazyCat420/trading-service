@@ -1961,6 +1961,8 @@ class VLLMClient:
         self._ensure_dispatcher()
 
         # ── Dynamic Token Constraint Conversion ──
+        if max_tokens is None:
+            max_tokens = 8192
         if max_tokens < 4096:
             if max_tokens <= 128:
                 sentences = "1 or 2 sentences max"
@@ -2164,6 +2166,8 @@ class VLLMClient:
         self._ensure_dispatcher()
 
         # ── Dynamic Token Constraint Conversion ──
+        if max_tokens is None:
+            max_tokens = 8192
         if max_tokens < 4096:
             if max_tokens <= 128:
                 sentences = "1 or 2 sentences max"
@@ -2375,6 +2379,11 @@ class VLLMClient:
         """Dynamically query /v1/models from the endpoint to get the active loaded model.
         Updates ep.model and model_endpoint_cache.
         """
+        if settings.MOCK_LLM:
+            if not getattr(ep, "model", None):
+                ep.model = settings.PRISM_FALLBACK_MODEL
+            return ep.model
+
         # Safe mock handling
         from unittest.mock import Mock, MagicMock
         ep_name = getattr(ep, "name", "unknown")
@@ -2843,6 +2852,8 @@ class VLLMClient:
         - Enabled endpoints whose model changed → updated
         - Enabled endpoints that went offline → auto-disabled
         """
+        if settings.MOCK_LLM:
+            return
         client = await self._get_client()
         changes = []
 
@@ -3096,6 +3107,8 @@ class VLLMClient:
         import json as _json
 
         # ── Dynamic Token Constraint Conversion ──
+        if max_tokens is None:
+            max_tokens = 8192
         if max_tokens < 4096:
             if max_tokens <= 128:
                 sentences = "1 or 2 sentences max"
