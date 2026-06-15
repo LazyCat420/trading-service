@@ -59,7 +59,7 @@ async def run_phase4_analysis(
         status="running",
     )
 
-    results = []
+    results = list(ctx.existing_results) if getattr(ctx, "existing_results", None) else []
     errors = []
 
     worker_count = settings.V2_TICKER_CONCURRENCY or 3
@@ -81,23 +81,25 @@ async def run_phase4_analysis(
     else:
         # Batch mode: pre-populate a local queue with all tickers + sentinels.
         work_queue = asyncio.Queue()
-        for t in ctx.tickers:
+        _already_done = set(ctx.already_analyzed) if getattr(ctx, "already_analyzed", None) else set()
+        tickers_to_queue = [t for t in ctx.tickers if t not in _already_done]
+        for t in tickers_to_queue:
             work_queue.put_nowait(t)
         for _ in range(worker_count):
             work_queue.put_nowait(None)
         emit(
             "analyzing",
             "batch_mode",
-            f"Analysis workers in BATCH mode — {len(ctx.tickers)} tickers pre-loaded",
+            f"Analysis workers in BATCH mode — {len(tickers_to_queue)} tickers pre-loaded ({len(_already_done)} already analyzed skipped)",
             status="running",
             data={"mode": "batch", "queue_depth": work_queue.qsize(), "worker_count": worker_count},
         )
 
-    analyzed_count = 0
+    analyzed_count = len(ctx.already_analyzed) if getattr(ctx, "already_analyzed", None) else 0
     count_lock = asyncio.Lock()
     active_workers = worker_count
     _worker_start_time = time.monotonic()
-    _seen_tickers: set[str] = set()  # Dedup: prevents double-analysis when tickers arrive from multiple sources
+    _seen_tickers: set[str] = set(ctx.already_analyzed) if getattr(ctx, "already_analyzed", None) else set()  # Dedup: prevents double-analysis when tickers arrive from multiple sources
 
     # Fix 2: Thesis semaphore — caps concurrent thesis LLM calls to prevent
     # GPU queue saturation. Without this, all 4 workers hit thesis generation

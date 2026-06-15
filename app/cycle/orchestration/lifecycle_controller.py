@@ -35,6 +35,7 @@ class LifecycleControllerMixin:
         discovered_tickers: int | None = None,
         pipeline_version: str | None = None,
         benchmark_group: str | None = None,
+        start_fresh: bool = False,
     ):
         async with cls._get_lock():
             # Check memory state first to avoid race conditions with DB read lag
@@ -57,6 +58,21 @@ class LifecycleControllerMixin:
                 "interrupted",
             ):
                 raise ValueError(f"Cycle already running: {cls._state['status']}")
+
+            # Auto-resume check if not starting fresh and not an edge case response
+            if not start_fresh and not trigger_type.startswith("edge_case_"):
+                # Clean up expired checkpoints (> 6 hours old)
+                PipelineStateDB.expire_old_checkpoints(max_age_hours=6)
+                checkpoint = PipelineStateDB.get_checkpoint()
+                if checkpoint:
+                    logger.info(
+                        "[CYCLE] Auto-resuming recent interrupted cycle %s",
+                        checkpoint["cycle_id"]
+                    )
+                    cls._state["status"] = "interrupted"
+                    cls._state["cycle_id"] = checkpoint["cycle_id"]
+                    cls.save_state()
+                    return await cls.resume_interrupted_cycle()
 
             cycle_id = f"cycle-{int(time.time())}"
 

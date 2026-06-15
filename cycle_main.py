@@ -178,6 +178,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                             trade=payload.get("trade", True),
                             max_tickers=payload.get("max_tickers"),
                             discovered_tickers=payload.get("discovered_tickers"),
+                            start_fresh=payload.get("start_fresh", False),
                         )
                     elif cmd_type == "ANALYZE_TICKER":
                         from app.pipeline.analysis.decision_engine import analyze_ticker
