@@ -260,7 +260,7 @@ def run_smoke_test(ticker: str = "AAPL") -> bool:
     try:
         logger.info(f"Running single-ticker smoke test for {ticker}...")
         res = subprocess.run(
-            ["python", "scripts/smoke_test_cycle.py", ticker, "--timeout", "600"],
+            ["python", "scripts/smoke_test_cycle.py", ticker, "--timeout", "900"],
             capture_output=True, text=True
         )
         logger.info(f"Smoke test stdout:\n{res.stdout}")

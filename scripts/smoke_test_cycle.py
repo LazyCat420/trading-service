@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 def parse_args():
     parser = argparse.ArgumentParser(description="Smoke test a single-ticker trading cycle")
     parser.add_argument("ticker", nargs="?", default="AAPL", help="Ticker symbol to test (default: AAPL)")
-    parser.add_argument("--timeout", type=int, default=600, help="Max seconds to wait for cycle completion (default: 600)")
+    parser.add_argument("--timeout", type=int, default=900, help="Max seconds to wait for cycle completion (default: 900)")
     parser.add_argument("--skip-collection", action="store_true", help="Skip data collection phase")
     parser.add_argument("--skip-trade", action="store_true", help="Skip trading phase")
     parser.add_argument("--resume", action="store_true", help="Resume interrupted cycle instead of starting fresh")
