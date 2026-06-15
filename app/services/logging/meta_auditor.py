@@ -37,7 +37,7 @@ async def audit_thesis_quality(ticker: str, packet: str, thesis: str, cycle_id: 
     )
     
     try:
-        response, _, _ = await vllm_client.chat(
+        response, _, _ = await vllm_client.llm.chat(
             system="You are a strict financial auditor.",
             user=prompt,
             temperature=0.1,
