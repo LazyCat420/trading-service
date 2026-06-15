@@ -251,20 +251,22 @@ async def generate_thesis(
             "error": f"Failed to parse thesis. Invalid JSON format. Raw: {response[:250]}..."
         }
 
-    action = gate_action(data.get("action", "HOLD"), held)
+    from app.utils.text_utils import coerce_str, coerce_int, coerce_list_str
+
+    action = gate_action(coerce_str(data.get("action", "HOLD")), held)
 
     draft = ThesisDraft(
         action=action,
-        confidence=int(data.get("confidence", 0)),
-        core_claims=data.get("core_claims", []),
-        evidence_refs=data.get("evidence_refs", []),
-        weaknesses=data.get("weaknesses", []),
-        rationale=data.get("rationale", data.get("error", "Failed to parse thesis")),
+        confidence=coerce_int(data.get("confidence", 0)),
+        core_claims=coerce_list_str(data.get("core_claims", [])),
+        evidence_refs=coerce_list_str(data.get("evidence_refs", [])),
+        weaknesses=coerce_list_str(data.get("weaknesses", [])),
+        rationale=coerce_str(data.get("rationale", data.get("error", "Failed to parse thesis"))),
         iteration=0,
-        conviction=data.get("conviction", ""),
-        management_quality=data.get("management_quality", ""),
-        competitive_moat=data.get("competitive_moat", ""),
-        devils_advocate=data.get("devils_advocate", ""),
-        invalidation_condition=data.get("invalidation_condition", ""),
+        conviction=coerce_str(data.get("conviction", "")),
+        management_quality=coerce_str(data.get("management_quality", "")),
+        competitive_moat=coerce_str(data.get("competitive_moat", "")),
+        devils_advocate=coerce_str(data.get("devils_advocate", "")),
+        invalidation_condition=coerce_str(data.get("invalidation_condition", "")),
     )
     return draft, tokens_used

@@ -112,23 +112,11 @@ async def run_technical_analyst(ticker: str, cycle_id: str = "JIT", bot_id: str 
         
     content = result.get("response", "").strip()
     
-    # Clean possible markdown
-    clean = content.replace('```json', '').replace('```', '').strip()
-    si = clean.find('{')
-    ei = clean.rfind('}') + 1
-    if si != -1 and ei > si:
-        clean = clean[si:ei]
-        
-    # Repair missing opening braces in JSON array of objects (common LLM error)
-    import re
-    repaired = re.sub(
-        r'\}\s*,\s*"(type|kind|x0|y0|x1|y1|color|reasoning)"\s*:',
-        r'},{"\1":',
-        clean
-    )
-    
+    from app.utils.text_utils import parse_json_response
     try:
-        overlays = json.loads(repaired)
+        overlays = parse_json_response(content)
+        if not overlays or "overlays" not in overlays:
+            raise ValueError("Parsed JSON is empty or missing 'overlays' key")
     except Exception as e:
         logger.error("[TECHNICAL_ANALYST] Failed to parse JSON from agent: %s | Output: %s", e, content)
         return False

@@ -767,3 +767,55 @@ def clean_html(html: str) -> str:
     return cleaned
 
 
+
+
+
+def coerce_str(val, default="") -> str:
+    """Coerce any value to string, extracting text keys from dicts if present."""
+    if val is None:
+        return default
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        for k in ["thesis_summary", "summary", "reasoning", "value", "text"]:
+            if k in val and isinstance(val[k], str):
+                return val[k]
+        try:
+            return json.dumps(val)
+        except Exception:
+            return str(val)
+    if isinstance(val, list):
+        return "; ".join(coerce_str(item) for item in val)
+    return str(val)
+
+
+def coerce_int(val, default=0) -> int:
+    """Coerce any value to integer, extracting digits from strings (e.g. '75%')."""
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        if isinstance(val, str):
+            cleaned_val = re.sub(r"[^\d]", "", val)
+            if cleaned_val:
+                return int(cleaned_val)
+        return default
+
+
+def coerce_list_str(val) -> list[str]:
+    """Coerce any value to a list of strings."""
+    if val is None:
+        return []
+    if isinstance(val, str):
+        items = []
+        for line in val.split("\n"):
+            line = line.strip().lstrip("-*•").strip()
+            if line:
+                items.append(line)
+        return items
+    if isinstance(val, list):
+        return [coerce_str(item) for item in val if item is not None]
+    if isinstance(val, dict):
+        return [f"{k}: {coerce_str(v)}" for k, v in val.items()]
+    return [str(val)]
