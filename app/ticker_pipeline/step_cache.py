@@ -58,21 +58,21 @@ async def run_cache_step(ctx: TickerContext) -> TickerContext:
 
             # 3. Check for new scraped data
             new_news = db.execute(
-                "SELECT 1 FROM news_articles WHERE ticker = %s AND created_at > %s LIMIT 1",
+                "SELECT 1 FROM news_articles WHERE ticker = %s AND collected_at > %s LIMIT 1",
                 [ctx.ticker, created_at]
             ).fetchone()
             if new_news:
                 return ctx
 
             new_reddit = db.execute(
-                "SELECT 1 FROM reddit_posts WHERE ticker = %s AND created_at > %s LIMIT 1",
+                "SELECT 1 FROM reddit_posts WHERE ticker = %s AND collected_at > %s LIMIT 1",
                 [ctx.ticker, created_at]
             ).fetchone()
             if new_reddit:
                 return ctx
 
             new_yt = db.execute(
-                "SELECT 1 FROM youtube_transcripts WHERE ticker = %s AND created_at > %s LIMIT 1",
+                "SELECT 1 FROM youtube_transcripts WHERE ticker = %s AND collected_at > %s LIMIT 1",
                 [ctx.ticker, created_at]
             ).fetchone()
             if new_yt:
