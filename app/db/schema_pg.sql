@@ -186,7 +186,8 @@ CREATE TABLE IF NOT EXISTS news_articles (
     screenshot      TEXT,
     cluster_id      TEXT,
     is_cluster_winner BOOLEAN,
-    collected_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    collected_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    content_hash    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS scraper_scripts (
@@ -900,6 +901,7 @@ CREATE INDEX IF NOT EXISTS idx_cycle_context_agent ON cycle_context(agent_name);
 -- ══════════════════════════════════════════
 CREATE INDEX IF NOT EXISTS idx_news_ticker ON news_articles(ticker);
 CREATE INDEX IF NOT EXISTS idx_news_published ON news_articles(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_content_hash ON news_articles(content_hash);
 CREATE INDEX IF NOT EXISTS idx_reddit_ticker ON reddit_posts(ticker);
 -- ══════════════════════════════════════════
 -- YOUTUBE CHANNEL MANAGEMENT
@@ -2246,3 +2248,77 @@ CREATE TABLE IF NOT EXISTS debate_tool_cache (
     created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(cycle_id, ticker, cache_key)
 );
+
+-- ══════════════════════════════════════════
+-- SOCIAL MEDIA POSTS (unified: Twitter, StockTwits, etc.)
+-- ══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS social_posts (
+    id                  TEXT PRIMARY KEY,     -- sha256(platform + post_id + ticker)
+    platform            TEXT NOT NULL,        -- 'twitter' | 'stocktwits' | 'threads'
+    platform_post_id    TEXT NOT NULL,        -- Original post ID on the platform
+    ticker              TEXT,
+    author_username     TEXT,
+    author_display_name TEXT,
+    author_followers    INT,
+    content             TEXT,
+    like_count          INT DEFAULT 0,
+    repost_count        INT DEFAULT 0,       -- retweet/repost
+    reply_count         INT DEFAULT 0,
+    view_count          INT DEFAULT 0,
+    cashtags            TEXT,                 -- JSON array of $TAGS
+    hashtags            TEXT,                 -- JSON array of #TAGS
+    sentiment_score     DOUBLE PRECISION,     -- nullable, filled by LLM later
+    quality_score       INT,
+    quality_status      TEXT,
+    is_repost           BOOLEAN DEFAULT FALSE,
+    posted_at           TIMESTAMP,
+    collected_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    content_hash        TEXT                  -- sha256 of normalized content for fuzzy dedup
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_platform ON social_posts(platform);
+CREATE INDEX IF NOT EXISTS idx_social_ticker ON social_posts(ticker);
+CREATE INDEX IF NOT EXISTS idx_social_posted ON social_posts(posted_at);
+CREATE INDEX IF NOT EXISTS idx_social_content_hash ON social_posts(content_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_social_platform_post ON social_posts(platform, platform_post_id, ticker);
+
+-- ══════════════════════════════════════════
+-- INSIDER TRADES (OpenInsider)
+-- ══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS insider_trades (
+    id              TEXT PRIMARY KEY,   -- sha256(ticker + insider_name + trade_date)
+    ticker          TEXT NOT NULL,
+    insider_name    TEXT,
+    insider_title   TEXT,
+    trade_type      TEXT,              -- 'P' (purchase) | 'S' (sale) etc.
+    price           DOUBLE PRECISION,
+    qty             INT,
+    value           DOUBLE PRECISION,
+    shares_owned    INT,
+    delta_pct       DOUBLE PRECISION,  -- % change in ownership
+    trade_date      DATE,
+    filing_date     DATE,
+    source          TEXT DEFAULT 'openinsider',
+    collected_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_insider_ticker ON insider_trades(ticker);
+CREATE INDEX IF NOT EXISTS idx_insider_trade_date ON insider_trades(trade_date);
+
+-- ══════════════════════════════════════════
+-- ECONOMIC CALENDAR (TradingEconomics)
+-- ══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS economic_calendar (
+    id              TEXT PRIMARY KEY,
+    event_name      TEXT,
+    country         TEXT,
+    event_date      TIMESTAMP,
+    actual          DOUBLE PRECISION,
+    forecast        DOUBLE PRECISION,
+    previous        DOUBLE PRECISION,
+    importance      TEXT,   -- 'high' | 'medium' | 'low'
+    source          TEXT DEFAULT 'tradingeconomics',
+    collected_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_econ_cal_date ON economic_calendar(event_date);

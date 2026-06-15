@@ -305,6 +305,12 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                 if len(summary) < 50:
                     continue
 
+                from app.processors.dedup_engine import DedupEngine
+                dedup = DedupEngine(table="news_articles")
+                if dedup.is_duplicate(title, summary):
+                    continue
+                content_hash = dedup.compute_hash(title, summary)
+
                 # Detect tickers in title + summary
                 full_text = f"{title} {summary}"
                 detected_tickers = await _detect_tickers_in_text(full_text)
@@ -331,8 +337,8 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                         db.execute(
                             """
                             INSERT INTO news_articles
-                            (id, ticker, title, publisher, url, published_at, summary, source, collected_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', CURRENT_TIMESTAMP)
+                            (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP)
                             ON CONFLICT (id) DO NOTHING
                             """,
                             [
@@ -343,6 +349,7 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                                 url,
                                 published_at,
                                 summary,
+                                content_hash,
                             ],
                         )
                         count += 1
@@ -352,8 +359,8 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', CURRENT_TIMESTAMP)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -364,6 +371,7 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                             url,
                             published_at,
                             summary,
+                            content_hash,
                         ],
                     )
                     count += 1
@@ -458,7 +466,8 @@ async def collect_finnhub_news(
             trusted = db.execute("SELECT source_name, win_rate, total_items FROM source_trust WHERE source_type='publisher'").fetchall()
         bad_publishers = {row[0] for row in trusted if row[2] >= 5 and row[1] < 0.1}
 
-        seen_word_sets: list[set] = []
+        from app.processors.dedup_engine import DedupEngine
+        dedup = DedupEngine(table="news_articles", ticker=ticker)
         unique_articles = []
         skipped = 0
 
@@ -469,31 +478,17 @@ async def collect_finnhub_news(
                 continue
 
             headline = article.get("headline", "").strip()
+            summary = article.get("summary", "").strip()
             if not headline:
                 continue
 
-            words = set(headline.lower().split())
-            words -= {
-                "the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "of", "is", "are", "was",
-            }
+            if dedup.is_duplicate(headline, summary):
+                skipped += 1
+                continue
 
-            is_duplicate = False
-            for seen in seen_word_sets:
-                if not words or not seen:
-                    continue
-                intersection = words & seen
-                union = words | seen
-                similarity = len(intersection) / len(union)
-                if similarity > 0.6:
-                    is_duplicate = True
-                    skipped += 1
-                    break
-
-            if not is_duplicate:
-                seen_word_sets.append(words)
-                unique_articles.append(article)
-                if len(unique_articles) >= max_articles:
-                    break
+            unique_articles.append(article)
+            if len(unique_articles) >= max_articles:
+                break
 
         async def process_article(article):
             headline = article.get("headline", "").strip()
@@ -524,6 +519,10 @@ async def collect_finnhub_news(
                 }
             tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
 
+            from app.processors.dedup_engine import DedupEngine
+            dedup = DedupEngine(table="news_articles")
+            content_hash = dedup.compute_hash(headline, summary)
+
             res = []
             for t in tickers_to_insert:
                 article_id = _get_article_id(headline, t)
@@ -535,6 +534,7 @@ async def collect_finnhub_news(
                     "url": url,
                     "published_at": published_at,
                     "summary": summary,
+                    "content_hash": content_hash,
                 })
             return res
 
@@ -549,8 +549,8 @@ async def collect_finnhub_news(
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'finnhub', CURRENT_TIMESTAMP)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'finnhub', %s, CURRENT_TIMESTAMP)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -561,6 +561,7 @@ async def collect_finnhub_news(
                             item["url"],
                             item["published_at"],
                             item["summary"],
+                            item.get("content_hash"),
                         ],
                     )
                     count += 1
@@ -600,6 +601,12 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
             content = article.get("content", article)
             title = content.get("title", "").strip()
             if not title:
+                return []
+
+            from app.processors.dedup_engine import DedupEngine
+            dedup = DedupEngine(table="news_articles", ticker=ticker)
+            api_summary = content.get("description", "") or content.get("summary", "")
+            if dedup.is_duplicate(title, api_summary):
                 return []
 
             url = ""
@@ -654,6 +661,10 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                 }
             tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
 
+            from app.processors.dedup_engine import DedupEngine
+            dedup = DedupEngine(table="news_articles")
+            content_hash = dedup.compute_hash(title, summary)
+
             res = []
             for t in tickers_to_insert:
                 article_id = _get_article_id(title, t)
@@ -665,6 +676,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     "url": url,
                     "published_at": published_at,
                     "summary": summary,
+                    "content_hash": content_hash,
                 })
             return res
 
@@ -679,8 +691,8 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance', CURRENT_TIMESTAMP)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance', %s, CURRENT_TIMESTAMP)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -691,6 +703,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                             item["url"],
                             item["published_at"],
                             item["summary"],
+                            item.get("content_hash"),
                         ],
                     )
                     count += 1

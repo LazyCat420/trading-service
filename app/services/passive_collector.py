@@ -95,23 +95,26 @@ async def _passive_collect_ticker(ticker: str):
     try:
         from app.collectors.news_collector import collect_for_ticker as collect_news
         from app.collectors.reddit_collector import collect_for_ticker as collect_reddit
+        from app.collectors.twitter_collector import collect_for_ticker as collect_twitter
 
         logger.debug("[PASSIVE] Collecting for %s...", ticker)
 
-        # Run news and reddit concurrently per ticker
+        # Run news, reddit, and twitter concurrently per ticker
         results = await asyncio.gather(
             collect_news(ticker),
             collect_reddit(ticker),
+            collect_twitter(ticker),
             return_exceptions=True,
         )
 
         news_count = results[0] if isinstance(results[0], int) else 0
         reddit_count = results[1] if isinstance(results[1], int) else 0
+        twitter_count = results[2] if isinstance(results[2], int) else 0
 
-        if news_count or reddit_count:
+        if news_count or reddit_count or twitter_count:
             logger.info(
-                "[PASSIVE] %s: %d news, %d reddit",
-                ticker, news_count, reddit_count,
+                "[PASSIVE] %s: %d news, %d reddit, %d twitter",
+                ticker, news_count, reddit_count, twitter_count,
             )
     except Exception as e:
         logger.warning("[PASSIVE] Failed to collect for %s: %s", ticker, e)
@@ -188,6 +191,15 @@ async def run_passive_collector_loop():
                         logger.info("[PASSIVE] Reddit Purge discovered: %d tickers", tickers_discovered)
                 except Exception as e:
                     logger.warning("[PASSIVE] Reddit Purge sweep failed: %s", e)
+                await asyncio.sleep(5)
+
+                try:
+                    from app.collectors.twitter_collector import collect_fintwit_sweep
+                    twitter_count = await collect_fintwit_sweep()
+                    if twitter_count:
+                        logger.info("[PASSIVE] Twitter FinTwit sweep: %d tweets", twitter_count)
+                except Exception as e:
+                    logger.warning("[PASSIVE] Twitter FinTwit sweep failed: %s", e)
                 await asyncio.sleep(5)
             else:
                 logger.info("[PASSIVE] Skipping RSS and Reddit Purge sweeps (runs every %d rotations)",

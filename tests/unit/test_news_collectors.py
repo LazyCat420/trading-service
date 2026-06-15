@@ -7,9 +7,17 @@ from app.collectors.news_collector import collect_finnhub_news
 
 @pytest.fixture
 def mock_db():
-    with patch("app.collectors.news_collector.get_db") as mock_get_db:
-        db = MagicMock()
-        mock_get_db.return_value.__enter__.return_value = db
+    db = MagicMock()
+    # Configure defaults so DedupEngine checks don't see false positive duplicates
+    db.fetchone.return_value = None
+    db.fetchall.return_value = []
+    db.execute.return_value.fetchone.return_value = None
+    db.execute.return_value.fetchall.return_value = []
+    
+    with patch("app.collectors.news_collector.get_db") as mock_get_db_1, \
+         patch("app.processors.dedup_engine.get_db") as mock_get_db_2:
+        mock_get_db_1.return_value.__enter__.return_value = db
+        mock_get_db_2.return_value.__enter__.return_value = db
         yield db
 
 @pytest.mark.asyncio
