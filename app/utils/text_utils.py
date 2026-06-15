@@ -790,13 +790,24 @@ def coerce_str(val, default="") -> str:
 
 
 def coerce_int(val, default=0) -> int:
-    """Coerce any value to integer, extracting digits from strings (e.g. '75%')."""
+    """Coerce any value to integer, converting float values between 0.0 and 1.0 to percentages (0-100)."""
     if val is None:
         return default
+    if isinstance(val, float):
+        if 0.0 < val <= 1.0:
+            return int(val * 100)
+        return int(val)
     try:
         return int(val)
     except (ValueError, TypeError):
         if isinstance(val, str):
+            try:
+                f_val = float(val)
+                if 0.0 < f_val <= 1.0:
+                    return int(f_val * 100)
+                return int(f_val)
+            except ValueError:
+                pass
             cleaned_val = re.sub(r"[^\d]", "", val)
             if cleaned_val:
                 return int(cleaned_val)

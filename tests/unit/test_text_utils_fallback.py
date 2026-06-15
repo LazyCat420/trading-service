@@ -60,6 +60,11 @@ def test_coercion_helpers():
     assert coerce_int(75) == 75
     assert coerce_int("75") == 75
     assert coerce_int("75%") == 75
+    assert coerce_int(0.75) == 75
+    assert coerce_int("0.75") == 75
+    assert coerce_int(1.0) == 100
+    assert coerce_int("1.0") == 100
+    assert coerce_int(0.0) == 0
     assert coerce_int("abc") == 0
     assert coerce_int(None) == 0
     
