@@ -156,3 +156,58 @@ def test_telemetry_bus_phases():
     state = bus.get_cycle_state(cycle_id)
     assert state.status == "interrupted"
     assert state.finished_at == "2026-06-08T12:22:00Z"
+
+
+def test_telemetry_bus_terminal_status():
+    cycle_id = "test-cycle-terminal-status"
+
+    # Done status event
+    bus.publish_event(TelemetryEvent(
+        ts="2026-06-08T12:30:00Z",
+        cycle_id=cycle_id,
+        ticker="",
+        phase="post",
+        kind="pipeline",
+        source="cycle_runner",
+        status="done",
+        step="done",
+        detail="Finished successfully"
+    ))
+    state = bus.get_cycle_state(cycle_id)
+    assert state.status == "done"
+    assert state.finished_at == "2026-06-08T12:30:00Z"
+
+    # Error status event
+    bus.publish_event(TelemetryEvent(
+        ts="2026-06-08T12:35:00Z",
+        cycle_id=cycle_id,
+        ticker="",
+        phase="trading",
+        kind="pipeline",
+        source="cycle_runner",
+        status="error",
+        step="error",
+        detail="Failed"
+    ))
+    state = bus.get_cycle_state(cycle_id)
+    assert state.status == "error"
+    assert state.finished_at == "2026-06-08T12:35:00Z"
+
+
+def test_state_manager_terminal_sync():
+    from app.services.pipeline_service import PipelineService
+    
+    # Setup in-memory mock state
+    PipelineService._state["cycle_id"] = "sync-test-cycle"
+    PipelineService._state["status"] = "done"
+    PipelineService._state["phase"] = "post"
+    PipelineService._state["progress"] = "Completed"
+    PipelineService._state["finished_at"] = "2026-06-08T12:40:00Z"
+    
+    # Get state - telemetry will be missing it (status will be idle/running by default)
+    # But because our fix detects a terminal status in _state, it will sync it.
+    res = PipelineService.get_current_state(summary_only=True)
+    assert res["cycle_id"] == "sync-test-cycle"
+    assert res["status"] == "done"
+    assert res["finished_at"] == "2026-06-08T12:40:00Z"
+

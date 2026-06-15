@@ -566,11 +566,12 @@ class PipelineStateMixin:
         # updated atomically by start_cycle() and emit(), so it's always
         # correct. We override the DB cycle_id if the in-memory one exists.
         mem_cycle_id = cls._state.get("cycle_id")
-        if mem_cycle_id and mem_cycle_id != state.get("cycle_id"):
-            logger.debug(
-                "[get_current_state] Correcting stale DB cycle_id %s → %s",
-                state.get("cycle_id"), mem_cycle_id,
-            )
+        if mem_cycle_id and (mem_cycle_id != state.get("cycle_id") or cls._state.get("status") in ("done", "error", "stopped", "interrupted")):
+            if mem_cycle_id != state.get("cycle_id"):
+                logger.debug(
+                    "[get_current_state] Correcting stale DB cycle_id %s → %s",
+                    state.get("cycle_id"), mem_cycle_id,
+                )
             state["cycle_id"] = mem_cycle_id
 
             # Also sync critical fields from in-memory state
@@ -581,6 +582,7 @@ class PipelineStateMixin:
                 mem_val = cls._state.get(key)
                 if mem_val is not None:
                     state[key] = mem_val
+
 
             # Re-fetch events for the correct (in-memory) cycle_id.
             # The DB query above used the old cycle_id, so events would

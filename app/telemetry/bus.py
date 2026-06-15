@@ -130,6 +130,9 @@ def publish_event(event: TelemetryEvent):
         }
         if event.status and event.status != "ok" and event.status in _LIFECYCLE_STATUSES:
             state.status = event.status
+            if event.status in ("done", "error", "stopped", "interrupted"):
+                state.finished_at = event.ts
+
         else:
             # Update status for special stages
             if event.phase in ("started", "collecting", "analyzing", "gated", "traded", "persisted", "evaluated", "resumed") or event.step == "init":

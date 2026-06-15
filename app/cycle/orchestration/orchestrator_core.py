@@ -431,6 +431,8 @@ class OrchestratorCoreMixin:
             cls._state["status"] = "done"
             cls._state["finished_at"] = ended
             cls.save_state()
+            cls.emit("done", "post", "Cycle completed successfully", status="done")
+
 
             try:
                 PipelineStateDB.clear_checkpoint(ctx.cycle_id)
