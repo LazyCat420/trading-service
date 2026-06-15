@@ -51,7 +51,7 @@ async def run_thesis_step(ctx: TickerContext) -> TickerContext:
             held=ctx.held,
         )
 
-        _thesis_timeouts = [180.0, 120.0]
+        _thesis_timeouts = [60.0, 45.0] if ctx.trigger_type == "smoke_test" else [180.0, 120.0]
         _max_attempts = len(_thesis_timeouts)
 
         for attempt in range(_max_attempts):

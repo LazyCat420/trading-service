@@ -133,6 +133,7 @@ class MetaOrchestrator:
         bot_id: str,
         is_highly_redundant: bool = False,
         research_focus: str = "",
+        trigger_type: str = "manual",
     ) -> tuple[Dict[str, str], int]:
         """
         4-stage staggered pipeline. Each stage reads earlier findings via TaskBoard.
@@ -215,72 +216,78 @@ class MetaOrchestrator:
         # ════════════════════════════════════════════════════════════
         #  STAGE 2: QUANTITATIVE — Dr. Aris critiques Stage 0+1 findings
         # ════════════════════════════════════════════════════════════
-        team_findings_str = await MetaOrchestrator._get_team_findings(entity_id, cycle_id)
+        if trigger_type != "smoke_test":
+            # ════════════════════════════════════════════════════════════
+            #  STAGE 2: QUANTITATIVE — Dr. Aris critiques Stage 0+1 findings
+            # ════════════════════════════════════════════════════════════
+            team_findings_str = await MetaOrchestrator._get_team_findings(entity_id, cycle_id)
 
-        if team_findings_str:
-            stage2_tasks = [
-                analyze_quantitative_critique(
-                    entity_id, packet, cycle_id, bot_id, research_focus, team_findings_str,
-                ),
-            ]
-            stage2_labels = ["quant_critique"]
+            if team_findings_str:
+                stage2_tasks = [
+                    analyze_quantitative_critique(
+                        entity_id, packet, cycle_id, bot_id, research_focus, team_findings_str,
+                    ),
+                ]
+                stage2_labels = ["quant_critique"]
 
-            stage2_tokens = await MetaOrchestrator._run_stage(
-                entity_id, stage2_tasks, stage2_labels, results,
-                "Stage 2 (Quantitative)", PER_AGENT_TIMEOUT,
-            )
-            total_tokens += stage2_tokens
+                stage2_tokens = await MetaOrchestrator._run_stage(
+                    entity_id, stage2_tasks, stage2_labels, results,
+                    "Stage 2 (Quantitative)", PER_AGENT_TIMEOUT,
+                )
+                total_tokens += stage2_tokens
 
-            # Post Stage 2 findings to TaskBoard
-            await MetaOrchestrator._post_findings_to_taskboard(
-                entity_id, results, stage2_labels, cycle_id,
-            )
-            logger.info(
-                f"[{entity_id}] MetaOrchestrator: Dr. Aris critique posted to TaskBoard"
-            )
+                # Post Stage 2 findings to TaskBoard
+                await MetaOrchestrator._post_findings_to_taskboard(
+                    entity_id, results, stage2_labels, cycle_id,
+                )
+                logger.info(
+                    f"[{entity_id}] MetaOrchestrator: Dr. Aris critique posted to TaskBoard"
+                )
 
-            # Process delegations from Aris
+                # Process delegations from Aris
+                await MetaOrchestrator._process_delegations(entity_id, cycle_id, bot_id)
+            else:
+                logger.info(f"[{entity_id}] MetaOrchestrator: Skipping Stage 2 — no prior findings to critique")
+
+            # Refresh team findings for Stage 3 (now includes Stages 0, 1, and 2)
+            team_findings_str = await MetaOrchestrator._get_team_findings(entity_id, cycle_id)
+
+            # ════════════════════════════════════════════════════════════
+            #  STAGE 3: RISK — Macro Risk (Helen) + Deep Research
+            # ════════════════════════════════════════════════════════════
+            stage3_tasks = []
+            stage3_labels = []
+
+            # Deep Research — for highly redundant tickers
+            if is_highly_redundant:
+                stage3_tasks.append(
+                    analyze_deep_research(entity_id, packet, cycle_id, bot_id, research_focus, team_findings_str),
+                )
+                stage3_labels.append("deep_research")
+
+            # Macro Risk (Helen) — if regime data exists
+            if "regime" not in packet.missing_fields:
+                stage3_tasks.append(
+                    analyze_macro_risk(entity_id, packet, cycle_id, bot_id, research_focus, team_findings_str),
+                )
+                stage3_labels.append("macro_risk")
+
+            if stage3_tasks:
+                stage3_tokens = await MetaOrchestrator._run_stage(
+                    entity_id, stage3_tasks, stage3_labels, results,
+                    "Stage 3 (Risk)", PER_AGENT_TIMEOUT,
+                )
+                total_tokens += stage3_tokens
+
+                # Post Stage 3 findings to TaskBoard
+                await MetaOrchestrator._post_findings_to_taskboard(
+                    entity_id, results, stage3_labels, cycle_id,
+                )
+
+            # Process final round of delegations
             await MetaOrchestrator._process_delegations(entity_id, cycle_id, bot_id)
         else:
-            logger.info(f"[{entity_id}] MetaOrchestrator: Skipping Stage 2 — no prior findings to critique")
-
-        # Refresh team findings for Stage 3 (now includes Stages 0, 1, and 2)
-        team_findings_str = await MetaOrchestrator._get_team_findings(entity_id, cycle_id)
-
-        # ════════════════════════════════════════════════════════════
-        #  STAGE 3: RISK — Macro Risk (Helen) + Deep Research
-        # ════════════════════════════════════════════════════════════
-        stage3_tasks = []
-        stage3_labels = []
-
-        # Deep Research — for highly redundant tickers
-        if is_highly_redundant:
-            stage3_tasks.append(
-                analyze_deep_research(entity_id, packet, cycle_id, bot_id, research_focus, team_findings_str),
-            )
-            stage3_labels.append("deep_research")
-
-        # Macro Risk (Helen) — if regime data exists
-        if "regime" not in packet.missing_fields:
-            stage3_tasks.append(
-                analyze_macro_risk(entity_id, packet, cycle_id, bot_id, research_focus, team_findings_str),
-            )
-            stage3_labels.append("macro_risk")
-
-        if stage3_tasks:
-            stage3_tokens = await MetaOrchestrator._run_stage(
-                entity_id, stage3_tasks, stage3_labels, results,
-                "Stage 3 (Risk)", PER_AGENT_TIMEOUT,
-            )
-            total_tokens += stage3_tokens
-
-            # Post Stage 3 findings to TaskBoard
-            await MetaOrchestrator._post_findings_to_taskboard(
-                entity_id, results, stage3_labels, cycle_id,
-            )
-
-        # Process final round of delegations
-        await MetaOrchestrator._process_delegations(entity_id, cycle_id, bot_id)
+            logger.info(f"[{entity_id}] Smoke test detected — skipping Stage 2 (Quantitative) and Stage 3 (Risk) specialist agents.")
 
         # Clean up delegation budget for this ticker
         try:

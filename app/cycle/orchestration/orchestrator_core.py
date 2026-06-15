@@ -438,87 +438,93 @@ class OrchestratorCoreMixin:
                 logger.warning("Failed to clear checkpoint on success: %s", e)
 
             # ── Trigger AutoResearch (BOUNDED — was fire-and-forget, caused zombie loops) ──
-            try:
-                _AUTORESEARCH_TIMEOUT = 120  # seconds — hard cap
-                cls._autoresearch_task = asyncio.create_task(
-                    run_autoresearch(ctx.cycle_id, dict(cls._cycle_summary))
-                )
-                logger.info("[CYCLE] Triggered AutoResearch for cycle %s (timeout=%ds)", ctx.cycle_id, _AUTORESEARCH_TIMEOUT)
+            if getattr(ctx, "trigger_type", "manual") != "smoke_test":
                 try:
-                    await asyncio.wait_for(cls._autoresearch_task, timeout=_AUTORESEARCH_TIMEOUT)
-                    logger.info("[CYCLE] AutoResearch completed successfully.")
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "[CYCLE] AutoResearch timeout (%ds) — cancelling to prevent zombie loop",
-                        _AUTORESEARCH_TIMEOUT,
+                    _AUTORESEARCH_TIMEOUT = 120  # seconds — hard cap
+                    cls._autoresearch_task = asyncio.create_task(
+                        run_autoresearch(ctx.cycle_id, dict(cls._cycle_summary))
                     )
-                    cls._autoresearch_task.cancel()
+                    logger.info("[CYCLE] Triggered AutoResearch for cycle %s (timeout=%ds)", ctx.cycle_id, _AUTORESEARCH_TIMEOUT)
                     try:
-                        await cls._autoresearch_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-            except Exception as ar_err:
-                logger.warning("[CYCLE] Failed to trigger AutoResearch: %s", ar_err)
+                        await asyncio.wait_for(cls._autoresearch_task, timeout=_AUTORESEARCH_TIMEOUT)
+                        logger.info("[CYCLE] AutoResearch completed successfully.")
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "[CYCLE] AutoResearch timeout (%ds) — cancelling to prevent zombie loop",
+                            _AUTORESEARCH_TIMEOUT,
+                        )
+                        cls._autoresearch_task.cancel()
+                        try:
+                            await cls._autoresearch_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                except Exception as ar_err:
+                    logger.warning("[CYCLE] Failed to trigger AutoResearch: %s", ar_err)
+            else:
+                logger.info("[CYCLE] Smoke test detected — skipping AutoResearch.")
 
             # ── Watchlist Curator: LLM-powered watchlist pruning ──
             # Scan all watched tickers for the 3+ HOLD/SELL trigger and run
             # the LLM curator on qualifying tickers.
-            try:
-                from app.cognition.watchlist_curator import (
-                    should_trigger_curation,
-                    evaluate_ticker_for_curation,
-                    apply_curation_decision,
-                )
-
-                curated_count = 0
-                removed_count = 0
-                with get_db() as db:
-                    attn_rows = db.execute(
-                        "SELECT ticker, recent_decisions FROM ticker_attention WHERE recent_decisions IS NOT NULL"
-                    ).fetchall()
-
-                for ticker_row, decisions_json in attn_rows:
-                    try:
-                        import json as _json
-                        decisions = decisions_json if isinstance(decisions_json, list) else _json.loads(decisions_json)
-                        if should_trigger_curation(decisions):
-                            cls.emit(
-                                "analyzing",
-                                f"curator_{ticker_row}",
-                                f"🔍 Curator evaluating {ticker_row} ({len(decisions)} recent decisions)",
-                                status="running",
-                            )
-                            result = await evaluate_ticker_for_curation(
-                                ticker=ticker_row,
-                                recent_decisions=decisions,
-                                cycle_id=ctx.cycle_id,
-                            )
-                            await apply_curation_decision(ticker_row, result)
-                            curated_count += 1
-                            if result.get("decision") == "REMOVE":
-                                removed_count += 1
-                            cls.emit(
-                                "analyzing",
-                                f"curator_{ticker_row}",
-                                f"🔍 Curator: {ticker_row} → {result.get('decision', '?')}",
-                                status="ok",
-                            )
-                    except Exception as cur_err:
-                        logger.warning("[CURATOR] Failed for %s (non-fatal): %s", ticker_row, cur_err)
-
-                if curated_count > 0:
-                    logger.info(
-                        "[CURATOR] Evaluated %d tickers, removed %d from watchlist",
-                        curated_count, removed_count,
+            if getattr(ctx, "trigger_type", "manual") != "smoke_test":
+                try:
+                    from app.cognition.watchlist_curator import (
+                        should_trigger_curation,
+                        evaluate_ticker_for_curation,
+                        apply_curation_decision,
                     )
-                    cls.emit(
-                        "analyzing",
-                        "curator_complete",
-                        f"Curator: evaluated {curated_count} tickers, removed {removed_count}",
-                        status="ok",
-                    )
-            except Exception as curator_err:
-                logger.warning("[CYCLE] Watchlist Curator failed (non-fatal): %s", curator_err)
+
+                    curated_count = 0
+                    removed_count = 0
+                    with get_db() as db:
+                        attn_rows = db.execute(
+                            "SELECT ticker, recent_decisions FROM ticker_attention WHERE recent_decisions IS NOT NULL"
+                        ).fetchall()
+
+                    for ticker_row, decisions_json in attn_rows:
+                        try:
+                            import json as _json
+                            decisions = decisions_json if isinstance(decisions_json, list) else _json.loads(decisions_json)
+                            if should_trigger_curation(decisions):
+                                cls.emit(
+                                    "analyzing",
+                                    f"curator_{ticker_row}",
+                                    f"🔍 Curator evaluating {ticker_row} ({len(decisions)} recent decisions)",
+                                    status="running",
+                                )
+                                result = await evaluate_ticker_for_curation(
+                                    ticker=ticker_row,
+                                    recent_decisions=decisions,
+                                    cycle_id=ctx.cycle_id,
+                                )
+                                await apply_curation_decision(ticker_row, result)
+                                curated_count += 1
+                                if result.get("decision") == "REMOVE":
+                                    removed_count += 1
+                                cls.emit(
+                                    "analyzing",
+                                    f"curator_{ticker_row}",
+                                    f"🔍 Curator: {ticker_row} → {result.get('decision', '?')}",
+                                    status="ok",
+                                )
+                        except Exception as cur_err:
+                            logger.warning("[CURATOR] Failed for %s (non-fatal): %s", ticker_row, cur_err)
+
+                    if curated_count > 0:
+                        logger.info(
+                            "[CURATOR] Evaluated %d tickers, removed %d from watchlist",
+                            curated_count, removed_count,
+                        )
+                        cls.emit(
+                            "analyzing",
+                            "curator_complete",
+                            f"Curator: evaluated {curated_count} tickers, removed {removed_count}",
+                            status="ok",
+                        )
+                except Exception as curator_err:
+                    logger.warning("[CYCLE] Watchlist Curator failed (non-fatal): %s", curator_err)
+            else:
+                logger.info("[CYCLE] Smoke test detected — skipping Watchlist Curator.")
 
             # Calculate entire cycle duration
             elapsed_sec = time.monotonic() - cls._start_time

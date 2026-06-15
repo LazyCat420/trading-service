@@ -253,6 +253,7 @@ async def run_phase4_analysis(
                         thesis_semaphore=thesis_semaphore,
                         is_highly_redundant=_is_highly_redundant,
                         research_focus=_research_focus,
+                        trigger_type=ctx.trigger_type,
                     ),
                     timeout=_ticker_timeout,
                 )
