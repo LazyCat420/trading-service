@@ -146,6 +146,19 @@ async def _scrape_article_body_via_service(url: str, max_chars: int = 15000) -> 
     return ""
 
 
+async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float = 15.0) -> str:
+    """Scrape article body with a strict timeout, falling back to the API summary."""
+    try:
+        body = await asyncio.wait_for(_scrape_article_body_via_service(url), timeout=timeout)
+        if body:
+            return body
+    except asyncio.TimeoutError:
+        logger.warning("[news] Scrape timeout (15s) for URL: %s, falling back to API summary", url)
+    except Exception as e:
+        logger.warning("[news] Scrape failed for URL %s: %s, falling back to API summary", url, e)
+    return fallback_summary
+
+
 def _extract_text_from_html(html: str, max_chars: int = 15000) -> str:
     """Extract readable text from HTML using BeautifulSoup with a regex fallback."""
     if not html:
@@ -482,42 +495,57 @@ async def collect_finnhub_news(
                 if len(unique_articles) >= max_articles:
                     break
 
+        async def process_article(article):
+            headline = article.get("headline", "").strip()
+            summary = article.get("summary", "").strip()
+            url = article.get("url", "")
+            source = article.get("source", "finnhub")
+            ts = article.get("datetime", 0)
+
+            if url and (not summary or len(summary) < 150 or "..." in summary):
+                summary = await _scrape_with_timeout(url, summary, timeout=15.0)
+
+            if len(summary) < 150:
+                return []
+
+            published_at = (
+                datetime.datetime.fromtimestamp(ts, tz=datetime.UTC) if ts else None
+            )
+
+            if since and published_at and published_at <= since:
+                return []
+
+            full_text = f"{headline} {summary}"
+            detected_tickers = await _detect_tickers_in_text(full_text)
+            if detected_tickers:
+                detected_tickers = {
+                    t for t in detected_tickers
+                    if _is_article_relevant_to_ticker(t, full_text)
+                }
+            tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
+
+            res = []
+            for t in tickers_to_insert:
+                article_id = _get_article_id(headline, t)
+                res.append({
+                    "id": article_id,
+                    "ticker": t,
+                    "title": headline,
+                    "publisher": source,
+                    "url": url,
+                    "published_at": published_at,
+                    "summary": summary,
+                })
+            return res
+
+        # Run concurrent scraping, ticker extraction, and relevance gating
+        tasks = [process_article(art) for art in unique_articles]
+        results_lists = await asyncio.gather(*tasks)
+
         with get_db() as db:
             count = 0
-            for article in unique_articles:
-                headline = article.get("headline", "").strip()
-                summary = article.get("summary", "").strip()
-                url = article.get("url", "")
-                source = article.get("source", "finnhub")
-                ts = article.get("datetime", 0)
-
-                if url and (len(summary) < 150 or "..." in summary):
-                    body = await _scrape_article_body_via_service(url)
-                    if body:
-                        summary = body
-
-                if len(summary) < 150:
-                    continue
-
-                published_at = (
-                    datetime.datetime.fromtimestamp(ts, tz=datetime.UTC) if ts else None
-                )
-
-                if since and published_at and published_at <= since:
-                    continue
-
-                full_text = f"{headline} {summary}"
-                detected_tickers = await _detect_tickers_in_text(full_text)
-                if detected_tickers:
-                    detected_tickers = {
-                        t for t in detected_tickers
-                        if _is_article_relevant_to_ticker(t, full_text)
-                    }
-                tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
-
-                for t in tickers_to_insert:
-                    article_id = _get_article_id(headline, t)
-
+            for item_list in results_lists:
+                for item in item_list:
                     db.execute(
                         """
                         INSERT INTO news_articles
@@ -526,22 +554,22 @@ async def collect_finnhub_news(
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
-                            article_id,
-                            t,
-                            headline[:500],
-                            source,
-                            url,
-                            published_at,
-                            summary,
+                            item["id"],
+                            item["ticker"],
+                            item["title"][:500],
+                            item["publisher"],
+                            item["url"],
+                            item["published_at"],
+                            item["summary"],
                         ],
                     )
                     count += 1
 
-            logger.info(
-                f"[news] Finnhub {ticker}: {count} unique articles (skipped {skipped} duplicates)"
-            )
-            await asyncio.sleep(1)
-            return count
+        logger.info(
+            f"[news] Finnhub {ticker}: {count} unique articles (skipped {skipped} duplicates)"
+        )
+        await asyncio.sleep(1)
+        return count
 
     except Exception as e:
         logger.info(f"[news] Finnhub {ticker} error: {e}")
@@ -567,71 +595,87 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
             trusted = db.execute("SELECT source_name, win_rate, total_items FROM source_trust WHERE source_type='publisher'").fetchall()
         bad_publishers = {row[0] for row in trusted if row[2] >= 5 and row[1] < 0.1}
 
+        # Helper to process a single yfinance article
+        async def process_yf_article(article):
+            content = article.get("content", article)
+            title = content.get("title", "").strip()
+            if not title:
+                return []
+
+            url = ""
+            if "canonicalUrl" in content:
+                url_obj = content["canonicalUrl"]
+                url = url_obj.get("url", "") if isinstance(url_obj, dict) else str(url_obj)
+            elif "clickThroughUrl" in content:
+                url_obj = content["clickThroughUrl"]
+                url = url_obj.get("url", "") if isinstance(url_obj, dict) else str(url_obj)
+            elif "link" in article:
+                url = article["link"]
+
+            provider = content.get("provider", {})
+            publisher = (
+                provider.get("displayName", "yfinance")
+                if isinstance(provider, dict)
+                else "yfinance"
+            )
+
+            if publisher in bad_publishers:
+                return []
+
+            pub_date = content.get("pubDate", "")
+            published_at = None
+            if pub_date:
+                try:
+                    published_at = datetime.datetime.fromisoformat(
+                        pub_date.replace("Z", "+00:00")
+                    )
+                except Exception:
+                    pass
+
+            api_summary = content.get("description", "") or content.get("summary", "")
+            summary = ""
+            if url:
+                summary = await _scrape_with_timeout(url, api_summary, timeout=15.0)
+            else:
+                summary = api_summary
+
+            if len(summary) < 150:
+                return []
+
+            if since and published_at and published_at <= since:
+                return []
+
+            full_text = f"{title} {summary}"
+            detected_tickers = await _detect_tickers_in_text(full_text)
+            if detected_tickers:
+                detected_tickers = {
+                    t for t in detected_tickers
+                    if _is_article_relevant_to_ticker(t, full_text)
+                }
+            tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
+
+            res = []
+            for t in tickers_to_insert:
+                article_id = _get_article_id(title, t)
+                res.append({
+                    "id": article_id,
+                    "ticker": t,
+                    "title": title,
+                    "publisher": publisher,
+                    "url": url,
+                    "published_at": published_at,
+                    "summary": summary,
+                })
+            return res
+
+        # Run concurrent scraping, ticker extraction, and relevance gating
+        tasks = [process_yf_article(art) for art in news]
+        results_lists = await asyncio.gather(*tasks)
+
         with get_db() as db:
             count = 0
-            for article in news:
-                content = article.get("content", article)
-                title = content.get("title", "").strip()
-                if not title:
-                    continue
-
-                url = ""
-                if "canonicalUrl" in content:
-                    url_obj = content["canonicalUrl"]
-                    url = url_obj.get("url", "") if isinstance(url_obj, dict) else str(url_obj)
-                elif "clickThroughUrl" in content:
-                    url_obj = content["clickThroughUrl"]
-                    url = url_obj.get("url", "") if isinstance(url_obj, dict) else str(url_obj)
-                elif "link" in article:
-                    url = article["link"]
-
-                provider = content.get("provider", {})
-                publisher = (
-                    provider.get("displayName", "yfinance")
-                    if isinstance(provider, dict)
-                    else "yfinance"
-                )
-
-                if publisher in bad_publishers:
-                    continue
-
-                pub_date = content.get("pubDate", "")
-                published_at = None
-                if pub_date:
-                    try:
-                        published_at = datetime.datetime.fromisoformat(
-                            pub_date.replace("Z", "+00:00")
-                        )
-                    except Exception:
-                        pass
-
-                api_summary = content.get("description", "") or content.get("summary", "")
-                summary = ""
-                if url:
-                    summary = await _scrape_article_body_via_service(url)
-
-                # Fallback if scraping failed but the API summary is detailed enough
-                if (not summary or len(summary) < 150) and len(api_summary) >= 150:
-                    summary = api_summary
-
-                if len(summary) < 150:
-                    continue
-
-                if since and published_at and published_at <= since:
-                    continue
-
-                full_text = f"{title} {summary}"
-                detected_tickers = await _detect_tickers_in_text(full_text)
-                if detected_tickers:
-                    detected_tickers = {
-                        t for t in detected_tickers
-                        if _is_article_relevant_to_ticker(t, full_text)
-                    }
-                tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
-
-                for t in tickers_to_insert:
-                    article_id = _get_article_id(title, t)
-
+            for item_list in results_lists:
+                for item in item_list:
                     db.execute(
                         """
                         INSERT INTO news_articles
@@ -640,13 +684,13 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
-                            article_id,
-                            t,
-                            title[:500],
-                            publisher,
-                            url,
-                            published_at,
-                            summary,
+                            item["id"],
+                            item["ticker"],
+                            item["title"][:500],
+                            item["publisher"],
+                            item["url"],
+                            item["published_at"],
+                            item["summary"],
                         ],
                     )
                     count += 1

@@ -10,7 +10,7 @@ from app.tools.coordination_tools import (
 
 
 @pytest.fixture(autouse=True)
-def setup_teardown_taskboard():
+def setup_teardown_taskboard(patch_real_get_db):
     """Clear the task board before and after each test for a clean state."""
     # We use a test ticker 'TEST'
     task_board.clear_board("TEST")

@@ -119,7 +119,7 @@ class TestSchemaAlignment:
         agent failures (like the technical_indicators bug).
         """
         tools_dir = os.path.join(APP_DIR, "tools")
-        ALIASES = {"t", "p", "e", "s", "r", "a", "b", "c", "d", "f", "m", "w"}
+        ALIASES = {"t", "p", "e", "s", "r", "a", "b", "c", "d", "f", "m", "w", "the"}
 
         missing = []
         for fname in os.listdir(tools_dir):

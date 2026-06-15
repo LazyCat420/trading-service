@@ -1,1 +1,1 @@
-mock response
+When the thesis cannot be parsed, default to a neutral stance (e.g., HOLD) rather than issuing a directional action based solely on confidence.

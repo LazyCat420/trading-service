@@ -255,3 +255,33 @@
 
 ⚠️ HALLUCINATION GATE REJECTED: Unverifiable claim detected...
 
+## 2026-06-15 05:30:52 - AAPL
+- **Action:** BUY @ 70%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2025-09-30 00:00 UTC to 2026-06-15 05:22 UTC
+
+📝 Memory context: - [2026-06-13] pipeline_run: SELL (conf=65)
+- [2026-06-01] pipeline_run: SELL (conf=95)
+- [202...
+
+## 2026-06-15 06:33:08 - AAPL
+- **Action:** HOLD @ 55%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2025-09-30 00:00 UTC to 2026-06-15 06:26 UTC
+
+📝 Memory context: - [2026-06-13] pipeline_run: SELL (conf=65)
+- [2026-06-01] pipeline_run: SELL (conf=95)
+- [202...
+
+## 2026-06-15 06:49:35 - NVDA
+- **Action:** SELL @ 74%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2026-01-31 00:00 UTC to 2026-06-15 06:44 UTC
+
+📝 Memory context: - [2026-06-08] pipeline_run: SELL (conf=72)
+- [2026-06-07] pipeline_run: SELL (conf=72)
+- [202...
+

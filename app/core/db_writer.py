@@ -115,7 +115,7 @@ def log_decision(
                 result_payload["estimate"] = estimate
 
             # Determine if this run should save thesis state
-            _is_thesis_run = result.get("triage_tier") in ("standard", "deep")
+            _is_thesis_run = result.get("triage_tier") in ("standard", "deep", "sufficient", "insufficient")
             _thesis_now = datetime.now(timezone.utc) if _is_thesis_run else None
 
             # Wrap both INSERTs in a transaction for atomicity

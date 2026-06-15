@@ -130,6 +130,7 @@ async def read_team_findings(
                 {
                     "status": "success",
                     "ticker": ticker,
+                    "findings_count": 0,
                     "findings": [],
                     "message": "No findings from other agents yet.",
                 }
@@ -264,6 +265,7 @@ async def check_open_investigations(
                 {
                     "status": "success",
                     "ticker": ticker,
+                    "investigation_count": 0,
                     "open_investigations": [],
                     "message": "No open investigations for you.",
                 }
