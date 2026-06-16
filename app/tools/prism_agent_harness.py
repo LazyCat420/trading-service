@@ -742,7 +742,7 @@ async def run_prism_agent(
                 # This is a DATA LOSS scenario — the agent likely used tools but
                 # Prism didn't return toolCalls metadata. Log prominently so
                 # operators can detect and investigate.
-                logger.warning(
+                logger.info(
                     "[PrismHarness] Prism returned NO toolCalls data for %s/%s (cycle=%s). "
                     "Tool usage stats will be incomplete for this agent run. "
                     "Check Prism logs for conversation %s.",
