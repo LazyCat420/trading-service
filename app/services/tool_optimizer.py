@@ -174,7 +174,12 @@ async def optimize_agent_tools(
         elif isinstance(t, str):
             name = t
         if name:
-            tool_map[name] = t
+            clean_name = name
+            for prefix in _MCP_PREFIXES:
+                if clean_name.startswith(prefix):
+                    clean_name = clean_name[len(prefix):]
+                    break
+            tool_map[clean_name] = t
 
     if not tool_map:
         return initial_tools, system_prompt
@@ -223,7 +228,19 @@ async def optimize_agent_tools(
         return initial_tools, system_prompt
 
     # Filter out pruned tools
-    optimized_tools = [t for t in initial_tools if (t.get("name") or t.get("function", {}).get("name") if isinstance(t, dict) else t) not in pruned_names]
+    optimized_tools = []
+    for t in initial_tools:
+        name = (t.get("name") or t.get("function", {}).get("name")) if isinstance(t, dict) else str(t)
+        if name:
+            clean_name = name
+            for prefix in _MCP_PREFIXES:
+                if clean_name.startswith(prefix):
+                    clean_name = clean_name[len(prefix):]
+                    break
+            if clean_name not in pruned_names:
+                optimized_tools.append(t)
+        else:
+            optimized_tools.append(t)
 
     # ── SAFETY: Never prune below minimum floor ──
     # If pruning would remove ALL (or nearly all) tools, keep the least-inactive ones.
@@ -339,7 +356,12 @@ async def record_tool_optimization_usage(
         else:
             name = str(t)
         if name:
-            offered_names.append(name)
+            clean_name = name
+            for prefix in _MCP_PREFIXES:
+                if clean_name.startswith(prefix):
+                    clean_name = clean_name[len(prefix):]
+                    break
+            offered_names.append(clean_name)
 
     if not offered_names:
         return
@@ -497,7 +519,12 @@ async def mark_tools_as_used_by_prism(
         else:
             name = str(t)
         if name:
-            offered_names.append(name)
+            clean_name = name
+            for prefix in _MCP_PREFIXES:
+                if clean_name.startswith(prefix):
+                    clean_name = clean_name[len(prefix):]
+                    break
+            offered_names.append(clean_name)
 
     if not offered_names:
         return

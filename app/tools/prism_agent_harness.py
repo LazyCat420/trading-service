@@ -698,6 +698,12 @@ async def run_prism_agent(
                         tool_results_map[tc_name] = (tc_success, tc_ms)
 
                 for tool_name in used_tool_names:
+                    # Skip logging MCP tools to tool_usage_stats here, as the downstream
+                    # MCP server (e.g. lazy-tool-service) natively logs them when executed.
+                    # This prevents duplicate entries outside the 5s deduplication window.
+                    if tool_name.startswith("mcp_"):
+                        continue
+                        
                     tc_success, tc_ms = tool_results_map.get(tool_name, (True, 0))
                     log_tool_call(
                         tool_name=tool_name,
