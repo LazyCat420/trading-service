@@ -1123,12 +1123,14 @@ class VLLMClient:
             # NOTE: Jetson was previously excluded from Prism routing.
             # As of Phase 3 (Unified Telemetry), ALL endpoints route
             # through Prism so that every request is tracked and visible.
+            from app.services.prism_agent_caller import _prism_breaker
             is_pipeline_or_background = item.priority > Priority.HIGH
             use_prism_agent = (
                 self.prism_client.enabled
                 and settings.PRISM_AGENT_ROUTING
                 and meta.get("agent_name") != "pre_trade"
                 and not is_pipeline_or_background
+                and not _prism_breaker.is_open
             )
             prism_routed = False
 

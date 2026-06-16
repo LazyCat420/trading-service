@@ -322,7 +322,7 @@ def get_agent_tools(agent_name: str) -> Optional[list[dict]]:
         len(schemas),
         len(tool_names),
     )
-    return schemas if schemas else None
+    return schemas
 
 
 def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
