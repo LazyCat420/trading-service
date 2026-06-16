@@ -42,3 +42,65 @@ def test_coral_allows_transient():
     
     result = recovery_engine.handle(event)
     assert result.action == RecoveryAction.RETRY
+
+@pytest.mark.asyncio
+async def test_analysis_task_timeout():
+    """Verify that a timeout during analysis worker execution cancels the task but allows the orchestrator to continue gracefully."""
+    import asyncio
+    from unittest.mock import patch
+    from app.services.pipeline_service import PipelineService
+    from app.cycle.context import CycleContext
+    
+    ctx = CycleContext(
+        cycle_id="test_timeout_cycle",
+        tickers=["AAPL"],
+        collect=True,
+        analyze=True,
+        trade=False
+    )
+    
+    with patch("app.cycle.orchestration.orchestrator_core.run_phase1_health") as mock_health, \
+         patch("app.cycle.orchestration.orchestrator_core.run_phase2_collection", return_value=["AAPL"]) as mock_collect, \
+         patch("app.cycle.orchestration.orchestrator_core.run_phase4_analysis") as mock_analysis, \
+         patch("app.cycle.orchestration.orchestrator_core.run_phase6_post") as mock_post, \
+         patch("app.cycle.orchestration.orchestrator_core.asyncio.wait_for", side_effect=asyncio.TimeoutError) as mock_wait_for, \
+         patch.object(PipelineService, "emit") as mock_emit, \
+         patch.object(PipelineService, "save_state") as mock_save:
+         
+        PipelineService._state = {"results": []}
+        import time
+        PipelineService._start_time = time.monotonic()
+        
+        await PipelineService._execute_cycle_impl(ctx, "test_bot")
+        
+        mock_wait_for.assert_called()
+        assert PipelineService._state["status"] == "done"
+
+@pytest.mark.asyncio
+async def test_portfolio_gate_integration_in_trading_phase():
+    """Verify that execute_decisions integrates and enforces the actual check_portfolio_gate decisions."""
+    from unittest.mock import patch
+    from app.cycle.trading_phase import execute_decisions
+    
+    decisions = [
+        {"ticker": "MSFT", "action": "BUY", "confidence": 95, "rationale": "High conviction buy"}
+    ]
+    
+    mock_portfolio = {
+        "cash": 5000.0,
+        "positions": []
+    }
+    
+    with patch("app.cycle.trading_phase.get_portfolio", return_value=mock_portfolio), \
+         patch("app.cycle.trading_phase.check_portfolio_gate", return_value={"blocked": True, "reason": "Constitutional Concentration Limit Exceeded"}) as mock_gate, \
+         patch("app.cycle.trading_phase.buy") as mock_buy:
+         
+        res = await execute_decisions(decisions, bot_id="test-bot", cycle_id="test-cycle")
+        
+        mock_gate.assert_called_once_with("MSFT", "BUY", "test-bot", 95)
+        mock_buy.assert_not_called()
+        assert res["counts"]["blocked"] == 1
+        assert len(res["skipped"]) == 1
+        assert res["skipped"][0]["ticker"] == "MSFT"
+        assert res["skipped"][0]["reason"] == "Constitutional Concentration Limit Exceeded"
+
