@@ -73,6 +73,7 @@ async def test_buy_positions_capped_at_max_capacity():
     }
     
     with patch("app.cycle.trading_phase.get_portfolio", return_value=mock_portfolio), \
+         patch("app.cycle.trading_phase.check_portfolio_gate", return_value={"blocked": True, "reason": "max capacity reached"}), \
          patch("app.cycle.trading_phase.buy") as mock_buy:
          
         res = await execute_decisions(decisions, bot_id="test-bot", cycle_id="test-cycle")

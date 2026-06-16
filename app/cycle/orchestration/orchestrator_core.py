@@ -326,6 +326,33 @@ class OrchestratorCoreMixin:
                             for t in ctx.tickers:
                                 analysis_queue.put_nowait(t)
 
+                # Run post-collection data sanity checks
+                try:
+                    from app.processors.data_sanity import run_sanity_checks
+                    sanity_failures = run_sanity_checks()
+                    if sanity_failures:
+                        logger.warning(
+                            "[CYCLE] Data Sanity check warnings/failures: %s",
+                            sanity_failures,
+                        )
+                        cls.emit(
+                            "collecting",
+                            "sanity_warnings",
+                            f"⚠️ Data sanity check issues detected: {len(sanity_failures)} failures found. Check logs.",
+                            status="warning",
+                            data={"failures": sanity_failures[:10]},
+                        )
+                    else:
+                        logger.info("[CYCLE] All post-collection data sanity checks passed cleanly.")
+                        cls.emit(
+                            "collecting",
+                            "sanity_ok",
+                            "✅ All post-collection data sanity checks passed cleanly.",
+                            status="ok",
+                        )
+                except Exception as sanity_e:
+                    logger.warning("[CYCLE] Data sanity checks failed to execute (non-fatal): %s", sanity_e)
+
                 _collection_elapsed = int(time.monotonic() - _collection_start)
 
                 _queue_depth = analysis_queue.qsize() if analysis_queue else 0
@@ -388,7 +415,11 @@ class OrchestratorCoreMixin:
             # ── Wait for analysis workers to finish ──
             if cls._analysis_task is not None:
                 cls._state["status"] = "analyzing"
-                await cls._analysis_task
+                try:
+                    await asyncio.wait_for(cls._analysis_task, timeout=5400.0)  # 90min safety
+                except asyncio.TimeoutError:
+                    logger.error("[CYCLE] Analysis workers safety timeout (90m) exceeded. Cancelling.")
+                    cls._analysis_task.cancel()
 
             # ── Phase 5: Trading (MUST wait for all analysis) ──
             trade_result = None

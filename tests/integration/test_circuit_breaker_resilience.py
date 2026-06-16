@@ -22,6 +22,30 @@ def mocked_vllm_cb(monkeypatch):
     
     mock_http = AsyncMock()
     mock_http.is_closed = False
+    
+    class MockStreamContext:
+        def __init__(self, method, url, json=None, headers=None, timeout=None):
+            self.method = method
+            self.url = url
+            self.json = json
+            self.headers = headers
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            # Execute mock_http.post.side_effect if it's set
+            if mock_http.post.side_effect:
+                await mock_http.post.side_effect(self.url, json=self.json, headers=self.headers, timeout=self.timeout)
+            mock_res = AsyncMock()
+            mock_res.status_code = 200
+            return mock_res
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    def mock_stream(method, url, json=None, headers=None, timeout=None):
+        return MockStreamContext(method, url, json, headers, timeout)
+
+    mock_http.stream = mock_stream
     client._client = mock_http
     client._get_client = AsyncMock(return_value=mock_http)
     
@@ -44,10 +68,12 @@ async def test_circuit_breaker_race_conditions(mocked_vllm_cb):
     ep.init_concurrency()
     client._roles_discovered = True
 
+    import contextlib
     from httpx import RequestError, Request
     
     # 50 simultaneous requests hitting a network error
-    async def fail_post(url, json=None, headers=None, timeout=None):
+    @contextlib.asynccontextmanager
+    async def fail_stream(method, url, json=None, headers=None, timeout=None):
         user_msg = json["messages"][1]["content"] if json and "messages" in json and len(json["messages"]) > 1 else ""
         try:
             idx = int(user_msg.split()[-1])
@@ -58,8 +84,9 @@ async def test_circuit_breaker_race_conditions(mocked_vllm_cb):
         stagger = idx * 0.25 if idx < 5 else 0.0
         await asyncio.sleep(0.01 + stagger)
         raise RequestError("Connection reset", request=Request("POST", "http://test"))
+        yield
 
-    mock_http.post.side_effect = fail_post
+    mock_http.stream = fail_stream
 
     with patch("app.services.vllm_client.tracker") as mock_tracker:
         mock_tracker.record = AsyncMock()

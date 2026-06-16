@@ -18,7 +18,7 @@ from app.cycle.attention_tracker import record_trade
 from app.pipeline.analysis.outcome_tracker import resolve_outcome
 from app.utils.async_utils import run_with_timeout
 
-from app.trading.risk_manager import check_portfolio_constraints
+from app.cycle.portfolio_gate import check_portfolio_gate
 from app.trading.position_sizer import calculate_buy_size
 
 logger = logging.getLogger(__name__)
@@ -34,9 +34,7 @@ def get_size_pct(confidence: int) -> float:
         confidence = 100
     return 0.02 + (confidence - 70) / 30.0 * 0.08
 
-def check_portfolio_gate(*args, **kwargs):
-    """Legacy helper for backward compatibility with tests."""
-    return {"blocked": False, "warnings": []}
+
 
 async def run_portfolio_allocator(*args, **kwargs):
     """Legacy helper for backward compatibility with tests."""
@@ -149,12 +147,18 @@ async def execute_decisions(
                 # Refresh portfolio for accurate constraints
                 current_portfolio = get_portfolio(bot_id)
                 
-                # Lego 1: Risk Manager
-                is_allowed, block_reason = check_portfolio_constraints(current_portfolio, action)
-                if not is_allowed:
-                    skipped.append({"ticker": ticker, "action": action, "reason": block_reason})
+                # Lego 1: Risk Manager (Constitution + Base Rules)
+                if action == "BUY" and current_portfolio.get("cash", 0.0) < 100.0:
+                    skipped.append({"ticker": ticker, "action": action, "reason": f"VETO: Insufficient cash to open new position (${current_portfolio.get('cash', 0.0):,.2f} remaining)."})
                     counts["blocked"] += 1
-                    logger.info("[TRADING] VETO %s %s: %s", action, ticker, block_reason)
+                    logger.info("[TRADING] VETO %s %s: Insufficient cash", action, ticker)
+                    continue
+                
+                gate_result = check_portfolio_gate(ticker, action, bot_id, confidence)
+                if gate_result.get("blocked"):
+                    skipped.append({"ticker": ticker, "action": action, "reason": gate_result.get("reason")})
+                    counts["blocked"] += 1
+                    logger.info("[TRADING] VETO %s %s: %s", action, ticker, gate_result.get("reason"))
                     continue
                     
                 # Execute Trade

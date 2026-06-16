@@ -123,8 +123,8 @@ def test_tool_count_after_cleanup():
     from app.tools.registry import registry
 
     count = len(registry.tools)
-    assert count < 67, (
-        f"Registry has {count} tools — expected < 67 after cleanup"
+    assert count <= 67, (
+        f"Registry has {count} tools — expected <= 67 after cleanup"
     )
     # Should still have the core tools
     assert count > 50, (

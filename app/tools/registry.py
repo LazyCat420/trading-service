@@ -641,13 +641,14 @@ class ToolRegistry:
     ) -> None:
         """Log a tool usage event to PostgreSQL (fire-and-forget)."""
         try:
+            from datetime import datetime, timezone
             from app.db.connection import get_db
 
             with get_db() as db:
                 db.execute(
                     "INSERT INTO tool_usage_stats "
-                    "(tool_name, agent_name, ticker, cycle_id, success, execution_ms, error_message, service_source) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    "(tool_name, agent_name, ticker, cycle_id, success, execution_ms, error_message, service_source, called_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     [
                         tool_name,
                         agent_name,
@@ -657,6 +658,7 @@ class ToolRegistry:
                         execution_ms,
                         error_message,
                         service_source,
+                        datetime.now(timezone.utc),
                     ],
                 )
         except Exception as e:

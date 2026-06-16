@@ -1,9 +1,25 @@
 import asyncio
 import time
 import pytest
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.vllm_client import VLLMClient, Priority
+
+# MockResponse emulates streaming SSE response
+class MockResponse:
+    def __init__(self, content_text, tokens=10):
+        self.status_code = 200
+        self._content_text = content_text
+        self._tokens = tokens
+
+    async def aiter_text(self):
+        yield f'data: {{"choices": [{{"delta": {{"content": "{self._content_text}"}}}}]}}\n'
+        yield f'data: {{"usage": {{"total_tokens": {self._tokens}, "prompt_tokens": 5, "completion_tokens": 5}}, "choices": []}}\n'
+        yield 'data: [DONE]\n'
+
+    def raise_for_status(self):
+        pass
 
 @pytest.fixture
 def mocked_vllm(monkeypatch):
@@ -32,6 +48,38 @@ def mocked_vllm(monkeypatch):
     mock_response.raise_for_status = MagicMock()
     mock_http.post = AsyncMock(return_value=mock_response)
     
+    class MockStreamContext:
+        def __init__(self, method, url, json=None, headers=None, timeout=None):
+            self.method = method
+            self.url = url
+            self.json = json
+            self.headers = headers
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            if mock_http.post.side_effect:
+                await mock_http.post.side_effect(self.url, json=self.json, headers=self.headers, timeout=self.timeout)
+            
+            mock_res = AsyncMock()
+            mock_res.status_code = 200
+            
+            async def mock_aiter_text():
+                for chunk in [
+                    'data: {"choices": [{"delta": {"content": "mocked success"}}]}\n\n',
+                    'data: {"usage": {"total_tokens": 10, "prompt_tokens": 5, "completion_tokens": 5}, "choices": [{"delta": {}, "finish_reason": "stop"}]}\n\n',
+                    'data: [DONE]\n\n'
+                ]:
+                    yield chunk
+            mock_res.aiter_text = mock_aiter_text
+            return mock_res
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    def mock_stream(method, url, json=None, headers=None, timeout=None):
+        return MockStreamContext(method, url, json, headers, timeout)
+
+    mock_http.stream = mock_stream
     mock_http.is_closed = False
     client._client = mock_http
     client._get_client = AsyncMock(return_value=mock_http)
@@ -54,14 +102,15 @@ async def test_vllm_dispatcher_priority_and_concurrency(mocked_vllm):
     # Slow down HTTP mock to allow queue to build up
     completion_order = []
     
-    async def slow_post(url, json=None, headers=None, timeout=None):
+    @contextlib.asynccontextmanager
+    async def slow_stream(method, url, json=None, headers=None, timeout=None):
         await asyncio.sleep(0.1)
         # message 0 is system, message 1 is user
-        priority_tag = json["messages"][1]["content"] if len(json["messages"]) > 1 else ""
+        priority_tag = json["messages"][1]["content"] if json and len(json["messages"]) > 1 else ""
         completion_order.append(priority_tag)
-        return mock_http.post.return_value
+        yield MockResponse("mocked success")
     
-    mock_http.post.side_effect = slow_post
+    mock_http.stream = slow_stream
 
     with patch("app.services.vllm_client.tracker") as mock_tracker:
         mock_tracker.record = AsyncMock()
@@ -116,16 +165,17 @@ async def test_queue_timeout_and_eviction(mocked_vllm):
     
     client._endpoints["jetson"].enabled = True
     client._endpoints["jetson"].model = "test-model"
-    client._endpoints["jetson"].max_concurrent = 2
+    client._endpoints["jetson"].max_concurrent = 3
     client._endpoints["jetson"].init_concurrency()
     client._roles_discovered = True
 
     # Block the HTTP mock forever
-    async def forever_post(*args, **kwargs):
+    @contextlib.asynccontextmanager
+    async def forever_stream(method, url, json=None, headers=None, timeout=None):
         await asyncio.sleep(10.0)
-        return mock_http.post.return_value
+        yield MockResponse("mocked success")
     
-    mock_http.post.side_effect = forever_post
+    mock_http.stream = forever_stream
 
     with patch("app.services.vllm_client.tracker") as mock_tracker:
         mock_tracker.record = AsyncMock()
@@ -175,12 +225,13 @@ async def test_hot_swap_model_stress(mocked_vllm):
     # Capture the payload sent to HTTP mock
     dispatched_models = []
     
-    async def capture_post(url, json=None, headers=None, timeout=None):
+    @contextlib.asynccontextmanager
+    async def capture_stream(method, url, json=None, headers=None, timeout=None):
         await asyncio.sleep(0.2)  # Block long enough to ensure max_concurrency stalls the queue
-        dispatched_models.append(json.get("model", "unknown"))
-        return mock_http.post.return_value
+        dispatched_models.append(json.get("model", "unknown") if json else "unknown")
+        yield MockResponse("mocked success")
     
-    mock_http.post.side_effect = capture_post
+    mock_http.stream = capture_stream
 
     with patch("app.services.vllm_client.tracker") as mock_tracker:
         mock_tracker.record = AsyncMock()

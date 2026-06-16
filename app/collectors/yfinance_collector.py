@@ -13,6 +13,26 @@ logger = logging.getLogger(__name__)
 import datetime
 import asyncio
 import yfinance as yf
+import requests
+from requests.adapters import HTTPAdapter
+
+class TimeoutHTTPAdapter(HTTPAdapter):
+    def __init__(self, timeout=15.0, *args, **kwargs):
+        self.timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        kwargs["timeout"] = kwargs.get("timeout") or self.timeout
+        return super().send(request, **kwargs)
+
+def get_timeout_session(timeout=15.0) -> requests.Session:
+    session = requests.Session()
+    adapter = TimeoutHTTPAdapter(timeout=timeout)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+_yf_session = get_timeout_session(15.0)
 from app.db.connection import get_db
 
 
@@ -30,7 +50,7 @@ def _is_blocked_ticker(ticker: str) -> bool:
 
 async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
     """Fetch OHLCV history as a DataFrame without writing to DB."""
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_yf_session)
     try:
         df = await asyncio.to_thread(stock.history, period=period, auto_adjust=True)
         if df is None or df.empty:
@@ -99,7 +119,7 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
 
 async def fetch_fundamentals_dict(ticker: str) -> dict | None:
     """Fetch fundamentals dictionary without writing to DB."""
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_yf_session)
     try:
         info = await asyncio.to_thread(lambda: stock.info)
         if not info or "symbol" not in info:
@@ -269,7 +289,7 @@ async def collect_financials(ticker: str) -> int:
     Fetch income statement (quarterly + annual) and upsert into financial_history.
     Returns number of rows inserted.
     """
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_yf_session)
     count = 0
     try:
         sources = await asyncio.to_thread(
@@ -333,7 +353,7 @@ async def collect_balance_sheet(ticker: str) -> int:
     Fetch balance sheet and upsert into balance_sheet table.
     Returns number of rows inserted.
     """
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_yf_session)
     try:
         bs = await asyncio.to_thread(lambda: stock.balance_sheet)
         if bs is None or bs.empty:
