@@ -15,6 +15,7 @@ class BootService:
         cls._run_stage("DB Connection & Schema", cls._init_database, required=True)
         cls._run_stage("Vector Store Indexes", cls._init_vector_indices, required=True)
         cls._run_stage("Reset Application State", cls._reset_app_state, required=True)
+        cls._run_stage("Restore Stable Fixes", cls._restore_stable_fixes, required=False)
 
         # --- Crash Recovery Detection ---
         cls._run_stage("Crash Recovery Scan", cls._detect_crashed_cycles, required=False)
@@ -29,6 +30,45 @@ class BootService:
         asyncio.create_task(cls._start_background_tasks())
 
         logger.info("[Boot] Application boot sequence completed successfully.")
+
+    @classmethod
+    def _restore_stable_fixes(cls):
+        """Load and restore all evolved stable fixes from stable_harnesses to disk."""
+        try:
+            from app.db.connection import get_db
+            from app.cognition.evolution.target_map import resolve_target
+            from pathlib import Path
+
+            logger.info("[Boot] Restoring evolved stable fixes from stable_harnesses...")
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT target_type, target_name, stable_content FROM stable_harnesses"
+                ).fetchall()
+
+                restored_count = 0
+                for r_type, r_name, content in rows:
+                    target_info = resolve_target(r_type, r_name)
+                    file_path = target_info.get("file_path")
+                    if file_path:
+                        path = Path(file_path)
+                        # Read current disk content if exists
+                        current_disk_content = ""
+                        if path.exists():
+                            try:
+                                current_disk_content = path.read_text(encoding="utf-8")
+                            except Exception:
+                                pass
+
+                        if current_disk_content != content:
+                            # Ensure parent directories exist
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text(content, encoding="utf-8")
+                            logger.info("[Boot] Restored stable fix for %s/%s to %s", r_type, r_name, file_path)
+                            restored_count += 1
+                
+                logger.info("[Boot] Restored %d stable fixes.", restored_count)
+        except Exception as e:
+            logger.warning("[Boot] Failed to restore stable fixes (non-fatal): %s", e)
 
     @classmethod
     async def shutdown(cls):
