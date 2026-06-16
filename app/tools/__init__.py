@@ -98,6 +98,9 @@ from app.tools.risk_tools import (
     assess_risk_environment_tool,
 )
 
+# Ontology / Brain Graph learning tools
+from app.tools.ontology_tools import graph_learn_tool
+
 __all__ = [
     "registry",
     "PermissionLevel",
@@ -110,6 +113,7 @@ __all__ = [
     "search_wiki",
     "scrape_url",
     "search_web",
+    "graph_learn_tool",
     "search_internal_database",
     "update_youtube_channel_handle",
     "run_local_command",

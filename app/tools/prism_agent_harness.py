@@ -684,7 +684,7 @@ async def run_prism_agent(
             except Exception as tel_e:
                 logger.debug("[run_prism_agent] Telemetry tool calls failed: %s", tel_e)
 
-            if used_tool_names:
+            if "toolCalls" in result_data:
                 # Log each tool call to tool_usage_stats for reputation tracking
                 # Parse per-tool results when Prism provides them
                 from app.services.logging.tool_logging import log_tool_call
@@ -708,13 +708,14 @@ async def run_prism_agent(
                         execution_ms=tc_ms,
                         service_source="prism",
                     )
-                # Count successes vs failures for logging
-                success_count = sum(1 for n in used_tool_names if tool_results_map.get(n, (True, 0))[0])
-                fail_count = len(used_tool_names) - success_count
-                logger.info(
-                    "[PrismHarness] Logged %d Prism tool calls for %s (%d ok, %d failed): %s",
-                    len(used_tool_names), agent_name, success_count, fail_count, used_tool_names,
-                )
+                if used_tool_names:
+                    # Count successes vs failures for logging
+                    success_count = sum(1 for n in used_tool_names if tool_results_map.get(n, (True, 0))[0])
+                    fail_count = len(used_tool_names) - success_count
+                    logger.info(
+                        "[PrismHarness] Logged %d Prism tool calls for %s (%d ok, %d failed): %s",
+                        len(used_tool_names), agent_name, success_count, fail_count, used_tool_names,
+                    )
 
                 # Data-driven optimization: only mark actually-used tools as active
                 from app.services.tool_optimizer import record_tool_optimization_usage

@@ -229,6 +229,7 @@ async def run_phase4_analysis(
                 _tier = "deep"
 
             _is_highly_redundant = ticker in state.get("highly_redundant_tickers", [])
+            _active_directives = state.get("active_directives", [])
 
             # Get dynamic research focus from curator
             _research_focus = getattr(ctx, "research_focus", {}).get(ticker, "")
@@ -254,6 +255,7 @@ async def run_phase4_analysis(
                         is_highly_redundant=_is_highly_redundant,
                         research_focus=_research_focus,
                         trigger_type=ctx.trigger_type,
+                        active_directives=_active_directives,
                     ),
                     timeout=_ticker_timeout,
                 )

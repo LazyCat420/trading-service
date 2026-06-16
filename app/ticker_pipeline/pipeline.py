@@ -55,6 +55,7 @@ async def execute_ticker_pipeline(
     is_highly_redundant: bool = False,
     research_focus: str = "",
     trigger_type: str = "manual",
+    active_directives: list[dict] | None = None,
 ) -> dict[str, Any] | None:
     """Run the full V2 cognition pipeline for a single ticker.
 
@@ -85,6 +86,7 @@ async def execute_ticker_pipeline(
         is_highly_redundant=is_highly_redundant,
         research_focus=research_focus,
         trigger_type=trigger_type,
+        active_directives=active_directives,
     )
 
     ctx.safe_emit(

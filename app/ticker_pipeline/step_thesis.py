@@ -290,6 +290,25 @@ def _build_extra_context(ctx: TickerContext) -> str:
     except Exception as ar_err:
         logger.warning("[V2] Failed to retrieve autoresearch lessons: %s", ar_err)
 
+    # Autoresearch directives
+    active_directives = getattr(ctx, "active_directives", None)
+    if active_directives:
+        directive_texts = []
+        for d in active_directives:
+            ticker_str = f" [Ticker: {d['ticker']}]" if d.get("ticker") else ""
+            directive_texts.append(f"- [{d.get('type', 'GENERAL')}] {d.get('text', '')}{ticker_str} (severity: {d.get('severity', 0)})")
+        if directive_texts:
+            directive_block = (
+                "# SYSTEM-WIDE RECENT DIRECTIVES\n"
+                "The following directives have been issued based on overall system reflection. "
+                "Consider these guidelines during thesis generation:\n\n" +
+                "\n".join(directive_texts)
+            )
+            remaining = MAX_EXTRA_CONTEXT_CHARS - budget_used
+            if remaining > 200:
+                parts.append(directive_block[:remaining])
+                budget_used += len(directive_block[:remaining])
+
     return "\n\n".join(parts)
 
 

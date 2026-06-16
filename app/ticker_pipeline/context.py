@@ -39,6 +39,7 @@ class TickerContext:
     is_highly_redundant: bool = False
     research_focus: str = ""
     trigger_type: str = "manual"
+    active_directives: list[dict] = field(default_factory=list)
 
     # ── Step 0: Position context ──
     position_context: dict[str, Any] = field(default_factory=dict)

@@ -112,14 +112,15 @@ def _check_degradation(deploy_cycle_id: str, current_cycle_id: str) -> bool:
         try:
             # Check if current cycle crashed/failed
             db.execute(
-                "SELECT status, error FROM pipeline_state WHERE cycle_id = %s",
+                "SELECT status, primary_failure_reason FROM cycle_run_summaries WHERE cycle_id = %s",
                 [current_cycle_id]
             )
             state_row = db.fetchone()
-            if state_row and state_row[0] == "error":
+            if state_row and state_row[0] in ("error", "failed"):
                 logger.warning(
-                    "[ROLLBACK-MONITOR] Post-deploy cycle %s has status='error' (error: %s). Triggering immediate rollback.",
+                    "[ROLLBACK-MONITOR] Post-deploy cycle %s has status='%s' (error: %s). Triggering immediate rollback.",
                     current_cycle_id,
+                    state_row[0],
                     state_row[1]
                 )
                 return True
