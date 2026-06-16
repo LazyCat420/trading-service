@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 # This prevents infinite retry/reroute loops.
 MAX_SAME_STEP_FAILURES = 3
 
+# DECISION (Dev 3 - Pipeline Governance):
+# CORAL is officially DORMANT. We do not automatically rewire complex cascade 
+# failures to prevent infinite loops masking underlying code defects.
+# Resilience logic currently handles simple TRANSIENT retries independently.
+CORAL_ACTIVE = False
+
 
 class RecoveryEngine:
     """Centralized failure classification and recovery routing.
@@ -82,6 +88,17 @@ class RecoveryEngine:
         self._failure_counter[event.key] += 1
         self._history.append(event)
         count = self._failure_counter[event.key]
+
+        # ── CORAL Dormancy Check ──
+        if not CORAL_ACTIVE and event.failure_type != FailureType.TRANSIENT:
+            logger.info("[RECOVERY] CORAL is dormant. Force skipping non-transient failure %s", event.key)
+            result = RecoveryResult(
+                action=RecoveryAction.SKIP,
+                failure_event=event,
+                reason=f"CORAL Dormant: Force skipping {event.exception_type}",
+            )
+            self._emit_recovery_event(event, result)
+            return result
 
         # ── Circuit breaker: too many failures of the same step ──
         if count >= MAX_SAME_STEP_FAILURES:
