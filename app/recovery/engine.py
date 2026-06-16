@@ -58,7 +58,10 @@ class RecoveryEngine:
     Emits structured events via PipelineService.emit() for monitoring.
     """
 
-    def __init__(self):
+    def __init__(self, coral_active: bool = None):
+        if coral_active is None:
+            coral_active = CORAL_ACTIVE
+        self.coral_active = coral_active
         # Per-cycle failure counter: key → count
         self._failure_counter: dict[str, int] = defaultdict(int)
         # History of all failure events (ring buffer for this cycle)
@@ -90,7 +93,7 @@ class RecoveryEngine:
         count = self._failure_counter[event.key]
 
         # ── CORAL Dormancy Check ──
-        if not CORAL_ACTIVE and event.failure_type != FailureType.TRANSIENT:
+        if not self.coral_active and event.failure_type != FailureType.TRANSIENT:
             logger.info("[RECOVERY] CORAL is dormant. Force skipping non-transient failure %s", event.key)
             result = RecoveryResult(
                 action=RecoveryAction.SKIP,

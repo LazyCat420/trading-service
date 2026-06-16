@@ -27,7 +27,7 @@ from app.recovery.engine import RecoveryEngine, MAX_SAME_STEP_FAILURES
 @pytest.fixture
 def engine():
     """Fresh RecoveryEngine for each test."""
-    eng = RecoveryEngine()
+    eng = RecoveryEngine(coral_active=True)
     eng.reset_cycle("test-cycle-001")
     return eng
 
@@ -269,3 +269,16 @@ class TestResetCycle:
         # Same event should now be RETRY again (counter reset)
         result = engine.handle(event)
         assert result.action == RecoveryAction.RETRY
+
+
+class TestDormancy:
+    """Verify dormancy behavior when coral_active=False."""
+
+    def test_dormant_engine_skips_non_transient(self):
+        engine = RecoveryEngine(coral_active=False)
+        engine.reset_cycle("test-dormant")
+
+        event = _make_event(failure_type=FailureType.DEGRADED)
+        result = engine.handle(event)
+        assert result.action == RecoveryAction.SKIP
+        assert "CORAL Dormant" in result.reason
