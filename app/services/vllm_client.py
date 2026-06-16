@@ -868,8 +868,12 @@ class VLLMClient:
         """
         # Map vLLM metric names to (attribute, converter)
         _METRIC_MAP = {
+            "vllm:gpu_cache_usage_perc": ("cache_usage", float),
+            "vllm:kv_cache_usage_perc": ("cache_usage", float),
             "vllm_gpu_cache_usage_perc": ("cache_usage", float),
+            "vllm:num_requests_running": ("requests_running", lambda v: int(float(v))),
             "vllm_num_requests_running": ("requests_running", lambda v: int(float(v))),
+            "vllm:num_requests_waiting": ("requests_waiting", lambda v: int(float(v))),
             "vllm_num_requests_waiting": ("requests_waiting", lambda v: int(float(v))),
         }
         while True:

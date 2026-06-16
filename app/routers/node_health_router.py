@@ -71,9 +71,11 @@ async def node_health(token: str = Depends(_verify_api_key)):
                         active = max(0, bound - sem._value)
                 else:
                     max_concurrent = getattr(ep, "max_concurrent", 0) or 0
-                    active = getattr(ep, "_active_count", 0) or 0
+                    active = max(getattr(ep, "active_count", 0), getattr(ep, "requests_running", 0))
 
-                queued = getattr(ep, "_queued_count", 0) or 0
+                queue_obj = getattr(ep, "queue", None)
+                qsize = queue_obj.qsize() if queue_obj else 0
+                queued = max(qsize, getattr(ep, "requests_waiting", 0))
             except Exception as e:
                 logger.debug(
                     "[node-health] Error reading endpoint %s: %s", name, e
