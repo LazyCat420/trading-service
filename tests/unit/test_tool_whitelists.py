@@ -147,3 +147,15 @@ def test_no_duplicate_tools_in_whitelists():
     for agent, tool_list in AGENT_TOOL_WHITELISTS.items():
         dupes = [t for t in tool_list if tool_list.count(t) > 1]
         assert not dupes, f"Agent '{agent}' has duplicate tools: {set(dupes)}"
+
+def test_graph_learn_in_appropriate_whitelists():
+    """Verify that graph_learn is available to the portfolio_allocator and user_chat agents."""
+    from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
+
+    # Verify portfolio_allocator has graph_learn
+    allocator_tools = set(AGENT_TOOL_WHITELISTS.get("portfolio_allocator", []))
+    assert "graph_learn" in allocator_tools, "portfolio_allocator agent missing graph_learn tool"
+
+    # Verify user_chat has graph_learn
+    chat_tools = set(AGENT_TOOL_WHITELISTS.get("user_chat", []))
+    assert "graph_learn" in chat_tools, "user_chat agent missing graph_learn tool"
