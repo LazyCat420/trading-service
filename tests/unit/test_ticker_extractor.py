@@ -60,3 +60,22 @@ def test_direct_syntax():
     
     assert amzn is not None
     assert amzn.confidence >= 0.90
+
+def test_is_hard_blocked_for_dots_and_digits():
+    """Verify that _is_hard_blocked blocks tickers with dots or digits."""
+    from app.processors.ticker_extractor import _is_hard_blocked, get_registry
+    registry = get_registry()
+    assert _is_hard_blocked("003160.KS", registry) is True
+    assert _is_hard_blocked("0700.HK", registry) is True
+    assert _is_hard_blocked("RY.TO", registry) is True
+    assert _is_hard_blocked("AAPL", registry) is False
+    assert _is_hard_blocked("BRK-B", registry) is False
+
+@pytest.mark.asyncio
+async def test_validate_unknown_tickers_fast_reject():
+    """Verify that validate_unknown_tickers fast-rejects tickers with dots or digits."""
+    from app.processors.ticker_extractor import validate_unknown_tickers
+    res = await validate_unknown_tickers(["003160.KS", "0700.HK", "AAPL"])
+    assert res.get("003160.KS") is False
+    assert res.get("0700.HK") is False
+    assert res.get("AAPL") is True

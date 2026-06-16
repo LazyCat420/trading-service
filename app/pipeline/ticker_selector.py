@@ -374,7 +374,7 @@ class TickerSelector:
             def is_valid_ticker_format(t: str) -> bool:
                 if not t or len(t) > 5:
                     return False
-                if bool(re.search(r"[0-9\-]", t)):
+                if bool(re.search(r"[0-9\.]", t)):
                     return False
                 if t in FALSE_TICKERS:
                     return False

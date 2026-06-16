@@ -311,3 +311,39 @@ def test_ticker_selector_ban_filtering(mock_get_active_bot_id, mock_get_db):
     assert "TSLA" not in res.non_position_tickers # TSLA is banned, should be filtered out!
 
 
+@patch("app.pipeline.ticker_selector.get_db")
+@patch("app.services.bot_manager.get_active_bot_id")
+def test_ticker_selector_format_filtering(mock_get_active_bot_id, mock_get_db):
+    """Verify that tickers with numbers/dots (e.g. 003160.KS) are filtered out, but hyphens (e.g. BRK-B) are allowed."""
+    mock_get_active_bot_id.return_value = "test-bot"
+    mock_db = MagicMock()
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    
+    def side_effect_execute(query, params=None):
+        mock_cursor = MagicMock()
+        if "information_schema" in query:
+            mock_cursor.fetchone.return_value = (1,)
+        elif "position_lots" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "watchlist" in query:
+            mock_cursor.fetchall.return_value = []
+        elif "discovered_tickers" in query:
+            # Return BRK-B (valid), 003160.KS (invalid dot/numbers), 0700 (invalid numbers)
+            mock_cursor.fetchall.return_value = [
+                ("BRK-B", 100, "large", True, "2000-01-01"),
+                ("003160.KS", 90, "large", True, "2000-01-01"),
+                ("0700", 80, "large", True, "2000-01-01"),
+            ]
+        else:
+            mock_cursor.fetchall.return_value = []
+        return mock_cursor
+
+    mock_db.execute.side_effect = side_effect_execute
+    
+    res = TickerSelector.select_tickers_for_cycle_v2([], cap=50)
+    
+    assert "BRK-B" in res.non_position_tickers
+    assert "003160.KS" not in res.non_position_tickers
+    assert "0700" not in res.non_position_tickers
+
+

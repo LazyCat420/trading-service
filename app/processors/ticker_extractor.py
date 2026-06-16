@@ -421,8 +421,13 @@ def _is_hard_blocked(sym: str, registry: "CompanyRegistry") -> bool:
       - Symbol IS in FALSE_TICKERS but is a verified stock with market_cap >= $1B
 
     Returns True (= block) if:
+      - Symbol contains digits or dots, OR
       - Symbol is in FALSE_TICKERS and NOT a known high-cap stock
     """
+    # Globally block any ticker containing a digit or a dot (non-US/foreign tickers)
+    if any(c.isdigit() or c == "." for c in sym):
+        return True
+
     if sym not in FALSE_TICKERS:
         return False  # not blocked
     # It's in FALSE_TICKERS — check if it's also a real high-cap stock
@@ -1252,6 +1257,11 @@ async def validate_unknown_tickers(tickers: list[str]) -> dict[str, bool]:
 
     for sym in tickers:
         sym = sym.upper()
+
+        # Fast reject if it has a digit or dot (saves network calls for non-US/foreign symbols)
+        if any(c.isdigit() or c == "." for c in sym):
+            results[sym] = False
+            continue
 
         # Skip if already known
         if registry.is_known(sym):
