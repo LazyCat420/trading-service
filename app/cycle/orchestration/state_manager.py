@@ -698,6 +698,18 @@ class PipelineStateMixin:
         # Expire any checkpoints older than 6 hours
         PipelineStateDB.expire_old_checkpoints(max_age_hours=6)
 
+        # Reset any stuck 'running' commands in system_commands table
+        try:
+            with connection.get_db() as db:
+                db.execute(
+                    "UPDATE system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, "
+                    "error_message = 'Orphaned command - backend restarted mid-execution' "
+                    "WHERE status = 'running'"
+                )
+                logger.info("[Boot] Cleaned up stuck running commands in system_commands")
+        except Exception as e:
+            logger.error("[Boot] Failed to clean up stuck running commands: %s", e)
+
         cls.load_state()
         prev_status = cls._state.get("status", "idle")
 
