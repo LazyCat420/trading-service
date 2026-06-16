@@ -1658,6 +1658,7 @@ class VLLMClient:
         """
         agent_name = meta.get("agent_name", "pipeline")
         ticker = meta.get("ticker", "")
+        stream_callback = meta.get("stream_callback")
 
         if settings.MOCK_LLM:
             mock_text = self._generate_mock_llm_response(agent_name, ticker)
