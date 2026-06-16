@@ -139,7 +139,7 @@ async def handle_delegation(
             fallback_system_prompt=system_prompt,
             fallback_agent_name=f"delegation_{persona_key.lower()}",
             temperature=LLM_TEMPERATURES.get("delegation", 0.3),
-            max_tokens=256,
+            max_tokens=8192,
             priority=Priority.LOW,
             ticker=ticker,
             cycle_id=cycle_id,

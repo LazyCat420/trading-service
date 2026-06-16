@@ -66,7 +66,7 @@ async def maybe_learn(
             fallback_system_prompt=LEARN_SYSTEM,
             fallback_agent_name="post_cycle_learner",
             temperature=0.0,
-            max_tokens=4000,
+            max_tokens=8192,
             ticker=ticker,
             priority=Priority.LOW,
         )

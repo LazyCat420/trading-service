@@ -113,14 +113,62 @@ class TradingMemory:
             self._limits["portfolio"],
         )
 
-    def get_frozen_snapshot(self) -> str:
-        """Return the frozen prompt block captured at load time."""
+    def get_frozen_snapshot(self, available_tokens: int | None = None) -> str:
+        """Return the frozen prompt block captured at load time.
+        
+        If available_tokens is provided and the snapshot exceeds it,
+        returns a mathematically truncated version with a warning marker.
+        However, the preferred usage is to call await enforce_budget_and_consolidate()
+        before fetching the snapshot to perform intelligent LLM summarization.
+        """
         if not self._loaded:
             return ""
         parts = [
             self._snapshot[t] for t in ("market", "portfolio") if self._snapshot[t]
         ]
-        return "\n".join(parts)
+        snapshot_str = "\n".join(parts)
+        
+        if available_tokens is not None:
+            from app.config.context_budget import estimate_tokens
+            estimated = estimate_tokens(snapshot_str)
+            if estimated > available_tokens:
+                # 4 chars per token rough fallback heuristic
+                max_chars = max(0, available_tokens * 4 - 100)
+                if len(snapshot_str) > max_chars:
+                    return snapshot_str[:max_chars] + "\n\n[MEMORY TRUNCATED DUE TO BUDGET LIMITS]"
+
+        return snapshot_str
+
+    async def enforce_budget_and_consolidate(self, available_tokens: int) -> None:
+        """Measure current memory against available token budget.
+        If it exceeds the budget, dynamically trigger LLM consolidation
+        to summarize the context and fit within limits.
+        Must be called BEFORE get_frozen_snapshot() is used to build prompts.
+        """
+        from app.config.context_budget import estimate_tokens
+        
+        # We estimate using the current internal state rendering
+        current_str = "\n".join([self._render_block(t) for t in ("market", "portfolio") if self._entries[t]])
+        estimated = estimate_tokens(current_str)
+        
+        if estimated > available_tokens:
+            logger.warning(
+                "[MEMORY] Budget exceeded! estimated=%d, available=%d. Forcing consolidation.", 
+                estimated, available_tokens
+            )
+            # Consolidate market memory first, as it's usually the largest
+            await self.consolidate("market")
+            
+            # Recalculate
+            current_str = "\n".join([self._render_block(t) for t in ("market", "portfolio") if self._entries[t]])
+            estimated = estimate_tokens(current_str)
+            
+            # If still over budget, consolidate portfolio as well
+            if estimated > available_tokens:
+                await self.consolidate("portfolio")
+            
+            # Re-capture the snapshot so it reflects the newly consolidated data
+            self._snapshot = {t: self._render_block(t) for t in self._entries}
 
     def _char_count(self, target: str) -> int:
         if not self._entries[target]:

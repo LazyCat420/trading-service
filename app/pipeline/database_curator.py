@@ -40,7 +40,7 @@ async def generate_summary(text: str, source_type: str, max_words: int = 100) ->
                 fallback_system_prompt=sys_prompt,
                 fallback_agent_name="data_curator",
                 temperature=0.2,
-                max_tokens=256,
+                max_tokens=8192,
                 priority=Priority.LOW,
             ),
             timeout=90.0,

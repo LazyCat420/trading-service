@@ -1,1 +1,3 @@
-When the thesis cannot be parsed, default to a neutral stance (e.g., HOLD) rather than issuing a directional action based solely on confidence.
+A low P/E (e.g., <10) paired with a low PEG (e.g., <0.5) and a high ROE (e.g., >20%) while the RSI sits near neutral (≈45‑50) signals an undervalued, high‑quality opportunity worth buying for the long term. §
+When a company’s forward P/E is materially lower than its trailing P/E, the market is typically pricing in expected earnings recovery, meaning near‑term headwinds are already reflected in the current price—supporting a HOLD rather than a buy. §
+Combine valuation metrics (e.g., low forward P/E) and profitability (e.g., high profit margin) with technical health (price above the 200‑day moving average, RSI in a neutral range) to justify a HOLD for a recently opened position with modest unrealized gains, thereby avoiding premature selling and unnecessary transaction costs.

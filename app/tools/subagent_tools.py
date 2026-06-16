@@ -191,7 +191,7 @@ async def _spawn_research_subagent_impl(
                 agent_name=agent_id_override,
                 priority=Priority.NORMAL,
                 tools_override=active_schemas,
-                max_tokens=2048,
+                max_tokens=8192,
                 temperature=0.3,
                 actor_label=agent_id_override,
             )
@@ -250,7 +250,7 @@ async def _spawn_research_subagent_impl(
                 fallback_system_prompt="You are summarizing your own partial research. Be factual and concise.",
                 fallback_agent_name=f"{agent_id_override}_yield",
                 temperature=0.2,
-                max_tokens=512,
+                max_tokens=8192,
                 priority=Priority.NORMAL,
                 ticker=ticker,
                 actor_label=f"{agent_id_override}_yield",

@@ -111,7 +111,7 @@ async def run_tool_agent(
                 cycle_id=cycle_id,
                 bot_id=bot_id,
                 priority=priority,
-                max_tokens=2048,
+                max_tokens=8192,
                 model_override=model_override,
             )
         except Exception as e:
