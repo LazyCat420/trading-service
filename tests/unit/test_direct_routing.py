@@ -27,7 +27,6 @@ async def test_vllm_client_routing_by_priority():
     # Mock tracker.record to avoid DB insert attempts
     with patch("app.services.vllm_client.tracker") as mock_tracker, \
          patch("app.services.vllm_client.strip_think_tags", return_value=("clean content", "think content")), \
-         patch.object(settings, "MOCK_LLM", False), \
          patch.object(settings, "PRISM_AGENT_ROUTING", True):
         
         mock_tracker.record = AsyncMock()

@@ -58,10 +58,10 @@ async def test_run_adversarial_debate_persistence(patch_llm, patch_get_db, mock_
     
     with patch("app.cognition.debate.debate_coordinator._run_biased_agent", mock_run_biased), \
          patch("app.cognition.debate.debate_coordinator.llm.chat", new_callable=AsyncMock) as mock_chat1, \
-         patch("app.cognition.debate.debate_judge.llm.chat", new_callable=AsyncMock) as mock_chat2:
+         patch("app.cognition.debate.debate_judge.call_prism_agent", new_callable=AsyncMock) as mock_prism:
         
         mock_chat1.side_effect = mock_chat_fn
-        mock_chat2.side_effect = mock_chat_fn
+        mock_prism.return_value = (judge_response, 100, 100)
         
         result = await run_adversarial_debate(
             ticker="TEST",

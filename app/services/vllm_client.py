@@ -645,7 +645,7 @@ class VLLMClient:
             candidates = [ep for ep in self._endpoints.values() if ep.enabled and ep.model]
         
         if not candidates:
-            if settings.MOCK_LLM or settings.FALLBACK_TO_PRISM_CLOUD:
+            if settings.FALLBACK_TO_PRISM_CLOUD:
                 logger.info("[VLLM] No active vLLM endpoints available. Creating fallback mock endpoint.")
                 fallback_ep = VLLMEndpoint(
                     name="fallback_ep",
@@ -1521,54 +1521,7 @@ class VLLMClient:
             f"Model '{model_id}' is not hosted on any available vLLM endpoint."
         )
 
-    def _generate_mock_llm_response(self, agent_name: str, ticker: str) -> str:
-        """Generate a simulated JSON response for the given agent."""
-        import json
-        name_lower = agent_name.lower() if agent_name else ""
-        ticker_val = (ticker or "AAPL").upper()
-        if "pre_trade" in name_lower:
-            return json.dumps({
-                "decision": "APPROVE",
-                "ticker": ticker_val,
-                "shares": 100,
-                "entry_price": 150.0,
-                "stop_loss": 140.0,
-                "risk_reward_ratio": 2.0,
-                "position_pct": 5.0,
-                "total_cost": 15000.0,
-                "veto_reason": None,
-                "rationale": "Strong fundamentals and positive sentiment in mock mode."
-            })
-        elif "portfolio" in name_lower or "allocator" in name_lower:
-            return json.dumps({
-                "allocations": [
-                    {
-                        "ticker": ticker_val,
-                        "decision": "APPROVE",
-                        "adjusted_size_pct": 5.0,
-                        "shares": 100,
-                        "total_cost": 15000.0,
-                        "veto_reason": None,
-                        "rationale": "Allocated 5% based on mock validation."
-                    }
-                ]
-            })
-        else:
-            # Standard BUY/SELL/HOLD decision json
-            action = "BUY"
-            if "sell" in name_lower:
-                action = "SELL"
-            elif "hold" in name_lower:
-                action = "HOLD"
-            return json.dumps({
-                "action": action,
-                "claims": [
-                    f"Asset {ticker_val} is displaying mock positive trends.",
-                    "Mock indicator indicates healthy momentum."
-                ],
-                "confidence": 85,
-                "key_argument": f"Favorable momentum and alignment in {agent_name}."
-            })
+
 
     async def _call_vllm_direct(
         self,
@@ -1584,15 +1537,7 @@ class VLLMClient:
         was already selected — we use its URL directly instead of re-resolving.
         This eliminates redundant GET /v1/models queries.
         """
-        if settings.MOCK_LLM:
-            agent_name = meta.get("agent_name", "unknown")
-            ticker = meta.get("ticker", "")
-            mock_text = self._generate_mock_llm_response(agent_name, ticker)
-            elapsed_ms = int((time.monotonic() - start) * 1000)
-            meta["_think_content"] = ""
-            meta["_usage"] = {"prompt_tokens": 100, "completion_tokens": 100}
-            payload["_finish_reason"] = "stop"
-            return mock_text, 200, elapsed_ms
+
 
         if ep:
             # Use the endpoint's URL directly — no re-resolution needed
@@ -1613,39 +1558,112 @@ class VLLMClient:
                 "[VLLM] Stripped chat_template_kwargs for non-Qwen model: %s", model_id
             )
 
-        r = await self._call_endpoint(
-            client=client,
-            url=f"{base_url}/v1/chat/completions",
-            json_payload=payload,
-        )
+        # Enforce streaming to allow early doom loop detection
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+
+        content = ""
+        think_content = ""
+        total_tokens = 0
+        tool_calls_builder = {}
+        finish_reason = ""
+
+        from app.services.streaming_observer import DoomLoopDetector, DoomLoopException
+        detector = DoomLoopDetector()
+
+        import json as _json
+
+        headers = {"Content-Type": "application/json"}
+        if self.auth_header:
+            headers.update(self.auth_header)
+
+        async with client.stream(
+            "POST",
+            f"{base_url}/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=float(settings.VLLM_FUTURE_TIMEOUT),
+        ) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                logger.error("[VLLM] Direct stream request failed status=%d body=%r", response.status_code, body)
+                response.raise_for_status()
+
+            buffer = ""
+            try:
+                async for raw_chunk in response.aiter_text():
+                    buffer += raw_chunk
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            continue
+                        try:
+                            chunk_data = _json.loads(data_str)
+                        except _json.JSONDecodeError:
+                            continue
+
+                        # Handle Usage (vLLM specific stream_options output)
+                        if "usage" in chunk_data and chunk_data["usage"]:
+                            usage = chunk_data["usage"]
+                            total_tokens = usage.get("total_tokens", 0)
+                            meta["_usage"] = {
+                                "prompt_tokens": usage.get("prompt_tokens", 0),
+                                "completion_tokens": usage.get("completion_tokens", 0),
+                            }
+
+                        choices = chunk_data.get("choices", [])
+                        if not choices:
+                            continue
+                        
+                        delta = choices[0].get("delta", {})
+                        if "content" in delta and delta["content"]:
+                            chunk_content = delta["content"]
+                            content += chunk_content
+                            detector.on_chunk(chunk_content)
+                            
+                        # Handle tool calls
+                        if "tool_calls" in delta and delta["tool_calls"]:
+                            for tc in delta["tool_calls"]:
+                                idx = tc.get("index")
+                                if idx not in tool_calls_builder:
+                                    tool_calls_builder[idx] = {
+                                        "id": tc.get("id", ""),
+                                        "type": tc.get("type", "function"),
+                                        "function": {"name": "", "arguments": ""}
+                                    }
+                                if "id" in tc and tc["id"]:
+                                    tool_calls_builder[idx]["id"] = tc["id"]
+                                if "function" in tc:
+                                    if "name" in tc["function"] and tc["function"]["name"]:
+                                        tool_calls_builder[idx]["function"]["name"] += tc["function"]["name"]
+                                    if "arguments" in tc["function"] and tc["function"]["arguments"]:
+                                        tool_calls_builder[idx]["function"]["arguments"] += tc["function"]["arguments"]
+
+                        if choices[0].get("finish_reason"):
+                            finish_reason = choices[0]["finish_reason"]
+
+            except DoomLoopException as e:
+                logger.error(f"[VLLM] Direct stream cut short due to DoomLoopDetector: {e}")
+                raise
+
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        data = r.json()
 
-        usage = data.get("usage", {})
-        raw_text = data["choices"][0]["message"].get("content") or ""
-        content, think_content = strip_think_tags(raw_text, return_think_content=True)
-        meta["_think_content"] = think_content
+        # Post-process think tags if generated by Qwen natively in content
+        from app.utils.text_utils import strip_think_tags
+        clean_content, extracted_think = strip_think_tags(content, return_think_content=True)
+        meta["_think_content"] = extracted_think
         
-        total_tokens = usage.get("total_tokens", 0)
+        if tool_calls_builder:
+            # Convert builder dict to list sorted by index
+            payload["_tool_calls_result"] = [tool_calls_builder[i] for i in sorted(tool_calls_builder.keys())]
 
-        # Store usage in metadata for tracker
-        meta["_usage"] = {
-            "prompt_tokens": usage.get("prompt_tokens", 0),
-            "completion_tokens": usage.get("completion_tokens", 0),
-        }
+        payload["_finish_reason"] = finish_reason
 
-        # Capture tool calls if any
-        tool_calls = data["choices"][0]["message"].get("tool_calls")
-        if tool_calls:
-            payload["_tool_calls_result"] = tool_calls
-
-        # Capture finish_reason for truncation detection
-        payload["_finish_reason"] = data["choices"][0].get("finish_reason", "")
-
-        from app.services.streaming_observer import DoomLoopDetector
-        DoomLoopDetector().check_text(content)
-
-        return content, total_tokens, elapsed_ms
+        return clean_content, total_tokens, elapsed_ms
 
     async def _call_prism_agent(
         self,
@@ -1664,13 +1682,7 @@ class VLLMClient:
         ticker = meta.get("ticker", "")
         stream_callback = meta.get("stream_callback")
 
-        if settings.MOCK_LLM:
-            mock_text = self._generate_mock_llm_response(agent_name, ticker)
-            elapsed_ms = int((time.monotonic() - start) * 1000)
-            meta["_think_content"] = ""
-            meta["_usage"] = {"prompt_tokens": 100, "completion_tokens": 100}
-            payload["_finish_reason"] = "stop"
-            return mock_text, 200, elapsed_ms
+
 
         model_id = payload.get("model", self.model)
         system_prompt = meta.get("system_prompt", "")
@@ -2096,15 +2108,20 @@ class VLLMClient:
                 qs,
             )
 
+        # Dynamic timeout: add extra time for large max_tokens to prevent premature aborts
+        dynamic_timeout = float(settings.VLLM_FUTURE_TIMEOUT)
+        if max_tokens > 2048:
+            dynamic_timeout += (max_tokens - 2048) * 0.1
+
         try:
             result_dict = await asyncio.wait_for(
-                future, timeout=float(settings.VLLM_FUTURE_TIMEOUT)
+                future, timeout=dynamic_timeout
             )
         except asyncio.TimeoutError:
             # Penalize the endpoint so future requests prefer other boxes
             target_ep.timeout_penalty_until = time.monotonic() + TIMEOUT_PENALTY_SECONDS
             logger.error(
-                "[VLLM] ⏰ Future TIMEOUT after %ds | agent=%s ticker=%s endpoint=%s | "
+                "[VLLM] ⏰ Future TIMEOUT after %.1fs | agent=%s ticker=%s endpoint=%s | "
                 "active=%d/%d queued=%d | PENALTY applied for %ds",
                 settings.VLLM_FUTURE_TIMEOUT,
                 agent_name,
@@ -2118,7 +2135,7 @@ class VLLMClient:
             if not future.done():
                 future.cancel()
             raise RuntimeError(
-                f"vLLM future timeout ({settings.VLLM_FUTURE_TIMEOUT}s): "
+                f"vLLM future timeout ({dynamic_timeout:.1f}s): "
                 f"{agent_name}/{ticker} on {target_ep.name}"
             )
         except asyncio.CancelledError:
@@ -2295,15 +2312,20 @@ class VLLMClient:
                 qs,
             )
 
+        # Dynamic timeout: add extra time for large max_tokens to prevent premature aborts
+        dynamic_timeout = float(settings.VLLM_FUTURE_TIMEOUT)
+        if max_tokens > 2048:
+            dynamic_timeout += (max_tokens - 2048) * 0.1
+
         try:
             return await asyncio.wait_for(
-                future, timeout=float(settings.VLLM_FUTURE_TIMEOUT)
+                future, timeout=dynamic_timeout
             )
         except asyncio.TimeoutError:
             # Penalize the endpoint so future requests prefer other boxes
             target_ep.timeout_penalty_until = time.monotonic() + TIMEOUT_PENALTY_SECONDS
             logger.error(
-                "[VLLM] ⏰ Future TIMEOUT after %ds | agent=%s ticker=%s endpoint=%s (chat_with_tools) | PENALTY applied for %ds",
+                "[VLLM] ⏰ Future TIMEOUT after %.1fs | agent=%s ticker=%s endpoint=%s (chat_with_tools) | PENALTY applied for %ds",
                 settings.VLLM_FUTURE_TIMEOUT,
                 agent_name,
                 ticker,
@@ -2313,7 +2335,7 @@ class VLLMClient:
             if not future.done():
                 future.cancel()
             raise RuntimeError(
-                f"vLLM future timeout ({settings.VLLM_FUTURE_TIMEOUT}s): "
+                f"vLLM future timeout ({dynamic_timeout:.1f}s): "
                 f"{agent_name}/{ticker} on {target_ep.name} (chat_with_tools)"
             )
         except asyncio.CancelledError:
@@ -2335,8 +2357,7 @@ class VLLMClient:
 
     async def health(self) -> bool:
         """Check if ANY vLLM server is healthy (direct check, bypasses Prism)."""
-        if settings.MOCK_LLM:
-            return True
+
         client = await self._get_client()
         for ep in self._endpoints.values():
             try:
@@ -2356,8 +2377,7 @@ class VLLMClient:
         Uses asyncio.gather so all endpoints are checked in parallel,
         capping worst-case latency at ~5s instead of 5s × N endpoints.
         """
-        if settings.MOCK_LLM:
-            return {"jetson": True, "dgx_spark": True}
+
 
         client = await self._get_client()
         result: dict[str, bool] = {}
@@ -2384,10 +2404,7 @@ class VLLMClient:
         """Dynamically query /v1/models from the endpoint to get the active loaded model.
         Updates ep.model and model_endpoint_cache.
         """
-        if settings.MOCK_LLM:
-            if not getattr(ep, "model", None):
-                ep.model = settings.PRISM_FALLBACK_MODEL
-            return ep.model
+
 
         # Safe mock handling
         from unittest.mock import Mock, MagicMock
@@ -2492,20 +2509,7 @@ class VLLMClient:
             return await self._discover_roles_unlocked()
 
     async def _discover_roles_unlocked(self) -> dict:
-        if settings.MOCK_LLM:
-            roles = {}
-            for name, ep in self._endpoints.items():
-                ep.model = settings.PRISM_FALLBACK_MODEL
-                ep.enabled = True
-                ep.loading = False
-                ep.init_concurrency(self.RESERVED_HIGH_SLOTS)
-                roles[f"{name}_model"] = ep.model
-                roles[f"{name}_url"] = ep.url
-            self.model = settings.PRISM_FALLBACK_MODEL
-            self._roles_discovered = True
-            self._ensure_dispatcher()
-            logger.info("[VLLM] Mock role discovery completed instantly.")
-            return roles
+
 
         client = await self._get_client()
         roles = {}
@@ -2857,8 +2861,7 @@ class VLLMClient:
         - Enabled endpoints whose model changed → updated
         - Enabled endpoints that went offline → auto-disabled
         """
-        if settings.MOCK_LLM:
-            return
+
         client = await self._get_client()
         changes = []
 

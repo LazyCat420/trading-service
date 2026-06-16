@@ -16,7 +16,7 @@ def mocked_vllm_cb(monkeypatch):
     monkeypatch.setattr("app.services.vllm_client.settings.BATCH_TIMEOUT", 5.0)
     monkeypatch.setattr("app.services.vllm_client.settings.BATCH_CIRCUIT_BREAKER_THRESHOLD", 3)
     monkeypatch.setattr("app.services.vllm_client.settings.VLLM_FUTURE_TIMEOUT", 60.0)
-    monkeypatch.setattr("app.services.vllm_client.settings.MOCK_LLM", False)
+
     
     client = VLLMClient()
     

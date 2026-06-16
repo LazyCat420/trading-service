@@ -100,7 +100,7 @@ class Settings(BaseSettings):
         # so 8 workers = 48-80 concurrent requests → vLLM saturation → mass thesis timeouts.
         # 4 workers keeps total LLM load at ~24-40, within adaptive concurrency ceiling.
     )
-    VLLM_FUTURE_TIMEOUT: int = 600  # seconds before a hung LLM future is killed (aligned with batch timeout)
+    VLLM_FUTURE_TIMEOUT: int = 900  # seconds before a hung LLM future is killed (aligned with batch timeout)
     ANALYSIS_WORKER_TIMEOUT_SECONDS: int = (
         900  # 15-min hard cap per ticker — if thesis already failed 2 retries (5.5min),
         # don't let the worker sit idle for another 25 min. Fail fast, move on.
@@ -258,8 +258,7 @@ class Settings(BaseSettings):
     # ── Tool Calling Bypass ──
     USE_TOOL_CALLING: bool = False
 
-    # ── Mock & Fallback LLM ──
-    MOCK_LLM: bool = False
+    # ── Fallback LLM ──
     FALLBACK_TO_PRISM_CLOUD: bool = True
     PRISM_FALLBACK_MODEL: str = "gemini-3.5-flash"
 

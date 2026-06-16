@@ -110,10 +110,7 @@ async def call_prism_agent(
         priority = Priority.NORMAL
 
     start = time.monotonic()
-    if settings.MOCK_LLM:
-        mock_text = llm._generate_mock_llm_response(fallback_agent_name, ticker)
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-        return mock_text, 200, elapsed_ms
+
 
     if max_tokens is None:
         max_tokens = 8192

@@ -53,14 +53,15 @@ async def run_phase1_health(
         except Exception:
             pass
 
-    bypass_ok = settings.MOCK_LLM or (settings.FALLBACK_TO_PRISM_CLOUD and prism_ok)
+    # Allow fallback if Prism Cloud routing is enabled and reachable
+    bypass_ok = settings.FALLBACK_TO_PRISM_CLOUD and prism_ok
 
     if not jetson_ok and not dgx_ok:
         if bypass_ok:
             emit(
                 "started",
                 "bots_offline_fallback",
-                "⚠️ Local GPU endpoints offline. Proceeding using mock/cloud fallback mode.",
+                "⚠️ Local GPU endpoints offline. Proceeding using cloud fallback mode.",
                 status="warning",
             )
             # Ensure start summary parameters are populated for UI
@@ -70,11 +71,15 @@ async def run_phase1_health(
             emit(
                 "started",
                 "bots_offline",
-                "⚠️ All LLM endpoints are UNREACHABLE. Aborting cycle.",
+                "⚠️ All LLM endpoints are UNREACHABLE. Aborting cycle gracefully.",
                 status="error",
             )
             cycle_summary["no_trade_reason"] = "all_bots_down"
-            raise RuntimeError("All LLM endpoints unreachable.")
+            ctx.tickers = []
+            ctx.collect = False
+            ctx.analyze = False
+            ctx.trade = False
+            return
     elif not dgx_ok:
         if bypass_ok:
             cycle_summary["dgx_healthy_start"] = True

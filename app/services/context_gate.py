@@ -37,7 +37,7 @@ SAFETY_MARGIN_TOKENS = 10000
 OUTPUT_CEILING = 8192
 
 # Minimum output tokens — if we can't afford this, the request is too big.
-OUTPUT_FLOOR = 512
+OUTPUT_FLOOR = 1024
 
 # ── tiktoken Encoder (lazy-loaded singleton) ───────────────────────────
 # o200k_base is a good general-purpose BPE encoding that closely
