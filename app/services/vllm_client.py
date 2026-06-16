@@ -436,6 +436,9 @@ class VLLMClient:
         # Active background tasks representing running requests
         self._active_tasks: set[asyncio.Task] = set()
 
+        # Auth header for fallback/direct requests
+        self.auth_header: dict[str, str] | None = None
+
         # ── Global concurrency cap ──────────────────────────────────────
         # Hard limit on total in-flight LLM requests across ALL endpoints.
         # At 20+ concurrent requests, vLLM TPS collapses from ~30 to ~3.

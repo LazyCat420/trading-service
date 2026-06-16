@@ -26,6 +26,14 @@ class DummyController(LifecycleControllerMixin):
     def force_save_checkpoint(cls, *args, **kwargs):
         pass
 
+    @classmethod
+    def _run_cycle(cls, *args, **kwargs):
+        pass
+
+    @classmethod
+    def _checkpoint_heartbeat(cls, *args, **kwargs):
+        pass
+
 
 @pytest.fixture(autouse=True)
 def reset_controller_state():
@@ -135,3 +143,39 @@ async def test_run_phase4_analysis_skips_already_analyzed():
             assert tickers_in_res["AAPL"]["action"] == "BUY"
             assert tickers_in_res["MSFT"]["action"] == "HOLD"
             assert tickers_in_res["GOOGL"]["action"] == "SELL"
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_max_tickers_caps():
+    """Verify that resuming a cycle successfully recovers max_tickers, discovered_tickers, and dynamic_selection_mode."""
+    DummyController._state["status"] = "interrupted"
+    DummyController._state["cycle_id"] = "cycle-12345"
+
+    mock_checkpoint = {
+        "cycle_id": "cycle-12345",
+        "completed_phases": ["collecting"],
+        "cycle_config": {
+            "tickers": ["AAPL", "MSFT"],
+            "max_tickers": 2,
+            "discovered_tickers": 2,
+            "dynamic_selection_mode": True,
+        }
+    }
+
+    with patch.object(PipelineStateDB, "get_checkpoint", return_value=mock_checkpoint) as mock_get:
+        with patch.object(DummyController, "_run_cycle", new_callable=MagicMock) as mock_run:
+            with patch.object(DummyController, "_checkpoint_heartbeat", new_callable=MagicMock):
+                await DummyController._background_resume_cycle("cycle-12345")
+                
+                # Check that DummyController._state was updated with checkpoint settings
+                assert DummyController._state["max_tickers"] == 2
+                assert DummyController._state["discovered_tickers"] == 2
+                assert DummyController._state["dynamic_selection_mode"] is True
+
+                # Check that _run_cycle was task-created with ctx containing correct settings
+                mock_run.assert_called_once()
+                ctx = mock_run.call_args[0][0]
+                assert ctx.max_tickers == 2
+                assert ctx.discovered_tickers == 2
+                assert ctx.dynamic_selection_mode is True
+

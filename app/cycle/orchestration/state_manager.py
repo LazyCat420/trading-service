@@ -150,11 +150,13 @@ class PipelineStateDB:
                         tickers, progress, error, phase,
                         operational_phase, step_count, total_steps,
                         collect_flag, analyze_flag, trade_flag,
+                        max_tickers, discovered_tickers, dynamic_selection_mode,
                         updated_at
                     ) VALUES (
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         %s::jsonb, %s, %s, %s,
+                        %s, %s, %s,
                         %s, %s, %s,
                         %s, %s, %s,
                         CURRENT_TIMESTAMP
@@ -179,6 +181,9 @@ class PipelineStateDB:
                     collect_flag = EXCLUDED.collect_flag,
                     analyze_flag = EXCLUDED.analyze_flag,
                     trade_flag = EXCLUDED.trade_flag,
+                    max_tickers = EXCLUDED.max_tickers,
+                    discovered_tickers = EXCLUDED.discovered_tickers,
+                    dynamic_selection_mode = EXCLUDED.dynamic_selection_mode,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                     [
@@ -202,6 +207,9 @@ class PipelineStateDB:
                         state.get("collect_flag", True),
                         state.get("analyze_flag", True),
                         state.get("trade_flag", False),
+                        state.get("max_tickers"),
+                        state.get("discovered_tickers"),
+                        state.get("dynamic_selection_mode", False),
                     ],
                 )
         except Exception as e:
@@ -364,6 +372,9 @@ class PipelineStateDB:
             "collect_flag": True,
             "analyze_flag": True,
             "trade_flag": False,
+            "max_tickers": None,
+            "discovered_tickers": None,
+            "dynamic_selection_mode": False,
         }
 
     # ─── Cycle checkpoint methods (resume after crash) ───
@@ -556,6 +567,9 @@ class PipelineStateMixin:
                 "collect_flag": cls._state.get("collect_flag", True),
                 "analyze_flag": cls._state.get("analyze_flag", True),
                 "trade_flag": cls._state.get("trade_flag", False),
+                "max_tickers": cls._state.get("max_tickers"),
+                "discovered_tickers": cls._state.get("discovered_tickers"),
+                "dynamic_selection_mode": cls._state.get("dynamic_selection_mode", False),
             }
         else:
             state = PipelineStateDB.get_state(summary_only=summary_only)
@@ -578,7 +592,7 @@ class PipelineStateMixin:
             # NOTE: started_at and finished_at MUST be included here.
             # Without them the frontend gets a new cycle_id paired with
             # the old cycle's started_at, causing timer flicker.
-            for key in ("status", "phase", "progress", "started_at", "finished_at"):
+            for key in ("status", "phase", "progress", "started_at", "finished_at", "max_tickers", "discovered_tickers", "dynamic_selection_mode"):
                 mem_val = cls._state.get(key)
                 if mem_val is not None:
                     state[key] = mem_val

@@ -1543,6 +1543,9 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
     collect_flag BOOLEAN,
     analyze_flag BOOLEAN,
     trade_flag BOOLEAN,
+    max_tickers INTEGER,
+    discovered_tickers INTEGER,
+    dynamic_selection_mode BOOLEAN DEFAULT FALSE,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -255,6 +255,9 @@ class LifecycleControllerMixin:
                     "collect_flag": collect,
                     "analyze_flag": analyze,
                     "trade_flag": trade,
+                    "max_tickers": max_tickers,
+                    "discovered_tickers": discovered_tickers,
+                    "dynamic_selection_mode": dynamic_selection_mode,
                 }
             )
             cls.save_state()
@@ -302,6 +305,7 @@ class LifecycleControllerMixin:
                 trigger_type=trigger_type,
                 schedule_id=schedule_id,
                 max_tickers=0 if dynamic_selection_mode else cap,
+                discovered_tickers=discovered_tickers,
                 dynamic_selection_mode=dynamic_selection_mode,
             )
 
@@ -851,9 +855,16 @@ class LifecycleControllerMixin:
 
             cycle_control.reset()
 
+            max_tickers = config.get("max_tickers")
+            discovered_tickers = config.get("discovered_tickers")
+            dynamic_selection_mode = config.get("dynamic_selection_mode", False)
+
             cls._state.update(
                 {
                     "progress": f"Resuming cycle {cycle_id} from {resume_from} phase",
+                    "max_tickers": max_tickers,
+                    "discovered_tickers": discovered_tickers,
+                    "dynamic_selection_mode": dynamic_selection_mode,
                 }
             )
             cls.save_state()
@@ -893,6 +904,9 @@ class LifecycleControllerMixin:
                 already_analyzed=already_analyzed,
                 existing_results=existing_results,
                 macro_memo=config.get("macro_memo", ""),
+                max_tickers=max_tickers,
+                discovered_tickers=discovered_tickers,
+                dynamic_selection_mode=dynamic_selection_mode,
             )
 
             cls._cycle_task = asyncio.create_task(cls._run_cycle(ctx))
@@ -951,6 +965,9 @@ class LifecycleControllerMixin:
             "analyze_flag": cls._state.get("analyze_flag", True),
             "trade_flag": cls._state.get("trade_flag", True),
             "macro_memo": cls._state.get("macro_memo", ""),
+            "max_tickers": cls._state.get("max_tickers"),
+            "discovered_tickers": cls._state.get("discovered_tickers"),
+            "dynamic_selection_mode": cls._state.get("dynamic_selection_mode", False),
         }
 
         completed_tickers = {}

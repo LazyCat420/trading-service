@@ -123,6 +123,9 @@ def run_migrations(conn):
     _safe_add_column(conn, "pipeline_state", "benchmark_group", "TEXT")
     _safe_add_column(conn, "pipeline_state", "execution_mode", "TEXT")
     _safe_add_column(conn, "pipeline_state", "v2_stage", "INTEGER")
+    _safe_add_column(conn, "pipeline_state", "max_tickers", "INTEGER")
+    _safe_add_column(conn, "pipeline_state", "discovered_tickers", "INTEGER")
+    _safe_add_column(conn, "pipeline_state", "dynamic_selection_mode", "BOOLEAN DEFAULT FALSE")
 
     # ── Pipeline state staleness detection
     _safe_add_column(conn, "pipeline_state", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
