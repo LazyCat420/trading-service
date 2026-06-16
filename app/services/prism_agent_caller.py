@@ -121,7 +121,10 @@ async def call_prism_agent(
     # ── Dynamic Token Constraint Conversion ──
     # Prevent aggressive mid-word truncation by converting tight max_tokens
     # bounds into explicit sentence limits in the system prompt.
-    if max_tokens < 4096:
+    # We skip this override for strict JSON validators that explicitly want tiny token constraints.
+    is_validator = "validator" in fallback_agent_name.lower()
+    
+    if max_tokens < 4096 and not is_validator:
         if max_tokens <= 128:
             sentences = "1 or 2 sentences max"
         elif max_tokens <= 256:
