@@ -384,7 +384,7 @@ async def summarize_stale_records(limit: int = 50) -> int:
                             fallback_system_prompt=system_prompt,
                             fallback_agent_name="lifecycle_summarizer",
                             temperature=0.2,
-                            max_tokens=256,
+                            max_tokens=8192,
                             priority=Priority.LOW,
                             ticker=ticker,
                         )

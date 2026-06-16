@@ -193,7 +193,7 @@ async def _llm_consolidate(lesson_texts: list[str]) -> str | None:
             fallback_system_prompt=system_prompt,
             fallback_agent_name="memory_consolidation",
             temperature=0.1,
-            max_tokens=512,
+            max_tokens=8192,
             priority=Priority.LOW,
             ticker="_system",
         )

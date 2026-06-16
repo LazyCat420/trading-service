@@ -127,7 +127,7 @@ async def _generate_dynamic_prompt(
                 fallback_system_prompt=AGENT_META_SYSTEM,
                 fallback_agent_name=f"{agent_name}_meta",
                 temperature=0.5,
-                max_tokens=2048,
+                max_tokens=8192,
                 priority=Priority.NORMAL,
                 ticker=ticker,
                 cycle_id=cycle_id,

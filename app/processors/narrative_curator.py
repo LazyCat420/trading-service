@@ -175,7 +175,7 @@ New Recent News & Social Developments:
             fallback_system_prompt=NARRATIVE_SYSTEM_PROMPT,
             fallback_agent_name="narrative_curator",
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=8192,
             priority=Priority.NORMAL,
             ticker=ticker,
             cycle_id=cycle_id,

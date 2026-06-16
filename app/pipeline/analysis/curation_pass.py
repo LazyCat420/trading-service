@@ -262,7 +262,7 @@ async def curate_discoveries(
                 fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
                 fallback_agent_name="curation_pass",
                 temperature=0.3,
-                max_tokens=512,
+                max_tokens=8192,
                 priority=Priority.LOW,
                 cycle_id=cycle_id,
             )

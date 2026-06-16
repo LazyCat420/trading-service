@@ -62,7 +62,7 @@ async def generate_consensus(ticker: str, articles: list[dict]) -> dict:
             fallback_system_prompt=CONSENSUS_PROMPT,
             fallback_agent_name="consensus_engine",
             temperature=0.2,
-            max_tokens=2048,
+            max_tokens=8192,
             priority=Priority.NORMAL,
         )
         

@@ -147,7 +147,7 @@ async def _summarize_one(
             user_message=user_text,
             fallback_system_prompt=system,
             fallback_agent_name=agent_name,
-            max_tokens=512,
+            max_tokens=8192,
             temperature=0.2,
             priority=Priority.LOW,
             ticker=ticker,

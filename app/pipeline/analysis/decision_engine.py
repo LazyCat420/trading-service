@@ -324,7 +324,7 @@ async def analyze_ticker(
                 fallback_system_prompt="",
                 fallback_agent_name="glance_detector",
                 temperature=0.1,
-                max_tokens=512,
+                max_tokens=8192,
                 priority=Priority.LOW,
                 ticker=ticker,
                 cycle_id=cycle_id,

@@ -38,7 +38,7 @@ class VLLMDeepEvalWrapper(DeepEvalBaseLLM):
             fallback_system_prompt="You are an expert impartial evaluator determining factual alignment.",
             fallback_agent_name="deepeval_judge",
             temperature=0.0,
-            max_tokens=2048,
+            max_tokens=8192,
             priority=Priority.HIGH,
         )
         return strip_think_tags(response)

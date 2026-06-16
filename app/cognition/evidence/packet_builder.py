@@ -463,7 +463,7 @@ Active Narrative Themes:
                     fallback_system_prompt=PILLAR_ADJUSTER_SYSTEM_PROMPT,
                     fallback_agent_name="pillar_adjuster",
                     temperature=0.2,
-                    max_tokens=2048,
+                    max_tokens=8192,
                     priority=Priority.NORMAL,
                     ticker=ticker,
                 ),

@@ -94,7 +94,7 @@ async def run_data_integrity_check(
             fallback_system_prompt=DATA_INTEGRITY_SYSTEM_PROMPT,
             fallback_agent_name="data_integrity",
             temperature=LLM_TEMPERATURES.get("data_integrity", 0.2),
-            max_tokens=4096,
+            max_tokens=8192,
             priority=Priority.NORMAL,
             ticker=entity_id,
             cycle_id=cycle_id,

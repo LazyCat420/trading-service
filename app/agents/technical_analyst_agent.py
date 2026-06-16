@@ -147,7 +147,7 @@ async def run_technical_analyst(ticker: str, cycle_id: str = "JIT", bot_id: str 
             bot_id=bot_id,
             system_prompt=TECHNICAL_ANALYST_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_tokens=2000,
+            max_tokens=8192,
             enable_tools=False
         )
     except Exception as e:

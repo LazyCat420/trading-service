@@ -120,7 +120,7 @@ async def run_benchmark_agent(cycle_id: str, days_back: int = 30) -> dict:
             fallback_system_prompt="",
             fallback_agent_name="benchmark_agent",
             temperature=0.2,
-            max_tokens=2048,
+            max_tokens=8192,
             priority=Priority.LOW,
             cycle_id=cycle_id,
         )

@@ -235,7 +235,7 @@ def format_agent_summaries(agent_results: dict) -> str:
     # Prefer capsules if available
     capsules = agent_results.get("_capsules")
     if capsules and isinstance(capsules, list) and len(capsules) > 0:
-        stack = format_capsule_stack(capsules, max_tokens=600)
+        stack = format_capsule_stack(capsules, max_tokens=8192)
         logger.info(
             "[AGENTS] Using capsule stack for RLM (%d capsules, ~%d chars)",
             len(capsules), len(stack),

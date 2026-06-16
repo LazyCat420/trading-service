@@ -223,7 +223,7 @@ async def generate_flash_briefing(report_type: str | None = None) -> str | None:
         fallback_system_prompt=system_prompt,
         fallback_agent_name="flash_briefing",
         temperature=0.3,
-        max_tokens=1000,
+        max_tokens=8192,
         priority=Priority.NORMAL,
     )
 

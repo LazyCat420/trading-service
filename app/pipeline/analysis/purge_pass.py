@@ -260,7 +260,7 @@ async def run_purge_pass(
                     fallback_system_prompt="",
                     fallback_agent_name="purge_pass",
                     temperature=0.3,
-                    max_tokens=512,
+                    max_tokens=8192,
                     priority=Priority.LOW,
                     cycle_id=cycle_id,
                 )

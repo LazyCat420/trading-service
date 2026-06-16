@@ -205,7 +205,7 @@ async def generate_replacement_prompt(role: str, post_mortem: dict, new_tools: l
         user_message=user_message,
         fallback_system_prompt=system_prompt,
         fallback_agent_name="hiring_agent",
-        max_tokens=4096,
+        max_tokens=8192,
         temperature=0.3
     )
     

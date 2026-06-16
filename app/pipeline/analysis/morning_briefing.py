@@ -107,7 +107,7 @@ async def generate_morning_briefing() -> str:
                 fallback_system_prompt="",
                 fallback_agent_name="morning_briefing_analyst",
                 temperature=0.3,
-                max_tokens=1500,
+                max_tokens=8192,
                 priority=Priority.HIGH,
             )
             if response:

@@ -295,7 +295,7 @@ async def execute_open_position_fast_track(
                 bot_id=bot_id,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                max_tokens=256,
+                max_tokens=8192,
                 enable_tools=False,
             )
     else:
@@ -306,7 +306,7 @@ async def execute_open_position_fast_track(
             bot_id=bot_id,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            max_tokens=256,
+            max_tokens=8192,
             enable_tools=False,
         )
 

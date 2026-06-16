@@ -222,7 +222,7 @@ async def _call_llm_for_memo(data_snapshot: str, emit: Callable) -> str:
         fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
         fallback_agent_name="macro_scout",
         temperature=0.3,
-        max_tokens=2000,
+        max_tokens=8192,
         priority=Priority.LOW,
     )
 

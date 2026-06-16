@@ -97,7 +97,7 @@ async def run_ticker_consolidation(ticker: str):
             fallback_system_prompt=CONSOLIDATION_SYSTEM_PROMPT,
             fallback_agent_name="memory_consolidator",
             temperature=0.2,
-            max_tokens=2048,
+            max_tokens=8192,
             priority=Priority.LOW,
             ticker=ticker,
         )

@@ -180,7 +180,7 @@ async def _call_discovery_llm(data_snapshot: str) -> str:
         fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
         fallback_agent_name="news_discovery",
         temperature=0.3,
-        max_tokens=2048,
+        max_tokens=8192,
         priority=Priority.LOW,
     )
 

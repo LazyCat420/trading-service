@@ -331,3 +331,51 @@
 - **Action:** HOLD @ 78%
 - **Rationale:** Pampa Energía presents a compelling GARP thesis with a trailing P/E of 10.55 and forward P/E of just 6.40 against 38.4% revenue growth, indicating significant earnings acceleration is priced in at a r...
 
+## 2026-06-16 19:13:45 - BCE
+- **Action:** HOLD @ 65%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2025-09-30 00:00 UTC to 2026-06-16 19:03 UTC
+
+📝 Memory context: Memory unavailable (timeout)....
+
+## 2026-06-16 19:15:39 - CME
+- **Action:** BUY @ 78%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2025-09-30 00:00 UTC to 2026-06-16 19:08 UTC
+
+📝 Memory context: - [2026-06-09] pipeline_run: BUY (conf=75)
+- [2026-06-07] pipeline_run: SELL (conf=62)
+- [2026...
+
+## 2026-06-16 19:24:37 - HBM
+- **Action:** SELL @ 72%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2025-09-30 00:00 UTC to 2026-06-16 00:00 UTC...
+
+## 2026-06-16 19:26:36 - HCA
+- **Action:** BUY @ 72%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2025-09-30 00:00 UTC to 2026-06-16 19:19 UTC
+
+📝 Memory context: - [2026-06-07] pipeline_run: BUY (conf=72)
+- [2026-06-04] pipeline_run: BUY (conf=82)
+- [2026-...
+
+## 2026-06-16 19:34:44 - LRMR
+- **Action:** SELL @ 65%
+- **Rationale:** Failed to parse thesis
+
+📅 Data timeframe: 2025-09-30 00:00 UTC to 2026-06-16 19:23 UTC
+
+📝 Memory context: - [2026-06-05] pipeline_run: SELL (conf=92)
+- [2026-06-04] pipeline_run: BUY (conf=72)
+- [2026...
+
+## 2026-06-16 19:34:54 - IONQ
+- **Action:** SELL @ 25%
+- **Rationale:** Multiple HIGH-activation sell signals with 85% confidence conflict with RSI < 65 entry condition. Extreme valuation (P/E 156.87, Forward P/E -58.69), elevated beta (3.18), and negative forward earning...
+

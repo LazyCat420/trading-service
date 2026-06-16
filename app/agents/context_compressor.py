@@ -138,7 +138,7 @@ async def compress_history(
             fallback_system_prompt="You are a context compression engine. Summarize facts densely.",
             fallback_agent_name="context_compressor",
             temperature=0.1,
-            max_tokens=1000,
+            max_tokens=8192,
             priority=Priority.NORMAL,
         )
 

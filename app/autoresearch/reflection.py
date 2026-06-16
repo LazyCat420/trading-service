@@ -74,7 +74,7 @@ async def _reflect(audit_bundle: dict) -> dict:
             system="You are a trading system auditor. Output valid JSON only.",
             user=prompt,
             temperature=0.1,
-            max_tokens=500,
+            max_tokens=8192,
             agent_name="autoresearch_reflection",
             ticker="_system",
             priority=Priority.LOW

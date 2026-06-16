@@ -109,7 +109,7 @@ async def _validate_prompt(
             fallback_system_prompt=proposed_fix[:2000],
             fallback_agent_name="evo_test_prove",
             temperature=0.1,
-            max_tokens=512,
+            max_tokens=8192,
             priority=Priority.LOW,
             ticker="_test",
         )

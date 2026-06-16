@@ -13,7 +13,7 @@ Usage:
     from app.services.embedding_service import embedder
     vec = embedder.embed_text("NVDA earnings beat expectations")
     vecs = embedder.embed_batch(["text1", "text2", "text3"])
-    chunks = embedder.chunk_text("very long article...", max_tokens=512)
+    chunks = embedder.chunk_text("very long article...", max_tokens=8192)
 """
 
 import logging

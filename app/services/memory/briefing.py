@@ -96,7 +96,7 @@ Example output:
             fallback_system_prompt="You are a strict JSON data summarizer.",
             fallback_agent_name="memory_briefer",
             temperature=0.0,
-            max_tokens=600,
+            max_tokens=8192,
             priority=Priority.HIGH,
         )
 

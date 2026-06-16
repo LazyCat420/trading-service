@@ -428,7 +428,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                             system=SYSTEM_PROMPT,
                             user=user_prompt,
                             temperature=0.1,
-                            max_tokens=256,
+                            max_tokens=8192,
                             priority=Priority.HIGH,
                             agent_name="judge_evaluator",
                             ticker=ticker,

@@ -470,7 +470,7 @@ async def evaluate_strategy(
                     fallback_system_prompt=SYSTEM_PROMPT,
                     fallback_agent_name="strategy_evaluator",
                     temperature=0.1,
-                    max_tokens=512,
+                    max_tokens=8192,
                     priority=Priority.HIGH,
                 )
                 logger.info(

@@ -132,7 +132,7 @@ async def select_tools_for_task(
             ticker=ticker,
             cycle_id=cycle_id,
             priority=priority,
-            max_tokens=2048,
+            max_tokens=8192,
         )
 
         raw_text = result.get("text", "").strip()

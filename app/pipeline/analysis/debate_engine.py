@@ -171,7 +171,7 @@ async def run_debate(
             fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
             fallback_agent_name="debate_meta",
             temperature=0.7,
-            max_tokens=512,
+            max_tokens=8192,
             priority=Priority.NORMAL,
             ticker=ticker,
             cycle_id=cycle_id,
@@ -285,7 +285,7 @@ async def run_debate(
             fallback_system_prompt=persona_prompt,
             fallback_agent_name="debate_challenge",
             temperature=0.4,
-            max_tokens=768,
+            max_tokens=8192,
             priority=Priority.NORMAL,
             ticker=ticker,
             cycle_id=cycle_id,
@@ -376,7 +376,7 @@ async def run_debate(
                 fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
                 fallback_agent_name="debate_cross_exam",
                 temperature=0.1,
-                max_tokens=512,
+                max_tokens=8192,
                 priority=Priority.NORMAL,
                 ticker=ticker,
                 cycle_id=cycle_id,
@@ -424,7 +424,7 @@ async def run_debate(
             fallback_system_prompt="",  # Loaded dynamically from app.agents.custom
             fallback_agent_name="debate_synthesis",
             temperature=0.2,
-            max_tokens=512,
+            max_tokens=8192,
             priority=Priority.NORMAL,
             ticker=ticker,
             cycle_id=cycle_id,

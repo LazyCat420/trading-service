@@ -100,7 +100,7 @@ async def evaluate_relevance(text: str, context: str = "") -> dict:
                 fallback_system_prompt=current_prompt,
                 fallback_agent_name="data_janitor",
                 temperature=0.1,
-                max_tokens=800,
+                max_tokens=8192,
                 priority=Priority.LOW,
             )
 
@@ -129,7 +129,7 @@ async def evaluate_relevance(text: str, context: str = "") -> dict:
                     fallback_system_prompt="You are a strict QA API. Respond ONLY in JSON.",
                     fallback_agent_name="data_janitor_critic",
                     temperature=0.1,
-                    max_tokens=150,
+                    max_tokens=8192,
                     priority=Priority.LOW,
                 )
                 critic_match = re.search(r"\{.*\}", critic_res, re.DOTALL)

@@ -245,7 +245,7 @@ async def run_ticker_curator(
         system_prompt=CURATOR_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         enable_tools=False,
-        max_tokens=4096,
+        max_tokens=8192,
     )
 
     return result

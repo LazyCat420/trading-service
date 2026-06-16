@@ -119,7 +119,7 @@ async def generate_prompt(
         system_prompt=META_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         temperature=0.7,  # Higher temp for creative prompt generation
-        max_tokens=768,
+        max_tokens=8192,
     )
 
     from app.utils.text_utils import parse_json_response

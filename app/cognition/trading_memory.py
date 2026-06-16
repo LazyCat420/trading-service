@@ -312,7 +312,7 @@ class TradingMemory:
                 fallback_system_prompt=consolidation_sys,
                 fallback_agent_name="memory_consolidator",
                 temperature=0.0,
-                max_tokens=500,
+                max_tokens=8192,
                 priority=Priority.LOW,
             )
             new_entries = [

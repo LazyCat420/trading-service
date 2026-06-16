@@ -276,7 +276,7 @@ class EvolutionDebateCouncil:
                 fallback_system_prompt=proposer_system,
                 fallback_agent_name=f"evo_proposer_{round_tag}",
                 temperature=0.4,
-                max_tokens=4096,
+                max_tokens=8192,
                 priority=Priority.LOW,
                 cycle_id=cycle_id,
             )
@@ -343,7 +343,7 @@ class EvolutionDebateCouncil:
                 fallback_system_prompt=critic_system,
                 fallback_agent_name=f"evo_critic_{round_tag}",
                 temperature=0.3,
-                max_tokens=2048,
+                max_tokens=8192,
                 priority=Priority.LOW,
                 cycle_id=cycle_id,
             )
@@ -429,7 +429,7 @@ class EvolutionDebateCouncil:
                 fallback_system_prompt=judge_system,
                 fallback_agent_name=f"evo_judge_{round_tag}",
                 temperature=0.1,
-                max_tokens=2048,
+                max_tokens=8192,
                 priority=Priority.LOW,
                 cycle_id=cycle_id,
             )
