@@ -182,6 +182,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "assess_risk_environment",
         "get_market_regime",
         "query_brain_graph",
+        "graph_learn",
         "calculate_portfolio_allocation",
         "calculate_stop_loss",
         "calculate_position_size",
@@ -254,6 +255,8 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_database_facts",
         "run_sql_query",
         "check_hallucination",
+        "query_brain_graph",
+        "graph_learn",
         # Performance
         "get_performance_metrics",
         "audit_decision_quality",
