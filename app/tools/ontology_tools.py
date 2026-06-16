@@ -36,14 +36,15 @@ from app.cognition.ontology.graph_learn_tool import graph_learn
                     "properties": {
                         "source": {"type": "string"},
                         "target": {"type": "string"},
-                        "relation": {"type": "string"},
+                        "relation": {"type": "string", "description": "e.g. SUPPORTS, CONTRADICTS, DRIVES, MITIGATES"},
                         "weight": {"type": "number"},
                         "reason": {"type": "string"}
                     },
                     "required": ["source", "target", "relation"]
                 }
             }
-        }
+        },
+        "required": ["nodes", "edges"]
     },
     permission=PermissionLevel.WRITE,
     tier=1,

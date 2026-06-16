@@ -138,11 +138,27 @@ async def run_agent_loop(
         try:
             from app.db.connection import get_db
             with get_db() as db:
+                # Fetch hold streak
                 row = db.execute("SELECT hold_streak FROM ticker_health WHERE ticker = %s", [ticker]).fetchone()
                 if row and row[0]:
                     hold_streak = row[0]
+                
+                # Fetch active cycle directives
+                directives = db.execute(
+                    "SELECT directive_type, directive_text, target_ticker, severity "
+                    "FROM cycle_directives WHERE status = 'active'"
+                ).fetchall()
+                if directives:
+                    relevant = []
+                    for d in directives:
+                        if not d[2] or d[2] == ticker:
+                            relevant.append(f"[{d[3]}] {d[0]}: {d[1]}")
+                    if relevant:
+                        dir_text = "\n".join(relevant)
+                        dynamic_instructions += f"\n\n### CYCLE DIRECTIVES (Highest Priority):\n{dir_text}\n"
+
         except Exception as e:
-            logger.warning(f"[AgentLoop] Failed to fetch hold_streak: {e}")
+            logger.warning(f"[AgentLoop] Failed to fetch hold_streak or directives: {e}")
 
         if hold_streak >= 3:
             dynamic_instructions += (

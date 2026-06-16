@@ -126,38 +126,43 @@ def _check_degradation(deploy_cycle_id: str, current_cycle_id: str) -> bool:
                 return True
 
             # Get the pre-deploy score (the cycle that triggered the fix)
-            before = db.execute(
+            cursor_before = db.execute(
                 "SELECT overall_score, data_quality_score, decision_quality_score "
                 "FROM autoresearch_reports WHERE cycle_id = %s",
                 [deploy_cycle_id],
-            ).fetchone()
+            )
+            before = cursor_before.fetchone()
 
-            # Get the current (post-deploy) score
-            after = db.execute(
+            cursor_after = db.execute(
                 "SELECT overall_score, data_quality_score, decision_quality_score "
                 "FROM autoresearch_reports WHERE cycle_id = %s",
                 [current_cycle_id],
-            ).fetchone()
+            )
+            after = cursor_after.fetchone()
 
             if not before or not after:
                 return False  # Can't compare — assume OK
 
-            # Check if overall score dropped by more than 10 points
-            before_overall = before[0] or 0
-            after_overall = after[0] or 0
+            before_decision = before[2] or 0
+            after_decision = after[2] or 0
+            
+            before_data = before[1] or 0
+            after_data = after[1] or 0
 
-            if after_overall < before_overall - 10:
-                logger.info(
-                    "[ROLLBACK-MONITOR] Overall score dropped: %.1f → %.1f",
-                    before_overall,
-                    after_overall,
+            # Check if decision quality dropped by more than 10 points
+            if after_decision < before_decision - 10:
+                logger.warning(
+                    "[RollbackMonitor] Degradation detected: Decision quality dropped from %s to %s",
+                    before_decision, after_decision
                 )
                 return True
 
             # Check if data quality dropped significantly
-            before_data = before[1] or 0
-            after_data = after[1] or 0
             if after_data < before_data - 15:
+                logger.warning(
+                    "[RollbackMonitor] Degradation detected: Data quality dropped from %s to %s",
+                    before_data, after_data
+                )
                 return True
 
             return False
