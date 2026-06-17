@@ -264,6 +264,70 @@ class LogManager:
         }
         self._write_jsonl(self._cycle_path(cycle_id), log_entry)
 
+        try:
+            from app.db.connection import get_db
+            from psycopg.types.json import Jsonb
+            
+            with get_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO cycle_run_summaries (
+                        cycle_id, trigger_type, started_at, finished_at, status, elapsed_ms,
+                        tickers_requested, tickers_final, 
+                        collect_requested, analyze_requested, trade_requested,
+                        analysis_results_count, buy_count, sell_count, hold_count,
+                        trade_attempted, trade_executed, trade_failed,
+                        no_trade_reason, primary_failure_reason,
+                        summary_json
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s
+                    ) ON CONFLICT (cycle_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        finished_at = EXCLUDED.finished_at,
+                        elapsed_ms = EXCLUDED.elapsed_ms,
+                        analysis_results_count = EXCLUDED.analysis_results_count,
+                        buy_count = EXCLUDED.buy_count,
+                        sell_count = EXCLUDED.sell_count,
+                        hold_count = EXCLUDED.hold_count,
+                        trade_attempted = EXCLUDED.trade_attempted,
+                        trade_executed = EXCLUDED.trade_executed,
+                        trade_failed = EXCLUDED.trade_failed,
+                        no_trade_reason = EXCLUDED.no_trade_reason,
+                        primary_failure_reason = EXCLUDED.primary_failure_reason,
+                        summary_json = EXCLUDED.summary_json
+                    """,
+                    [
+                        cycle_id,
+                        summary.get("trigger_type", "manual"),
+                        summary.get("started_at"),
+                        summary.get("ended_at"),
+                        summary.get("status", "unknown"),
+                        summary.get("elapsed_ms", 0),
+                        Jsonb(summary.get("tickers_requested", [])),
+                        Jsonb(summary.get("tickers", [])),
+                        summary.get("collect_flag", False),
+                        summary.get("analyze_flag", False),
+                        summary.get("trade_flag", False),
+                        summary.get("analysis_results_count", 0),
+                        summary.get("buy_count", 0),
+                        summary.get("sell_count", 0),
+                        summary.get("hold_count", 0),
+                        summary.get("trade_attempted", 0),
+                        summary.get("trade_executed", 0),
+                        summary.get("trade_failed", 0),
+                        summary.get("no_trade_reason"),
+                        summary.get("primary_failure_reason"),
+                        Jsonb(summary)
+                    ]
+                )
+                db.commit()
+        except Exception as e:
+            logger.debug("[LogManager] Failed to write cycle summary to postgres: %s", e)
+
     # ── Crash Recovery Detection (NEW) ────────────────────────────────────
 
     def detect_and_log_crashed_cycles(self, max_age_hours: int = 48) -> list[dict]:

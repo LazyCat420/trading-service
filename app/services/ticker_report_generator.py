@@ -330,7 +330,7 @@ class TickerReportGenerator:
                 cycle_id=cycle_id,
                 ticker="__SUMMARY__",
                 report_markdown=summary_md,
-                result={"action": "SUMMARY", "confidence": 0},
+                result={"action": "SUMMARY", "confidence": 0, "_report_data": cycle_summary or {}},
                 is_summary=True,
             )
             summary_saved = True
@@ -782,6 +782,11 @@ class TickerReportGenerator:
                 "total_time_s": result.get("total_time_s", 0),
                 "escalated": result.get("escalated", False),
             }
+
+            # Merge full report data into summary to expose structured data to frontend
+            report_data = result.get("_report_data", {})
+            if report_data:
+                result_summary.update(report_data)
 
             with get_db() as db:
                 db.execute(
