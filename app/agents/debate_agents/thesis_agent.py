@@ -53,7 +53,7 @@ GROUNDING REQUIREMENTS (critical for evaluation):
 Respond with exactly this JSON schema:
 {{
   "action": "{allowed_actions}",
-  "confidence": 0-100,
+  "confidence": 85,
   "conviction": "WATCH | LOW | MODERATE | HIGH | EXTREME",
   "management_quality": "1-2 sentence assessment of management team quality and alignment",
   "competitive_moat": "1-2 sentence assessment of durable competitive advantage",
@@ -85,7 +85,7 @@ Do NOT override the judge's decision. Instead:
 Respond with exactly this JSON schema:
 {{
   "action": "{allowed_actions}",
-  "confidence": 0-100,
+  "confidence": 85,
   "conviction": "WATCH | LOW | MODERATE | HIGH | EXTREME",
   "management_quality": "1-2 sentence assessment of management team quality and alignment",
   "competitive_moat": "1-2 sentence assessment of durable competitive advantage",
@@ -210,7 +210,7 @@ async def generate_thesis(
             fallback_system_prompt=active_prompt,
             fallback_agent_name="thesis_agent",
             temperature=LLM_TEMPERATURES.get(active_temp_key, 0.5),
-            max_tokens=8192,
+            max_tokens=2048,
             priority=Priority.NORMAL,
             ticker=entity_id,
             cycle_id=cycle_id,

@@ -120,8 +120,9 @@ async def call_prism_agent(
     # bounds into explicit sentence limits in the system prompt.
     # We skip this override for strict JSON validators that explicitly want tiny token constraints.
     is_validator = "validator" in fallback_agent_name.lower()
+    is_thesis = "thesis" in fallback_agent_name.lower()
     
-    if max_tokens < 4096 and not is_validator:
+    if max_tokens < 4096 and not is_validator and not is_thesis:
         if max_tokens <= 128:
             sentences = "1 or 2 sentences max"
         elif max_tokens <= 256:
