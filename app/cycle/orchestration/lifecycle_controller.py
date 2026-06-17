@@ -219,6 +219,15 @@ class LifecycleControllerMixin:
 
             cycle_control.reset()
 
+            # Reset the LLM kill switch so requests can flow for the new cycle.
+            # Must happen AFTER cycle_control.reset() to prevent race conditions
+            # where the dispatch loop sees is_stopped=False but _killed=True.
+            try:
+                from app.services.vllm_client import llm
+                llm.reset_kill_switch()
+            except Exception as e:
+                logger.warning("[CYCLE] Failed to reset LLM kill switch (non-fatal): %s", e)
+
             try:
                 from app.services.memory.working_memory import working_memory
                 from app.services.session_profile import profile_memory
@@ -495,6 +504,16 @@ class LifecycleControllerMixin:
 
         # 1. Signal the pipeline to stop (immediate flag flip)
         cycle_control.stop()
+
+        # 1b. Engage LLM kill switch IMMEDIATELY — don't wait for
+        # background stop_cycle(). This prevents any new pipeline
+        # requests from being sent to Prism while cleanup runs.
+        try:
+            from app.services.vllm_client import llm
+            llm._killed = True
+            logger.info("[CYCLE] Kill switch engaged immediately on stop request")
+        except Exception:
+            pass
 
         # 2. Set state to 'stopping' so UI reflects it instantly
         cls._state["status"] = "stopping"

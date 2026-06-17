@@ -435,6 +435,10 @@ class VLLMClient:
         self._roles_discovered: bool = False
         # Active background tasks representing running requests
         self._active_tasks: set[asyncio.Task] = set()
+        # Kill switch — when True, all non-HIGH pipeline requests are
+        # rejected immediately. Set by abort_active_requests() on stop,
+        # cleared by reset_kill_switch() on new cycle start.
+        self._killed = False
 
         # Auth header for fallback/direct requests
         self.auth_header: dict[str, str] | None = None
@@ -1068,6 +1072,14 @@ class VLLMClient:
         self, item: QueueItem, ep: VLLMEndpoint, release_pipeline: bool = False
     ):
         """Execute a single queued request through Prism gateway."""
+        # Kill switch gate: if killed, cancel this item immediately
+        # instead of sending it to Prism (where it would become a zombie).
+        if self._killed and item.priority > Priority.HIGH:
+            if not item.future.done():
+                item.future.cancel()
+            ep.active_count -= 0  # never incremented yet
+            return
+
         ep.active_count += 1
         semaphore_active = ep.active_count
         semaphore_max = ep.max_concurrent
@@ -1583,6 +1595,11 @@ class VLLMClient:
         headers = {"Content-Type": "application/json"}
         if self.auth_header:
             headers.update(self.auth_header)
+        # Observability: tag all outbound requests so Prism logs show
+        # which cycle/agent/source generated each request.
+        headers["x-cycle-id"] = meta.get("cycle_id", "background")
+        headers["x-agent"] = meta.get("agent_name", "unknown")
+        headers["x-source"] = "trading-service"
 
         async with client.stream(
             "POST",
@@ -1720,6 +1737,11 @@ class VLLMClient:
             actor_label=resolved_actor_label,
         )
         agent_payload, target_url, headers = prism_payload
+        # Observability: tag all outbound Prism requests so admin shows
+        # which cycle/agent generated each request.
+        headers["x-cycle-id"] = meta.get("cycle_id", "background")
+        headers["x-agent"] = meta.get("agent_name", "unknown")
+        headers["x-source"] = "trading-service"
 
         # Convert non-streaming URL to streaming URL
         target_url = target_url.replace("?stream=false", "")
@@ -1971,9 +1993,14 @@ class VLLMClient:
         images: list of base64 data URIs for vision support.
         tools: optional list of tool schemas for function calling.
         """
-        # ── Stop gate: reject pipeline requests when cycle is stopped ──
+        # ── Kill switch gate: reject pipeline requests when killed ──
         # HIGH priority (user chat) is always allowed through so the user
         # can still interact even during/after a stop.
+        if priority > Priority.HIGH and self._killed:
+            raise asyncio.CancelledError(
+                "LLM client killed — stop in progress (no request sent to Prism)"
+            )
+        # Also check the cooperative stop flag
         if priority > Priority.HIGH:
             try:
                 from app.pipeline.orchestration.cycle_control import cycle_control
@@ -3524,8 +3551,22 @@ class VLLMClient:
             logger.info("[VLLM] Cancelled %d active background requests", cancelled_count)
         return cancelled_count
 
+    def reset_kill_switch(self):
+        """Clear the kill switch so new cycle requests can flow.
+
+        Called at cycle start to re-enable outbound requests.
+        """
+        if self._killed:
+            logger.info("[VLLM] Kill switch RESET — outbound requests re-enabled")
+        self._killed = False
+
     async def abort_active_requests(self) -> int:
         """Cancel all active background requests and close HTTP clients to force socket closure."""
+        # KILL SWITCH: block all new outbound pipeline requests immediately.
+        # Since Prism doesn't propagate client disconnects to vLLM, this is
+        # the only way to prevent new requests from reaching the GPU boxes.
+        self._killed = True
+        logger.info("[VLLM] 🛑 Kill switch ENGAGED — all new pipeline requests blocked")
         cancelled_count = self.cancel_active_requests()
         self.drain_queues()
         

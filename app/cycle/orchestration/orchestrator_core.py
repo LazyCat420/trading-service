@@ -32,6 +32,15 @@ from app.utils.emit import noop_emit
 logger = logging.getLogger(__name__)
 _auditor = CycleAuditor()
 
+# Module-level cycle ID for observability: allows background jobs
+# and the scheduler to know which cycle is currently running.
+_current_cycle_id: str = ""
+
+
+def get_current_cycle_id() -> str:
+    """Return the currently running cycle ID, or empty string if no cycle is active."""
+    return _current_cycle_id
+
 
 class OrchestratorCoreMixin:
     """
@@ -50,6 +59,10 @@ class OrchestratorCoreMixin:
         pipeline_profiler.start_cycle(ctx.cycle_id)
         cls._start_time = time.monotonic()
         loop_start = datetime.now(timezone.utc)
+
+        # Track current cycle globally for observability
+        global _current_cycle_id
+        _current_cycle_id = ctx.cycle_id
 
         logger.info(
             "===== CYCLE START: %s =====", loop_start.strftime("%Y-%m-%d %H:%M:%S")
@@ -472,34 +485,43 @@ class OrchestratorCoreMixin:
 
             # ── Trigger AutoResearch (BOUNDED — was fire-and-forget, caused zombie loops) ──
             if getattr(ctx, "trigger_type", "manual") != "smoke_test":
-                try:
-                    _AUTORESEARCH_TIMEOUT = 120  # seconds — hard cap
-                    cls._autoresearch_task = asyncio.create_task(
-                        run_autoresearch(ctx.cycle_id, dict(cls._cycle_summary))
-                    )
-                    logger.info("[CYCLE] Triggered AutoResearch for cycle %s (timeout=%ds)", ctx.cycle_id, _AUTORESEARCH_TIMEOUT)
+                # Guard: skip if cycle was stopped during post-phase
+                if cycle_control.is_stopped:
+                    logger.info("[CYCLE] Skipping AutoResearch — cycle is stopped")
+                else:
                     try:
-                        await asyncio.wait_for(cls._autoresearch_task, timeout=_AUTORESEARCH_TIMEOUT)
-                        logger.info("[CYCLE] AutoResearch completed successfully.")
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "[CYCLE] AutoResearch timeout (%ds) — cancelling to prevent zombie loop",
-                            _AUTORESEARCH_TIMEOUT,
+                        _AUTORESEARCH_TIMEOUT = 120  # seconds — hard cap
+                        cls._autoresearch_task = asyncio.create_task(
+                            run_autoresearch(ctx.cycle_id, dict(cls._cycle_summary))
                         )
-                        cls._autoresearch_task.cancel()
+                        logger.info("[CYCLE] Triggered AutoResearch for cycle %s (timeout=%ds)", ctx.cycle_id, _AUTORESEARCH_TIMEOUT)
                         try:
-                            await cls._autoresearch_task
-                        except (asyncio.CancelledError, Exception):
-                            pass
-                except Exception as ar_err:
-                    logger.warning("[CYCLE] Failed to trigger AutoResearch: %s", ar_err)
+                            await asyncio.wait_for(cls._autoresearch_task, timeout=_AUTORESEARCH_TIMEOUT)
+                            logger.info("[CYCLE] AutoResearch completed successfully.")
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "[CYCLE] AutoResearch timeout (%ds) — cancelling to prevent zombie loop",
+                                _AUTORESEARCH_TIMEOUT,
+                            )
+                            cls._autoresearch_task.cancel()
+                            try:
+                                await cls._autoresearch_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                    except Exception as ar_err:
+                        logger.warning("[CYCLE] Failed to trigger AutoResearch: %s", ar_err)
             else:
                 logger.info("[CYCLE] Smoke test detected — skipping AutoResearch.")
 
             # ── Watchlist Curator: LLM-powered watchlist pruning ──
             # Scan all watched tickers for the 3+ HOLD/SELL trigger and run
             # the LLM curator on qualifying tickers.
-            if getattr(ctx, "trigger_type", "manual") != "smoke_test":
+            # Guard: skip if cycle was stopped during post-phase
+            if cycle_control.is_stopped:
+                logger.info("[CYCLE] Skipping Watchlist Curator — cycle is stopped")
+            elif getattr(ctx, "trigger_type", "manual") != "smoke_test":
+                _CURATOR_TIMEOUT = 300  # 5 minutes total cap
+                _CURATOR_MAX_TICKERS = 10  # cap per cycle to prevent runaway loops
                 try:
                     from app.cognition.watchlist_curator import (
                         should_trigger_curation,
@@ -509,12 +531,25 @@ class OrchestratorCoreMixin:
 
                     curated_count = 0
                     removed_count = 0
+                    _curator_start = time.monotonic()
                     with get_db() as db:
                         attn_rows = db.execute(
                             "SELECT ticker, recent_decisions FROM ticker_attention WHERE recent_decisions IS NOT NULL"
                         ).fetchall()
 
                     for ticker_row, decisions_json in attn_rows:
+                        # Stop-awareness: bail out immediately if stopped
+                        if cycle_control.is_stopped:
+                            logger.info("[CURATOR] Stopped mid-loop — exiting")
+                            break
+                        # Timeout guard
+                        if time.monotonic() - _curator_start > _CURATOR_TIMEOUT:
+                            logger.warning("[CURATOR] Timeout (%ds) — stopping curator loop", _CURATOR_TIMEOUT)
+                            break
+                        # Iteration cap
+                        if curated_count >= _CURATOR_MAX_TICKERS:
+                            logger.info("[CURATOR] Reached max tickers cap (%d) — stopping", _CURATOR_MAX_TICKERS)
+                            break
                         try:
                             import json as _json
                             decisions = decisions_json if isinstance(decisions_json, list) else _json.loads(decisions_json)
@@ -684,6 +719,9 @@ class OrchestratorCoreMixin:
                 pass
             raise
         finally:
+            # Clear global cycle ID tracker
+            global _current_cycle_id
+            _current_cycle_id = ""
             cls._finalize_cycle_telemetry(ctx)
 
     @classmethod

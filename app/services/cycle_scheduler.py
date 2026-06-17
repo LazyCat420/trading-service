@@ -75,13 +75,17 @@ class SchedulerService:
     @staticmethod
     async def execute_schedule(schedule_id: str):
         """Callback fired by APScheduler when it's time to run a cycle."""
-        if cycle_control.is_paused:
+        # CRITICAL FIX: Do NOT auto-resume from paused state.
+        # When the user hits Stop, the system enters paused state.
+        # Previously, scheduled cycles would auto-resume, causing
+        # zombie processing to restart even after explicit stop.
+        if cycle_control.is_paused or cycle_control.is_stopped:
             logger.info(
-                "[SCHEDULER] System is PAUSED but scheduled cycle overrides — "
-                "auto-resuming for schedule %s",
+                "[SCHEDULER] System is PAUSED/STOPPED — skipping scheduled cycle %s "
+                "(user must manually resume or start a new cycle)",
                 schedule_id,
             )
-            cycle_control.resume()
+            return
 
         logger.info(
             "[SCHEDULER] ====== TRIGGER FIRED for schedule %s ======", schedule_id
