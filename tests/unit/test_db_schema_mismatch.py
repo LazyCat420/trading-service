@@ -1,48 +1,57 @@
 import os
 import re
 
+def get_file_content(path):
+    with open(path, "r") as f:
+        return f.read()
+
 def test_analysis_results_schema_matches_db_writer():
-    """Verify that analysis_results schema contains all columns inserted by db_writer.py"""
-    schema_file = os.path.join(
-        os.path.dirname(__file__), "..", "..", "app", "db", "schema_pg.sql"
-    )
+    """Verify that analysis_results schema contains all columns inserted by db_writer.py
+    and that they are covered by migrations.py"""
     
-    with open(schema_file, "r") as f:
-        content = f.read()
+    schema_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "schema_pg.sql")
+    migrations_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "migrations.py")
+    
+    schema_content = get_file_content(schema_file)
+    migrations_content = get_file_content(migrations_file)
         
-    # Extract analysis_results table definition
-    match = re.search(r"CREATE TABLE IF NOT EXISTS analysis_results \((.*?)\);", content, re.DOTALL)
+    match = re.search(r"CREATE TABLE IF NOT EXISTS analysis_results \((.*?)\);", schema_content, re.DOTALL)
     assert match is not None, "Could not find analysis_results in schema_pg.sql"
     
     table_def = match.group(1).lower()
     
-    # These are the columns db_writer.py tries to insert
     required_columns = [
         "id", "cycle_id", "bot_id", "ticker", "agent_name", "result_json", 
         "confidence", "created_at", "triage_tier", "thesis_verdict", 
         "thesis_confidence", "thesis_summary", "thesis_updated_at", "thesis_unchanged"
     ]
     
+    # Core columns that are created in the original CREATE TABLE in migrations.py
+    core_columns = ["id", "cycle_id", "bot_id", "ticker", "agent_name", "result_json", "confidence", "created_at"]
+    
     for col in required_columns:
-        # Check if the column exists in the table definition
-        assert re.search(rf"\b{col}\b", table_def) is not None, f"Column '{col}' is missing from analysis_results schema"
+        assert re.search(rf"\b{col}\b", table_def) is not None, f"Column '{col}' is missing from analysis_results schema_pg.sql"
+        if col not in core_columns:
+            # Must be added explicitly in migrations.py using _safe_add_column
+            # Using basic string check for robustness against exact quote styles
+            assert col in migrations_content and "analysis_results" in migrations_content, \
+                   f"Column '{col}' must be added to app/db/migrations.py for analysis_results"
 
 def test_pipeline_state_schema_matches_state_manager():
-    """Verify that pipeline_state schema contains all columns inserted by state_manager.py"""
-    schema_file = os.path.join(
-        os.path.dirname(__file__), "..", "..", "app", "db", "schema_pg.sql"
-    )
+    """Verify that pipeline_state schema contains all columns inserted by state_manager.py
+    and that they are covered by migrations.py"""
     
-    with open(schema_file, "r") as f:
-        content = f.read()
+    schema_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "schema_pg.sql")
+    migrations_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "migrations.py")
+    
+    schema_content = get_file_content(schema_file)
+    migrations_content = get_file_content(migrations_file)
         
-    # Extract pipeline_state table definition
-    match = re.search(r"CREATE TABLE IF NOT EXISTS pipeline_state \((.*?)\);", content, re.DOTALL)
+    match = re.search(r"CREATE TABLE IF NOT EXISTS pipeline_state \((.*?)\);", schema_content, re.DOTALL)
     assert match is not None, "Could not find pipeline_state in schema_pg.sql"
     
     table_def = match.group(1).lower()
     
-    # These are the columns state_manager.py tries to insert
     required_columns = [
         "singleton_id", "status", "cycle_id", "started_at", "finished_at",
         "requested_pipeline_version", "effective_pipeline_version",
@@ -55,5 +64,8 @@ def test_pipeline_state_schema_matches_state_manager():
     ]
     
     for col in required_columns:
-        # Check if the column exists in the table definition
-        assert re.search(rf"\b{col}\b", table_def) is not None, f"Column '{col}' is missing from pipeline_state schema"
+        assert re.search(rf"\b{col}\b", table_def) is not None, f"Column '{col}' is missing from pipeline_state schema_pg.sql"
+        # Since pipeline_state has its full CREATE TABLE IF NOT EXISTS repeated inside migrations.py
+        # we check if the column name exists anywhere in migrations.py alongside the table name.
+        assert col in migrations_content and "pipeline_state" in migrations_content, \
+               f"Column '{col}' must be present in app/db/migrations.py for pipeline_state"

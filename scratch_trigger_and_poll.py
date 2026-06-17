@@ -7,13 +7,12 @@ def run_test():
     job_id = f"test_audit_{uuid.uuid4().hex[:8]}"
     print(f"Triggering manual cycle under job ID: {job_id}")
     
-    conn = psycopg.connect(
-        host="10.0.0.16",
-        port=5433,
-        user="trader",
-        password="trading_bot_pass",
-        dbname="trading_bot"
-    )
+    import os
+    from app.config import settings
+    
+    # Extract connection args from URL or fallback to settings if possible.
+    # We will just use the same psycopg connect pattern but with the DB URL
+    conn = psycopg.connect(settings.DATABASE_URL)
     conn.autocommit = True
     cur = conn.cursor()
     
