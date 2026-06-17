@@ -35,7 +35,7 @@ async def test_post_finding_new(mock_taskboard_db):
     
     # Check SELECT was called to find max finding_id
     mock_taskboard_db.execute.assert_any_call(
-        "SELECT COALESCE(MAX(CAST(SUBSTRING(finding_id FROM 3) AS INTEGER)), 0) "
+        "SELECT COALESCE(MAX(CAST(NULLIF(REGEXP_REPLACE(finding_id, '\\D', '', 'g'), '') AS INTEGER)), 0) "
         "FROM taskboard_findings WHERE cycle_id = %s AND ticker = %s",
         ["cycle-2026-06", "AAPL"]
     )
@@ -119,7 +119,7 @@ async def test_request_investigation_new(mock_taskboard_db):
     
     # Check SELECT and INSERT calls
     mock_taskboard_db.execute.assert_any_call(
-        "SELECT COALESCE(MAX(CAST(SUBSTRING(investigation_id FROM 5) AS INTEGER)), 0) "
+        "SELECT COALESCE(MAX(CAST(NULLIF(REGEXP_REPLACE(investigation_id, '\\D', '', 'g'), '') AS INTEGER)), 0) "
         "FROM taskboard_investigations WHERE cycle_id = %s AND ticker = %s",
         ["cycle-2026-06", "AAPL"]
     )
