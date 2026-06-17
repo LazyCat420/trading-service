@@ -83,7 +83,7 @@ class TaskBoard:
                 with db.transaction():
                     # Calculate next sequential finding_id for this cycle + ticker
                     row = db.execute(
-                        "SELECT COALESCE(MAX(CAST(SUBSTRING(finding_id FROM 3) AS INTEGER)), 0) "
+                        "SELECT COALESCE(MAX(CAST(NULLIF(REGEXP_REPLACE(finding_id, '\\D', '', 'g'), '') AS INTEGER)), 0) "
                         "FROM taskboard_findings WHERE cycle_id = %s AND ticker = %s",
                         [cycle_id, ticker]
                     ).fetchone()
@@ -191,7 +191,7 @@ class TaskBoard:
                 with db.transaction():
                     # Calculate next sequential investigation_id for this cycle + ticker
                     row = db.execute(
-                        "SELECT COALESCE(MAX(CAST(SUBSTRING(investigation_id FROM 5) AS INTEGER)), 0) "
+                        "SELECT COALESCE(MAX(CAST(NULLIF(REGEXP_REPLACE(investigation_id, '\\D', '', 'g'), '') AS INTEGER)), 0) "
                         "FROM taskboard_investigations WHERE cycle_id = %s AND ticker = %s",
                         [cycle_id, ticker]
                     ).fetchone()
