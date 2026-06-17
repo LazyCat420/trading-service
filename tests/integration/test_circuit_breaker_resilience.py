@@ -66,6 +66,7 @@ async def test_circuit_breaker_race_conditions(mocked_vllm_cb):
     ep.slots = None
     ep.pipeline_slots = None
     ep.init_concurrency()
+    client._global_slots = asyncio.Semaphore(100)
     client._roles_discovered = True
 
     import contextlib
@@ -79,9 +80,9 @@ async def test_circuit_breaker_race_conditions(mocked_vllm_cb):
             idx = int(user_msg.split()[-1])
         except Exception:
             idx = 0
-        # Stagger the first 5 requests by 0.25s each so their complete failures
+        # Stagger the first 5 requests by 0.5s each so their complete failures
         # cross the 0.2s deduplication window and trip the circuit breaker.
-        stagger = idx * 0.25 if idx < 5 else 0.0
+        stagger = idx * 0.5 if idx < 5 else 0.0
         await asyncio.sleep(0.01 + stagger)
         raise RequestError("Connection reset", request=Request("POST", "http://test"))
         yield
