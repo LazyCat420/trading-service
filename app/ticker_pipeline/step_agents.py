@@ -105,6 +105,7 @@ async def run_agents_step(ctx: TickerContext) -> TickerContext:
             "analyzing", f"v2_orchestrator_done_{ctx.ticker}",
             f"{ctx.ticker}: MetaOrchestrator completed {len(ctx.agent_insights)} specialist agents",
             elapsed_ms=ms_orch,
+            data={"agents": list(ctx.agent_insights.keys())}
         )
 
     # ── Position context logging ──
