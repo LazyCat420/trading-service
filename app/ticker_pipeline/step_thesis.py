@@ -358,3 +358,5 @@ def _set_final_decision(ctx: TickerContext) -> None:
         ctx.final_action = ctx.thesis.action
         ctx.final_confidence = ctx.thesis.confidence
         ctx.final_rationale = ctx.thesis.rationale
+
+# Force build cache invalidation: 2026-06-16T18:20
