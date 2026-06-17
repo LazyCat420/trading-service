@@ -435,7 +435,7 @@ async def collect_for_ticker(ticker: str, since: datetime.datetime | None = None
 
 
 async def collect_finnhub_news(
-    ticker: str, days: int = 7, max_articles: int = 50, since: datetime.datetime | None = None
+    ticker: str, days: int = 7, max_articles: int = 15, since: datetime.datetime | None = None
 ) -> int:
     """Fetch per-ticker news from Finnhub API."""
     import os
@@ -502,10 +502,13 @@ async def collect_finnhub_news(
             source = article.get("source", "finnhub")
             ts = article.get("datetime", 0)
 
-            if url and (not summary or len(summary) < 150 or "..." in summary):
-                summary = await _scrape_with_timeout(url, summary, timeout=15.0)
+            # NOTE: Body scraping removed from collection phase to fix 120s timeouts.
+            # Full article bodies are fetched lazily via deep_read_top_articles()
+            # during the analysis phase. Store with API summary for now.
+            if not summary:
+                summary = headline  # Use headline as minimal fallback
 
-            if len(summary) < 150:
+            if len(summary) < 50:
                 return []
 
             published_at = (
@@ -645,13 +648,14 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     pass
 
             api_summary = content.get("description", "") or content.get("summary", "")
-            summary = ""
-            if url:
-                summary = await _scrape_with_timeout(url, api_summary, timeout=15.0)
-            else:
-                summary = api_summary
+            # NOTE: Body scraping removed from collection phase to fix 120s timeouts.
+            # Full article bodies are fetched lazily via deep_read_top_articles()
+            # during the analysis phase. Store with API summary for now.
+            summary = api_summary
+            if not summary:
+                summary = title  # Use title as minimal fallback
 
-            if len(summary) < 150:
+            if len(summary) < 50:
                 return []
 
             if since and published_at and published_at <= since:

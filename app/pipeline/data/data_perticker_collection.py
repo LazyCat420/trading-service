@@ -17,7 +17,17 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-SOURCE_TIMEOUT = 120.0
+SOURCE_TIMEOUT = 60.0  # Default timeout; per-source overrides below
+
+# Per-source timeouts — tuned after decoupling body scraping from collection
+SOURCE_TIMEOUTS = {
+    "market_data": 90.0,   # yfinance can be slow for 1y price data + fundamentals
+    "finnhub": 45.0,       # API calls + DB writes only (body scraping removed)
+    "reddit": 60.0,        # Multi-query search through scraper-service
+    "youtube": 90.0,       # yt-dlp subprocess is CPU + network heavy
+    "yfnews": 45.0,        # API calls + DB writes only (body scraping removed)
+    "news_api_rotator": 60.0,  # Multiple API sources
+}
 
 
 async def run_smart_janitor_on_ticker_data(ticker: str) -> None:
@@ -433,43 +443,73 @@ async def run_perticker_collection(
                             return p, f, fi, b
 
                         prices, fundies, fins, bs = await asyncio.wait_for(
-                            _fetch_yf_with_retry(), timeout=SOURCE_TIMEOUT
+                            _fetch_yf_with_retry(), timeout=SOURCE_TIMEOUTS.get("market_data", SOURCE_TIMEOUT)
                         )
 
                         # If yfinance returned 0 price rows AND we had
-                        # very few existing rows, this ticker is likely delisted
-                        # or untradeable. Auto-reject and cancel sibling sources.
+                        # very few existing rows, this ticker MAY be delisted.
+                        # But we must check market cap first — blue-chip stocks
+                        # can return 0 on transient yfinance failures, and
+                        # permanently rejecting them is catastrophic.
                         if prices == 0 and existing_prices < 5:
-                            logger.warning(
-                                "[PIPELINE] [market_data] %s: 0 price rows — "
-                                "likely delisted/untradeable. Auto-rejecting.",
-                                ticker,
-                            )
-                            emit(
-                                "collecting",
-                                f"market_data_{ticker}",
-                                f"{ticker}: NO PRICE DATA — likely delisted or untradeable",
-                                status="error",
-                            )
-                            _ticker_rejected.set()  # Signal sibling tasks to stop
+                            # ── SAFETY GATE: Check if this is a known large-cap ──
+                            _is_known_large_cap = False
                             try:
-                                from app.processors.ticker_extractor import (
-                                    get_registry as _get_reg_yf,
-                                    _save_rejected_to_db as _reject_db,
-                                    FALSE_TICKERS as _FT,
-                                )
+                                with _get_db_yf() as _db_mc:
+                                    _mc_row = _db_mc.execute(
+                                        "SELECT market_cap FROM fundamentals WHERE ticker = %s "
+                                        "AND market_cap IS NOT NULL ORDER BY snapshot_date DESC LIMIT 1",
+                                        [ticker],
+                                    ).fetchone()
+                                if _mc_row and _mc_row[0] and float(_mc_row[0]) > 1_000_000_000:
+                                    _is_known_large_cap = True
+                            except Exception:
+                                pass
 
-                                _reg_yf = _get_reg_yf()
-                                _reg_yf.add_rejected(ticker)
-                                _FT.add(ticker)
-                                _reject_db(ticker)
-                            except Exception as rej_err:
-                                logger.debug(
-                                    "[PIPELINE] [market_data] auto-reject write failed for %s: %s",
+                            if _is_known_large_cap:
+                                logger.warning(
+                                    "[PIPELINE] [market_data] %s: 0 price rows but KNOWN large-cap "
+                                    "(market_cap > $1B) — treating as transient failure, NOT rejecting.",
                                     ticker,
-                                    rej_err,
                                 )
-                            return  # Skip all other collection for this ticker
+                                emit(
+                                    "collecting",
+                                    f"market_data_{ticker}",
+                                    f"{ticker}: 0 prices (transient failure — known large-cap, not rejecting)",
+                                    status="warning",
+                                )
+                                # Don't reject, don't cancel siblings — just skip price collection
+                            else:
+                                logger.warning(
+                                    "[PIPELINE] [market_data] %s: 0 price rows — "
+                                    "likely delisted/untradeable. Auto-rejecting.",
+                                    ticker,
+                                )
+                                emit(
+                                    "collecting",
+                                    f"market_data_{ticker}",
+                                    f"{ticker}: NO PRICE DATA — likely delisted or untradeable",
+                                    status="error",
+                                )
+                                _ticker_rejected.set()  # Signal sibling tasks to stop
+                                try:
+                                    from app.processors.ticker_extractor import (
+                                        get_registry as _get_reg_yf,
+                                        _save_rejected_to_db as _reject_db,
+                                        FALSE_TICKERS as _FT,
+                                    )
+
+                                    _reg_yf = _get_reg_yf()
+                                    _reg_yf.add_rejected(ticker)
+                                    _FT.add(ticker)
+                                    _reject_db(ticker)
+                                except Exception as rej_err:
+                                    logger.debug(
+                                        "[PIPELINE] [market_data] auto-reject write failed for %s: %s",
+                                        ticker,
+                                        rej_err,
+                                    )
+                                return  # Skip all other collection for this ticker
 
                         record_collection(
                             "fundamentals", ticker, rows=prices + fundies + fins + bs
@@ -518,12 +558,12 @@ async def run_perticker_collection(
                     emit(
                         "collecting",
                         f"market_data_{ticker}",
-                        f"{ticker}: Market Data TIMEOUT ({SOURCE_TIMEOUT}s)",
+                        f"{ticker}: Market Data TIMEOUT ({SOURCE_TIMEOUTS.get('market_data', SOURCE_TIMEOUT)}s)",
                         status="timeout",
                         elapsed_ms=ms,
                     )
                     logger.error(
-                        f"[PIPELINE]   [market_data] {ticker} TIMEOUT after {SOURCE_TIMEOUT}s — removing from cycle"
+                        f"[PIPELINE]   [market_data] {ticker} TIMEOUT after {SOURCE_TIMEOUTS.get('market_data', SOURCE_TIMEOUT)}s — removing from cycle"
                     )
                     _ticker_rejected.set()
                 except Exception as e:
@@ -552,7 +592,7 @@ async def run_perticker_collection(
 
                         async with rate_limiter.acquire("finnhub"):
                             news = await asyncio.wait_for(
-                                collect_news(ticker), timeout=SOURCE_TIMEOUT
+                                collect_news(ticker), timeout=SOURCE_TIMEOUTS.get("finnhub", SOURCE_TIMEOUT)
                             )
                         record_collection("news_finnhub", ticker, rows=news)
                         ms = elapsed_ms(t0)
@@ -583,7 +623,7 @@ async def run_perticker_collection(
                     emit(
                         "collecting",
                         f"finnhub_{ticker}",
-                        f"{ticker}: Finnhub TIMEOUT ({SOURCE_TIMEOUT}s)",
+                        f"{ticker}: Finnhub TIMEOUT ({SOURCE_TIMEOUTS.get('finnhub', SOURCE_TIMEOUT)}s)",
                         status="timeout",
                         elapsed_ms=ms,
                     )
@@ -617,7 +657,7 @@ async def run_perticker_collection(
                         # acquire waited 120s the actual fetch got 0s budget.
                         async with rate_limiter.acquire("reddit"):
                             reddit_t = await asyncio.wait_for(
-                                reddit_snipe(ticker), timeout=SOURCE_TIMEOUT
+                                reddit_snipe(ticker), timeout=SOURCE_TIMEOUTS.get("reddit", SOURCE_TIMEOUT)
                             )
                         record_collection("reddit", ticker, rows=reddit_t)
                         ms = elapsed_ms(t0)
@@ -649,13 +689,13 @@ async def run_perticker_collection(
                     emit(
                         "collecting",
                         f"reddit_{ticker}",
-                        f"{ticker}: Reddit TIMEOUT ({SOURCE_TIMEOUT}s configured, {actual_s:.0f}s actual)",
+                        f"{ticker}: Reddit TIMEOUT ({SOURCE_TIMEOUTS.get('reddit', SOURCE_TIMEOUT)}s configured, {actual_s:.0f}s actual)",
                         status="timeout",
                         elapsed_ms=ms,
                     )
                     logger.error(
                         "[PIPELINE]   [Reddit] %s TIMEOUT (configured=%ss, actual=%.0fs)",
-                        ticker, SOURCE_TIMEOUT, actual_s,
+                        ticker, SOURCE_TIMEOUTS.get("reddit", SOURCE_TIMEOUT), actual_s,
                     )
                 except Exception as e:
                     _log_err("reddit", e, ticker)
@@ -731,7 +771,7 @@ async def run_perticker_collection(
                     emit(
                         "collecting",
                         f"youtube_{ticker}",
-                        f"{ticker}: YouTube TIMEOUT ({SOURCE_TIMEOUT}s)",
+                        f"{ticker}: YouTube TIMEOUT ({SOURCE_TIMEOUTS.get('youtube', SOURCE_TIMEOUT)}s)",
                         status="timeout",
                         elapsed_ms=ms,
                     )
@@ -761,7 +801,7 @@ async def run_perticker_collection(
 
                         async with rate_limiter.acquire("yf_news"):
                             yf_n = await asyncio.wait_for(
-                                yf_news_collector(ticker), timeout=SOURCE_TIMEOUT
+                                yf_news_collector(ticker), timeout=SOURCE_TIMEOUTS.get("yfnews", SOURCE_TIMEOUT)
                             )
                         record_collection("news_yfinance", ticker, rows=yf_n)
                         ms = elapsed_ms(t0)
@@ -794,7 +834,7 @@ async def run_perticker_collection(
                     emit(
                         "collecting",
                         f"yfnews_{ticker}",
-                        f"{ticker}: yfinance news TIMEOUT ({SOURCE_TIMEOUT}s)",
+                        f"{ticker}: yfinance news TIMEOUT ({SOURCE_TIMEOUTS.get('yfnews', SOURCE_TIMEOUT)}s)",
                         status="timeout",
                         elapsed_ms=ms,
                     )

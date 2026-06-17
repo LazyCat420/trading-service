@@ -280,22 +280,23 @@ async def search_subreddit_for_ticker(
 
 
 async def collect_for_ticker(ticker: str, since: datetime.datetime | None = None) -> int:
-    """Collect Reddit posts about a specific ticker using subreddit-scoped search."""
+    """Collect Reddit posts about a specific ticker using subreddit-scoped search.
+
+    Streamlined: 2-3 queries instead of 5+ to stay within SOURCE_TIMEOUT.
+    Body of search goes through scraper-service → Reddit JSON/RSS API.
+    """
     ticker_upper = ticker.upper()
 
-    # Core query variants
+    # Streamlined query variants (was 5+ queries, now 2-3)
     queries = [
-        f"${ticker_upper}",  # $NVDA (strongest signal)
+        f"${ticker_upper}",       # $NVDA (strongest signal)
         f"{ticker_upper} stock",  # NVDA stock
-        f"{ticker_upper} earnings",  # NVDA earnings
-        f"{ticker_upper} analysis",  # NVDA analysis
-        f"{ticker_upper} DD",  # NVDA DD (due diligence)
     ]
 
-    # Add company name queries (e.g. "Nvidia stock", "Apple earnings")
+    # Add ONE company name query if available (e.g., "Nvidia stock")
     company_names = _get_company_names(ticker_upper)
-    for name in company_names[:2]:  # Top 2 names to avoid spam
-        queries.append(f"{name} stock")
+    if company_names:
+        queries.append(f"{company_names[0]} stock")
 
     total = 0
     multi_sub = "+".join(PRIORITY_SUBS)
@@ -303,8 +304,8 @@ async def collect_for_ticker(ticker: str, since: datetime.datetime | None = None
         subreddit=multi_sub,
         ticker=ticker_upper,
         queries=queries,
-        time_filter="month",  # Expanded from week for more data
-        limit=25,  # Higher limit since we search all combined
+        time_filter="week",  # Was "month" — too much data, causes timeouts
+        limit=15,            # Was 25 — reduced to stay within timeout budget
         since=since,
     )
     if count > 0:

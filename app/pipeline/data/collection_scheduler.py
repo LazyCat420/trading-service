@@ -180,8 +180,20 @@ def record_collection(
 
     Writes to data_source_status so the scheduler knows when
     each source was last refreshed.
+
+    NOTE: If rows == 0 and no explicit error, we record as a SOFT FAILURE
+    so the scheduler re-collects next cycle instead of treating empty data as "fresh".
     """
     now = datetime.datetime.now(datetime.UTC).isoformat()
+
+    # Treat 0-row collections as soft failures — prevents "fresh but empty" skipping
+    if rows == 0 and error is None:
+        error = "no_data_returned"
+        logger.info(
+            f"[PIPELINE] [scheduler] {source}/{ticker}: 0 rows — recording as soft failure "
+            f"so scheduler re-collects next cycle"
+        )
+
     with get_db() as db:
         if error:
             db.execute(
@@ -210,8 +222,9 @@ def record_collection(
             )
     logger.info(
         f"[PIPELINE] [scheduler] Recorded {source}/{ticker}: "
-        f"{rows} rows {'(error)' if error else '(ok)'}"
+        f"{rows} rows {'(error: ' + error + ')' if error else '(ok)'}"
     )
+
 
 
 def get_last_collected(

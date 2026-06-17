@@ -27,9 +27,6 @@ from app.monitoring.pipeline_profiler import profiler as pipeline_profiler
 
 logger = logging.getLogger(__name__)
 
-# Timeout for individual source coroutines (seconds).
-# Prevents a single hanging API call from blocking the semaphore indefinitely.
-SOURCE_TIMEOUT = 120.0
 
 
 async def run(
