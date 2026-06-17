@@ -549,7 +549,13 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     agent_name  TEXT,
     result_json TEXT,
     confidence  INTEGER,
-    created_at  TIMESTAMP
+    created_at  TIMESTAMP,
+    triage_tier TEXT,
+    thesis_verdict TEXT,
+    thesis_confidence INTEGER,
+    thesis_summary TEXT,
+    thesis_updated_at TIMESTAMP,
+    thesis_unchanged BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS decision_evaluations (

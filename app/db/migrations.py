@@ -145,6 +145,14 @@ def run_migrations(conn):
     _safe_add_column(conn, "youtube_transcripts", "analysis_count", "INTEGER DEFAULT 0")
     _safe_add_column(conn, "youtube_transcripts", "max_analyses", "INTEGER DEFAULT 5")
 
+    # ── Analysis Results: Thesis storage ──
+    _safe_add_column(conn, "analysis_results", "triage_tier", "TEXT")
+    _safe_add_column(conn, "analysis_results", "thesis_verdict", "TEXT")
+    _safe_add_column(conn, "analysis_results", "thesis_confidence", "INTEGER")
+    _safe_add_column(conn, "analysis_results", "thesis_summary", "TEXT")
+    _safe_add_column(conn, "analysis_results", "thesis_updated_at", "TIMESTAMP")
+    _safe_add_column(conn, "analysis_results", "thesis_unchanged", "BOOLEAN")
+
     # ── Attention Tracker (Smart Ticker Triage) ──
     try:
         with conn.cursor() as cur:
