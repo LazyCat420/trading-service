@@ -3561,16 +3561,23 @@ class VLLMClient:
         self._killed = False
 
     async def abort_active_requests(self) -> int:
-        """Cancel all active background requests and close HTTP clients to force socket closure."""
-        # KILL SWITCH: block all new outbound pipeline requests immediately.
-        # Since Prism doesn't propagate client disconnects to vLLM, this is
-        # the only way to prevent new requests from reaching the GPU boxes.
+        """Cancel all active background requests and close HTTP clients to force socket closure.
+
+        Sequencing is critical:
+          1. Kill switch — block new requests from being enqueued
+          2. Cancel dispatchers — stop queued items from being dispatched
+          3. Cancel active tasks — inject CancelledError into running streams
+          4. Wait for cancellation to propagate — lets CancelledError reach
+             the httpx stream iterator, closing the TCP socket. vLLM detects
+             the disconnect and calls abort() on the GPU-side generation.
+          5. Close HTTP clients — cleanup any remaining connections
+          6. Query vLLM metrics — verify requests are actually dropping
+        """
+        # 1. Kill switch
         self._killed = True
         logger.info("[VLLM] 🛑 Kill switch ENGAGED — all new pipeline requests blocked")
 
-        # Stop dispatcher loops FIRST — prevents queued items from being dispatched
-        # while we're draining queues and cancelling tasks. They'll be lazily
-        # recreated by _ensure_dispatcher() when the next cycle starts.
+        # 2. Stop dispatcher loops FIRST
         for ep in self._endpoints.values():
             if ep.dispatcher_task and not ep.dispatcher_task.done():
                 logger.info("[VLLM] Cancelling %s dispatcher loop", ep.name)
@@ -3578,22 +3585,40 @@ class VLLMClient:
             if ep.metrics_task and not ep.metrics_task.done():
                 ep.metrics_task.cancel()
 
-        cancelled_count = self.cancel_active_requests()
+        # 3. Cancel all active tasks (the run_and_release coroutines)
+        cancelled_count = 0
+        tasks_to_wait = []
+        for task in list(self._active_tasks):
+            if not task.done():
+                task.cancel()
+                tasks_to_wait.append(task)
+                cancelled_count += 1
+        if cancelled_count:
+            logger.info("[VLLM] Cancelled %d active background requests", cancelled_count)
+
+        # 4. WAIT for cancellation to propagate into stream iterators
+        # This is critical: CancelledError must reach response.aiter_text()
+        # so httpx closes the TCP socket, causing vLLM to detect the
+        # disconnect and abort the GPU-side generation.
+        if tasks_to_wait:
+            logger.info("[VLLM] Waiting for %d tasks to process cancellation...", len(tasks_to_wait))
+            done, pending = await asyncio.wait(tasks_to_wait, timeout=3.0)
+            if pending:
+                logger.warning("[VLLM] %d tasks still pending after 3s cancellation wait", len(pending))
+
         self.drain_queues()
-        
-        # Force-close the direct HTTP client to terminate any active connections immediately.
-        # This signals to vLLM's internal server (via TCP connection drop) to abort processing.
+
+        # 5. Force-close HTTP clients to terminate any remaining connections
         if self._client and not self._client.is_closed:
-            logger.info("[VLLM] Force closing direct HTTP client to terminate active connections")
+            logger.info("[VLLM] Force closing direct HTTP client")
             try:
                 await self._client.aclose()
             except Exception as e:
                 logger.warning("[VLLM] Error closing direct client: %s", e)
             self._client = None
-            
-        # Also close the Prism client's shared HTTP client if present.
+
         if hasattr(self, "prism_client") and self.prism_client and getattr(self.prism_client, "_client", None) and not self.prism_client._client.is_closed:
-            logger.info("[PRISM] Force closing Prism HTTP client to terminate active connections")
+            logger.info("[PRISM] Force closing Prism HTTP client")
             try:
                 await self.prism_client._client.aclose()
             except Exception as e:
@@ -3608,8 +3633,42 @@ class VLLMClient:
                 except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                     pass
             ep.dispatcher_task = None
-            
+
+        # 6. Query vLLM metrics to verify requests are draining
+        await self._check_vllm_drain()
+
         return cancelled_count
+
+    async def _check_vllm_drain(self):
+        """Query each vLLM endpoint's /metrics to log how many requests are still running.
+
+        This is purely diagnostic — it doesn't abort anything, just provides
+        visibility into whether the TCP disconnects actually reached the GPUs.
+        """
+        import httpx as _httpx
+
+        for ep in self._endpoints.values():
+            if not ep.enabled or not ep.url:
+                continue
+            try:
+                async with _httpx.AsyncClient(timeout=3.0) as probe:
+                    resp = await probe.get(f"{ep.url}/metrics")
+                    if resp.status_code == 200:
+                        for line in resp.text.split("\n"):
+                            if "num_requests_running{" in line and not line.startswith("#"):
+                                count = line.split("}")[-1].strip()
+                                logger.info(
+                                    "[VLLM] 📊 %s requests_running=%s after abort",
+                                    ep.name, count,
+                                )
+                            elif "num_requests_waiting{" in line and not line.startswith("#") and "by_reason" not in line:
+                                count = line.split("}")[-1].strip()
+                                logger.info(
+                                    "[VLLM] 📊 %s requests_waiting=%s after abort",
+                                    ep.name, count,
+                                )
+            except Exception as e:
+                logger.debug("[VLLM] Failed to probe %s metrics: %s", ep.name, e)
 
     # ── CRITICAL: Provider and Model Resolution ──
     # NEVER ALTER OR DELETE THESE FUNCTIONS! They govern the routing between Gold Spark and Jetson.

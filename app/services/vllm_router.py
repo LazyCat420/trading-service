@@ -245,6 +245,54 @@ def vllm_queue_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/v1/vllm/force_abort")
+async def vllm_force_abort():
+    """Nuclear abort: kill switch + cancel all tasks + close connections + query vLLM metrics.
+
+    Use this when the regular stop doesn't fully kill GPU-side requests.
+    After calling this, check each vLLM box's /metrics to verify requests dropped.
+    """
+    try:
+        cancelled = await llm.abort_active_requests()
+
+        # Gather metrics from each vLLM endpoint
+        metrics = {}
+        import httpx
+        for name, ep in llm._endpoints.items():
+            if not ep.enabled or not ep.url:
+                metrics[name] = {"status": "disabled"}
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as probe:
+                    resp = await probe.get(f"{ep.url}/metrics")
+                    if resp.status_code == 200:
+                        running = 0
+                        waiting = 0
+                        for line in resp.text.split("\n"):
+                            if "num_requests_running{" in line and not line.startswith("#"):
+                                running = float(line.split("}")[-1].strip())
+                            elif "num_requests_waiting{" in line and not line.startswith("#") and "by_reason" not in line:
+                                waiting = float(line.split("}")[-1].strip())
+                        metrics[name] = {
+                            "url": ep.url,
+                            "requests_running": int(running),
+                            "requests_waiting": int(waiting),
+                        }
+                    else:
+                        metrics[name] = {"status": f"http_{resp.status_code}"}
+            except Exception as e:
+                metrics[name] = {"status": f"unreachable: {e}"}
+
+        return {
+            "status": "abort_complete",
+            "killed": llm._killed,
+            "cancelled_tasks": cancelled,
+            "vllm_metrics": metrics,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/api/v1/vllm/endpoints")
 def vllm_endpoints():
     try:
