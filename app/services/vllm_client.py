@@ -3608,13 +3608,34 @@ class VLLMClient:
 
         self.drain_queues()
 
-        # 5. Force-close HTTP clients to terminate any remaining connections
+        # 5. NUCLEAR TCP KILL: Force-close the underlying transport connections.
+        # httpx's aclose() is gentle — it waits for in-flight requests to finish.
+        # We need to forcibly close the TCP sockets so vLLM detects the disconnect
+        # and aborts GPU-side generation. We do this by:
+        #   a) Closing the httpcore transport directly (kills TCP sockets)
+        #   b) Nulling the client (forces fresh connections on next cycle)
         if self._client and not self._client.is_closed:
-            logger.info("[VLLM] Force closing direct HTTP client")
+            logger.info("[VLLM] 🔌 Nuclear TCP kill — force-closing all transport connections")
+            try:
+                # Reach through httpx → httpcore to close the pool's connections
+                transport = self._client._transport
+                if hasattr(transport, 'close'):
+                    transport.close()
+                elif hasattr(transport, 'aclose'):
+                    await transport.aclose()
+                # Also try the httpcore pool directly
+                if hasattr(transport, '_pool'):
+                    pool = transport._pool
+                    if hasattr(pool, 'close'):
+                        pool.close()
+                    elif hasattr(pool, 'aclose'):
+                        await pool.aclose()
+            except Exception as e:
+                logger.warning("[VLLM] Transport close error (expected): %s", e)
             try:
                 await self._client.aclose()
-            except Exception as e:
-                logger.warning("[VLLM] Error closing direct client: %s", e)
+            except Exception:
+                pass
             self._client = None
 
         if hasattr(self, "prism_client") and self.prism_client and getattr(self.prism_client, "_client", None) and not self.prism_client._client.is_closed:
