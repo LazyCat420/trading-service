@@ -462,3 +462,82 @@ def get_purge_candidates(
 
     # Already sorted worst-first, cap at max_purge
     return candidates[:max_purge]
+
+
+def update_source_quality_scores() -> None:
+    """Aggregate per-publisher discard stats and upsert into source_quality_scores.
+
+    Should be called at the end of each janitor pass (after smart_janitor runs).
+
+    Logic:
+    - Queries news_articles grouped by publisher
+    - Computes: total articles, discarded count, discard_pct, avg content length
+    - Upserts into source_quality_scores
+    - Auto-bans publishers with discard_pct > 80% AND total_articles >= 10
+      (the 10-article threshold prevents false bans from tiny samples)
+
+    Banned publishers are logged at WARNING level for easy grepping:
+        grep "[SOURCE_BAN]" logs/ to see banned sources
+    """
+    from app.utils.db_migrations import ensure_source_quality_table
+
+    try:
+        with get_db() as db:
+            ensure_source_quality_table(db)
+
+            rows = db.execute(
+                """
+                SELECT
+                    COALESCE(publisher, source, 'unknown') AS pub,
+                    COUNT(*) AS total,
+                    COUNT(CASE WHEN quality_status = 'discarded' THEN 1 END) AS discarded,
+                    ROUND(AVG(LENGTH(COALESCE(summary, '')))) AS avg_len
+                FROM news_articles
+                WHERE publisher IS NOT NULL OR source IS NOT NULL
+                GROUP BY pub
+                HAVING COUNT(*) >= 5
+                ORDER BY discarded DESC
+                """
+            ).fetchall()
+
+            banned_count = 0
+            for pub, total, discarded, avg_len in rows:
+                discard_pct = round((discarded / total) * 100, 1) if total > 0 else 0.0
+                is_banned = discard_pct > 80.0 and total >= 10
+                ban_reason = (
+                    f"Auto-banned: {discard_pct:.0f}% discard rate over {total} articles"
+                    if is_banned
+                    else None
+                )
+
+                db.execute(
+                    """
+                    INSERT INTO source_quality_scores
+                        (publisher, total_articles, discarded_count, discard_pct, avg_content_len, is_banned, ban_reason, last_updated)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (publisher) DO UPDATE SET
+                        total_articles = EXCLUDED.total_articles,
+                        discarded_count = EXCLUDED.discarded_count,
+                        discard_pct = EXCLUDED.discard_pct,
+                        avg_content_len = EXCLUDED.avg_content_len,
+                        is_banned = EXCLUDED.is_banned,
+                        ban_reason = COALESCE(EXCLUDED.ban_reason, source_quality_scores.ban_reason),
+                        last_updated = NOW()
+                    """,
+                    (pub, total, discarded, discard_pct, avg_len or 0, is_banned, ban_reason),
+                )
+
+                if is_banned:
+                    banned_count += 1
+                    logger.warning(
+                        "[SOURCE_BAN] publisher='%s' discard_pct=%.0f%% total=%d avg_len=%d — auto-banned",
+                        pub, discard_pct, total, avg_len or 0,
+                    )
+
+            logger.info(
+                "[watchlist_health] source_quality_scores updated: %d publishers scored, %d auto-banned",
+                len(rows), banned_count,
+            )
+    except Exception as e:
+        logger.warning("[watchlist_health] update_source_quality_scores failed: %s", e)
+

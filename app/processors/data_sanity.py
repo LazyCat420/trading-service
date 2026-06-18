@@ -167,6 +167,52 @@ def run_sanity_checks() -> list[str]:
         except Exception as e:
             logger.warning(f"Technicals sanity check error: {e}")
 
+        # ── News Content Quality ──
+        try:
+            # Articles with very short summaries that are still unprocessed (not yet janitor-reviewed)
+            row = db.execute(
+                """
+                SELECT COUNT(*) FROM news_articles
+                WHERE LENGTH(COALESCE(summary, '')) < 150
+                  AND (quality_status IS NULL OR quality_status = 'relevant')
+                """
+            ).fetchone()
+            if row and row[0] > 50:
+                failures.append(
+                    f"News: {row[0]} unprocessed articles with very short content (<150 chars)"
+                )
+
+            # Articles containing known truncation markers (NewsAPI free tier, paywalls)
+            row = db.execute(
+                """
+                SELECT COUNT(*) FROM news_articles
+                WHERE (
+                    summary ILIKE '%[+%'
+                    OR summary ILIKE '%subscribe to read%'
+                    OR summary ILIKE '%log in to read%'
+                    OR summary ILIKE '%continue reading%'
+                    OR summary ILIKE '%cookie settings%'
+                    OR summary ILIKE '%access denied%'
+                )
+                AND (quality_status IS NULL OR quality_status = 'relevant')
+                """
+            ).fetchone()
+            if row and row[0] > 10:
+                failures.append(
+                    f"News: {row[0]} unprocessed articles with paywall/truncation markers"
+                )
+
+            # Completely empty content
+            row = db.execute(
+                "SELECT COUNT(*) FROM news_articles WHERE summary IS NULL OR TRIM(summary) = ''"
+            ).fetchone()
+            if row and row[0] > 0:
+                failures.append(
+                    f"News: {row[0]} articles with NULL or empty summary"
+                )
+        except Exception as e:
+            logger.warning(f"News content quality sanity check error: {e}")
+
         return failures
 
 

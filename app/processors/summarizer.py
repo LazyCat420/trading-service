@@ -683,6 +683,9 @@ async def summarize_unsummarized(
         ensure_summary_columns(db)
 
         # ── Find unsummarized YouTube transcripts ──
+        # NOTE: We intentionally do NOT fetch transcripts with quality_status IS NULL.
+        # The smart_janitor must run first so only 'relevant' items reach the LLM.
+        # Items with NULL status are new arrivals not yet janitor-reviewed.
         if ticker:
             ticker = ticker.upper()
             yt_rows = db.execute(
@@ -693,6 +696,7 @@ async def summarize_unsummarized(
                   AND summarized_at IS NULL
                   AND raw_transcript IS NOT NULL
                   AND LENGTH(raw_transcript) > 50
+                  AND quality_status = 'relevant'
                   AND ticker = %s
                 ORDER BY published_at DESC
                 LIMIT %s
@@ -708,6 +712,7 @@ async def summarize_unsummarized(
                   AND summarized_at IS NULL
                   AND raw_transcript IS NOT NULL
                   AND LENGTH(raw_transcript) > 50
+                  AND quality_status = 'relevant'
                 ORDER BY published_at DESC
                 LIMIT %s
             """,
@@ -718,13 +723,14 @@ async def summarize_unsummarized(
         # Low minimum (20 chars) because Python-side classification handles
         # garbage/thin/substantial routing. This lets us still discover and
         # properly discard posts rather than ignoring them forever.
+        # NOTE: quality_status = 'relevant' only — janitor must run first.
         if ticker:
             reddit_rows = db.execute(
                 """
                 SELECT id, title, COALESCE(body, ''), subreddit, qualitative_draft
                 FROM reddit_posts
                 WHERE summary IS NULL
-                  AND (quality_status IS NULL OR quality_status = 'relevant')
+                  AND quality_status = 'relevant'
                   AND (LENGTH(title) + LENGTH(COALESCE(body, ''))) > 20
                   AND ticker = %s
                 ORDER BY created_utc DESC
@@ -738,7 +744,7 @@ async def summarize_unsummarized(
                 SELECT id, title, COALESCE(body, ''), subreddit, qualitative_draft
                 FROM reddit_posts
                 WHERE summary IS NULL
-                  AND (quality_status IS NULL OR quality_status = 'relevant')
+                  AND quality_status = 'relevant'
                   AND (LENGTH(title) + LENGTH(COALESCE(body, ''))) > 20
                 ORDER BY created_utc DESC
                 LIMIT %s
@@ -747,13 +753,16 @@ async def summarize_unsummarized(
             ).fetchall()
 
         # ── Find unsummarized news (with bad/missing summaries) ──
+        # NOTE: quality_status = 'relevant' only — janitor must run first.
+        # Articles with quality_status IS NULL are new arrivals not yet reviewed.
+        # They will be picked up on the next cycle once the janitor processes them.
         if ticker:
             news_rows = db.execute(
                 """
                 SELECT id, title, COALESCE(summary, ''), qualitative_draft
                 FROM news_articles
                 WHERE llm_summary IS NULL
-                  AND (quality_status IS NULL OR quality_status = 'relevant')
+                  AND quality_status = 'relevant'
                   AND title IS NOT NULL
                   AND LENGTH(title) > 10
                   AND ticker = %s
@@ -768,7 +777,7 @@ async def summarize_unsummarized(
                 SELECT id, title, COALESCE(summary, ''), qualitative_draft
                 FROM news_articles
                 WHERE llm_summary IS NULL
-                  AND (quality_status IS NULL OR quality_status = 'relevant')
+                  AND quality_status = 'relevant'
                   AND title IS NOT NULL
                   AND LENGTH(title) > 10
                 ORDER BY published_at DESC

@@ -32,6 +32,7 @@ from typing import Any
 from app.config import settings
 from app.db.connection import get_db
 from app.services.request_utils import SmartClient
+from app.utils.text_utils import is_truncated_content
 
 logger = logging.getLogger(__name__)
 
@@ -493,7 +494,11 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
             if (not summary or len(summary) < 150) and len(api_summary) >= 150:
                 summary = api_summary
 
-            if len(summary) < 150:
+            if is_truncated_content(summary):
+                logger.warning(
+                    "[rotator][DROP] dropped '%s' from %s — truncated/paywalled (len=%d)",
+                    article.title[:60], article.source, len(summary),
+                )
                 continue
 
             # Use tickers from API if provided, otherwise detect from full text

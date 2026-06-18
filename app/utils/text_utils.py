@@ -548,6 +548,63 @@ SCRAPE_ARTIFACT_PATTERNS = [
     "unusual traffic",
 ]
 
+# Markers that indicate API-truncated content (e.g. NewsAPI free tier appends "[+XXXX chars]")
+# or paywalled/cookie-walled pages where the scraper got the gate instead of the article.
+TRUNCATION_MARKERS = [
+    "[+",                     # NewsAPI free tier: "Apple reported earnings [+1204 chars]"
+    "subscribe to read",
+    "subscribe to continue",
+    "continue reading",
+    "log in to read",
+    "log in to view",
+    "sign in to read",
+    "sign in to view",
+    "create a free account",
+    "register to read",
+    "cookie settings",
+    "we use cookies",
+    "accept all cookies",
+    "this content is for subscribers",
+    "this article is for premium members",
+    "paywall",
+    "403 forbidden",
+    "access denied",
+]
+
+# Minimum content length (characters) for a news article to be useful to the LLM.
+# Below this threshold the article is just a headline or a one-sentence teaser.
+MIN_ARTICLE_CONTENT_CHARS = 150
+
+
+def is_truncated_content(text: str, min_chars: int = MIN_ARTICLE_CONTENT_CHARS) -> bool:
+    """Return True if text looks like a truncated, paywalled, or low-quality snippet.
+
+    Catches:
+    - NewsAPI free-tier articles truncated with "[+XXXX chars]"
+    - Paywall gates ("Subscribe to read", "Log in to view", etc.)
+    - Cookie-wall pages ("Accept all cookies", "We use cookies", etc.)
+    - Content that is simply too short to be useful (< min_chars)
+
+    Used at the collector boundary so bad content never touches the DB.
+
+    Args:
+        text: The raw article content/summary string to check.
+        min_chars: Minimum character count required. Default 150.
+
+    Returns:
+        True if the content should be dropped, False if it looks acceptable.
+    """
+    if not text:
+        return True
+    stripped = text.strip()
+    if len(stripped) < min_chars:
+        return True
+    lower = stripped.lower()
+    for marker in TRUNCATION_MARKERS:
+        if marker in lower:
+            return True
+    return False
+
 
 def is_scrape_artifact(summary: str) -> bool:
     """Return True if the summary looks like a scrape artifact (captcha, block page).

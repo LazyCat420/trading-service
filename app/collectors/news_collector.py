@@ -15,6 +15,7 @@ import asyncio
 import time
 from app.db.connection import get_db
 from app.processors.ticker_extractor import get_ticker_symbols
+from app.utils.text_utils import is_truncated_content
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +308,11 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                 if not summary:
                     summary = api_summary
 
-                if len(summary) < 50:
+                if is_truncated_content(summary):
+                    logger.warning(
+                        "[news][DROP] collect_feed: dropped '%s' from %s — truncated/paywalled (len=%d)",
+                        title[:60], feed_name, len(summary),
+                    )
                     continue
 
                 from app.processors.dedup_engine import DedupEngine
@@ -508,7 +513,11 @@ async def collect_finnhub_news(
             if not summary:
                 summary = headline  # Use headline as minimal fallback
 
-            if len(summary) < 50:
+            if is_truncated_content(summary):
+                logger.warning(
+                    "[news][DROP] finnhub: dropped '%s' from %s — truncated/paywalled (len=%d)",
+                    headline[:60], source, len(summary),
+                )
                 return []
 
             published_at = (
@@ -655,7 +664,11 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
             if not summary:
                 summary = title  # Use title as minimal fallback
 
-            if len(summary) < 50:
+            if is_truncated_content(summary):
+                logger.warning(
+                    "[news][DROP] yfinance: dropped '%s' from %s — truncated/paywalled (len=%d)",
+                    title[:60], publisher, len(summary),
+                )
                 return []
 
             if since and published_at and published_at <= since:

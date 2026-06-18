@@ -188,6 +188,14 @@ Summary/Snippet: {summary or "No summary content."}
                     article_id
                 ]
             )
+
+        if decision == "discard":
+            logger.warning(
+                "[JANITOR][DROP] news article_id=%s ticker=%s publisher=%s len=%d reason=%s",
+                article_id, ticker, publisher or "unknown",
+                len(summary or ""),
+                (draft_data.get("justification") or "")[:120],
+            )
         logger.info(f"[JANITOR] Processed article {article_id} for {ticker} -> {draft_data.get('decision')}")
         return True
         
@@ -341,6 +349,14 @@ Body: {body or "No body content."}
                     draft_data.get("justification", ""),
                     post_id
                 ]
+            )
+
+        if decision == "discard":
+            logger.warning(
+                "[JANITOR][DROP] reddit post_id=%s ticker=%s subreddit=r/%s len=%d reason=%s",
+                post_id, ticker, subreddit or "unknown",
+                len(body or ""),
+                (draft_data.get("justification") or "")[:120],
             )
         logger.info(f"[JANITOR] Processed Reddit post {post_id} for {ticker} -> {draft_data.get('decision')}")
         return True
