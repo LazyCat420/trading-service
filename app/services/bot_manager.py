@@ -17,6 +17,7 @@ Public API:
 
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -226,10 +227,6 @@ def list_bot_profiles() -> list[dict]:
         }
         for r in rows
     ]
-
-
-import time
-
 
 def create_bot_profile(
     display_name: str,

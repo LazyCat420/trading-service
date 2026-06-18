@@ -87,7 +87,7 @@ async def test_collect_fundamentals_missing_data(mock_ticker):
 
 @pytest.mark.asyncio
 @patch("app.collectors.news_collector._scrape_article_body_via_service", new_callable=AsyncMock)
-@patch("app.collectors.yfinance_collector.yf.Ticker")
+@patch("yfinance.Ticker")
 async def test_collect_news_success(mock_ticker, mock_scrape, mock_db):
     
     # Mock bad publishers
@@ -96,8 +96,8 @@ async def test_collect_news_success(mock_ticker, mock_scrape, mock_db):
     
     mock_ticker_inst = MagicMock()
     mock_ticker_inst.news = [
-        {"content": {"title": "Test 1", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Provider 1"}, "pubDate": "2023-10-01T12:00:00Z"}},
-        {"content": {"title": "Test 2", "clickThroughUrl": {"url": "http://2"}}},
+        {"content": {"title": "Test 1 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Provider 1"}, "pubDate": "2023-10-01T12:00:00Z"}},
+        {"content": {"title": "Test 2 Article Headline that is long enough to pass quality gate", "clickThroughUrl": {"url": "http://2"}}},
     ]
     mock_ticker.return_value = mock_ticker_inst
     
@@ -108,7 +108,7 @@ async def test_collect_news_success(mock_ticker, mock_scrape, mock_db):
 
 @pytest.mark.asyncio
 @patch("app.collectors.news_collector._scrape_article_body_via_service", new_callable=AsyncMock)
-@patch("app.collectors.yfinance_collector.yf.Ticker")
+@patch("yfinance.Ticker")
 async def test_collect_news_bad_publisher(mock_ticker, mock_scrape, mock_db):
     
     # Mock bad publishers (win_rate < 0.1, total_items >= 5)
@@ -117,8 +117,8 @@ async def test_collect_news_bad_publisher(mock_ticker, mock_scrape, mock_db):
     
     mock_ticker_inst = MagicMock()
     mock_ticker_inst.news = [
-        {"content": {"title": "Test 1", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Bad Provider"}}},
-        {"content": {"title": "Test 2", "canonicalUrl": {"url": "http://2"}, "provider": {"displayName": "Good Provider"}}},
+        {"content": {"title": "Test 1 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Bad Provider"}}},
+        {"content": {"title": "Test 2 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://2"}, "provider": {"displayName": "Good Provider"}}},
     ]
     mock_ticker.return_value = mock_ticker_inst
     

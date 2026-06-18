@@ -133,6 +133,7 @@ class TestScheduleClockBoundary:
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
+            mock_cc.is_stopped = False
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -168,6 +169,7 @@ class TestScheduleClockBoundary:
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
+            mock_cc.is_stopped = False
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -182,15 +184,15 @@ class TestScheduleClockBoundary:
 
 
 # ============================================================================
-# TEST: Paused system auto-resumes when schedule executes
+# TEST: Paused system skips execution when schedule executes
 # ============================================================================
 
-class TestPausedSystemResumes:
-    """When cycle_control.is_paused is True, schedules should auto-resume the system."""
+class TestPausedSystemSkipsSchedule:
+    """When cycle_control.is_paused/is_stopped is True, schedules should skip execution and NOT auto-resume."""
 
     @pytest.mark.asyncio
-    async def test_paused_system_resumes_schedule(self):
-        """Paused system should resume and execute scheduled cycles."""
+    async def test_paused_system_skips_schedule(self):
+        """Paused system should skip executing scheduled cycles and not call resume."""
         mock_db = MagicMock()
         mock_db.execute.return_value = mock_db
         mock_db.fetchone.side_effect = [
@@ -209,17 +211,18 @@ class TestPausedSystemResumes:
              patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = True
+            mock_cc.is_stopped = False
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
 
             await SchedulerService.execute_schedule("sched-paused")
 
-            # Check that resume was triggered on cycle_control
-            mock_cc.resume.assert_called_once()
+            # Check that resume was NOT triggered on cycle_control
+            mock_cc.resume.assert_not_called()
 
-        # Should have inserted a system_command (executed)
+        # Should NOT have inserted a system_command (skipped)
         insert_calls = [
             c for c in mock_db.execute.call_args_list
             if "INSERT INTO system_commands" in str(c)
         ]
-        assert len(insert_calls) >= 1, "Schedule should have executed and dispatched command"
+        assert len(insert_calls) == 0, "Schedule should have been skipped when system is paused"

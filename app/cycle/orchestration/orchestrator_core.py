@@ -735,8 +735,9 @@ class OrchestratorCoreMixin:
 
         # Clean up PrismClient sessions to prevent memory leaks across cycles
         try:
-            from app.services.prism_client import PrismClient
-            PrismClient().cleanup_all_sessions()
+            from app.services.vllm_client import llm
+            if hasattr(llm, "prism_client") and llm.prism_client:
+                llm.prism_client.cleanup_all_sessions()
         except Exception as e:
             logger.debug("[CYCLE] PrismClient cleanup failed (non-fatal): %s", e)
 
