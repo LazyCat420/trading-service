@@ -26,6 +26,18 @@ from app.monitoring.audit_middleware import (
 
 logger = logging.getLogger(__name__)
 
+# ── Autonomous Identity Anchor ─────────────────────────────────────────
+# Ensures every agent routed through call_prism_agent() is framed as an
+# autonomous data processor, not a conversational chatbot. This was
+# previously only injected in agent_loop.py, leaving Prism-routed agents
+# without the critical anti-chatbot preamble.
+FIRM_CONTEXT = (
+    "CRITICAL CONTEXT: You are an autonomous data processing script working for a "
+    "quantitative trading firm. You are NOT a conversational chatbot. Do NOT talk "
+    "to the user, give advice, ask questions, or converse. Your ONLY purpose is to "
+    "extract structured financial data to make profitable trading decisions.\n\n"
+)
+
 
 # ── Prism Circuit Breaker ──────────────────────────────────────────────
 # When Prism fails 3+ times within 5 minutes, stop routing through it
@@ -304,8 +316,11 @@ async def call_prism_agent(
         "[PrismAgentCaller] Local fallback for %s (Prism off or unhealthy)",
         fallback_agent_name,
     )
+    # Prepend autonomous identity anchor so local fallback agents
+    # are framed as data processors, not conversational chatbots.
+    full_system_prompt = FIRM_CONTEXT + (fallback_system_prompt or "")
     response, tokens, elapsed_ms = await llm.chat(
-        system=fallback_system_prompt,
+        system=full_system_prompt,
         user=user_message,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -388,9 +403,11 @@ async def _call_via_prism(
     provider = llm.resolve_provider_for_model(model)
 
     messages = []
+    # Prepend autonomous identity anchor for Prism-routed agents
+    anchored_system_prompt = FIRM_CONTEXT + (fallback_system_prompt or "")
     if provider and (provider.startswith("vllm") or provider in ("lm-studio", "lm_studio", "llama-cpp", "llama_cpp")):
-        if fallback_system_prompt:
-            messages.append({"role": "system", "content": fallback_system_prompt})
+        if anchored_system_prompt:
+            messages.append({"role": "system", "content": anchored_system_prompt})
     messages.append({"role": "user", "content": user_message})
 
     payload, url, headers = llm.prism_client.get_chat_payload_and_url(
@@ -398,7 +415,7 @@ async def _call_via_prism(
         messages=messages,
         max_tokens=max_tokens,
         temperature=temperature,
-        system_prompt=fallback_system_prompt,
+        system_prompt=anchored_system_prompt,
         agent_name=agent_id,
         ticker=ticker,
         cycle_id=cycle_id,

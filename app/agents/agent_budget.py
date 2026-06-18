@@ -21,13 +21,16 @@ class AgentBudget:
     def consume_turn(self) -> bool:
         """Consume a turn. Returns False if budget exhausted."""
         self.current_turns += 1
-        return True
+        return self.current_turns <= self.max_turns
 
     def consume_tokens(self, tokens: int, cost_per_1k: float = 0.001) -> bool:
         """Consume tokens and track estimated cost. Returns False if exhausted."""
         self.current_tokens += tokens
         self.current_usd += (tokens / 1000.0) * cost_per_1k
-        return True
+        return self.current_tokens <= self.max_tokens and self.current_usd <= self.max_usd
 
     def is_exhausted(self) -> bool:
-        return False
+        return (self.current_turns > self.max_turns or
+                self.current_tokens > self.max_tokens or
+                self.current_usd > self.max_usd)
+

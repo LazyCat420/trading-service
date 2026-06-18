@@ -551,6 +551,8 @@ async def run_agent_loop(
             logger.warning(
                 f"[AgentLoop] Agent '{agent_name}' reached consecutive empty/error threshold ({scorecard.consecutive_empty}). Aborting loop to protect Jetson model server."
             )
+            stop_reason = "consecutive_empty_abort"
+            break
 
         if requires_approval:
             logger.warning(
