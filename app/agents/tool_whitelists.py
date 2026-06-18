@@ -280,6 +280,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     "v3_worker_news": [
         "get_finnhub_news",
         "search_web",
+        "scrape_url",
         "search_database_facts",
         "search_internal_database",
     ],
@@ -294,6 +295,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     "v3_junior_analyst": [
         "get_finnhub_news",
         "search_web",
+        "scrape_url",
         "get_market_data",
         "search_internal_database",
         "search_database_facts",
@@ -305,6 +307,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_earnings_data",
         "query_financial_metrics",
         "search_web",
+        "scrape_url",
         "search_database_facts",
         "get_market_data",
         "post_finding",
@@ -329,6 +332,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_market_data",
         "get_finnhub_news",
         "search_web",
+        "scrape_url",
         "get_technical_indicators",
         "search_database_facts",
     ],

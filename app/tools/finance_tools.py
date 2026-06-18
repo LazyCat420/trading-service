@@ -122,7 +122,7 @@ async def get_finnhub_news(ticker: str) -> str:
     with get_db() as db:
         rows = db.execute(
             """
-            SELECT title, publisher, published_at, COALESCE(llm_summary, summary)
+            SELECT title, publisher, published_at, url, COALESCE(llm_summary, summary)
             FROM news_articles WHERE ticker = %s ORDER BY published_at DESC LIMIT 15
         """,
             [ticker],
@@ -132,7 +132,7 @@ async def get_finnhub_news(ticker: str) -> str:
         return "No recent news found."
 
     return format_db_section(
-        "Recent News", rows, ["Title", "Publisher", "Date", "Summary"]
+        "Recent News", rows, ["Title", "Publisher", "Date", "URL", "Summary"]
     )
 
 

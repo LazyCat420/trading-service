@@ -15,7 +15,9 @@ Output JSON Schema:
 {
     "is_stock": boolean,  // true if it's a real stock being discussed, false otherwise
     "reason": "string"    // 1-sentence explanation of why
-}"""
+}
+
+CRITICAL: The snippet you receive will likely be cut off mid-sentence (e.g. "I think they're..."). Do NOT attempt to complete the sentence or act like a chatbot. Output ONLY the raw JSON object above, with no markdown, no conversational text, and no hallucinated continuations."""
 
 ENABLED_TOOLS = []
 
