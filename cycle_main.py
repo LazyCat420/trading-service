@@ -147,7 +147,17 @@ async def poll_system_commands(shutdown: asyncio.Event):
             with get_db() as db:
                 with db.transaction():
                     row = db.execute(
-                        "SELECT id, command_type, payload FROM system_commands WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
+                        "SELECT id, command_type, payload FROM system_commands "
+                        "WHERE status = 'pending' "
+                        "ORDER BY "
+                        "  CASE command_type "
+                        "    WHEN 'STOP_CYCLE' THEN 0 "
+                        "    WHEN 'PAUSE_CYCLE' THEN 1 "
+                        "    WHEN 'RESUME_CYCLE' THEN 2 "
+                        "    ELSE 10 "
+                        "  END, "
+                        "  created_at ASC "
+                        "LIMIT 1 FOR UPDATE SKIP LOCKED"
                     ).fetchone()
                     
                     if row:
@@ -190,8 +200,36 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         from app.services.flash_briefing import generate_flash_briefing
                         result = await generate_flash_briefing()
                     elif cmd_type == "STOP_CYCLE":
+                        import time as _time
+                        _stop_start = _time.monotonic()
                         from app.services.pipeline_service import PipelineService
-                        result = await PipelineService.stop_cycle()
+                        # fast=true uses request_stop() (non-blocking, <50ms)
+                        # fast=false/missing uses full stop_cycle() (waits for cleanup)
+                        if payload.get("fast"):
+                            result = PipelineService.request_stop()
+                            _stop_ms = int((_time.monotonic() - _stop_start) * 1000)
+                            logger.info(
+                                "[cycle_backend] STOP_CYCLE ACK (fast mode) — %dms — result: %s",
+                                _stop_ms, result.get("status", "?"),
+                            )
+                        else:
+                            result = await PipelineService.stop_cycle()
+                            _stop_ms = int((_time.monotonic() - _stop_start) * 1000)
+                            logger.info(
+                                "[cycle_backend] STOP_CYCLE ACK (full mode) — %dms — result: %s",
+                                _stop_ms, result.get("status", "?"),
+                            )
+                        # Deduplicate: mark any other pending STOP_CYCLE commands as completed
+                        try:
+                            with get_db() as dedup_db:
+                                dedup_db.execute(
+                                    "UPDATE system_commands SET status = 'completed', "
+                                    "completed_at = CURRENT_TIMESTAMP, "
+                                    "result = '{\"status\": \"deduplicated\"}' "
+                                    "WHERE command_type = 'STOP_CYCLE' AND status = 'pending'"
+                                )
+                        except Exception as dedup_err:
+                            logger.debug("[cycle_backend] STOP_CYCLE dedup cleanup: %s", dedup_err)
                     elif cmd_type == "PAUSE_CYCLE":
                         from app.services.pipeline_service import PipelineService
                         PipelineService.pause_cycle()

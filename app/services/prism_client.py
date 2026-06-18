@@ -113,15 +113,28 @@ class PrismClient:
         return is_up
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Lazy-init a persistent async client for connection reuse."""
-        if self._client is not None and not self._client.is_closed:
+        """Lazy-init a persistent async client for connection reuse.
+
+        Tracks the event loop ID and recreates the client if the loop
+        changes (e.g., after asyncio.run() creates a new event loop).
+        This prevents stale connection pool leaks.
+        """
+        current_loop = asyncio.get_running_loop()
+        client_loop = getattr(self, "_client_loop", None)
+
+        # If loop changed, close the old client before creating a new one
+        if self._client is not None and client_loop is not current_loop:
             try:
-                asyncio.get_event_loop()
-            except RuntimeError:
-                self._client = None
+                await self._client.aclose()
+            except Exception:
+                pass
+            self._client = None
+            logger.debug("[PRISM] Event loop changed — recycling httpx client")
+
         if self._client is None or self._client.is_closed:
             limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
             self._client = httpx.AsyncClient(timeout=120.0, limits=limits)
+            self._client_loop = current_loop
         return self._client
 
     def _get_or_create_session(self, group_key: str) -> tuple[str | None, bool]:
@@ -141,6 +154,23 @@ class PrismClient:
         if removed or removed_conv:
             logger.debug("[PRISM] Ended session for %s", group_key[:16])
 
+    def cleanup_all_sessions(self):
+        """Clear ALL tracked sessions and conversations.
+
+        Called at end-of-cycle to prevent memory leaks. Without this,
+        _sessions and _conversations grow without bound across cycles
+        because no individual end_session() calls are made during normal flow.
+        """
+        session_count = len(self._sessions)
+        conv_count = len(self._conversations)
+        self._sessions.clear()
+        self._conversations.clear()
+        if session_count or conv_count:
+            logger.info(
+                "[PRISM] Cleaned up %d sessions and %d conversations",
+                session_count, conv_count,
+            )
+
     async def _call_endpoint(
         self,
         client: httpx.AsyncClient,
@@ -148,14 +178,35 @@ class PrismClient:
         json_payload: dict,
         headers: dict | None = None,
     ) -> httpx.Response:
-        """Internal API wrapper with explicit timeout and retry logic."""
+        """Internal API wrapper with explicit timeout, retry logic, and stop-flag checking.
+
+        Before each attempt and during retry backoff, checks if a cycle stop
+        has been requested. This prevents Prism requests from blocking for
+        up to 120s × 3 attempts after a stop signal.
+        """
         from app.utils.text_utils import sanitize_surrogates
         json_payload = sanitize_surrogates(json_payload)
 
         max_retries = 3
         backoff = 1.0
 
+        def _is_stopped() -> bool:
+            """Check if the cycle has been stopped (non-blocking)."""
+            try:
+                from app.cycle.orchestration.cycle_control import cycle_control
+                return cycle_control.is_stopped
+            except Exception:
+                return False
+
         for attempt in range(max_retries):
+            # Check stop flag before each attempt
+            if _is_stopped():
+                logger.info(
+                    "[PRISM] Stop flag detected before attempt %d/%d to %s — aborting.",
+                    attempt + 1, max_retries, url,
+                )
+                raise asyncio.CancelledError("Cycle stopped — aborting Prism request")
+
             try:
                 r = await client.post(
                     url,
@@ -187,7 +238,18 @@ class PrismClient:
                         e,
                     )
                     raise
-                await asyncio.sleep(backoff)
+
+                # Interruptible backoff: check stop flag during sleep
+                sleep_remaining = backoff
+                while sleep_remaining > 0:
+                    if _is_stopped():
+                        logger.info(
+                            "[PRISM] Stop flag detected during retry backoff for %s — aborting.",
+                            url,
+                        )
+                        raise asyncio.CancelledError("Cycle stopped — aborting Prism retry")
+                    await asyncio.sleep(min(0.25, sleep_remaining))
+                    sleep_remaining -= 0.25
                 backoff *= 2.0
 
         raise RuntimeError(

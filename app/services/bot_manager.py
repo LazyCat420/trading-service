@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 
 # ── In-memory cache of the active bot_id ──
 # Initialized lazily from DB on first call, updated on set_active_bot().
+# TTL-based: expires after _CACHE_TTL_S seconds to prevent stale fallback caching.
 _active_bot_id: str | None = None
+_active_bot_id_ts: float = 0.0  # monotonic timestamp of last cache write
+_CACHE_TTL_S: float = 120.0  # 2 minute TTL
 
 
 def _slugify(name: str) -> str:
@@ -43,12 +46,15 @@ def get_active_bot_id() -> str:
     """Return the currently active bot_id.
 
     Resolution order:
-    1. In-memory cache (fastest)
+    1. In-memory cache (fastest, with TTL)
     2. DB lookup (is_active = TRUE)
     3. Fallback to settings.BOT_ID
     """
-    global _active_bot_id
-    if _active_bot_id is not None:
+    global _active_bot_id, _active_bot_id_ts
+    now = time.monotonic()
+
+    # Return cached value if within TTL
+    if _active_bot_id is not None and (now - _active_bot_id_ts) < _CACHE_TTL_S:
         logger.debug(
             "[TRACE][BOT_MANAGER] get_active_bot_id() cache hit: %s", _active_bot_id
         )
@@ -61,6 +67,7 @@ def get_active_bot_id() -> str:
             ).fetchall()
             if rows:
                 _active_bot_id = rows[0][0]
+                _active_bot_id_ts = now
                 # Enforce single-active invariant: if multiple are active, fix it
                 if len(rows) > 1:
                     logger.warning(
@@ -83,6 +90,7 @@ def get_active_bot_id() -> str:
         logger.warning("Failed to query active bot: %s", e)
 
     _active_bot_id = settings.BOT_ID
+    _active_bot_id_ts = now  # TTL applies to fallback too — prevents permanent stale cache
     logger.info(
         "[TRACE][BOT_MANAGER] get_active_bot_id() fallback to settings.BOT_ID: %s",
         _active_bot_id,
@@ -145,7 +153,7 @@ def set_active_bot(bot_id: str) -> None:
     Sets is_active=FALSE on all bots, then TRUE on the target.
     Raises ValueError if bot_id doesn't exist or a cycle is running.
     """
-    global _active_bot_id
+    global _active_bot_id, _active_bot_id_ts
 
     if is_cycle_running():
         raise ValueError(
@@ -163,6 +171,7 @@ def set_active_bot(bot_id: str) -> None:
         db.execute("UPDATE bots SET is_active = FALSE WHERE is_active = TRUE")
         db.execute("UPDATE bots SET is_active = TRUE WHERE bot_id = %s", [bot_id])
     _active_bot_id = bot_id
+    _active_bot_id_ts = time.monotonic()
     logger.info("[BOT_MANAGER] Active bot switched to: %s", bot_id)
 
     # Reset pipeline state — the old bot's cycle state is irrelevant to the new bot.

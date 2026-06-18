@@ -726,12 +726,19 @@ class OrchestratorCoreMixin:
 
     @classmethod
     def _finalize_cycle_telemetry(cls, ctx: Any) -> None:
-        """Flush remaining events, end the pipeline profiler, and persist the benchmark report."""
+        """Flush remaining events, end the pipeline profiler, clean up PrismClient, and persist the benchmark report."""
         try:
             if hasattr(cls, "flush_events"):
                 cls.flush_events()
         except Exception as e:
             logger.warning("[CYCLE] Failed to flush events for telemetry: %s", e)
+
+        # Clean up PrismClient sessions to prevent memory leaks across cycles
+        try:
+            from app.services.prism_client import PrismClient
+            PrismClient().cleanup_all_sessions()
+        except Exception as e:
+            logger.debug("[CYCLE] PrismClient cleanup failed (non-fatal): %s", e)
 
         try:
             from app.monitoring.pipeline_profiler import profiler as pipeline_profiler

@@ -63,11 +63,19 @@ class CycleControl:
     def reset(self):
         """Clear all flags for a fresh cycle start.
 
-        Re-creates the Event to ensure it's bound to the current event loop
-        (prevents stale Event from import-time loop after uvicorn reload).
+        IMPORTANT: Sets the old Event before discarding it, so any coroutines
+        that were awaiting pause_event.wait() are unblocked first.
+        Without this, those coroutines would be permanently parked on a dead
+        Event object (ghost task bug).
+
+        Re-creates the Event lazily on next use to ensure it's bound to the
+        current event loop (prevents stale Event after uvicorn reload).
         """
         self.is_stopped = False
         self.is_paused = False
+        # Unblock any coroutines waiting on the old event before discarding it
+        if self._pause_event is not None:
+            self._pause_event.set()
         self._pause_event = None  # Lazy init on next use to guarantee current loop
         logger.info("[PIPELINE] [CYCLE_CONTROL] Reset (fresh cycle)")
 
