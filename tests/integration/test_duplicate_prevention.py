@@ -47,6 +47,7 @@ class TestPipelineStateLock:
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
+            mock_cc.is_stopped = False
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -163,6 +164,7 @@ class TestScheduler409:
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
+            mock_cc.is_stopped = False
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
 

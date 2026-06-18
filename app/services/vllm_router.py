@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from typing import Any, List, Dict, Optional, Tuple
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -145,7 +145,7 @@ async def vllm_chat(req: ChatRequest):
 
 
 @router.post("/api/v1/vllm/chat_stream")
-async def vllm_chat_stream(req: ChatStreamRequest):
+async def vllm_chat_stream(req: ChatStreamRequest, request: Request):
     async def event_generator():
         try:
 
@@ -164,6 +164,9 @@ async def vllm_chat_stream(req: ChatStreamRequest):
                     images=req.images,
                     bypass_prism=req.bypass_prism
                 ):
+                    if await request.is_disconnected():
+                        logger.info("[vLLM Router] Client disconnected from chat_stream, aborting.")
+                        break
                     yield chunk + "\n"
         except Exception as e:
             logger.exception("Error in /vllm/chat_stream generator")

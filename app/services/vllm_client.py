@@ -1044,12 +1044,24 @@ class VLLMClient:
 
                 # Run execute_item in background, and release semaphore when finished
                 async def run_and_release(item=item):
+                    execute_task = asyncio.create_task(
+                        self._execute_item(item, ep, release_pipeline=item.priority > Priority.HIGH)
+                    )
+
+                    def on_future_done(f):
+                        if f.cancelled():
+                            logger.info(
+                                "[VLLM] 🛑 Caller future cancelled for agent=%s ticker=%s — cancelling execution task",
+                                item.metadata.get("agent_name"),
+                                item.metadata.get("ticker"),
+                            )
+                            execute_task.cancel()
+
+                    item.future.add_done_callback(on_future_done)
+
                     try:
                         # execute individual item with BATCH_TIMEOUT
-                        await asyncio.wait_for(
-                            self._execute_item(item, ep, release_pipeline=item.priority > Priority.HIGH),
-                            timeout=batch_timeout
-                        )
+                        await asyncio.wait_for(execute_task, timeout=batch_timeout)
                         if item.future.done() and item.future.exception() is not None:
                             raise item.future.exception()
                         ep.consecutive_batch_failures = 0
@@ -1080,6 +1092,7 @@ class VLLMClient:
                         logger.exception("[VLLM] Request failed for agent=%s ticker=%s: %s", item.metadata.get("agent_name"), item.metadata.get("ticker"), err)
                         _record_endpoint_failure(ep, cb_threshold, "error")
                     finally:
+                        item.future.remove_done_callback(on_future_done)
                         ep.queue.task_done()
                         ep.slots.release()
                         self._global_slots.release()

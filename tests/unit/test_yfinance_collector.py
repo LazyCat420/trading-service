@@ -96,8 +96,8 @@ async def test_collect_news_success(mock_ticker, mock_scrape, mock_db):
     
     mock_ticker_inst = MagicMock()
     mock_ticker_inst.news = [
-        {"content": {"title": "Test 1 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Provider 1"}, "pubDate": "2023-10-01T12:00:00Z"}},
-        {"content": {"title": "Test 2 Article Headline that is long enough to pass quality gate", "clickThroughUrl": {"url": "http://2"}}},
+        {"content": {"title": "Test 1 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Provider 1"}, "pubDate": "2023-10-01T12:00:00Z", "description": "A" * 200}},
+        {"content": {"title": "Test 2 Article Headline that is long enough to pass quality gate", "clickThroughUrl": {"url": "http://2"}, "description": "A" * 200}},
     ]
     mock_ticker.return_value = mock_ticker_inst
     
@@ -117,8 +117,8 @@ async def test_collect_news_bad_publisher(mock_ticker, mock_scrape, mock_db):
     
     mock_ticker_inst = MagicMock()
     mock_ticker_inst.news = [
-        {"content": {"title": "Test 1 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Bad Provider"}}},
-        {"content": {"title": "Test 2 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://2"}, "provider": {"displayName": "Good Provider"}}},
+        {"content": {"title": "Test 1 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://1"}, "provider": {"displayName": "Bad Provider"}, "description": "A" * 200}},
+        {"content": {"title": "Test 2 Article Headline that is long enough to pass quality gate", "canonicalUrl": {"url": "http://2"}, "provider": {"displayName": "Good Provider"}, "description": "A" * 200}},
     ]
     mock_ticker.return_value = mock_ticker_inst
     

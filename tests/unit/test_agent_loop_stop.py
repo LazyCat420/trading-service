@@ -192,3 +192,68 @@ async def test_agent_loop_checks_stop_between_turns():
 
     # Only 1 LLM call should have been made
     assert call_count == 1, f"Expected 1 LLM call, got {call_count}"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_consecutive_empty_abort_fallback():
+    """Agent loop should return a degraded JSON fallback when consecutive empty/error responses abort it and require_json_schema is True."""
+    from app.agents.agent_loop import run_agent_loop
+    from app.agents.agent_loop import FailureEvent
+
+    call_count = 0
+
+    async def mock_chat_with_tools(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {
+            "text": "Checking tools.",
+            "total_tokens": 10,
+            "elapsed_ms": 10,
+            "tool_calls": [
+                {
+                    "id": f"call_{call_count}",
+                    "function": {"name": "test_tool", "arguments": "{}"},
+                }
+            ],
+        }
+
+    mock_llm = MagicMock()
+    mock_llm.chat_with_tools = AsyncMock(side_effect=mock_chat_with_tools)
+
+    mock_registry = MagicMock()
+    mock_registry.schemas = [{"function": {"name": "test_tool", "description": "test"}}]
+    mock_registry.execute_tool_call = AsyncMock(
+        return_value={
+            "role": "tool",
+            "name": "test_tool",
+            "tool_call_id": "call_1",
+            "content": "",  # Empty response to trigger consecutive_empty increment
+        }
+    )
+
+    with patch("app.pipeline.orchestration.cycle_control.cycle_control") as mock_cc:
+        mock_cc.is_stopped = False
+        with patch("app.agents.agent_loop.llm", mock_llm):
+            with patch("app.agents.agent_loop.registry", mock_registry):
+                with patch("app.db.connection.get_db", return_value=_mock_db_ctx()):
+                    with patch("app.agents.context_compressor.compress_history", new_callable=AsyncMock, side_effect=lambda m: m):
+                        with patch("app.agents.context_compressor.summarize_tool_result", side_effect=lambda c, **kw: c):
+                            with patch("app.cognition.evolution.reflector.reflect_on_trajectory", new_callable=AsyncMock):
+                                with patch("app.cognition.evolution.reflector.adjust_lesson_score"):
+                                    with patch("app.agents.agent_loop.recovery_engine") as mock_recovery:
+                                        result = await run_agent_loop(
+                                            system_prompt="test",
+                                            user_prompt="test",
+                                            ticker="AAPL",
+                                            agent_name="test_agent",
+                                            budget=AgentBudget(max_turns=5),
+                                            require_json_schema=True,
+                                        )
+
+                                        # The loop should abort after 3 consecutive empty responses
+                                        assert call_count == 3
+                                        assert result["stop_reason"] == "consecutive_empty_abort"
+                                        assert "DATA_MISSING" in result["final_text"]
+                                        assert "ConsecutiveEmptyAbort" in result["final_text"]
+                                        mock_recovery.handle.assert_called_once()
+

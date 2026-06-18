@@ -319,6 +319,10 @@ async def call_prism_agent(
     # Prepend autonomous identity anchor so local fallback agents
     # are framed as data processors, not conversational chatbots.
     full_system_prompt = FIRM_CONTEXT + (fallback_system_prompt or "")
+    logger.info(
+        "[PrismAgentCaller] Local fallback assembled prompt for %s (ticker=%s): SYSTEM=%r | USER=%r",
+        fallback_agent_name, ticker or "global", full_system_prompt, user_message
+    )
     response, tokens, elapsed_ms = await llm.chat(
         system=full_system_prompt,
         user=user_message,
@@ -409,6 +413,11 @@ async def _call_via_prism(
         if anchored_system_prompt:
             messages.append({"role": "system", "content": anchored_system_prompt})
     messages.append({"role": "user", "content": user_message})
+    
+    logger.info(
+        "[PrismAgentCaller] Assembled prompt messages for %s (ticker=%s): systemPrompt=%r | userMessage=%r",
+        fallback_agent_name, ticker or "global", anchored_system_prompt, user_message
+    )
 
     payload, url, headers = llm.prism_client.get_chat_payload_and_url(
         model=model,

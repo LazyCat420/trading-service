@@ -139,6 +139,70 @@ def parse_json_response(text: str) -> dict:
     return {}
 
 
+def parse_json_list_response(text: str) -> list:
+    """Extract JSON list from LLM response, handling markdown fences and nesting.
+
+    Tries (in order):
+        1. Markdown JSON code block (```json ... ```) with brackets [ ... ]
+        2. Balanced bracket-counting for nested JSON lists
+        3. Raw text as JSON
+    
+    Args:
+        text: Raw LLM response text (may contain <think> blocks, markdown, etc.)
+
+    Returns:
+        Parsed list, or [] if no valid JSON list found.
+    """
+    cleaned = strip_think_tags(text)
+
+    # Strip __THINK__ streaming markers that may have leaked
+    if "__THINK__" in cleaned:
+        lines = cleaned.split("\n")
+        cleaned = "\n".join(l for l in lines if not l.strip().startswith("__THINK__"))
+        cleaned = cleaned.strip()
+
+    if not cleaned:
+        return []
+
+    # Try markdown JSON block first (find all code blocks, non-greedy)
+    for match in re.finditer(r"```(?:json)?\s*(\[.*?\])\s*```", cleaned, re.DOTALL):
+        try:
+            parsed = json.loads(match.group(1))
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    # Find balanced JSON lists using bracket counting
+    for start_idx in range(len(cleaned)):
+        if cleaned[start_idx] != "[":
+            continue
+        depth = 0
+        for end_idx in range(start_idx, len(cleaned)):
+            if cleaned[end_idx] == "[":
+                depth += 1
+            elif cleaned[end_idx] == "]":
+                depth -= 1
+            if depth == 0:
+                candidate = cleaned[start_idx : end_idx + 1]
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, list):
+                        return parsed
+                except json.JSONDecodeError:
+                    break  # This opening bracket didn't work, try next
+
+    # Last resort: try the entire cleaned text
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return []
+
+
 def parse_malformed_text_response(text: str) -> dict:
     """Fallback parser that extracts keys from markdown or plain text responses
     when standard JSON parsing fails.

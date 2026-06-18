@@ -99,3 +99,38 @@ def test_parse_malformed_overlays():
     assert any(o["y0"] == round(155.00 * 0.99, 2) and o["y1"] == round(155.00 * 1.01, 2) for o in resistances)
     assert any(o["y0"] == 158.0 and o["y1"] == 160.0 for o in resistances)
 
+
+def test_parse_json_list_response():
+    from app.utils.text_utils import parse_json_list_response
+
+    # Test case 1: Raw JSON array
+    raw = '[{"ticker": "AAPL", "reason": "growth"}]'
+    assert parse_json_list_response(raw) == [{"ticker": "AAPL", "reason": "growth"}]
+
+    # Test case 2: Markdown JSON block
+    raw_markdown = (
+        "Here is the list:\n"
+        "```json\n"
+        '[\n'
+        '  {"ticker": "MSFT", "reason": "AI"}\n'
+        ']\n'
+        "```\n"
+        "Hope this helps."
+    )
+    assert parse_json_list_response(raw_markdown) == [{"ticker": "MSFT", "reason": "AI"}]
+
+    # Test case 3: Nested JSON array with prefix/suffix prose and think block
+    raw_think = (
+        "<think>\n"
+        "Let's think about this.\n"
+        "</think>\n"
+        "JSON output:\n"
+        '[{"ticker": "TSLA", "reason": "EV"}]'
+    )
+    assert parse_json_list_response(raw_think) == [{"ticker": "TSLA", "reason": "EV"}]
+
+    # Test case 4: Empty / malformed response
+    assert parse_json_list_response("") == []
+    assert parse_json_list_response("No tickers found.") == []
+
+

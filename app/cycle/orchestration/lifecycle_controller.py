@@ -511,6 +511,8 @@ class LifecycleControllerMixin:
         try:
             from app.services.vllm_client import llm
             llm._killed = True
+            llm.cancel_active_requests()
+            llm.drain_queues()
             logger.info("[CYCLE] Kill switch engaged immediately on stop request")
         except Exception:
             pass
@@ -571,6 +573,15 @@ class LifecycleControllerMixin:
         ):
             raise ValueError("No active cycle to pause")
         cycle_control.pause()
+        
+        try:
+            from app.services.vllm_client import llm
+            llm.cancel_active_requests()
+            llm.drain_queues()
+            logger.info("[CYCLE] VLLM queues drained and active requests cancelled for pause")
+        except Exception as e:
+            logger.error("[CYCLE] Failed to cancel LLM requests on pause: %s", e)
+            
         cls._state["status"] = "paused"
         cls.save_state()
         cls.emit("paused", "user_pause", "Cycle paused by user", status="ok")

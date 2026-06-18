@@ -138,10 +138,11 @@ async def run_agent_loop(
         try:
             from app.db.connection import get_db
             with get_db() as db:
-                # Fetch hold streak
-                row = db.execute("SELECT hold_streak FROM ticker_health WHERE ticker = %s", [ticker]).fetchone()
-                if row and row[0]:
-                    hold_streak = row[0]
+                if ticker:
+                    # Fetch hold streak
+                    row = db.execute("SELECT hold_streak FROM ticker_health WHERE ticker = %s", [ticker]).fetchone()
+                    if row and row[0]:
+                        hold_streak = row[0]
                 
                 # Fetch active cycle directives
                 directives = db.execute(
@@ -151,7 +152,7 @@ async def run_agent_loop(
                 if directives:
                     relevant = []
                     for d in directives:
-                        if not d[2] or d[2] == ticker:
+                        if not d[2] or (ticker and d[2] == ticker):
                             relevant.append(f"[{d[3]}] {d[0]}: {d[1]}")
                     if relevant:
                         dir_text = "\n".join(relevant)
@@ -177,31 +178,44 @@ async def run_agent_loop(
             lesson_text = "\n".join([f"- {l}" for l in lessons])
             dynamic_instructions += f"\n\n### PAST LESSONS LEARNED (Follow these to maximize success):\n{lesson_text}"
             
-        if spotlight:
-            spotlight_text = ", ".join(spotlight)
-            dynamic_instructions += (
-                "\n\n### REQUIRED TOOL CHECK:\n"
-                f"The following tools have NOT been used recently: [{spotlight_text}].\n"
-                "Before writing your final answer, you MUST ask yourself: "
-                "Does my current analysis have a gap that one of these tools would fill? "
-                "If yes, call it now. If no, briefly state why it's not relevant."
-            )
+        has_active_tools = (tools_override is None or len(tools_override) > 0)
+        if has_active_tools:
+            if spotlight:
+                spotlight_text = ", ".join(spotlight)
+                dynamic_instructions += (
+                    "\n\n### REQUIRED TOOL CHECK:\n"
+                    f"The following tools have NOT been used recently: [{spotlight_text}].\n"
+                    "Before writing your final answer, you MUST ask yourself: "
+                    "Does my current analysis have a gap that one of these tools would fill? "
+                    "If yes, call it now. If no, briefly state why it's not relevant."
+                )
+                
+            dynamic_instructions += "\n\n### WORKING MEMORY RULE:\nAfter every tool call, before taking your next action, you MUST output a compressed structured memory object summarizing the evidence. Include: evidence type, freshness, confidence, contradiction flags, decision relevance, and source reference."
             
-        dynamic_instructions += "\n\n### WORKING MEMORY RULE:\nAfter every tool call, before taking your next action, you MUST output a compressed structured memory object summarizing the evidence. Include: evidence type, freshness, confidence, contradiction flags, decision relevance, and source reference."
-        
-        dynamic_instructions += "\n\n### TOOL USE RULE:\nBefore calling any tool, you MUST briefly state your rationale for calling it (why you need it) and your planned next action after receiving the data."
+            dynamic_instructions += "\n\n### TOOL USE RULE:\nBefore calling any tool, you MUST briefly state your rationale for calling it (why you need it) and your planned next action after receiving the data."
 
-        # Inject dynamic tool discovery guidance when Prism routing is active.
-        # This teaches agents they can call discover_and_enable_tools mid-loop
-        # to expand their toolset beyond the initial whitelist.
-        if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
-            from app.agents.dynamic_tool_prompt import DYNAMIC_TOOL_DISCOVERY_PROMPT
-            dynamic_instructions += DYNAMIC_TOOL_DISCOVERY_PROMPT
+            # Inject dynamic tool discovery guidance when Prism routing is active.
+            # This teaches agents they can call discover_and_enable_tools mid-loop
+            # to expand their toolset beyond the initial whitelist.
+            if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
+                from app.agents.dynamic_tool_prompt import DYNAMIC_TOOL_DISCOVERY_PROMPT
+                dynamic_instructions += DYNAMIC_TOOL_DISCOVERY_PROMPT
 
         messages = [{"role": "system", "content": enhanced_system_prompt}]
     else:
         spotlight = []  # We only have spotlight tools on the first message
         messages = previous_messages.copy()
+        firm_context = (
+            "CRITICAL CONTEXT: You are an autonomous data processing script working for a quantitative trading firm. "
+            "You are NOT a conversational chatbot. Do NOT talk to the user, give advice, ask questions, or converse. "
+            "Your ONLY purpose is to extract structured financial data to make profitable trading decisions.\n\n"
+        )
+        if messages and messages[0].get("role") == "system":
+            sys_content = messages[0].get("content") or ""
+            if "CRITICAL CONTEXT: You are an autonomous data processing script" not in sys_content:
+                messages[0]["content"] = firm_context + sys_content
+        else:
+            messages.insert(0, {"role": "system", "content": firm_context})
         dynamic_instructions = ""
 
     if user_prompt:
@@ -372,9 +386,10 @@ async def run_agent_loop(
                     f"[AgentLoop] Agent '{agent_name}' triggered CRITIQUE round. {critique_rounds} remaining."
                 )
                 critique_msg = (
-                    "CRITIQUE PHASE: Review your previous findings. Consider alternative perspectives, missing context, or conflicting data. "
-                    "If you need to verify anything or fill gaps, use your tools to dig deeper now. "
-                    "If you are 100% confident you have everything required, provide your final summarized conclusion."
+                    "[SYSTEM TASK: CRITIQUE PHASE - MANDATORY] Review your previous findings. "
+                    "Analyze alternative perspectives, check for missing context, and verify any conflicting data. "
+                    "If verification or additional data is required, execute tools to acquire the data now. "
+                    "If the analysis is complete and fully verified, output the final conclusion."
                 )
                 messages.append({"role": "user", "content": critique_msg})
                 continue
@@ -617,6 +632,21 @@ async def run_agent_loop(
             # Synthesize a safe JSON fallback so downstream parsers don't crash
             if not final_content or not final_content.strip().startswith("{"):
                 final_content = '{"status": "DATA_MISSING", "action": "HOLD", "confidence": 0, "error": "BudgetExhausted"}'
+
+    if stop_reason == "consecutive_empty_abort" and require_json_schema:
+        fail_event = FailureEvent(
+            failure_type=FailureType.DEGRADED,
+            agent_name=agent_name,
+            step_name="consecutive_empty_abort",
+            ticker=ticker,
+            cycle_id=cycle_id,
+            exception_type="ConsecutiveEmptyAbort",
+            exception_msg="Agent loop aborted due to consecutive empty/error responses.",
+        )
+        recovery_engine.handle(fail_event)
+        # Synthesize a safe JSON fallback so downstream parsers don't crash
+        if not final_content or not final_content.strip().startswith("{"):
+            final_content = '{"status": "DATA_MISSING", "action": "HOLD", "confidence": 0, "error": "ConsecutiveEmptyAbort"}'
 
     base_result = {
         "final_text": final_content,

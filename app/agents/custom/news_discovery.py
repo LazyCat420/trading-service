@@ -47,7 +47,7 @@ Respond with ONLY a JSON array. No prose, no markdown, no explanation outside th
   ...
 ]
 
-If no actionable tickers are found in today's data, respond with exactly: []
+If today's data snapshot is empty, contains no articles, posts, or trades, or if no actionable tickers are found, you MUST respond with exactly: []
 Do NOT explain why the array is empty. Just output [].
 """
 

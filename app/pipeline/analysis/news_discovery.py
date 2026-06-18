@@ -38,7 +38,7 @@ def _gather_recent_news(hours: int = 48, limit: int = 30) -> str:
                 SELECT ticker, title, publisher, published_at,
                        COALESCE(llm_summary, summary) AS best_summary
                 FROM news_articles
-                WHERE published_at > CURRENT_TIMESTAMP - INTERVAL '%s hours'
+                WHERE published_at > CURRENT_TIMESTAMP - (%s * INTERVAL '1 hour')
                 ORDER BY published_at DESC
                 LIMIT %s
                 """,
@@ -66,7 +66,7 @@ def _gather_recent_reddit(hours: int = 48, limit: int = 20) -> str:
                 """
                 SELECT subreddit, title, body, score
                 FROM reddit_posts
-                WHERE created_utc > CURRENT_TIMESTAMP - INTERVAL '%s hours'
+                WHERE created_utc > CURRENT_TIMESTAMP - (%s * INTERVAL '1 hour')
                 ORDER BY score DESC
                 LIMIT %s
                 """,
@@ -94,7 +94,7 @@ def _gather_congress_trades(days: int = 30, limit: int = 20) -> str:
                 SELECT politician, party, ticker, transaction_type,
                        amount_range, trade_date
                 FROM congress_trades
-                WHERE trade_date > CURRENT_TIMESTAMP - INTERVAL '%s days'
+                WHERE trade_date > CURRENT_TIMESTAMP - (%s * INTERVAL '1 day')
                 ORDER BY trade_date DESC
                 LIMIT %s
                 """,
@@ -193,33 +193,12 @@ async def _call_discovery_llm(data_snapshot: str) -> str:
 
 def _parse_discovery_response(raw: str) -> list[dict]:
     """Parse the LLM JSON array response into a list of ticker suggestions."""
-    if not raw or not raw.strip():
-        return []
-
-    text = raw.strip()
-
-    # Strip markdown fences if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:])
-        if text.endswith("```"):
-            text = text[:-3].strip()
-
-    # Find the JSON array
-    start = text.find("[")
-    end = text.rfind("]")
-    if start == -1 or end == -1:
-        logger.warning("[DISCOVERY] No JSON array found in LLM response")
-        return []
-
-    json_str = text[start:end + 1]
+    logger.info("[DISCOVERY] Parsing raw response: %s", raw)
+    from app.utils.text_utils import parse_json_list_response
     try:
-        data = json.loads(json_str)
-        if not isinstance(data, list):
-            return []
-        return data
-    except json.JSONDecodeError as e:
-        logger.warning("[DISCOVERY] JSON parse failed: %s", e)
+        return parse_json_list_response(raw)
+    except Exception as e:
+        logger.warning("[DISCOVERY] JSON parse failed: %s | Raw content: %s", e, raw)
         return []
 
 
