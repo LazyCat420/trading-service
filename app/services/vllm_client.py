@@ -3567,6 +3567,17 @@ class VLLMClient:
         # the only way to prevent new requests from reaching the GPU boxes.
         self._killed = True
         logger.info("[VLLM] 🛑 Kill switch ENGAGED — all new pipeline requests blocked")
+
+        # Stop dispatcher loops FIRST — prevents queued items from being dispatched
+        # while we're draining queues and cancelling tasks. They'll be lazily
+        # recreated by _ensure_dispatcher() when the next cycle starts.
+        for ep in self._endpoints.values():
+            if ep.dispatcher_task and not ep.dispatcher_task.done():
+                logger.info("[VLLM] Cancelling %s dispatcher loop", ep.name)
+                ep.dispatcher_task.cancel()
+            if ep.metrics_task and not ep.metrics_task.done():
+                ep.metrics_task.cancel()
+
         cancelled_count = self.cancel_active_requests()
         self.drain_queues()
         
@@ -3588,6 +3599,15 @@ class VLLMClient:
             except Exception as e:
                 logger.warning("[PRISM] Error closing Prism client: %s", e)
             self.prism_client._client = None
+
+        # Wait briefly for dispatcher tasks to actually stop
+        for ep in self._endpoints.values():
+            if ep.dispatcher_task and not ep.dispatcher_task.done():
+                try:
+                    await asyncio.wait_for(ep.dispatcher_task, timeout=0.5)
+                except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                    pass
+            ep.dispatcher_task = None
             
         return cancelled_count
 

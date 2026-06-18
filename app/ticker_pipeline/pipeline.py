@@ -163,6 +163,9 @@ async def execute_ticker_pipeline(
         asyncio.create_task(run_ontology_step(ctx))
         return await run_persist_step(ctx)
 
+    # ── Stop checkpoint: abort before heavy LLM steps ──
+    await cycle_control.wait_if_paused()
+
     # Step 0.5: Data completeness + processors
     logger.info("[V2] %s: Step 0.5 - Data Completeness", ticker)
     ctx = await run_data_step(ctx)
@@ -185,6 +188,8 @@ async def execute_ticker_pipeline(
     logger.info("[V2] %s: Step 1 - Ontology", ticker)
     ctx = await run_ontology_step(ctx)
 
+    await cycle_control.wait_if_paused()
+
     # Step 2: Evidence packet build
     logger.info("[V2] %s: Step 2 - Evidence Build", ticker)
     ctx = await run_evidence_step(ctx)
@@ -197,21 +202,35 @@ async def execute_ticker_pipeline(
     if isinstance(result_or_ctx, dict):
         return result_or_ctx  # ABSTAIN result
 
+    await cycle_control.wait_if_paused()
+
     # Step 5: Memory context injection
     logger.info("[V2] %s: Step 5 - Memory Context", ticker)
     ctx = await run_memory_step(ctx)
+
+    # ── Stop checkpoint: before heavy multi-agent LLM calls ──
+    await cycle_control.wait_if_paused()
 
     # Step 5.5: MetaOrchestrator agent routing + team findings
     logger.info("[V2] %s: Step 5.5 - Agents Routing", ticker)
     ctx = await run_agents_step(ctx)
 
+    # ── Stop checkpoint: between agents and debate ──
+    await cycle_control.wait_if_paused()
+
     # Step 5.7: Adversarial debate
     logger.info("[V2] %s: Step 5.7 - Debate", ticker)
     ctx = await run_debate_step(ctx)
 
+    # ── Stop checkpoint: before thesis LLM call ──
+    await cycle_control.wait_if_paused()
+
     # Step 6: Thesis generation
     logger.info("[V2] %s: Step 6 - Thesis Generation", ticker)
     ctx = await run_thesis_step(ctx)
+
+    # ── Stop checkpoint: before verification LLM call ──
+    await cycle_control.wait_if_paused()
 
     # Step 6.5: Hallucination check + rationale enrichment
     logger.info("[V2] %s: Step 6.5 - Verification", ticker)
