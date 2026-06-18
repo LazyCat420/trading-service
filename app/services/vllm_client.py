@@ -326,20 +326,25 @@ class VLLMEndpoint:
 
     @property
     def load_score(self) -> float:
-        """Combined load score: active + queued + penalty + circuit breaker.
+        """Combined load score (proportional): (active + queued) / max_concurrent.
 
-        Lower score = more available capacity.
-        Penalty adds a large constant when the endpoint recently timed out.
-        Circuit breaker adds infinity when the endpoint is tripped.
+        Normalized to [0.0, ∞) so endpoints with different concurrency limits
+        (e.g., Jetson=8 vs DGX=16) compete fairly instead of DGX always winning
+        on raw count. A score of 1.0 means the endpoint is at full capacity.
+
+        Penalty adds max_concurrent (i.e., +1.0 normalized) when recently timed out.
+        Circuit breaker returns infinity when tripped.
         """
         # Circuit breaker open → infinite score (never route here)
         if self.circuit_open_until > time.monotonic():
             return float('inf')
         qs = self.queue.qsize() if self.queue else 0
-        score = float(self.active_count + qs)
-        # Add penalty if endpoint recently timed out
+        capacity = max(self.max_concurrent, 1)
+        # Proportional score: 0.0 = idle, 1.0 = fully loaded
+        score = float(self.active_count + qs) / capacity
+        # Add normalized penalty if endpoint recently timed out
         if self.timeout_penalty_until > time.monotonic():
-            score += self.max_concurrent  # effectively deprioritize
+            score += 1.0  # equivalent to 'fully loaded' penalty
         return score
 
     @property
@@ -630,22 +635,43 @@ class VLLMClient:
                     candidates = role_candidates
                 else:
                     # CROSS-ROLE FALLBACK: preferred tier has no ready endpoints.
-                    # Route to ANY available endpoint with a model loaded.
+                    #
+                    # Before routing collector work to DGX, check if the correct
+                    # tier (Jetson) is still loading. If so, raise immediately —
+                    # this surfaces the root cause instead of silently flooding DGX.
+                    # The caller can retry and will succeed once Jetson is ready.
                     if model_filtered:
                         pass
-                    elif all_ready:
-                        fallback_names = ', '.join(ep.name for ep in all_ready)
-                        logger.warning(
-                            "[VLLM] 🔀 No %s-tier endpoints have models loaded. "
-                            "Cross-routing '%s' to available endpoints: [%s]",
-                            required_role, agent_name, fallback_names,
-                        )
-                        candidates = all_ready
                     else:
-                        logger.warning(
-                            "[VLLM] No active endpoint found for role tier '%s' and no fallbacks. ",
-                            required_role,
-                        )
+                        # Check if any same-tier endpoint is still loading (model not yet ready)
+                        if required_role in ("analyst", "trader"):
+                            loading_same_tier_roles = ("analyst", "trader")
+                        else:
+                            loading_same_tier_roles = ("collector",)
+                        loading_same_tier = [
+                            ep for ep in self._endpoints.values()
+                            if ep.loading and ep.role in loading_same_tier_roles
+                        ]
+                        if loading_same_tier:
+                            loading_names = ', '.join(ep.name for ep in loading_same_tier)
+                            raise RuntimeError(
+                                f"No {required_role}-tier endpoints have models loaded — "
+                                f"[{loading_names}] still loading. "
+                                f"Request for '{agent_name}' held; retry once model is ready."
+                            )
+                        elif all_ready:
+                            fallback_names = ', '.join(ep.name for ep in all_ready)
+                            logger.warning(
+                                "[VLLM] 🔀 No %s-tier endpoints have models loaded. "
+                                "Cross-routing '%s' to available endpoints: [%s]",
+                                required_role, agent_name, fallback_names,
+                            )
+                            candidates = all_ready
+                        else:
+                            logger.warning(
+                                "[VLLM] No active endpoint found for role tier '%s' and no fallbacks. ",
+                                required_role,
+                            )
 
         if not candidates:
             # Fallback: any enabled endpoint with a model
@@ -2554,7 +2580,9 @@ class VLLMClient:
             roles[f"{name}_model"] = None
             roles[f"{name}_url"] = ep.url
             try:
-                r = await client.get(f"{ep.url}/v1/models", timeout=5.0)
+                # 15s timeout: Jetson vLLM /v1/models can be slow under load.
+                # The original 5s caused spurious auto-disable on every cold boot.
+                r = await client.get(f"{ep.url}/v1/models", timeout=15.0)
                 if r.status_code == 200:
                     models = r.json().get("data", [])
                     if models:
@@ -2901,7 +2929,9 @@ class VLLMClient:
 
         async def _probe(name: str, ep: VLLMEndpoint):
             try:
-                r = await client.get(f"{ep.url}/v1/models", timeout=5.0)
+                # 15s timeout: matches discovery probe — prevents spurious
+                # auto-disable of a slow-responding Jetson during rediscovery.
+                r = await client.get(f"{ep.url}/v1/models", timeout=15.0)
                 if r.status_code == 200:
                     models = r.json().get("data", [])
                     if models:
