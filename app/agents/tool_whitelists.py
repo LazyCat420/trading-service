@@ -290,6 +290,49 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_database_facts",
     ],
     "ticker_validator": [],
+    # ── V3 Pure Agentic Pipeline Agents ──
+    "v3_junior_analyst": [
+        "get_finnhub_news",
+        "search_web",
+        "get_market_data",
+        "search_internal_database",
+        "search_database_facts",
+        "post_finding",
+    ],
+    "v3_fundamental_analyst": [
+        "get_sec_filings",
+        "get_finviz_fundamentals",
+        "get_earnings_data",
+        "query_financial_metrics",
+        "search_web",
+        "search_database_facts",
+        "get_market_data",
+        "post_finding",
+    ],
+    "v3_quant_analyst": [
+        "get_market_data",
+        "get_technical_indicators",
+        "get_polygon_price_history",
+        "get_options_flow",
+        "query_technical_indicator",
+        "calculate_risk_reward",
+        "calculate_stop_loss",
+        "calculate_position_size",
+        "get_portfolio_state",
+        "get_position_pnl",
+        "post_finding",
+    ],
+    "v3_bull_agent": [],       # Pure reasoning — no tools
+    "v3_bear_agent": [],       # Pure reasoning — no tools
+    "v3_bull_defense": [],     # Pure reasoning — no tools
+    "v3_regime_engine": [
+        "get_market_data",
+        "get_finnhub_news",
+        "search_web",
+        "get_technical_indicators",
+        "search_database_facts",
+    ],
+    "v3_board_of_directors": [],  # Pure reasoning — no tools
 }
 
 
@@ -392,6 +435,15 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "verifier": 5,
     # User chat — generous budget for interactive sessions
     "user_chat": 15,
+    # ── V3 Pure Agentic Pipeline Agents (real limits, not V2's 9999) ──
+    "v3_junior_analyst": 5,
+    "v3_fundamental_analyst": 7,
+    "v3_quant_analyst": 7,
+    "v3_bull_agent": 3,          # No tools — pure reasoning
+    "v3_bear_agent": 3,          # No tools — pure reasoning
+    "v3_bull_defense": 3,        # No tools — pure reasoning
+    "v3_regime_engine": 5,
+    "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk
 }
 
 # Default budget for agents not in the override dict

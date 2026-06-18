@@ -69,6 +69,25 @@ async def execute_v2_pipeline(
     Returns a dict with the same keys as V1's analyze_ticker() so the
     trading phase, post-cycle hooks, and report generation work unchanged.
     """
+    # ── V3 dispatch — activated via PIPELINE_VERSION=v3 env var ──
+    import os
+    if os.getenv("PIPELINE_VERSION", "v2") == "v3":
+        from app.v3.orchestrator import run_v3_pipeline
+        return await run_v3_pipeline(
+            ticker,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            emit=emit,
+            macro_memo=macro_memo,
+            watchlist=watchlist,
+            db_semaphore=db_semaphore,
+            thesis_semaphore=thesis_semaphore,
+            is_highly_redundant=is_highly_redundant,
+            research_focus=research_focus,
+            trigger_type=trigger_type,
+            active_directives=active_directives,
+        )
+
     from app.ticker_pipeline.pipeline import execute_ticker_pipeline
 
     return await execute_ticker_pipeline(
