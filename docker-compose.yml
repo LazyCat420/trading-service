@@ -14,6 +14,7 @@ services:
       - SCRAPER_SERVICE_URL=http://10.0.0.16:8001
       - USE_LAZY_TOOL_SERVICE=true
       - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:5591
+      - PIPELINE_VERSION=v3
     volumes:
       - /usr/share/zoneinfo/America/Los_Angeles:/etc/localtime:ro
       - ./logs:/app/logs
