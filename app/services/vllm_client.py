@@ -3682,11 +3682,27 @@ class VLLMClient:
             self._client = None
 
         if hasattr(self, "prism_client") and self.prism_client and getattr(self.prism_client, "_client", None) and not self.prism_client._client.is_closed:
-            logger.info("[PRISM] Force closing Prism HTTP client")
+            logger.info("[PRISM] 🔌 Nuclear TCP kill — force-closing Prism transport connections")
+            try:
+                # Reach through httpx → httpcore to close the pool's connections
+                transport = self.prism_client._client._transport
+                if hasattr(transport, 'close'):
+                    transport.close()
+                elif hasattr(transport, 'aclose'):
+                    await transport.aclose()
+                # Also try the httpcore pool directly
+                if hasattr(transport, '_pool'):
+                    pool = transport._pool
+                    if hasattr(pool, 'close'):
+                        pool.close()
+                    elif hasattr(pool, 'aclose'):
+                        await pool.aclose()
+            except Exception as e:
+                logger.warning("[PRISM] Transport close error (expected): %s", e)
             try:
                 await self.prism_client._client.aclose()
-            except Exception as e:
-                logger.warning("[PRISM] Error closing Prism client: %s", e)
+            except Exception:
+                pass
             self.prism_client._client = None
 
         # Wait briefly for dispatcher tasks to actually stop
