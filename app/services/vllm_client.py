@@ -1184,12 +1184,10 @@ class VLLMClient:
             # As of Phase 3 (Unified Telemetry), ALL endpoints route
             # through Prism so that every request is tracked and visible.
             from app.services.prism_agent_caller import _prism_breaker
-            is_pipeline_or_background = item.priority > Priority.HIGH
             use_prism_agent = (
                 self.prism_client.enabled
                 and settings.PRISM_AGENT_ROUTING
                 and meta.get("agent_name") != "pre_trade"
-                and not is_pipeline_or_background
                 and not _prism_breaker.is_open
             )
             
@@ -1797,11 +1795,12 @@ class VLLMClient:
         # Convert non-streaming URL to streaming URL
         target_url = target_url.replace("?stream=false", "")
 
-        # For pipeline calls with tools, ensure functionCallingEnabled and agenticLoopEnabled are enabled
-        # so Prism runs the agentic loop and executes the tools.
+        # For pipeline calls with tools, we do NOT want Prism to run the agentic loop
+        # because the loop is managed by trading-service's Python agent_loop.py.
+        # But we still enable functionCallingEnabled so the model can yield tool calls.
         if not is_interactive and tools:
             agent_payload["functionCallingEnabled"] = True
-            agent_payload["agenticLoopEnabled"] = True
+            agent_payload["agenticLoopEnabled"] = False
 
         # Server-to-server: skip conversation persistence, auto-approve tools
         agent_payload["skipConversation"] = settings.PRISM_SKIP_CONVERSATION
@@ -1892,6 +1891,13 @@ class VLLMClient:
             buffer = ""
             try:
                 async for raw_chunk in response.aiter_text():
+                    try:
+                        from app.pipeline.orchestration.cycle_control import cycle_control
+                        if cycle_control.is_stopped:
+                            logger.info("[PRISM] Pipeline stopped mid-stream — breaking")
+                            break
+                    except ImportError:
+                        pass
                     buffer += raw_chunk
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)

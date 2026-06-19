@@ -47,10 +47,32 @@ async def test_vllm_client_routing_by_priority():
             mock_prism.assert_called_once()
             mock_direct.assert_not_called()
             
-        # 2. Test Priority.NORMAL -> routes directly to vLLM
+        # 2. Test Priority.NORMAL with PRISM_AGENT_ROUTING=True -> still routes through Prism
         item_normal = QueueItem(
             priority=Priority.NORMAL,
             seq=2,
+            future=asyncio.Future(),
+            payload={"model": "qwen-test", "messages": []},
+            metadata={"agent_name": "thesis_agent", "ticker": "AAPL", "cycle_id": "test"}
+        )
+        
+        with patch.object(client, "_call_prism_agent", new_callable=AsyncMock, return_value=("resp", 10, 10)) as mock_prism, \
+             patch.object(client, "_call_vllm_direct", new_callable=AsyncMock, return_value=("resp", 10, 10)) as mock_direct:
+            
+            await client._execute_item(item_normal, mock_ep)
+            mock_prism.assert_called_once()
+            mock_direct.assert_not_called()
+
+    # 3. Test with PRISM_AGENT_ROUTING=False -> routes directly to vLLM
+    with patch("app.services.vllm_client.tracker") as mock_tracker, \
+         patch("app.services.vllm_client.strip_think_tags", return_value=("clean content", "think content")), \
+         patch.object(settings, "PRISM_AGENT_ROUTING", False):
+        
+        mock_tracker.record = AsyncMock()
+        
+        item_normal = QueueItem(
+            priority=Priority.NORMAL,
+            seq=3,
             future=asyncio.Future(),
             payload={"model": "qwen-test", "messages": []},
             metadata={"agent_name": "thesis_agent", "ticker": "AAPL", "cycle_id": "test"}
