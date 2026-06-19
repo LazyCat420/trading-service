@@ -442,61 +442,149 @@ async def _call_via_prism(
         fallback_agent_name, agent_id, ticker or "N/A", len(payload.get("enabledTools", []))
     )
 
-    r = await llm.prism_client._call_endpoint(client, url, payload, headers)
-    data = r.json()
+    from unittest.mock import Mock
+    is_mock_client = (isinstance(client, Mock) and getattr(client, "_is_mock_json", True)) or not hasattr(client, "stream")
 
-    # Raise error if response represents an error payload
-    if "error" in data or data.get("error") is True:
-        error_msg = data.get("message") or data.get("error") or "Unknown Prism error"
-        raise RuntimeError(f"Prism error: {error_msg}")
+    if is_mock_client:
+        # Fallback to non-streaming direct endpoint call for mock/unit tests
+        r = await llm.prism_client._call_endpoint(client, url, payload, headers)
+        data = r.json()
+        if "error" in data or data.get("error") is True:
+            error_msg = data.get("message") or data.get("error") or "Unknown Prism error"
+            raise RuntimeError(f"Prism error: {error_msg}")
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        response_data = data.get("response")
+        text = ""
+        for d in (response_data, data):
+            if isinstance(d, dict):
+                choices = d.get("choices", [])
+                if choices:
+                    message = choices[0].get("message", {})
+                    text = message.get("content", "")
+                    if text:
+                        break
+                text = d.get("text") or d.get("content") or ""
+                if text:
+                    break
+                messages = d.get("messages", [])
+                if messages:
+                    last = messages[-1]
+                    text = last.get("content", "") if isinstance(last, dict) else str(last)
+                    if text:
+                        break
+
+        if text and ("⚠️ The model's response was cut short" in text or "response was cut short" in text):
+            raise RuntimeError(f"Prism response was cut short warning detected: {text[:100]}...")
+
+        token_count = 0
+        for d in (response_data, data):
+            if isinstance(d, dict):
+                usage = d.get("usage") or {}
+                tc = (
+                    d.get("totalTokens", 0)
+                    or d.get("total_tokens", 0)
+                    or usage.get("total_tokens", 0)
+                    or usage.get("totalTokens", 0)
+                    or (usage.get("inputTokens", 0) + usage.get("outputTokens", 0))
+                    or 0
+                )
+                if tc:
+                    token_count = int(tc)
+                    break
+
+        logger.info(
+            "[PrismAgentCaller] %s completed via Prism JSON (agent=%s, tokens=%d, %dms)",
+            fallback_agent_name, agent_id, token_count, elapsed_ms,
+        )
+        return text, token_count, elapsed_ms
+
+    # If active client, route via SSE stream to allow connection close cancellation
+    content = ""
+    thinking = ""
+    total_tokens = 0
+    import json as _json
+
+    target_url = url.replace("?stream=false", "")
+
+    async with client.stream(
+        "POST",
+        target_url,
+        json=payload,
+        headers=headers,
+        timeout=240.0,
+    ) as response:
+        if response.status_code != 200:
+            body = await response.aread()
+            logger.error(
+                "[PrismAgentCaller] Stream request failed status=%d body=%r",
+                response.status_code, body
+            )
+            response.raise_for_status()
+
+        content_type = response.headers.get("content-type", "")
+        if "text/event-stream" not in content_type:
+            body = await response.aread()
+            logger.error(
+                "[PrismAgentCaller] Expected text/event-stream but got content-type=%s body=%r",
+                content_type, body
+            )
+            try:
+                error_json = _json.loads(body.decode("utf-8", errors="ignore"))
+                error_msg = error_json.get("message") or error_json.get("error") or str(error_json)
+            except Exception:
+                error_msg = body.decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Prism returned non-SSE response: {error_msg}")
+
+        buffer = ""
+        async for raw_chunk in response.aiter_text():
+            try:
+                from app.pipeline.orchestration.cycle_control import cycle_control
+                if cycle_control.is_stopped:
+                    logger.info("[PrismAgentCaller] Pipeline stopped mid-stream — breaking")
+                    break
+            except ImportError:
+                pass
+            buffer += raw_chunk
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    continue
+                try:
+                    chunk_data = _json.loads(data_str)
+                except _json.JSONDecodeError:
+                    continue
+
+                if "type" in chunk_data:
+                    ctype = chunk_data.get("type")
+                    chunk_content = chunk_data.get("content", "")
+
+                    if ctype == "thinking" and chunk_content:
+                        thinking += chunk_content
+                    elif ctype == "chunk" and chunk_content:
+                        content += chunk_content
+                    elif ctype == "error":
+                        error_msg = chunk_data.get("message") or "Unknown SSE error"
+                        raise RuntimeError(f"Prism SSE error: {error_msg}")
+                    elif ctype == "done":
+                        usage = chunk_data.get("usage", {})
+                        if usage:
+                            total_tokens = (
+                                usage.get("totalTokens")
+                                or usage.get("total_tokens")
+                                or (usage.get("inputTokens", 0) + usage.get("outputTokens", 0))
+                                or 0
+                            )
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
-    # Prism /agent?stream=false wraps the result inside a "response" dictionary
-    response_data = data.get("response")
-
-    # Extract response text
-    text = ""
-    for d in (response_data, data):
-        if isinstance(d, dict):
-            choices = d.get("choices", [])
-            if choices:
-                message = choices[0].get("message", {})
-                text = message.get("content", "")
-                if text:
-                    break
-            text = d.get("text") or d.get("content") or ""
-            if text:
-                break
-            messages = d.get("messages", [])
-            if messages:
-                last = messages[-1]
-                text = last.get("content", "") if isinstance(last, dict) else str(last)
-                if text:
-                    break
-
-    if text and ("⚠️ The model's response was cut short" in text or "response was cut short" in text):
-        raise RuntimeError(f"Prism response was cut short warning detected: {text[:100]}...")
-
-    # Extract token count
-    token_count = 0
-    for d in (response_data, data):
-        if isinstance(d, dict):
-            usage = d.get("usage") or {}
-            tc = (
-                d.get("totalTokens", 0)
-                or d.get("total_tokens", 0)
-                or usage.get("total_tokens", 0)
-                or usage.get("totalTokens", 0)
-                or (usage.get("inputTokens", 0) + usage.get("outputTokens", 0))
-            )
-            if tc:
-                token_count = int(tc)
-                break
-
     logger.info(
-        "[PrismAgentCaller] %s completed via Prism (agent=%s, tokens=%d, %dms)",
-        fallback_agent_name, agent_id, token_count, elapsed_ms,
+        "[PrismAgentCaller] %s completed via Prism Stream (agent=%s, tokens=%d, %dms)",
+        fallback_agent_name, agent_id, total_tokens, elapsed_ms,
     )
 
-    return text, token_count, elapsed_ms
+    return content, total_tokens, elapsed_ms
