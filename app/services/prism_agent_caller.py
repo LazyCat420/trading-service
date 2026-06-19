@@ -539,7 +539,10 @@ async def _call_via_prism(
             raise RuntimeError(f"Prism returned non-SSE response: {error_msg}")
 
         buffer = ""
+        stream_done = False
         async for raw_chunk in response.aiter_text():
+            if stream_done:
+                break
             try:
                 from app.pipeline.orchestration.cycle_control import cycle_control
                 if cycle_control.is_stopped:
@@ -555,7 +558,13 @@ async def _call_via_prism(
                     continue
                 data_str = line[6:].strip()
                 if data_str == "[DONE]":
-                    continue
+                    # Server signalled end of stream — give Prism time to
+                    # finalize its DB writes (save request record) before we
+                    # tear down the TCP connection by exiting the context.
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(0.5)
+                    stream_done = True
+                    break
                 try:
                     chunk_data = _json.loads(data_str)
                 except _json.JSONDecodeError:
