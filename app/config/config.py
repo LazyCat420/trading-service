@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
 
     PROVIDER_VLLM_2_URL: str = _config.get("PROVIDER_VLLM_2_URL", "http://10.0.0.141:8000")
     PROVIDER_VLLM_2_NICKNAME: str = _config.get("PROVIDER_VLLM_2_NICKNAME", "Gold Spark")
-    PROVIDER_VLLM_2_CONCURRENCY: int = int(_config.get("PROVIDER_VLLM_2_CONCURRENCY", "16") or "16")
+    PROVIDER_VLLM_2_CONCURRENCY: int = Field(default=int(_config.get("PROVIDER_VLLM_2_CONCURRENCY", "16") or "16"), validation_alias="DGX_MAX_CONCURRENT")
 
     PROVIDER_VLLM_3_URL: str = _config.get("PROVIDER_VLLM_3_URL", "")
     PROVIDER_VLLM_3_NICKNAME: str = _config.get("PROVIDER_VLLM_3_NICKNAME", "")

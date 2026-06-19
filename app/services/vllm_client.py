@@ -440,7 +440,7 @@ class VLLMClient:
         self._roles_discovered: bool = False
         # Active background tasks representing running requests
         self._active_tasks: set[asyncio.Task] = set()
-        # Kill switch — when True, all non-HIGH pipeline requests are
+        self._active_execute_tasks: set[asyncio.Task] = set()
         # rejected immediately. Set by abort_active_requests() on stop,
         # cleared by reset_kill_switch() on new cycle start.
         self._killed = False
@@ -1047,6 +1047,8 @@ class VLLMClient:
                     execute_task = asyncio.create_task(
                         self._execute_item(item, ep, release_pipeline=item.priority > Priority.HIGH)
                     )
+                    self._active_execute_tasks.add(execute_task)
+                    execute_task.add_done_callback(self._active_execute_tasks.discard)
 
                     def on_future_done(f):
                         if f.cancelled():
@@ -1190,6 +1192,9 @@ class VLLMClient:
                 and not is_pipeline_or_background
                 and not _prism_breaker.is_open
             )
+            
+            logger.info("[VLLM] Routing for %s (priority=%s): use_prism_agent=%s", meta.get("agent_name"), item.priority, use_prism_agent)
+            
             prism_routed = False
 
             if use_prism_agent:
@@ -1655,6 +1660,13 @@ class VLLMClient:
             buffer = ""
             try:
                 async for raw_chunk in response.aiter_text():
+                    try:
+                        from app.pipeline.orchestration.cycle_control import cycle_control
+                        if cycle_control.is_stopped:
+                            logger.info("[VLLM] Pipeline stopped mid-stream — breaking")
+                            break
+                    except ImportError:
+                        pass
                     buffer += raw_chunk
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)
@@ -3604,23 +3616,11 @@ class VLLMClient:
         self._killed = False
 
     async def abort_active_requests(self) -> int:
-        """Cancel all active background requests and close HTTP clients to force socket closure.
-
-        Sequencing is critical:
-          1. Kill switch — block new requests from being enqueued
-          2. Cancel dispatchers — stop queued items from being dispatched
-          3. Cancel active tasks — inject CancelledError into running streams
-          4. Wait for cancellation to propagate — lets CancelledError reach
-             the httpx stream iterator, closing the TCP socket. vLLM detects
-             the disconnect and calls abort() on the GPU-side generation.
-          5. Close HTTP clients — cleanup any remaining connections
-          6. Query vLLM metrics — verify requests are actually dropping
-        """
-        # 1. Kill switch
+        """Cancel all active background requests and close HTTP clients to force socket closure."""
         self._killed = True
         logger.info("[VLLM] 🛑 Kill switch ENGAGED — all new pipeline requests blocked")
 
-        # 2. Stop dispatcher loops FIRST
+        # 1. Stop dispatcher loops FIRST
         for ep in self._endpoints.values():
             if ep.dispatcher_task and not ep.dispatcher_task.done():
                 logger.info("[VLLM] Cancelling %s dispatcher loop", ep.name)
@@ -3628,81 +3628,60 @@ class VLLMClient:
             if ep.metrics_task and not ep.metrics_task.done():
                 ep.metrics_task.cancel()
 
-        # 3. Cancel all active tasks (the run_and_release coroutines)
+        # 2. Cancel all active execution tasks (the direct I/O coroutines)
+        execute_tasks = list(self._active_execute_tasks)
+        for t in execute_tasks:
+            if not t.done():
+                t.cancel()
+
+        # 3. Cancel all wrapper tasks
+        wrapper_tasks = list(self._active_tasks)
         cancelled_count = 0
-        tasks_to_wait = []
-        for task in list(self._active_tasks):
-            if not task.done():
-                task.cancel()
-                tasks_to_wait.append(task)
+        for t in wrapper_tasks:
+            if not t.done():
+                t.cancel()
                 cancelled_count += 1
         if cancelled_count:
             logger.info("[VLLM] Cancelled %d active background requests", cancelled_count)
 
-        # 4. WAIT for cancellation to propagate into stream iterators
-        # This is critical: CancelledError must reach response.aiter_text()
-        # so httpx closes the TCP socket, causing vLLM to detect the
-        # disconnect and abort the GPU-side generation.
-        if tasks_to_wait:
-            logger.info("[VLLM] Waiting for %d tasks to process cancellation...", len(tasks_to_wait))
-            done, pending = await asyncio.wait(tasks_to_wait, timeout=3.0)
-            if pending:
-                logger.warning("[VLLM] %d tasks still pending after 3s cancellation wait", len(pending))
+        # 4. Give tasks one event loop cycle to process cancellation
+        if execute_tasks or wrapper_tasks:
+            logger.info("[VLLM] Waiting for tasks to process cancellation...")
+            await asyncio.gather(*execute_tasks, *wrapper_tasks, return_exceptions=True)
 
         self.drain_queues()
 
         # 5. NUCLEAR TCP KILL: Force-close the underlying transport connections.
-        # httpx's aclose() is gentle — it waits for in-flight requests to finish.
-        # We need to forcibly close the TCP sockets so vLLM detects the disconnect
-        # and aborts GPU-side generation. We do this by:
-        #   a) Closing the httpcore transport directly (kills TCP sockets)
-        #   b) Nulling the client (forces fresh connections on next cycle)
         if self._client and not self._client.is_closed:
             logger.info("[VLLM] 🔌 Nuclear TCP kill — force-closing all transport connections")
             try:
-                # Reach through httpx → httpcore to close the pool's connections
                 transport = self._client._transport
-                if hasattr(transport, 'close'):
-                    transport.close()
-                elif hasattr(transport, 'aclose'):
-                    await transport.aclose()
-                # Also try the httpcore pool directly
-                if hasattr(transport, '_pool'):
+                if hasattr(transport, "_pool"):
                     pool = transport._pool
-                    if hasattr(pool, 'close'):
-                        pool.close()
-                    elif hasattr(pool, 'aclose'):
-                        await pool.aclose()
+                    for conn in list(getattr(pool, "_connections", [])):
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                transport.close()
             except Exception as e:
                 logger.warning("[VLLM] Transport close error (expected): %s", e)
-            try:
-                await self._client.aclose()
-            except Exception:
-                pass
             self._client = None
 
         if hasattr(self, "prism_client") and self.prism_client and getattr(self.prism_client, "_client", None) and not self.prism_client._client.is_closed:
             logger.info("[PRISM] 🔌 Nuclear TCP kill — force-closing Prism transport connections")
             try:
-                # Reach through httpx → httpcore to close the pool's connections
                 transport = self.prism_client._client._transport
-                if hasattr(transport, 'close'):
-                    transport.close()
-                elif hasattr(transport, 'aclose'):
-                    await transport.aclose()
-                # Also try the httpcore pool directly
-                if hasattr(transport, '_pool'):
+                if hasattr(transport, "_pool"):
                     pool = transport._pool
-                    if hasattr(pool, 'close'):
-                        pool.close()
-                    elif hasattr(pool, 'aclose'):
-                        await pool.aclose()
+                    for conn in list(getattr(pool, "_connections", [])):
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                transport.close()
             except Exception as e:
                 logger.warning("[PRISM] Transport close error (expected): %s", e)
-            try:
-                await self.prism_client._client.aclose()
-            except Exception:
-                pass
             self.prism_client._client = None
 
         # Wait briefly for dispatcher tasks to actually stop
