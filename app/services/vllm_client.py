@@ -512,8 +512,8 @@ class VLLMClient:
         """
         import re
 
-        # CRITICAL: Force Qwen 35B / cyankiwi models to route strictly to Jetson Orin AGX 64GB
-        if requested_model and ("cyankiwi" in requested_model.lower() or "qwen3.6-35b" in requested_model.lower() or "35b" in requested_model.lower()):
+        # CRITICAL: Force Qwen 35B models to route strictly to Jetson Orin AGX 64GB
+        if requested_model and ("qwen3.6-35b" in requested_model.lower() or "35b" in requested_model.lower()):
             jetson_ep = self._endpoints.get("jetson")
             if jetson_ep and jetson_ep.enabled and jetson_ep.model:
                 logger.info("[VLLM] Forcing Jetson Orin AGX 64GB routing for 35B model: %s", requested_model)
@@ -1524,8 +1524,8 @@ class VLLMClient:
         Raises an error if the model cannot be found, rather than
         silently defaulting to an endpoint.
         """
-        # CRITICAL: Force Qwen 35B / cyankiwi models to route strictly to Jetson Orin AGX 64GB
-        if model_id and ("cyankiwi" in model_id.lower() or "qwen3.6-35b" in model_id.lower() or "35b" in model_id.lower()):
+        # CRITICAL: Force Qwen 35B models to route strictly to Jetson Orin AGX 64GB
+        if model_id and ("qwen3.6-35b" in model_id.lower() or "35b" in model_id.lower()):
             jetson_ep = self._endpoints.get("jetson")
             if jetson_ep and jetson_ep.enabled:
                 logger.info("[VLLM] Forcing Jetson Orin AGX 64GB routing for model resolution: %s", model_id)
@@ -3763,7 +3763,7 @@ class VLLMClient:
 
         # Heuristic fallback (guessing based on model size/names) only if not found on endpoints
         model_lower = model.lower() if model else ""
-        if "cyankiwi" in model_lower or "qwen3.6-35b" in model_lower or "35b" in model_lower:
+        if "qwen3.6-35b" in model_lower or "35b" in model_lower:
             # Jetson hosts the 35B models
             return "vllm-1"
         elif "122b" in model_lower or "120b" in model_lower:

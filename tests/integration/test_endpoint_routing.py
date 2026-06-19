@@ -195,8 +195,15 @@ async def test_qwen_35b_routing_rules():
     client._endpoints["dgx_spark"].model = "some-other-heavy-model"
     assert client.resolve_provider_for_model("some-other-heavy-model") == "vllm-2"
 
-    # 3. Verify pick best endpoint forces Jetson for cyankiwi
+    # Verify that cyankiwi/MiniMax-M2.7-AWQ-4bit resolves to vllm-2 (Gold Spark) and is not forced to Jetson
+    client._endpoints["dgx_spark"].model = "cyankiwi/MiniMax-M2.7-AWQ-4bit"
+    assert client.resolve_provider_for_model("cyankiwi/MiniMax-M2.7-AWQ-4bit") == "vllm-2"
+
+    # 3. Verify pick best endpoint forces Jetson for Qwen 35B model, but routes MiniMax 2.7B to Gold Spark
     best_ep = client._pick_best_endpoint(requested_model="cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit")
     assert best_ep.name == "jetson"
+
+    best_ep = client._pick_best_endpoint(requested_model="cyankiwi/MiniMax-M2.7-AWQ-4bit")
+    assert best_ep.name == "dgx_spark"
 
 
