@@ -478,12 +478,16 @@ class PrismClient:
         username = actor_label or self.username
 
         # Deduplicate: strip role=system messages from the messages array
-        # since the systemPrompt field already delivers it to Prism.
-        # This prevents the system prompt from being injected multiple
-        # times into the LLM context (triple-injection bug fix).
-        deduplicated_messages = [
-            m for m in messages if m.get("role") != "system"
-        ]
+        # since the systemPrompt field already delivers it to Prism's /agent endpoint.
+        # IMPORTANT: Only strip when using /agent (agentic_mode=True).
+        # Prism's /chat endpoint ignores the systemPrompt field and only reads
+        # messages[], so system messages MUST be preserved for /chat routing.
+        if agentic_mode:
+            deduplicated_messages = [
+                m for m in messages if m.get("role") != "system"
+            ]
+        else:
+            deduplicated_messages = list(messages)
 
         payload: dict[str, Any] = {
             "provider": provider,
@@ -575,10 +579,16 @@ class PrismClient:
         username = actor_label or self.username
 
         # Deduplicate: strip role=system messages from the messages array
-        # since the systemPrompt field already delivers it to Prism.
-        deduplicated_messages = [
-            m for m in messages if m.get("role") != "system"
-        ]
+        # since the systemPrompt field already delivers it to Prism's /agent endpoint.
+        # IMPORTANT: Only strip when using /agent (agentic_mode=True).
+        # Prism's /chat endpoint ignores the systemPrompt field and only reads
+        # messages[], so system messages MUST be preserved for /chat routing.
+        if agentic_mode:
+            deduplicated_messages = [
+                m for m in messages if m.get("role") != "system"
+            ]
+        else:
+            deduplicated_messages = list(messages)
 
         payload: dict[str, Any] = {
             "provider": provider,
