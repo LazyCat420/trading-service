@@ -215,6 +215,7 @@ AGENT_ROLE_ROUTING = {
     "collector": "collector",
     "tool_selector": "collector",  # Brain-Action split: lightweight tool routing
     "news_discovery": "collector",
+    "ticker_validator": "collector",
 
     # Specialist agents -> Jetson (short 256-token outputs, don't need 120B)
     "sentiment": "collector",
