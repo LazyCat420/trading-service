@@ -223,6 +223,10 @@ async def run_perticker_collection(
                 pass
 
         async with sem:
+            # ── STOP FLAG CHECK ──
+            if cycle_control.is_stopped:
+                logger.info("[PIPELINE] %s skipped — stop requested", ticker)
+                return None
             await cycle_control.wait_if_paused()
             logger.info(
                 f"[PIPELINE] \n  --- Collecting: {ticker} (parallel sources) ---"
@@ -394,6 +398,8 @@ async def run_perticker_collection(
 
             # ── Source 1: Market Data Rotator (prices + fundamentals + financials + balance sheet) ──
             async def _src_market_data():
+                if cycle_control.is_stopped:
+                    return  # Stop requested
                 t0 = time.monotonic()
                 try:
                     # Force collection when ticker has no price data yet,
@@ -583,8 +589,8 @@ async def run_perticker_collection(
 
             # ── Source 2: Finnhub news ──
             async def _src_finnhub():
-                if _ticker_rejected.is_set():
-                    return  # Ticker already rejected by yfinance
+                if _ticker_rejected.is_set() or cycle_control.is_stopped:
+                    return  # Ticker already rejected or stop requested
                 t0 = time.monotonic()
                 try:
                     if not _is_sufficient and should_collect("news_finnhub", ticker):
@@ -642,8 +648,8 @@ async def run_perticker_collection(
 
             # ── Source 3: Reddit search ──
             async def _src_reddit():
-                if _ticker_rejected.is_set():
-                    return  # Ticker already rejected by yfinance
+                if _ticker_rejected.is_set() or cycle_control.is_stopped:
+                    return  # Ticker already rejected or stop requested
                 t0 = time.monotonic()
                 try:
                     if not _is_sufficient and should_collect("reddit", ticker):
@@ -711,8 +717,8 @@ async def run_perticker_collection(
 
             # ── Source 4: YouTube search + transcript ──
             async def _src_youtube():
-                if _ticker_rejected.is_set():
-                    return  # Ticker already rejected by yfinance
+                if _ticker_rejected.is_set() or cycle_control.is_stopped:
+                    return  # Ticker already rejected or stop requested
                 t0 = time.monotonic()
                 try:
                     if not _is_sufficient and should_collect("youtube", ticker):
@@ -790,8 +796,8 @@ async def run_perticker_collection(
 
             # ── Source 5: yfinance curated news ──
             async def _src_yf_news():
-                if _ticker_rejected.is_set():
-                    return  # Ticker already rejected by yfinance
+                if _ticker_rejected.is_set() or cycle_control.is_stopped:
+                    return  # Ticker already rejected or stop requested
                 t0 = time.monotonic()
                 try:
                     if not _is_sufficient and should_collect("news_yfinance", ticker):
@@ -851,12 +857,11 @@ async def run_perticker_collection(
                     )
                     logger.info(f"[PIPELINE]   [yfinance] {ticker} news skipped: {e}")
 
-            # ── Fire all 5 sources in parallel (rate limiters prevent overloading) ──
-            # NOTE: CancelledError propagates from gather() automatically.
-            # market_data runs first and can signal rejection via _ticker_rejected.
-            # Due to the gather, sibling sources check the event at their start.
-            # For already-running siblings, they complete but the results are
-            # discarded below when _ticker_rejected is checked.
+            # ── STOP FLAG CHECK before firing sources ──
+            if cycle_control.is_stopped:
+                logger.info("[PIPELINE] %s sources skipped — stop requested", ticker)
+                return None
+
             await asyncio.gather(
                 _src_market_data(),
                 _src_finnhub(),
@@ -960,11 +965,26 @@ async def run_perticker_collection(
         ticker_res = [t for t in tickers]
     else:
         # Launch all tickers concurrently (semaphore enforces the cap)
-        # NOTE: CancelledError propagates from gather() automatically — no post-gather check needed.
+        # Using a cancellation-aware gather: when the cycle is stopped,
+        # any CancelledError is re-raised so cleanup actually stops.
+        async def _guarded_collect(t):
+            """Wrapper that checks stop flag and re-raises CancelledError."""
+            if cycle_control.is_stopped:
+                return None
+            try:
+                return await _collect_single_ticker(t)
+            except asyncio.CancelledError:
+                logger.info("[PIPELINE] Collection for %s cancelled by stop", t)
+                raise  # Re-raise to propagate to outer handler
+
+        try:
             ticker_res = await asyncio.gather(
-                *[_collect_single_ticker(t) for t in tickers],
+                *[_guarded_collect(t) for t in tickers],
                 return_exceptions=True,
             )
+        except asyncio.CancelledError:
+            logger.info("[PIPELINE] Per-ticker collection cancelled by stop")
+            raise
 
     # Filter out tickers that were rejected (None), failed (Exception), or banned
     valid_tickers = []
