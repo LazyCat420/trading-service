@@ -38,6 +38,7 @@ _OPERATIONAL_PHASES = {
     "done",
     "error",
     "stopped",
+    "cancelled",
 }
 
 
@@ -580,7 +581,7 @@ class PipelineStateMixin:
         # updated atomically by start_cycle() and emit(), so it's always
         # correct. We override the DB cycle_id if the in-memory one exists.
         mem_cycle_id = cls._state.get("cycle_id")
-        if mem_cycle_id and (mem_cycle_id != state.get("cycle_id") or cls._state.get("status") in ("done", "error", "stopped", "interrupted")):
+        if mem_cycle_id and (mem_cycle_id != state.get("cycle_id") or cls._state.get("status") in ("done", "error", "stopped", "cancelled", "interrupted")):
             if mem_cycle_id != state.get("cycle_id"):
                 logger.debug(
                     "[get_current_state] Correcting stale DB cycle_id %s → %s",
@@ -707,6 +708,13 @@ class PipelineStateMixin:
                     "WHERE status = 'running'"
                 )
                 logger.info("[Boot] Cleaned up stuck running commands in system_commands")
+                # Add stop_confirmed_at column if it doesn't exist (schema migration)
+                try:
+                    db.execute(
+                        "ALTER TABLE system_commands ADD COLUMN IF NOT EXISTS stop_confirmed_at TIMESTAMP"
+                    )
+                except Exception:
+                    pass  # Column already exists or table doesn't support ALTER
         except Exception as e:
             logger.error("[Boot] Failed to clean up stuck running commands: %s", e)
 
@@ -724,7 +732,7 @@ class PipelineStateMixin:
         # Previously these were treated as terminal and left in place,
         # which caused the frontend to permanently show stale crashed-cycle
         # data. Now we reset to idle so the next cycle starts cleanly.
-        if prev_status in ("error", "stopped"):
+        if prev_status in ("error", "stopped", "cancelled"):
             stale_cycle_id = cls._state.get("cycle_id")
             logger.warning(
                 "[CYCLE] Previous cycle ended with '%s' — resetting to idle on boot (cycle: %s)",
@@ -803,6 +811,7 @@ class PipelineStateMixin:
             "done",
             "error",
             "stopped",
+            "cancelled",
             "interrupted",
         ):
             cls._state["status"] = "idle"

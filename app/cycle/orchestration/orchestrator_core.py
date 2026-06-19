@@ -637,14 +637,19 @@ class OrchestratorCoreMixin:
             timeout_sec = int(getattr(settings, "CYCLE_TIMEOUT_MINUTES", 120)) * 60
             
             is_timeout = elapsed_sec >= timeout_sec
-            cancel_reason = "System Timeout Hit (>%d min)" % (timeout_sec // 60) if is_timeout else "User manually stopped the cycle"
+            if is_timeout:
+                terminal_status = "error"
+                cancel_reason = "System Timeout Hit (>%d min)" % (timeout_sec // 60)
+            else:
+                terminal_status = "cancelled"
+                cancel_reason = "User manually stopped the cycle"
             
             logger.warning(
                 f"[CYCLE] PIPELINE CANCELLED ({cancel_reason})."
             )
-            cls._cycle_summary["status"] = "stopped"
+            cls._cycle_summary["status"] = terminal_status
             cls._cycle_summary["primary_failure_reason"] = cls._cycle_summary.get("primary_failure_reason", cancel_reason)
-            cls._state["status"] = "stopped"
+            cls._state["status"] = terminal_status
             cls._state["finished_at"] = datetime.now(timezone.utc).isoformat()
             cls.save_state()
 

@@ -40,6 +40,26 @@ class PrismClient:
         self._username: str | None = None
         self._enabled: bool | None = None
         self._agent: str | None = None
+        self._cycle_generation: int = 0  # Increments on each new cycle
+
+    @property
+    def cycle_generation(self) -> int:
+        """Current cycle generation ID. Used to detect stale responses."""
+        return self._cycle_generation
+
+    def begin_cycle(self) -> int:
+        """Called at cycle start. Increments the generation ID and cleans up old sessions.
+
+        Returns the new generation ID for the caller to snapshot and compare
+        against later when processing responses.
+        """
+        self._cycle_generation += 1
+        self.cleanup_all_sessions()
+        logger.info(
+            "[PRISM] New cycle generation %d — sessions cleared",
+            self._cycle_generation,
+        )
+        return self._cycle_generation
 
     @property
     def url(self) -> str:

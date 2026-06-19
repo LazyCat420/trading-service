@@ -176,20 +176,26 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     
                     if cmd_type == "START_CYCLE":
                         from app.services.pipeline_service import PipelineService
+                        from app.cycle.orchestration.lifecycle_controller import _task_registry
                         # Sync in-memory state from DB before checking guards.
                         # Without this, stale in-memory state (e.g. 'starting' from
                         # a previous failed attempt) will reject the command even
                         # though the DB has been reset to 'idle'.
                         PipelineService.load_state()
-                        result = await PipelineService.start_cycle(
-                            tickers=payload.get("tickers", []),
-                            collect=payload.get("collect", True),
-                            analyze=payload.get("analyze", True),
-                            trade=payload.get("trade", True),
-                            max_tickers=payload.get("max_tickers"),
-                            discovered_tickers=payload.get("discovered_tickers"),
-                            start_fresh=payload.get("start_fresh", False),
-                        )
+                        # Task slot deduplication: reject if cycle task is still alive
+                        if _task_registry.is_active("cycle"):
+                            result = {"status": "deduplicated", "message": "Cycle task already running"}
+                            logger.info("[cycle_backend] START_CYCLE deduplicated — task still active")
+                        else:
+                            result = await PipelineService.start_cycle(
+                                tickers=payload.get("tickers", []),
+                                collect=payload.get("collect", True),
+                                analyze=payload.get("analyze", True),
+                                trade=payload.get("trade", True),
+                                max_tickers=payload.get("max_tickers"),
+                                discovered_tickers=payload.get("discovered_tickers"),
+                                start_fresh=payload.get("start_fresh", False),
+                            )
                     elif cmd_type == "ANALYZE_TICKER":
                         from app.pipeline.analysis.decision_engine import analyze_ticker
                         result = await analyze_ticker(payload.get("ticker"), cycle_id="manual_run")
@@ -202,10 +208,15 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     elif cmd_type == "STOP_CYCLE":
                         import time as _time
                         _stop_start = _time.monotonic()
+                        logger.info("[STOP_TRACE] T1: STOP_CYCLE command picked up by poller (command_id=%s)", job_id)
                         from app.services.pipeline_service import PipelineService
-                        # fast=true uses request_stop() (non-blocking, <50ms)
-                        # fast=false/missing uses full stop_cycle() (waits for cleanup)
-                        if payload.get("fast"):
+                        # Check if there's actually a cycle running — no-op if not
+                        current_status = PipelineService._state.get("status", "idle")
+                        if current_status in ("idle", "done", "error", "stopped", "cancelled", "interrupted"):
+                            result = {"status": "no_op", "message": f"No cycle running (status: {current_status})"}
+                            logger.info("[cycle_backend] STOP_CYCLE no-op — already in terminal state: %s", current_status)
+                        elif payload.get("fast"):
+                            # fast=true uses request_stop() (non-blocking, <50ms)
                             result = PipelineService.request_stop()
                             _stop_ms = int((_time.monotonic() - _stop_start) * 1000)
                             logger.info(
@@ -213,12 +224,22 @@ async def poll_system_commands(shutdown: asyncio.Event):
                                 _stop_ms, result.get("status", "?"),
                             )
                         else:
-                            result = await PipelineService.stop_cycle()
+                            # full mode: waits for cleanup
+                            result = await PipelineService.stop_cycle(_stop_t1=_stop_start)
                             _stop_ms = int((_time.monotonic() - _stop_start) * 1000)
                             logger.info(
                                 "[cycle_backend] STOP_CYCLE ACK (full mode) — %dms — result: %s",
                                 _stop_ms, result.get("status", "?"),
                             )
+                        # Write stop_confirmed_at timestamp
+                        try:
+                            with get_db() as ts_db:
+                                ts_db.execute(
+                                    "UPDATE system_commands SET stop_confirmed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                                    [job_id]
+                                )
+                        except Exception:
+                            pass
                         # Deduplicate: mark any other pending STOP_CYCLE commands as completed
                         try:
                             with get_db() as dedup_db:
@@ -332,6 +353,38 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         track_task(_do_refresh_sectors())
                         result = {"status": "refresh_sectors_started"}
 
+                    elif cmd_type == "FORCE_RESET":
+                        from app.services.pipeline_service import PipelineService
+                        from app.cycle.orchestration.cycle_control import cycle_control
+                        from app.cycle.orchestration.lifecycle_controller import _task_registry
+                        from app.cycle.orchestration.state_manager import PipelineStateDB
+
+                        # Cancel any running cycle task
+                        cycle_task = getattr(PipelineService, "_cycle_task", None)
+                        if cycle_task and not cycle_task.done():
+                            cycle_task.cancel()
+                            try:
+                                await asyncio.wait_for(cycle_task, timeout=5.0)
+                            except (asyncio.CancelledError, asyncio.TimeoutError):
+                                pass
+                        await _task_registry.cancel_all(timeout=2.0)
+
+                        # Full reset
+                        cycle_control.reset()
+                        try:
+                            from app.services.vllm_client import llm
+                            llm.reset_kill_switch()
+                            if hasattr(llm, "prism_client") and llm.prism_client:
+                                llm.prism_client.cleanup_all_sessions()
+                        except Exception:
+                            pass
+
+                        PipelineService._state = PipelineStateDB.default_state()
+                        PipelineService.save_state()
+                        PipelineService._cycle_task = None
+                        result = {"status": "idle", "message": "Force reset complete"}
+                        logger.info("[cycle_backend] FORCE_RESET completed")
+
                     else:
                         logger.error(
                             "[cycle_backend] Unknown command type '%s' (job %s) — no handler matched",
@@ -345,6 +398,14 @@ async def poll_system_commands(shutdown: asyncio.Event):
                             [json.dumps(result), job_id]
                         )
                     logger.info("[cycle_backend] Completed command %s", job_id)
+                except asyncio.CancelledError:
+                    logger.info("[cycle_backend] Command %s cancelled (user stop)", job_id)
+                    with get_db() as db:
+                        db.execute(
+                            "UPDATE system_commands SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                            [job_id]
+                        )
+                    raise
                 except BaseException as e:
                     logger.error("[cycle_backend] Command %s failed: %s", job_id, e)
                     with get_db() as db:
@@ -352,8 +413,6 @@ async def poll_system_commands(shutdown: asyncio.Event):
                             "UPDATE system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
                             [str(e), job_id]
                         )
-                    if isinstance(e, asyncio.CancelledError):
-                        raise
         except BaseException as e:
             logger.error("[cycle_backend] Poller error: %s", e)
             if isinstance(e, asyncio.CancelledError):

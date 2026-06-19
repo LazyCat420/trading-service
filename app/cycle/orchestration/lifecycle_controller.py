@@ -12,6 +12,69 @@ from app.cognition.orchestration import resolve_cycle_runtime
 
 logger = logging.getLogger(__name__)
 
+# ── Terminal states where no cycle is active ──
+_TERMINAL_STATES = ("idle", "done", "error", "stopped", "cancelled", "interrupted")
+
+
+class TaskRegistry:
+    """Lightweight task registry for deterministic cleanup.
+
+    All asyncio.Task objects spawned by the lifecycle controller are
+    registered here instead of bare class attributes. This provides:
+    - Single cancel_all() for stop/cleanup
+    - is_active() guard for deduplication
+    - Deterministic ordering of cancellation
+    """
+
+    def __init__(self):
+        self._tasks: dict[str, asyncio.Task] = {}
+
+    def register(self, name: str, task: asyncio.Task) -> None:
+        """Register a task. If one already exists with that name, it is NOT cancelled."""
+        self._tasks[name] = task
+
+    async def cancel_and_await(self, name: str, timeout: float = 2.0) -> None:
+        """Cancel a specific task and wait for it to finish."""
+        task = self._tasks.pop(name, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=timeout)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+
+    def is_active(self, name: str) -> bool:
+        """Return True if the named task exists and is still running."""
+        task = self._tasks.get(name)
+        return task is not None and not task.done()
+
+    async def cancel_all(self, timeout: float = 2.0) -> int:
+        """Cancel all registered tasks and wait for them. Returns count cancelled."""
+        count = 0
+        names = list(self._tasks.keys())
+        for name in names:
+            task = self._tasks.pop(name, None)
+            if task and not task.done():
+                task.cancel()
+                count += 1
+        # Wait for all cancelled tasks together
+        tasks_to_wait = [t for t in [self._tasks.get(n) for n in names] if t and not t.done()]
+        if tasks_to_wait:
+            await asyncio.gather(*tasks_to_wait, return_exceptions=True)
+        return count
+
+    def get(self, name: str) -> asyncio.Task | None:
+        """Get a task by name."""
+        return self._tasks.get(name)
+
+    def clear(self) -> None:
+        """Clear all references without cancelling."""
+        self._tasks.clear()
+
+
+# Module-level singleton — shared across all mixin users
+_task_registry = TaskRegistry()
+
 
 class LifecycleControllerMixin:
     _action_lock = None
@@ -40,25 +103,16 @@ class LifecycleControllerMixin:
         async with cls._get_lock():
             # Check memory state first to avoid race conditions with DB read lag
             current_status = cls._state.get("status", "idle")
-            if current_status not in (
-                "idle",
-                "done",
-                "error",
-                "stopped",
-                "interrupted",
-            ):
+            if current_status not in _TERMINAL_STATES:
                 raise ValueError(f"Cycle already running: {current_status}")
 
-            cls.load_state()
-            if cls._state["status"] not in (
-                "idle",
-                "done",
-                "error",
-                "stopped",
-                "interrupted",
-            ):
-                raise ValueError(f"Cycle already running: {cls._state['status']}")
+            # Task slot guard: reject if asyncio task is still alive
+            if _task_registry.is_active("cycle"):
+                raise ValueError("Cycle task already running — rejecting duplicate START_CYCLE")
 
+            cls.load_state()
+            if cls._state["status"] not in _TERMINAL_STATES:
+                raise ValueError(f"Cycle already running: {cls._state['status']}")
             # Auto-resume check if not starting fresh and not an edge case response
             if not start_fresh and not trigger_type.startswith("edge_case_"):
                 # Clean up expired checkpoints (> 6 hours old)
@@ -225,6 +279,11 @@ class LifecycleControllerMixin:
             try:
                 from app.services.vllm_client import llm
                 llm.reset_kill_switch()
+                # Begin new Prism cycle generation — clears stale sessions and
+                # increments the generation ID so late-arriving responses from
+                # a previous cycle can be detected and discarded.
+                if hasattr(llm, "prism_client") and llm.prism_client:
+                    llm.prism_client.begin_cycle()
             except Exception as e:
                 logger.warning("[CYCLE] Failed to reset LLM kill switch (non-fatal): %s", e)
 
@@ -319,10 +378,12 @@ class LifecycleControllerMixin:
             )
 
             cls._cycle_task = asyncio.create_task(cls._run_cycle(ctx))
+            _task_registry.register("cycle", cls._cycle_task)
 
             cls._checkpoint_task = asyncio.create_task(
                 cls._checkpoint_heartbeat(cycle_id)
             )
+            _task_registry.register("checkpoint", cls._checkpoint_task)
 
         except Exception as e:
             logger.error("[CYCLE] Failed to initialize cycle in background: %s", e)
@@ -380,13 +441,43 @@ class LifecycleControllerMixin:
             logger.debug("[CYCLE] Watchdog error (non-fatal): %s", e)
 
     @classmethod
-    async def stop_cycle(cls) -> dict:
+    async def stop_cycle(cls, _stop_t1: float | None = None) -> dict:
+        """Deterministic 9-step shutdown sequence.
+
+        Steps:
+          1. Set pipeline_state = stopping in DB
+          2. Call cycle_control.stop() — sets stop flag, unblocks paused tasks
+          3. Call llm.abort_active_requests() — kill switch + TCP kill
+          4. Cancel and await all registered tasks
+          5. Cancel and await the main cycle task
+          6. Call cycle_control.stop_and_drain() — flush pending work
+          7. Call prism_client.cleanup_all_sessions()
+          8. Clear the task registry
+          9. Set pipeline_state to cancelled/interrupted in DB and emit SSE
+
+        _stop_t1: optional monotonic timestamp from the poller (T1)
+        """
         from app.cycle.orchestration.cycle_control import cycle_control
         from app.services.vllm_client import llm
 
-        cycle_control.stop()
-        await llm.abort_active_requests()
+        _t_base = _stop_t1 or time.monotonic()
 
+        # ── Step 1: Set stopping state ──
+        cls._state["status"] = "stopping"
+        cls._state["progress"] = "Stopping cycle..."
+        cls.save_state()
+
+        # ── Step 2: Signal stop via cycle_control ──
+        T2 = time.monotonic()
+        cycle_control.stop()
+        logger.info("[STOP_TRACE] T2: cycle_control.stop() called (Δ=%.3fs from T1)", T2 - _t_base)
+
+        # ── Step 3: Kill LLM requests ──
+        await llm.abort_active_requests()
+        T3 = time.monotonic()
+        logger.info("[STOP_TRACE] T3: llm.abort_active_requests() done (Δ=%.3fs)", T3 - _t_base)
+
+        # ── Step 4: Cancel subsidiary tasks via registry + class attrs ──
         for name, task in [
             ("scout", getattr(cls, "_scout_task", None)),
             ("consumer", getattr(cls, "_consumer_task", None)),
@@ -407,22 +498,49 @@ class LifecycleControllerMixin:
         cls._macro_task = None
         cls._analysis_task = None
 
+        # ── Step 5: Cancel and await the main cycle task ──
         cycle_task = getattr(cls, "_cycle_task", None)
         if cycle_task is None or cycle_task.done():
-            if cls._state["status"] in ("idle", "done", "error", "stopped"):
+            if cls._state["status"] in _TERMINAL_STATES and cls._state["status"] != "stopping":
+                _task_registry.clear()
                 return {"status": "already_idle", "message": "No cycle running"}
-            # Do NOT return early. We might still need to create a synthetic checkpoint
-            # for a cycle that was running when the server crashed/restarted.
             cls._cycle_task = None
         else:
+            T4_start = time.monotonic()
+            logger.info("[STOP_TRACE] T4: task.cancel() called (task_id=%s)", id(cycle_task))
             cycle_task.cancel()
             try:
                 await asyncio.wait_for(cycle_task, timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
+            T4 = time.monotonic()
+            logger.info(
+                "[STOP_TRACE] T4: await task returned (Δ=%.3fs — cancellation latency)",
+                T4 - T4_start,
+            )
             cls._cycle_task = None
 
-        # Check for checkpoint — if one exists, mark as interrupted (resumable)
+        # ── Step 6: Drain remaining work ──
+        try:
+            await cycle_control.stop_and_drain(drain_seconds=0.5)
+        except Exception as e:
+            logger.debug("[CYCLE] stop_and_drain error (non-fatal): %s", e)
+
+        # ── Step 7: Clean up Prism sessions ──
+        session_count = 0
+        try:
+            if hasattr(llm, "prism_client") and llm.prism_client:
+                session_count = len(llm.prism_client._sessions)
+                llm.prism_client.cleanup_all_sessions()
+        except Exception as e:
+            logger.debug("[CYCLE] Prism cleanup error (non-fatal): %s", e)
+        T6 = time.monotonic()
+        logger.info("[STOP_TRACE] T6: Prism sessions cleaned (count=%d, Δ=%.3fs)", session_count, T6 - _t_base)
+
+        # ── Step 8: Clear the task registry ──
+        _task_registry.clear()
+
+        # ── Step 9: Set terminal state in DB ──
         cycle_id = cls._state.get("cycle_id")
         checkpoint = PipelineStateDB.get_checkpoint(cycle_id) if cycle_id else None
 
@@ -458,6 +576,9 @@ class LifecycleControllerMixin:
                 logger.error("[CYCLE] Failed to save synthetic checkpoint: %s", e)
                 checkpoint = None
 
+        T5 = time.monotonic()
+        logger.info("[STOP_TRACE] T5: pipeline_state written to DB (Δ=%.3fs)", T5 - _t_base)
+
         if checkpoint:
             cls._state["status"] = "interrupted"
             cls._state["phase"] = "interrupted"
@@ -474,18 +595,22 @@ class LifecycleControllerMixin:
                 "Cycle stopped — checkpoint available for resume",
                 status="ok",
             )
+            T7 = time.monotonic()
+            logger.info("[STOP_TRACE] T7: SSE 'interrupted' event emitted (total stop time=%.3fs)", T7 - _t_base)
             return {
                 "status": "interrupted",
                 "message": "Cycle stopped. Checkpoint available for resume.",
             }
 
-        cls._state["status"] = "stopped"
+        cls._state["status"] = "cancelled"
         cls._state["finished_at"] = datetime.now(timezone.utc).isoformat()
         cls.save_state()
-        cls.emit("stopped", "user_stop", "Cycle stopped by user", status="ok")
+        cls.emit("cancelled", "user_stop", "Cycle cancelled by user", status="ok")
+        T7 = time.monotonic()
+        logger.info("[STOP_TRACE] T7: SSE 'cancelled' event emitted (total stop time=%.3fs)", T7 - _t_base)
         return {
-            "status": "stopped",
-            "message": "Cycle cancelled (Checkpoint failed to save)",
+            "status": "cancelled",
+            "message": "Cycle cancelled by user.",
         }
 
     @classmethod
@@ -498,8 +623,11 @@ class LifecycleControllerMixin:
         """
         from app.cycle.orchestration.cycle_control import cycle_control
 
+        T1 = time.monotonic()
+        logger.info("[STOP_TRACE] T1: request_stop() entered")
+
         prev_status = cls._state.get("status", "idle")
-        if prev_status in ("idle", "done", "error", "stopped", "interrupted"):
+        if prev_status in _TERMINAL_STATES:
             return {"status": "already_idle", "message": "No cycle running"}
 
         # 1. Signal the pipeline to stop (immediate flag flip)
@@ -531,7 +659,7 @@ class LifecycleControllerMixin:
         # 3. Schedule the heavy cleanup as a background task
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(cls._background_stop_cleanup())
+            loop.create_task(cls._background_stop_cleanup(_stop_t1=T1))
         except RuntimeError:
             # If no event loop, fall through — next status poll will
             # detect the 'stopping' state and the cycle task's own
@@ -549,10 +677,10 @@ class LifecycleControllerMixin:
         }
 
     @classmethod
-    async def _background_stop_cleanup(cls):
+    async def _background_stop_cleanup(cls, _stop_t1: float | None = None):
         """Background task that performs the heavy stop cleanup."""
         try:
-            await cls.stop_cycle()
+            await cls.stop_cycle(_stop_t1=_stop_t1)
         except Exception as e:
             logger.error("[CYCLE] Background stop cleanup failed: %s", e)
         finally:
@@ -940,10 +1068,12 @@ class LifecycleControllerMixin:
             )
 
             cls._cycle_task = asyncio.create_task(cls._run_cycle(ctx))
+            _task_registry.register("cycle", cls._cycle_task)
 
             cls._checkpoint_task = asyncio.create_task(
                 cls._checkpoint_heartbeat(cycle_id)
             )
+            _task_registry.register("checkpoint", cls._checkpoint_task)
 
         except Exception as e:
             logger.error("[RESUME] Failed to resume cycle in background: %s", e)
