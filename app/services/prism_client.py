@@ -434,7 +434,7 @@ class PrismClient:
         tools: list[dict] | None = None,
         is_qwen_model: bool = False,
         agentic_mode: bool = True,
-        provider: str = "vllm",
+        provider: str = "vllm-1",
         actor_label: str | None = None,
     ) -> tuple[dict, str, dict]:
         """
@@ -489,8 +489,11 @@ class PrismClient:
         else:
             deduplicated_messages = list(messages)
 
+        # Map internal "vllm-1" to Prism-compatible "vllm"
+        prism_provider = "vllm" if provider == "vllm-1" else provider
+
         payload: dict[str, Any] = {
-            "provider": provider,
+            "provider": prism_provider,
             "model": model,
             "messages": deduplicated_messages,
             "maxTokens": max_tokens,
@@ -506,7 +509,7 @@ class PrismClient:
             "conversationMeta": {
                 "title": title,
                 "settings": {
-                    "provider": provider,
+                    "provider": prism_provider,
                     "model": model,
                 },
             },
@@ -550,7 +553,7 @@ class PrismClient:
         tools: list[dict] | None = None,
         is_qwen_model: bool = False,
         agentic_mode: bool = True,
-        provider: str = "vllm",
+        provider: str = "vllm-1",
         actor_label: str | None = None,
     ) -> tuple[dict, str, dict]:
         """
@@ -590,8 +593,11 @@ class PrismClient:
         else:
             deduplicated_messages = list(messages)
 
+        # Map internal "vllm-1" to Prism-compatible "vllm"
+        prism_provider = "vllm" if provider == "vllm-1" else provider
+
         payload: dict[str, Any] = {
-            "provider": provider,
+            "provider": prism_provider,
             "model": model,
             "messages": deduplicated_messages,
             "maxTokens": max_tokens,
@@ -607,7 +613,7 @@ class PrismClient:
             "conversationMeta": {
                 "title": title,
                 "settings": {
-                    "provider": provider,
+                    "provider": prism_provider,
                     "model": model,
                 },
             },

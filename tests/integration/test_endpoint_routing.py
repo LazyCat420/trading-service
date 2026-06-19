@@ -187,9 +187,9 @@ async def test_qwen_35b_routing_rules():
     
     client._roles_discovered = True
 
-    # 1. Verify resolving cyankiwi model provider always returns "vllm" (Jetson)
-    assert client.resolve_provider_for_model("cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit") == "vllm"
-    assert client.resolve_provider_for_model("Qwen3.6-35B") == "vllm"
+    # 1. Verify resolving cyankiwi model provider always returns "vllm-1" (Jetson)
+    assert client.resolve_provider_for_model("cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit") == "vllm-1"
+    assert client.resolve_provider_for_model("Qwen3.6-35B") == "vllm-1"
 
     # 2. Verify Gold Spark URL resolving maps to "vllm-2" (Gold Spark)
     client._endpoints["dgx_spark"].model = "some-other-heavy-model"

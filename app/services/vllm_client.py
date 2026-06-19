@@ -129,13 +129,13 @@ def _parse_parameter_size(model_id: str) -> float | None:
 
 
 def _url_to_prism_provider(url: str | None) -> str:
-    """Resolve the canonical Prism provider name ('vllm', 'vllm-2', 'vllm-3')
+    """Resolve the canonical Prism provider name ('vllm-1', 'vllm-2', 'vllm-3')
     based on the endpoint URL.
     """
     if not url:
-        return "vllm"
+        return "vllm-1"
     if settings.PROVIDER_VLLM_1_URL and settings.PROVIDER_VLLM_1_URL in url:
-        return "vllm"
+        return "vllm-1"
     if settings.PROVIDER_VLLM_2_URL and settings.PROVIDER_VLLM_2_URL in url:
         return "vllm-2"
     if settings.PROVIDER_VLLM_3_URL and settings.PROVIDER_VLLM_3_URL in url:
@@ -152,14 +152,14 @@ def _url_to_prism_provider(url: str | None) -> str:
         vllm3_host = urlparse(settings.PROVIDER_VLLM_3_URL).hostname if settings.PROVIDER_VLLM_3_URL else None
         
         if vllm1_host and vllm1_host in host:
-            return "vllm"
+            return "vllm-1"
         if vllm2_host and vllm2_host in host:
             return "vllm-2"
         if vllm3_host and vllm3_host in host:
             return "vllm-3"
     except Exception:
         pass
-    return "vllm"
+    return "vllm-1"
 
 
 
@@ -1745,7 +1745,7 @@ class VLLMClient:
         payload: dict,
         meta: dict,
         start: float,
-        provider: str = "vllm",
+        provider: str = "vllm-1",
         actor_label: str | None = None,
     ) -> tuple[str, int, int]:
         """Route through Prism's /agent or /chat endpoint (streaming mode) to collect the response.
@@ -3741,7 +3741,7 @@ class VLLMClient:
     # Changing them will break the agent routing, causing 122B requests to be sent to Jetson and fail.
 
     def resolve_provider_for_model(self, model: str) -> str:
-        """Resolve the canonical Prism provider name ('vllm', 'vllm-2')
+        """Resolve the canonical Prism provider name ('vllm-1', 'vllm-2')
         based on which active endpoint hosts the given model.
         """
         # Find endpoint hosting the model by reading model from active endpoints
@@ -3765,12 +3765,12 @@ class VLLMClient:
         model_lower = model.lower() if model else ""
         if "cyankiwi" in model_lower or "qwen3.6-35b" in model_lower or "35b" in model_lower:
             # Jetson hosts the 35B models
-            return "vllm"
+            return "vllm-1"
         elif "122b" in model_lower or "120b" in model_lower:
             # Gold Spark hosts the heavy models
             return "vllm-2"
 
-        return "vllm"
+        return "vllm-1"
 
     def _resolve_model(self, agent_name: str) -> str:
         """Resolve the model ID for a given agent name based on role-based routing.
