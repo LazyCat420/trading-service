@@ -1782,7 +1782,7 @@ class VLLMClient:
             enable_thinking=payload.get("chat_template_kwargs", {}).get("enable_thinking", False),
             tools=tools,
             is_qwen_model=_is_qwen_model(model_id),
-            agentic_mode=is_interactive or bool(tools),
+            agentic_mode=True,
             provider=provider,
             actor_label=resolved_actor_label,
         )
