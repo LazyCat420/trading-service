@@ -1503,7 +1503,7 @@ async def extract_and_validate(
                 fallback_system_prompt="See app.agents.custom.ticker_validator_agent",
                 fallback_agent_name="ticker_validator",
                 temperature=0.1,
-                max_tokens=8192,
+                max_tokens=128,
                 priority=Priority.LOW,
             )
             data = parse_json_response(content)
