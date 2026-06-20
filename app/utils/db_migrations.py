@@ -104,6 +104,26 @@ def ensure_summary_columns(db=None):
                 ban_reason        TEXT,
                 last_updated      TIMESTAMPTZ DEFAULT NOW()
             )""",
+            """CREATE TABLE IF NOT EXISTS sub_task_queue (
+                id SERIAL PRIMARY KEY,
+                parent_agent VARCHAR,
+                sub_agent VARCHAR,
+                ticker VARCHAR,
+                task_payload JSONB,
+                status VARCHAR DEFAULT 'pending',
+                result JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS critic_feedback (
+                id SERIAL PRIMARY KEY,
+                ticker VARCHAR,
+                target_agent VARCHAR,
+                score INTEGER,
+                hallucinations JSONB,
+                missing_risks JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )""",
         ]
         for sql in migrations:
             try:

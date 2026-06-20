@@ -175,54 +175,79 @@ def resolve_agent_id(agent_name: str, default_agent: str = "CUSTOM_MARKET_ALPHA"
     if not agent_name:
         return default_agent
 
+    name_lower = agent_name.lower()
+    suffix = ""
+    if "_tot" in name_lower:
+        suffix = "_TOT"
+    elif "_got" in name_lower:
+        suffix = "_GOT"
+    elif "_cot" in name_lower:
+        suffix = "_COT"
+
     # If the caller already provided a canonical custom agent ID, return it as-is
     # Except if it maps to a more specific custom agent ID in AGENT_ID_MAP (like CUSTOM_DATA_VERIFIER_AGENT)
     if agent_name.startswith("CUSTOM_"):
         mapped = AGENT_ID_MAP.get(agent_name)
         if mapped:
-            return mapped
-        return agent_name
+            base_agent = mapped
+        else:
+            base_agent = agent_name
+        
+        if suffix and not base_agent.endswith(suffix):
+            return f"{base_agent}{suffix}"
+        return base_agent
 
     # Direct lookup first (fast path)
     agent_id = AGENT_ID_MAP.get(agent_name)
     if agent_id:
+        if suffix and not agent_id.endswith(suffix):
+            return f"{agent_id}{suffix}"
         return agent_id
 
     # Fuzzy matching for specific specialist agents first
-    name_lower = agent_name.lower()
     if "retriever" in name_lower:
-        return "CUSTOM_RETRIEVER_AGENT"
-    if "verifier" in name_lower:
-        return "CUSTOM_VERIFIER_AGENT"
-    if "synthesizer" in name_lower:
-        return "CUSTOM_SYNTHESIZER_AGENT"
-    if "pre_trade" in name_lower:
-        return "CUSTOM_PRE_TRADE_AGENT"
-    if "meta_audit" in name_lower:
-        return "CUSTOM_META_AUDIT_AGENT"
+        base_agent = "CUSTOM_RETRIEVER_AGENT"
+    elif "verifier" in name_lower:
+        base_agent = "CUSTOM_VERIFIER_AGENT"
+    elif "synthesizer" in name_lower:
+        base_agent = "CUSTOM_SYNTHESIZER_AGENT"
+    elif "pre_trade" in name_lower:
+        base_agent = "CUSTOM_PRE_TRADE_AGENT"
+    elif "meta_audit" in name_lower:
+        base_agent = "CUSTOM_META_AUDIT_AGENT"
 
     # Fuzzy matching for standard analysis agents
-    if any(x in name_lower for x in _STANDARD_ANALYSIS_AGENTS):
-        return "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT"
+    elif any(x in name_lower for x in _STANDARD_ANALYSIS_AGENTS):
+        base_agent = "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT"
 
     # Fuzzy matching for known prefixes (backward compat with prism_client.py logic)
-    if "quant_research" in name_lower:
-        return "CUSTOM_QUANT_RESEARCH_AGENT"
-    if "janitor" in name_lower or "maintenance" in name_lower or "summarizer" in name_lower:
-        return "CUSTOM_MARKET_SCOUT"
-    if "reddit" in name_lower or "youtube" in name_lower or "news" in name_lower:
-        return "CUSTOM_MARKET_SCOUT"
-    if "curator" in name_lower or "data" in name_lower:
-        return "CUSTOM_MARKET_SCOUT"
+    elif "quant_research" in name_lower:
+        base_agent = "CUSTOM_QUANT_RESEARCH_AGENT"
+    elif "janitor" in name_lower or "maintenance" in name_lower or "summarizer" in name_lower:
+        base_agent = "CUSTOM_MARKET_SCOUT"
+    elif "reddit" in name_lower or "youtube" in name_lower or "news" in name_lower:
+        base_agent = "CUSTOM_MARKET_SCOUT"
+    elif "curator" in name_lower or "data" in name_lower:
+        base_agent = "CUSTOM_MARKET_SCOUT"
+    else:
+        base_agent = None
+
+    if base_agent:
+        if suffix and not base_agent.endswith(suffix):
+            return f"{base_agent}{suffix}"
+        return base_agent
     
+    base_agent = "CUSTOM_MARKET_SCOUT"
     # Otherwise, default to MARKET_SCOUT for data ingestion
     if "technical" in name_lower:
-        return "CUSTOM_TECHNICAL_ANALYSIS_AGENT"
-    if "agent_architect" in name_lower or "architect" in name_lower:
-        return "CUSTOM_AGENT_ARCHITECT"
-    if "budget" in name_lower:
-        return "CUSTOM_AGENT_BUDGET_MANAGER"
-    if "debater" in name_lower:
-        return "CUSTOM_BULLISH_DEBATER"
+        base_agent = "CUSTOM_TECHNICAL_ANALYSIS_AGENT"
+    elif "agent_architect" in name_lower or "architect" in name_lower:
+        base_agent = "CUSTOM_AGENT_ARCHITECT"
+    elif "budget" in name_lower:
+        base_agent = "CUSTOM_AGENT_BUDGET_MANAGER"
+    elif "debater" in name_lower:
+        base_agent = "CUSTOM_BULLISH_DEBATER"
 
-    return "CUSTOM_MARKET_SCOUT"
+    if suffix and not base_agent.endswith(suffix):
+        return f"{base_agent}{suffix}"
+    return base_agent

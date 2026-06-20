@@ -43,19 +43,37 @@ async def run_ticker_processors(ticker: str, emit) -> None:
     try:
         # Instead of manually stringing together summarizer, janitor, and consensus engine,
         # we hand the ticker directly to the Market Scout to do it all with its subagents.
-        response, tokens, ms = await call_prism_agent(
-            agent_id="MARKET_SCOUT",
-            user_message=f"New raw data has been collected for ticker: {ticker}. Please investigate, clean the data, validate any mentions, summarize the sentiment, and post your final consensus.",
-            fallback_system_prompt="See app.agents.custom.market_scout",
-            fallback_agent_name="market_scout",
-            temperature=0.2,
-            max_tokens=8192,
-            priority=Priority.NORMAL,
-            ticker=ticker,
-            actor_label="market_scout_orchestrator"
-        )
-        
-        logger.info("[PIPELINE] Market Scout completed processing for %s in %dms. Response: %s", ticker, ms, response[:100])
+        try:
+            response, tokens, ms = await asyncio.wait_for(
+                call_prism_agent(
+                    agent_id="MARKET_SCOUT",
+                    user_message=f"New raw data has been collected for ticker: {ticker}. Please investigate, clean the data, validate any mentions, summarize the sentiment, and post your final consensus.",
+                    fallback_system_prompt="See app.agents.custom.market_scout",
+                    fallback_agent_name="market_scout",
+                    temperature=0.2,
+                    max_tokens=8192,
+                    priority=Priority.NORMAL,
+                    ticker=ticker,
+                    actor_label="market_scout_orchestrator"
+                ),
+                timeout=90.0
+            )
+            logger.info("[PIPELINE] Market Scout completed processing for %s in %dms. Response: %s", ticker, ms, response[:100])
+        except asyncio.TimeoutError:
+            logger.warning("[PIPELINE] Market Scout timed out after 90s for %s. Falling back to simple summarizer.", ticker)
+            response, tokens, ms = await call_prism_agent(
+                agent_id="SUMMARIZER",
+                user_message=f"Raw data collected for ticker: {ticker}. Briefly summarize sentiment and key facts.",
+                fallback_system_prompt="You are a fast summarizer. Provide a concise summary of the data.",
+                fallback_agent_name="summarizer",
+                temperature=0.2,
+                max_tokens=512,
+                priority=Priority.NORMAL,
+                ticker=ticker,
+                actor_label="summarizer_fallback"
+            )
+            logger.info("[PIPELINE] Fallback summarizer completed for %s in %dms. Response: %s", ticker, ms, response[:100])
+            
     except Exception as e:
         logger.error("[PIPELINE] Market Scout processing failed for %s: %s", ticker, e)
 

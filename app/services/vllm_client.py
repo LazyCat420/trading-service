@@ -454,9 +454,7 @@ class VLLMClient:
         # At 20+ concurrent requests, vLLM TPS collapses from ~30 to ~3.
         # This semaphore prevents that cliff by capping total dispatched
         # requests. Per-endpoint semaphores still apply within this cap.
-        self._global_slots_total = sum(ep.max_concurrent for ep in self._endpoints.values())
-        if self._global_slots_total <= 0:
-            self._global_slots_total = 24
+        self._global_slots_total = 15
         self._global_slots = asyncio.Semaphore(self._global_slots_total)
 
     # ── Model Context Discovery ────────────────────────────────────────
@@ -855,9 +853,7 @@ class VLLMClient:
                     logger.warning("[VLLM] Event loop changed from %s to %s — re-initializing global slots and dispatcher tasks", getattr(self, "_dispatcher_loop", None), loop)
                     self._dispatcher_loop = loop
                     
-                    self._global_slots_total = sum(ep.max_concurrent for ep in self._endpoints.values())
-                    if self._global_slots_total <= 0:
-                        self._global_slots_total = 24
+                    self._global_slots_total = 15
                     self._global_slots = asyncio.Semaphore(self._global_slots_total)
 
                 for ep in self._endpoints.values():
@@ -2712,9 +2708,7 @@ class VLLMClient:
                 )
 
         # Scale global slots to only active/enabled endpoints
-        self._global_slots_total = sum(ep.max_concurrent for ep in self._endpoints.values() if ep.enabled)
-        if self._global_slots_total <= 0:
-            self._global_slots_total = 24
+        self._global_slots_total = 15
         self._global_slots = asyncio.Semaphore(self._global_slots_total)
         logger.info("[VLLM] Dynamically adjusted global slots limit to: %d", self._global_slots_total)
 

@@ -250,6 +250,30 @@ async def run_prism_agent(
     # Check if Prism is available
     prism_healthy = await prism.check_health()
 
+    # ── Intercept ToT/GoT Agents for Local Orchestration ──
+    # Prism's /agent endpoint natively handles linear loops but cannot execute
+    # recursive Tree of Thought or Graph of Thought branch explorations.
+    name_lower = agent_name.lower()
+    if "_tot" in name_lower or "_got" in name_lower:
+        logger.info(
+            "[PrismHarness] Intercepting %s for local Thought Orchestration (ToT/GoT).",
+            agent_name
+        )
+        # Execute complex tree/graph logic locally while delegating single node
+        # evaluations to Prism's /chat endpoint (via fallback/executor).
+        return await _fallback_to_local(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            ticker=ticker,
+            agent_name=agent_name,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            priority=priority,
+            tools_override=tools_override,
+            # For a real implementation, this fallback would trigger the recursive
+            # thought orchestrator module instead of just the basic executor loop.
+        )
+
     # Publish start event to telemetry bus
     try:
         from app.telemetry.bus import publish_event

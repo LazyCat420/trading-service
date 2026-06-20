@@ -385,6 +385,13 @@ class LifecycleControllerMixin:
             )
             _task_registry.register("checkpoint", cls._checkpoint_task)
 
+            try:
+                from app.cognition.orchestration.sub_task_manager import poll_sub_tasks
+                cls._sub_task_poll_task = asyncio.create_task(poll_sub_tasks())
+                _task_registry.register("sub_task_poll", cls._sub_task_poll_task)
+            except ImportError as e:
+                logger.error("[CYCLE] Failed to import sub-task manager: %s", e)
+
         except Exception as e:
             logger.error("[CYCLE] Failed to initialize cycle in background: %s", e)
             cls._state.update(

@@ -12,6 +12,14 @@ class ScraperServiceClient:
     def __init__(self, base_url: str | None = None):
         # Default to settings.SCRAPER_SERVICE_URL if not provided
         self.base_url = base_url or getattr(settings, "SCRAPER_SERVICE_URL", "http://scraper-service:8001")
+        self._semaphores = {}
+
+    def _get_semaphore(self, source: str) -> asyncio.Semaphore:
+        """Lazily initialize semaphores to ensure they are created in the active event loop."""
+        import asyncio
+        if source not in self._semaphores:
+            self._semaphores[source] = asyncio.Semaphore(5)
+        return self._semaphores[source]
         
     async def scrape(self, url: str, engine: str = "http", options: dict | None = None) -> dict | None:
         """
@@ -24,17 +32,19 @@ class ScraperServiceClient:
             "options": options or {}
         }
         
+        sem = self._get_semaphore("news")
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                r = await client.post(f"{self.base_url}/scrape", json=payload)
-                r.raise_for_status()
-                data = r.json()
-                
-                if data.get("success"):
-                    return data
-                else:
-                    logger.warning(f"[scraper_client] Scrape failed for {url}: {data.get('error')}")
-                    return None
+            async with sem:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    r = await client.post(f"{self.base_url}/scrape", json=payload)
+                    r.raise_for_status()
+                    data = r.json()
+                    
+                    if data.get("success"):
+                        return data
+                    else:
+                        logger.warning(f"[scraper_client] Scrape failed for {url}: {data.get('error')}")
+                        return None
         except httpx.HTTPError as e:
             logger.error(f"[scraper_client] HTTP error when scraping {url}: {e}")
             return None
@@ -49,16 +59,18 @@ class ScraperServiceClient:
         """
         payload = {"source": source, **req_data}
         
+        sem = self._get_semaphore(source)
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                r = await client.post(f"{self.base_url}/collect", json=payload)
-                r.raise_for_status()
-                data = r.json()
-                
-                if "error" in data and data["error"]:
-                    logger.warning(f"[scraper_client] Collect failed for {source}: {data['error']}")
-                
-                return data.get("items", [])
+            async with sem:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    r = await client.post(f"{self.base_url}/collect", json=payload)
+                    r.raise_for_status()
+                    data = r.json()
+                    
+                    if "error" in data and data["error"]:
+                        logger.warning(f"[scraper_client] Collect failed for {source}: {data['error']}")
+                    
+                    return data.get("items", [])
         except httpx.HTTPError as e:
             logger.error(f"[scraper_client] HTTP error when collecting from {source}: {e}")
             return []

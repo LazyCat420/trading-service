@@ -225,6 +225,8 @@ class PrismClient:
             except Exception:
                 return False
 
+        import random
+
         for attempt in range(max_retries):
             # Check stop flag before each attempt
             if _is_stopped():
@@ -251,10 +253,11 @@ class PrismClient:
                         url,
                     )
                     raise
-                # Do not retry on 4xx client errors
+                # Do not retry on 4xx client errors EXCEPT 429 Too Many Requests
                 if (
                     isinstance(e, HTTPStatusError)
                     and 400 <= e.response.status_code < 500
+                    and e.response.status_code != 429
                 ):
                     raise
                 if attempt == max_retries - 1:
@@ -267,7 +270,9 @@ class PrismClient:
                     raise
 
                 # Interruptible backoff: check stop flag during sleep
-                sleep_remaining = backoff
+                # Add jitter to backoff (±20%)
+                jitter = random.uniform(0.8, 1.2)
+                sleep_remaining = backoff * jitter
                 while sleep_remaining > 0:
                     if _is_stopped():
                         logger.info(
