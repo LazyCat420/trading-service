@@ -648,6 +648,7 @@ def is_truncated_content(text: str, min_chars: int = MIN_ARTICLE_CONTENT_CHARS) 
     - Paywall gates ("Subscribe to read", "Log in to view", etc.)
     - Cookie-wall pages ("Accept all cookies", "We use cookies", etc.)
     - Content that is simply too short to be useful (< min_chars)
+    - RSS summaries that are cut off mid-sentence (end with ... or …)
 
     Used at the collector boundary so bad content never touches the DB.
 
@@ -663,10 +664,20 @@ def is_truncated_content(text: str, min_chars: int = MIN_ARTICLE_CONTENT_CHARS) 
     stripped = text.strip()
     if len(stripped) < min_chars:
         return True
+        
+    # Many RSS feeds truncate text with an ellipsis if they don't provide the full body.
+    if stripped.endswith("...") or stripped.endswith("…"):
+        return True
+        
     lower = stripped.lower()
     for marker in TRUNCATION_MARKERS:
         if marker in lower:
             return True
+            
+    # Explicit "Read more" links
+    if "read more" in lower[-30:]:
+        return True
+        
     return False
 
 

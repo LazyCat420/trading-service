@@ -1465,97 +1465,15 @@ async def extract_and_validate(
     """
     matches = extract_tickers(text, title=title, source=source)
 
-    # Filter out extremely low confidence before calling LLM
+    # Filter out extremely low confidence
     candidates = [m for m in matches if m.confidence >= 0.40]
     
-    # Layer 2.5: LLM Context Validation
-    # We maintain an in-memory cache to avoid calling LLM for the exact same snippet+ticker.
-    if not hasattr(extract_and_validate, "_llm_cache"):
-        extract_and_validate._llm_cache = {}
-        
-    valid_matches = []
-    pending_candidates = []
+    # We no longer validate with a standalone LLM micro-agent here.
+    # The user requested that ticker validation be pushed downstream to the
+    # main overarching agents (e.g. Market Scout / Data Collector) to allow
+    # for native Prism swarm tools and proper UI graphing.
     
-    from app.services.prism_agent_caller import call_prism_agent
-    from app.services.vllm_client import Priority
-    from app.utils.text_utils import parse_json_list_response
-    
-    for m in candidates:
-        cache_key = f"{m.symbol}::{m.context_snippet}"
-        
-        # If it's a very clear S&P 500 stock with no anti-pattern penalty, skip LLM to save time
-        registry = get_registry()
-        company = registry.lookup_symbol(m.symbol)
-        if company and company.is_sp500 and not company.single_letter and m.confidence >= 0.8:
-            valid_matches.append(m)
-            continue
-            
-        # Check cache
-        if cache_key in extract_and_validate._llm_cache:
-            if extract_and_validate._llm_cache[cache_key]:
-                valid_matches.append(m)
-            continue
-            
-        pending_candidates.append(m)
-
-    if pending_candidates:
-        # Create JSON batch array
-        import json
-        batch_payload = [
-            {"symbol": m.symbol, "snippet": m.context_snippet}
-            for m in pending_candidates
-        ]
-        
-        user_msg = f"TICKER CANDIDATES TO VALIDATE:\n{json.dumps(batch_payload, indent=2)}"
-        
-        try:
-            content, _, _ = await call_prism_agent(
-                agent_id="TICKER_VALIDATION_AGENT",
-                user_message=user_msg,
-                fallback_system_prompt="See app.agents.custom.ticker_validator_agent",
-                fallback_agent_name="ticker_validator",
-                temperature=0.1,
-                # Increase max_tokens since we expect a JSON array result containing multiple objects
-                # and the V3 agent might use tools before returning the final JSON.
-                max_tokens=4096,
-                priority=Priority.LOW,
-            )
-            
-            # Parse as list
-            data_list = parse_json_list_response(content)
-            
-            # Create a lookup map from the LLM results
-            llm_results = {
-                item.get("symbol"): item.get("is_stock", True)
-                for item in data_list if isinstance(item, dict) and "symbol" in item
-            }
-            
-            for m in pending_candidates:
-                cache_key = f"{m.symbol}::{m.context_snippet}"
-                # Default to true if the LLM failed to include this symbol in its output
-                is_stock = llm_results.get(m.symbol, True)
-                
-                extract_and_validate._llm_cache[cache_key] = is_stock
-                if is_stock:
-                    valid_matches.append(m)
-                else:
-                    # Find the reason if available
-                    reason = "no reason"
-                    for item in data_list:
-                        if isinstance(item, dict) and item.get("symbol") == m.symbol:
-                            reason = item.get("reason", reason)
-                            break
-                    logger.debug(f"[ticker_extractor] LLM rejected '{m.symbol}': {reason}")
-                    
-        except Exception as e:
-            logger.warning(f"LLM batch validation failed: {e}")
-            # fallback to allowing all pending items if the batch call completely fails
-            for m in pending_candidates:
-                cache_key = f"{m.symbol}::{m.context_snippet}"
-                extract_and_validate._llm_cache[cache_key] = True
-                valid_matches.append(m)
-
-    return valid_matches
+    return candidates
 
 
 async def get_ticker_symbols(text: str, title: str | None = None) -> list[str]:
