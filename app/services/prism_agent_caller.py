@@ -191,9 +191,9 @@ async def call_prism_agent(
                     logger.info("[PrismAgentCaller] Loaded custom Lego agent definition for '%s'", fallback_agent_name)
                     fallback_system_prompt = custom_def["identity"]
                     dynamic_tools = custom_def["enabled_tools"]
-                    # Prism's /chat endpoint now properly reads the system prompt as long as
-                    # agentic_mode=False is passed (which preserves the system messages array).
-                    agentic_mode = bool(dynamic_tools)
+                    # Always route custom registered agents to Prism's /agent endpoint.
+                    # This ensures full UI visibility and dynamic tool capabilities for V3 agents.
+                    agentic_mode = True
                     
                     # Dynamically register the agent in Prism to lock in its custom system prompt and tools
                     try:

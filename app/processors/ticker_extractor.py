@@ -1516,7 +1516,8 @@ async def extract_and_validate(
                 fallback_agent_name="ticker_validator",
                 temperature=0.1,
                 # Increase max_tokens since we expect a JSON array result containing multiple objects
-                max_tokens=1024,
+                # and the V3 agent might use tools before returning the final JSON.
+                max_tokens=4096,
                 priority=Priority.LOW,
             )
             
