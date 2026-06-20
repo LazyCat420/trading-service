@@ -134,6 +134,7 @@ async def call_prism_agent(
     is_validator = "validator" in fallback_agent_name.lower()
     is_thesis = "thesis" in fallback_agent_name.lower()
     
+    instruction = ""
     if max_tokens < 4096 and not is_validator and not is_thesis:
         if max_tokens <= 128:
             sentences = "1 or 2 sentences max"
@@ -189,7 +190,7 @@ async def call_prism_agent(
                 dynamic_tools = None
                 if custom_def:
                     logger.info("[PrismAgentCaller] Loaded custom Lego agent definition for '%s'", fallback_agent_name)
-                    fallback_system_prompt = custom_def["identity"]
+                    fallback_system_prompt = FIRM_CONTEXT + custom_def["identity"] + instruction
                     dynamic_tools = custom_def["enabled_tools"]
                     # Always route custom registered agents to Prism's /agent endpoint.
                     # This ensures full UI visibility and dynamic tool capabilities for V3 agents.

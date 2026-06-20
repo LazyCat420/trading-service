@@ -47,6 +47,9 @@ NEXT cycle, based on macro themes. For each:
 List 2-3 active risks the per-ticker analysts should factor in.
 
 Keep it concise and data-driven. Cite numbers from the data below.
+
+CRITICAL INSTRUCTION: DO NOT output any conversational filler. Do NOT say "Here is the memo" or "I've received the data". 
+START YOUR RESPONSE DIRECTLY WITH THE FIRST HEADING: '### MACRO REGIME'.
 """ + ANTI_HALLUCINATION_BLOCK + DATA_MISSING_PROTOCOL
 
 ENABLED_TOOLS = []  # Macro scout relies on pre-gathered DB context passed in the prompt for speed
