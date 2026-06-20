@@ -59,6 +59,19 @@ async def run_ticker_processors(ticker: str, emit) -> None:
                 timeout=90.0
             )
             logger.info("[PIPELINE] Market Scout completed processing for %s in %dms. Response: %s", ticker, ms, response[:100])
+            
+            # Phase 5: Enqueue Critic audit post-cycle
+            from app.cognition.orchestration.sub_task_manager import enqueue_sub_task
+            enqueue_sub_task(
+                parent_agent="MARKET_SCOUT",
+                sub_agent="CRITIC_AGENT",
+                ticker=ticker,
+                payload={
+                    "target_agent": "MARKET_SCOUT",
+                    "message": f"Raw data for {ticker} was processed. Please audit the following output for hallucinations, missing risks, and overall logic:\n\n{response}"
+                }
+            )
+            
         except asyncio.TimeoutError:
             logger.warning("[PIPELINE] Market Scout timed out after 90s for %s. Falling back to simple summarizer.", ticker)
             response, tokens, ms = await call_prism_agent(
