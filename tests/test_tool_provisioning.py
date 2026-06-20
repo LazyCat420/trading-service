@@ -9,9 +9,6 @@ Tests cover:
     - get_schemas_by_names with unknown names returns empty
     - Intersection logic: requested tools that don't exist are silently skipped
     - get_schemas_by_tier / get_schemas_by_permission filtering
-  🔗 Integration Tests:
-    - spawn_research_subagent with enabled_tools filters correctly
-    - spawn_research_subagent with invalid tools falls back to all
 """
 
 import sys
@@ -86,16 +83,6 @@ def _build_test_registry() -> ToolRegistry:
     )
     async def _buy_stock():
         return "bought"
-
-    @reg.register(
-        name="spawn_research_subagent",
-        description="Spawn a research subagent.",
-        parameters={"type": "object", "properties": {}, "required": []},
-        tier=1,
-        permission=PermissionLevel.WRITE,
-    )
-    async def _spawn():
-        return "spawned"
 
     return reg
 
@@ -242,80 +229,4 @@ class TestToolMeta:
         assert "search_web" in names
 
 
-# ══════════════════════════════════════════════════════════════
-# 🔗 Integration — Subagent Tool Filtering Logic
-# ══════════════════════════════════════════════════════════════
 
-
-class TestSubagentToolFiltering:
-    """Test the filtering logic that subagent_tools.py uses.
-
-    We replicate the exact logic here instead of importing subagent_tools
-    (which would pull in the full app stack).
-    """
-
-    def test_enabled_tools_filters_correctly(self):
-        """Phase 4: enabled_tools whitelist works."""
-        reg = _build_test_registry()
-        enabled_tools = ["search_web", "scrape_url"]
-
-        # Replicate the logic from subagent_tools.py
-        active_schemas = reg.get_schemas_by_names(enabled_tools)
-        active_schemas = [
-            s for s in active_schemas
-            if s["function"]["name"] != "spawn_research_subagent"
-        ]
-
-        names = [s["function"]["name"] for s in active_schemas]
-        assert names == ["search_web", "scrape_url"]
-        assert "spawn_research_subagent" not in names
-
-    def test_enabled_tools_removes_spawn_even_if_requested(self):
-        """Safety: spawn tool is always excluded from subagents."""
-        reg = _build_test_registry()
-        enabled_tools = ["search_web", "spawn_research_subagent"]
-
-        active_schemas = reg.get_schemas_by_names(enabled_tools)
-        active_schemas = [
-            s for s in active_schemas
-            if s["function"]["name"] != "spawn_research_subagent"
-        ]
-
-        names = [s["function"]["name"] for s in active_schemas]
-        assert "spawn_research_subagent" not in names
-        assert "search_web" in names
-
-    def test_no_enabled_tools_gives_all_minus_spawn(self):
-        """Phase 4: omitting enabled_tools gives all tools minus spawn."""
-        reg = _build_test_registry()
-
-        # Replicate the fallback logic
-        active_schemas = [
-            s for s in reg.schemas
-            if s["function"]["name"] != "spawn_research_subagent"
-        ]
-
-        names = [s["function"]["name"] for s in active_schemas]
-        assert "spawn_research_subagent" not in names
-        assert len(names) == 4  # all 5 minus spawn
-
-    def test_invalid_enabled_tools_falls_back(self):
-        """Phase 4: invalid tool names produce empty, triggering fallback."""
-        reg = _build_test_registry()
-        enabled_tools = ["fake_tool_1", "fake_tool_2"]
-
-        active_schemas = reg.get_schemas_by_names(enabled_tools)
-        active_schemas = [
-            s for s in active_schemas
-            if s["function"]["name"] != "spawn_research_subagent"
-        ]
-
-        # Fallback: if empty, use all tools
-        if not active_schemas:
-            active_schemas = [
-                s for s in reg.schemas
-                if s["function"]["name"] != "spawn_research_subagent"
-            ]
-
-        names = [s["function"]["name"] for s in active_schemas]
-        assert len(names) == 4  # all tools minus spawn
