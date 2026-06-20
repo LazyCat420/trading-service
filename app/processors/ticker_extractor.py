@@ -1474,9 +1474,11 @@ async def extract_and_validate(
         extract_and_validate._llm_cache = {}
         
     valid_matches = []
+    pending_candidates = []
+    
     from app.services.prism_agent_caller import call_prism_agent
     from app.services.vllm_client import Priority
-    from app.utils.text_utils import parse_json_response
+    from app.utils.text_utils import parse_json_list_response
     
     for m in candidates:
         cache_key = f"{m.symbol}::{m.context_snippet}"
@@ -1494,8 +1496,18 @@ async def extract_and_validate(
                 valid_matches.append(m)
             continue
             
-        # Call LLM Validator
-        user_msg = f"TICKER CANDIDATE: {m.symbol}\nSNIPPET: {m.context_snippet}"
+        pending_candidates.append(m)
+
+    if pending_candidates:
+        # Create JSON batch array
+        import json
+        batch_payload = [
+            {"symbol": m.symbol, "snippet": m.context_snippet}
+            for m in pending_candidates
+        ]
+        
+        user_msg = f"TICKER CANDIDATES TO VALIDATE:\n{json.dumps(batch_payload, indent=2)}"
+        
         try:
             content, _, _ = await call_prism_agent(
                 agent_id="TICKER_VALIDATION_AGENT",
@@ -1503,21 +1515,44 @@ async def extract_and_validate(
                 fallback_system_prompt="See app.agents.custom.ticker_validator_agent",
                 fallback_agent_name="ticker_validator",
                 temperature=0.1,
-                max_tokens=128,
+                # Increase max_tokens since we expect a JSON array result containing multiple objects
+                max_tokens=1024,
                 priority=Priority.LOW,
             )
-            data = parse_json_response(content)
-            is_stock = data.get("is_stock", True)  # default to true if parse fails
             
-            extract_and_validate._llm_cache[cache_key] = is_stock
+            # Parse as list
+            data_list = parse_json_list_response(content)
             
-            if is_stock:
-                valid_matches.append(m)
-            else:
-                logger.debug(f"[ticker_extractor] LLM rejected '{m.symbol}': {data.get('reason', 'no reason')}")
+            # Create a lookup map from the LLM results
+            llm_results = {
+                item.get("symbol"): item.get("is_stock", True)
+                for item in data_list if isinstance(item, dict) and "symbol" in item
+            }
+            
+            for m in pending_candidates:
+                cache_key = f"{m.symbol}::{m.context_snippet}"
+                # Default to true if the LLM failed to include this symbol in its output
+                is_stock = llm_results.get(m.symbol, True)
+                
+                extract_and_validate._llm_cache[cache_key] = is_stock
+                if is_stock:
+                    valid_matches.append(m)
+                else:
+                    # Find the reason if available
+                    reason = "no reason"
+                    for item in data_list:
+                        if isinstance(item, dict) and item.get("symbol") == m.symbol:
+                            reason = item.get("reason", reason)
+                            break
+                    logger.debug(f"[ticker_extractor] LLM rejected '{m.symbol}': {reason}")
+                    
         except Exception as e:
-            logger.warning(f"LLM validation failed for {m.symbol}: {e}")
-            valid_matches.append(m) # fallback to allowing it
+            logger.warning(f"LLM batch validation failed: {e}")
+            # fallback to allowing all pending items if the batch call completely fails
+            for m in pending_candidates:
+                cache_key = f"{m.symbol}::{m.context_snippet}"
+                extract_and_validate._llm_cache[cache_key] = True
+                valid_matches.append(m)
 
     return valid_matches
 

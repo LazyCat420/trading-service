@@ -16,8 +16,8 @@ async def test_ticker_extractor_json_fallback(mock_prism_endpoint):
     Audit test: verifies that ticker extraction handles malformed LLM JSON.
     Simulates the exact error from the user report where the bracket failed to finish.
     """
-    # 1. Provide a malformed JSON response (unclosed bracket)
-    malformed_response = '{"is_stock": true' 
+    # 1. Provide a malformed JSON response (unclosed bracket/array)
+    malformed_response = '[{"symbol": "ALICE", "is_stock": true' 
 
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
@@ -55,8 +55,8 @@ async def test_ticker_extractor_json_valid(mock_prism_endpoint):
     """
     Audit test: verifies that ticker extraction handles valid LLM JSON.
     """
-    # 1. Provide a valid JSON response
-    valid_response = '{"is_stock": false, "reason": "Not a stock"}' 
+    # 1. Provide a valid JSON response as an array
+    valid_response = '[{"symbol": "BOB", "is_stock": false, "reason": "Not a stock"}]' 
 
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
