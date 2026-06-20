@@ -23,8 +23,6 @@ SOURCE_TIMEOUT = 60.0  # Default timeout; per-source overrides below
 SOURCE_TIMEOUTS = {
     "market_data": 90.0,   # yfinance can be slow for 1y price data + fundamentals
     "finnhub": 45.0,       # API calls + DB writes only (body scraping removed)
-    "reddit": 60.0,        # Multi-query search through scraper-service
-    "youtube": 90.0,       # yt-dlp subprocess is CPU + network heavy
     "yfnews": 45.0,        # API calls + DB writes only (body scraping removed)
     "news_api_rotator": 60.0,  # Multiple API sources
 }
@@ -200,8 +198,6 @@ async def run_perticker_collection(
                 for _src_key in [
                     "yfinance",
                     "finnhub",
-                    "reddit",
-                    "youtube",
                     "yfnews",
                 ]:
                     emit(
@@ -604,153 +600,7 @@ async def run_perticker_collection(
                     )
                     logger.info(f"[PIPELINE]   [finnhub] {ticker} skipped: {e}")
 
-            # ── Source 3: Reddit search ──
-            async def _src_reddit():
-                if _ticker_rejected.is_set() or cycle_control.is_stopped:
-                    return  # Ticker already rejected or stop requested
-                t0 = time.monotonic()
-                try:
-                    if not _is_sufficient and should_collect("reddit", ticker):
-                        from app.collectors.reddit_collector import (
-                            collect_for_ticker as reddit_snipe,
-                        )
 
-                        # Fix 3: Apply timeout INSIDE the rate limiter to prevent
-                        # the semaphore acquire from inflating the timeout duration.
-                        # Previously, wait_for wrapped both acquire+fetch, so if
-                        # acquire waited 120s the actual fetch got 0s budget.
-                        async with rate_limiter.acquire("reddit"):
-                            reddit_t = await asyncio.wait_for(
-                                reddit_snipe(ticker), timeout=SOURCE_TIMEOUTS.get("reddit", SOURCE_TIMEOUT)
-                            )
-                        record_collection("reddit", ticker, rows=reddit_t)
-                        ms = elapsed_ms(t0)
-                        local[f"{ticker}_reddit_search"] = {"posts": reddit_t}
-                        emit(
-                            "collecting",
-                            f"reddit_{ticker}",
-                            f"{ticker}: {reddit_t} Reddit posts via search",
-                            status="ok",
-                            data={"posts": reddit_t},
-                            elapsed_ms=ms,
-                        )
-                        logger.info(
-                            f"[PIPELINE]   [Reddit] {ticker}: {reddit_t} posts ({ms}ms)"
-                        )
-                    else:
-                        ms = elapsed_ms(t0)
-                        emit(
-                            "collecting",
-                            f"reddit_{ticker}",
-                            f"{ticker}: fresh, skipping",
-                            status="skipped",
-                            elapsed_ms=ms,
-                        )
-                        logger.info(f"[PIPELINE]   [Reddit] {ticker} fresh, skipping")
-                except asyncio.TimeoutError:
-                    ms = elapsed_ms(t0)
-                    actual_s = (time.monotonic() - t0)
-                    emit(
-                        "collecting",
-                        f"reddit_{ticker}",
-                        f"{ticker}: Reddit TIMEOUT ({SOURCE_TIMEOUTS.get('reddit', SOURCE_TIMEOUT)}s configured, {actual_s:.0f}s actual)",
-                        status="timeout",
-                        elapsed_ms=ms,
-                    )
-                    logger.error(
-                        "[PIPELINE]   [Reddit] %s TIMEOUT (configured=%ss, actual=%.0fs)",
-                        ticker, SOURCE_TIMEOUTS.get("reddit", SOURCE_TIMEOUT), actual_s,
-                    )
-                except Exception as e:
-                    _log_err("reddit", e, ticker)
-                    ms = elapsed_ms(t0)
-                    emit(
-                        "collecting",
-                        f"reddit_{ticker}",
-                        f"{ticker}: Reddit search skipped -- {e}",
-                        status="skipped",
-                        elapsed_ms=ms,
-                    )
-                    logger.info(f"[PIPELINE]   [Reddit] {ticker} search skipped: {e}")
-
-            # ── Source 4: YouTube search + transcript ──
-            async def _src_youtube():
-                if _ticker_rejected.is_set() or cycle_control.is_stopped:
-                    return  # Ticker already rejected or stop requested
-                t0 = time.monotonic()
-                try:
-                    if not _is_sufficient and should_collect("youtube", ticker):
-                        from app.collectors.youtube_collector import (
-                            collect_for_ticker as youtube_snipe,
-                        )
-
-                        @retry(
-                            stop=stop_after_attempt(3),
-                            wait=wait_exponential(multiplier=2, min=2, max=30),
-                            retry=retry_if_exception_type(
-                                (ConnectionError, OSError, TimeoutError, asyncio.TimeoutError)
-                            ),
-                            reraise=True,
-                        )
-                        async def _fetch():
-                            async with rate_limiter.acquire("youtube"):
-                                seven_days_ago = datetime.datetime.now(
-                                    datetime.UTC
-                                ) - datetime.timedelta(days=7)
-                                return await youtube_snipe(
-                                    ticker, max_results=5, since=seven_days_ago
-                                )
-
-                        yt_stats = await asyncio.wait_for(
-                            _fetch(), timeout=180.0
-                        )  # Extended 180s hard timeout to prevent yt-dlp stalls
-
-                        yt_t = yt_stats.get("stored", 0)
-                        record_collection("youtube", ticker, rows=yt_t)
-                        ms = elapsed_ms(t0)
-                        local[f"{ticker}_youtube_search"] = {"transcripts": yt_t}
-                        emit(
-                            "collecting",
-                            f"youtube_{ticker}",
-                            f"{ticker}: {yt_t} YouTube transcripts via search",
-                            status="ok",
-                            data={"transcripts": yt_t},
-                            elapsed_ms=ms,
-                        )
-                        logger.info(
-                            f"[PIPELINE]   [YouTube] {ticker}: {yt_t} transcripts ({ms}ms)"
-                        )
-                    else:
-                        ms = elapsed_ms(t0)
-                        emit(
-                            "collecting",
-                            f"youtube_{ticker}",
-                            f"{ticker}: fresh, skipping",
-                            status="skipped",
-                            elapsed_ms=ms,
-                        )
-                        logger.info(f"[PIPELINE]   [YouTube] {ticker} fresh, skipping")
-                except asyncio.TimeoutError:
-                    ms = elapsed_ms(t0)
-                    emit(
-                        "collecting",
-                        f"youtube_{ticker}",
-                        f"{ticker}: YouTube TIMEOUT ({SOURCE_TIMEOUTS.get('youtube', SOURCE_TIMEOUT)}s)",
-                        status="timeout",
-                        elapsed_ms=ms,
-                    )
-                    logger.error(f"[PIPELINE]   [YouTube] {ticker} TIMEOUT")
-                except Exception as e:
-                    _log_err("youtube", e, ticker)
-                    ms = elapsed_ms(t0)
-                    emit(
-                        "collecting",
-                        f"youtube_{ticker}",
-                        f"{ticker}: YouTube search skipped -- {e}",
-                        status="skipped",
-                        elapsed_ms=ms,
-                    )
-                    logger.info(f"[PIPELINE]   [YouTube] {ticker} search skipped: {e}")
 
             # ── Source 5: yfinance curated news ──
             async def _src_yf_news():
@@ -823,8 +673,6 @@ async def run_perticker_collection(
             await asyncio.gather(
                 _src_market_data(),
                 _src_finnhub(),
-                _src_reddit(),
-                _src_youtube(),
                 _src_yf_news(),
             )
 
@@ -853,17 +701,12 @@ async def run_perticker_collection(
 
                 finnhub_news = local.get(f"{ticker}_finnhub", {}).get("news", 0)
                 yf_news = local.get(f"{ticker}_yfinance_news", {}).get("articles", 0)
-                reddit_posts = local.get(f"{ticker}_reddit_search", {}).get("posts", 0)
-                yt_transcripts = local.get(f"{ticker}_youtube_search", {}).get(
-                    "transcripts", 0
-                )
-                yf_ok = f"{ticker}_yfinance" in local
                 update_signals_from_collection(
                     ticker,
                     {
                         "news": (finnhub_news or 0) + (yf_news or 0),
-                        "reddit": reddit_posts or 0,
-                        "youtube": yt_transcripts or 0,
+                        "reddit": 0,
+                        "youtube": 0,
                         "yfinance_ok": yf_ok,
                     },
                 )
