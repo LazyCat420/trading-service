@@ -209,6 +209,8 @@ async def run_prism_agent(
     temperature: float = 0.3,
     timeout_seconds: int = 300,
     actor_label: str | None = None,
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Run an agent via Prism Gateway's /agent endpoint.
 
@@ -402,6 +404,8 @@ async def run_prism_agent(
         agentic_mode=True,
         provider=provider,
         actor_label=actor_label,
+        parent_conversation_id=parent_conversation_id,
+        parent_agent_session_id=parent_agent_session_id,
     )
 
     # Add metadata for tracking

@@ -436,6 +436,8 @@ class PrismClient:
         agentic_mode: bool = True,
         provider: str = "vllm-1",
         actor_label: str | None = None,
+        parent_conversation_id: str | None = None,
+        parent_agent_session_id: str | None = None,
     ) -> tuple[dict, str, dict]:
         """
         Returns (payload, url, headers) formatted for Prism /agent (non-streaming).
@@ -458,22 +460,39 @@ class PrismClient:
         title = " · ".join(title_parts)
 
         if cycle_id:
+            ticker_part = f"-{ticker}" if ticker else ""
+            parent_group_key = f"{cycle_id}{ticker_part}"
+            
+            # The parent session (Orchestrator session)
+            if not parent_agent_session_id:
+                parent_agent_session_id, _ = self._get_or_create_session(parent_group_key)
+                
+            # The parent conversation (Orchestrator conversation)
+            if not parent_conversation_id:
+                if parent_group_key not in self._conversations:
+                    self._conversations[parent_group_key] = str(uuid.uuid4())
+                parent_conversation_id = self._conversations[parent_group_key]
+
             if agent_name == "user_chat":
-                group_key = cycle_id
+                group_key = parent_group_key
             else:
-                ticker_part = f"-{ticker}" if ticker else ""
-                group_key = f"{cycle_id}{ticker_part}"
+                # Each agent run gets a unique session ID so Prism UI renders it as a branched sub-agent
+                # instead of a straight line of sequential turns.
+                group_key = f"{cycle_id}{ticker_part}-{agent_name}-{str(uuid.uuid4())[:8]}"
+                
+            session_id, is_new = self._get_or_create_session(group_key)
+            conversation_id = parent_conversation_id
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
-        session_id, is_new = self._get_or_create_session(group_key)
-
-        # Reuse conversation ID for the same group key (e.g. cycle/ticker/agent) only in agentic mode
-        if agentic_mode and group_key:
-            if group_key not in self._conversations:
-                self._conversations[group_key] = str(uuid.uuid4())
-            conversation_id = self._conversations[group_key]
-        else:
-            conversation_id = str(uuid.uuid4())
+            session_id, is_new = self._get_or_create_session(group_key)
+            
+            # Reuse conversation ID for the same group key (e.g. cycle/ticker/agent) only in agentic mode
+            if agentic_mode and group_key:
+                if group_key not in self._conversations:
+                    self._conversations[group_key] = str(uuid.uuid4())
+                conversation_id = self._conversations[group_key]
+            else:
+                conversation_id = str(uuid.uuid4())
 
         username = actor_label or self.username
 
@@ -499,12 +518,15 @@ class PrismClient:
             "maxTokens": max_tokens,
             "temperature": temperature,
             "conversationId": conversation_id,
+            "agentSessionId": session_id,
             "project": self.project,
             "username": username,
             "agent": self._resolve_prism_agent_id(agent_name),
             "functionCallingEnabled": agentic_mode or bool(tools),
             "agenticLoopEnabled": agentic_mode,
             "autoApprove": settings.PRISM_AUTO_APPROVE,
+            "parentConversationId": parent_conversation_id,
+            "parentAgentSessionId": parent_agent_session_id,
             "systemPrompt": system_prompt[:15000],
             "conversationMeta": {
                 "title": title,
@@ -556,6 +578,8 @@ class PrismClient:
         agentic_mode: bool = True,
         provider: str = "vllm-1",
         actor_label: str | None = None,
+        parent_conversation_id: str | None = None,
+        parent_agent_session_id: str | None = None,
     ) -> tuple[dict, str, dict]:
         """
         Returns (payload, url, headers) formatted for Prism /agent streaming.
@@ -571,23 +595,39 @@ class PrismClient:
 
         # Replicate get_chat_payload_and_url's cycle/ticker grouping logic
         if cycle_id:
+            ticker_part = f"-{ticker}" if ticker else ""
+            parent_group_key = f"{cycle_id}{ticker_part}"
+            
+            # The parent session (Orchestrator session)
+            if not parent_agent_session_id:
+                parent_agent_session_id, _ = self._get_or_create_session(parent_group_key)
+                
+            # The parent conversation (Orchestrator conversation)
+            if not parent_conversation_id:
+                if parent_group_key not in self._conversations:
+                    self._conversations[parent_group_key] = str(uuid.uuid4())
+                parent_conversation_id = self._conversations[parent_group_key]
+
             if agent_name == "user_chat":
-                group_key = cycle_id
+                group_key = parent_group_key
             else:
-                ticker_part = f"-{ticker}" if ticker else ""
-                group_key = f"{cycle_id}{ticker_part}"
+                # Each agent run gets a unique session ID so Prism UI renders it as a branched sub-agent
+                # instead of a straight line of sequential turns.
+                group_key = f"{cycle_id}{ticker_part}-{agent_name}-{str(uuid.uuid4())[:8]}"
+                
+            session_id, is_new = self._get_or_create_session(group_key)
+            conversation_id = parent_conversation_id
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
+            session_id, is_new = self._get_or_create_session(group_key)
             
-        session_id, is_new = self._get_or_create_session(group_key)
-
-        # Reuse conversation ID for the same group key only in agentic mode
-        if agentic_mode and group_key:
-            if group_key not in self._conversations:
-                self._conversations[group_key] = str(uuid.uuid4())
-            conversation_id = self._conversations[group_key]
-        else:
-            conversation_id = str(uuid.uuid4())
+            # Reuse conversation ID for the same group key only in agentic mode
+            if agentic_mode and group_key:
+                if group_key not in self._conversations:
+                    self._conversations[group_key] = str(uuid.uuid4())
+                conversation_id = self._conversations[group_key]
+            else:
+                conversation_id = str(uuid.uuid4())
 
         username = actor_label or self.username
 
@@ -613,12 +653,15 @@ class PrismClient:
             "maxTokens": max_tokens,
             "temperature": temperature,
             "conversationId": conversation_id,
+            "agentSessionId": session_id,
             "project": self.project,
             "username": username,
             "agent": self._resolve_prism_agent_id(agent_name),
             "functionCallingEnabled": agentic_mode or bool(tools),
             "agenticLoopEnabled": agentic_mode,
             "autoApprove": settings.PRISM_AUTO_APPROVE,
+            "parentConversationId": parent_conversation_id,
+            "parentAgentSessionId": parent_agent_session_id,
             "systemPrompt": system_prompt[:15000],
             "conversationMeta": {
                 "title": title,
