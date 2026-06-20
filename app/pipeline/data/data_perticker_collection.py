@@ -34,59 +34,121 @@ SOURCE_TIMEOUTS = {
 
 
 async def run_ticker_processors(ticker: str, emit) -> None:
-    """Run per-ticker V3 Swarm processing via Market Scout."""
+    """Run per-ticker V3 Swarm processing via Market Scout Orchestration Loop."""
     from app.services.prism_agent_caller import call_prism_agent
     from app.services.vllm_client import Priority
+    import json
+    import re
     
-    logger.info("[PIPELINE] Delegating data processing to Market Scout for %s", ticker)
+    logger.info("[PIPELINE] Delegating data processing to Market Scout Orchestrator for %s", ticker)
     
     try:
-        # Instead of manually stringing together summarizer, janitor, and consensus engine,
-        # we hand the ticker directly to the Market Scout to do it all with its subagents.
+        # Phase 1: Planning (Ask Market Scout for worker plan)
         try:
-            response, tokens, ms = await asyncio.wait_for(
+            plan_response, _, _ = await asyncio.wait_for(
                 call_prism_agent(
                     agent_id="MARKET_SCOUT",
-                    user_message=f"New raw data has been collected for ticker: {ticker}. Please investigate, clean the data, validate any mentions, summarize the sentiment, and post your final consensus.",
+                    user_message=f"RAW DATA collected for {ticker}. Which workers do you need to clean this data? Output ONLY a JSON array of worker names (e.g. [\"janitor_agent\", \"summarizer_agent\"]).",
                     fallback_system_prompt="See app.agents.custom.market_scout",
                     fallback_agent_name="market_scout",
-                    temperature=0.2,
-                    max_tokens=8192,
+                    temperature=0.1,
+                    max_tokens=128,
                     priority=Priority.NORMAL,
                     ticker=ticker,
-                    actor_label="market_scout_orchestrator"
+                    actor_label="market_scout_planner"
                 ),
-                timeout=90.0
-            )
-            logger.info("[PIPELINE] Market Scout completed processing for %s in %dms. Response: %s", ticker, ms, response[:100])
-            
-            # Phase 5: Enqueue Critic audit post-cycle
-            from app.cognition.orchestration.sub_task_manager import enqueue_sub_task
-            enqueue_sub_task(
-                parent_agent="MARKET_SCOUT",
-                sub_agent="CRITIC_AGENT",
-                ticker=ticker,
-                payload={
-                    "target_agent": "MARKET_SCOUT",
-                    "message": f"Raw data for {ticker} was processed. Please audit the following output for hallucinations, missing risks, and overall logic:\n\n{response}"
-                }
+                timeout=45.0
             )
             
-        except asyncio.TimeoutError:
-            logger.warning("[PIPELINE] Market Scout timed out after 90s for %s. Falling back to simple summarizer.", ticker)
-            response, tokens, ms = await call_prism_agent(
-                agent_id="SUMMARIZER",
-                user_message=f"Raw data collected for ticker: {ticker}. Briefly summarize sentiment and key facts.",
-                fallback_system_prompt="You are a fast summarizer. Provide a concise summary of the data.",
-                fallback_agent_name="summarizer",
+            # Parse JSON from plan
+            workers = []
+            json_match = re.search(r'\[.*\]', plan_response, re.DOTALL)
+            if json_match:
+                workers = json.loads(json_match.group(0))
+            if not isinstance(workers, list) or not workers:
+                workers = ["janitor_agent", "summarizer_agent"] # fallback default
+                
+            logger.info("[PIPELINE] Market Scout requested workers for %s: %s", ticker, workers)
+            
+        except Exception as e:
+            logger.warning("[PIPELINE] Market Scout planning failed/timed out for %s. Using default workers. Error: %s", ticker, e)
+            workers = ["janitor_agent", "summarizer_agent"]
+
+        # Phase 2: Worker Execution
+        worker_tasks = []
+        for worker in workers:
+            worker_tasks.append(
+                call_prism_agent(
+                    agent_id=worker.upper(),
+                    user_message=f"Clean the RAW DATA for {ticker}.",
+                    fallback_system_prompt=f"See app.agents.custom.{worker}",
+                    fallback_agent_name=worker,
+                    temperature=0.2,
+                    max_tokens=2048,
+                    priority=Priority.NORMAL,
+                    ticker=ticker,
+                    actor_label=worker
+                )
+            )
+            
+        worker_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+        
+        compiled_worker_data = ""
+        for i, worker in enumerate(workers):
+            res = worker_results[i]
+            if isinstance(res, Exception):
+                logger.error("[PIPELINE] Worker %s failed for %s: %s", worker, ticker, res)
+                continue
+            
+            resp_text, _, _ = res
+            compiled_worker_data += f"--- {worker.upper()} OUTPUT ---\n{resp_text}\n\n"
+            
+        logger.info("[PIPELINE] Workers completed for %s. Submitting clean data for synthesis.", ticker)
+        
+        # Phase 3: Final Synthesis
+        response, tokens, ms = await asyncio.wait_for(
+            call_prism_agent(
+                agent_id="MARKET_SCOUT",
+                user_message=f"The workers have cleaned the data for {ticker}. Please synthesize the following outputs and provide the final consensus:\n\n{compiled_worker_data}",
+                fallback_system_prompt="See app.agents.custom.market_scout",
+                fallback_agent_name="market_scout",
                 temperature=0.2,
-                max_tokens=512,
+                max_tokens=8192,
                 priority=Priority.NORMAL,
                 ticker=ticker,
-                actor_label="summarizer_fallback"
-            )
-            logger.info("[PIPELINE] Fallback summarizer completed for %s in %dms. Response: %s", ticker, ms, response[:100])
+                actor_label="market_scout_synthesizer"
+            ),
+            timeout=90.0
+        )
+        logger.info("[PIPELINE] Market Scout synthesis completed for %s in %dms. Response: %s", ticker, ms, response[:100])
+        
+        # Phase 5: Enqueue Critic audit post-cycle
+        from app.cognition.orchestration.sub_task_manager import enqueue_sub_task
+        enqueue_sub_task(
+            parent_agent="MARKET_SCOUT",
+            sub_agent="CRITIC_AGENT",
+            ticker=ticker,
+            payload={
+                "target_agent": "MARKET_SCOUT",
+                "message": f"Raw data for {ticker} was processed. Please audit the following output for hallucinations, missing risks, and overall logic:\n\n{response}"
+            }
+        )
             
+    except asyncio.TimeoutError:
+        logger.warning("[PIPELINE] Market Scout synthesis timed out after 90s for %s. Falling back to simple summarizer.", ticker)
+        response, tokens, ms = await call_prism_agent(
+            agent_id="SUMMARIZER_AGENT",
+            user_message=f"Raw data collected for ticker: {ticker}. Briefly summarize sentiment and key facts.",
+            fallback_system_prompt="You are a fast summarizer. Provide a concise summary of the data.",
+            fallback_agent_name="summarizer_agent",
+            temperature=0.2,
+            max_tokens=512,
+            priority=Priority.NORMAL,
+            ticker=ticker,
+            actor_label="summarizer_fallback"
+        )
+        logger.info("[PIPELINE] Fallback summarizer completed for %s in %dms. Response: %s", ticker, ms, response[:100])
+        
     except Exception as e:
         logger.error("[PIPELINE] Market Scout processing failed for %s: %s", ticker, e)
 
