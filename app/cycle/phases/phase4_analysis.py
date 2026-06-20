@@ -238,6 +238,31 @@ async def run_phase4_analysis(
             # Fix B.1: Workers wait for scout to finish instead of reading partial memo
             current_macro_memo = await _await_macro_memo(timeout_s=5.0)
 
+            # ── DEEP PULL: Collect high-quality articles for the winner ──
+            try:
+                emit(
+                    "analyzing",
+                    f"deep_pull_{ticker}",
+                    f"Executing Deep Pull (10-20 articles) for {ticker}...",
+                    status="running",
+                )
+                from app.collectors.news_api_rotator import collect_from_all_apis
+                
+                # Fetch 10-20 high quality articles before the swarm starts
+                dp_start = time.monotonic()
+                articles_stored = await collect_from_all_apis(tickers=[ticker], query=f"{ticker} stock news")
+                dp_ms = int((time.monotonic() - dp_start) * 1000)
+                
+                emit(
+                    "analyzing",
+                    f"deep_pull_done_{ticker}",
+                    f"Deep Pull {ticker}: Stored {articles_stored} articles ({dp_ms}ms)",
+                    status="ok",
+                )
+                logger.info(f"[CYCLE] [Worker {worker_id}] Deep Pull {ticker}: {articles_stored} articles ({dp_ms}ms)")
+            except Exception as e:
+                logger.error(f"[CYCLE] [Worker {worker_id}] Deep Pull failed for {ticker}: {e}")
+
             result = None
             _ticker_start = time.monotonic()
             try:

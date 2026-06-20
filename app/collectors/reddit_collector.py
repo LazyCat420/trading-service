@@ -279,7 +279,7 @@ async def search_subreddit_for_ticker(
         return count
 
 
-async def collect_for_ticker(ticker: str, since: datetime.datetime | None = None) -> int:
+async def collect_for_ticker(ticker: str, limit: int = 15, since: datetime.datetime | None = None) -> int:
     """Collect Reddit posts about a specific ticker using subreddit-scoped search.
 
     Streamlined: 2-3 queries instead of 5+ to stay within SOURCE_TIMEOUT.
@@ -305,7 +305,7 @@ async def collect_for_ticker(ticker: str, since: datetime.datetime | None = None
         ticker=ticker_upper,
         queries=queries,
         time_filter="week",  # Was "month" — too much data, causes timeouts
-        limit=15,            # Was 25 — reduced to stay within timeout budget
+        limit=limit,            # Passed down
         since=since,
     )
     if count > 0:
