@@ -549,6 +549,7 @@ class PrismClient:
         system_prompt: str,
         agent_name: str,
         ticker: str,
+        cycle_id: str,
         enable_thinking: bool,
         tools: list[dict] | None = None,
         is_qwen_model: bool = False,
@@ -568,7 +569,16 @@ class PrismClient:
             title_parts.append(ticker)
         title = " · ".join(title_parts)
 
-        group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
+        # Replicate get_chat_payload_and_url's cycle/ticker grouping logic
+        if cycle_id:
+            if agent_name == "user_chat":
+                group_key = cycle_id
+            else:
+                ticker_part = f"-{ticker}" if ticker else ""
+                group_key = f"{cycle_id}{ticker_part}"
+        else:
+            group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
+            
         session_id, is_new = self._get_or_create_session(group_key)
 
         # Reuse conversation ID for the same group key only in agentic mode
