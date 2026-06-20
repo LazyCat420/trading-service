@@ -95,6 +95,8 @@ Your response must be valid JSON with the following schema:
 }
 """ + ANTI_HALLUCINATION_BLOCK
 
+import asyncio
+
 async def run_ticker_curator(
     candidates: list[str],
     position_tickers: list[str],
@@ -188,8 +190,11 @@ async def run_ticker_curator(
                 for r in rows:
                     title, pub, pub_at, summary = r
                     pub_date = pub_at.strftime("%Y-%m-%d %H:%M") if pub_at else "?"
+                    safe_summary = summary or 'N/A'
+                    if len(safe_summary) > 400:
+                        safe_summary = safe_summary[:400] + "..."
                     news_items.append(
-                        f"Title: {title}\nPublisher: {pub} ({pub_date})\nSummary: {summary or 'N/A'}"
+                        f"Title: {title}\nPublisher: {pub} ({pub_date})\nSummary: {safe_summary}"
                     )
                 news_by_ticker[ticker] = "\n---\n".join(news_items) if news_items else "No recent news articles found."
             except Exception as ex:
@@ -201,51 +206,80 @@ async def run_ticker_curator(
     for ticker in candidates:
         thesis = get_thesis(ticker)
         if thesis:
+            safe_thesis_summary = thesis.summary or ""
+            if len(safe_thesis_summary) > 600:
+                safe_thesis_summary = safe_thesis_summary[:600] + "..."
             candidate_theses[ticker] = (
                 f"Verdict: {thesis.verdict}\n"
                 f"Confidence: {thesis.confidence}%\n"
-                f"Summary: {thesis.summary}\n"
+                f"Summary: {safe_thesis_summary}\n"
                 f"Last Updated: {thesis.updated_at.strftime('%Y-%m-%d %H:%M UTC')}"
             )
         else:
             candidate_theses[ticker] = "No prior thesis/report exists for this stock."
 
-    user_prompt_lines = [
-        "# PORTFOLIO STATE & PREVIOUS CYCLE ACTIONS",
-        f"Available Cash: ${cash_balance:,.2f}",
-        "",
-        "Current Holdings in Portfolio:",
-        "\n".join(current_holdings) if current_holdings else "None",
-        "",
-        f"Decisions & Outcomes from the Previous Cycle (Cycle ID: {last_cycle_id}):",
-        "\n".join(last_decisions) if last_decisions else "None",
-        "",
-        "---",
-        "",
-        "# CANDIDATES FOR TODAY'S CYCLE",
-        "Please review the previous thesis and the latest news for each candidate ticker, and decide which ones we should research today and what focus direction to give.",
-    ]
-    for ticker in candidates:
-        is_pos = ticker in position_tickers
-        pos_label = " [ACTIVE PORTFOLIO POSITION]" if is_pos else ""
-        user_prompt_lines.append(f"\n### {ticker}{pos_label}")
-        user_prompt_lines.append("#### PREVIOUS THESIS / REPORT:")
-        user_prompt_lines.append(candidate_theses[ticker])
-        user_prompt_lines.append("#### TODAY'S NEWS:")
-        user_prompt_lines.append(news_by_ticker.get(ticker, "No news found."))
+    # Batch process candidates
+    CHUNK_SIZE = 15
+    chunks = [candidates[i:i + CHUNK_SIZE] for i in range(0, len(candidates), CHUNK_SIZE)]
 
-    user_prompt = "\n".join(user_prompt_lines)
+    async def process_chunk(chunk: list[str]) -> dict:
+        user_prompt_lines = [
+            "# PORTFOLIO STATE & PREVIOUS CYCLE ACTIONS",
+            f"Available Cash: ${cash_balance:,.2f}",
+            "",
+            "Current Holdings in Portfolio:",
+            "\n".join(current_holdings) if current_holdings else "None",
+            "",
+            f"Decisions & Outcomes from the Previous Cycle (Cycle ID: {last_cycle_id}):",
+            "\n".join(last_decisions) if last_decisions else "None",
+            "",
+            "---",
+            "",
+            "# CANDIDATES FOR THIS BATCH",
+            "Please review the previous thesis and the latest news for each candidate ticker, and decide which ones we should research today and what focus direction to give.",
+        ]
+        for ticker in chunk:
+            is_pos = ticker in position_tickers
+            pos_label = " [ACTIVE PORTFOLIO POSITION]" if is_pos else ""
+            user_prompt_lines.append(f"\n### {ticker}{pos_label}")
+            user_prompt_lines.append("#### PREVIOUS THESIS / REPORT:")
+            user_prompt_lines.append(candidate_theses[ticker])
+            user_prompt_lines.append("#### TODAY'S NEWS:")
+            user_prompt_lines.append(news_by_ticker.get(ticker, "No news found."))
 
-    logger.info("[CURATOR] Running Curator agent for %d candidates...", len(candidates))
-    result = await run_agent(
-        agent_name="curator",
-        ticker="global",
-        cycle_id=cycle_id,
-        bot_id=bot_id,
-        system_prompt=CURATOR_SYSTEM_PROMPT,
-        user_prompt=user_prompt,
-        enable_tools=False,
-        max_tokens=8192,
-    )
+        user_prompt = "\n".join(user_prompt_lines)
 
-    return result
+        logger.info("[CURATOR] Running Curator agent for chunk of %d candidates...", len(chunk))
+        return await run_agent(
+            agent_name="curator",
+            ticker="global",
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            system_prompt=CURATOR_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            enable_tools=False,
+            max_tokens=8192,
+        )
+
+    logger.info("[CURATOR] Running Curator agent in %d chunks for %d candidates...", len(chunks), len(candidates))
+    tasks = [process_chunk(chunk) for chunk in chunks]
+    chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    merged_result = {
+        "selected_tickers": [],
+        "justification": {},
+        "research_focus": {},
+        "skipped_tickers": {}
+    }
+
+    for res in chunk_results:
+        if isinstance(res, Exception):
+            logger.error("[CURATOR] A chunk failed: %s", res)
+            continue
+        if isinstance(res, dict):
+            merged_result["selected_tickers"].extend(res.get("selected_tickers", []))
+            merged_result["justification"].update(res.get("justification", {}))
+            merged_result["research_focus"].update(res.get("research_focus", {}))
+            merged_result["skipped_tickers"].update(res.get("skipped_tickers", {}))
+
+    return merged_result
