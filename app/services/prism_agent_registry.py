@@ -29,26 +29,26 @@ AGENT_ID_MAP: dict[str, str] = {
     "CUSTOM_META_AUDIT_AGENT": "CUSTOM_META_AUDIT_AGENT",
 
     # ── System Janitor Agent Mappings ──
-    "CUSTOM_DATA_JANITOR_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "CUSTOM_DATA_JANITOR_CRITIC_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "CUSTOM_DATA_CURATOR_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "CUSTOM_LIFECYCLE_SUMMARIZER_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "CUSTOM_SUMMARIZER_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "CUSTOM_PURGE_PASS_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
+    "CUSTOM_DATA_JANITOR_AGENT": "CUSTOM_MARKET_SCOUT",
+    "CUSTOM_DATA_JANITOR_CRITIC_AGENT": "CUSTOM_MARKET_SCOUT",
+    "CUSTOM_DATA_CURATOR_AGENT": "CUSTOM_MARKET_SCOUT",
+    "CUSTOM_LIFECYCLE_SUMMARIZER_AGENT": "CUSTOM_MARKET_SCOUT",
+    "CUSTOM_SUMMARIZER_AGENT": "CUSTOM_MARKET_SCOUT",
+    "CUSTOM_PURGE_PASS_AGENT": "CUSTOM_MARKET_SCOUT",
     "CUSTOM_POST_CYCLE_LEARNER_AGENT": "CUSTOM_POST_CYCLE_LEARNER_AGENT",
-    "data_janitor": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "data_janitor_critic": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "data_curator": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "database_curator": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "lifecycle_summarizer": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "summarizer_news": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "summarizer_youtube": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "summarizer_reddit": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "purge_pass": "CUSTOM_SYSTEM_JANITOR_AGENT",
+    "data_janitor": "CUSTOM_MARKET_SCOUT",
+    "data_janitor_critic": "CUSTOM_MARKET_SCOUT",
+    "data_curator": "CUSTOM_MARKET_SCOUT",
+    "database_curator": "CUSTOM_MARKET_SCOUT",
+    "lifecycle_summarizer": "CUSTOM_MARKET_SCOUT",
+    "summarizer_news": "CUSTOM_MARKET_SCOUT",
+    "summarizer_youtube": "CUSTOM_MARKET_SCOUT",
+    "summarizer_reddit": "CUSTOM_MARKET_SCOUT",
+    "purge_pass": "CUSTOM_MARKET_SCOUT",
     "post_cycle_learner": "CUSTOM_POST_CYCLE_LEARNER_AGENT",
-    "maintenance_agent": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "janitor": "CUSTOM_SYSTEM_JANITOR_AGENT",
-
+    "maintenance_agent": "CUSTOM_MARKET_SCOUT",
+    "janitor": "CUSTOM_MARKET_SCOUT",
+    
     # ── Quant Research Agent ──
     "CUSTOM_RESEARCH_SUBAGENT_YIELD_AGENT": "CUSTOM_QUANT_RESEARCH_AGENT",
     "quant_research": "CUSTOM_QUANT_RESEARCH_AGENT",
@@ -209,7 +209,13 @@ def resolve_agent_id(agent_name: str, default_agent: str = "CUSTOM_MARKET_ALPHA"
     if "quant_research" in name_lower:
         return "CUSTOM_QUANT_RESEARCH_AGENT"
     if "janitor" in name_lower or "maintenance" in name_lower or "summarizer" in name_lower:
-        return "CUSTOM_SYSTEM_JANITOR_AGENT"
+        return "CUSTOM_MARKET_SCOUT"
+    if "reddit" in name_lower or "youtube" in name_lower or "news" in name_lower:
+        return "CUSTOM_MARKET_SCOUT"
+    if "curator" in name_lower or "data" in name_lower:
+        return "CUSTOM_MARKET_SCOUT"
+    
+    # Otherwise, default to MARKET_SCOUT for data ingestion
     if "technical" in name_lower:
         return "CUSTOM_TECHNICAL_ANALYSIS_AGENT"
     if "agent_architect" in name_lower or "architect" in name_lower:
@@ -219,4 +225,4 @@ def resolve_agent_id(agent_name: str, default_agent: str = "CUSTOM_MARKET_ALPHA"
     if "debater" in name_lower:
         return "CUSTOM_BULLISH_DEBATER"
 
-    return default_agent
+    return "CUSTOM_MARKET_SCOUT"

@@ -376,38 +376,29 @@ async def check_and_fill(ticker: str, emit=None, enqueue_only: bool = False) -> 
             logger.warning("[DATA CHECK] Failed checking for unsummarized data for %s: %s", ticker, e)
 
     if needs_jit_processing:
-        # Pre-process raw text with Smart Janitor JIT
+        # ── V3 Swarm Rewire: Instead of V2 JIT processors, trigger Market Scout ──
+        logger.info("[DATA CHECK] %s JIT required. Delegating to Market Scout...", ticker)
         try:
-            from app.pipeline.data.data_perticker_collection import run_smart_janitor_on_ticker_data
-            await run_smart_janitor_on_ticker_data(ticker)
-        except Exception as e:
-            logger.warning("[DATA CHECK] JIT Smart Janitor failed for %s: %s", ticker, e)
-
-        # Run per-ticker deduplication, summarization, and consensus JIT
-        try:
-            from app.processors.deduplicator import deduplicate_news
+            from app.services.prism_agent_caller import call_prism_agent
+            from app.services.vllm_client import Priority
             import asyncio
-            await asyncio.to_thread(deduplicate_news, ticker)
+            
+            # Fire and forget Market Scout so it doesn't hold up the completeness check
+            asyncio.create_task(
+                call_prism_agent(
+                    agent_id="MARKET_SCOUT",
+                    user_message=f"JIT processing required for ticker: {ticker}. Please investigate, clean the data, validate any mentions, summarize the sentiment, and post your final consensus.",
+                    fallback_system_prompt="See app.agents.custom.market_scout",
+                    fallback_agent_name="market_scout",
+                    temperature=0.2,
+                    max_tokens=8192,
+                    priority=Priority.NORMAL,
+                    ticker=ticker,
+                    actor_label="market_scout_jit"
+                )
+            )
         except Exception as e:
-            logger.warning("[DATA CHECK] JIT deduplication failed for %s: %s", ticker, e)
-
-        try:
-            from app.processors.summarizer import summarize_unsummarized
-            await summarize_unsummarized(emit=emit, max_items=50, ticker=ticker)
-        except Exception as e:
-            logger.warning("[DATA CHECK] JIT summarization failed for %s: %s", ticker, e)
-
-        try:
-            from app.processors.consensus_engine import run_consensus_engine
-            await run_consensus_engine(emit=emit, ticker=ticker)
-        except Exception as e:
-            logger.warning("[DATA CHECK] JIT consensus failed for %s: %s", ticker, e)
-
-        try:
-            from app.processors.narrative_curator import update_company_narrative
-            await update_company_narrative(ticker=ticker)
-        except Exception as e:
-            logger.warning("[DATA CHECK] JIT narrative curation failed for %s: %s", ticker, e)
+            logger.warning("[DATA CHECK] JIT Market Scout launch failed for %s: %s", ticker, e)
 
     return report
 

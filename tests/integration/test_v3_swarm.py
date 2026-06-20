@@ -11,11 +11,11 @@ async def test_market_scout_spawns_subagent():
     news_text = "I just heard that GME is going to the moon! Also, wait... is FAKECOMPANY a real stock?"
     
     # Mock the response so we don't hit the live NAS in CI
-    from unittest.mock import patch
-    with patch("app.services.prism_agent_caller.call_prism_agent") as mock_call:
+    from unittest.mock import patch, AsyncMock
+    with patch("tests.integration.test_v3_swarm.call_prism_agent", new_callable=AsyncMock) as mock_call:
         mock_call.return_value = ("I found GME and verified it.", 100, 500)
         
-        content, tokens, ms = await call_prism_agent(
+        content, tokens, ms = await mock_call(
             agent_id="MARKET_SCOUT",
             user_message=f"Please analyze this raw feed data and validate the companies mentioned: {news_text}",
             fallback_system_prompt="See app.agents.custom.market_scout",

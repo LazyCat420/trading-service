@@ -30,76 +30,34 @@ SOURCE_TIMEOUTS = {
 }
 
 
-async def run_smart_janitor_on_ticker_data(ticker: str) -> None:
-    """Find all un-janited news and reddit posts for this ticker and process them."""
-    ticker = ticker.upper()
-    try:
-        from app.processors.smart_janitor import run_smart_janitor_for_article, run_smart_janitor_for_reddit
-        from app.db.connection import get_db
-        
-        # 1. Fetch un-janited news articles
-        with get_db() as db:
-            news_rows = db.execute(
-                "SELECT id FROM news_articles WHERE ticker = %s AND qualitative_draft IS NULL AND (quality_status IS NULL OR quality_status NOT IN ('duplicate', 'discarded', 'noise')) ORDER BY published_at DESC LIMIT 10",
-                [ticker]
-            ).fetchall()
-            article_ids = [r[0] for r in news_rows]
-            
-        if article_ids:
-            logger.info("[PIPELINE] Running Smart Janitor on %d news articles for %s", len(article_ids), ticker)
-            tasks = [run_smart_janitor_for_article(aid) for aid in article_ids]
-            await asyncio.gather(*tasks, return_exceptions=True)
-            
-        # 2. Fetch un-janited Reddit posts
-        with get_db() as db:
-            reddit_rows = db.execute(
-                "SELECT id FROM reddit_posts WHERE ticker = %s AND qualitative_draft IS NULL AND (quality_status IS NULL OR quality_status NOT IN ('duplicate', 'discarded', 'noise')) ORDER BY created_utc DESC LIMIT 10",
-                [ticker]
-            ).fetchall()
-            post_ids = [r[0] for r in reddit_rows]
-            
-        if post_ids:
-            logger.info("[PIPELINE] Running Smart Janitor on %d Reddit posts for %s", len(post_ids), ticker)
-            tasks = [run_smart_janitor_for_reddit(pid) for pid in post_ids]
-            await asyncio.gather(*tasks, return_exceptions=True)
-            
-    except Exception as e:
-        logger.warning("[PIPELINE] Smart Janitor batch run failed for %s: %s", ticker, e)
+
 
 
 async def run_ticker_processors(ticker: str, emit) -> None:
-    """Run per-ticker deduplication, summarization, and consensus."""
-    # ── Per-ticker deduplication runs FIRST so Smart Janitor skips duplicates ──
+    """Run per-ticker V3 Swarm processing via Market Scout."""
+    from app.services.prism_agent_caller import call_prism_agent
+    from app.services.vllm_client import Priority
+    
+    logger.info("[PIPELINE] Delegating data processing to Market Scout for %s", ticker)
+    
     try:
-        from app.processors.deduplicator import deduplicate_news
-        # Run in thread pool to not block
-        await asyncio.to_thread(deduplicate_news, ticker)
+        # Instead of manually stringing together summarizer, janitor, and consensus engine,
+        # we hand the ticker directly to the Market Scout to do it all with its subagents.
+        response, tokens, ms = await call_prism_agent(
+            agent_id="MARKET_SCOUT",
+            user_message=f"New raw data has been collected for ticker: {ticker}. Please investigate, clean the data, validate any mentions, summarize the sentiment, and post your final consensus.",
+            fallback_system_prompt="See app.agents.custom.market_scout",
+            fallback_agent_name="market_scout",
+            temperature=0.2,
+            max_tokens=8192,
+            priority=Priority.NORMAL,
+            ticker=ticker,
+            actor_label="market_scout_orchestrator"
+        )
+        
+        logger.info("[PIPELINE] Market Scout completed processing for %s in %dms. Response: %s", ticker, ms, response[:100])
     except Exception as e:
-        logger.warning("[PIPELINE] Per-ticker deduplication failed for %s: %s", ticker, e)
-
-    # -- Pre-process raw text with Smart Janitor --
-    await run_smart_janitor_on_ticker_data(ticker)
-
-    # ── Per-ticker summarization ──
-    try:
-        from app.processors.summarizer import summarize_unsummarized
-        await summarize_unsummarized(emit=emit, max_items=10, ticker=ticker)
-    except Exception as e:
-        logger.warning("[PIPELINE] Per-ticker summarization failed for %s: %s", ticker, e)
-
-    # ── Per-ticker consensus ──
-    try:
-        from app.processors.consensus_engine import run_consensus_engine
-        await run_consensus_engine(emit=emit, ticker=ticker)
-    except Exception as e:
-        logger.warning("[PIPELINE] Per-ticker consensus failed for %s: %s", ticker, e)
-
-    # ── Per-ticker narrative curation ──
-    try:
-        from app.processors.narrative_curator import update_company_narrative
-        await update_company_narrative(ticker=ticker)
-    except Exception as e:
-        logger.warning("[PIPELINE] Per-ticker narrative curation failed for %s: %s", ticker, e)
+        logger.error("[PIPELINE] Market Scout processing failed for %s: %s", ticker, e)
 
 
 
