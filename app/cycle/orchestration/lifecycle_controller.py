@@ -99,6 +99,7 @@ class LifecycleControllerMixin:
         pipeline_version: str | None = None,
         benchmark_group: str | None = None,
         start_fresh: bool = False,
+        cycle_id: str | None = None,
     ):
         async with cls._get_lock():
             # Check memory state first to avoid race conditions with DB read lag
@@ -128,7 +129,8 @@ class LifecycleControllerMixin:
                     cls.save_state()
                     return await cls.resume_interrupted_cycle()
 
-            cycle_id = f"cycle-{int(time.time())}"
+            if not cycle_id:
+                cycle_id = f"cycle-{int(time.time())}"
 
             cls._state.update(
                 {

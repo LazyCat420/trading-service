@@ -80,6 +80,13 @@ from app.tools.script_sandbox import execute_quant_script, execute_python
 
 # Phase 6: Prism Agent Harness (Onion Layer)
 from app.tools.prism_agent_harness import run_prism_agent
+from app.tools.dynamic_meta_tools import (
+    discover_and_enable_tools,
+    enable_tools,
+    disable_tools,
+    search_tools,
+    create_team,
+)
 
 # Phase 11: LLM-Steered Data Collection
 from app.tools.collection_request_tool import request_data_collection
@@ -172,4 +179,9 @@ __all__ = [
     "get_market_regime_tool",
     "query_brain_graph_tool",
     "assess_risk_environment_tool",
+    "discover_and_enable_tools",
+    "enable_tools",
+    "disable_tools",
+    "search_tools",
+    "create_team",
 ]

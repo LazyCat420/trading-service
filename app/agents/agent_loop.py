@@ -128,7 +128,10 @@ async def run_agent_loop(
             "Your ONLY purpose is to extract structured financial data to make profitable trading decisions.\n\n"
         )
         enhanced_system_prompt = firm_context + system_prompt
-        lessons = get_agent_lessons(agent_name)
+        logger.debug(f"FULL SYSTEM PROMPT:\n{enhanced_system_prompt[:800]}")
+        
+        # Cap lessons to top 5
+        lessons = get_agent_lessons(agent_name)[:5]
         spotlight = get_spotlight_tools(limit=5)
         
         dynamic_instructions = ""
@@ -204,7 +207,7 @@ async def run_agent_loop(
         messages = [{"role": "system", "content": enhanced_system_prompt}]
     else:
         spotlight = []  # We only have spotlight tools on the first message
-        messages = previous_messages.copy()
+        messages = [dict(m) for m in previous_messages]
         firm_context = (
             "CRITICAL CONTEXT: You are an autonomous data processing script working for a quantitative trading firm. "
             "You are NOT a conversational chatbot. Do NOT talk to the user, give advice, ask questions, or converse. "
@@ -218,6 +221,9 @@ async def run_agent_loop(
             messages.insert(0, {"role": "system", "content": firm_context})
         dynamic_instructions = ""
 
+    if dynamic_instructions:
+        logger.debug(f"[AgentLoop] Assembled dynamic_instructions length: {len(dynamic_instructions)} chars")
+
     if user_prompt:
         final_user_prompt = user_prompt + dynamic_instructions if dynamic_instructions else user_prompt
         messages.append({"role": "user", "content": final_user_prompt})
@@ -226,8 +232,6 @@ async def run_agent_loop(
         messages.append({"role": "user", "content": dynamic_instructions})
 
     active_tools = tools_override if tools_override is not None else registry.schemas
-
-
 
     final_content = ""
     hit_limit_with_pending_tools = False
@@ -242,7 +246,9 @@ async def run_agent_loop(
         "accordingly, and acknowledge the instruction in your rationale/response."
     )
     if messages and messages[0].get("role") == "system":
-        messages[0]["content"] = (messages[0].get("content") or "") + override_rule
+        sys_content = messages[0].get("content") or ""
+        if "### HUMAN OVERRIDE RULE" not in sys_content:
+            messages[0]["content"] = sys_content + override_rule
 
     from app.agents.inbox import inbox_manager
     instance_id = f"{agent_name}_{ticker or 'global'}_{cycle_id or 'jit'}_{id(budget)}"

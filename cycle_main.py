@@ -187,7 +187,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                             result = {"status": "deduplicated", "message": "Cycle task already running"}
                             logger.info("[cycle_backend] START_CYCLE deduplicated — task still active")
                         else:
-                            result = await PipelineService.start_cycle(
+                             result = await PipelineService.start_cycle(
                                 tickers=payload.get("tickers", []),
                                 collect=payload.get("collect", True),
                                 analyze=payload.get("analyze", True),
@@ -195,6 +195,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                                 max_tickers=payload.get("max_tickers"),
                                 discovered_tickers=payload.get("discovered_tickers"),
                                 start_fresh=payload.get("start_fresh", False),
+                                cycle_id=payload.get("cycle_id"),
                             )
                     elif cmd_type == "ANALYZE_TICKER":
                         from app.pipeline.analysis.decision_engine import analyze_ticker

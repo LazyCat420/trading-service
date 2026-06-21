@@ -230,9 +230,33 @@ async def process_delegations_from_findings(
             content = finding.get("content", "")
             source = finding.get("source_agent", "unknown")
 
+            if source.startswith("delegation_"):
+                continue
+
             delegation = extract_delegation(content)
             if delegation:
                 target_name, message = delegation
+                
+                # Resolve target persona first to check for existing response
+                persona_key = _TARGET_TO_PERSONA.get(target_name.upper())
+                if not persona_key:
+                    continue
+                
+                # Check if we already responded to this delegation source in this cycle
+                response_prefix = f"[Response to {source}]"
+                already_responded = False
+                for f in findings:
+                    if f.get("source_agent") == f"delegation_{persona_key.lower()}" and response_prefix in f.get("content", ""):
+                        already_responded = True
+                        break
+                
+                if already_responded:
+                    logger.debug(
+                        "[DELEGATION] Already responded to @%s from %s in cycle %s — skipping duplicate",
+                        target_name, source, cycle_id
+                    )
+                    continue
+
                 result = await handle_delegation(
                     source_agent=source,
                     target_name=target_name,

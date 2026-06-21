@@ -117,6 +117,14 @@ def update_signals_from_analysis(ticker: str, result: dict) -> None:
         action = result.get("action", "HOLD").upper()
         confidence = result.get("confidence", 0) or 0
 
+        # Check if this represents an error/exhaustion fallback
+        is_fallback = (
+            result.get("error") is not None 
+            or result.get("status") == "DATA_MISSING" 
+            or result.get("status") == "error"
+            or result.get("stop_reason") in ("exhausted", "context_overflow")
+        )
+
         try:
             # Read current values to compute rolling average
             row = db.execute(
@@ -127,22 +135,27 @@ def update_signals_from_analysis(ticker: str, result: dict) -> None:
             if row:
                 n = row[0] or 0
                 old_avg = row[1] or 0.0
-                new_avg = (
-                    ((old_avg * n) + confidence) / (n + 1) if n >= 0 else confidence
-                )
+                if is_fallback:
+                    new_avg = old_avg
+                else:
+                    new_avg = (
+                        ((old_avg * n) + confidence) / (n + 1) if n >= 0 else confidence
+                    )
             else:
-                new_avg = confidence
+                new_avg = 0.0 if is_fallback else confidence
 
             is_hold = 1 if action == "HOLD" else 0
-            is_buy = 1 if action == "BUY" else 0
-            is_sell = 1 if action == "SELL" else 0
+            is_buy = 1 if (action == "BUY" and not is_fallback) else 0
+            is_sell = 1 if (action == "SELL" and not is_fallback) else 0
+            analyses_increment = 0 if is_fallback else 1
+            is_fallback_int = 1 if is_fallback else 0
 
             db.execute(
                 """
                 UPDATE ticker_health SET
-                    total_analyses = total_analyses + 1,
+                    total_analyses = total_analyses + %s,
                     avg_confidence = %s,
-                    hold_streak = CASE WHEN %s = 1 THEN hold_streak + 1 ELSE 0 END,
+                    hold_streak = CASE WHEN %s = 1 THEN hold_streak WHEN %s = 1 THEN hold_streak + 1 ELSE 0 END,
                     last_action = %s,
                     last_confidence = %s,
                     buy_count = buy_count + %s,
@@ -152,7 +165,9 @@ def update_signals_from_analysis(ticker: str, result: dict) -> None:
                 WHERE ticker = %s
             """,
                 (
+                    analyses_increment,
                     new_avg,
+                    is_fallback_int,
                     is_hold,
                     action,
                     confidence,
