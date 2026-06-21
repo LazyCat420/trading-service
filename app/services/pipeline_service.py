@@ -15,7 +15,6 @@ class PipelineService(
     LifecycleControllerMixin,
     OrchestratorV3Mixin,
     OrchestratorV2Mixin,
-    EmitMixin,
 ):
     """
     Lightweight facade for pipeline orchestration.

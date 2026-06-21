@@ -32,6 +32,27 @@ def load_custom_agents():
         except Exception as e:
             logger.error(f"Failed to load custom agent module {module_name}: {e}")
 
+    # Load archived custom agents as fallback
+    import os
+    archive_dir = os.path.join(os.path.dirname(__file__), "archive")
+    if os.path.isdir(archive_dir):
+        for _, module_name, _ in pkgutil.iter_modules([archive_dir]):
+            try:
+                module = importlib.import_module(f"app.agents.custom.archive.{module_name}")
+                if hasattr(module, "AGENT_NAME") and hasattr(module, "IDENTITY"):
+                    agent_name = module.AGENT_NAME
+                    identity = module.IDENTITY
+                    enabled_tools = getattr(module, "ENABLED_TOOLS", [])
+                    
+                    if agent_name not in _custom_agents:
+                        _custom_agents[agent_name] = {
+                            "identity": identity,
+                            "enabled_tools": enabled_tools
+                        }
+                        logger.debug(f"Loaded archived custom agent '{agent_name}' (fallback).")
+            except Exception as e:
+                logger.error(f"Failed to load archived custom agent module {module_name}: {e}")
+
     return _custom_agents
 
 def get_custom_agent(agent_name: str) -> dict | None:
