@@ -1009,6 +1009,185 @@ async def run_adversarial_debate(
     except Exception as _guard_err:
         logger.debug("[DEBATE] Confirmation loop guard check failed (non-fatal): %s", _guard_err)
 
+    # ── Prism Gateway Native Orchestration ──
+    from app.config import settings
+    if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
+        try:
+            prism_healthy = await llm.prism_client.check_health()
+            if prism_healthy:
+                logger.info("[DEBATE] Prism routing enabled and healthy — delegating full debate orchestration to CUSTOM_DEBATE_COORDINATOR")
+                
+                # Pre-filter facts for Fundamental, Technical, and Macro
+                facts_fundamental = filter_packet_for_persona(packet, "Fundamental")
+                facts_technical = filter_packet_for_persona(packet, "Technical")
+                facts_macro = filter_packet_for_persona(packet, "Macro_Sentiment")
+
+                unstructured_context = "None available."
+                if packet.source_summaries:
+                    unstructured_context = "\n".join([format_source_ref_for_prompt(s) for s in packet.source_summaries[:15]])
+
+                fundamental_facts_text = _build_evidence_header(facts_fundamental)
+                technical_facts_text = _build_evidence_header(facts_technical)
+                macro_facts_text = _build_evidence_header(facts_macro)
+
+                # Format user prompt
+                debate_coordinator_user_prompt = f"""## TARGET TICKER: {ticker}
+
+{_pos_block}
+
+## FUNDAMENTAL DATA & EVIDENCE CONTEXT:
+{fundamental_facts_text}
+
+## TECHNICAL INDICATORS & TREND CONTEXT:
+{technical_facts_text}
+
+## MACRO & SENTIMENT CONTEXT:
+{macro_facts_text}
+
+## UNSTRUCTURED CONTEXT (News, Reddit, YouTube):
+{unstructured_context}
+
+## COMPANY NARRATIVE:
+{getattr(packet, "company_story", "No narrative available.")}
+
+Please orchestrate the debates for Fundamental, Technical, and Macro_Sentiment frameworks sequentially using `create_team`. Once all sub-agents complete, evaluate the arguments, perform a claim cross-examination, and provide your final synthesized verdict in the requested JSON format."""
+
+                from app.tools.prism_agent_harness import run_prism_agent
+                from app.agents.custom.debate_coordinator_prompt import IDENTITY as DEBATE_COORDINATOR_SYSTEM_PROMPT
+
+                prism_res = await run_prism_agent(
+                    system_prompt=DEBATE_COORDINATOR_SYSTEM_PROMPT,
+                    user_prompt=debate_coordinator_user_prompt,
+                    ticker=ticker,
+                    agent_name="debate_coordinator",
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                    priority=Priority.NORMAL,
+                    tools_override=None,
+                    max_tokens=8192,
+                    temperature=0.3,
+                )
+
+                # Parse JSON verdict
+                parsed = parse_json_response(prism_res.get("final_text", ""))
+                
+                if parsed and parsed.get("action"):
+                    # Map claims back to expected format for database logging and return
+                    verified_bull_meta = [{"claim": c, "turn": 1, "survived_rebuttal": True} for c in parsed.get("verified_bull_claims", [])]
+                    verified_bear_meta = [{"claim": c, "turn": 2, "survived_rebuttal": True} for c in parsed.get("verified_bear_claims", [])]
+                    unverified_meta = [{"claim": c, "turn": 0, "survived_rebuttal": False} for c in parsed.get("unverified_claims", [])]
+                    
+                    unverified_count = len(unverified_meta)
+                    integrity = "HIGH" if unverified_count <= cognition_settings.CLAIM_REJECT_THRESHOLD else "LOW_INTEGRITY"
+                    
+                    from app.cognition.debate.action_gate import gate_action
+                    judge_action = gate_action(parsed.get("action", "HOLD"), held)
+                    judge_confidence = parsed.get("confidence", 0)
+                    
+                    if integrity == "LOW_INTEGRITY":
+                        judge_action = gate_action("HOLD", held)
+                        judge_confidence = 0
+                        parsed["rationale"] = f"[LOW INTEGRITY ABSTAIN] {unverified_count} unverified claims. Original rationale: {parsed.get('rationale')}"
+
+                    # Log to DB
+                    try:
+                        from app.db.connection import get_db
+                        import uuid as _uuid
+                        import json
+                        with get_db() as db:
+                            db.execute(
+                                """
+                                INSERT INTO debate_history
+                                (id, ticker, cycle_id, pro_argument, con_argument, winner, final_action, final_confidence, persona_outcomes)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (ticker, cycle_id) DO UPDATE SET 
+                                pro_argument = EXCLUDED.pro_argument, 
+                                con_argument = EXCLUDED.con_argument, 
+                                winner = EXCLUDED.winner, 
+                                final_action = EXCLUDED.final_action,
+                                final_confidence = EXCLUDED.final_confidence,
+                                persona_outcomes = EXCLUDED.persona_outcomes
+                                """,
+                                [
+                                    f"dh-{_uuid.uuid4().hex[:12]}",
+                                    ticker,
+                                    cycle_id or "manual",
+                                    json.dumps(verified_bull_meta),
+                                    json.dumps(verified_bear_meta),
+                                    parsed.get("winning_side", "split"),
+                                    judge_action,
+                                    judge_confidence,
+                                    json.dumps({}),
+                                ],
+                            )
+                    except Exception as db_err:
+                        logger.error("[DEBATE] Failed to log debate history: %s", db_err)
+
+                    # Write Audit Log
+                    try:
+                        from pathlib import Path
+                        import json
+                        _audit_dir = Path("logs/audit")
+                        _audit_dir.mkdir(parents=True, exist_ok=True)
+                        run_time = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                        cycle_suffix = f"_{cycle_id}" if cycle_id else ""
+                        log_filename = f"debate_audit_{ticker}{cycle_suffix}_{run_time}.jsonl"
+                        audit_entry = {
+                            "ticker": ticker,
+                            "cycle_id": cycle_id,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "debate_mode": debate_mode,
+                            "verdict": {
+                                "action": judge_action,
+                                "confidence": judge_confidence,
+                                "winner": parsed.get("winning_side", "split"),
+                                "rationale": parsed.get("rationale", ""),
+                                "key_factor": "",
+                                "rejected_impact": "",
+                            },
+                            "integrity": integrity,
+                            "retry_count": 0,
+                            "tokens": {
+                                "total": prism_res.get("token_usage", 0),
+                            },
+                            "persona_outcomes": {},
+                            "claims": {
+                                "verified_bull": parsed.get("verified_bull_claims", []),
+                                "verified_bear": parsed.get("verified_bear_claims", []),
+                                "unverified": parsed.get("unverified_claims", []),
+                            },
+                            "cross_exam_summary": parsed.get("rationale", ""),
+                        }
+                        with open(_audit_dir / log_filename, "w", encoding="utf-8") as f:
+                            f.write(json.dumps(audit_entry, indent=2) + "\n")
+                    except Exception as audit_err:
+                        logger.error("[DEBATE] Failed to write debate audit: %s", audit_err)
+
+                    return DebateResult(
+                        bull_claims=[{"claim": c, "turn": 1, "survived_rebuttal": False} for c in parsed.get("verified_bull_claims", []) + parsed.get("unverified_claims", [])],
+                        bear_claims=[{"claim": c, "turn": 2, "survived_rebuttal": False} for c in parsed.get("verified_bear_claims", []) + parsed.get("unverified_claims", [])],
+                        verified_bull_claims=verified_bull_meta,
+                        verified_bear_claims=verified_bear_meta,
+                        unverified_claims=unverified_meta,
+                        cross_exam_findings=parsed.get("rationale", ""),
+                        judge_action=judge_action,
+                        judge_confidence=judge_confidence,
+                        judge_rationale=parsed.get("rationale", ""),
+                        winning_side=parsed.get("winning_side", "split"),
+                        key_deciding_factor="",
+                        rejected_claim_impact="",
+                        integrity_status=integrity,
+                        transcript=prism_res.get("final_text", ""),
+                        total_tokens=prism_res.get("token_usage", 0),
+                        persona_outcomes={},
+                        original_thesis_status="NOT_HELD",
+                        original_thesis_explanation="",
+                    )
+                else:
+                    logger.warning("[DEBATE] Prism debate coordinator returned empty/invalid verdict JSON. Falling back to local loop.")
+        except Exception as pe:
+            logger.error("[DEBATE] Prism debate coordinator execution failed: %s. Falling back to local loop.", pe)
+
     max_retries = 3
     retry_count = 0
     bull_critique = ""

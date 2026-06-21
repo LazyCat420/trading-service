@@ -381,7 +381,10 @@ class PrismClient:
                 enabled_tools.append(meta_tool)
 
         # Add core orchestrator tools if agent is a Core Orchestrator
-        CORE_ORCHESTRATORS = {"planner_agent", "swarm_cio", "retriever_agent", "technical_analyst_agent", "pre_trade_agent"}
+        CORE_ORCHESTRATORS = {
+            "planner_agent", "swarm_cio", "retriever_agent",
+            "technical_analyst_agent", "pre_trade_agent", "debate_coordinator"
+        }
         # We don't have the agent name in this function signature directly, but we can extract it from the payload
         agent_id = payload.get("agent", "")
         if isinstance(agent_id, str):

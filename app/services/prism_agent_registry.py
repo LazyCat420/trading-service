@@ -92,7 +92,8 @@ AGENT_ID_MAP: dict[str, str] = {
     "thesis_agent": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "debate_judge": "CUSTOM_BULLISH_DEBATER",
     "debate_critic": "CUSTOM_BULLISH_DEBATER",
-    "debate_coordinator": "CUSTOM_BULLISH_DEBATER",
+    "debate_coordinator": "CUSTOM_DEBATE_COORDINATOR",
+    "CUSTOM_DEBATE_COORDINATOR": "CUSTOM_DEBATE_COORDINATOR",
 
     # ── Trading Cycle Analysis Agent ──
     "CUSTOM_CURATION_PASS_AGENT": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
