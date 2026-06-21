@@ -896,7 +896,11 @@ async def run_cross_examination(
 
     Returns a string summary of findings (verified/unverified claims).
     """
-    from app.agents.custom.debate_cross_examiner import IDENTITY as CROSS_EXAM_SYSTEM_PROMPT
+    # Safely import from archive
+    try:
+        from app.agents.custom.archive.debate_cross_examiner import IDENTITY as CROSS_EXAM_SYSTEM_PROMPT
+    except ImportError:
+        CROSS_EXAM_SYSTEM_PROMPT = "You are the Debate Cross-Examiner. Evaluate the claims critically."
     from app.services.prism_agent_caller import call_prism_agent
     import json
 

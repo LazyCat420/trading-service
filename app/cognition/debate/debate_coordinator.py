@@ -35,7 +35,10 @@ from app.services.logging.tracer import trace_span
 from app.config.investment_philosophy import (
     BARON_FIRST_PRINCIPLES, CONVICTION_FRAMEWORK, LONG_TERM_INVESTMENT_MANDATE,
 )
-from app.agents.custom.debate_cross_examiner import IDENTITY as CROSS_EXAM_SYSTEM_PROMPT
+try:
+    from app.agents.custom.archive.debate_cross_examiner import IDENTITY as CROSS_EXAM_SYSTEM_PROMPT
+except ImportError:
+    CROSS_EXAM_SYSTEM_PROMPT = "You are the Debate Cross-Examiner. Evaluate the claims critically."
 
 logger = logging.getLogger(__name__)
 
