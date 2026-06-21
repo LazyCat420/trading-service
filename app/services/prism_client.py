@@ -380,6 +380,20 @@ class PrismClient:
             if meta_tool not in enabled_tools:
                 enabled_tools.append(meta_tool)
 
+        # Add core orchestrator tools if agent is a Core Orchestrator
+        CORE_ORCHESTRATORS = {"planner_agent", "swarm_cio", "retriever_agent", "technical_analyst_agent", "pre_trade_agent"}
+        # We don't have the agent name in this function signature directly, but we can extract it from the payload
+        agent_id = payload.get("agent", "")
+        if isinstance(agent_id, str):
+            agent_slug = agent_id.replace("CUSTOM_", "").lower()
+            if agent_slug in CORE_ORCHESTRATORS or any(core in agent_slug for core in CORE_ORCHESTRATORS):
+                if "create_team" not in enabled_tools:
+                    enabled_tools.append("create_team")
+                if "send_message" not in enabled_tools:
+                    enabled_tools.append("send_message")
+                if "stop_agent" not in enabled_tools:
+                    enabled_tools.append("stop_agent")
+
         payload["enabledTools"] = [
             t for t in enabled_tools if t != "ask_user_question"
         ]

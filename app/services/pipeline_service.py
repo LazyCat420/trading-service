@@ -5,7 +5,7 @@ Refactored to act as a lightweight facade extending modular mixins.
 
 from app.pipeline.orchestration.state_manager import PipelineStateMixin
 from app.pipeline.orchestration.lifecycle_controller import LifecycleControllerMixin
-from app.pipeline.orchestration.orchestrator_core import OrchestratorCoreMixin
+from app.cycle.orchestration.orchestrator_v3 import OrchestratorV3Mixin
 from app.pipeline.orchestration.orchestrator_v2 import OrchestratorV2Mixin
 from app.pipeline.core import PipelineContext  # noqa: F401 — re-exported for backward compat
 
@@ -13,8 +13,9 @@ from app.pipeline.core import PipelineContext  # noqa: F401 — re-exported for 
 class PipelineService(
     PipelineStateMixin,
     LifecycleControllerMixin,
-    OrchestratorCoreMixin,
+    OrchestratorV3Mixin,
     OrchestratorV2Mixin,
+    EmitMixin,
 ):
     """
     Lightweight facade for pipeline orchestration.

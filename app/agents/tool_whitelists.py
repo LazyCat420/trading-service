@@ -140,6 +140,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "sell_stock",
         "get_cycle_context",
         "get_cycle_context_all",
+        "publish_event",
         # Coordination — pre_trade needs to see team findings before executing
         "post_finding",
         "read_team_findings",
@@ -268,6 +269,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_polygon_price_history",
         "get_options_flow",
         "query_technical_indicator",
+        "publish_event",
     ],
     "v3_worker_fundamental": [
         "get_market_data",
@@ -276,6 +278,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_earnings_data",
         "query_financial_metrics",
         "search_database_facts",
+        "publish_event",
     ],
     "v3_worker_news": [
         "get_finnhub_news",
@@ -283,12 +286,14 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "scrape_url",
         "search_database_facts",
         "search_internal_database",
+        "publish_event",
     ],
     "v3_worker_insider": [
         "get_insider_trades",
         "get_congress_trades",
         "get_sec_filings",
         "search_database_facts",
+        "publish_event",
     ],
     "ticker_validator": [],
     # ── V3 Pure Agentic Pipeline Agents ──

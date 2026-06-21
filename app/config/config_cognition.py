@@ -59,3 +59,14 @@ LLM_TEMPERATURES = {
     "thesis_synthesis": 0.3,
 }
 
+# The default tools given to any worker spawned via Prism `create_team`
+# These are the baseline survival tools; workers can dynamically acquire
+# others (like polygon price history) using discover_and_enable_tools.
+CORE_WORKER_TOOLS = [
+    "read_memory_note",
+    "write_memory_note",
+    "search_web",
+    "get_market_data",
+    "get_finnhub_news",
+    "search_internal_database",
+]

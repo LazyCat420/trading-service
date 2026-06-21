@@ -282,3 +282,73 @@ async def check_open_investigations(
     except Exception as e:
         logger.exception("[CoordinationTools] check_open_investigations failed")
         return json.dumps({"status": "error", "message": str(e)})
+
+
+# ── Tool 5: Publish Event ─────────────────────────────────────────────
+@registry.register(
+    name="publish_event",
+    description=(
+        "Publish an event to the Event Bus to notify other agents. "
+        "Use this to signal that your analysis is complete, or to trigger the next stage. "
+        "For example, emit 'ANALYSIS_READY' when you have finished your research for a ticker."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "event_name": {
+                "type": "string",
+                "description": "The name of the event (e.g., 'ANALYSIS_READY', 'TRADE_EXECUTED').",
+            },
+            "ticker": {
+                "type": "string",
+                "description": "The stock ticker this event is for.",
+            },
+            "payload": {
+                "type": "string",
+                "description": "A JSON-formatted string containing event payload data.",
+            },
+        },
+        "required": ["event_name", "ticker"],
+    },
+    tier=1,
+    source="coordination",
+    permission=PermissionLevel.WRITE,
+    tags=["coordinate", "event", "publish", "trigger"],
+)
+async def publish_event(
+    event_name: str,
+    ticker: str,
+    payload: str = "{}",
+    _agent_name: str = "unknown_agent",
+    _cycle_id: str = "",
+) -> str:
+    """Publish an event to the global event bus."""
+    from app.cycle.orchestration.event_bus import event_bus
+    import json
+    try:
+        try:
+            parsed_payload = json.loads(payload)
+        except:
+            parsed_payload = {"raw_payload": payload}
+            
+        full_payload = {
+            "ticker": ticker,
+            "cycle_id": _cycle_id,
+            "source_agent": _agent_name,
+            "data": parsed_payload
+        }
+        
+        # We publish the event. The bus will handle waking up subscribers.
+        event_bus.publish(event_name, full_payload)
+        
+        return json.dumps(
+            {
+                "status": "published",
+                "event_name": event_name,
+                "message": f"Successfully published event {event_name} to the swarm bus.",
+            }
+        )
+    except Exception as e:
+        logger.exception("[CoordinationTools] publish_event failed")
+        return json.dumps({"status": "error", "message": str(e)})
+

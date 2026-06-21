@@ -8,35 +8,20 @@ from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
 
 logger = logging.getLogger(__name__)
 
-PLANNER_SYSTEM_PROMPT = """You are the Planner agent. Your job is to create a structured evidence-gathering checklist for an investment decision on the requested stock.
+PLANNER_SYSTEM_PROMPT = """You are the Swarm Planner Agent. Your job is to initialize the event-driven trading swarm for the requested stock ticker.
 We operate as a long-term quality investment firm inspired by Baron Funds First Principles and Da Vinci's polymathic evaluation framework.
-You must output a JSON object containing a detailed plan.
 
-The plan MUST cover the following categories (Da Vinci THREE-ANGLE RULE — every investment evaluated from 3+ perspectives):
+Your sole objective for this interaction is to formulate a research plan and immediately spawn the research team using your `create_team` tool.
 
-1. Fundamentals (P/E ratio, revenue growth, profit margins, balance sheet health, earnings history, free cash flow, ROIC, debt-to-equity)
-2. Management & Culture (CEO track record, insider ownership, capital allocation history, corporate governance quality, key executive changes, founder-led status)
-3. Competitive Moat (market share trajectory, pricing power, network effects, switching costs, intellectual property, scale economics, brand strength, regulatory barriers)
-4. Technicals (RSI, Moving Averages, price trends, volume trends, support/resistance levels — used to identify entry points, NOT as the primary decision driver)
-5. News Sentiment (recent earnings call highlights, press releases, social media sentiment, macro context, activist investor activity)
-6. Flows (institutional holdings changes, insider trades, options order flow, 13F filings, congressional trades)
-7. Long-term Catalysts (secular industry trends, TAM expansion, new product/market opportunities, demographic tailwinds, regulatory changes)
+1. You MUST call the `create_team` tool.
+2. The team topology should be "hierarchical".
+3. The members of the team MUST include:
+   - "retriever_agent": Responsible for gathering fundamental data, news, and SEC filings.
+   - "technical_analyst_agent": Responsible for technical analysis, price history, and options flow.
+4. Pass your research plan and the stock ticker as the `task` parameter to `create_team`.
+5. Instruct the members that they must publish the 'ANALYSIS_READY' event when they are done gathering their respective data.
 
-Your response must be valid JSON with the following schema:
-{
-  "ticker": "string",
-  "categories": {
-    "fundamentals": ["list of specific data points / metrics to fetch"],
-    "management_culture": ["list of management quality and governance metrics to research"],
-    "competitive_moat": ["list of competitive advantage indicators to assess"],
-    "technicals": ["list of specific technical indicators to fetch"],
-    "sentiment": ["list of news / sentiment sources to analyze"],
-    "flows": ["list of flow metrics to look up"],
-    "long_term_catalysts": ["list of growth drivers and secular trends to investigate"]
-  },
-  "investment_horizon": "What time horizon should the analysis focus on (e.g., '3-5 years', '5-10 years')?",
-  "justification": "Why this specific plan is tailored to the stock (e.g., growth vs value, sector factors, management quality emphasis)"
-}
+Do not output JSON. Just call the tool and confirm the swarm has been launched.
 """ + ANTI_HALLUCINATION_BLOCK
 
 async def run_planner(
@@ -59,7 +44,7 @@ async def run_planner(
         bot_id=bot_id,
         system_prompt=PLANNER_SYSTEM_PROMPT,
         user_prompt=planner_prompt,
-        enable_tools=False
+        enable_tools=True
     )
     
     return result
