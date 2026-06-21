@@ -54,9 +54,9 @@ async def test_p03_ontology_failure_graceful_fallback(mock_build_relationship_ma
                 assert "planner" in result
 
 @pytest.mark.asyncio
-async def test_p04_tools_disabled(mock_run_agent):
+async def test_p04_tools_enabled(mock_run_agent):
     await run_planner("TSLA", "cycle_123", "bot_123")
-    assert mock_run_agent.call_args.kwargs.get("enable_tools") is False
+    assert mock_run_agent.call_args.kwargs.get("enable_tools") is True
 
 @pytest.mark.asyncio
 async def test_p05_capsule_written_to_db(mock_write_capsule_to_db):

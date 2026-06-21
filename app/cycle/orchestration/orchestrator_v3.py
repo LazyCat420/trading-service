@@ -173,8 +173,14 @@ class OrchestratorV3Mixin:
 
             # Trigger Planner for each ticker
             from app.agents.planner_agent import run_planner
+            sem = asyncio.Semaphore(settings.V2_TICKER_CONCURRENCY)
+
+            async def run_planner_throttled(t):
+                async with sem:
+                    await run_planner(t, ctx.cycle_id, bot_id)
+
             for ticker in tickers_to_process:
-                asyncio.create_task(run_planner(ticker, ctx.cycle_id, bot_id))
+                asyncio.create_task(run_planner_throttled(ticker))
 
             # Wait for completion of all trades
             try:

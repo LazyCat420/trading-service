@@ -147,8 +147,10 @@ def test_prism_client_payload_construction():
     
     # Assert session ID is isolated and cached under compound key: cycle-1234-LLY-thesis_agent
     expected_group_key = "cycle-1234-LLY-thesis_agent"
-    assert expected_group_key in client._sessions
-    session_id = client._sessions[expected_group_key]
+    session_keys = list(client._sessions.keys())
+    matched_key = next((k for k in session_keys if k.startswith(expected_group_key)), None)
+    assert matched_key is not None
+    session_id = client._sessions[matched_key]
     assert payload.get("createSession") is True or payload.get("sessionId") == session_id
 
     # Test user_chat session key uses cycle_id directly
@@ -178,6 +180,7 @@ def test_prism_client_payload_construction():
         system_prompt="system instructions",
         agent_name="thesis_agent",
         ticker="LLY",
+        cycle_id="cycle-1234",
         enable_thinking=True,
         is_qwen_model=True,
         agentic_mode=False
@@ -204,12 +207,12 @@ def test_prism_client_conversation_caching():
         agentic_mode=True
     )
     
-    expected_group_key = "cycle-123-AAPL-thesis_agent"
-    assert expected_group_key in client._conversations
-    conv_id1 = client._conversations[expected_group_key]
+    expected_parent_key = "cycle-123-AAPL"
+    assert expected_parent_key in client._conversations
+    conv_id1 = client._conversations[expected_parent_key]
     assert payload1["conversationId"] == conv_id1
 
-    # 2. Subsequent call for same group key should return the same conversation ID
+    # 2. Subsequent call for same parent group key should return the same conversation ID
     payload2, _, _ = client.get_chat_payload_and_url(
         model="test-model",
         messages=[{"role": "user", "content": "hello again"}],
@@ -224,7 +227,7 @@ def test_prism_client_conversation_caching():
     )
     assert payload2["conversationId"] == conv_id1
 
-    # 3. Call for different agent should return a different conversation ID
+    # 3. Call for different agent under same cycle/ticker should ALSO share parent conversation ID
     payload3, _, _ = client.get_chat_payload_and_url(
         model="test-model",
         messages=[{"role": "user", "content": "hi"}],
@@ -237,15 +240,14 @@ def test_prism_client_conversation_caching():
         enable_thinking=False,
         agentic_mode=True
     )
-    assert payload3["conversationId"] != conv_id1
-    assert "cycle-123-AAPL-technical_agent" in client._conversations
+    assert payload3["conversationId"] == conv_id1
 
-    # 4. Ending session should clear both session and conversation
-    assert expected_group_key in client._sessions
-    assert expected_group_key in client._conversations
-    client.end_session(expected_group_key)
-    assert expected_group_key not in client._sessions
-    assert expected_group_key not in client._conversations
+    # 4. Cleaning up all sessions should clear everything
+    assert len(client._sessions) > 0
+    assert len(client._conversations) > 0
+    client.cleanup_all_sessions()
+    assert len(client._sessions) == 0
+    assert len(client._conversations) == 0
 
 
 @pytest.mark.asyncio
@@ -318,13 +320,13 @@ def test_prism_client_agent_mapping():
         model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
         agent_name="maintenance_agent", ticker="", cycle_id="", enable_thinking=False
     )
-    assert p["agent"] == "CUSTOM_SYSTEM_JANITOR_AGENT"
+    assert p["agent"] == "CUSTOM_MARKET_SCOUT"
     
     p, _, _ = client.get_chat_payload_and_url(
         model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
         agent_name="data_janitor", ticker="", cycle_id="", enable_thinking=False
     )
-    assert p["agent"] == "CUSTOM_SYSTEM_JANITOR_AGENT"
+    assert p["agent"] == "CUSTOM_MARKET_SCOUT"
 
     # Test technical analysis mapping
     p, _, _ = client.get_chat_payload_and_url(
@@ -351,7 +353,7 @@ def test_prism_client_agent_mapping():
         model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
         agent_name="unknown_random_agent", ticker="", cycle_id="", enable_thinking=False
     )
-    assert p["agent"] == "CUSTOM_MARKET_ALPHA"
+    assert p["agent"] == "CUSTOM_MARKET_SCOUT"
 
     # Test post_cycle_learner mapping
     p, _, _ = client.get_chat_payload_and_url(

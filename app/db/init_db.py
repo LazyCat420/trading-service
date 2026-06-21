@@ -6,6 +6,13 @@ logger = logging.getLogger(__name__)
 def run_auto_migrations():
     """Run all inline DDL updates and migrations on startup."""
     with get_db() as db:
+        # Run central summary column migrations first
+        try:
+            from app.utils.db_migrations import ensure_summary_columns
+            ensure_summary_columns(db)
+        except Exception as e:
+            logger.warning("ensure_summary_columns on startup failed: %s", e)
+
         # ── Auto-migrate: add stop_loss_pct to positions if missing ──
         try:
             cols = db.execute(

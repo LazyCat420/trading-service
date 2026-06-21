@@ -776,7 +776,15 @@ class OrchestratorCoreMixin:
         if not candidates:
             return []
 
-        position_tickers = list(cls._state.get("position_tickers", []))
+        # Fallback if cls doesn't have _state (e.g. if called on the mixin directly)
+        state = getattr(cls, "_state", None)
+        if state is None:
+            try:
+                from app.services.pipeline_service import PipelineService
+                state = getattr(PipelineService, "_state", {})
+            except ImportError:
+                state = {}
+        position_tickers = list(state.get("position_tickers", []))
 
         result = await run_ticker_curator(
             candidates=candidates,

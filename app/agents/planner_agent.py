@@ -262,9 +262,28 @@ async def run_ticker_curator(
             logger.error("[CURATOR] A chunk failed: %s", res)
             continue
         if isinstance(res, dict):
-            merged_result["selected_tickers"].extend(res.get("selected_tickers", []))
-            merged_result["justification"].update(res.get("justification", {}))
-            merged_result["research_focus"].update(res.get("research_focus", {}))
-            merged_result["skipped_tickers"].update(res.get("skipped_tickers", {}))
+            response_text = res.get("response", "")
+            if response_text:
+                try:
+                    from app.utils.text_utils import parse_json_response
+                    parsed = parse_json_response(response_text)
+                    if isinstance(parsed, dict):
+                        merged_result["selected_tickers"].extend(parsed.get("selected_tickers", []))
+                        merged_result["justification"].update(parsed.get("justification", {}))
+                        merged_result["research_focus"].update(parsed.get("research_focus", {}))
+                        merged_result["skipped_tickers"].update(parsed.get("skipped_tickers", {}))
+                except Exception as ex:
+                    logger.error("[CURATOR] Failed to parse curator chunk response: %s", ex)
 
-    return merged_result
+    # If all chunk responses were empty/failed, return empty response to trigger fallback
+    if not merged_result["selected_tickers"] and not merged_result["skipped_tickers"]:
+        return {
+            "agent": "curator",
+            "response": ""
+        }
+
+    import json
+    return {
+        "agent": "curator",
+        "response": json.dumps(merged_result)
+    }

@@ -52,7 +52,7 @@ async def run_ticker_processors(ticker: str, emit) -> None:
                     fallback_system_prompt="See app.agents.custom.market_scout",
                     fallback_agent_name="market_scout",
                     temperature=0.1,
-                    max_tokens=128,
+                    max_tokens=8192,
                     priority=Priority.NORMAL,
                     ticker=ticker,
                     actor_label="market_scout_planner"
@@ -84,7 +84,7 @@ async def run_ticker_processors(ticker: str, emit) -> None:
                     fallback_system_prompt=f"See app.agents.custom.{worker}",
                     fallback_agent_name=worker,
                     temperature=0.2,
-                    max_tokens=2048,
+                    max_tokens=8192,
                     priority=Priority.NORMAL,
                     ticker=ticker,
                     actor_label=worker
@@ -142,7 +142,7 @@ async def run_ticker_processors(ticker: str, emit) -> None:
             fallback_system_prompt="You are a fast summarizer. Provide a concise summary of the data.",
             fallback_agent_name="summarizer_agent",
             temperature=0.2,
-            max_tokens=512,
+            max_tokens=8192,
             priority=Priority.NORMAL,
             ticker=ticker,
             actor_label="summarizer_fallback"
