@@ -508,17 +508,10 @@ class PrismClient:
 
         username = actor_label or self.username
 
-        # Deduplicate: strip role=system messages from the messages array
-        # since the systemPrompt field already delivers it to Prism's /agent endpoint.
-        # IMPORTANT: Only strip when using /agent (agentic_mode=True).
-        # Prism's /chat endpoint ignores the systemPrompt field and only reads
-        # messages[], so system messages MUST be preserved for /chat routing.
-        if agentic_mode:
-            deduplicated_messages = [
-                m for m in messages if m.get("role") != "system"
-            ]
-        else:
-            deduplicated_messages = list(messages)
+        # We no longer strip role=system messages, even in agentic_mode, because
+        # some versions of Prism's /agent endpoint ignore the top-level systemPrompt field.
+        # This ensures the model always receives its system instructions as a native message.
+        deduplicated_messages = list(messages)
 
         # Map internal "vllm-1" to Prism-compatible "vllm"
         prism_provider = "vllm" if provider == "vllm-1" else provider
@@ -643,17 +636,10 @@ class PrismClient:
 
         username = actor_label or self.username
 
-        # Deduplicate: strip role=system messages from the messages array
-        # since the systemPrompt field already delivers it to Prism's /agent endpoint.
-        # IMPORTANT: Only strip when using /agent (agentic_mode=True).
-        # Prism's /chat endpoint ignores the systemPrompt field and only reads
-        # messages[], so system messages MUST be preserved for /chat routing.
-        if agentic_mode:
-            deduplicated_messages = [
-                m for m in messages if m.get("role") != "system"
-            ]
-        else:
-            deduplicated_messages = list(messages)
+        # We no longer strip role=system messages, even in agentic_mode, because
+        # some versions of Prism's /agent endpoint ignore the top-level systemPrompt field.
+        # This ensures the model always receives its system instructions as a native message.
+        deduplicated_messages = list(messages)
 
         # Map internal "vllm-1" to Prism-compatible "vllm"
         prism_provider = "vllm" if provider == "vllm-1" else provider
