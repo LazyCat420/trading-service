@@ -531,26 +531,18 @@ async def execute_v2_tickers(
         status="running",
     )
 
-    try:
-        raw_results = await asyncio.wait_for(
-            asyncio.gather(
-                *[_run_ticker(t) for t in tickers],
-                return_exceptions=True,
-            ),
-            timeout=timeout_seconds,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "[V2] CYCLE TIMEOUT after %d min",
-            settings.CYCLE_TIMEOUT_MINUTES,
-        )
-        emit(
-            "analyzing",
-            "v2_timeout",
-            f"V2 cycle timeout ({settings.CYCLE_TIMEOUT_MINUTES}min)",
-            status="error",
-        )
-        return [{"ticker": t, "error": "cycle_timeout"} for t in tickers]
+    async def _run_ticker_with_timeout(t: str) -> dict[str, Any]:
+        try:
+            return await asyncio.wait_for(_run_ticker(t), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            logger.warning("[V2] Ticker %s timed out after %d seconds", t, timeout_seconds)
+            emit("analyzing", f"v2_timeout_{t}", f"{t}: V2 TIMEOUT after {timeout_seconds}s", status="error")
+            return {"ticker": t, "error": "cycle_timeout"}
+
+    raw_results = await asyncio.gather(
+        *[_run_ticker_with_timeout(t) for t in tickers],
+        return_exceptions=True,
+    )
 
     results = []
     for t, r in zip(tickers, raw_results):

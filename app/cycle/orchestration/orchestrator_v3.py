@@ -162,7 +162,19 @@ class OrchestratorV3Mixin:
                 logger.info(f"[CYCLE] ANALYSIS_READY received for {ticker}. Launching Pre-Trade Agent.")
                 # We launch the CIO/Pre-trade agent immediately on event
                 from app.agents.pre_trade_agent import run_pre_trade
-                asyncio.create_task(run_pre_trade(ticker, ctx.cycle_id, bot_id))
+                confidence = payload.get("data", {}).get("confidence") or 100
+                rationale = payload.get("data", {}).get("rationale") or "V3 Event-Driven consensus reached."
+                
+                async def run_pre_trade_and_complete(t, conf, r):
+                    try:
+                        await run_pre_trade(t, conf, ctx.cycle_id, bot_id, r)
+                    except Exception as e:
+                        logger.error(f"[CYCLE] Pre-trade agent failed for {t}: {e}")
+                    finally:
+                        # Always publish TRADE_COMPLETE to avoid stalling the cycle
+                        event_bus.publish("TRADE_COMPLETE", {"ticker": t, "cycle_id": ctx.cycle_id})
+                
+                asyncio.create_task(run_pre_trade_and_complete(ticker, confidence, rationale))
 
             event_bus.subscribe("TRADE_COMPLETE", on_trade_complete)
             event_bus.subscribe("ANALYSIS_READY", on_analysis_ready)

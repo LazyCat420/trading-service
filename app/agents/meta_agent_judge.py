@@ -167,6 +167,33 @@ async def run_meta_agent_judge(cycle_id: str) -> dict:
     return summary
 
 
+def _get_sector_guidance(sector: str) -> str:
+    """Return hardcoded guidance instructions for a given sector to help prompt mutation."""
+    guidance = {
+        "technology": (
+            "Focus on high growth metrics, software/hardware product lifecycles, R&D spend, "
+            "subscriber or customer growth (SaaS), competitive advantages, and technological disruption risk."
+        ),
+        "energy": (
+            "Focus on commodity pricing, structural demand trends, inventory levels, exploration/drilling capital expenditure, "
+            "regulatory/policy environments, and geopolitical supply constraints."
+        ),
+        "healthcare": (
+            "Focus on FDA approvals, clinical trial success rates, patent cliffs, research pipelines, "
+            "Medicare/insurance reimbursement dynamics, and healthcare services utilization."
+        ),
+        "financial services": (
+            "Focus on interest rate environments (net interest margin), loan/deposit growth, credit quality (non-performing loans), "
+            "capital adequacy ratios, and regulatory compliance policies."
+        ),
+        "consumer": (
+            "Focus on consumer confidence indexes, disposable income, brand loyalty, supply chain inventory levels, "
+            "marketing efficiency, input cost inflation, and macroeconomic discretionary spend."
+        )
+    }
+    return guidance.get(sector.lower(), "Focus on fundamental growth drivers, financial health, valuation metrics, and risk factors.")
+
+
 async def _generate_variant(db, sector: str, cycle_id: str) -> dict | None:
     """Generate a new prompt variant for the given sector by mutating the best.
 
@@ -216,7 +243,6 @@ Rules:
                 f"Create an improved variant with a different analytical emphasis."
             )
         else:
-            from app.agents.trade_execution_agent import _get_sector_guidance
             guidance = _get_sector_guidance(sector)
             user_msg = (
                 f"Sector: {sector}\n"

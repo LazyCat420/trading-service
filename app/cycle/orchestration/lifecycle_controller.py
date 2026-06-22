@@ -150,7 +150,7 @@ class LifecycleControllerMixin:
         )
 
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        startup_task = loop.create_task(
             cls._background_start_cycle(
                 tickers=tickers,
                 collect=collect,
@@ -165,6 +165,7 @@ class LifecycleControllerMixin:
                 cycle_id=cycle_id,
             )
         )
+        _task_registry.register("startup", startup_task)
 
         # Watchdog: if status is still 'starting' after 180s, force error
         loop.create_task(cls._starting_state_watchdog(cycle_id, timeout_s=180))
@@ -426,10 +427,30 @@ class LifecycleControllerMixin:
             if current_status == "starting" and current_cycle == cycle_id:
                 logger.error(
                     "[CYCLE] WATCHDOG: status still 'starting' after %ds for cycle %s. "
-                    "Forcing error state.",
+                    "Forcing error state and cancelling tasks.",
                     timeout_s,
                     cycle_id,
                 )
+                
+                # Engage LLM kill switch immediately
+                try:
+                    from app.services.vllm_client import llm
+                    llm._killed = True
+                    llm.drain_queues()
+                except Exception:
+                    pass
+
+                # Cancel all registered tasks (startup, cycle, checkpoint, sub_task_poll)
+                await _task_registry.cancel_all(timeout=2.0)
+
+                # Clean up Prism sessions
+                try:
+                    from app.services.vllm_client import llm
+                    if hasattr(llm, "prism_client") and llm.prism_client:
+                        llm.prism_client.cleanup_all_sessions()
+                except Exception:
+                    pass
+
                 cls._state.update(
                     {
                         "status": "error",
