@@ -122,9 +122,8 @@ def _ensure_default_schedule(
     description=(
         "Create a new automated trading cycle schedule or update an existing one. "
         "Use this after completing a trading cycle to ensure the bot runs again. "
-        "Parameters: name (str), interval_hours (float, 1-168), collect (bool), "
-        "analyze (bool), market_hours_only (bool), tickers (string[]), max_tickers (number), discovered_tickers (number). "
-        "Safety: max 6 active schedules, min 1h interval."
+        "The scheduler is policy-driven. Instead of arbitrary timestamps, specify "
+        "your intent, scope, and urgency."
     ),
     parameters={
         "type": "object",
@@ -133,25 +132,42 @@ def _ensure_default_schedule(
                 "type": "string",
                 "description": "Name for the schedule (e.g. 'Post-Trade Follow-Up')",
             },
+            "schedule_scope": {
+                "type": "string",
+                "description": "portfolio | positions | watchlist_subset | sector | single_ticker",
+                "enum": ["portfolio", "positions", "watchlist_subset", "sector", "single_ticker"]
+            },
+            "review_intent": {
+                "type": "string",
+                "description": "monitor | reassess | trade_window | event_followup | weekly_review | monthly_review",
+                "enum": ["monitor", "reassess", "trade_window", "event_followup", "weekly_review", "monthly_review"]
+            },
+            "urgency": {
+                "type": "string",
+                "description": "low | medium | high | critical",
+                "enum": ["low", "medium", "high", "critical"]
+            },
+            "earliest_window": {
+                "type": "string",
+                "description": "next_pre_market | next_open | midday | pre_close | post_close | next_trading_day | next_week",
+                "enum": ["next_pre_market", "next_open", "midday", "pre_close", "post_close", "next_trading_day", "next_week"]
+            },
+            "reason_codes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Array of triggers e.g., ['news', 'earnings', 'thesis_drift', 'portfolio_risk']"
+            },
+            "confidence": {
+                "type": "number",
+                "description": "Confidence score 0-100"
+            },
+            "anti_overtrading_justification": {
+                "type": "string",
+                "description": "Explanation of why this run is justified and not just spam."
+            },
             "interval_hours": {
                 "type": "number",
-                "description": "Hours between runs (1-168). Default: 4",
-            },
-            "cron_expression": {
-                "type": "string",
-                "description": "Cron expression (e.g. '30 9 * * 1-5'). Use INSTEAD of interval_hours for clock-based scheduling.",
-            },
-            "collect": {
-                "type": "boolean",
-                "description": "Whether to collect fresh data. Default: true",
-            },
-            "analyze": {
-                "type": "boolean",
-                "description": "Whether to run analysis. Default: true",
-            },
-            "market_hours_only": {
-                "type": "boolean",
-                "description": "Only run during US market hours. Default: true",
+                "description": "Fallback explicit interval in hours for recurring monitor tasks.",
             },
             "update_schedule_id": {
                 "type": "string",
@@ -160,18 +176,10 @@ def _ensure_default_schedule(
             "tickers": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional explicit tickers this schedule should always include.",
-            },
-            "max_tickers": {
-                "type": "number",
-                "description": "Hard cap on total tickers processed for this schedule.",
-            },
-            "discovered_tickers": {
-                "type": "number",
-                "description": "Max number of discovery tickers to add per run for this schedule.",
-            },
+                "description": "Explicit tickers this schedule should include.",
+            }
         },
-        "required": ["name"],
+        "required": ["name", "schedule_scope", "review_intent", "urgency", "earliest_window", "anti_overtrading_justification"],
     },
     permission=PermissionLevel.WRITE,
     tier=2,
@@ -180,36 +188,39 @@ def _ensure_default_schedule(
 )
 async def create_or_update_schedule(
     name: str,
-    interval_hours: float = DEFAULT_INTERVAL_HOURS,
-    cron_expression: str | None = None,
-    collect: bool = True,
-    analyze: bool = True,
-    market_hours_only: bool = True,
+    schedule_scope: str,
+    review_intent: str,
+    urgency: str,
+    earliest_window: str,
+    anti_overtrading_justification: str,
+    reason_codes: list[str] | None = None,
+    confidence: int = 100,
+    interval_hours: float | None = None,
     update_schedule_id: str | None = None,
     tickers: list[str] | None = None,
-    max_tickers: int | None = None,
-    discovered_tickers: int | None = None,
 ) -> str:
-    """Create or update a cycle schedule."""
+    """Create or update a policy-driven cycle schedule."""
     try:
-        # ── Validate interval bounds ──
-        if not cron_expression:
-            if interval_hours < MIN_INTERVAL_HOURS:
-                return json.dumps(
-                    {
-                        "error": f"Interval too short. Minimum is {MIN_INTERVAL_HOURS}h to prevent self-DoS.",
-                        "min_interval_hours": MIN_INTERVAL_HOURS,
-                    }
-                )
-            if interval_hours > MAX_INTERVAL_HOURS:
-                return json.dumps(
-                    {
-                        "error": f"Interval too long. Maximum is {MAX_INTERVAL_HOURS}h (1 week).",
-                        "max_interval_hours": MAX_INTERVAL_HOURS,
-                    }
-                )
-
-        schedule_type = "cron" if cron_expression else "interval"
+        reason_codes = reason_codes or []
+        
+        # 1. Run Validator
+        proposal = {
+            "schedule_scope": schedule_scope,
+            "review_intent": review_intent,
+            "urgency": urgency,
+            "earliest_window": earliest_window,
+            "reason_codes": reason_codes
+        }
+        from app.validation.schedule_validator import ScheduleValidator
+        is_valid, reject_reason = ScheduleValidator.validate_proposal(proposal)
+        if not is_valid:
+            return json.dumps({
+                "error": "Schedule rejected by Validator",
+                "reason": reject_reason,
+                "suggestion": "Adjust scope, intent, or provide a catalyst in reason_codes."
+            })
+            
+        schedule_type = "interval" if interval_hours else "policy"
 
         with get_db() as db:
             if update_schedule_id:
@@ -232,23 +243,24 @@ async def create_or_update_schedule(
                 db.execute(
                     """
                     UPDATE cycle_schedules SET
-                        name = %s, schedule_type = %s, cron_expression = %s,
-                        interval_hours = %s, collect = %s, "analyze" = %s,
-                        market_hours_only = %s, tickers = %s, max_tickers = %s,
-                        discovered_tickers = %s, updated_at = %s
+                        name = %s, schedule_type = %s, interval_hours = %s,
+                        schedule_scope = %s, review_intent = %s, urgency = %s,
+                        earliest_window = %s, reason_codes = %s, confidence = %s,
+                        anti_overtrading_justification = %s, tickers = %s, updated_at = %s
                     WHERE id = %s
                     """,
                     [
                         name,
                         schedule_type,
-                        cron_expression,
-                        interval_hours if not cron_expression else None,
-                        collect,
-                        analyze,
-                        market_hours_only,
+                        interval_hours,
+                        schedule_scope,
+                        review_intent,
+                        urgency,
+                        earliest_window,
+                        json.dumps(reason_codes),
+                        confidence,
+                        anti_overtrading_justification,
                         final_tickers_str,
-                        final_max_tickers,
-                        final_discovered_tickers,
                         now,
                         update_schedule_id,
                     ],
@@ -301,24 +313,27 @@ async def create_or_update_schedule(
                 db.execute(
                     """
                     INSERT INTO cycle_schedules (
-                        id, name, schedule_type, cron_expression, interval_hours,
-                        collect, "analyze", trade, tickers, max_tickers, discovered_tickers,
-                        market_hours_only, is_active, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        id, name, schedule_type, interval_hours,
+                        schedule_scope, review_intent, urgency, earliest_window,
+                        reason_codes, confidence, anti_overtrading_justification,
+                        tickers, max_tickers, discovered_tickers, is_active, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         job_id,
                         name,
                         schedule_type,
-                        cron_expression,
-                        interval_hours if not cron_expression else None,
-                        collect,
-                        analyze,
-                        None,  # trade = armed
+                        interval_hours,
+                        schedule_scope,
+                        review_intent,
+                        urgency,
+                        earliest_window,
+                        json.dumps(reason_codes),
+                        confidence,
+                        anti_overtrading_justification,
                         final_tickers_str,
                         final_max_tickers,
                         final_discovered_tickers,
-                        market_hours_only,
                         True,
                         now,
                         now,

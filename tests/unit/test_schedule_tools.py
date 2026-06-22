@@ -7,12 +7,17 @@ from app.tools.schedule_tools import create_or_update_schedule
 
 @pytest.mark.asyncio
 async def test_create_schedule_with_custom_parameters(monkeypatch, mock_db):
-    """Verify create path saves custom tickers, max_tickers, and discovered_tickers."""
+    """Verify create path saves policy-driven scheduling parameters."""
     @contextmanager
     def fake_get_db():
         yield mock_db
 
     monkeypatch.setattr("app.tools.schedule_tools.get_db", fake_get_db)
+    
+    # Mock validator
+    mock_validator = MagicMock()
+    mock_validator.validate_proposal.return_value = (True, "")
+    monkeypatch.setattr("app.validation.schedule_validator.ScheduleValidator", mock_validator)
 
     def side_effect_execute(query, params=None):
         mock_cursor = MagicMock()
@@ -27,10 +32,13 @@ async def test_create_schedule_with_custom_parameters(monkeypatch, mock_db):
     # Call tool to CREATE a new schedule
     result_str = await create_or_update_schedule(
         name="Test Follow-up Cycle",
+        schedule_scope="portfolio",
+        review_intent="monitor",
+        urgency="medium",
+        earliest_window="next_pre_market",
+        anti_overtrading_justification="Regular check",
         interval_hours=2.0,
-        tickers=["AAPL", "TSLA"],
-        max_tickers=10,
-        discovered_tickers=5,
+        tickers=["AAPL", "TSLA"]
     )
     result = json.loads(result_str)
 
@@ -48,13 +56,14 @@ async def test_create_schedule_with_custom_parameters(monkeypatch, mock_db):
     params = insert_call[0][1]
     
     # Columns in insert list:
-    # id, name, schedule_type, cron_expression, interval_hours, collect, analyze, trade, tickers, max_tickers, discovered_tickers, market_hours_only, is_active, created_at, updated_at
-    # tickers (index 8) -> json.dumps(["AAPL", "TSLA"])
-    # max_tickers (index 9) -> 10
-    # discovered_tickers (index 10) -> 5
-    assert json.loads(params[8]) == ["AAPL", "TSLA"]
-    assert params[9] == 10
-    assert params[10] == 5
+    # id(0), name(1), schedule_type(2), interval_hours(3), schedule_scope(4), review_intent(5), urgency(6), earliest_window(7), reason_codes(8), confidence(9), anti_overtrading_justification(10), tickers(11), max_tickers(12), discovered_tickers(13), is_active(14), created_at(15), updated_at(16)
+    
+    assert params[1] == "Test Follow-up Cycle"
+    assert params[4] == "portfolio"
+    assert params[5] == "monitor"
+    assert params[6] == "medium"
+    assert params[7] == "next_pre_market"
+    assert json.loads(params[11]) == ["AAPL", "TSLA"]
 
 
 @pytest.mark.asyncio
@@ -65,6 +74,11 @@ async def test_update_schedule_merging_provided_values(monkeypatch, mock_db):
         yield mock_db
 
     monkeypatch.setattr("app.tools.schedule_tools.get_db", fake_get_db)
+    
+    # Mock validator
+    mock_validator = MagicMock()
+    mock_validator.validate_proposal.return_value = (True, "")
+    monkeypatch.setattr("app.validation.schedule_validator.ScheduleValidator", mock_validator)
 
     def side_effect_execute(query, params=None):
         mock_cursor = MagicMock()
@@ -80,13 +94,16 @@ async def test_update_schedule_merging_provided_values(monkeypatch, mock_db):
 
     mock_db.execute.side_effect = side_effect_execute
 
-    # Call tool to UPDATE with ONLY max_tickers changed
+    # Call tool to UPDATE
     result_str = await create_or_update_schedule(
         name="Auto-Recovery Schedule",
+        schedule_scope="single_ticker",
+        review_intent="reassess",
+        urgency="high",
+        earliest_window="midday",
+        anti_overtrading_justification="News catalyst",
         update_schedule_id="sch-default",
-        max_tickers=5, # new value
         tickers=None,   # should keep existing
-        discovered_tickers=None, # should keep existing
     )
     result = json.loads(result_str)
 
@@ -104,10 +121,6 @@ async def test_update_schedule_merging_provided_values(monkeypatch, mock_db):
     params = update_call[0][1]
     
     # UPDATE parameters:
-    # name, schedule_type, cron_expression, interval_hours, collect, analyze, market_hours_only, tickers, max_tickers, discovered_tickers, updated_at, id
-    # tickers (index 7) -> keep existing '["AAPL"]'
-    # max_tickers (index 8) -> new value 5
-    # discovered_tickers (index 9) -> keep existing 10
-    assert params[7] == '["AAPL"]'
-    assert params[8] == 5
-    assert params[9] == 10
+    # name(0), schedule_type(1), interval_hours(2), schedule_scope(3), review_intent(4), urgency(5), earliest_window(6), reason_codes(7), confidence(8), anti_overtrading_justification(9), tickers(10), updated_at(11), id(12)
+    assert params[3] == "single_ticker"
+    assert params[10] == '["AAPL"]'

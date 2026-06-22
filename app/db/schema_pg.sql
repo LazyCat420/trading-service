@@ -337,9 +337,17 @@ CREATE TABLE IF NOT EXISTS user_data (
 CREATE TABLE IF NOT EXISTS cycle_schedules (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
-    schedule_type   TEXT NOT NULL,         -- 'cron' | 'interval'
+    schedule_type   TEXT NOT NULL,         -- 'cron' | 'interval' | 'policy'
     cron_expression TEXT,
     interval_hours  DOUBLE PRECISION,
+    schedule_scope  TEXT,                  -- portfolio, positions, watchlist_subset, sector, single_ticker
+    review_intent   TEXT,                  -- monitor, reassess, trade_window, event_followup, weekly_review, monthly_review
+    urgency         TEXT,                  -- low, medium, high, critical
+    earliest_window TEXT,                  -- next_pre_market, next_open, midday, pre_close, post_close, next_trading_day, next_week
+    expiry_at       TIMESTAMP,
+    reason_codes    TEXT,                  -- JSONB array
+    confidence      INTEGER,
+    anti_overtrading_justification TEXT,
     collect         BOOLEAN DEFAULT TRUE,
     "analyze"       BOOLEAN DEFAULT TRUE,
     trade           BOOLEAN,                  -- NULL = use armed state

@@ -97,7 +97,7 @@ class SchedulerService:
         with get_db() as db:
             # Load latest config from DB to ensure it wasn't deleted or paused
             row = db.execute(
-                "SELECT id, name, schedule_type, cron_expression, interval_hours, "
+                "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
                 "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
                 "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
                 "created_at, updated_at FROM cycle_schedules WHERE id = %s", [schedule_id]
@@ -119,6 +119,7 @@ class SchedulerService:
                 "schedule_type",
                 "cron_expression",
                 "interval_hours",
+                "earliest_window",
                 "collect",
                 "analyze",
                 "trade",
@@ -142,6 +143,16 @@ class SchedulerService:
                     "[SCHEDULER] Schedule %s is inactive, skipping.", schedule_id
                 )
                 return
+
+            # Pre-run check from validator
+            try:
+                from app.validation.schedule_validator import ScheduleValidator
+                is_valid, reject_reason = ScheduleValidator.pre_run_check(schedule_id)
+                if not is_valid:
+                    logger.info("[SCHEDULER] Pre-run validation failed for %s: %s", schedule_id, reject_reason)
+                    return
+            except Exception as val_e:
+                logger.warning("[SCHEDULER] Validator error (continuing): %s", val_e)
 
             if s["market_hours_only"] and not SchedulerService._is_market_hours():
                 logger.info(
@@ -265,7 +276,7 @@ class SchedulerService:
         logger.info("[SCHEDULER] Loading schedules from DB...")
         with get_db() as db:
             rows = db.execute(
-                "SELECT id, name, schedule_type, cron_expression, interval_hours, "
+                "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
                 "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
                 "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
                 "created_at, updated_at FROM cycle_schedules WHERE is_active = TRUE"
@@ -277,6 +288,7 @@ class SchedulerService:
                 "schedule_type",
                 "cron_expression",
                 "interval_hours",
+                "earliest_window",
                 "collect",
                 "analyze",
                 "trade",
@@ -330,6 +342,20 @@ class SchedulerService:
             trigger = IntervalTrigger(
                 hours=float(s["interval_hours"]), timezone=local_tz
             )
+        elif s["schedule_type"] == "policy" and s["earliest_window"]:
+            try:
+                from app.services.market_calendar import MarketCalendar
+                from apscheduler.triggers.date import DateTrigger
+                
+                # Check if it was supposed to run in the past but missed
+                run_time = MarketCalendar.get_next_window(s["earliest_window"])
+                if run_time < datetime.now(local_tz):
+                    # It missed its window (e.g. system was down), run immediately
+                    run_time = datetime.now(local_tz) + timedelta(seconds=5)
+                    
+                trigger = DateTrigger(run_date=run_time, timezone=local_tz)
+            except Exception as e:
+                logger.error("[SCHEDULER] Failed to create policy trigger for %s: %s", job_id, e)
 
         if trigger:
             scheduler.add_job(

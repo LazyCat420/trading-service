@@ -109,8 +109,16 @@ def run_migrations(conn):
     _safe_add_column(conn, "sec_13f_holdings", "filing_date", "DATE")
     _safe_add_column(conn, "sec_13f_holdings", "collected_at", "TIMESTAMPTZ")
 
-    # ── Scheduler: max_tickers per scheduled run
+    # ── Scheduler: policy-driven constraints and max_tickers
     _safe_add_column(conn, "cycle_schedules", "max_tickers", "INTEGER")
+    _safe_add_column(conn, "cycle_schedules", "schedule_scope", "TEXT")
+    _safe_add_column(conn, "cycle_schedules", "review_intent", "TEXT")
+    _safe_add_column(conn, "cycle_schedules", "urgency", "TEXT")
+    _safe_add_column(conn, "cycle_schedules", "earliest_window", "TEXT")
+    _safe_add_column(conn, "cycle_schedules", "expiry_at", "TIMESTAMP")
+    _safe_add_column(conn, "cycle_schedules", "reason_codes", "TEXT")
+    _safe_add_column(conn, "cycle_schedules", "confidence", "INTEGER")
+    _safe_add_column(conn, "cycle_schedules", "anti_overtrading_justification", "TEXT")
 
     # ── Pipeline version routing / benchmarking
     _safe_add_column(conn, "cycle_benchmarks", "requested_version", "TEXT")

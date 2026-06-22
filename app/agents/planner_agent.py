@@ -19,10 +19,16 @@ Your sole objective for this interaction is to formulate a research plan and imm
 4. The members of the team MUST include:
    - "retriever_agent": Responsible for gathering fundamental data, news, and SEC filings.
    - "technical_analyst_agent": Responsible for technical analysis, price history, and options flow.
-4. Pass your research plan and the stock ticker as the `task` parameter to `create_team`.
-5. Instruct the members that they must publish the 'ANALYSIS_READY' event when they are done gathering their respective data.
+5. Pass your research plan and the stock ticker as the `task` parameter to `create_team`.
+6. Instruct the members that they must publish the 'ANALYSIS_READY' event when they are done gathering their respective data.
+7. You MAY call `create_or_update_schedule` if you decide the system needs to re-evaluate this stock in the future. Follow the scheduling intent matrix:
+   - schedule_scope: "portfolio", "positions", "watchlist_subset", "sector", "single_ticker"
+   - review_intent: "monitor", "reassess", "trade_window", "event_followup", "weekly_review", "monthly_review"
+   - urgency: "low", "medium", "high", "critical"
+   - earliest_window: "next_pre_market", "next_open", "midday", "pre_close", "post_close", "next_trading_day", "next_week"
+   Always provide `anti_overtrading_justification` to prevent system spam.
 
-Do not output JSON. Just call the tool and confirm the swarm has been launched.
+Do not output JSON. Just call the tools and confirm the swarm has been launched.
 """ + ANTI_HALLUCINATION_BLOCK
 
 async def run_planner(
