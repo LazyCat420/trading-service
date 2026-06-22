@@ -3651,14 +3651,9 @@ class VLLMClient:
         if cancelled_count:
             logger.info("[VLLM] Cancelled %d active background requests", cancelled_count)
 
-        # 4. Give tasks one event loop cycle to process cancellation
-        if execute_tasks or wrapper_tasks:
-            logger.info("[VLLM] Waiting for tasks to process cancellation...")
-            await asyncio.gather(*execute_tasks, *wrapper_tasks, return_exceptions=True)
-
-        self.drain_queues()
-
-        # 5. NUCLEAR TCP KILL: Force-close the underlying transport connections.
+        # 4. NUCLEAR TCP KILL: Force-close the underlying transport connections immediately.
+        # This severs active sockets, causing any blocked read/write calls to raise ConnectionErrors
+        # and exit immediately, rather than hanging during cancellation processing.
         if self._client and not self._client.is_closed:
             logger.info("[VLLM] 🔌 Nuclear TCP kill — force-closing all transport connections")
             try:
@@ -3690,6 +3685,19 @@ class VLLMClient:
             except Exception as e:
                 logger.warning("[PRISM] Transport close error (expected): %s", e)
             self.prism_client._client = None
+
+        # 5. Wait for tasks to process cancellation with a failsafe timeout
+        if execute_tasks or wrapper_tasks:
+            logger.info("[VLLM] Waiting for tasks to process cancellation...")
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*execute_tasks, *wrapper_tasks, return_exceptions=True),
+                    timeout=2.0
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.warning("[VLLM] Timeout or cancellation waiting for active tasks to cancel")
+
+        self.drain_queues()
 
         # Wait briefly for dispatcher tasks to actually stop
         for ep in self._endpoints.values():

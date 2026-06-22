@@ -544,7 +544,7 @@ class LifecycleControllerMixin:
             cycle_task.cancel()
             try:
                 await asyncio.wait_for(cycle_task, timeout=5.0)
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 pass
             T4 = time.monotonic()
             logger.info(
