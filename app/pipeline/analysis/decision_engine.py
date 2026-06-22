@@ -746,6 +746,19 @@ async def analyze_ticker(
     except Exception:
         pass
 
+    from app.services.agent_voice_service import dispatch_agent_quote
+    dispatch_agent_quote(
+        agent_id="trader",
+        archetype="TRADER",
+        context={
+            "ticker": ticker,
+            "cycle_id": cycle_id,
+            "tool": "final_decision",
+            "action_result": f"Verdict: {c_action}",
+            "agent_insight": c_result.get("rationale", "")
+        }
+    )
+
     emit(
         "analyzing",
         f"rlm_config_c_{ticker}",

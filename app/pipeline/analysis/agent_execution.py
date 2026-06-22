@@ -87,6 +87,7 @@ async def run_specialist_agents(
     from app.agents.planner_agent import run_planner
     from app.agents.retriever_agent import run_retriever
     from app.agents.verifier_agent import run_verifier
+    from app.services.agent_voice_service import dispatch_agent_quote
 
     # Fetch ontology context once — shared by planner as baseline knowledge
     if not ontology_context:
@@ -113,6 +114,17 @@ async def run_specialist_agents(
         if planner_capsule:
             await write_capsule_to_db(planner_capsule, _get_resp(planner))
             capsules.append(planner_capsule)
+            dispatch_agent_quote(
+                agent_id="planner",
+                archetype="PLANNER",
+                context={
+                    "ticker": ticker,
+                    "cycle_id": cycle_id,
+                    "tool": "planning",
+                    "action_result": "Planner phase complete",
+                    "agent_insight": _get_resp(planner)
+                }
+            )
         
         # 2. Retriever
         capsule_context = format_capsule_stack(capsules)
@@ -131,6 +143,17 @@ async def run_specialist_agents(
         if retriever_capsule:
             await write_capsule_to_db(retriever_capsule, _get_resp(retriever))
             capsules.append(retriever_capsule)
+            dispatch_agent_quote(
+                agent_id="retriever",
+                archetype="RETRIEVER",
+                context={
+                    "ticker": ticker,
+                    "cycle_id": cycle_id,
+                    "tool": "retrieval",
+                    "action_result": "Retriever phase complete",
+                    "agent_insight": _get_resp(retriever)
+                }
+            )
         
         # 3. Verifier
         capsule_context = format_capsule_stack(capsules)
@@ -149,6 +172,17 @@ async def run_specialist_agents(
         if verifier_capsule:
             await write_capsule_to_db(verifier_capsule, _get_resp(verifier))
             capsules.append(verifier_capsule)
+            dispatch_agent_quote(
+                agent_id="verifier",
+                archetype="VERIFIER",
+                context={
+                    "ticker": ticker,
+                    "cycle_id": cycle_id,
+                    "tool": "verification",
+                    "action_result": "Verifier phase complete",
+                    "agent_insight": _get_resp(verifier)
+                }
+            )
         
         # 4. Synthesizer
         capsules = [c for c in capsules if c]
@@ -197,6 +231,17 @@ async def run_specialist_agents(
         if synthesizer_capsule:
             await write_capsule_to_db(synthesizer_capsule, _get_resp(synthesizer))
             capsules.append(synthesizer_capsule)
+            dispatch_agent_quote(
+                agent_id="synthesizer",
+                archetype="SYNTHESIZER",
+                context={
+                    "ticker": ticker,
+                    "cycle_id": cycle_id,
+                    "tool": "synthesis",
+                    "action_result": "Synthesizer phase complete",
+                    "agent_insight": _get_resp(synthesizer)
+                }
+            )
         
     except PipelineAbortError:
         raise

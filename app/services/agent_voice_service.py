@@ -43,6 +43,11 @@ _VOICE_SUFFIXES = {
     "BEAR": "State your bearish finding to a specific teammate (Priya, Aris, Helen, or Ray). What risk does the data reveal?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
     "RISK": "Flag a risk finding to a specific teammate (Priya, Vance, Aris, or Ray). What is the risk and how severe?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
     "RESEARCH": "State your fundamental finding to a specific teammate (Aris, Vance, Helen, or Ray). What does the data say about business quality?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "PLANNER": "Outline the research plan to the team. What are we looking for?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "RETRIEVER": "State the key facts you found to the Verifier. What does the raw data say?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "VERIFIER": "State your verification results to the Synthesizer. Are there contradictions in the data?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "SYNTHESIZER": "State your final synthesis to the team. What is the consensus?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
+    "TRADER": "Announce the final trading decision with absolute authority. What is the final verdict and why?" + _VOICE_DIRECTNESS + _VOICE_ANTI_FABRICATION,
 }
 
 # Map voice archetypes to persona roles
@@ -53,6 +58,11 @@ _ARCHETYPE_TO_ROLE = {
     "BEAR": "BEHAVIORAL",
     "RISK": "RISK",
     "RESEARCH": "FUNDAMENTAL",
+    "PLANNER": "PLANNER",
+    "RETRIEVER": "RETRIEVER",
+    "VERIFIER": "VERIFIER",
+    "SYNTHESIZER": "SYNTHESIZER",
+    "TRADER": "TRADER",
 }
 
 # Fallback hardcoded prompts (used when store is unavailable)
@@ -86,6 +96,30 @@ _FALLBACK_PROMPTS = {
         "You are Priya, the Fundamental Value Analyst. "
         "You read news, earnings transcripts, balance sheets, and SEC filings. "
         "You believe technical charts are just noise. True value comes from product moats, competitive advantages, and revenue/FCF growth. "
+    ),
+    "PLANNER": (
+        "You are the Research Planner. "
+        "You organize the investigation, breaking down complex analysis into step-by-step tasks. "
+        "You speak clearly and strategically."
+    ),
+    "RETRIEVER": (
+        "You are the Data Retriever. "
+        "You are an expert at extracting exact numbers, quotes, and facts from massive datasets. "
+        "You speak precisely, citing your sources."
+    ),
+    "VERIFIER": (
+        "You are the Fact Verifier. "
+        "You are skeptical and detail-oriented. You cross-reference data and immediately flag contradictions or weak evidence. "
+    ),
+    "SYNTHESIZER": (
+        "You are the Synthesizer (The Boss). "
+        "You take in all the verified evidence and make the final synthesis. "
+        "You speak with authority and clarity."
+    ),
+    "TRADER": (
+        "You are the Lead Trader (The Final Boss). "
+        "You make the hard calls to Buy, Sell, or Hold based on the team's research. "
+        "You speak with absolute finality and conviction."
     ),
 }
 
@@ -154,6 +188,11 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
                     "HELEN": "Helen",
                     "PM": "The Boss",
                     "BOSS": "The Boss",
+                    "PLANNER": "The Planner",
+                    "RETRIEVER": "The Retriever",
+                    "VERIFIER": "The Verifier",
+                    "SYNTHESIZER": "The Boss",
+                    "TRADER": "The Final Boss",
                 }
                 target_name = human_names.get(target.upper(), target)
                 override = f"{target_name}, {message}"
