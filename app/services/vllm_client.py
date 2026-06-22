@@ -3654,20 +3654,16 @@ class VLLMClient:
         # 4. NUCLEAR TCP KILL: Force-close the underlying transport connections immediately.
         # This severs active sockets, causing any blocked read/write calls to raise ReadErrors
         # and exit immediately, rather than hanging during cancellation processing.
-        if self._client and not self._client.is_closed:
+        if self._client:
             logger.info("[VLLM] 🔌 Nuclear TCP kill — force-closing all transport connections via aclose()")
-            try:
-                await self._client.aclose()
-            except Exception as e:
-                logger.warning("[VLLM] Client close error: %s", e)
+            from app.services.request_utils import safe_aclose_client
+            await safe_aclose_client(self._client, name="VLLM")
             self._client = None
 
-        if hasattr(self, "prism_client") and self.prism_client and getattr(self.prism_client, "_client", None) and not self.prism_client._client.is_closed:
+        if hasattr(self, "prism_client") and self.prism_client and getattr(self.prism_client, "_client", None):
             logger.info("[PRISM] 🔌 Nuclear TCP kill — force-closing Prism transport connections via aclose()")
-            try:
-                await self.prism_client._client.aclose()
-            except Exception as e:
-                logger.warning("[PRISM] Client close error: %s", e)
+            from app.services.request_utils import safe_aclose_client
+            await safe_aclose_client(self.prism_client._client, name="PRISM")
             self.prism_client._client = None
 
         # 5. Wait for tasks to process cancellation with a failsafe timeout

@@ -172,3 +172,12 @@ class SmartClient:
     async def pace(self, min_delay: float = 1.0, max_delay: float = 3.0):
         """Random delay between requests to avoid detection."""
         await asyncio.sleep(random.uniform(min_delay, max_delay))
+
+
+async def safe_aclose_client(client: httpx.AsyncClient | None, name: str = "Client") -> None:
+    """Safely close an httpx.AsyncClient asynchronously, catching and logging any exceptions."""
+    if client and not client.is_closed:
+        try:
+            await client.aclose()
+        except Exception as e:
+            logger.warning("[%s] Client close error: %s", name, e)

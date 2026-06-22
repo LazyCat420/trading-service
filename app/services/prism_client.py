@@ -151,10 +151,8 @@ class PrismClient:
 
         # If loop changed, close the old client before creating a new one
         if self._client is not None and client_loop is not current_loop:
-            try:
-                await self._client.aclose()
-            except Exception:
-                pass
+            from app.services.request_utils import safe_aclose_client
+            await safe_aclose_client(self._client, name="PRISM-Recycle")
             self._client = None
             logger.debug("[PRISM] Event loop changed — recycling httpx client")
 
