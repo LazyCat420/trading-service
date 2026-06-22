@@ -374,11 +374,12 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         cycle_control.reset()
                         try:
                             from app.services.vllm_client import llm
+                            await llm.abort_active_requests()
                             llm.reset_kill_switch()
                             if hasattr(llm, "prism_client") and llm.prism_client:
                                 llm.prism_client.cleanup_all_sessions()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.error("[cycle_backend] Failed to clean up LLM sessions: %s", e)
 
                         PipelineService._state = PipelineStateDB.default_state()
                         PipelineService.save_state()

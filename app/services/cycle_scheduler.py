@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 # Use local timezone
 from tzlocal import get_localzone
 
+# Suppress APScheduler execution INFO logs to prevent terminal spam
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
+logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
+
 local_tz = get_localzone()
 
 # Single scheduler instance — misfire_grace_time=3600 means jobs that fire
