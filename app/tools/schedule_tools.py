@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 MAX_ACTIVE_SCHEDULES = 6
 MIN_INTERVAL_HOURS = 1.0
 MAX_INTERVAL_HOURS = 168.0  # 1 week
-DEFAULT_INTERVAL_HOURS = 4.0
-DEFAULT_SCHEDULE_NAME = "Auto-Recovery Schedule"
 
 
 def _count_active_schedules() -> int:
@@ -37,79 +35,6 @@ def _count_active_schedules() -> int:
             "SELECT COUNT(*) FROM cycle_schedules WHERE is_active = TRUE"
         ).fetchone()
         return row[0] if row else 0
-
-
-def _ensure_default_schedule(
-    interval_hours: float = DEFAULT_INTERVAL_HOURS,
-    market_hours_only: bool = True,
-) -> dict:
-    """Create a default schedule if none exist. Used by the Schedule Guardian.
-
-    This is a deterministic safety net — not LLM-driven. It ensures the bot
-    always has at least one schedule to wake itself up.
-
-    Returns:
-        dict with status and job_id (if created)
-    """
-    active = _count_active_schedules()
-    if active > 0:
-        return {"status": "exists", "active_count": active}
-
-    with get_db() as db:
-        job_id = "sch-default"
-        now = datetime.now(timezone.utc).isoformat()
-        db.execute(
-            """
-            INSERT INTO cycle_schedules (
-                id, name, schedule_type, cron_expression, interval_hours,
-                collect, "analyze", trade, tickers, max_tickers, market_hours_only,
-                is_active, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            [
-                job_id,
-                DEFAULT_SCHEDULE_NAME,
-                "interval",
-                None,
-                interval_hours,
-                True,  # collect
-                True,  # analyze
-                None,  # trade = armed (default)
-                "[]",  # watchlist
-                None,  # max_tickers = unlimited
-                market_hours_only,
-                True,  # is_active
-                now,
-                now,
-            ],
-        )
-
-        # Verify the INSERT persisted
-        verify = db.execute(
-            "SELECT id FROM cycle_schedules WHERE id = %s", [job_id]
-        ).fetchone()
-        if not verify:
-            logger.error("[SCHEDULE-TOOL] INSERT did not persist for %s!", job_id)
-            return {"status": "error", "reason": "INSERT did not persist"}
-
-    # Refresh the APScheduler engine so it picks up the new job
-    try:
-        from app.services.cycle_scheduler import SchedulerService
-
-        SchedulerService.refresh_job(job_id)
-    except Exception as e:
-        logger.warning(
-            "[SCHEDULE-TOOL] APScheduler refresh failed (non-fatal, will load on next start): %s",
-            e,
-        )
-
-    logger.info(
-        "[SCHEDULE-TOOL] Created default schedule: %s (every %.1fh, market_hours=%s) — verified in DB",
-        job_id,
-        interval_hours,
-        market_hours_only,
-    )
-    return {"status": "created", "job_id": job_id, "interval_hours": interval_hours}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -177,6 +102,18 @@ def _ensure_default_schedule(
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Explicit tickers this schedule should include.",
+            },
+            "cron_expression": {
+                "type": "string",
+                "description": "Cron expression for the schedule (optional).",
+            },
+            "max_tickers": {
+                "type": "integer",
+                "description": "Max number of discovery tickers to add per run.",
+            },
+            "discovered_tickers": {
+                "type": "integer",
+                "description": "Number of discovered tickers.",
             }
         },
         "required": ["name", "schedule_scope", "review_intent", "urgency", "earliest_window", "anti_overtrading_justification"],
@@ -198,6 +135,9 @@ async def create_or_update_schedule(
     interval_hours: float | None = None,
     update_schedule_id: str | None = None,
     tickers: list[str] | None = None,
+    cron_expression: str | None = None,
+    max_tickers: int | None = None,
+    discovered_tickers: int | None = None,
 ) -> str:
     """Create or update a policy-driven cycle schedule."""
     try:
@@ -220,7 +160,7 @@ async def create_or_update_schedule(
                 "suggestion": "Adjust scope, intent, or provide a catalyst in reason_codes."
             })
             
-        schedule_type = "interval" if interval_hours else "policy"
+        schedule_type = "cron" if cron_expression else ("interval" if interval_hours else "policy")
 
         with get_db() as db:
             if update_schedule_id:
@@ -243,15 +183,17 @@ async def create_or_update_schedule(
                 db.execute(
                     """
                     UPDATE cycle_schedules SET
-                        name = %s, schedule_type = %s, interval_hours = %s,
+                        name = %s, schedule_type = %s, cron_expression = %s, interval_hours = %s,
                         schedule_scope = %s, review_intent = %s, urgency = %s,
                         earliest_window = %s, reason_codes = %s, confidence = %s,
-                        anti_overtrading_justification = %s, tickers = %s, updated_at = %s
+                        anti_overtrading_justification = %s, tickers = %s,
+                        max_tickers = %s, discovered_tickers = %s, updated_at = %s
                     WHERE id = %s
                     """,
                     [
                         name,
                         schedule_type,
+                        cron_expression,
                         interval_hours,
                         schedule_scope,
                         review_intent,
@@ -261,6 +203,8 @@ async def create_or_update_schedule(
                         confidence,
                         anti_overtrading_justification,
                         final_tickers_str,
+                        final_max_tickers,
+                        final_discovered_tickers,
                         now,
                         update_schedule_id,
                     ],
@@ -313,16 +257,17 @@ async def create_or_update_schedule(
                 db.execute(
                     """
                     INSERT INTO cycle_schedules (
-                        id, name, schedule_type, interval_hours,
+                        id, name, schedule_type, cron_expression, interval_hours,
                         schedule_scope, review_intent, urgency, earliest_window,
                         reason_codes, confidence, anti_overtrading_justification,
                         tickers, max_tickers, discovered_tickers, is_active, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         job_id,
                         name,
                         schedule_type,
+                        cron_expression,
                         interval_hours,
                         schedule_scope,
                         review_intent,
@@ -367,6 +312,7 @@ async def create_or_update_schedule(
                         "active_count": active + 1,
                     }
                 )
+
 
     except Exception as e:
         logger.error("[SCHEDULE-TOOL] create_or_update failed: %s", e)

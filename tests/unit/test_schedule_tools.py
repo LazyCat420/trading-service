@@ -56,14 +56,14 @@ async def test_create_schedule_with_custom_parameters(monkeypatch, mock_db):
     params = insert_call[0][1]
     
     # Columns in insert list:
-    # id(0), name(1), schedule_type(2), interval_hours(3), schedule_scope(4), review_intent(5), urgency(6), earliest_window(7), reason_codes(8), confidence(9), anti_overtrading_justification(10), tickers(11), max_tickers(12), discovered_tickers(13), is_active(14), created_at(15), updated_at(16)
+    # id(0), name(1), schedule_type(2), cron_expression(3), interval_hours(4), schedule_scope(5), review_intent(6), urgency(7), earliest_window(8), reason_codes(9), confidence(10), anti_overtrading_justification(11), tickers(12), max_tickers(13), discovered_tickers(14), is_active(15), created_at(16), updated_at(17)
     
     assert params[1] == "Test Follow-up Cycle"
-    assert params[4] == "portfolio"
-    assert params[5] == "monitor"
-    assert params[6] == "medium"
-    assert params[7] == "next_pre_market"
-    assert json.loads(params[11]) == ["AAPL", "TSLA"]
+    assert params[5] == "portfolio"
+    assert params[6] == "monitor"
+    assert params[7] == "medium"
+    assert params[8] == "next_pre_market"
+    assert json.loads(params[12]) == ["AAPL", "TSLA"]
 
 
 @pytest.mark.asyncio
@@ -121,6 +121,6 @@ async def test_update_schedule_merging_provided_values(monkeypatch, mock_db):
     params = update_call[0][1]
     
     # UPDATE parameters:
-    # name(0), schedule_type(1), interval_hours(2), schedule_scope(3), review_intent(4), urgency(5), earliest_window(6), reason_codes(7), confidence(8), anti_overtrading_justification(9), tickers(10), updated_at(11), id(12)
-    assert params[3] == "single_ticker"
-    assert params[10] == '["AAPL"]'
+    # name(0), schedule_type(1), cron_expression(2), interval_hours(3), schedule_scope(4), review_intent(5), urgency(6), earliest_window(7), reason_codes(8), confidence(9), anti_overtrading_justification(10), tickers(11), max_tickers(12), discovered_tickers(13), updated_at(14), id(15)
+    assert params[4] == "single_ticker"
+    assert params[11] == '["AAPL"]'

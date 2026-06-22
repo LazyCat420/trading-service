@@ -120,8 +120,8 @@ class TestScheduleClockBoundary:
         mock_db = MagicMock()
         mock_db.execute.return_value = mock_db
         mock_db.fetchone.return_value = (
-            "sched-1", "Test", "interval", None, 2.0,
-            True, True, True, "[]", None, True, True,  # market_hours_only=True
+            "sched-1", "Test", "interval", None, 2.0, "next_pre_market",
+            True, True, True, "[]", None, None, True,  # market_hours_only=True
             True, None, None, 0, "ok", None,
             "2025-01-01", "2025-01-01",
         )
@@ -151,14 +151,15 @@ class TestScheduleClockBoundary:
         """When market_hours_only=True and inside hours, schedule executes."""
         mock_db = MagicMock()
         mock_db.execute.return_value = mock_db
-        # First fetchone = schedule row, second = pipeline_state (idle)
+        # First fetchone = schedule row, second = ScheduleValidator.pre_run_check row, third = pipeline_state (idle)
         mock_db.fetchone.side_effect = [
             (
-                "sched-2", "Test", "interval", None, 2.0,
-                True, True, True, "[]", None, True, True,  # market_hours_only=True
+                "sched-2", "Test", "interval", None, 2.0, "next_pre_market",
+                True, True, True, "[]", None, None, True,  # market_hours_only=True
                 True, None, None, 0, "ok", None,
                 "2025-01-01", "2025-01-01",
             ),
+            ("portfolio", "monitor", "low", "[]", None),  # validator check
             ("idle",),  # pipeline_state.status
         ]
 
@@ -166,12 +167,15 @@ class TestScheduleClockBoundary:
 
         with patch.object(SchedulerService, "_is_market_hours", return_value=True), \
              patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
+             patch("app.validation.schedule_validator.get_db") as mock_val_get_db, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
             mock_cc.is_stopped = False
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+            mock_val_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_val_get_db.return_value.__exit__ = MagicMock(return_value=False)
 
             await SchedulerService.execute_schedule("sched-2")
 
@@ -197,8 +201,8 @@ class TestPausedSystemSkipsSchedule:
         mock_db.execute.return_value = mock_db
         mock_db.fetchone.side_effect = [
             (
-                "sched-paused", "Test", "interval", None, 2.0,
-                True, True, True, "[]", None, True, False,
+                "sched-paused", "Test", "interval", None, 2.0, "next_pre_market",
+                True, True, True, "[]", None, None, False,
                 True, None, None, 0, "ok", None,
                 "2025-01-01", "2025-01-01",
             ),

@@ -452,32 +452,6 @@ class SchedulerService:
             for job in scheduler.get_jobs():
                 SchedulerService._sync_next_run_to_db(job.id)
 
-            # ── Schedule Guardian (runs AFTER engine start) ──
-            # Break chicken-and-egg: if no schedules exist, create a default
-            # so the bot can autonomously wake itself up without manual triggers.
-            # Must run after scheduler.start() so refresh_job() can register
-            # the new schedule with the APScheduler engine.
-            try:
-                from app.tools.schedule_tools import _ensure_default_schedule
-
-                sg_result = _ensure_default_schedule()
-                if sg_result.get("status") == "created":
-                    logger.warning(
-                        "[SCHEDULER] No active schedules found — created default: %s",
-                        sg_result,
-                    )
-                    # Reload so the newly created schedule is picked up
-                    SchedulerService.load_all_schedules()
-                else:
-                    logger.info(
-                        "[SCHEDULER] Schedule guardian: %d active schedule(s) exist.",
-                        sg_result.get("active_count", 0),
-                    )
-            except Exception as sg_err:
-                logger.warning(
-                    "[SCHEDULER] Schedule guardian failed (non-fatal): %s", sg_err
-                )
-
             # ── Background Stop-Loss Monitor ──
             # Run stop-loss checks for the active bot every 1 minute
             try:
