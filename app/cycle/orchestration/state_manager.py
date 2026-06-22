@@ -618,9 +618,10 @@ class PipelineStateMixin:
             queued_requests = 0
             per_box = {}
             for ep in llm._endpoints.values():
-                # Use client-side state combined with container metrics for real-time responsiveness
-                ep_active = max(ep.active_count, ep.requests_running)
-                ep_queued = max(ep.queue.qsize() if ep.queue else 0, ep.requests_waiting)
+                # Use client-side state only. vLLM server metrics often leak requests on disconnects,
+                # causing the UI to infinitely show '1 active' when the backend is actually idle.
+                ep_active = ep.active_count
+                ep_queued = ep.queue.qsize() if ep.queue else 0
                 active_requests += ep_active
                 queued_requests += ep_queued
                 per_box[ep.name] = {
