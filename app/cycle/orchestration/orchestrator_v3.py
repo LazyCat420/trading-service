@@ -177,7 +177,13 @@ class OrchestratorV3Mixin:
 
             async def run_planner_throttled(t):
                 async with sem:
-                    await run_planner(t, ctx.cycle_id, bot_id)
+                    await run_planner(
+                        t,
+                        ctx.cycle_id,
+                        bot_id,
+                        research_focus=ctx.research_focus.get(t, ""),
+                        is_position=(t in cls._state.get("position_tickers", []))
+                    )
 
             for ticker in tickers_to_process:
                 asyncio.create_task(run_planner_throttled(ticker))

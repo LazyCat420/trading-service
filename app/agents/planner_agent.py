@@ -28,7 +28,9 @@ async def run_planner(
     ticker: str,
     cycle_id: str,
     bot_id: str,
-    ontology_context: str = ""
+    ontology_context: str = "",
+    research_focus: str = "",
+    is_position: bool = False
 ) -> dict:
     """Run the Planner agent to determine what data needs to be gathered."""
     logger.info("[PLANNER] Starting planner for %s", ticker)
@@ -36,6 +38,10 @@ async def run_planner(
     planner_prompt = f"Create an evidence gathering plan for {ticker}."
     if ontology_context:
         planner_prompt += f"\n\nKNOWN CONTEXT (sector/correlations/relationships):\n{ontology_context}"
+    if research_focus:
+        planner_prompt += f"\n\nRESEARCH FOCUS (from Curator):\n{research_focus}"
+    if is_position:
+        planner_prompt += f"\n\nPORTFOLIO STATUS:\nWe currently HOLD an open position in this stock. The research plan should prioritize finding evidence to justify whether we should continue holding or exit/trim the position."
 
     result = await run_agent(
         agent_name="planner",
