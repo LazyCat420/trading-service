@@ -502,9 +502,9 @@ class LifecycleControllerMixin:
         cycle_control.stop()
         logger.info("[STOP_TRACE] T2: cycle_control.stop() called (Δ=%.3fs from T1)", T2 - _t_base)
 
-        # ── Step 3: Stop new LLM requests (do not abort active) ──
+        # ── Step 3: Stop new LLM requests and abort active ──
         try:
-            llm._killed = True
+            await llm.abort_active_requests()
         except Exception:
             pass
         T3 = time.monotonic()
@@ -678,13 +678,17 @@ class LifecycleControllerMixin:
         # requests from being sent to Prism while cleanup runs.
         try:
             from app.services.vllm_client import llm
-            llm._killed = True
-            # DO NOT cancel active requests. Allow the current generation to finish gracefully 
-            # so the backend wait-state syncs with Prism's remote execution.
-            llm.drain_queues()
-            logger.info("[CYCLE] Kill switch engaged immediately on stop request (active requests retained)")
-        except Exception:
-            pass
+            # Instantly cancel active requests and close the HTTP connection so vLLM stops processing
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(llm.abort_active_requests())
+            except RuntimeError:
+                llm._killed = True
+                llm.cancel_active_requests()
+                llm.drain_queues()
+            logger.info("[CYCLE] Kill switch engaged immediately on stop request (active requests aborted and TCP closed)")
+        except Exception as e:
+            logger.error("[CYCLE] Failed to abort LLM requests: %s", e)
 
         # 2. Set state to 'stopping' so UI reflects it instantly
         cls._state["status"] = "stopping"
