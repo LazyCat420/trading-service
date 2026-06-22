@@ -305,7 +305,9 @@ async def run_agent(
         agent_tools = get_agent_tools(agent_name) if enable_tools else []
 
         # Try routing via Prism agent harness first if routing is enabled and healthy
-        if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
+        # CRITICAL: Bypass planner agent to ensure it runs locally and uses our python-side create_team tool
+        # (which auto-publishes ANALYSIS_READY and sets correct sub-agent conversation titles).
+        if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING and agent_name != "planner":
             try:
                 prism_healthy = await llm.prism_client.check_health()
                 if prism_healthy:
