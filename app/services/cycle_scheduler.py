@@ -167,6 +167,7 @@ class SchedulerService:
                 "trade": bool(s["trade"]) if s["trade"] is not None else True,
                 "max_tickers": s.get("max_tickers"),
                 "discovered_tickers": s.get("discovered_tickers"),
+                "dynamic_selection_mode": True,
             }
 
             logger.info(

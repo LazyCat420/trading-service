@@ -340,6 +340,25 @@ async def create_team(
         tasks = [run_member(m, i) for i, m in enumerate(members)]
         results = await asyncio.gather(*tasks)
         
+    # Auto-publish ANALYSIS_READY so the orchestrator unblocks and proceeds to trading
+    if ticker:
+        try:
+            from app.cycle.orchestration.event_bus import event_bus
+            payload_data = {
+                "team_name": name,
+                "topology": topology,
+                "status": "complete"
+            }
+            event_bus.publish("ANALYSIS_READY", {
+                "ticker": ticker,
+                "cycle_id": cycle_id,
+                "source_agent": "create_team_tool",
+                "data": payload_data
+            })
+            logger.info(f"[create_team] Successfully published ANALYSIS_READY for {ticker}")
+        except Exception as e:
+            logger.error(f"[create_team] Failed to auto-publish ANALYSIS_READY: {e}")
+
     return json.dumps({
         "team_name": name,
         "topology": topology,

@@ -481,10 +481,13 @@ class LifecycleControllerMixin:
         cycle_control.stop()
         logger.info("[STOP_TRACE] T2: cycle_control.stop() called (Δ=%.3fs from T1)", T2 - _t_base)
 
-        # ── Step 3: Kill LLM requests ──
-        await llm.abort_active_requests()
+        # ── Step 3: Stop new LLM requests (do not abort active) ──
+        try:
+            llm._killed = True
+        except Exception:
+            pass
         T3 = time.monotonic()
-        logger.info("[STOP_TRACE] T3: llm.abort_active_requests() done (Δ=%.3fs)", T3 - _t_base)
+        logger.info("[STOP_TRACE] T3: llm._killed = True (Δ=%.3fs)", T3 - _t_base)
 
         # ── Step 4: Cancel subsidiary tasks via registry + class attrs ──
         for name, task in [
@@ -516,15 +519,22 @@ class LifecycleControllerMixin:
             cls._cycle_task = None
         else:
             T4_start = time.monotonic()
-            logger.info("[STOP_TRACE] T4: task.cancel() called (task_id=%s)", id(cycle_task))
-            cycle_task.cancel()
+            logger.info("[STOP_TRACE] T4: Waiting for cycle_task to finish gracefully (task_id=%s)", id(cycle_task))
             try:
-                await asyncio.wait_for(cycle_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                # Give it up to 120s to finish the current Prism request
+                await asyncio.wait_for(cycle_task, timeout=120.0)
+            except asyncio.TimeoutError:
+                logger.warning("[STOP_TRACE] cycle_task did not finish in 120s, cancelling...")
+                cycle_task.cancel()
+                try:
+                    await asyncio.wait_for(cycle_task, timeout=5.0)
+                except Exception:
+                    pass
+            except Exception:
                 pass
             T4 = time.monotonic()
             logger.info(
-                "[STOP_TRACE] T4: await task returned (Δ=%.3fs — cancellation latency)",
+                "[STOP_TRACE] T4: await task returned (Δ=%.3fs)",
                 T4 - T4_start,
             )
             cls._cycle_task = None
@@ -648,9 +658,10 @@ class LifecycleControllerMixin:
         try:
             from app.services.vllm_client import llm
             llm._killed = True
-            llm.cancel_active_requests()
+            # DO NOT cancel active requests. Allow the current generation to finish gracefully 
+            # so the backend wait-state syncs with Prism's remote execution.
             llm.drain_queues()
-            logger.info("[CYCLE] Kill switch engaged immediately on stop request")
+            logger.info("[CYCLE] Kill switch engaged immediately on stop request (active requests retained)")
         except Exception:
             pass
 

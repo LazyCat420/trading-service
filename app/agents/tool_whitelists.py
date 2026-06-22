@@ -261,6 +261,8 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         # Performance
         "get_performance_metrics",
         "audit_decision_quality",
+        # Trading Cycle Control
+        "start_trading_cycle",
     ],
     # ── V3 Family Office Worker Agents ──
     "v3_worker_quant": [

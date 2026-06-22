@@ -233,3 +233,67 @@ async def search_trading_skills(ticker: str) -> str:
         return json.dumps({"status": "error", "ticker": ticker, "message": str(e)})
 
 
+
+# ── Tool 8: Start Trading Cycle ─────────────────────────────────────────
+@registry.register(
+    name="start_trading_cycle",
+    description=(
+        "Start a new trading cycle. Use this when the user explicitly asks to run "
+        "or start a cycle. You can optionally provide a list of tickers to focus on."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "tickers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of stock tickers to process. Leave empty to use auto-discovery.",
+            },
+            "collect": {
+                "type": "boolean",
+                "description": "Whether to run the data collection phase. Default True.",
+            },
+            "analyze": {
+                "type": "boolean",
+                "description": "Whether to run the analysis phase. Default True.",
+            },
+            "trade": {
+                "type": "boolean",
+                "description": "Whether to execute trades. Default True.",
+            }
+        },
+    },
+    tier=1,
+    source="internal_db",
+    tags=["pipeline", "start", "cycle", "trigger"],
+)
+async def start_trading_cycle(tickers: list[str] = None, collect: bool = True, analyze: bool = True, trade: bool = True) -> str:
+    """Trigger a new trading cycle by writing a system command."""
+    try:
+        import uuid
+        from app.db.connection import get_db
+
+        job_id = f"job_{uuid.uuid4().hex[:8]}"
+        payload = {
+            "tickers": tickers or [],
+            "collect": collect,
+            "analyze": analyze,
+            "trade": trade,
+            "start_fresh": False,
+        }
+
+        with get_db() as db:
+            db.execute(
+                "INSERT INTO system_commands (id, command_type, payload, status) VALUES (%s, %s, %s, 'pending')",
+                [job_id, "START_CYCLE", json.dumps(payload)],
+            )
+
+        return json.dumps({
+            "status": "success",
+            "message": f"Trading cycle started successfully with job ID {job_id}.",
+            "job_id": job_id
+        })
+    except Exception as e:
+        logger.exception("[PipelineTools] start_trading_cycle failed")
+        return json.dumps({"status": "error", "message": str(e)})
+
