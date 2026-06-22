@@ -479,7 +479,8 @@ class PrismClient:
         model = normalize_prism_model(model)
         if ticker:
             ticker = ticker.upper()
-        title_parts = [agent_name]
+        display_name = actor_label or agent_name
+        title_parts = [display_name]
         if ticker:
             title_parts.append(ticker)
         if cycle_id:

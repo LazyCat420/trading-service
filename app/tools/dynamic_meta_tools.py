@@ -198,6 +198,7 @@ async def create_team(
 ) -> str:
     """Spawn a team of sub-agents to perform tasks with branched topology logic."""
     results = []
+    insights = {}
     ticker = kwargs.get("ticker", "")
     cycle_id = kwargs.get("cycle_id", "")
     
@@ -224,8 +225,10 @@ async def create_team(
                     priority=Priority.LOW,
                     ticker=ticker,
                     cycle_id=cycle_id,
+                    actor_label=agent_role,
                 )
                 current_context = response_text
+                insights[agent_role.lower()] = response_text
                 results.append({
                     "description": desc,
                     "status": "success",
@@ -254,7 +257,9 @@ async def create_team(
                     priority=Priority.LOW,
                     ticker=ticker,
                     cycle_id=cycle_id,
+                    actor_label=agent_role,
                 )
+                insights[agent_role.lower()] = response_text
                 return {
                     "description": desc,
                     "status": "success",
@@ -292,7 +297,9 @@ async def create_team(
                 priority=Priority.NORMAL,
                 ticker=ticker,
                 cycle_id=cycle_id,
+                actor_label="synthesizer",
             )
+            insights["synthesis"] = final_response
             results = [{
                 "description": "Map-Reduce Synthesis",
                 "status": "success",
@@ -323,7 +330,9 @@ async def create_team(
                     priority=Priority.LOW,
                     ticker=ticker,
                     cycle_id=cycle_id,
+                    actor_label=agent_role,
                 )
+                insights[agent_role.lower()] = response_text
                 return {
                     "description": desc,
                     "status": "success",
@@ -347,7 +356,8 @@ async def create_team(
             payload_data = {
                 "team_name": name,
                 "topology": topology,
-                "status": "complete"
+                "status": "complete",
+                "agent_insights": insights
             }
             event_bus.publish("ANALYSIS_READY", {
                 "ticker": ticker,
