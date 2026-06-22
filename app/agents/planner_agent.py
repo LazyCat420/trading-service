@@ -204,7 +204,7 @@ async def run_ticker_curator(
             candidate_theses[ticker] = "No prior thesis/report exists for this stock."
 
     # Batch process candidates
-    CHUNK_SIZE = 15
+    CHUNK_SIZE = 5
     chunks = [candidates[i:i + CHUNK_SIZE] for i in range(0, len(candidates), CHUNK_SIZE)]
 
     async def process_chunk(chunk: list[str]) -> dict:
@@ -247,7 +247,14 @@ async def run_ticker_curator(
         )
 
     logger.info("[CURATOR] Running Curator agent in %d chunks for %d candidates...", len(chunks), len(candidates))
-    tasks = [process_chunk(chunk) for chunk in chunks]
+    
+    sem = asyncio.Semaphore(3)
+    
+    async def process_chunk_throttled(chunk: list[str]) -> dict:
+        async with sem:
+            return await process_chunk(chunk)
+            
+    tasks = [process_chunk_throttled(chunk) for chunk in chunks]
     chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     merged_result = {

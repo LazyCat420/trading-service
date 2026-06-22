@@ -96,9 +96,9 @@ class Settings(BaseSettings):
     MIN_MARKET_CAP: float = 50_000_000  # $50M floor — reject OTC/penny
     CYCLE_TIMEOUT_MINUTES: int = 120  # 2-hour hard cap per cycle
     V2_TICKER_CONCURRENCY: int = (
-        4  # parallel tickers — reduced from 8; each worker spawns 6-10 LLM calls,
+        2  # parallel tickers — reduced from 8; each worker spawns 6-10 LLM calls,
         # so 8 workers = 48-80 concurrent requests → vLLM saturation → mass thesis timeouts.
-        # 4 workers keeps total LLM load at ~24-40, within adaptive concurrency ceiling.
+        # 2 workers keeps total LLM load within adaptive concurrency ceiling.
     )
     VLLM_FUTURE_TIMEOUT: int = 900  # seconds before a hung LLM future is killed (aligned with batch timeout)
     ANALYSIS_WORKER_TIMEOUT_SECONDS: int = (
