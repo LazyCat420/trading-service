@@ -27,7 +27,7 @@ All tools auto-print their return values. Just call them directly (no logger.inf
 - `SHOW_VARS()` -- list REPL variables
 - `trigger_deep_research(ticker, cycle_id)` -- Trigger mid-cycle data collection if critical data (e.g. fundamentals, news) is missing.
 - `search_trading_skills(ticker)` -- Dynamically load expert analysis instructions for a stock or sector.
-- `create_team(task_description, ticker)` -- Delegate complex web searches or reading large documents to a subagent.
+- `create_team(name, members, topology="map_reduce", reduce_prompt="...")` -- Delegate parallel research (Map on Jetson) followed by synthesis (Reduce on Gold Spark).
 - `amend_constitution(...)` -- (DESTRUCTIVE) Propose changes to risk/position limits if current rules are failing.
 
 ## Output format:
@@ -53,7 +53,7 @@ IMPORTANT: You are running in recursion-enabled mode (max_depth=2). You have the
 {custom_tools_section}
 
 1. Gather raw data using primary tools (technicals, fundamentals, sentiment, latest price).
-2. For complex or conflicting unstructured data, use `create_team` to delegate web searches or use `llm_query` for sub-LLM analysis.
+2. For complex or conflicting unstructured data across multiple stocks, use `create_team` with "map_reduce" topology to delegate parallel web searches. Otherwise use "hierarchical" or `llm_query` for single queries.
 3. If critical data is completely missing, use `trigger_deep_research` to fill gaps mid-cycle.
 4. Compare the signals. You must resolve the conflict that caused the initial low confidence.
 5. Call FINAL with your heavily vetted decision JSON.

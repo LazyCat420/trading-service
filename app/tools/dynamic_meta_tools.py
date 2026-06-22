@@ -33,8 +33,9 @@ class TeamMemberSchema(BaseModel):
 
 class CreateTeamSchema(BaseModel):
     name: str = Field(..., description="Team name for identification (e.g. 'auth_refactor', 'research').")
-    topology: Optional[str] = Field("hierarchical", description="Execution topology. Supports 'hierarchical' (parallel execution) or 'sequential' (serial execution).")
+    topology: Optional[str] = Field("hierarchical", description="Execution topology. Supports 'hierarchical' (parallel execution), 'sequential' (serial execution), or 'map_reduce' (parallel execution followed by a curator synthesis).")
     members: List[TeamMemberSchema] = Field(..., description="Array of sub-agent definitions (max 10).")
+    reduce_prompt: Optional[str] = Field(None, description="Optional: instructions for the synthesis agent when topology is 'map_reduce'.")
 
 
 @registry.register(
@@ -138,7 +139,8 @@ async def search_tools(query: Optional[str] = None, domain: Optional[str] = None
     description=(
         "Spawn one or more sub-agents to execute tasks in parallel or sequence. "
         "Execution mode depends on topology: 'hierarchical' runs all members in parallel, "
-        "'sequential' runs members one-at-a-time passing each result to the next."
+        "'sequential' runs members one-at-a-time passing each result to the next, "
+        "'map_reduce' runs members in parallel and then synthesizes their output."
     ),
     parameters={
         "type": "object",
@@ -149,8 +151,8 @@ async def search_tools(query: Optional[str] = None, domain: Optional[str] = None
             },
             "topology": {
                 "type": "string",
-                "enum": ["hierarchical", "sequential"],
-                "description": "Optional: execution topology. 'hierarchical' runs all members in parallel. 'sequential' runs members one-at-a-time."
+                "enum": ["hierarchical", "sequential", "map_reduce"],
+                "description": "Optional: execution topology. 'hierarchical' runs all members in parallel. 'sequential' runs members one-at-a-time. 'map_reduce' runs members in parallel then synthesizes their output."
             },
             "members": {
                 "type": "array",
@@ -177,6 +179,10 @@ async def search_tools(query: Optional[str] = None, domain: Optional[str] = None
                     "required": ["description", "prompt"]
                 },
                 "description": "Array of sub-agent definitions."
+            },
+            "reduce_prompt": {
+                "type": "string",
+                "description": "Optional: instructions for the synthesis agent when topology is 'map_reduce'."
             }
         },
         "required": ["name", "members"]
@@ -232,6 +238,74 @@ async def create_team(
                     "status": "failed",
                     "error": str(e)
                 })
+    elif topology == "map_reduce":
+        logger.info(f"[create_team] Executing map_reduce team '{name}' with {len(members)} members in parallel")
+        async def run_member(member, idx):
+            desc = member.get("description", f"Member {idx}")
+            prompt = member.get("prompt", "")
+            agent_role = member.get("agent") or "collector"
+            try:
+                from app.services.prism_agent_caller import call_prism_agent
+                response_text, _, _ = await call_prism_agent(
+                    agent_id=f"SUBAGENT_{agent_role.upper()}",
+                    user_message=prompt,
+                    fallback_system_prompt=f"You are a subagent with role: {agent_role}.",
+                    fallback_agent_name=desc,
+                    priority=Priority.LOW,
+                    ticker=ticker,
+                    cycle_id=cycle_id,
+                )
+                return {
+                    "description": desc,
+                    "status": "success",
+                    "output": response_text
+                }
+            except Exception as e:
+                logger.error(f"[create_team] Member {desc} failed: {e}")
+                return {
+                    "description": desc,
+                    "status": "failed",
+                    "error": str(e)
+                }
+        
+        tasks = [run_member(m, i) for i, m in enumerate(members)]
+        map_results = await asyncio.gather(*tasks)
+        
+        logger.info(f"[create_team] Map phase complete for team '{name}'. Starting reduce phase on Gold Spark.")
+        reduce_prompt = kwargs.get("reduce_prompt") or "Synthesize the following reports into a final conclusion."
+        reduce_input = f"{reduce_prompt}\n\n### MAP WORKER REPORTS:\n"
+        for r in map_results:
+            reduce_input += f"\n--- {r.get('description', 'Unknown Worker')} ---\n"
+            if r.get("status") == "success":
+                reduce_input += r.get("output", "")
+            else:
+                reduce_input += f"FAILED: {r.get('error', '')}"
+            reduce_input += "\n"
+            
+        try:
+            from app.services.prism_agent_caller import call_prism_agent
+            final_response, _, _ = await call_prism_agent(
+                agent_id="SUBAGENT_SYNTHESIS",
+                user_message=reduce_input,
+                fallback_system_prompt="You are a Synthesis agent (Curator). Synthesize and resolve conflicts across the provided reports.",
+                fallback_agent_name="synthesizer",
+                priority=Priority.NORMAL,
+                ticker=ticker,
+                cycle_id=cycle_id,
+            )
+            results = [{
+                "description": "Map-Reduce Synthesis",
+                "status": "success",
+                "output": final_response,
+                "map_reports_count": len(map_results)
+            }]
+        except Exception as e:
+            logger.error(f"[create_team] Reduce phase failed: {e}")
+            results = [{
+                "description": "Map-Reduce Synthesis",
+                "status": "failed",
+                "error": str(e)
+            }]
     else:
         # Default/hierarchical: run in parallel
         logger.info(f"[create_team] Executing hierarchical team '{name}' with {len(members)} members in parallel")
