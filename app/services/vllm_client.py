@@ -3652,38 +3652,22 @@ class VLLMClient:
             logger.info("[VLLM] Cancelled %d active background requests", cancelled_count)
 
         # 4. NUCLEAR TCP KILL: Force-close the underlying transport connections immediately.
-        # This severs active sockets, causing any blocked read/write calls to raise ConnectionErrors
+        # This severs active sockets, causing any blocked read/write calls to raise ReadErrors
         # and exit immediately, rather than hanging during cancellation processing.
         if self._client and not self._client.is_closed:
-            logger.info("[VLLM] 🔌 Nuclear TCP kill — force-closing all transport connections")
+            logger.info("[VLLM] 🔌 Nuclear TCP kill — force-closing all transport connections via aclose()")
             try:
-                transport = self._client._transport
-                if hasattr(transport, "_pool"):
-                    pool = transport._pool
-                    for conn in list(getattr(pool, "_connections", [])):
-                        try:
-                            conn.close()
-                        except Exception:
-                            pass
-                transport.close()
+                await self._client.aclose()
             except Exception as e:
-                logger.warning("[VLLM] Transport close error (expected): %s", e)
+                logger.warning("[VLLM] Client close error: %s", e)
             self._client = None
 
         if hasattr(self, "prism_client") and self.prism_client and getattr(self.prism_client, "_client", None) and not self.prism_client._client.is_closed:
-            logger.info("[PRISM] 🔌 Nuclear TCP kill — force-closing Prism transport connections")
+            logger.info("[PRISM] 🔌 Nuclear TCP kill — force-closing Prism transport connections via aclose()")
             try:
-                transport = self.prism_client._client._transport
-                if hasattr(transport, "_pool"):
-                    pool = transport._pool
-                    for conn in list(getattr(pool, "_connections", [])):
-                        try:
-                            conn.close()
-                        except Exception:
-                            pass
-                transport.close()
+                await self.prism_client._client.aclose()
             except Exception as e:
-                logger.warning("[PRISM] Transport close error (expected): %s", e)
+                logger.warning("[PRISM] Client close error: %s", e)
             self.prism_client._client = None
 
         # 5. Wait for tasks to process cancellation with a failsafe timeout

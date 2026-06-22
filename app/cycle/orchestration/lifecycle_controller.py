@@ -511,6 +511,7 @@ class LifecycleControllerMixin:
         logger.info("[STOP_TRACE] T3: llm._killed = True (Δ=%.3fs)", T3 - _t_base)
 
         # ── Step 4: Cancel subsidiary tasks via registry + class attrs ──
+        tasks_to_await = []
         for name, task in [
             ("scout", getattr(cls, "_scout_task", None)),
             ("consumer", getattr(cls, "_consumer_task", None)),
@@ -521,10 +522,15 @@ class LifecycleControllerMixin:
             if task and not task.done():
                 logger.info("[CYCLE] Cancelling %s task...", name)
                 task.cancel()
-                try:
-                    await asyncio.wait_for(task, timeout=1.0)
-                except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                    pass
+                tasks_to_await.append(task)
+        if tasks_to_await:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks_to_await, return_exceptions=True),
+                    timeout=1.0
+                )
+            except Exception:
+                pass
         cls._scout_task = None
         cls._consumer_task = None
         cls._checkpoint_task = None
@@ -543,7 +549,7 @@ class LifecycleControllerMixin:
             logger.info("[STOP_TRACE] T4: Cancelling cycle_task immediately to abort HTTP connections (task_id=%s)", id(cycle_task))
             cycle_task.cancel()
             try:
-                await asyncio.wait_for(cycle_task, timeout=5.0)
+                await asyncio.wait_for(cycle_task, timeout=1.5)
             except (Exception, asyncio.CancelledError):
                 pass
             T4 = time.monotonic()
