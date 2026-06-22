@@ -540,17 +540,10 @@ class LifecycleControllerMixin:
             cls._cycle_task = None
         else:
             T4_start = time.monotonic()
-            logger.info("[STOP_TRACE] T4: Waiting for cycle_task to finish gracefully (task_id=%s)", id(cycle_task))
+            logger.info("[STOP_TRACE] T4: Cancelling cycle_task immediately to abort HTTP connections (task_id=%s)", id(cycle_task))
+            cycle_task.cancel()
             try:
-                # Give it up to 120s to finish the current Prism request
-                await asyncio.wait_for(cycle_task, timeout=120.0)
-            except asyncio.TimeoutError:
-                logger.warning("[STOP_TRACE] cycle_task did not finish in 120s, cancelling...")
-                cycle_task.cancel()
-                try:
-                    await asyncio.wait_for(cycle_task, timeout=5.0)
-                except Exception:
-                    pass
+                await asyncio.wait_for(cycle_task, timeout=5.0)
             except Exception:
                 pass
             T4 = time.monotonic()
