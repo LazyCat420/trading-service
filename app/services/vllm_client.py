@@ -1181,14 +1181,20 @@ class VLLMClient:
             # As of Phase 3 (Unified Telemetry), ALL endpoints route
             # through Prism so that every request is tracked and visible.
             from app.services.prism_agent_caller import _prism_breaker
+            
+            # Bypass Prism for all automated pipeline requests (priority > Priority.HIGH)
+            # so that HTTP socket disconnects directly hit Jetson and abort vLLM natively.
+            bypass_prism = (item.priority > Priority.HIGH)
+            
             use_prism_agent = (
                 self.prism_client.enabled
                 and settings.PRISM_AGENT_ROUTING
                 and meta.get("agent_name") != "pre_trade"
+                and not bypass_prism
                 and not _prism_breaker.is_open
             )
             
-            logger.info("[VLLM] Routing for %s (priority=%s): use_prism_agent=%s", meta.get("agent_name"), item.priority, use_prism_agent)
+            logger.info("[VLLM] Routing for %s (priority=%s): use_prism_agent=%s (bypass=%s)", meta.get("agent_name"), item.priority, use_prism_agent, bypass_prism)
             
             prism_routed = False
 

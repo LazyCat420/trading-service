@@ -99,10 +99,18 @@ class AgentInboxManager:
         """List currently active running agent instances (pruning stale ones)."""
         now = datetime.datetime.now(datetime.timezone.utc)
         stale_ids = []
-        for inst_id, info in self._active_instances.items():
-            reg_time = datetime.datetime.fromisoformat(info["registered_at"])
-            if (now - reg_time).total_seconds() > 300:
+        for inst_id, info in list(self._active_instances.items()):
+            reg_at_str = info.get("registered_at")
+            if not reg_at_str:
                 stale_ids.append(inst_id)
+                continue
+            try:
+                reg_time = datetime.datetime.fromisoformat(reg_at_str)
+                if (now - reg_time).total_seconds() > 300:
+                    stale_ids.append(inst_id)
+            except Exception:
+                stale_ids.append(inst_id)
+
         for inst_id in stale_ids:
             try:
                 del self._active_instances[inst_id]
