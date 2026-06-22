@@ -331,14 +331,14 @@ async def run_news_discovery(
         import asyncio
         raw_response = await asyncio.wait_for(
             _call_discovery_llm(data_snapshot),
-            timeout=60.0,
+            timeout=300.0,
         )
     except asyncio.TimeoutError:
         llm_ms = int((time.monotonic() - t0) * 1000)
-        logger.warning("[DISCOVERY] LLM call timed out after 60s")
+        logger.warning("[DISCOVERY] LLM call timed out after 300s")
         emit(
             "collecting", "discovery_timeout",
-            "Phase 0: Discovery LLM timed out (60s) — continuing without new discoveries",
+            "Phase 0: Discovery LLM timed out (300s) — continuing without new discoveries",
             status="warning",
             elapsed_ms=llm_ms,
         )
