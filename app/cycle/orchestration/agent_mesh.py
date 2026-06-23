@@ -124,23 +124,121 @@ class CuratorMeshNode(AgentMeshNode):
             })
 
 
-class PlannerMeshNode(AgentMeshNode):
+class SectorClusteringMeshNode(AgentMeshNode):
     def __init__(self):
-        super().__init__("planner")
+        super().__init__("sector_clustering")
 
     def register_subscriptions(self):
         self.subscribe("TICKERS_DISCOVERED", self.on_tickers_discovered)
 
     async def on_tickers_discovered(self, payload: dict):
         cycle_id = payload.get("cycle_id")
-        bot_id = payload.get("bot_id", "system")
+        bot_id = payload.get("bot_id")
         selected_tickers = payload.get("selected_tickers", [])
-        research_focus = payload.get("research_focus", {})
-        position_tickers = payload.get("position_tickers", [])
+        
+        try:
+            from app.graph.sector_collector import collect_metadata
+            from app.db.connection import get_db
+            
+            # Ensure metadata is updated
+            await collect_metadata(selected_tickers)
+            
+            sector_map = {}
+            with get_db() as db:
+                for t in selected_tickers:
+                    row = db.execute("SELECT sector FROM ticker_metadata WHERE ticker = %s", [t]).fetchone()
+                    sector = row["sector"] if row else "Unknown"
+                    if sector not in sector_map:
+                        sector_map[sector] = []
+                    sector_map[sector].append(t)
+            
+            payload["sector_map"] = sector_map
+            logger.info(f"[SectorClusteringNode] Clustered {len(selected_tickers)} tickers into {len(sector_map)} sectors.")
+            event_bus.publish("TICKERS_CLUSTERED", payload)
+        except Exception as e:
+            logger.error(f"[SectorClusteringNode] Clustering failed: {e}", exc_info=True)
+            payload["sector_map"] = {"Unknown": selected_tickers}
+            event_bus.publish("TICKERS_CLUSTERED", payload)
 
-        # Start Planner for each ticker concurrently
-        tasks = [self.process_ticker(ticker, cycle_id, bot_id, research_focus.get(ticker, ""), ticker in position_tickers) for ticker in selected_tickers]
-        await asyncio.gather(*tasks)
+
+class TickerDispatcherMeshNode(AgentMeshNode):
+    def __init__(self, max_concurrent: int = 4):
+        super().__init__("ticker_dispatcher")
+        self.max_concurrent = max_concurrent
+        self._lock = asyncio.Lock()
+        
+        # State
+        self.pending_tickers = []
+        self.active_tickers = set()
+        self.base_payload = {}
+
+    def register_subscriptions(self):
+        self.subscribe("TICKERS_CLUSTERED", self.on_tickers_clustered)
+        self.subscribe("TRADE_COMPLETE", self.on_trade_complete)
+        self.subscribe("CYCLE_ABORTED", self.on_cycle_aborted)
+        self.subscribe("CYCLE_COMPLETED", self.on_cycle_aborted)
+
+    async def on_tickers_clustered(self, payload: dict):
+        selected_tickers = payload.get("selected_tickers", [])
+        
+        async with self._lock:
+            self.base_payload = payload
+            self.pending_tickers.extend(selected_tickers)
+            logger.info(f"[DispatcherNode] Received {len(selected_tickers)} tickers. Pending: {len(self.pending_tickers)}")
+            await self._dispatch_next()
+
+    async def on_trade_complete(self, payload: dict):
+        ticker = payload.get("ticker")
+        async with self._lock:
+            if ticker in self.active_tickers:
+                self.active_tickers.remove(ticker)
+                logger.info(f"[DispatcherNode] Ticker {ticker} completed pipeline. Active: {len(self.active_tickers)}")
+            await self._dispatch_next()
+
+    async def on_cycle_aborted(self, payload: dict):
+        async with self._lock:
+            self.pending_tickers.clear()
+            self.active_tickers.clear()
+
+    async def _dispatch_next(self):
+        while len(self.active_tickers) < self.max_concurrent and self.pending_tickers:
+            next_ticker = self.pending_tickers.pop(0)
+            self.active_tickers.add(next_ticker)
+            
+            logger.info(f"[DispatcherNode] Dispatching {next_ticker}. Active: {len(self.active_tickers)}/{self.max_concurrent}")
+            
+            cycle_id = self.base_payload.get("cycle_id")
+            bot_id = self.base_payload.get("bot_id", "system")
+            research_focus = self.base_payload.get("research_focus", {})
+            position_tickers = self.base_payload.get("position_tickers", [])
+            sector_map = self.base_payload.get("sector_map", {})
+            
+            event_bus.publish("TICKER_DISPATCHED", {
+                "cycle_id": cycle_id,
+                "bot_id": bot_id,
+                "ticker": next_ticker,
+                "research_focus": research_focus.get(next_ticker, ""),
+                "is_position": next_ticker in position_tickers,
+                "sector_map": sector_map
+            })
+
+
+class PlannerMeshNode(AgentMeshNode):
+    def __init__(self):
+        super().__init__("planner")
+
+    def register_subscriptions(self):
+        self.subscribe("TICKER_DISPATCHED", self.on_ticker_dispatched)
+
+    async def on_ticker_dispatched(self, payload: dict):
+        cycle_id = payload.get("cycle_id")
+        bot_id = payload.get("bot_id", "system")
+        ticker = payload.get("ticker")
+        focus = payload.get("research_focus", "")
+        is_pos = payload.get("is_position", False)
+
+        # Process single ticker dispatched by the concurrency window
+        await self.process_ticker(ticker, cycle_id, bot_id, focus, is_pos)
 
     async def process_ticker(self, ticker: str, cycle_id: str, bot_id: str, focus: str, is_pos: bool):
         logger.info(f"[PlannerNode] Formulating research plan for {ticker}")
@@ -476,14 +574,102 @@ class DebateMeshNode(AgentMeshNode):
         asyncio.create_task(run_pipeline())
 
 
+class SectorDebateMeshNode(AgentMeshNode):
+    def __init__(self):
+        super().__init__("sector_debate")
+        self._states = {}
+        self._sector_maps = {}
+        self._lock = asyncio.Lock()
+
+    def register_subscriptions(self):
+        self.subscribe("TICKERS_CLUSTERED", self.on_tickers_clustered)
+        self.subscribe("DEBATE_READY", self.on_debate_ready)
+        self.subscribe("CYCLE_ABORTED", self.on_cycle_aborted)
+
+    async def on_tickers_clustered(self, payload: dict):
+        cycle_id = payload.get("cycle_id")
+        sector_map = payload.get("sector_map", {})
+        async with self._lock:
+            self._sector_maps[cycle_id] = sector_map
+            self._states[cycle_id] = {sector: [] for sector in sector_map.keys()}
+
+    async def on_debate_ready(self, payload: dict):
+        cycle_id = payload.get("cycle_id")
+        ticker = payload.get("ticker")
+        
+        async with self._lock:
+            if cycle_id not in self._sector_maps:
+                # Fallback, just pass it through if no sector map
+                event_bus.publish("SECTOR_DEBATE_READY", payload)
+                return
+                
+            # Find which sector this ticker belongs to
+            target_sector = "Unknown"
+            for sector, tickers in self._sector_maps[cycle_id].items():
+                if ticker in tickers:
+                    target_sector = sector
+                    break
+                    
+            self._states[cycle_id][target_sector].append(payload)
+            
+            # Check if sector is complete
+            total_in_sector = len(self._sector_maps[cycle_id][target_sector])
+            current_in_sector = len(self._states[cycle_id][target_sector])
+            
+            if current_in_sector == total_in_sector:
+                # Run sector comparison
+                logger.info(f"[SectorDebateNode] Sector {target_sector} complete. Running comparison.")
+                asyncio.create_task(self._run_sector_comparison(cycle_id, target_sector, self._states[cycle_id][target_sector]))
+
+    async def on_cycle_aborted(self, payload: dict):
+        cycle_id = payload.get("cycle_id")
+        async with self._lock:
+            if cycle_id in self._states:
+                del self._states[cycle_id]
+            if cycle_id in self._sector_maps:
+                del self._sector_maps[cycle_id]
+
+    async def _run_sector_comparison(self, cycle_id: str, sector: str, payloads: list):
+        try:
+            bot_id = payloads[0].get("bot_id", "system")
+            tickers = [p.get("ticker") for p in payloads]
+            
+            system_prompt = (
+                f"You are the Sector Comparison Agent for the {sector} sector. "
+                "Review the debate rationales for the following tickers and rank them. "
+                "Only the strongest should proceed to trade execution. Weak ones should be changed to HOLD."
+            )
+            
+            user_prompt = "Debate Rationales:\n"
+            for p in payloads:
+                user_prompt += f"--- {p.get('ticker')} (Action: {p.get('action')}) ---\n{p.get('rationale')}\n\n"
+                
+            res = await run_agent(
+                agent_name="sector_comparison",
+                ticker=sector,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                enable_tools=False
+            )
+            logger.info(f"[SectorDebateNode] Sector {sector} comparison complete.")
+        except Exception as e:
+            logger.error(f"[SectorDebateNode] Sector comparison failed: {e}")
+            
+        # For now, pass all of them through to CIO
+        for p in payloads:
+            event_bus.publish("SECTOR_DEBATE_READY", p)
+
+
 class CIOMeshNode(AgentMeshNode):
     def __init__(self):
         super().__init__("cio")
 
     def register_subscriptions(self):
-        self.subscribe("DEBATE_READY", self.on_debate_ready)
+        self.subscribe("SECTOR_DEBATE_READY", self.on_sector_debate_ready)
 
-    async def on_debate_ready(self, payload: dict):
+    async def on_sector_debate_ready(self, payload: dict):
         ticker = payload.get("ticker")
         cycle_id = payload.get("cycle_id")
         bot_id = payload.get("bot_id")
@@ -572,11 +758,14 @@ class AgentMesh:
         self.nodes = [
             HealthAndSafetyMeshNode(),
             CuratorMeshNode(),
+            SectorClusteringMeshNode(),
+            TickerDispatcherMeshNode(max_concurrent=4),
             PlannerMeshNode(),
             RetrieverMeshNode(),
             TechnicalAnalystMeshNode(),
             SynthesisMeshNode(),
             DebateMeshNode(),
+            SectorDebateMeshNode(),
             CIOMeshNode(),
             HousekeepingMeshNode()
         ]
