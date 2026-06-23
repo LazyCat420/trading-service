@@ -11,19 +11,26 @@ logger = logging.getLogger(__name__)
 PLANNER_SYSTEM_PROMPT = """You are the Swarm Planner Agent. Your job is to formulate the research plan for the event-driven trading swarm for the requested stock ticker.
 We operate as a long-term quality investment firm inspired by Baron Funds First Principles and Da Vinci's polymathic evaluation framework.
 
-Your sole objective for this interaction is to formulate a clear, textual research plan that will be passed to the specialized agents (Retriever and Technical Analyst).
-Do NOT attempt to gather data or execute research yourself. The event mesh will automatically route your plan to the workers.
+Your objective is to:
+1. Formulate a clear research plan with the questions that need answering.
+2. Use `create_team` to spawn 2-4 specialized sub-agents that will execute the research plan in parallel.
 
-1. The plan must explicitly state the questions the Retriever and Technical Analyst need to answer.
-2. Focus on the most critical aspects (e.g., margins, specific news events, catalyst follow-up).
-3. You MAY call `create_or_update_schedule` if you decide the system needs to re-evaluate this stock in the future. Follow the scheduling intent matrix:
+Focus on the most critical aspects (e.g., margins, specific news events, catalyst follow-up).
+
+You MUST call `create_team` with topology "map_reduce" to spawn your research sub-agents. Each sub-agent should cover a different research dimension:
+- Fundamental analysis (revenue, margins, valuation, earnings)
+- Technical analysis (price action, indicators, support/resistance)
+- News & sentiment (catalysts, social sentiment, insider activity)
+- Macro context (sector trends, interest rates, regulatory environment) — optional 4th agent
+
+Each sub-agent prompt must be SELF-CONTAINED with all the context it needs. Sub-agents cannot see your conversation.
+
+You MAY also call `create_or_update_schedule` if you decide the system needs to re-evaluate this stock in the future. Follow the scheduling intent matrix:
    - schedule_scope: "portfolio", "positions", "watchlist_subset", "sector", "single_ticker"
    - review_intent: "monitor", "reassess", "trade_window", "event_followup", "weekly_review", "monthly_review"
    - urgency: "low", "medium", "high", "critical"
    - earliest_window: "next_pre_market", "next_open", "midday", "pre_close", "post_close", "next_trading_day", "next_week"
    Always provide `anti_overtrading_justification` to prevent system spam.
-
-Output your research plan directly as text. Do not output JSON. Do not call any tools other than the scheduler (if needed).
 """ + ANTI_HALLUCINATION_BLOCK
 
 async def run_planner(
@@ -269,6 +276,21 @@ async def run_ticker_curator(
             user_prompt_lines.append("#### TODAY'S NEWS:")
             user_prompt_lines.append(news_by_ticker.get(ticker, "No news found."))
 
+        user_prompt_lines.append("\n---\n")
+        user_prompt_lines.append("## SUB-AGENT INSTRUCTIONS")
+        user_prompt_lines.append(
+            "After selecting the tickers, you MUST call `create_team` to spawn 2-4 sub-agents that will "
+            "perform deeper initial screening on the selected tickers in parallel. Use topology `map_reduce`."
+        )
+        user_prompt_lines.append(
+            "\nEach sub-agent should receive the ticker, its news, and thesis context, and return a structured "
+            "assessment of whether the ticker has actionable catalysts worth a full research cycle."
+        )
+        user_prompt_lines.append(
+            "\nAfter receiving sub-agent results, output your final JSON with selected_tickers, justification, "
+            "research_focus, and skipped_tickers."
+        )
+
         user_prompt = "\n".join(user_prompt_lines)
 
         logger.info("[CURATOR] Running Curator agent for chunk of %d candidates...", len(chunk))
@@ -279,7 +301,7 @@ async def run_ticker_curator(
             bot_id=bot_id,
             system_prompt=CURATOR_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            enable_tools=False,
+            enable_tools=True,
             max_tokens=8192,
         )
 

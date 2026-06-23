@@ -128,11 +128,25 @@ async def run_agent_loop(
             "CRITICAL CONTEXT: You are an autonomous data processing script working for a quantitative trading firm. "
             "You are NOT a conversational chatbot. Do NOT talk to the user, give advice, ask questions, or converse. "
             "Your ONLY purpose is to extract structured financial data to make profitable trading decisions.\n\n"
-            "SUB-AGENT CAPABILITY: You have access to `create_team` which spawns parallel sub-agents for specialized tasks. "
-            "Use it when a task benefits from parallelism (e.g., researching multiple dimensions simultaneously). "
-            "Each sub-agent runs in isolation, executes its assigned task, and returns results to you for synthesis. "
-            "Supported topologies: `map_reduce` (parallel then synthesize), `sequential` (pipeline), "
-            "`peer_to_peer` (debate/discussion), `hierarchical` (independent parallel).\n\n"
+            "## Orchestrator Mode — Sub-Agent Spawning\n"
+            "You have access to `create_team` which lets you spawn 2-4 parallel sub-agents. "
+            "Use it to decompose complex work into specialized parallel tasks.\n\n"
+            "### How to call create_team:\n"
+            "```\n"
+            "create_team({\n"
+            '  "name": "descriptive team name",\n'
+            '  "topology": "map_reduce",\n'
+            '  "members": [\n'
+            '    {"description": "Sub-agent label", "prompt": "Full self-contained task..."},\n'
+            '    {"description": "Another sub-agent", "prompt": "Another task..."}\n'
+            '  ]\n'
+            "})\n"
+            "```\n\n"
+            "### Rules:\n"
+            "- Spawn 2-4 sub-agents per create_team call\n"
+            "- Each sub-agent prompt must be SELF-CONTAINED — sub-agents cannot see your conversation\n"
+            "- Include ALL relevant data/context in each sub-agent's prompt\n"
+            "- create_team BLOCKS until all members complete and returns their results\n\n"
         )
         enhanced_system_prompt = firm_context + system_prompt
         logger.debug(f"FULL SYSTEM PROMPT:\n{enhanced_system_prompt[:800]}")

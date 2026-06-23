@@ -137,7 +137,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_options_flow",
         "query_technical_indicator",
     ],
-    "curator": [],
+    "curator": ["create_team"],
     "planner": ["create_or_update_schedule", "create_team"],
     "verifier": [
         "check_hallucination",
