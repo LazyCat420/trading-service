@@ -88,7 +88,6 @@ class OrchestratorV3Mixin:
         finally:
             cls._scout_task = None
             cls._consumer_task = None
-            cls._checkpoint_task = None
             cls._macro_task = None
             cls._analysis_task = None
             cls._autoresearch_task = None
@@ -140,12 +139,12 @@ class OrchestratorV3Mixin:
 
             # Dynamic Selection Mode fallback
             tickers_to_process = ctx.tickers
-            if getattr(ctx, "dynamic_selection_mode", False):
-                from app.cycle.orchestration.orchestrator_core import OrchestratorCoreMixin
+            if getattr(ctx, "dynamic_selection_mode", False) and not tickers_to_process:
+                from app.tools.ticker_candidates import generate_candidate_tickers
                 try:
-                    tickers_to_process = await OrchestratorCoreMixin.decide_tickers_to_process(ctx, bot_id)
+                    tickers_to_process = generate_candidate_tickers()
                 except Exception as e:
-                    logger.warning(f"Dynamic selection failed, falling back to all candidates: {e}")
+                    logger.warning(f"Failed to generate candidates, falling back to empty list: {e}")
             
             ctx.tickers = tickers_to_process
             cls._cycle_summary["tickers_final"] = tickers_to_process
@@ -177,7 +176,8 @@ class OrchestratorV3Mixin:
                 "cycle_id": ctx.cycle_id,
                 "candidates": tickers_to_process,
                 "position_tickers": cls._state.get("position_tickers", []),
-                "bot_id": bot_id
+                "bot_id": bot_id,
+                "dynamic_selection_mode": getattr(ctx, "dynamic_selection_mode", False)
             })
 
             # Wait for completion of all trades

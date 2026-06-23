@@ -65,8 +65,28 @@ class CuratorMeshNode(AgentMeshNode):
         candidates = payload.get("candidates", [])
         position_tickers = payload.get("position_tickers", [])
         bot_id = payload.get("bot_id", "system")
+        dynamic_selection_mode = payload.get("dynamic_selection_mode", False)
         
         logger.info(f"[CuratorNode] Cycle started. Candidates: {candidates}")
+
+        if not dynamic_selection_mode:
+            logger.info("[CuratorNode] Dynamic selection mode disabled. Bypassing LLM curator.")
+            selected = candidates
+            focus = {}
+            if not selected:
+                logger.info("[CuratorNode] No tickers selected. Completing cycle.")
+                event_bus.publish("CYCLE_COMPLETED", {"cycle_id": cycle_id, "status": "no_tickers"})
+                return
+                
+            event_bus.publish("TICKERS_DISCOVERED", {
+                "cycle_id": cycle_id,
+                "bot_id": bot_id,
+                "selected_tickers": selected,
+                "research_focus": focus,
+                "position_tickers": position_tickers
+            })
+            return
+
         try:
             res = await run_ticker_curator(candidates, position_tickers, cycle_id, bot_id)
             resp_str = res.get("response", "")

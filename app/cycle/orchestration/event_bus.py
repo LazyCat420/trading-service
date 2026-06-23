@@ -17,6 +17,7 @@ class EventBus:
         # The underlying asyncio queue to process events asynchronously
         self._queue: asyncio.Queue = asyncio.Queue()
         self._task: asyncio.Task | None = None
+        self._running_tasks: set[asyncio.Task] = set()
 
     def subscribe(self, event_name: str, callback: Callable[[Any], Coroutine]):
         """Subscribe an async callback to an event type. Supports wildcards like *."""
@@ -57,6 +58,9 @@ class EventBus:
                 # Execute all subscribers concurrently for this event
                 if matched_subscribers:
                     tasks = [asyncio.create_task(sub(payload)) for sub in matched_subscribers]
+                    for t in tasks:
+                        self._running_tasks.add(t)
+                        t.add_done_callback(self._running_tasks.discard)
                     # We don't await them here to avoid blocking the event loop
                     
                 self._queue.task_done()
@@ -75,6 +79,9 @@ class EventBus:
         if self._task:
             self._task.cancel()
             self._task = None
+        for t in list(self._running_tasks):
+            t.cancel()
+        self._running_tasks.clear()
 
     def clear(self):
         """Clear all subscribers and pending events. Useful for tests or resetting cycles."""
