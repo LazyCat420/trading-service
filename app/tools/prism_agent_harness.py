@@ -432,8 +432,19 @@ async def run_prism_agent(
         parent_agent_session_id=parent_agent_session_id,
     )
 
-    # Add metadata for tracking
-    title_parts = [agent_name]
+    # Map raw agent names to friendly process names for Prism UI titles
+    friendly_process_names = {
+        "v3_junior_analyst": "Junior Analyst Research",
+        "v3_fundamental_analyst": "Fundamental Analyst Research",
+        "v3_quant_analyst": "Quant Analyst Technicals",
+        "bull_argument": "Bull Debater Argument",
+        "bear_rebuttal": "Bear Debater Rebuttal",
+        "bull_defense": "Bull Debater Defense",
+        "regime_engine": "Regime Classification",
+        "board_of_directors": "Board of Directors Decision",
+    }
+    display_name = friendly_process_names.get(agent_name, agent_name)
+    title_parts = [display_name]
     if ticker:
         title_parts.append(ticker)
     if cycle_id:

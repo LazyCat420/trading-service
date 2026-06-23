@@ -540,23 +540,7 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register enriched briefings: %s", e
                 )
 
-            # ── LLM Janitor ──
-            try:
-                scheduler.add_job(
-                    SchedulerService._run_janitor,
-                    trigger=CronTrigger(hour=0, minute=0, timezone=local_tz),
-                    id="llm_janitor_job",
-                    replace_existing=True,
-                    misfire_grace_time=3600,
-                    coalesce=True,
-                )
-                logger.info(
-                    "[SCHEDULER] Registered LLM Janitor (cron: Midnight)"
-                )
-            except Exception as e:
-                logger.warning(
-                    "[SCHEDULER] Failed to register LLM Janitor job: %s", e
-                )
+
 
             # ── Background Ticker Validation ──
             try:
@@ -606,17 +590,7 @@ class SchedulerService:
         logger.info("[SCHEDULER] Morning briefing is a legacy V2 feature and is not run in V3.")
         return
 
-    @staticmethod
-    async def _run_janitor():
-        """Run the LLM Janitor to clean up old database entries."""
-        if cycle_control.is_paused:
-            logger.info("[SCHEDULER] Skipping LLM Janitor: System is PAUSED.")
-            return
-        try:
-            from app.agents.janitor_agent import run_janitor_cleanup
-            await run_janitor_cleanup()
-        except Exception as e:
-            logger.error("[SCHEDULER] LLM Janitor execution failed: %s", e)
+
 
     @staticmethod
     async def _run_flash_briefing(report_type: str | None = None):

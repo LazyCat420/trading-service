@@ -1,1 +1,0 @@
-# Legacy pipeline package compatibility
