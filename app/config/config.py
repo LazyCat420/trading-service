@@ -247,6 +247,13 @@ class Settings(BaseSettings):
     PRISM_MONGO_DB: str = "prism"
     PRISM_SKIP_CONVERSATION: bool = False
     PRISM_AUTO_APPROVE: bool = True
+    PRISM_WORKSPACE_ENABLED: bool = False
+    PRISM_THINKING_ENABLED: bool = True
+    PRISM_MAX_ITERATIONS: int = 100
+    PRISM_MAX_SUB_AGENT_ITERATIONS: int = 100
+    PRISM_MAX_RECURSION_DEPTH: int = 2
+    PRISM_THOUGHT_STRUCTURE: str = "chain_of_thought"
+    PRISM_TOPOLOGY: str = "peer_to_peer"
 
     # ── SEC 13F Tracking ──
     SEC_USER_AGENT: str = "vllm-trading-bot LazyCat420@users.noreply.github.com"

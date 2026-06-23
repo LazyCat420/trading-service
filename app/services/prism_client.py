@@ -520,7 +520,7 @@ class PrismClient:
                 group_key = f"{cycle_id}{ticker_part}-{agent_name}-{str(uuid.uuid4())[:8]}"
                 
             session_id, is_new = self._get_or_create_session(group_key)
-            conversation_id = parent_conversation_id
+            conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
             session_id, is_new = self._get_or_create_session(group_key)
@@ -560,6 +560,13 @@ class PrismClient:
             "parentConversationId": parent_conversation_id,
             "parentAgentSessionId": parent_agent_session_id,
             "systemPrompt": system_prompt[:15000],
+            "workspaceEnabled": settings.PRISM_WORKSPACE_ENABLED,
+            "thinkingEnabled": settings.PRISM_THINKING_ENABLED,
+            "maxIterations": settings.PRISM_MAX_ITERATIONS,
+            "maxSubAgentIterations": settings.PRISM_MAX_SUB_AGENT_ITERATIONS,
+            "maxRecursionDepth": settings.PRISM_MAX_RECURSION_DEPTH,
+            "thoughtStructure": settings.PRISM_THOUGHT_STRUCTURE,
+            "topology": settings.PRISM_TOPOLOGY,
             "conversationMeta": {
                 "title": title,
                 "settings": {
@@ -648,7 +655,7 @@ class PrismClient:
                 group_key = f"{cycle_id}{ticker_part}-{agent_name}-{str(uuid.uuid4())[:8]}"
                 
             session_id, is_new = self._get_or_create_session(group_key)
-            conversation_id = parent_conversation_id
+            conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
             session_id, is_new = self._get_or_create_session(group_key)
@@ -688,6 +695,13 @@ class PrismClient:
             "parentConversationId": parent_conversation_id,
             "parentAgentSessionId": parent_agent_session_id,
             "systemPrompt": system_prompt[:15000],
+            "workspaceEnabled": settings.PRISM_WORKSPACE_ENABLED,
+            "thinkingEnabled": settings.PRISM_THINKING_ENABLED,
+            "maxIterations": settings.PRISM_MAX_ITERATIONS,
+            "maxSubAgentIterations": settings.PRISM_MAX_SUB_AGENT_ITERATIONS,
+            "maxRecursionDepth": settings.PRISM_MAX_RECURSION_DEPTH,
+            "thoughtStructure": settings.PRISM_THOUGHT_STRUCTURE,
+            "topology": settings.PRISM_TOPOLOGY,
             "conversationMeta": {
                 "title": title,
                 "settings": {
