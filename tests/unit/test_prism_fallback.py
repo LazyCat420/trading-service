@@ -143,7 +143,7 @@ def test_prism_client_payload_construction():
     assert payload["systemPrompt"] == "system instructions"
     assert payload["conversationMeta"]["title"] == "thesis_agent · LLY · cycle-1234"
     assert payload["autoApprove"] is True
-    assert url == "http://prism_host:7777/chat?stream=false"
+    assert url == "http://prism_host:7777/agent?stream=false"
     
     # Assert session ID is isolated and cached under compound key: cycle-1234-LLY-thesis_agent
     expected_group_key = "cycle-1234-LLY-thesis_agent"
@@ -187,7 +187,7 @@ def test_prism_client_payload_construction():
     )
     assert payload_s["systemPrompt"] == "system instructions"
     assert payload_s["autoApprove"] is True
-    assert url_s == "http://prism_host:7777/chat"
+    assert url_s == "http://prism_host:7777/agent"
 
 
 def test_prism_client_conversation_caching():

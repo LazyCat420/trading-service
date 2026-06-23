@@ -602,11 +602,8 @@ class PrismClient:
         elif session_id:
             payload["sessionId"] = session_id
 
-        # Route to agentic loop endpoint only when agentic_mode is True, otherwise use standard chat completion
-        if agentic_mode:
-            target_url = f"{self.url}/agent?stream=false"
-        else:
-            target_url = f"{self.url}/chat?stream=false"
+        # ALWAYS use /agent, never use /chat for prism-service
+        target_url = f"{self.url}/agent?stream=false"
         headers = {
             "Content-Type": "application/json",
             "x-project": self.project,
@@ -744,11 +741,8 @@ class PrismClient:
         elif session_id:
             payload["sessionId"] = session_id
 
-        # Route to agentic loop endpoint only when agentic_mode is True, otherwise use standard chat completion
-        if agentic_mode:
-            target_url = f"{self.url}/agent"
-        else:
-            target_url = f"{self.url}/chat"
+        # ALWAYS use /agent, never use /chat for prism-service
+        target_url = f"{self.url}/agent"
         headers = {
             "Content-Type": "application/json",
             "x-project": self.project,
