@@ -1,66 +1,159 @@
-"""Pipeline orchestration service.
+import asyncio
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Any
 
-Refactored to act as a lightweight facade extending modular mixins.
-"""
+from app.services.pipeline_state import PipelineStateDB
+from app.v3.orchestrator import run_v3_pipeline
 
-from app.pipeline.orchestration.state_manager import PipelineStateMixin
-from app.pipeline.orchestration.lifecycle_controller import LifecycleControllerMixin
-from app.cycle.orchestration.orchestrator_v3 import OrchestratorV3Mixin
-from app.pipeline.orchestration.orchestrator_v2 import OrchestratorV2Mixin
-from app.pipeline.core import PipelineContext  # noqa: F401 — re-exported for backward compat
+logger = logging.getLogger(__name__)
 
-
-class PipelineService(
-    PipelineStateMixin,
-    LifecycleControllerMixin,
-    OrchestratorV3Mixin,
-    OrchestratorV2Mixin,
-):
-    """
-    Lightweight facade for pipeline orchestration.
-    All operational logic is implemented in the mixin classes.
-    """
+class PipelineService:
+    _state = PipelineStateDB.default_state()
+    _cycle_task = None
+    _stop_requested = False
 
     @classmethod
-    async def _run_cycle(cls, ctx: PipelineContext):
-        """Route the cycle through V1, V2 scaffold, or benchmark mode."""
-        import logging
+    def load_state(cls, summary_only: bool = False):
+        cls._state = PipelineStateDB.get_state(summary_only)
 
-        logger = logging.getLogger(__name__)
+    @classmethod
+    def save_state(cls):
+        PipelineStateDB.save_state(cls._state)
 
-        mode = cls._state.get("execution_mode", "production")
-        v2_stage = cls._state.get("v2_stage", 0)
+    @classmethod
+    def get_current_state(cls, summary_only: bool = False) -> dict:
+        return PipelineStateDB.get_state(summary_only)
 
-        # ── Benchmark Mode ──
-        if "benchmark" in mode:
-            logger.info("[CYCLE] Dispatching to Benchmark Mode (%s)", mode)
+    @classmethod
+    async def start_cycle(cls, tickers: list[str], **kwargs):
+        if cls._state.get("status") in ("running", "starting"):
+            return {"status": "deduplicated", "message": "Cycle already running"}
+
+        cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
+        
+        cls._state.update({
+            "status": "running",
+            "cycle_id": cycle_id,
+            "tickers": tickers,
+            "progress": f"Starting V3 cycle for {len(tickers)} tickers",
+            "phase": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "error": None
+        })
+        cls.save_state()
+        cls._stop_requested = False
+
+        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers))
+        return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
+
+    @classmethod
+    async def _run_all_v3(cls, cycle_id: str, tickers: list[str]):
+        try:
+            for i, ticker in enumerate(tickers):
+                if cls._stop_requested:
+                    logger.info("[PipelineService] V3 Cycle stopped by user request.")
+                    break
+                
+                cls._state["progress"] = f"Processing {ticker} ({i+1}/{len(tickers)})"
+                cls.save_state()
+                
+                result = await run_v3_pipeline(ticker=ticker, cycle_id=cycle_id)
+                
+                # Save verdict to DB
+                from app.services.result_saver import save_analysis_result
+                save_analysis_result(ticker, cycle_id, result)
+                
+                # Execute Trade
+                action = result.get("action", "HOLD")
+                confidence = result.get("confidence", 0)
+                
+                try:
+                    from app.trading.paper_trader import buy, sell
+                    if action == "BUY":
+                        size_pct = max(0.02, min(0.10, confidence / 100.0 * 0.10))
+                        await buy(bot_id="cycle-backend", ticker=ticker, size_pct=size_pct, cycle_id=cycle_id)
+                    elif action == "SELL":
+                        await sell(bot_id="cycle-backend", ticker=ticker, cycle_id=cycle_id, qty_pct=1.0)
+                        
+                    # Handle Triggers (limit orders)
+                    decision = result.get("estimate", {})
+                    stop_loss = decision.get("stop_loss")
+                    take_profit = decision.get("take_profit")
+                    if stop_loss or take_profit:
+                        from app.trading.order_triggers import create_trigger
+                        if stop_loss:
+                            await create_trigger(bot_id="cycle-backend", ticker=ticker, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
+                        if take_profit:
+                            await create_trigger(bot_id="cycle-backend", ticker=ticker, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
+                except Exception as e:
+                    logger.error("[PipelineService] Trade execution failed for %s: %s", ticker, e)
+
+
+            from app.v3.debate_coordinator import run_battle_royale
+            await run_battle_royale(cycle_id=cycle_id, bot_id="cycle-backend")
+
+            cls._state.update({
+                "status": "done",
+                "progress": "V3 cycle complete",
+                "finished_at": datetime.now(timezone.utc).isoformat()
+            })
+        except Exception as e:
+            logger.error("[PipelineService] V3 Cycle failed: %s", e)
+            cls._state.update({
+                "status": "error",
+                "error": str(e),
+                "finished_at": datetime.now(timezone.utc).isoformat()
+            })
+        finally:
+            cls.save_state()
+            cls._cycle_task = None
+
+    @classmethod
+    def request_stop(cls):
+        cls._stop_requested = True
+        cls._state.update({"status": "stopping", "progress": "Stopping V3 cycle..."})
+        cls.save_state()
+        if cls._cycle_task and not cls._cycle_task.done():
+            cls._cycle_task.cancel()
+        return {"status": "stopping"}
+
+    @classmethod
+    async def stop_cycle(cls, _stop_t1=None):
+        cls.request_stop()
+        if cls._cycle_task and not cls._cycle_task.done():
             try:
-                from app.pipeline.benchmark_runner import run_benchmark_cycle
-            except ImportError:
-                logger.error(
-                    "[CYCLE] benchmark_runner module not found — benchmark mode is not yet implemented"
-                )
-                raise NotImplementedError(
-                    "Benchmark mode is not yet implemented (app.pipeline.benchmark_runner missing)"
-                )
-            return await run_benchmark_cycle(
-                ctx.tickers, cls._state.get("benchmark_group", "baseline"), ctx.cycle_id
-            )
+                await asyncio.wait_for(cls._cycle_task, timeout=2.0)
+            except Exception:
+                pass
+        cls._state.update({
+            "status": "stopped",
+            "progress": "Cycle stopped by user",
+            "finished_at": datetime.now(timezone.utc).isoformat()
+        })
+        cls.save_state()
+        return {"status": "stopped"}
 
-        # ── V2 Scaffold ──
-        if mode == "v2_scaffold":
-            logger.info("[CYCLE] Dispatching to V2 Scaffold (Stage %d)", v2_stage)
-            return await cls.run_v2_cycle(ctx)
+    @classmethod
+    def pause_cycle(cls):
+        return {"status": "error", "message": "Pause not supported in V3"}
 
-        # ── A/B Testing ──
-        if mode == "ab_test":
-            logger.info("[CYCLE] Dispatching to A/B Test Runner")
-            return await cls.run_ab_cycle(ctx)
+    @classmethod
+    async def resume_cycle(cls):
+        return {"status": "error", "message": "Resume not supported in V3"}
+        
+    @classmethod
+    async def resume_interrupted_cycle(cls):
+        return {"status": "error", "message": "Resume not supported in V3"}
 
-        # ── Canonical Pipeline ──
-        logger.info("[CYCLE] Dispatching to Canonical Production Pipeline")
-        return await cls._execute_cycle(ctx)
+    @classmethod
+    def discard_checkpoint(cls):
+        return {"status": "ok"}
+        
+    @classmethod
+    def force_save_checkpoint(cls):
+        pass
 
-
-# Global singleton instance export to preserve compatibility
 pipeline_service = PipelineService()

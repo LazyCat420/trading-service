@@ -486,6 +486,8 @@ def _build_v1_compatible_result(
     rationale = decision.get("reasoning", "V3 pipeline produced no final decision.")
     persona = decision.get("persona_used", "unknown")
     regime = decision.get("regime", "unknown")
+    stop_loss = decision.get("stop_loss")
+    take_profit = decision.get("take_profit")
 
     # Token sum from telemetry
     total_tokens = sum(
@@ -501,6 +503,10 @@ def _build_v1_compatible_result(
         "triage_tier": "v3_full",
         "escalated": True,  # V3 always runs full pipeline
         "agent_results": _extract_agent_results(desk),
+        "estimate": {
+            "stop_loss": stop_loss,
+            "take_profit": take_profit
+        },
         "c_result": {
             "action": action,
             "confidence": int(confidence),
