@@ -62,7 +62,7 @@ def log_decision(
 
             if action == "BUY" and confidence > 0:
                 try:
-                    from app.cycle.trading_phase import estimate_trade
+                    from app.trading.position_sizer import estimate_trade
                     from app.trading.paper_trader import get_portfolio
 
                     pf = get_portfolio(bot_id or "default")

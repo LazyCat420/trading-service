@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import HTTPException
 
-from app.pipeline.orchestration.cycle_control import cycle_control
+from app.services.cycle_control import cycle_control
 from app.db.connection import get_db
 from app.services.bot_manager import get_active_bot_id
 from app.trading.paper_trader import check_stop_losses, check_take_profits
@@ -603,14 +603,8 @@ class SchedulerService:
     @staticmethod
     async def _run_morning_briefing():
         """Generate the morning briefing."""
-        if cycle_control.is_paused:
-            logger.info("[SCHEDULER] Skipping morning briefing: System is PAUSED.")
-            return
-        try:
-            from app.pipeline.analysis.morning_briefing import generate_morning_briefing
-            await generate_morning_briefing()
-        except Exception as e:
-            logger.error("[SCHEDULER] Morning briefing generation failed: %s", e)
+        logger.info("[SCHEDULER] Morning briefing is a legacy V2 feature and is not run in V3.")
+        return
 
     @staticmethod
     async def _run_janitor():

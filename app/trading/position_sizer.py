@@ -46,3 +46,17 @@ def calculate_sell_size(confidence: int, current_qty: float) -> dict:
         "amount": 0.0, # Not used for sell qty
         "qty": current_qty
     }
+
+def estimate_trade(confidence: int, cash: float, current_price: float) -> dict:
+    """Estimate shares/$ for a BUY signal without executing.
+
+    Returns: {"size_pct": 7.3, "amount": 7300, "qty": 52, "price": 140.38}
+    """
+    res = calculate_buy_size(confidence, cash, current_price)
+    return {
+        "size_pct": res["size_pct"],
+        "amount": res["amount"],
+        "qty": res["qty"],
+        "price": round(current_price, 2),
+    }
+
