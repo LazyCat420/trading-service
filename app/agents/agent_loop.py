@@ -146,8 +146,7 @@ async def run_agent_loop(
             "- Spawn 2-4 sub-agents per create_team call\n"
             "- Each sub-agent prompt must be SELF-CONTAINED — sub-agents cannot see your conversation\n"
             "- Include ALL relevant data/context in each sub-agent's prompt\n"
-            "- create_team BLOCKS until all members complete and returns their results\n"
-            "- CRITICAL: When setting the `agent` parameter in create_team, NEVER use non-financial or conversational personas (e.g., NEVER use 'Lupos' or 'Coding'). ONLY use valid trading roles (e.g., 'analyst', 'retriever', 'verifier', 'synthesizer').\n\n"
+            "- create_team BLOCKS until all members complete and returns their results\n\n"
         )
         enhanced_system_prompt = firm_context + system_prompt
         logger.debug(f"FULL SYSTEM PROMPT:\n{enhanced_system_prompt[:800]}")
