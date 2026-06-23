@@ -114,6 +114,31 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "request_data_collection",
         "request_lateral_fact_check",
     ],
+    "retriever_fact_check": [
+        "get_market_data",
+        "get_finnhub_news",
+        "get_sec_filings",
+        "get_finviz_fundamentals",
+        "search_internal_database",
+        "search_database_facts",
+        "scrape_url",
+    ],
+    "technical_analyst": [
+        "get_market_data",
+        "get_technical_indicators",
+        "get_polygon_price_history",
+        "get_options_flow",
+        "query_technical_indicator",
+    ],
+    "technical_fact_check": [
+        "get_market_data",
+        "get_technical_indicators",
+        "get_polygon_price_history",
+        "get_options_flow",
+        "query_technical_indicator",
+    ],
+    "curator": [],
+    "planner": ["create_or_update_schedule"],
     "verifier": [
         "check_hallucination",
         

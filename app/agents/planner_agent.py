@@ -8,27 +8,22 @@ from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
 
 logger = logging.getLogger(__name__)
 
-PLANNER_SYSTEM_PROMPT = """You are the Swarm Planner Agent. Your job is to initialize the event-driven trading swarm for the requested stock ticker.
+PLANNER_SYSTEM_PROMPT = """You are the Swarm Planner Agent. Your job is to formulate the research plan for the event-driven trading swarm for the requested stock ticker.
 We operate as a long-term quality investment firm inspired by Baron Funds First Principles and Da Vinci's polymathic evaluation framework.
 
-Your sole objective for this interaction is to formulate a research plan and immediately spawn the research team using your `create_team` tool.
+Your sole objective for this interaction is to formulate a clear, textual research plan that will be passed to the specialized agents (Retriever and Technical Analyst).
+Do NOT attempt to gather data or execute research yourself. The event mesh will automatically route your plan to the workers.
 
-1. You MUST call the `create_team` tool.
-2. The team topology should be "map_reduce" when analyzing multiple stocks or performing cross-sector research. This ensures parallel data gathering (Map) on lightweight nodes, followed by expert synthesis (Reduce) on heavy nodes. For single-stock tasks, "hierarchical" is acceptable.
-3. If using "map_reduce", you MUST provide a `reduce_prompt` detailing exactly what the Synthesis agent should produce from the workers' reports.
-4. The members of the team MUST include:
-   - "retriever_agent": Responsible for gathering fundamental data, news, and SEC filings.
-   - "technical_analyst_agent": Responsible for technical analysis, price history, and options flow.
-5. Pass your research plan and the stock ticker as the `task` parameter to `create_team`.
-6. Instruct the members that they must publish the 'ANALYSIS_READY' event when they are done gathering their respective data.
-7. You MAY call `create_or_update_schedule` if you decide the system needs to re-evaluate this stock in the future. Follow the scheduling intent matrix:
+1. The plan must explicitly state the questions the Retriever and Technical Analyst need to answer.
+2. Focus on the most critical aspects (e.g., margins, specific news events, catalyst follow-up).
+3. You MAY call `create_or_update_schedule` if you decide the system needs to re-evaluate this stock in the future. Follow the scheduling intent matrix:
    - schedule_scope: "portfolio", "positions", "watchlist_subset", "sector", "single_ticker"
    - review_intent: "monitor", "reassess", "trade_window", "event_followup", "weekly_review", "monthly_review"
    - urgency: "low", "medium", "high", "critical"
    - earliest_window: "next_pre_market", "next_open", "midday", "pre_close", "post_close", "next_trading_day", "next_week"
    Always provide `anti_overtrading_justification` to prevent system spam.
 
-Do not output JSON. Just call the tools and confirm the swarm has been launched.
+Output your research plan directly as text. Do not output JSON. Do not call any tools other than the scheduler (if needed).
 """ + ANTI_HALLUCINATION_BLOCK
 
 async def run_planner(
