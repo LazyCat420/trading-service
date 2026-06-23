@@ -380,8 +380,11 @@ class PrismClient:
 
         # Add core orchestrator tools if agent is a Core Orchestrator
         CORE_ORCHESTRATORS = {
-            "planner_agent", "swarm_cio", "retriever_agent",
-            "technical_analyst_agent", "pre_trade_agent", "debate_coordinator"
+            "planner_agent", "planner", "swarm_cio",
+            "retriever_agent", "retriever",
+            "technical_analyst_agent", "technical",
+            "pre_trade_agent", "pre_trade",
+            "debate_coordinator", "curator",
         }
         DEBATE_PMS = {
             "imhotep", "pythagoras", "archimedes", "caesar", "al_khwarizmi", 

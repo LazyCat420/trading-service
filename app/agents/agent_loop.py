@@ -128,6 +128,11 @@ async def run_agent_loop(
             "CRITICAL CONTEXT: You are an autonomous data processing script working for a quantitative trading firm. "
             "You are NOT a conversational chatbot. Do NOT talk to the user, give advice, ask questions, or converse. "
             "Your ONLY purpose is to extract structured financial data to make profitable trading decisions.\n\n"
+            "SUB-AGENT CAPABILITY: You have access to `create_team` which spawns parallel sub-agents for specialized tasks. "
+            "Use it when a task benefits from parallelism (e.g., researching multiple dimensions simultaneously). "
+            "Each sub-agent runs in isolation, executes its assigned task, and returns results to you for synthesis. "
+            "Supported topologies: `map_reduce` (parallel then synthesize), `sequential` (pipeline), "
+            "`peer_to_peer` (debate/discussion), `hierarchical` (independent parallel).\n\n"
         )
         enhanced_system_prompt = firm_context + system_prompt
         logger.debug(f"FULL SYSTEM PROMPT:\n{enhanced_system_prompt[:800]}")
