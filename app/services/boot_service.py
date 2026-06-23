@@ -79,7 +79,7 @@ class BootService:
         try:
             from app.services.pipeline_service import PipelineService
 
-            await PipelineService.cancel_cycle_shutdown()
+            await PipelineService.stop_cycle()
         except Exception as e:
             logger.warning("[Boot] Cycle cancellation on shutdown: %s", e)
 

@@ -20,7 +20,7 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict):
                 db.execute(
                     """
                     INSERT INTO analysis_results (
-                        id, ticker, cycle_id, result_json, confidence,
+                        id, ticker, cycle_id, bot_id, result_json, confidence,
                         thesis_verdict, thesis_confidence, thesis_summary,
                         created_at, triage_tier
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
