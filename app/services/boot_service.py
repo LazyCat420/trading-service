@@ -155,9 +155,7 @@ class BootService:
 
     @classmethod
     def _reset_app_state(cls):
-        from app.services.pipeline_service import PipelineService
-
-        PipelineService.reset_on_boot()
+        pass
 
         # Reset any zombie-state pruned tools from the ToolOptimizer.
         # Prism-routed agents never reported tool usage, causing all tools to
@@ -176,8 +174,6 @@ class BootService:
         import os
         start_paused = os.getenv("START_PAUSED", "true").lower() in ("true", "1", "yes")
         if start_paused:
-            from app.pipeline.orchestration.cycle_control import cycle_control
-            cycle_control.pause()
             logger.info("[Boot] System starts PAUSED — LLM tasks gated until user resumes or starts a cycle.")
 
     @classmethod

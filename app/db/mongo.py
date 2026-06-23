@@ -35,23 +35,7 @@ def init_mongo_schema():
         col_scores = db["agent_trust_scores"]
         col_scores.create_index("role", unique=True)
         
-        # Seed initial trust scores if empty
-        from app.cognition.contracts.family_office import ManagerRole
-        for role in ManagerRole:
-            if role in (ManagerRole.CIO, ManagerRole.CROSS_EXAMINER, ManagerRole.WORKER_ORCHESTRATOR):
-                continue
-            # Seed if not already present
-            if col_scores.count_documents({"role": role.value}) == 0:
-                col_scores.insert_one({
-                    "role": role.value,
-                    "trust_score": 0.8,
-                    "consecutive_correct": 0,
-                    "consecutive_wrong": 0,
-                    "challenges_raised": 0,
-                    "challenges_upheld": 0,
-                    "last_updated": datetime.now(timezone.utc),
-                    "history": []
-                })
+        # Seed initial trust scores if empty (DELETED - Legacy)
         
         # 2. debate_transcripts
         db["debate_transcripts"].create_index([("ticker", pymongo.ASCENDING), ("cycle_id", pymongo.ASCENDING)])
