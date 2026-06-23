@@ -131,14 +131,7 @@ class OrchestratorV3Mixin:
             traded_tickers = set()
             aborted_reason = None
 
-            # Dynamic Selection Mode fallback
             tickers_to_process = ctx.tickers
-            if getattr(ctx, "dynamic_selection_mode", False) and not tickers_to_process:
-                from app.tools.ticker_candidates import generate_candidate_tickers
-                try:
-                    tickers_to_process = generate_candidate_tickers()
-                except Exception as e:
-                    logger.warning(f"Failed to generate candidates, falling back to empty list: {e}")
             
             ctx.tickers = tickers_to_process
             cls._cycle_summary["tickers_final"] = tickers_to_process

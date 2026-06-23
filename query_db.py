@@ -1,13 +1,19 @@
-import sys
-import os
-sys.path.insert(0, '/home/lazycat/github/projects/sun/trading-service')
+import asyncio
+from app.db.connection import get_db
 
-from app.db import connection
-
-try:
-    with connection.get_db() as db:
-        res = db.execute("SELECT cycle_id, timestamp, ticker, error, stage, extra FROM cycle_error_log WHERE event_type = 'analysis_crash' ORDER BY timestamp DESC LIMIT 5").fetchall()
-        for r in res:
-            print(f"CYCLE: {r[0]}, TIMESTAMP: {r[1]}, TICKER: {r[2]}, ERROR: {r[3]}, STAGE: {r[4]}, EXTRA: {r[5]}")
-except Exception as e:
-    print("Failed:", e)
+with get_db() as conn:
+    with conn.cursor() as cur:
+        cur.execute("SELECT tool_name, error_message, called_at FROM tool_usage_stats ORDER BY called_at DESC LIMIT 20;")
+        print("--- Recent Tool Calls ---")
+        for row in cur.fetchall():
+            print(row)
+        
+        cur.execute("SELECT model, messages, response, created_at FROM llm_tracker ORDER BY created_at DESC LIMIT 5;")
+        print("\n--- Recent LLM Calls ---")
+        for row in cur.fetchall():
+            print(row[0], row[3])
+            
+        cur.execute("SELECT cycle_id, status, updated_at FROM cycles ORDER BY updated_at DESC LIMIT 5;")
+        print("\n--- Recent Cycles ---")
+        for row in cur.fetchall():
+            print(row)
