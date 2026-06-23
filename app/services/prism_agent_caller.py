@@ -96,6 +96,8 @@ async def call_prism_agent(
     bot_id: str = "",
     agentic_mode: bool = False,
     actor_label: str | None = None,
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> tuple[str, int, int]:
     """Route an LLM call through Prism /agent or fall back to local llm.chat().
 
@@ -222,6 +224,8 @@ async def call_prism_agent(
                     agentic_mode=agentic_mode,
                     dynamic_tools=dynamic_tools,
                     actor_label=actor_label,
+                    parent_conversation_id=parent_conversation_id,
+                    parent_agent_session_id=parent_agent_session_id,
                 )
                 
                 # Publish end event
@@ -388,6 +392,8 @@ async def _call_via_prism(
     agentic_mode: bool = False,
     dynamic_tools: list[str] | None = None,
     actor_label: str | None = None,
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> tuple[str, int, int]:
     """Execute the actual Prism /agent call.
 
@@ -434,6 +440,8 @@ async def _call_via_prism(
         agentic_mode=agentic_mode,
         provider=provider,
         actor_label=actor_label,
+        parent_conversation_id=parent_conversation_id,
+        parent_agent_session_id=parent_agent_session_id,
     )
     payload["autoApprove"] = settings.PRISM_AUTO_APPROVE
     payload["skipConversation"] = False

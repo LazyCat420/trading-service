@@ -104,6 +104,8 @@ async def run_agent_loop(
     yield_on_limit: bool = False,
     require_json_schema: bool = False,
     critique_rounds: int = 0,
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Run an LLM agent with multi-turn tool capabilities and self-healing.
@@ -487,7 +489,9 @@ async def run_agent_loop(
                 try:
                     tool_res = await asyncio.wait_for(
                         registry.execute_tool_call(
-                            tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id
+                            tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id,
+                            parent_conversation_id=parent_conversation_id,
+                            parent_agent_session_id=parent_agent_session_id,
                         ),
                         timeout=120.0
                     )
@@ -769,6 +773,8 @@ async def run_split_agent_loop(
     require_json_schema: bool = False,
     critique_rounds: int = 0,
     max_selector_tools: int = 5,
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Brain-Action Split Agent Loop.
 
@@ -818,6 +824,8 @@ async def run_split_agent_loop(
             yield_on_limit=yield_on_limit,
             require_json_schema=require_json_schema,
             critique_rounds=critique_rounds,
+            parent_conversation_id=parent_conversation_id,
+            parent_agent_session_id=parent_agent_session_id,
         )
 
     # Phase 1: Tool Selection (lightweight, no schemas in context)
@@ -862,5 +870,7 @@ async def run_split_agent_loop(
         yield_on_limit=yield_on_limit,
         require_json_schema=require_json_schema,
         critique_rounds=critique_rounds,
+        parent_conversation_id=parent_conversation_id,
+        parent_agent_session_id=parent_agent_session_id,
     )
 

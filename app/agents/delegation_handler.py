@@ -78,6 +78,8 @@ async def handle_delegation(
     cycle_id: str,
     bot_id: str,
     team_context: str = "",
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> str | None:
     """Handle a delegation request from one agent to another.
 
@@ -144,6 +146,8 @@ async def handle_delegation(
             ticker=ticker,
             cycle_id=cycle_id,
             bot_id=bot_id,
+            parent_conversation_id=parent_conversation_id,
+            parent_agent_session_id=parent_agent_session_id,
         )
 
         # Increment budget counter

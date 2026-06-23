@@ -285,6 +285,8 @@ class ToolRegistry:
         cycle_id: str = "",
         tool_cache: dict | None = None,
         enforce_ticker: bool = False,
+        parent_conversation_id: str | None = None,
+        parent_agent_session_id: str | None = None,
     ) -> dict:
         token = current_agent_name.set(agent_name)
         try:
@@ -296,6 +298,8 @@ class ToolRegistry:
                 cycle_id=cycle_id,
                 tool_cache=tool_cache,
                 enforce_ticker=enforce_ticker,
+                parent_conversation_id=parent_conversation_id,
+                parent_agent_session_id=parent_agent_session_id,
             )
         finally:
             current_agent_name.reset(token)
@@ -310,6 +314,8 @@ class ToolRegistry:
         cycle_id: str = "",
         tool_cache: dict | None = None,
         enforce_ticker: bool = False,
+        parent_conversation_id: str | None = None,
+        parent_agent_session_id: str | None = None,
     ) -> dict:
         """Execute a single tool call from the LLM and return the formatted result.
 
@@ -572,6 +578,10 @@ class ToolRegistry:
                     kwargs["ticker"] = ticker
                 if cycle_id and "cycle_id" not in kwargs and ("cycle_id" in sig.parameters or accepts_kwargs):
                     kwargs["cycle_id"] = cycle_id
+                if parent_conversation_id and "parent_conversation_id" not in kwargs and ("parent_conversation_id" in sig.parameters or accepts_kwargs):
+                    kwargs["parent_conversation_id"] = parent_conversation_id
+                if parent_agent_session_id and "parent_agent_session_id" not in kwargs and ("parent_agent_session_id" in sig.parameters or accepts_kwargs):
+                    kwargs["parent_agent_session_id"] = parent_agent_session_id
             except ValueError:
                 pass # Some built-ins don't have signatures
         else:
@@ -579,6 +589,10 @@ class ToolRegistry:
                 kwargs["ticker"] = ticker
             if cycle_id and "cycle_id" not in kwargs:
                 kwargs["cycle_id"] = cycle_id
+            if parent_conversation_id and "parent_conversation_id" not in kwargs:
+                kwargs["parent_conversation_id"] = parent_conversation_id
+            if parent_agent_session_id and "parent_agent_session_id" not in kwargs:
+                kwargs["parent_agent_session_id"] = parent_agent_session_id
 
         logger.info(
             "[ToolRegistry] Executing tool: %s with args: %s", func_name, kwargs

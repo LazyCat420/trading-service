@@ -32,6 +32,8 @@ async def process_sub_task(task_id: int, sub_agent: str, ticker: str, payload: d
     logger.info(f"[SUB-TASK] Processing task {task_id} for {sub_agent} on {ticker}")
     try:
         user_message = payload.get("message", "Please analyze the provided data.")
+        parent_conversation_id = payload.get("parent_conversation_id")
+        parent_agent_session_id = payload.get("parent_agent_session_id")
         
         response, _, _ = await call_prism_agent(
             agent_id=sub_agent.upper(),
@@ -40,7 +42,9 @@ async def process_sub_task(task_id: int, sub_agent: str, ticker: str, payload: d
             fallback_agent_name=sub_agent.lower(),
             priority=Priority.NORMAL,
             ticker=ticker,
-            actor_label=f"subtask_{task_id}"
+            actor_label=f"subtask_{task_id}",
+            parent_conversation_id=parent_conversation_id,
+            parent_agent_session_id=parent_agent_session_id,
         )
         
         with get_db() as db:

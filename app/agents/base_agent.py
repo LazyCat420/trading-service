@@ -176,6 +176,8 @@ async def run_agent(
     endpoint_override: str | None = None,
     enable_tools: bool = False,
     response_format: dict | None = None,
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -325,6 +327,8 @@ async def run_agent(
                         max_tokens=max_tokens,
                         temperature=temperature,
                         actor_label=agent_name,
+                        parent_conversation_id=parent_conversation_id,
+                        parent_agent_session_id=parent_agent_session_id,
                     )
                     return (
                         result.get("final_text", ""),
@@ -357,6 +361,8 @@ async def run_agent(
                 priority=Priority.NORMAL,
                 tools_override=agent_tools,
                 require_json_schema=True,
+                parent_conversation_id=parent_conversation_id,
+                parent_agent_session_id=parent_agent_session_id,
             )
         else:
             result = await run_agent_loop(
@@ -370,6 +376,8 @@ async def run_agent(
                 priority=Priority.NORMAL,
                 tools_override=agent_tools,
                 require_json_schema=True,
+                parent_conversation_id=parent_conversation_id,
+                parent_agent_session_id=parent_agent_session_id,
             )
         return (
             result.get("final_text", ""),

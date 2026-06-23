@@ -201,6 +201,8 @@ async def create_team(
     insights = {}
     ticker = kwargs.get("ticker", "")
     cycle_id = kwargs.get("cycle_id", "")
+    parent_conversation_id = kwargs.get("parent_conversation_id")
+    parent_agent_session_id = kwargs.get("parent_agent_session_id")
     
     if topology == "sequential":
         logger.info(f"[create_team] Executing sequential team '{name}' with {len(members)} members")
@@ -226,6 +228,8 @@ async def create_team(
                     ticker=ticker,
                     cycle_id=cycle_id,
                     actor_label=agent_role,
+                    parent_conversation_id=parent_conversation_id,
+                    parent_agent_session_id=parent_agent_session_id,
                 )
                 current_context = response_text
                 insights[agent_role.lower()] = response_text
@@ -258,6 +262,8 @@ async def create_team(
                     ticker=ticker,
                     cycle_id=cycle_id,
                     actor_label=agent_role,
+                    parent_conversation_id=parent_conversation_id,
+                    parent_agent_session_id=parent_agent_session_id,
                 )
                 insights[agent_role.lower()] = response_text
                 return {
@@ -298,6 +304,8 @@ async def create_team(
                 ticker=ticker,
                 cycle_id=cycle_id,
                 actor_label="synthesizer",
+                parent_conversation_id=parent_conversation_id,
+                parent_agent_session_id=parent_agent_session_id,
             )
             insights["synthesis"] = final_response
             results = [{
@@ -331,6 +339,8 @@ async def create_team(
                     ticker=ticker,
                     cycle_id=cycle_id,
                     actor_label=agent_role,
+                    parent_conversation_id=parent_conversation_id,
+                    parent_agent_session_id=parent_agent_session_id,
                 )
                 insights[agent_role.lower()] = response_text
                 return {

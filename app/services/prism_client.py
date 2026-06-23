@@ -498,6 +498,11 @@ class PrismClient:
             title_parts.append(cycle_id[:12])
         title = " · ".join(title_parts)
 
+        # Track if the caller explicitly provided a parent conversation ID.
+        # When True, we create a unique conversationId for this sub-agent
+        # so it renders as a child node in Prism's conversation tree.
+        _caller_supplied_parent = parent_conversation_id is not None
+
         if cycle_id:
             ticker_part = f"-{ticker}" if ticker else ""
             parent_group_key = f"{cycle_id}{ticker_part}"
@@ -520,7 +525,13 @@ class PrismClient:
                 group_key = f"{cycle_id}{ticker_part}-{agent_name}-{str(uuid.uuid4())[:8]}"
                 
             session_id, is_new = self._get_or_create_session(group_key)
-            conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
+            # When parent_conversation_id was explicitly passed by the caller,
+            # each sub-agent gets its own unique conversationId so it renders as
+            # a separate child conversation in the Prism UI tree.
+            if _caller_supplied_parent:
+                conversation_id = str(uuid.uuid4())
+            else:
+                conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
             session_id, is_new = self._get_or_create_session(group_key)
@@ -632,6 +643,9 @@ class PrismClient:
             title_parts.append(ticker)
         title = " · ".join(title_parts)
 
+        # Track if the caller explicitly provided a parent conversation ID.
+        _caller_supplied_parent = parent_conversation_id is not None
+
         # Replicate get_chat_payload_and_url's cycle/ticker grouping logic
         if cycle_id:
             ticker_part = f"-{ticker}" if ticker else ""
@@ -655,7 +669,12 @@ class PrismClient:
                 group_key = f"{cycle_id}{ticker_part}-{agent_name}-{str(uuid.uuid4())[:8]}"
                 
             session_id, is_new = self._get_or_create_session(group_key)
-            conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
+            # When parent_conversation_id was explicitly passed by the caller,
+            # each sub-agent gets its own unique conversationId.
+            if _caller_supplied_parent:
+                conversation_id = str(uuid.uuid4())
+            else:
+                conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
             session_id, is_new = self._get_or_create_session(group_key)

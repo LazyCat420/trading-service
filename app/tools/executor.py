@@ -38,6 +38,8 @@ async def run_tool_agent(
     tools_override: list[dict] | None = None,
     yield_on_limit: bool = False,
     bypass_prism: bool = False,
+    parent_conversation_id: str | None = None,
+    parent_agent_session_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Run an LLM agent with tools. Automatically loops back to the LLM
@@ -67,6 +69,8 @@ async def run_tool_agent(
                     tools_override=tools_override,
                     temperature=0.3,
                     actor_label=agent_name,
+                    parent_conversation_id=parent_conversation_id,
+                    parent_agent_session_id=parent_agent_session_id,
                 )
         except Exception as pe:
             logger.error("[Executor] Prism routing failed for %s, falling back to local: %s", agent_name, pe)
@@ -198,7 +202,9 @@ async def run_tool_agent(
         tool_results_for_log = []
         for tc in tool_calls:
             tool_res = await registry.execute_tool_call(
-                tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id
+                tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id,
+                parent_conversation_id=parent_conversation_id,
+                parent_agent_session_id=parent_agent_session_id,
             )
             messages.append(tool_res)
             tool_results_for_log.append(tool_res)
