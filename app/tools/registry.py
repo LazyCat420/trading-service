@@ -563,10 +563,22 @@ class ToolRegistry:
                 }
 
         # Inject context parameters if not already present
-        if ticker and "ticker" not in kwargs:
-            kwargs["ticker"] = ticker
-        if cycle_id and "cycle_id" not in kwargs:
-            kwargs["cycle_id"] = cycle_id
+        if not is_remote_tool:
+            func = self.tools[func_name]
+            try:
+                sig = inspect.signature(func)
+                accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if ticker and "ticker" not in kwargs and ("ticker" in sig.parameters or accepts_kwargs):
+                    kwargs["ticker"] = ticker
+                if cycle_id and "cycle_id" not in kwargs and ("cycle_id" in sig.parameters or accepts_kwargs):
+                    kwargs["cycle_id"] = cycle_id
+            except ValueError:
+                pass # Some built-ins don't have signatures
+        else:
+            if ticker and "ticker" not in kwargs:
+                kwargs["ticker"] = ticker
+            if cycle_id and "cycle_id" not in kwargs:
+                kwargs["cycle_id"] = cycle_id
 
         logger.info(
             "[ToolRegistry] Executing tool: %s with args: %s", func_name, kwargs
