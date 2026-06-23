@@ -11,8 +11,7 @@ from app.cycle.orchestration.state_manager import PipelineStateDB
 from app.services.logging.cycle_auditor import CycleAuditor
 from app.log_manager import log_manager
 
-from app.cycle.phases.phase1_health import run_phase1_health
-from app.cycle.phases.phase6_post import run_phase6_post
+
 
 from app.utils.trace import set_trace_id
 from app.pipeline.orchestration.cycle_control import cycle_control
@@ -123,12 +122,6 @@ class OrchestratorV3Mixin:
 
             _auditor.phase_entry(ctx.cycle_id, "starting")
 
-            # ── Phase 1: Health, Triage, Directives (Safety check) ──
-            await run_phase1_health(
-                ctx, bot_id, cls.emit, cls._cycle_summary, cls._state
-            )
-            _auditor.phase_exit(ctx.cycle_id, "starting")
-
             cls._state["status"] = "analyzing"
             cls.emit("started", "concurrent", "Starting Event-Driven Swarm", status="ok")
 
@@ -136,6 +129,7 @@ class OrchestratorV3Mixin:
             event_bus.start()
             completion_event = asyncio.Event()
             traded_tickers = set()
+            aborted_reason = None
 
             # Dynamic Selection Mode fallback
             tickers_to_process = ctx.tickers
@@ -149,22 +143,43 @@ class OrchestratorV3Mixin:
             ctx.tickers = tickers_to_process
             cls._cycle_summary["tickers_final"] = tickers_to_process
 
+            async def trigger_housekeeping():
+                event_bus.publish("START_HOUSEKEEPING", {
+                    "ctx": ctx,
+                    "bot_id": bot_id,
+                    "results": [],
+                    "trade_result": {"status": "ok", "executed": len(traded_tickers)},
+                    "emit": cls.emit,
+                    "state": cls._state,
+                    "cycle_summary": cls._cycle_summary
+                })
+
             async def on_trade_complete(payload):
                 ticker = payload.get("ticker")
                 if ticker:
                     traded_tickers.add(ticker)
-                if len(traded_tickers) >= len(tickers_to_process):
-                    completion_event.set()
+                if len(traded_tickers) >= len(ctx.tickers):
+                    await trigger_housekeeping()
 
             async def on_cycle_completed(payload):
+                await trigger_housekeeping()
+
+            async def on_teardown_complete(payload):
+                completion_event.set()
+
+            async def on_cycle_aborted(payload):
+                nonlocal aborted_reason
+                aborted_reason = payload.get("reason", "unknown")
                 completion_event.set()
 
             event_bus.subscribe("TRADE_COMPLETE", on_trade_complete)
             event_bus.subscribe("CYCLE_COMPLETED", on_cycle_completed)
+            event_bus.subscribe("TEARDOWN_COMPLETE", on_teardown_complete)
+            event_bus.subscribe("CYCLE_ABORTED", on_cycle_aborted)
 
             # Manually trigger completion if no tickers to process
             if not tickers_to_process:
-                completion_event.set()
+                await trigger_housekeeping()
 
             # Initialize and start the Peer-to-Peer Agent Mesh
             from app.cycle.orchestration.agent_mesh import AgentMesh
@@ -172,15 +187,15 @@ class OrchestratorV3Mixin:
             await mesh.start()
 
             # Kick off the mesh with the initial event
-            event_bus.publish("CYCLE_STARTED", {
-                "cycle_id": ctx.cycle_id,
-                "candidates": tickers_to_process,
-                "position_tickers": cls._state.get("position_tickers", []),
+            event_bus.publish("CYCLE_TRIGGERED", {
+                "ctx": ctx,
                 "bot_id": bot_id,
-                "dynamic_selection_mode": getattr(ctx, "dynamic_selection_mode", False)
+                "emit": cls.emit,
+                "cycle_summary": cls._cycle_summary,
+                "state": cls._state
             })
 
-            # Wait for completion of all trades
+            # Wait for completion of all trades and teardown
             try:
                 await asyncio.wait_for(completion_event.wait(), timeout=5400.0)  # 90 min timeout
             except asyncio.TimeoutError:
@@ -190,25 +205,8 @@ class OrchestratorV3Mixin:
                 event_bus.stop()
                 event_bus.clear()
 
-            # ── Phase 6: Post-Enrichment (bounded housekeeping) ──
-            cls._state["status"] = "persisted"
-            cls.emit("persisted", "post", "Persisting results and launching bounded housekeeping", status="ok")
-            _auditor.phase_entry(ctx.cycle_id, "post", ticker_count=len(tickers_to_process))
-            try:
-                # We need some dummy results format to pass to run_phase6_post
-                # Real results are saved via the agents themselves now
-                results = [] 
-                trade_result = {"status": "ok", "executed": len(traded_tickers)}
-                await run_phase6_post(
-                    ctx, bot_id, results, trade_result, cls.emit, cls._state, cls._cycle_summary
-                )
-                _auditor.phase_exit(ctx.cycle_id, "post", results_count=len(tickers_to_process))
-            except Exception as e:
-                logger.error("[CYCLE] Post phase failed: %s", e)
-                _auditor.phase_exit(ctx.cycle_id, "post", severity="critical", message=f"Post phase failed: {e}")
-
-            cls._state["status"] = "evaluated"
-            cls.emit("evaluated", "post", "Cycle evaluations and metrics collected", status="ok")
+            if aborted_reason:
+                raise Exception(f"Cycle aborted: {aborted_reason}")
 
             ended = datetime.now(timezone.utc).isoformat()
             cls._cycle_summary["status"] = "done"

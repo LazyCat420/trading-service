@@ -508,16 +508,77 @@ class CIOMeshNode(AgentMeshNode):
             })
 
 
+class HealthAndSafetyMeshNode(AgentMeshNode):
+    def __init__(self):
+        super().__init__("health_and_safety")
+
+    def register_subscriptions(self):
+        self.subscribe("CYCLE_TRIGGERED", self.on_cycle_triggered)
+
+    async def on_cycle_triggered(self, payload: dict):
+        ctx = payload.get("ctx")
+        bot_id = payload.get("bot_id")
+        cycle_summary = payload.get("cycle_summary", {})
+        state = payload.get("state", {})
+        emit = payload.get("emit")
+        
+        try:
+            from app.cycle.phases.phase1_health import run_phase1_health
+            await run_phase1_health(ctx, bot_id, emit, cycle_summary, state)
+            
+            if getattr(ctx, "trade", True) is False and not ctx.tickers:
+                event_bus.publish("CYCLE_ABORTED", {"cycle_id": ctx.cycle_id, "reason": "health_failure"})
+                return
+
+            event_bus.publish("CYCLE_STARTED", {
+                "cycle_id": ctx.cycle_id,
+                "candidates": ctx.tickers,
+                "position_tickers": state.get("position_tickers", []),
+                "bot_id": bot_id,
+                "dynamic_selection_mode": getattr(ctx, "dynamic_selection_mode", False)
+            })
+        except Exception as e:
+            logger.error(f"[HealthAndSafetyNode] Failed: {e}", exc_info=True)
+            event_bus.publish("CYCLE_ABORTED", {"cycle_id": ctx.cycle_id, "reason": str(e)})
+
+
+class HousekeepingMeshNode(AgentMeshNode):
+    def __init__(self):
+        super().__init__("housekeeping")
+
+    def register_subscriptions(self):
+        self.subscribe("START_HOUSEKEEPING", self.on_start_housekeeping)
+
+    async def on_start_housekeeping(self, payload: dict):
+        ctx = payload.get("ctx")
+        bot_id = payload.get("bot_id")
+        results = payload.get("results", [])
+        trade_result = payload.get("trade_result", {"status": "ok", "executed": []})
+        emit = payload.get("emit")
+        state = payload.get("state", {})
+        cycle_summary = payload.get("cycle_summary", {})
+
+        try:
+            from app.cycle.phases.phase6_post import run_phase6_post
+            await run_phase6_post(ctx, bot_id, results, trade_result, emit, state, cycle_summary)
+        except Exception as e:
+            logger.error(f"[HousekeepingNode] Failed: {e}", exc_info=True)
+        finally:
+            event_bus.publish("TEARDOWN_COMPLETE", {"cycle_id": ctx.cycle_id})
+
+
 class AgentMesh:
     def __init__(self):
         self.nodes = [
+            HealthAndSafetyMeshNode(),
             CuratorMeshNode(),
             PlannerMeshNode(),
             RetrieverMeshNode(),
             TechnicalAnalystMeshNode(),
             SynthesisMeshNode(),
             DebateMeshNode(),
-            CIOMeshNode()
+            CIOMeshNode(),
+            HousekeepingMeshNode()
         ]
 
     async def start(self):
