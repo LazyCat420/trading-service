@@ -45,6 +45,35 @@ async def run_planner(
     if is_position:
         planner_prompt += f"\n\nPORTFOLIO STATUS:\nWe currently HOLD an open position in this stock. The research plan should prioritize finding evidence to justify whether we should continue holding or exit/trim the position."
 
+    planner_prompt += f"""
+
+## SUB-AGENT INSTRUCTIONS
+After formulating your research plan, you MUST use the `create_team` tool to spawn specialized research sub-agents that will execute the plan.
+
+Call `create_team` with:
+- **name**: A descriptive team name (e.g. "Research Team for {ticker}")
+- **topology**: "map_reduce" (parallel research, then synthesize)
+- **members**: An array of sub-agent definitions, each with:
+  - `role`: The sub-agent's role (e.g. "fundamental_researcher", "technical_analyst", "news_sentiment")
+  - `description`: A short label for this sub-agent
+  - `prompt`: The specific research questions this sub-agent should answer based on your plan
+
+Example:
+```
+create_team(
+  name="Research Team for {ticker}",
+  topology="map_reduce",
+  members=[
+    {{"role": "fundamental_researcher", "description": "Fundamental Analysis", "prompt": "Analyze revenue trends, margins, and valuation for {ticker}..."}},
+    {{"role": "technical_analyst", "description": "Technical Analysis", "prompt": "Analyze price action, RSI, MACD, and support/resistance for {ticker}..."}},
+    {{"role": "news_sentiment", "description": "News & Sentiment", "prompt": "Analyze recent news catalysts and market sentiment for {ticker}..."}}
+  ]
+)
+```
+
+This will spawn parallel sub-agents that each research their assigned area and synthesize the results."""
+
+
     result = await run_agent(
         agent_name="planner",
         ticker=ticker,
