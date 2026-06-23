@@ -383,17 +383,28 @@ class PrismClient:
             "planner_agent", "swarm_cio", "retriever_agent",
             "technical_analyst_agent", "pre_trade_agent", "debate_coordinator"
         }
+        DEBATE_PMS = {
+            "imhotep", "pythagoras", "archimedes", "caesar", "al_khwarizmi", 
+            "brahmagupta", "newton_leibniz", "memory_pm", "v3"
+        }
         # We don't have the agent name in this function signature directly, but we can extract it from the payload
         agent_id = payload.get("agent", "")
         if isinstance(agent_id, str):
             agent_slug = agent_id.replace("CUSTOM_", "").lower()
-            if agent_slug in CORE_ORCHESTRATORS or any(core in agent_slug for core in CORE_ORCHESTRATORS):
+            
+            # Check if core orchestrator or debate PM
+            is_core = agent_slug in CORE_ORCHESTRATORS or any(core in agent_slug for core in CORE_ORCHESTRATORS)
+            is_pm = agent_slug in DEBATE_PMS or any(pm in agent_slug for pm in DEBATE_PMS)
+            
+            if is_core or is_pm:
                 if "create_team" not in enabled_tools:
                     enabled_tools.append("create_team")
                 if "send_message" not in enabled_tools:
                     enabled_tools.append("send_message")
                 if "stop_agent" not in enabled_tools:
                     enabled_tools.append("stop_agent")
+                if "request_lateral_fact_check" not in enabled_tools:
+                    enabled_tools.append("request_lateral_fact_check")
 
         payload["enabledTools"] = [
             t for t in enabled_tools if t != "ask_user_question"

@@ -562,6 +562,12 @@ class ToolRegistry:
                     ),
                 }
 
+        # Inject context parameters if not already present
+        if ticker and "ticker" not in kwargs:
+            kwargs["ticker"] = ticker
+        if cycle_id and "cycle_id" not in kwargs:
+            kwargs["cycle_id"] = cycle_id
+
         logger.info(
             "[ToolRegistry] Executing tool: %s with args: %s", func_name, kwargs
         )

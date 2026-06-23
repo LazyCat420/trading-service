@@ -5,6 +5,7 @@ Allows decoupled agents to communicate via Pub/Sub without waiting on rigid phas
 
 import asyncio
 import logging
+import fnmatch
 from typing import Any, Callable, Coroutine, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -18,11 +19,23 @@ class EventBus:
         self._task: asyncio.Task | None = None
 
     def subscribe(self, event_name: str, callback: Callable[[Any], Coroutine]):
-        """Subscribe an async callback to an event type."""
+        """Subscribe an async callback to an event type. Supports wildcards like *."""
         if event_name not in self._subscribers:
             self._subscribers[event_name] = []
-        self._subscribers[event_name].append(callback)
-        logger.debug(f"[EventBus] Subscribed to {event_name}")
+        if callback not in self._subscribers[event_name]:
+            self._subscribers[event_name].append(callback)
+            logger.debug(f"[EventBus] Subscribed callback to {event_name}")
+
+    def unsubscribe(self, event_name: str, callback: Callable[[Any], Coroutine]):
+        """Unsubscribe a callback from an event type."""
+        if event_name in self._subscribers:
+            try:
+                self._subscribers[event_name].remove(callback)
+                logger.debug(f"[EventBus] Unsubscribed callback from {event_name}")
+                if not self._subscribers[event_name]:
+                    del self._subscribers[event_name]
+            except ValueError:
+                pass
 
     def publish(self, event_name: str, payload: Any):
         """Publish an event to the bus. Returns immediately."""
@@ -34,13 +47,17 @@ class EventBus:
         while True:
             try:
                 event_name, payload = await self._queue.get()
-                subscribers = self._subscribers.get(event_name, [])
+                
+                # Gather all matching subscribers (supporting direct match and fnmatch patterns)
+                matched_subscribers = []
+                for pattern, callbacks in self._subscribers.items():
+                    if pattern == event_name or (('*' in pattern or '?' in pattern) and fnmatch.fnmatch(event_name, pattern)):
+                        matched_subscribers.extend(callbacks)
                 
                 # Execute all subscribers concurrently for this event
-                if subscribers:
-                    tasks = [asyncio.create_task(sub(payload)) for sub in subscribers]
+                if matched_subscribers:
+                    tasks = [asyncio.create_task(sub(payload)) for sub in matched_subscribers]
                     # We don't await them here to avoid blocking the event loop
-                    # But we could if we wanted strict ordering
                     
                 self._queue.task_done()
             except asyncio.CancelledError:

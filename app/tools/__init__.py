@@ -107,9 +107,11 @@ from app.tools.risk_tools import (
 
 # Ontology / Brain Graph learning tools
 from app.tools.ontology_tools import graph_learn_tool
+from app.tools.mesh_tools import request_lateral_fact_check
 
 __all__ = [
     "registry",
+    "request_lateral_fact_check",
     "PermissionLevel",
     "get_market_data",
     "get_finnhub_news",

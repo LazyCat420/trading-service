@@ -112,6 +112,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_internal_database",
         "search_trading_skills",
         "request_data_collection",
+        "request_lateral_fact_check",
     ],
     "verifier": [
         "check_hallucination",
@@ -272,6 +273,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_options_flow",
         "query_technical_indicator",
         "publish_event",
+        "request_lateral_fact_check",
     ],
     "v3_worker_fundamental": [
         "get_market_data",
@@ -281,6 +283,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "query_financial_metrics",
         "search_database_facts",
         "publish_event",
+        "request_lateral_fact_check",
     ],
     "v3_worker_news": [
         "get_finnhub_news",
@@ -289,6 +292,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_database_facts",
         "search_internal_database",
         "publish_event",
+        "request_lateral_fact_check",
     ],
     "v3_worker_insider": [
         "get_insider_trades",
@@ -296,6 +300,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
         "search_database_facts",
         "publish_event",
+        "request_lateral_fact_check",
     ],
     "ticker_validator": [],
     # ── V3 Pure Agentic Pipeline Agents ──
@@ -307,6 +312,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_internal_database",
         "search_database_facts",
         "post_finding",
+        "request_lateral_fact_check",
     ],
     "v3_fundamental_analyst": [
         "get_sec_filings",
@@ -318,6 +324,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_database_facts",
         "get_market_data",
         "post_finding",
+        "request_lateral_fact_check",
     ],
     "v3_quant_analyst": [
         "get_market_data",
@@ -331,6 +338,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_portfolio_state",
         "get_position_pnl",
         "post_finding",
+        "request_lateral_fact_check",
     ],
     "v3_bull_agent": [],       # Pure reasoning — no tools
     "v3_bear_agent": [],       # Pure reasoning — no tools

@@ -157,114 +157,28 @@ class OrchestratorV3Mixin:
                 if len(traded_tickers) >= len(tickers_to_process):
                     completion_event.set()
 
-            async def on_analysis_ready(payload):
-                ticker = payload.get("ticker")
-                logger.info(f"[CYCLE] ANALYSIS_READY received for {ticker}. Launching full debate and thesis steps.")
-                
-                from app.ticker_pipeline.context import TickerContext
-                from app.ticker_pipeline.step_data import run_data_step
-                from app.ticker_pipeline.step_ontology import run_ontology_step
-                from app.ticker_pipeline.step_evidence import run_evidence_step
-                from app.ticker_pipeline.step_sufficiency import run_sufficiency_step
-                from app.ticker_pipeline.step_memory import run_memory_step
-                from app.ticker_pipeline.step_debate import run_debate_step
-                from app.ticker_pipeline.step_thesis import run_thesis_step
-                from app.ticker_pipeline.step_verify import run_verify_step
-                from app.ticker_pipeline.step_persist import run_persist_step
-                
-                async def run_cognition_and_trade():
-                    try:
-                        # 1. Initialize TickerContext
-                        ctx_ticker = TickerContext(
-                            ticker=ticker,
-                            cycle_id=ctx.cycle_id,
-                            bot_id=bot_id,
-                            emit=cls.emit,
-                            macro_memo=cls._cycle_summary.get("macro_memo", ""),
-                            watchlist=ctx.tickers,
-                            trigger_type=ctx.trigger_type,
-                            active_directives=cls._state.get("active_directives", []),
-                        )
-                        
-                        try:
-                            from app.tools.portfolio_tools import get_position_context
-                            ctx_ticker.position_context = get_position_context(ticker, bot_id)
-                        except Exception as e:
-                            logger.debug("Position context query failed for %s: %s", ticker, e)
-                        ctx_ticker.held = ctx_ticker.position_context.get("held", False)
-
-                        try:
-                            from app.tools.portfolio_tools import get_portfolio_risk_dashboard
-                            ctx_ticker.portfolio_dashboard = get_portfolio_risk_dashboard(ticker, bot_id)
-                        except Exception as e:
-                            logger.debug("Portfolio risk dashboard failed for %s: %s", ticker, e)
-                            
-                        # 2. Run preparation steps
-                        ctx_ticker = await run_data_step(ctx_ticker)
-                        ctx_ticker = await run_ontology_step(ctx_ticker)
-                        ctx_ticker = await run_evidence_step(ctx_ticker)
-                        
-                        result_or_ctx = await run_sufficiency_step(ctx_ticker)
-                        if result_or_ctx is None or isinstance(result_or_ctx, dict):
-                            logger.warning(f"[CYCLE] Sufficiency check rejected or abstained for {ticker}")
-                            return
-                            
-                        ctx_ticker = await run_memory_step(ctx_ticker)
-                        
-                        # 3. Inject sub-agent insights from the event payload
-                        ctx_ticker.agent_insights = payload.get("data", {}).get("agent_insights", {})
-                        ctx_ticker.orchestrator_had_agents = bool(ctx_ticker.agent_insights)
-                        
-                        # 4. Run debate, thesis, and verification
-                        ctx_ticker = await run_debate_step(ctx_ticker)
-                        ctx_ticker = await run_thesis_step(ctx_ticker)
-                        ctx_ticker = await run_verify_step(ctx_ticker)
-                        
-                        # 5. Persist to DB
-                        await run_persist_step(ctx_ticker)
-                        
-                        action = ctx_ticker.final_action
-                        confidence = ctx_ticker.final_confidence
-                        rationale = ctx_ticker.final_rationale
-                        
-                        logger.info(f"[CYCLE] Cognition complete for {ticker}: action={action}, confidence={confidence}%")
-                        
-                        if action in ("BUY", "SELL"):
-                            from app.agents.pre_trade_agent import run_pre_trade
-                            await run_pre_trade(ticker, confidence, ctx.cycle_id, bot_id, rationale)
-                        else:
-                            logger.info(f"[CYCLE] No trade required for {ticker} (action: {action})")
-                    except Exception as e:
-                        logger.error(f"[CYCLE] Cognition pipeline failed for {ticker}: {e}", exc_info=True)
-                    finally:
-                        # Always publish TRADE_COMPLETE to avoid stalling the cycle
-                        event_bus.publish("TRADE_COMPLETE", {"ticker": ticker, "cycle_id": ctx.cycle_id})
-                        
-                asyncio.create_task(run_cognition_and_trade())
+            async def on_cycle_completed(payload):
+                completion_event.set()
 
             event_bus.subscribe("TRADE_COMPLETE", on_trade_complete)
-            event_bus.subscribe("ANALYSIS_READY", on_analysis_ready)
+            event_bus.subscribe("CYCLE_COMPLETED", on_cycle_completed)
 
             # Manually trigger completion if no tickers to process
             if not tickers_to_process:
                 completion_event.set()
 
-            # Trigger Planner for each ticker
-            from app.agents.planner_agent import run_planner
-            sem = asyncio.Semaphore(settings.V2_TICKER_CONCURRENCY)
+            # Initialize and start the Peer-to-Peer Agent Mesh
+            from app.cycle.orchestration.agent_mesh import AgentMesh
+            mesh = AgentMesh()
+            await mesh.start()
 
-            async def run_planner_throttled(t):
-                async with sem:
-                    await run_planner(
-                        t,
-                        ctx.cycle_id,
-                        bot_id,
-                        research_focus=ctx.research_focus.get(t, ""),
-                        is_position=(t in cls._state.get("position_tickers", []))
-                    )
-
-            for ticker in tickers_to_process:
-                asyncio.create_task(run_planner_throttled(ticker))
+            # Kick off the mesh with the initial event
+            event_bus.publish("CYCLE_STARTED", {
+                "cycle_id": ctx.cycle_id,
+                "candidates": tickers_to_process,
+                "position_tickers": cls._state.get("position_tickers", []),
+                "bot_id": bot_id
+            })
 
             # Wait for completion of all trades
             try:
@@ -272,6 +186,7 @@ class OrchestratorV3Mixin:
             except asyncio.TimeoutError:
                 logger.error("[CYCLE] Event Swarm safety timeout (90m) exceeded.")
             finally:
+                await mesh.stop()
                 event_bus.stop()
                 event_bus.clear()
 
