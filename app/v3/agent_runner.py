@@ -41,7 +41,7 @@ async def run_v3_agent(
     cycle_id: str = "",
     bot_id: str = "",
     emit: Any = None,
-    timeout_seconds: float = 600.0,
+    timeout_seconds: float = 900.0,
     include_debate_context: bool = False,
 ) -> PhaseOutcome:
     """Run a V3 agent against the SharedDesk.
