@@ -1,49 +1,29 @@
-"""Stop/Cancel race condition tests.
-
-These tests verify the 4 critical race scenarios identified in the
-trading cycle stop/cancel audit.
-"""
+"""Stop/Cancel regression tests for PipelineService."""
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-
+from unittest.mock import AsyncMock, MagicMock, patch
+from app.services.pipeline_service import PipelineService
+from app.services.vllm_client import llm
 
 # ── Test fixtures ──
 
-
 class FakeCycleControl:
-    """Minimal stub of cycle_control for testing."""
-
+    """Minimal stub of cycle_control for testing retry cancellation."""
     def __init__(self):
         self.is_stopped = False
         self.is_paused = False
-        self._pause_event = asyncio.Event()
-        self._pause_event.set()
 
     def stop(self):
         self.is_stopped = True
 
-    def reset(self):
-        self.is_stopped = False
-        self.is_paused = False
-        self._pause_event.set()
-
-    async def stop_and_drain(self, drain_seconds=0.5):
-        pass
-
-    def pause(self):
-        self.is_paused = True
-        self._pause_event.clear()
-
 
 class FakePrismClient:
     """Minimal stub of PrismClient for session tracking tests."""
-
     def __init__(self):
-        self._sessions: dict[str, str] = {}
-        self._conversations: dict[str, str] = {}
-        self._cycle_generation: int = 0
+        self._sessions = {}
+        self._conversations = {}
+        self._cycle_generation = 0
 
     @property
     def cycle_generation(self):
@@ -59,70 +39,81 @@ class FakePrismClient:
         self._conversations.clear()
 
 
-# ── Test 1: Duplicate stop clicks ──
+@pytest.fixture(autouse=True)
+def cleanup_pipeline_service():
+    """Reset PipelineService class variables before/after each test."""
+    PipelineService._state = {
+        "status": "stopped",
+        "progress": "",
+        "tickers": [],
+        "cycle_id": None,
+    }
+    PipelineService._cycle_task = None
+    PipelineService._stop_requested = False
+    yield
+    PipelineService._cycle_task = None
+    PipelineService._stop_requested = False
 
+
+# ── Test 1: Duplicate stop clicks ──
 
 @pytest.mark.asyncio
 async def test_duplicate_stop_does_not_write_error():
-    """Start cycle, send STOP_CYCLE twice in quick succession.
-    Assert: second STOP writes 'no_op', not 'error'; state is 'cancelled' once.
+    """Start cycle, send stop_cycle twice in quick succession.
+    Assert: second stop is handled cleanly and state is 'stopped'.
     """
-    from app.cycle.orchestration.lifecycle_controller import (
-        _TERMINAL_STATES,
-        _task_registry,
-        TaskRegistry,
-    )
+    # Set status to running
+    PipelineService._state["status"] = "running"
+    
+    # Create a mock running task
+    async def mock_cycle_task():
+        await asyncio.sleep(10)
+    
+    task = asyncio.create_task(mock_cycle_task())
+    PipelineService._cycle_task = task
 
-    # Simulate a controller with a running cycle
-    mock_state = {"status": "collecting", "cycle_id": "cycle-test-1"}
-
-    # First stop — should transition to stopping
-    assert mock_state["status"] not in _TERMINAL_STATES
-
-    # After first stop completes
-    mock_state["status"] = "cancelled"
-
-    # Second stop — should be a no-op
-    assert mock_state["status"] in _TERMINAL_STATES
-    result = {"status": "no_op", "message": f"No cycle running (status: {mock_state['status']})"}
-    assert result["status"] == "no_op"
-    assert "cancelled" in result["message"]
+    with patch("app.services.vllm_client.llm.abort_active_requests", new_callable=AsyncMock) as mock_abort, \
+         patch("app.services.pipeline_state.PipelineStateDB.save_state") as mock_save:
+        
+        # Stop first time
+        res1 = await PipelineService.stop_cycle()
+        assert res1["status"] == "stopped"
+        assert PipelineService._state["status"] == "stopped"
+        
+        # Stop second time
+        res2 = await PipelineService.stop_cycle()
+        assert res2["status"] == "stopped"
+        assert PipelineService._state["status"] == "stopped"
+        
+        # Verify LLM abort was called
+        assert mock_abort.called
 
 
 # ── Test 2: Stop during Prism retry backoff ──
 
-
 @pytest.mark.asyncio
 async def test_stop_during_prism_retry_cancels_cleanly():
-    """Start cycle, mock Prism to be unreachable triggering retry backoff.
-    Send STOP_CYCLE during backoff sleep.
-    Assert: cycle cancels immediately, does not wait for retry to exhaust.
+    """Start cycle, mock Prism retry backoff sleep and send STOP during backoff.
+    Assert: cycle cancels immediately.
     """
     fake_control = FakeCycleControl()
 
     async def slow_prism_call():
-        """Simulates a Prism call that sleeps during retry backoff."""
         for i in range(3):
-            # Check stop flag before each retry (as the real code does)
             if fake_control.is_stopped:
                 return {"status": "cancelled", "reason": "stop_requested"}
             try:
-                await asyncio.sleep(10)  # Would be the retry backoff
+                await asyncio.sleep(10)
             except asyncio.CancelledError:
                 return {"status": "cancelled", "reason": "task_cancelled"}
         return {"status": "ok"}
 
-    # Start the slow call
     task = asyncio.create_task(slow_prism_call())
-
-    # Give it a moment to start
     await asyncio.sleep(0.01)
 
-    # Signal stop
     fake_control.stop()
-
-    # Cancel the task (as stop_cycle would)
     task.cancel()
+
     try:
         result = await asyncio.wait_for(task, timeout=1.0)
     except (asyncio.CancelledError, asyncio.TimeoutError):
@@ -132,169 +123,99 @@ async def test_stop_during_prism_retry_cancels_cleanly():
     assert fake_control.is_stopped is True
 
 
-# ── Test 3: Start immediately after stop (STOP→START race) ──
-
+# ── Test 3: Start during stopping state ──
 
 @pytest.mark.asyncio
-async def test_start_after_stop_waits_for_cancellation():
-    """Send STOP_CYCLE then immediately START_CYCLE.
-    Assert: START_CYCLE does not execute until stop is confirmed.
-    Assert: no orphaned pause event on new cycle's CycleControl.
-    """
-    from app.cycle.orchestration.lifecycle_controller import (
-        _TERMINAL_STATES,
-        _task_registry,
-        TaskRegistry,
-    )
+async def test_start_during_stopping_returns_deduplicated():
+    """Verify that start_cycle returns deduplicated if the current status is 'stopping'."""
+    PipelineService._state["status"] = "stopping"
 
-    # Create a fresh registry for isolation
-    registry = TaskRegistry()
-
-    # Simulate a running cycle task
-    async def fake_cycle():
-        await asyncio.sleep(100)
-
-    cycle_task = asyncio.create_task(fake_cycle())
-    registry.register("cycle", cycle_task)
-
-    # Verify cycle is active
-    assert registry.is_active("cycle") is True
-
-    # Stop: cancel the task
-    await registry.cancel_and_await("cycle", timeout=1.0)
-
-    # After stop, cycle should no longer be active
-    assert registry.is_active("cycle") is False
-
-    # Now START can proceed — no orphaned task
-    fake_control = FakeCycleControl()
-    fake_control.reset()
-    assert fake_control._pause_event.is_set() is True  # Unblocked
-    assert fake_control.is_stopped is False
-    assert fake_control.is_paused is False
+    res = await PipelineService.start_cycle(["AAPL"])
+    assert res["status"] == "deduplicated"
+    assert "stopping" in res["message"]
 
 
 # ── Test 4: Repeated cycles — session/conversation leak check ──
 
-
 @pytest.mark.asyncio
 async def test_repeated_cycles_do_not_grow_prism_sessions():
-    """Run 5 full cycles to completion.
-    Assert: len(prism_client._sessions) == 0 after each cycle ends.
-    Assert: len(prism_client._conversations) == 0 after each cycle ends.
-    """
+    """Run 5 full cycles. Verify sessions and conversations are cleared each time."""
     prism = FakePrismClient()
 
     for i in range(5):
-        # begin_cycle increments generation and clears sessions
         gen = prism.begin_cycle()
         assert gen == i + 1
 
-        # Simulate adding sessions during cycle
         prism._sessions[f"ticker_{i}_1"] = f"session_{i}_1"
         prism._sessions[f"ticker_{i}_2"] = f"session_{i}_2"
         prism._conversations[f"conv_{i}_1"] = f"conv_id_{i}_1"
         assert len(prism._sessions) == 2
         assert len(prism._conversations) == 1
 
-        # Simulate cycle end cleanup
         prism.cleanup_all_sessions()
         assert len(prism._sessions) == 0
         assert len(prism._conversations) == 0
 
-    # Final generation should be 5
     assert prism.cycle_generation == 5
 
 
-# ── Test 5: TaskRegistry unit tests ──
-
+# ── Test 5: Pipeline Task Lifecycle & CancelledError ──
 
 @pytest.mark.asyncio
-async def test_task_registry_cancel_all():
-    """Verify TaskRegistry.cancel_all cancels all registered tasks."""
-    from app.cycle.orchestration.lifecycle_controller import TaskRegistry
+async def test_pipeline_task_lifecycle_cancellation():
+    """Verify request_stop cancels cycle task and _run_all_v3 handles CancelledError."""
+    # Mock run_v3_pipeline to block
+    async def mock_run_v3(*args, **kwargs):
+        await asyncio.sleep(10)
+        return {"action": "HOLD", "confidence": 0}
 
-    registry = TaskRegistry()
+    # Mock DB save and all other side-effects in the pipeline
+    with patch("app.services.pipeline_state.PipelineStateDB.save_state"), \
+         patch("app.services.pipeline_state.PipelineStateDB.append_events"), \
+         patch("app.v3.orchestrator.run_v3_pipeline", side_effect=mock_run_v3), \
+         patch("app.services.result_saver.save_analysis_result") as mock_save_verdict, \
+         patch("app.trading.paper_trader.buy", new_callable=AsyncMock) as mock_buy, \
+         patch("app.trading.paper_trader.sell", new_callable=AsyncMock) as mock_sell, \
+         patch("app.trading.order_triggers.create_trigger", new_callable=AsyncMock) as mock_trigger, \
+         patch("app.v3.debate_coordinator.run_battle_royale", new_callable=AsyncMock) as mock_debate, \
+         patch("app.services.vllm_client.llm.abort_active_requests", new_callable=AsyncMock) as mock_abort:
+         
+        # Start a real task using start_cycle
+        await PipelineService.start_cycle(["AAPL"])
+        await asyncio.sleep(0.05)
+        
+        task = PipelineService._cycle_task
+        assert task is not None
+        assert not task.done()
 
-    results = []
-
-    async def worker(name):
+        # Stop
+        PipelineService.request_stop()
+        assert PipelineService._state["status"] == "stopping"
+        
+        # Verify it cancels and finishes cleanly
         try:
-            await asyncio.sleep(100)
+            await task
         except asyncio.CancelledError:
-            results.append(f"{name}_cancelled")
-            raise
+            pass
 
-    registry.register("a", asyncio.create_task(worker("a")))
-    registry.register("b", asyncio.create_task(worker("b")))
-    registry.register("c", asyncio.create_task(worker("c")))
-
-    assert registry.is_active("a") is True
-    assert registry.is_active("b") is True
-
-    count = await registry.cancel_all(timeout=1.0)
-    assert count == 3
-
-    # After cancel_all, no tasks should be active
-    assert registry.is_active("a") is False
-    assert registry.is_active("b") is False
-    assert registry.is_active("c") is False
+        assert PipelineService._state["status"] == "stopped"
+        assert mock_abort.called
 
 
-@pytest.mark.asyncio
-async def test_task_registry_is_active_for_done_task():
-    """A completed task should not be reported as active."""
-    from app.cycle.orchestration.lifecycle_controller import TaskRegistry
-
-    registry = TaskRegistry()
-
-    async def instant():
-        return 42
-
-    task = asyncio.create_task(instant())
-    registry.register("done_task", task)
-    await task  # Wait for completion
-
-    assert registry.is_active("done_task") is False
-
-
-# ── Post-stop regression guard assertions ──
-
+# ── Test 6: Post-stop regression guard ──
 
 @pytest.mark.asyncio
 async def test_post_stop_regression_guard():
-    """After a forced stop, the next START_CYCLE must pass all four
-    assertions simultaneously:
-    1. cycle_control._pause_event.is_set() == True (unblocked)
-    2. _task_registry.is_active("cycle") == False (no orphaned task)
-    3. len(prism_client._sessions) == 0 (no leaked Prism state)
-    4. pipeline_state can be set to "running" (no DB reversion)
-    """
-    from app.cycle.orchestration.lifecycle_controller import TaskRegistry
+    """Verify that start_cycle resets the VLLM client's kill switch."""
+    # Simulate stopping/killing
+    llm._killed = True
 
-    registry = TaskRegistry()
-    fake_control = FakeCycleControl()
-    prism = FakePrismClient()
-
-    # Simulate a running cycle
-    async def fake_cycle():
-        await asyncio.sleep(100)
-
-    task = asyncio.create_task(fake_cycle())
-    registry.register("cycle", task)
-    prism._sessions["test"] = "session_1"
-
-    # Simulate stop
-    fake_control.stop()
-    await registry.cancel_and_await("cycle", timeout=1.0)
-    prism.cleanup_all_sessions()
-    fake_control.reset()
-
-    # All four assertions must pass
-    assert fake_control._pause_event.is_set() is True
-    assert registry.is_active("cycle") is False
-    assert len(prism._sessions) == 0
-
-    # Simulate new cycle start
-    state = {"status": "running"}
-    assert state["status"] == "running"
+    # Start a cycle
+    with patch("app.services.pipeline_state.PipelineStateDB.save_state"), \
+         patch("app.services.pipeline_service.PipelineService._run_all_v3", new_callable=AsyncMock):
+        
+        res = await PipelineService.start_cycle(["AAPL"])
+        assert res["status"] == "starting"
+        
+        # Verify the kill switch was reset
+        assert llm._killed is False
