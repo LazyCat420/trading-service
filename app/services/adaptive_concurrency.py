@@ -71,9 +71,13 @@ class AdaptiveConcurrencyController:
             self._active_tasks_count += 1
 
     async def _release_slot(self):
-        async with self._cv:
-            self._active_tasks_count = max(0, self._active_tasks_count - 1)
-            self._cv.notify_all()
+        # Decrement synchronously to prevent leaking slots if cancelled during the await
+        self._active_tasks_count = max(0, self._active_tasks_count - 1)
+        try:
+            async with self._cv:
+                self._cv.notify_all()
+        except asyncio.CancelledError:
+            pass
 
     # ── vLLM /metrics readers ────────────────────────────────────────
 
