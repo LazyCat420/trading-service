@@ -78,12 +78,38 @@ async def recover_json_output(
 ) -> tuple[dict, str, int, int]:
     """Attempt fast JSON recovery based on agent schema."""
     from app.utils.text_utils import parse_json_response
+    import json
 
-    if agent_name == "pre_trade":
-        recovery_system = (
-            "You are a precise data converter. Your job is to extract the structured pre-trade risk decision "
-            "from the provided unstructured analysis text and output it as a strictly valid JSON object."
+    recovery_system = (
+        "You are a precise data converter. Your job is to extract the structured decision "
+        "from the provided unstructured analysis text and output it as a strictly valid JSON object."
+    )
+
+    expected_schema_str = ""
+    # For V3 agents, dynamically load their schema
+    if agent_name.startswith("v3_"):
+        try:
+            import importlib
+            module_name = agent_name[3:]  # strip 'v3_'
+            module = importlib.import_module(f"app.v3.agents.{module_name}")
+            artifact_type = getattr(module, "ARTIFACT_TYPE", None)
+            if artifact_type:
+                from app.v3.artifacts import ARTIFACT_SCHEMAS
+                schema = ARTIFACT_SCHEMAS.get(artifact_type)
+                if schema:
+                    expected_schema_str = json.dumps(schema, indent=2)
+        except Exception as e:
+            logger.warning("[PrismHarness] Failed to load V3 schema for recovery of %s: %s", agent_name, e)
+
+    if expected_schema_str:
+        recovery_user = (
+            "Here is the unstructured analysis text:\n"
+            f"{final_text}\n\n"
+            "Extract the required fields and output EXACTLY a JSON object conforming to this JSON schema. "
+            "Output ONLY the raw JSON object (no markdown formatting, no other text):\n"
+            f"{expected_schema_str}\n"
         )
+    elif agent_name == "pre_trade":
         recovery_user = (
             "Here is the unstructured analysis text:\n"
             f"{final_text}\n\n"
@@ -103,10 +129,6 @@ async def recover_json_output(
             "If the text does not specify some values, calculate them: total_cost = shares * entry_price. If the decision is not clear, decide based on the tone."
         )
     elif agent_name == "portfolio_allocator":
-        recovery_system = (
-            "You are a precise data converter. Your job is to extract the structured portfolio allocation decisions "
-            "from the provided unstructured analysis text and output it as a strictly valid JSON object."
-        )
         recovery_user = (
             "Here is the unstructured analysis text:\n"
             f"{final_text}\n\n"
@@ -127,10 +149,6 @@ async def recover_json_output(
             "If the decision is not clear, decide based on the tone."
         )
     else:
-        recovery_system = (
-            "You are a precise data converter. Your job is to extract the structured financial decision "
-            "from the provided unstructured analysis text and output it as a strictly valid JSON object."
-        )
         recovery_user = (
             "Here is the unstructured analysis text:\n"
             f"{final_text}\n\n"
@@ -160,7 +178,11 @@ async def recover_json_output(
 
         # Verify success based on agent schema requirements
         success = False
-        if agent_name == "pre_trade":
+        if agent_name.startswith("v3_"):
+            # For V3 agents, if it's a dict, we trust it or use validate_artifact
+            if recovered_parsed and isinstance(recovered_parsed, dict):
+                success = True
+        elif agent_name == "pre_trade":
             if recovered_parsed and "decision" in recovered_parsed and "ticker" in recovered_parsed:
                 success = True
         elif agent_name == "portfolio_allocator":
@@ -312,15 +334,14 @@ async def run_prism_agent(
             tools_override=tools_override,
         )
 
-    # Build the tools list — force dynamic tool discovery mode.
-    # By passing None for tools, we only provide core built-ins and
-    # Prism meta-tools, forcing the agent to use discover_and_enable_tools.
-    active_tools = None
+    # Use tools_override if provided, otherwise default to dynamic discovery
+    active_tools = tools_override
 
-    # Inject dynamic tool prompt into system prompt
-    from app.agents.dynamic_tool_prompt import DYNAMIC_TOOL_DISCOVERY_PROMPT
-    if DYNAMIC_TOOL_DISCOVERY_PROMPT not in system_prompt:
-        system_prompt = system_prompt + "\n\n" + DYNAMIC_TOOL_DISCOVERY_PROMPT
+    # Only inject dynamic tool prompt if we are in dynamic discovery mode (active_tools is None)
+    if active_tools is None:
+        from app.agents.dynamic_tool_prompt import DYNAMIC_TOOL_DISCOVERY_PROMPT
+        if DYNAMIC_TOOL_DISCOVERY_PROMPT not in system_prompt:
+            system_prompt = system_prompt + "\n\n" + DYNAMIC_TOOL_DISCOVERY_PROMPT
 
     # Inject strict JSON enforcement guardrail for all Prism-routed agents
     JSON_GUARDRAIL = (
@@ -360,13 +381,12 @@ async def run_prism_agent(
                     else:
                         tool_names.append(name)
 
-    # Add Prism-native dynamic tool discovery meta-tools.
-    # These are Prism-local tools (NOT MCP-prefixed) that allow agents
-    # to discover and enable additional tools mid-loop.
-    from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
-    for meta_tool in PRISM_DYNAMIC_META_TOOLS:
-        if meta_tool not in tool_names:
-            tool_names.append(meta_tool)
+    # Add Prism-native dynamic tool discovery meta-tools ONLY if active_tools is None
+    if active_tools is None:
+        from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
+        for meta_tool in PRISM_DYNAMIC_META_TOOLS:
+            if meta_tool not in tool_names:
+                tool_names.append(meta_tool)
 
     # Dynamically register/update the custom agent persona in Prism
     # to preserve custom system prompts and whitelisted tools.
