@@ -203,7 +203,7 @@ class SchedulerService:
 
                 cmd_id = f"sch-cmd-{uuid.uuid4().hex[:8]}"
                 db.execute(
-                    "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
+                    "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
                     [cmd_id, "START_CYCLE", json.dumps(payload)]
                 )
                 logger.info(

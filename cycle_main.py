@@ -100,6 +100,16 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     elif cmd_type == "STOP_CYCLE":
                         from app.services.pipeline_service import PipelineService
                         result = await PipelineService.stop_cycle()
+                    elif cmd_type == "FORCE_RESET":
+                        from app.services.pipeline_service import PipelineService
+                        result = await PipelineService.stop_cycle()
+                    elif cmd_type == "DISCARD_CHECKPOINT":
+                        from app.services.pipeline_service import PipelineService
+                        result = PipelineService.discard_checkpoint()
+                    elif cmd_type == "FORCE_CHECKPOINT":
+                        from app.services.pipeline_service import PipelineService
+                        PipelineService.force_save_checkpoint()
+                        result = {"status": "ok"}
                     else:
                         logger.error("[cycle_backend] Ignored legacy command type '%s'", cmd_type)
                         result = {"status": "ignored", "message": "Legacy command ignored in V3"}
