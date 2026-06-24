@@ -3754,7 +3754,7 @@ class VLLMClient:
         if "qwen3.6-35b" in model_lower or "35b" in model_lower:
             # Jetson hosts the 35B models
             return "vllm-1"
-        elif "122b" in model_lower or "120b" in model_lower:
+        elif "122b" in model_lower or "120b" in model_lower or "minimax" in model_lower:
             # Gold Spark hosts the heavy models
             return "vllm-2"
 

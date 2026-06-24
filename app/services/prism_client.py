@@ -559,7 +559,7 @@ class PrismClient:
             "provider": prism_provider,
             "model": model,
             "messages": deduplicated_messages,
-            "maxTokens": max_tokens,
+            "maxTokens": max_tokens if max_tokens and max_tokens > 0 else 8192,
             "temperature": temperature,
             "conversationId": conversation_id,
             "agentSessionId": session_id,
