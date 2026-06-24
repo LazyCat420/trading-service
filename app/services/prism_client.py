@@ -395,19 +395,13 @@ class PrismClient:
         # We don't have the agent name in this function signature directly, but we can extract it from the payload
         agent_id = payload.get("agent", "")
         if isinstance(agent_id, str):
-            agent_slug = agent_id.replace("CUSTOM_", "").lower()
-            
-            # Check if core orchestrator or debate PM
-            is_core = any(core == agent_slug for core in CORE_ORCHESTRATORS)
-            is_pm = any(pm == agent_slug for pm in DEBATE_PMS)
-            
-            if is_core or is_pm:
-                if "create_team" not in enabled_tools:
-                    enabled_tools.append("create_team")
-                if "send_message" not in enabled_tools:
-                    enabled_tools.append("send_message")
-                if "stop_agent" not in enabled_tools:
-                    enabled_tools.append("stop_agent")
+            # All custom agents should be able to create subagent teams
+            if "create_team" not in enabled_tools:
+                enabled_tools.append("create_team")
+            if "send_message" not in enabled_tools:
+                enabled_tools.append("send_message")
+            if "stop_agent" not in enabled_tools:
+                enabled_tools.append("stop_agent")
 
         payload["enabledTools"] = [
             t for t in enabled_tools if t != "ask_user_question"
