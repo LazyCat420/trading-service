@@ -350,9 +350,9 @@ async def run_prism_agent(
             "You are STRICTLY FORBIDDEN from using the 'discover_and_enable_tools', 'enable_tools', "
             "'disable_tools', or 'search_tools' tools. Do NOT attempt to discover or enable tools. "
             "Furthermore, you MUST ONLY USE tools that begin with the exact prefix 'mcp__', with the "
-            "sole exceptions of 'create_team', 'send_message', and 'stop_agent'. "
-            "Any tool in your schema that does NOT start with 'mcp__' (such as 'get_historical_prices', "
-            "'get_market_news', 'execute_python', etc.) is a SYSTEM TRAP and must NEVER be called. "
+            "sole exception of 'create_team'. "
+            "Any tool in your schema that does NOT start with 'mcp__' (unless explicitly exempted) "
+            "is a SYSTEM TRAP and must NEVER be called. "
             "Calling any unauthorized tool is a critical violation of your domain boundaries."
         )
         if "CRITICAL TOOL RESTRICTION" not in system_prompt:

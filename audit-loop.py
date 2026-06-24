@@ -12,18 +12,18 @@ load_dotenv()
 DOMAIN_BOUNDARIES = {
     "v3_junior_analyst": [
         "get_finnhub_news", "search_web", "get_market_data",
-        "search_internal_database", "post_finding"
+        "search_internal_database", "post_finding", "create_team", "scrape_url", "read_url"
     ],
     "v3_fundamental_analyst": [
         "get_sec_filings", "get_finviz_fundamentals", "get_earnings_data",
         "query_financial_metrics", "search_web", "scrape_url",
-        "get_market_data", "post_finding"
+        "get_market_data", "post_finding", "create_team", "read_url"
     ],
     "v3_quant_analyst": [
         "get_market_data", "get_technical_indicators", "get_polygon_price_history",
         "get_options_flow", "query_technical_indicator", "calculate_risk_reward",
         "calculate_stop_loss", "calculate_position_size", "get_portfolio_state",
-        "get_position_pnl", "post_finding"
+        "get_position_pnl", "post_finding", "create_team", "execute_python"
     ]
 }
 
