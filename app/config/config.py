@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     PIPELINE_BENCHMARK_GROUP: str = "baseline"
     MACRO_SCOUT_ENABLED: bool = True  # enable/disable macro strategy scout
 
+    # ── Decision Pipeline ──
+    DECISION_AGENT_ENABLED: bool = True  # enable Layer 5 decision synthesis agent
+    ANALYSIS_CONFIDENCE_THRESHOLD: int = 65  # minimum confidence (0-100) to execute trades
+
     # ── World Simulator ──
     EXECUTION_MODE: str = "production"  # "production" | "staging" | "simulation"
     SIMULATION_TREND: str = "bullish"  # "bullish" | "bearish" | "neutral" | "volatile"

@@ -57,6 +57,7 @@ _VALID_ARTIFACT_TYPES = frozenset({
     "bull_defense",
     "regime_classification",
     "final_decision",
+    "trade_decision",
 })
 
 # Max compressed context size to prevent context snowball
@@ -88,6 +89,7 @@ class SharedDesk:
     bull_defense: dict | None = None        # Bull Agent final defense
     regime_classification: dict | None = None  # Market Regime Engine output
     final_decision: dict | None = None      # Board of Directors output
+    trade_decision: dict | None = None      # Decision Synthesizer output (Layer 5)
 
     # ── Phase outcome tracking ──
     phase_outcomes: dict[str, str] = field(default_factory=dict)
@@ -312,6 +314,7 @@ class SharedDesk:
             "bull_defense": self.bull_defense,
             "regime_classification": self.regime_classification,
             "final_decision": self.final_decision,
+            "trade_decision": self.trade_decision,
             "phase_outcomes": self.phase_outcomes,
             "cycle_metadata": self.cycle_metadata,
             "agent_telemetry": self.agent_telemetry,
@@ -334,6 +337,7 @@ class SharedDesk:
         desk.bull_defense = data.get("bull_defense")
         desk.regime_classification = data.get("regime_classification")
         desk.final_decision = data.get("final_decision")
+        desk.trade_decision = data.get("trade_decision")
         desk.phase_outcomes = data.get("phase_outcomes", {})
         desk.cycle_metadata = data.get("cycle_metadata", {})
         desk.agent_telemetry = data.get("agent_telemetry", [])

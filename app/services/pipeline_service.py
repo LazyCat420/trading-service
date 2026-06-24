@@ -146,13 +146,27 @@ class PipelineService:
                 from app.services.result_saver import save_analysis_result
                 save_analysis_result(ticker, cycle_id, result)
                 
-                # Execute Trade
+                # Execute Trade — gated by confidence threshold
                 action = result.get("action", "HOLD")
                 confidence = result.get("confidence", 0)
                 
                 try:
+                    from app.config import settings as _cfg
                     from app.trading.paper_trader import buy, sell
-                    if action == "BUY":
+
+                    if confidence is None:
+                        logger.warning(
+                            "[PipelineService] %s: confidence is None — defaulting to 0, skipping trade",
+                            ticker,
+                        )
+                        confidence = 0
+
+                    if action in ("BUY", "SELL") and confidence < _cfg.ANALYSIS_CONFIDENCE_THRESHOLD:
+                        logger.warning(
+                            "[PipelineService] %s: %s blocked — confidence %d%% < threshold %d%%",
+                            ticker, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
+                        )
+                    elif action == "BUY":
                         size_pct = max(0.02, min(0.10, confidence / 100.0 * 0.10))
                         await buy(bot_id="cycle-backend", ticker=ticker, size_pct=size_pct, cycle_id=cycle_id)
                     elif action == "SELL":

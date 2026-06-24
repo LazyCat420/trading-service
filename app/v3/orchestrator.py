@@ -242,6 +242,55 @@ async def run_v3_pipeline(
     save_desk(desk)
 
     # ═══════════════════════════════════════════════════════════════════
+    # LAYER 5: Decision Synthesis — Structured trade verdict with signal weights
+    # ═══════════════════════════════════════════════════════════════════
+    from app.config import settings as _settings
+
+    if _settings.DECISION_AGENT_ENABLED:
+        from app.v3.agents import decision_agent
+
+        outcome = await _run_agent_with_circuit_breaker(
+            desk=desk,
+            agent_module=decision_agent,
+            phase_name="decision_synthesizer",
+            breaker=breaker,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            emit=emit,
+            include_debate_context=True,
+        )
+        breaker.record_outcome("decision_synthesizer", outcome)
+
+        # Persist trade verdict to trade_results table
+        if desk.has_artifact("trade_decision"):
+            try:
+                from app.services.trade_result_saver import save_trade_result
+
+                trade_decision = desk.trade_decision or {}
+                # Inject regime/persona from Layer 4 if not already set
+                if not trade_decision.get("regime"):
+                    trade_decision["regime"] = regime
+                if not trade_decision.get("persona_used"):
+                    board_decision = desk.final_decision or {}
+                    trade_decision["persona_used"] = board_decision.get(
+                        "persona_used", _persona_label(regime)
+                    )
+                save_trade_result(ticker, cycle_id, trade_decision)
+            except Exception as e:
+                logger.error(
+                    "[V3] %s: Failed to persist trade result: %s",
+                    ticker, e,
+                )
+
+        emit(
+            "analyzing", f"v3_decision_{ticker}",
+            f"📝 {ticker}: Decision Synthesis complete",
+            status="ok",
+        )
+
+    save_desk(desk)
+
+    # ═══════════════════════════════════════════════════════════════════
     # BUILD RESULT — V1-compatible shape for downstream phases
     # ═══════════════════════════════════════════════════════════════════
     elapsed_s = time.monotonic() - t_pipeline
@@ -479,10 +528,21 @@ def _build_v1_compatible_result(
     Ensures downstream phases (trading, post-cycle hooks, reports)
     work unchanged.
     """
-    # Extract final decision
-    decision = desk.final_decision or {}
+    # Extract final decision — prefer trade_decision (Layer 5) over
+    # final_decision (Layer 4) when the decision agent is enabled
+    decision = desk.trade_decision or desk.final_decision or {}
     action = decision.get("action", "HOLD")
     confidence = decision.get("confidence", 0)
+
+    if confidence is None or confidence == 0:
+        logger.warning(
+            "[V3] %s: confidence is %s after pipeline — action=%s will likely be gated",
+            desk.ticker,
+            confidence,
+            action,
+        )
+        confidence = confidence or 0
+
     rationale = decision.get("reasoning", "V3 pipeline produced no final decision.")
     persona = decision.get("persona_used", "unknown")
     regime = decision.get("regime", "unknown")

@@ -268,30 +268,31 @@ async def search_trading_skills(ticker: str) -> str:
     tags=["pipeline", "start", "cycle", "trigger"],
 )
 async def start_trading_cycle(tickers: list[str] = None, collect: bool = True, analyze: bool = True, trade: bool = True) -> str:
-    """Trigger a new trading cycle by writing a system command."""
+    """Trigger a new trading cycle by writing a V3 system command."""
     try:
         import uuid
         from app.db.connection import get_db
 
         job_id = f"job_{uuid.uuid4().hex[:8]}"
+        cycle_id = f"cycle-v3-{uuid.uuid4().hex[:8]}"
         payload = {
             "tickers": tickers or [],
-            "collect": collect,
-            "analyze": analyze,
-            "trade": trade,
-            "start_fresh": False,
+            "cycle_id": cycle_id,
         }
 
         with get_db() as db:
             db.execute(
-                "INSERT INTO system_commands (id, command_type, payload, status) VALUES (%s, %s, %s, 'pending')",
-                [job_id, "START_CYCLE", json.dumps(payload)],
+                "INSERT INTO v3_system_commands (id, command_type, payload, status) VALUES (%s, %s, %s, 'pending')",
+                [job_id, "START_V3_CYCLE", json.dumps(payload)],
             )
+
+        logger.info("[PipelineTools] Dispatched V3 cycle command %s (cycle: %s)", job_id, cycle_id)
 
         return json.dumps({
             "status": "success",
-            "message": f"Trading cycle started successfully with job ID {job_id}.",
-            "job_id": job_id
+            "message": f"V3 trading cycle started with job ID {job_id}.",
+            "job_id": job_id,
+            "cycle_id": cycle_id,
         })
     except Exception as e:
         logger.exception("[PipelineTools] start_trading_cycle failed")

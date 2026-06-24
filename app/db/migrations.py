@@ -3119,3 +3119,40 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Trade Results (V3 Decision Pipeline Layer 5) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS trade_results (
+                    id                  TEXT PRIMARY KEY,
+                    ticker              TEXT NOT NULL,
+                    cycle_id            TEXT NOT NULL,
+                    action              TEXT NOT NULL,          -- BUY / SELL / HOLD
+                    confidence          INTEGER DEFAULT 0,     -- 0-100
+                    reasoning           TEXT,
+                    signal_weights      JSONB,                 -- {"quant": 0.25, "fundamental": 0.25, ...}
+                    signal_assessments  JSONB,                 -- per-signal assessment text
+                    risk_flags          JSONB,                 -- ["flag1", "flag2"]
+                    stop_loss           DOUBLE PRECISION,
+                    take_profit         DOUBLE PRECISION,
+                    position_size_pct   DOUBLE PRECISION,
+                    persona_used        TEXT,
+                    regime              TEXT,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_trade_results_ticker
+                ON trade_results(ticker);
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_trade_results_cycle
+                ON trade_results(cycle_id);
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

@@ -382,6 +382,53 @@ PORTFOLIO_SCREENER_SCHEMA: dict = {
 }
 
 
+TRADE_DECISION_SCHEMA: dict = {
+    "type": "object",
+    "required": ["action", "confidence", "reasoning"],
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["BUY", "SELL", "HOLD"],
+            "description": "Final trade action",
+        },
+        "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+        },
+        "reasoning": {
+            "type": "string",
+            "description": "Synthesis of all pipeline signals into a verdict",
+        },
+        "signal_weights": {
+            "type": "object",
+            "description": "How each signal was weighted in the decision",
+        },
+        "signal_assessments": {
+            "type": "object",
+            "description": "Brief assessment of each signal",
+        },
+        "risk_flags": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Risk factors to monitor",
+        },
+        "stop_loss": {
+            "type": "number",
+            "description": "Suggested stop-loss price",
+        },
+        "take_profit": {
+            "type": "number",
+            "description": "Suggested take-profit price",
+        },
+        "position_size_pct": {
+            "type": "number",
+            "description": "Suggested position size as percentage of portfolio",
+        },
+    },
+}
+
+
 # ── Schema lookup ────────────────────────────────────────────────────────
 ARTIFACT_SCHEMAS: dict[str, dict] = {
     "desk_note": DESK_NOTE_SCHEMA,
@@ -392,6 +439,7 @@ ARTIFACT_SCHEMAS: dict[str, dict] = {
     "bull_defense": BULL_DEFENSE_SCHEMA,
     "regime_classification": REGIME_CLASSIFICATION_SCHEMA,
     "final_decision": FINAL_DECISION_SCHEMA,
+    "trade_decision": TRADE_DECISION_SCHEMA,
     "portfolio_screener": PORTFOLIO_SCREENER_SCHEMA,
 }
 
