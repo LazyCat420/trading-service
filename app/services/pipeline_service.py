@@ -132,19 +132,21 @@ class PipelineService:
                 }
                 PipelineStateDB.append_events(cycle_id, [event])
 
-            for i, ticker in enumerate(tickers):
+            from app.services.adaptive_concurrency import concurrency_controller
+            
+            cls._state["progress"] = f"Processing {len(tickers)} tickers concurrently"
+            cls.save_state()
+
+            async def _process_ticker(i: int, ticker_name: str):
                 if cls._stop_requested:
-                    logger.info("[PipelineService] V3 Cycle stopped by user request.")
-                    break
+                    logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
+                    return
                 
-                cls._state["progress"] = f"Processing {ticker} ({i+1}/{len(tickers)})"
-                cls.save_state()
-                
-                result = await run_v3_pipeline(ticker=ticker, cycle_id=cycle_id, emit=emit_cb)
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb)
                 
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result
-                save_analysis_result(ticker, cycle_id, result)
+                save_analysis_result(ticker_name, cycle_id, result)
                 
                 # Execute Trade — gated by confidence threshold
                 action = result.get("action", "HOLD")
@@ -157,20 +159,20 @@ class PipelineService:
                     if confidence is None:
                         logger.warning(
                             "[PipelineService] %s: confidence is None — defaulting to 0, skipping trade",
-                            ticker,
+                            ticker_name,
                         )
                         confidence = 0
 
                     if action in ("BUY", "SELL") and confidence < _cfg.ANALYSIS_CONFIDENCE_THRESHOLD:
                         logger.warning(
                             "[PipelineService] %s: %s blocked — confidence %d%% < threshold %d%%",
-                            ticker, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
+                            ticker_name, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
                         )
                     elif action == "BUY":
                         size_pct = max(0.02, min(0.10, confidence / 100.0 * 0.10))
-                        await buy(bot_id="cycle-backend", ticker=ticker, size_pct=size_pct, cycle_id=cycle_id)
+                        await buy(bot_id="cycle-backend", ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
                     elif action == "SELL":
-                        await sell(bot_id="cycle-backend", ticker=ticker, cycle_id=cycle_id, qty_pct=1.0)
+                        await sell(bot_id="cycle-backend", ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
                         
                     # Handle Triggers (limit orders)
                     decision = result.get("estimate", {})
@@ -179,11 +181,15 @@ class PipelineService:
                     if stop_loss or take_profit:
                         from app.trading.order_triggers import create_trigger
                         if stop_loss:
-                            await create_trigger(bot_id="cycle-backend", ticker=ticker, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
+                            await create_trigger(bot_id="cycle-backend", ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
                         if take_profit:
-                            await create_trigger(bot_id="cycle-backend", ticker=ticker, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
+                            await create_trigger(bot_id="cycle-backend", ticker=ticker_name, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
                 except Exception as e:
-                    logger.error("[PipelineService] Trade execution failed for %s: %s", ticker, e)
+                    logger.error("[PipelineService] Trade execution failed for %s: %s", ticker_name, e)
+
+            # Build tasks and execute concurrently via adaptive concurrency
+            tasks = [_process_ticker(i, t) for i, t in enumerate(tickers)]
+            await concurrency_controller.gather(tasks, label="v3_pipeline")
 
 
             from app.v3.debate_coordinator import run_battle_royale
