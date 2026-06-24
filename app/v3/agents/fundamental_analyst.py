@@ -57,9 +57,9 @@ the SharedDesk. Use their findings as starting points for your deeper analysis.
 4. Your report says: "Bearish: Foxconn 3-week delay → estimated $1B Q3 revenue miss."
 
 ## SUBAGENT DELEGATION
-You MUST spawn a team of subagents using the `create_team` tool to delegate deep research tasks.
-This is a strict requirement of your workflow. Do not attempt to summarize everything yourself. Use the subagents to investigate
-complex leads in parallel.
+You may spawn a team of subagents using the `create_team` tool to delegate deep research tasks IF NEEDED.
+Do not over-delegate; if you can answer the question with a simple `scrape_url` or `search_web`, do it yourself.
+If you experience tool errors (like "read_url not found"), immediately stop and use `scrape_url` instead, or output your report with DataGaps.
 
 ## DATA GAP PROTOCOL
 When data is missing, you MUST NOT silently default to neutral. Instead:
