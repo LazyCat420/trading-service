@@ -344,39 +344,41 @@ class PrismClient:
         enabled_tools = []
         if tools is not None:
             # We have a specific whitelist of tools
-            whitelist_names = set()
+            built_ins_set = {
+                "execute_python", "search_web", "read_file", "write_file",
+                "str_replace_file", "file_info", "file_diff", "browser_action",
+                "browser_script", "precise_calculator"
+            }
             for t in tools:
                 if isinstance(t, dict):
-                    if t.get("type") == "function" and "function" in t:
-                        name = t["function"].get("name")
-                        if name:
-                            whitelist_names.add(name)
-                    elif t.get("name"):
-                        whitelist_names.add(t["name"])
-            for name in whitelist_names:
-                enabled_tools.append(name)
-                enabled_tools.append(f"{mcp_prefix}{name}")
+                    name = t.get("function", {}).get("name") if t.get("type") == "function" else t.get("name")
+                    if name:
+                        if name not in built_ins_set and not name.startswith(mcp_prefix):
+                            name = f"{mcp_prefix}{name}"
+                        enabled_tools.append(name)
         else:
             # Fall back to only core tools (let the agent dynamically acquire other tools)
             pass
             
-        # Add core built-in tools
-        built_ins = [
-            "execute_python", "search_web", "read_file", "write_file",
-            "str_replace_file", "file_info", "file_diff", "browser_action",
-            "browser_script", "precise_calculator"
-        ]
-        for bi in built_ins:
-            if bi not in enabled_tools:
-                enabled_tools.append(bi)
+        # Add core built-in tools ONLY if no strict whitelist is provided
+        if tools is None:
+            built_ins = [
+                "execute_python", "search_web", "read_file", "write_file",
+                "str_replace_file", "file_info", "file_diff", "browser_action",
+                "browser_script", "precise_calculator"
+            ]
+            for bi in built_ins:
+                if bi not in enabled_tools:
+                    enabled_tools.append(bi)
 
-        # Add Prism-local dynamic tool discovery meta-tools.
+        # Add Prism-local dynamic tool discovery meta-tools ONLY if no strict whitelist is provided.
         # These are NOT MCP-prefixed — they run inside Prism's process and
         # allow agents to discover and enable additional tools mid-loop.
-        from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
-        for meta_tool in PRISM_DYNAMIC_META_TOOLS:
-            if meta_tool not in enabled_tools:
-                enabled_tools.append(meta_tool)
+        if tools is None:
+            from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
+            for meta_tool in PRISM_DYNAMIC_META_TOOLS:
+                if meta_tool not in enabled_tools:
+                    enabled_tools.append(meta_tool)
 
         # Add core orchestrator tools if agent is a Core Orchestrator
         CORE_ORCHESTRATORS = {
@@ -396,8 +398,8 @@ class PrismClient:
             agent_slug = agent_id.replace("CUSTOM_", "").lower()
             
             # Check if core orchestrator or debate PM
-            is_core = agent_slug in CORE_ORCHESTRATORS or any(core in agent_slug for core in CORE_ORCHESTRATORS)
-            is_pm = agent_slug in DEBATE_PMS or any(pm in agent_slug for pm in DEBATE_PMS)
+            is_core = any(core == agent_slug for core in CORE_ORCHESTRATORS)
+            is_pm = any(pm == agent_slug for pm in DEBATE_PMS)
             
             if is_core or is_pm:
                 if "create_team" not in enabled_tools:
@@ -594,6 +596,10 @@ class PrismClient:
         # Forward tools if present.
         if tools:
             payload["tools"] = self._format_tools(tools)
+            import logging
+            temp_logger = logging.getLogger(__name__)
+            temp_logger.info(f"[DEBUG-PAYLOAD] Sending tools to /agent: {[t.get('name') for t in payload['tools']]}")
+            temp_logger.info(f"[DEBUG-PAYLOAD] Sending enabledTools to /agent: {payload.get('enabledTools')}")
 
         if is_new:
             payload["createSession"] = True
@@ -812,6 +818,7 @@ class PrismClient:
                 "identity": identity,
                 "guidelines": guidelines,
                 "enabledTools": _filtered_tools,
+                "availableTools": _filtered_tools,
                 "project": project,
                 "usesDirectoryTree": False,
                 "usesCodingGuidelines": False,

@@ -365,6 +365,23 @@ FINAL_DECISION_SCHEMA: dict = {
 }
 
 
+PORTFOLIO_SCREENER_SCHEMA: dict = {
+    "type": "object",
+    "required": ["selected_tickers", "rationale"],
+    "properties": {
+        "selected_tickers": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of selected tickers for deep analysis",
+        },
+        "rationale": {
+            "type": "string",
+            "description": "Brief 1-sentence reasoning for the selection",
+        },
+    },
+}
+
+
 # ── Schema lookup ────────────────────────────────────────────────────────
 ARTIFACT_SCHEMAS: dict[str, dict] = {
     "desk_note": DESK_NOTE_SCHEMA,
@@ -375,6 +392,7 @@ ARTIFACT_SCHEMAS: dict[str, dict] = {
     "bull_defense": BULL_DEFENSE_SCHEMA,
     "regime_classification": REGIME_CLASSIFICATION_SCHEMA,
     "final_decision": FINAL_DECISION_SCHEMA,
+    "portfolio_screener": PORTFOLIO_SCREENER_SCHEMA,
 }
 
 

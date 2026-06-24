@@ -6,7 +6,7 @@ from app.v3.desk_persistence import load_desk
 logging.basicConfig(level=logging.INFO)
 
 async def test_canary():
-    cycle_id = "canary_test_direct_001"
+    cycle_id = "canary_test_direct_005"
     print(f"Triggering direct canary cycle: {cycle_id}")
     
     def emit_cb(phase, step, detail, **kwargs):
@@ -14,6 +14,9 @@ async def test_canary():
         
     result = await run_v3_pipeline("AAPL", cycle_id=cycle_id, emit=emit_cb)
     print("Pipeline result:", result)
+
+    from app.services.result_saver import save_analysis_result
+    save_analysis_result("AAPL", cycle_id, result)
     
     desk = load_desk(cycle_id, "AAPL")
     if desk:

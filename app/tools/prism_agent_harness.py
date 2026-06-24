@@ -342,6 +342,18 @@ async def run_prism_agent(
         from app.agents.dynamic_tool_prompt import DYNAMIC_TOOL_DISCOVERY_PROMPT
         if DYNAMIC_TOOL_DISCOVERY_PROMPT not in system_prompt:
             system_prompt = system_prompt + "\n\n" + DYNAMIC_TOOL_DISCOVERY_PROMPT
+    else:
+        # STRICT BOUNDARY ENFORCEMENT: Prism Gateway automatically injects dynamic discovery tools
+        # regardless of our whitelist. We MUST explicitly forbid the LLM from using them.
+        STRICT_BLOCK_PROMPT = (
+            "\n\n### CRITICAL TOOL RESTRICTION\n"
+            "You are STRICTLY FORBIDDEN from using the 'discover_and_enable_tools', 'enable_tools', "
+            "'disable_tools', or 'search_tools' tools. Do NOT attempt to discover or enable tools. "
+            "You MUST use ONLY the exact tools currently provided in your schema. Any attempt to use "
+            "discovery tools is a critical violation of your domain boundaries."
+        )
+        if "CRITICAL TOOL RESTRICTION" not in system_prompt:
+            system_prompt = system_prompt + STRICT_BLOCK_PROMPT
 
     # Inject strict JSON enforcement guardrail for all Prism-routed agents
     JSON_GUARDRAIL = (
