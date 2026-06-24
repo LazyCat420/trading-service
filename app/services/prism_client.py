@@ -118,8 +118,8 @@ class PrismClient:
         if not self.enabled:
             return False
 
-        # Return cached health if we checked within the last 30 seconds
-        if now - self._last_health_check < 30.0:
+        # Return cached health if we checked within the last 5 seconds
+        if now - self._last_health_check < 5.0:
             return self._is_healthy
 
         try:
@@ -548,8 +548,8 @@ class PrismClient:
         # This ensures the model always receives its system instructions as a native message.
         deduplicated_messages = list(messages)
 
-        # Map internal "vllm-1" to Prism-compatible "vllm"
-        prism_provider = "vllm" if provider == "vllm-1" else provider
+        # Pass provider directly to Prism for proper hardware routing
+        prism_provider = provider
 
         payload: dict[str, Any] = {
             "provider": prism_provider,
@@ -692,8 +692,8 @@ class PrismClient:
         # This ensures the model always receives its system instructions as a native message.
         deduplicated_messages = list(messages)
 
-        # Map internal "vllm-1" to Prism-compatible "vllm"
-        prism_provider = "vllm" if provider == "vllm-1" else provider
+        # Pass provider directly to Prism for proper hardware routing
+        prism_provider = provider
 
         payload: dict[str, Any] = {
             "provider": prism_provider,

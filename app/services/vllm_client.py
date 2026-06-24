@@ -1216,7 +1216,7 @@ class VLLMClient:
                     prism_routed = True
                 else:
                     logger.warning(
-                        "[PRISM] ⚠️ Prism unhealthy — falling back to direct vLLM for %s",
+                        "[PRISM] ⚠️ Prism unhealthy — falling back to direct vLLM for %s. Agentic loop and tools will be stripped.",
                         meta.get("agent_name", "unknown"),
                     )
 
