@@ -229,7 +229,7 @@ async def run_prism_agent(
     tools_override: list[dict] | None = None,
     max_tokens: int = 2048,
     temperature: float = 0.3,
-    timeout_seconds: int = 600,
+    timeout_seconds: int = 1800,
     actor_label: str | None = None,
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
