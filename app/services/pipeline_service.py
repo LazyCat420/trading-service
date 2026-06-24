@@ -70,7 +70,7 @@ class PipelineService:
                         enable_tools=True,
                     )
                     
-                    final_text = result.get("final_text", "{}")
+                    final_text = result.get("response", "{}")
                     parsed = parse_json_response(final_text)
                     if not parsed:
                         parsed = {}
