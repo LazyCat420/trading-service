@@ -17,7 +17,7 @@ TOOL_WHITELIST = [
     "get_earnings_data",
     "query_financial_metrics",
     "search_web",
-    "search_database_facts",
+    "scrape_url",
     "get_market_data",
     "post_finding",
 ]

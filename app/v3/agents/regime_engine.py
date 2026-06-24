@@ -10,10 +10,9 @@ AGENT_NAME = "v3_regime_engine"
 
 TOOL_WHITELIST = [
     "get_market_data",
+    "get_technical_indicators",
     "get_finnhub_news",
     "search_web",
-    "get_technical_indicators",
-    "search_database_facts",
 ]
 
 SYSTEM_PROMPT = """You are the Market Regime Engine at a quantitative trading firm.

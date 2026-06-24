@@ -37,7 +37,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "write_memory_note",
         "read_memory_note",
         "request_data_collection",
-        "search_database_facts",
     ],
     "technical": [
         "get_market_data",
@@ -60,7 +59,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "read_team_findings",
         "request_data_collection",
         "query_financial_metrics",
-        "search_database_facts",
     ],
     "risk": [
         "get_market_data",
@@ -88,7 +86,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_internal_database",
         "post_finding",
         "read_team_findings",
-        "search_database_facts",
     ],
     "comparative": [
         "get_market_data",
@@ -112,7 +109,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_internal_database",
         "search_trading_skills",
         "request_data_collection",
-        "request_lateral_fact_check",
     ],
     "retriever_fact_check": [
         "get_market_data",
@@ -120,7 +116,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
         "get_finviz_fundamentals",
         "search_internal_database",
-        "search_database_facts",
         "scrape_url",
     ],
     "technical_analyst": [
@@ -279,7 +274,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "upsert_memory",
         # Context & database
         "get_cycle_context",
-        "search_database_facts",
         "run_sql_query",
         "check_hallucination",
         "query_brain_graph",
@@ -298,7 +292,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_options_flow",
         "query_technical_indicator",
         "publish_event",
-        "request_lateral_fact_check",
     ],
     "v3_worker_fundamental": [
         "get_market_data",
@@ -306,26 +299,20 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
         "get_earnings_data",
         "query_financial_metrics",
-        "search_database_facts",
         "publish_event",
-        "request_lateral_fact_check",
     ],
     "v3_worker_news": [
         "get_finnhub_news",
         "search_web",
         "scrape_url",
-        "search_database_facts",
         "search_internal_database",
         "publish_event",
-        "request_lateral_fact_check",
     ],
     "v3_worker_insider": [
         "get_insider_trades",
         "get_congress_trades",
         "get_sec_filings",
-        "search_database_facts",
         "publish_event",
-        "request_lateral_fact_check",
     ],
     "ticker_validator": [],
     # ── V3 Pure Agentic Pipeline Agents ──
@@ -335,9 +322,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "scrape_url",
         "get_market_data",
         "search_internal_database",
-        "search_database_facts",
         "post_finding",
-        "request_lateral_fact_check",
     ],
     "v3_fundamental_analyst": [
         "get_sec_filings",
@@ -346,10 +331,8 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "query_financial_metrics",
         "search_web",
         "scrape_url",
-        "search_database_facts",
         "get_market_data",
         "post_finding",
-        "request_lateral_fact_check",
     ],
     "v3_quant_analyst": [
         "get_market_data",
@@ -363,7 +346,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_portfolio_state",
         "get_position_pnl",
         "post_finding",
-        "request_lateral_fact_check",
     ],
     "v3_bull_agent": [],       # Pure reasoning — no tools
     "v3_bear_agent": [],       # Pure reasoning — no tools
@@ -374,7 +356,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_web",
         "scrape_url",
         "get_technical_indicators",
-        "search_database_facts",
     ],
     "v3_board_of_directors": [],  # Pure reasoning — no tools
 }

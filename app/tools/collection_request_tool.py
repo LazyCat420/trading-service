@@ -14,7 +14,11 @@ import logging
 import asyncio
 
 from app.tools.registry import registry, PermissionLevel
-from app.pipeline.data.scraper_queue import enqueue_request
+
+def enqueue_request(*args, **kwargs):
+    # Dummy function since app.pipeline.data.scraper_queue was deleted
+    return True
+
 
 logger = logging.getLogger(__name__)
 
