@@ -52,6 +52,18 @@ class PipelineService:
     @classmethod
     async def _run_all_v3(cls, cycle_id: str, tickers: list[str]):
         try:
+            def emit_cb(phase: str, step: str, detail: str, **kwargs):
+                event = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "phase": phase,
+                    "step": step,
+                    "detail": detail,
+                    "status": kwargs.get("status", "ok"),
+                    "data": kwargs.get("data", {}),
+                    "elapsed_ms": kwargs.get("elapsed_ms", 0),
+                }
+                PipelineStateDB.append_events(cycle_id, [event])
+
             for i, ticker in enumerate(tickers):
                 if cls._stop_requested:
                     logger.info("[PipelineService] V3 Cycle stopped by user request.")
@@ -60,7 +72,7 @@ class PipelineService:
                 cls._state["progress"] = f"Processing {ticker} ({i+1}/{len(tickers)})"
                 cls.save_state()
                 
-                result = await run_v3_pipeline(ticker=ticker, cycle_id=cycle_id)
+                result = await run_v3_pipeline(ticker=ticker, cycle_id=cycle_id, emit=emit_cb)
                 
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result

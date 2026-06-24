@@ -472,7 +472,12 @@ async def run_prism_agent(
             client.post(url, json=payload, headers=headers, timeout=float(timeout_seconds)),
             timeout=float(timeout_seconds) + 5,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except Exception as e:
+            if hasattr(e, "response") and hasattr(e.response, "text"):
+                logger.error("[PrismAgentCaller] Prism 500 Error Body: %s", e.response.text)
+            raise
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
         result_data = response.json()
