@@ -72,7 +72,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
             with get_db() as db:
                 with db.transaction():
                     row = db.execute(
-                        "SELECT id, command_type, payload FROM system_commands "
+                        "SELECT id, command_type, payload FROM v3_system_commands "
                         "WHERE status = 'pending' "
                         "ORDER BY created_at ASC "
                         "LIMIT 1 FOR UPDATE SKIP LOCKED"
@@ -81,7 +81,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     if row:
                         job_id, cmd_type, payload_val = row
                         db.execute(
-                            "UPDATE system_commands SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = %s", 
+                            "UPDATE v3_system_commands SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = %s", 
                             [job_id]
                         )
             
@@ -106,7 +106,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
 
                     with get_db() as db:
                         db.execute(
-                            "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = %s WHERE id = %s", 
+                            "UPDATE v3_system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = %s WHERE id = %s", 
                             [json.dumps(result), job_id]
                         )
                 except asyncio.CancelledError:
@@ -115,7 +115,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     logger.error("[cycle_backend] Command %s failed: %s", job_id, e)
                     with get_db() as db:
                         db.execute(
-                            "UPDATE system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
+                            "UPDATE v3_system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
                             [str(e), job_id]
                         )
         except BaseException as e:

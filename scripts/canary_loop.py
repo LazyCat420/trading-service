@@ -31,7 +31,7 @@ def trigger_canary():
     }
     
     cur.execute(
-        "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
+        "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
         (job_id, "START_V3_CYCLE", json.dumps(payload))
     )
     
@@ -40,7 +40,7 @@ def trigger_canary():
     max_wait = 120
     for i in range(max_wait):
         time.sleep(10)
-        cur.execute("SELECT status, result, error_message FROM system_commands WHERE id = %s;", (job_id,))
+        cur.execute("SELECT status, result, error_message FROM v3_system_commands WHERE id = %s;", (job_id,))
         row = cur.fetchone()
         if not row:
             continue
