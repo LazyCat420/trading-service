@@ -36,24 +36,29 @@ def audit_latest_cycle():
     
     with get_db() as conn:
         with conn.cursor() as cur:
-            # 1. Find the most recent cycle
-            cur.execute("""
-                SELECT cycle_id, status, phase, error, started_at, finished_at 
-                FROM pipeline_state 
-                ORDER BY started_at DESC LIMIT 1
-            """)
-            state = cur.fetchone()
+            # 1. Find the most recent cycle from tool_usage_stats to catch running cycles
+            import sys
+            cycle_id_override = sys.argv[1] if len(sys.argv) > 1 else None
             
-            if not state:
-                print("No pipeline cycles found.")
-                return
-            
-            cycle_id, status, phase, error, started_at, finished_at = state
-            print(f"Cycle ID: {cycle_id}")
-            print(f"Status:   {status}")
-            print(f"Phase:    {phase}")
-            if error:
-                print(f"Error:    {error}")
+            if cycle_id_override:
+                cycle_id = cycle_id_override
+                print(f"Cycle ID (override): {cycle_id}")
+            else:
+                cur.execute("""
+                    SELECT cycle_id, MAX(called_at) as last_activity
+                    FROM tool_usage_stats 
+                    GROUP BY cycle_id
+                    ORDER BY last_activity DESC LIMIT 1
+                """)
+                state = cur.fetchone()
+                
+                if not state:
+                    print("No pipeline cycles found in tool_usage_stats.")
+                    return
+                
+                cycle_id, last_activity = state
+                print(f"Cycle ID: {cycle_id}")
+                print(f"Last Activity: {last_activity}")
             
             # 2. Check SharedDesk for timeouts and data gaps
             cur.execute("SELECT desk_data FROM shared_desk WHERE cycle_id = %s", [cycle_id])

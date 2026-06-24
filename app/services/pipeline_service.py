@@ -33,6 +33,59 @@ class PipelineService:
 
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         
+        # ── Dynamic Watchlist Pre-Filter (Gatekeeper) ──
+        if not tickers or kwargs.get("dynamic_selection_mode"):
+            max_tickers = kwargs.get("max_tickers") or 3
+            cls._state.update({
+                "status": "starting",
+                "progress": f"Screening watchlist for top {max_tickers} setups...",
+            })
+            cls.save_state()
+            
+            try:
+                from app.trading.watchlist import get_active
+                from app.utils.batch_screener import get_watchlist_snapshots
+                from app.tools.prism_agent_harness import run_prism_agent
+                from app.v3.agents.portfolio_manager import SYSTEM_PROMPT, AGENT_NAME
+                import json
+                
+                active_tickers = [t["ticker"] for t in get_active()]
+                if not active_tickers:
+                    logger.warning("[PipelineService] Watchlist is empty, falling back to default.")
+                    tickers = ["AAPL"]
+                else:
+                    snapshot_table = await get_watchlist_snapshots(active_tickers)
+                    
+                    system_prompt = SYSTEM_PROMPT.replace("{max_tickers}", str(max_tickers))
+                    user_prompt = f"Here is the active watchlist snapshot:\n\n{snapshot_table}"
+                    
+                    from app.utils.text_utils import parse_json_response
+                    
+                    result = await run_prism_agent(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        ticker="WATCHLIST",
+                        agent_name=AGENT_NAME,
+                        cycle_id=cycle_id,
+                    )
+                    
+                    final_text = result.get("final_text", "{}")
+                    parsed = parse_json_response(final_text)
+                    if not parsed:
+                        parsed = {}
+                        
+                    selected = parsed.get("selected_tickers", [])
+                    rationale = parsed.get("rationale", "")
+                    
+                    if selected:
+                        tickers = selected
+                        logger.info("[PipelineService] Gatekeeper selected: %s. Rationale: %s", tickers, rationale)
+                    else:
+                        tickers = ["AAPL"]
+            except Exception as e:
+                logger.error("[PipelineService] Portfolio screener failed, falling back to AAPL: %s", e)
+                tickers = ["AAPL"]
+
         cls._state.update({
             "status": "running",
             "cycle_id": cycle_id,
