@@ -38,6 +38,7 @@ def trigger_canary():
     print("Command inserted. Waiting for cycle_id...")
     
     max_wait = 120
+    cycle_id = None
     for i in range(max_wait):
         time.sleep(10)
         cur.execute("SELECT status, result, error_message FROM v3_system_commands WHERE id = %s;", (job_id,))

@@ -199,7 +199,7 @@ class PipelineService:
         if cls._cycle_task and not cls._cycle_task.done():
             try:
                 await asyncio.wait_for(cls._cycle_task, timeout=2.0)
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 pass
         cls._state.update({
             "status": "stopped",
