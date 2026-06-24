@@ -27,8 +27,8 @@ def trigger_canary():
     }
     
     cur.execute(
-        "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
-        (cycle_id, "START_CYCLE", json.dumps(payload))
+        "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
+        (cycle_id, "START_V3_CYCLE", json.dumps(payload))
     )
     
     print("Canary cycle triggered. Waiting for SharedDesk phase updates...")

@@ -218,7 +218,7 @@ class PrismClient:
         def _is_stopped() -> bool:
             """Check if the cycle has been stopped (non-blocking)."""
             try:
-                from app.cycle.orchestration.cycle_control import cycle_control
+                from app.services.pipeline_service import pipeline_service
                 return cycle_control.is_stopped
             except Exception:
                 return False

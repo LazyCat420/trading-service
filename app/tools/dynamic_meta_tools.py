@@ -362,19 +362,19 @@ async def create_team(
     # Auto-publish ANALYSIS_READY so the orchestrator unblocks and proceeds to trading
     if ticker:
         try:
-            from app.cycle.orchestration.event_bus import event_bus
+            
             payload_data = {
                 "team_name": name,
                 "topology": topology,
                 "status": "complete",
                 "agent_insights": insights
             }
-            event_bus.publish("ANALYSIS_READY", {
-                "ticker": ticker,
-                "cycle_id": cycle_id,
-                "source_agent": "create_team_tool",
-                "data": payload_data
-            })
+            # event_bus.publish("ANALYSIS_READY", {
+            #     "ticker": ticker,
+            #     "cycle_id": cycle_id,
+            #     "source_agent": "create_team_tool",
+            #     "data": payload_data
+            # })
             logger.info(f"[create_team] Successfully published ANALYSIS_READY for {ticker}")
         except Exception as e:
             logger.error(f"[create_team] Failed to auto-publish ANALYSIS_READY: {e}")

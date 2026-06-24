@@ -187,6 +187,12 @@ async def start_health_server(shutdown_event: asyncio.Event):
         from app.services.pipeline_service import PipelineService
         return PipelineService.get_current_state(summary_only=summary_only)
 
+    try:
+        from app.services.vllm_router import router as vllm_router
+        app.include_router(vllm_router)
+    except Exception as e:
+        logger.error(f"Failed to include vllm_router: {e}")
+
     config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="error")
     server = uvicorn.Server(config)
     

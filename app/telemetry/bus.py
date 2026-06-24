@@ -49,7 +49,6 @@ def get_cycle_state(cycle_id: str) -> CycleState:
 
             if not mem_state:
                 try:
-                    from app.cycle.orchestration.state_manager import PipelineStateMixin
                     if PipelineStateMixin._state and PipelineStateMixin._state.get("cycle_id") == cycle_id:
                         mem_state = PipelineStateMixin._state
                 except Exception:
@@ -70,7 +69,7 @@ def get_cycle_state(cycle_id: str) -> CycleState:
                 logger.info("[TelemetryBus] Restored cycle state %s from in-memory state", cycle_id)
             else:
                 # Load from database fallback
-                from app.cycle.orchestration.state_manager import PipelineStateDB
+                from app.services.pipeline_state import PipelineStateDB
                 db_state = PipelineStateDB.get_state(summary_only=False)
                 if db_state and db_state.get("cycle_id") == cycle_id:
                     state = CycleState(

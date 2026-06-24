@@ -28,7 +28,7 @@ async def safe_agent(coro: Awaitable, name: str, cycle_id: str = "") -> None:
     except Exception as e:
         log.error("[%s] Failed: %s", name, e)
         try:
-            from app.cycle.orchestration.state_manager import PipelineStateDB
+            from app.services.pipeline_state import PipelineStateDB
             PipelineStateDB.safe_log_execution_error(
                 cycle_id=cycle_id,
                 phase="post_trade",

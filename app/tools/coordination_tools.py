@@ -323,7 +323,7 @@ async def publish_event(
     _cycle_id: str = "",
 ) -> str:
     """Publish an event to the global event bus."""
-    from app.cycle.orchestration.event_bus import event_bus
+    
     import json
     try:
         try:
@@ -339,7 +339,7 @@ async def publish_event(
         }
         
         # We publish the event. The bus will handle waking up subscribers.
-        event_bus.publish(event_name, full_payload)
+        # event_bus.publish(event_name, full_payload)
         
         return json.dumps(
             {

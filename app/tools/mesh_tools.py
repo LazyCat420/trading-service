@@ -8,7 +8,7 @@ import uuid
 import json
 from pydantic import BaseModel, Field
 from app.tools.registry import registry, PermissionLevel
-# from app.cycle.orchestration.event_bus import event_bus
+# 
 class DummyEventBus:
     def subscribe(self, *args, **kwargs): pass
     def publish(self, *args, **kwargs): pass
