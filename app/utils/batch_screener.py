@@ -24,7 +24,7 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
         df = await asyncio.to_thread(
             yf.download,
             " ".join(tickers),
-            period="5d",
+            period="2mo",
             group_by="ticker",
             auto_adjust=True,
             threads=True,
@@ -40,16 +40,23 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
         if len(tickers) == 1:
             t = tickers[0]
             try:
-                if len(df) >= 2:
-                    current_price = df['Close'].iloc[-1]
-                    prev_price = df['Close'].iloc[-2]
+                if len(df) >= 20:
+                    current_price = float(df['Close'].iloc[-1])
+                    prev_price = float(df['Close'].iloc[-2])
                     change_pct = ((current_price - prev_price) / prev_price) * 100
                     
-                    vol_today = df['Volume'].iloc[-1]
-                    avg_vol = df['Volume'].mean()
+                    vol_today = float(df['Volume'].iloc[-1])
+                    avg_vol = float(df['Volume'].mean())
                     rel_vol = vol_today / avg_vol if avg_vol > 0 else 0
                     
-                    results.append((t, current_price, change_pct, rel_vol))
+                    sma20 = float(df['Close'].rolling(window=20).mean().iloc[-1])
+                    delta = df['Close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss
+                    rsi = float((100 - (100 / (1 + rs))).iloc[-1])
+                    
+                    results.append((t, current_price, change_pct, rel_vol, sma20, rsi))
             except Exception as e:
                 logger.warning(f"[batch_screener] Error parsing {t}: {e}")
         else:
@@ -57,16 +64,23 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
                 try:
                     if t in df.columns.levels[0]:
                         ticker_df = df[t].dropna()
-                        if len(ticker_df) >= 2:
-                            current_price = ticker_df['Close'].iloc[-1]
-                            prev_price = ticker_df['Close'].iloc[-2]
+                        if len(ticker_df) >= 20:
+                            current_price = float(ticker_df['Close'].iloc[-1])
+                            prev_price = float(ticker_df['Close'].iloc[-2])
                             change_pct = ((current_price - prev_price) / prev_price) * 100
                             
-                            vol_today = ticker_df['Volume'].iloc[-1]
-                            avg_vol = ticker_df['Volume'].mean()
+                            vol_today = float(ticker_df['Volume'].iloc[-1])
+                            avg_vol = float(ticker_df['Volume'].mean())
                             rel_vol = vol_today / avg_vol if avg_vol > 0 else 0
                             
-                            results.append((t, current_price, change_pct, rel_vol))
+                            sma20 = float(ticker_df['Close'].rolling(window=20).mean().iloc[-1])
+                            delta = ticker_df['Close'].diff()
+                            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                            rs = gain / loss
+                            rsi = float((100 - (100 / (1 + rs))).iloc[-1])
+                            
+                            results.append((t, current_price, change_pct, rel_vol, sma20, rsi))
                 except Exception as e:
                     logger.warning(f"[batch_screener] Error parsing {t}: {e}")
 
@@ -77,10 +91,11 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
         results.sort(key=lambda x: x[3], reverse=True)
 
         md_lines = []
-        md_lines.append("| Ticker | Price | Change % | Rel Volume |")
-        md_lines.append("|--------|-------|----------|------------|")
-        for t, px, chg, rvol in results:
-            md_lines.append(f"| {t} | ${px:.2f} | {chg:+.2f}% | {rvol:.2f}x |")
+        md_lines.append("| Ticker | Price | Change % | Rel Volume | SMA-20 | RSI (14) |")
+        md_lines.append("|--------|-------|----------|------------|--------|----------|")
+        for t, px, chg, rvol, sma, rsi in results:
+            sma_rel = ((px - sma) / sma) * 100 if sma > 0 else 0
+            md_lines.append(f"| {t} | ${px:.2f} | {chg:+.2f}% | {rvol:.2f}x | {sma_rel:+.2f}% | {rsi:.1f} |")
 
         return "\n".join(md_lines)
     except Exception as e:

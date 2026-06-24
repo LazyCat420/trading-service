@@ -45,7 +45,7 @@ class PipelineService:
             try:
                 from app.trading.watchlist import get_active
                 from app.utils.batch_screener import get_watchlist_snapshots
-                from app.tools.prism_agent_harness import run_prism_agent
+                from app.agents.base_agent import run_agent
                 from app.v3.agents.portfolio_manager import SYSTEM_PROMPT, AGENT_NAME
                 import json
                 
@@ -60,13 +60,14 @@ class PipelineService:
                     user_prompt = f"Here is the active watchlist snapshot:\n\n{snapshot_table}"
                     
                     from app.utils.text_utils import parse_json_response
-                    
-                    result = await run_prism_agent(
+                    result = await run_agent(
+                        agent_name=AGENT_NAME,
+                        ticker="WATCHLIST",
+                        cycle_id=cycle_id,
+                        bot_id="cycle-backend",
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
-                        ticker="WATCHLIST",
-                        agent_name=AGENT_NAME,
-                        cycle_id=cycle_id,
+                        enable_tools=True,
                     )
                     
                     final_text = result.get("final_text", "{}")
@@ -81,7 +82,10 @@ class PipelineService:
                         tickers = selected
                         logger.info("[PipelineService] Gatekeeper selected: %s. Rationale: %s", tickers, rationale)
                     else:
-                        tickers = ["AAPL"]
+                        logger.info("[PipelineService] Gatekeeper chose 0 tickers. Ending cycle early. Rationale: %s", rationale)
+                        cls._state.update({"status": "completed", "progress": "Gatekeeper bypassed."})
+                        cls.save_state()
+                        return {"status": "skipped", "message": "Gatekeeper found no compelling setups"}
             except Exception as e:
                 logger.error("[PipelineService] Portfolio screener failed, falling back to AAPL: %s", e)
                 tickers = ["AAPL"]

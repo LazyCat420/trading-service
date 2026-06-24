@@ -6,7 +6,7 @@ from app.v3.desk_persistence import load_desk
 logging.basicConfig(level=logging.INFO)
 
 async def test_canary():
-    cycle_id = "canary_test_direct_005"
+    cycle_id = "canary_test_direct_007"
     print(f"Triggering direct canary cycle: {cycle_id}")
     
     def emit_cb(phase, step, detail, **kwargs):

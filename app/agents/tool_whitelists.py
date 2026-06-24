@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 # If an agent_name is NOT in this dict, it gets ALL tools (legacy behavior).
 
 AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
+    # ── V3 Gatekeeper ──
+    "v3_portfolio_manager": [
+        "mcp__lazy-tool-service__get_finnhub_news",
+        "search_web",
+        "mcp__lazy-tool-service__get_market_data"
+    ],
     # ── V1 Specialist Agents ──
     "sentiment": [
         "get_market_data",
