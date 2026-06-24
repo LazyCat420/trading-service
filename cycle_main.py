@@ -189,9 +189,24 @@ async def start_health_server(shutdown_event: asyncio.Event):
 
     try:
         from app.services.vllm_router import router as vllm_router
+        from app.routers.agent_persona_router import router as agent_persona_router
+        from app.routers.agent_tools_router import router as agent_tools_router
+        from app.routers.chat_router import router as chat_router
+        from app.routers.debug_router import router as debug_router
+        from app.routers.diagnostics_router import router as diagnostics_router
+        from app.routers.node_health_router import router as node_health_router
+        from app.routers.verdict_router import router as verdict_router
+
         app.include_router(vllm_router)
+        app.include_router(agent_persona_router)
+        app.include_router(agent_tools_router)
+        app.include_router(chat_router)
+        app.include_router(debug_router)
+        app.include_router(diagnostics_router)
+        app.include_router(node_health_router)
+        app.include_router(verdict_router)
     except Exception as e:
-        logger.error(f"Failed to include vllm_router: {e}")
+        logger.error(f"Failed to include routers: {e}")
 
     config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="error")
     server = uvicorn.Server(config)
