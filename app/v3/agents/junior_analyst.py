@@ -15,7 +15,6 @@ TOOL_WHITELIST = [
     "search_web",
     "get_market_data",
     "search_internal_database",
-    "search_database_facts",
     "post_finding",
 ]
 

@@ -406,8 +406,6 @@ class PrismClient:
                     enabled_tools.append("send_message")
                 if "stop_agent" not in enabled_tools:
                     enabled_tools.append("stop_agent")
-                if "request_lateral_fact_check" not in enabled_tools:
-                    enabled_tools.append("request_lateral_fact_check")
 
         payload["enabledTools"] = [
             t for t in enabled_tools if t != "ask_user_question"
