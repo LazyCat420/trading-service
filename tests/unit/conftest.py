@@ -21,12 +21,42 @@ def mock_new_agents_globally():
     """Globally mock the new specialist agents that make external LLM calls."""
     from unittest.mock import AsyncMock, patch, MagicMock
     import sys
+    import app
+    import app.agents
     
     # Dynamically inject portfolio_allocator_agent if it doesn't exist to prevent import/attribute errors in tests
     if "app.agents.portfolio_allocator_agent" not in sys.modules:
         mock_pa_module = MagicMock()
         mock_pa_module.run_portfolio_allocator = AsyncMock(return_value={})
+        setattr(app.agents, "portfolio_allocator_agent", mock_pa_module)
         sys.modules["app.agents.portfolio_allocator_agent"] = mock_pa_module
+
+    # Dynamically inject post_mortem_auditor_agent if it doesn't exist to prevent attribute errors in tests
+    if "app.agents.post_mortem_auditor_agent" not in sys.modules:
+        mock_pm_module = MagicMock()
+        mock_pm_module.run_post_mortem = AsyncMock(return_value=None)
+        setattr(app.agents, "post_mortem_auditor_agent", mock_pm_module)
+        sys.modules["app.agents.post_mortem_auditor_agent"] = mock_pm_module
+
+    # Dynamically inject legacy cycle phases if they don't exist
+    if not hasattr(app, "cycle"):
+        mock_cycle = MagicMock()
+        setattr(app, "cycle", mock_cycle)
+        sys.modules["app.cycle"] = mock_cycle
+        
+        mock_phases = MagicMock()
+        setattr(mock_cycle, "phases", mock_phases)
+        sys.modules["app.cycle.phases"] = mock_phases
+        
+        mock_ph6 = MagicMock()
+        mock_ph6.run_post_mortem = AsyncMock(return_value=None)
+        setattr(mock_phases, "phase6_post", mock_ph6)
+        sys.modules["app.cycle.phases.phase6_post"] = mock_ph6
+        
+        mock_tp = MagicMock()
+        mock_tp.run_portfolio_allocator = AsyncMock(return_value={})
+        setattr(mock_cycle, "trading_phase", mock_tp)
+        sys.modules["app.cycle.trading_phase"] = mock_tp
         
     with patch("app.agents.portfolio_allocator_agent.run_portfolio_allocator", new_callable=AsyncMock) as mock_pa, \
          patch("app.agents.post_mortem_auditor_agent.run_post_mortem", new_callable=AsyncMock) as mock_pm, \
