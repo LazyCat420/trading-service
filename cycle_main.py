@@ -91,7 +91,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     result = None
                     logger.info("[cycle_backend] Processing command %s (%s)", cmd_type, job_id)
                     
-                    if cmd_type == "START_CYCLE":
+                    if cmd_type in ("START_CYCLE", "START_V3_CYCLE"):
                         from app.services.pipeline_service import PipelineService
                         result = await PipelineService.start_cycle(
                             tickers=payload.get("tickers", []),

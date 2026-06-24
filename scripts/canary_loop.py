@@ -32,7 +32,7 @@ def trigger_canary():
     
     cur.execute(
         "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
-        (job_id, "START_CYCLE", json.dumps(payload))
+        (job_id, "START_V3_CYCLE", json.dumps(payload))
     )
     
     print("Command inserted. Waiting for cycle_id...")
