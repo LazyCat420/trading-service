@@ -34,8 +34,8 @@ class PipelineService:
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         
         # ── Dynamic Watchlist Pre-Filter (Gatekeeper) ──
-        if not tickers or kwargs.get("dynamic_selection_mode"):
-            max_tickers = kwargs.get("max_tickers") or 3
+        if not tickers or kwargs.get("dynamic_selection_mode") or len(tickers) > 5:
+            max_tickers = kwargs.get("max_tickers") or 5
             cls._state.update({
                 "status": "starting",
                 "progress": f"Screening watchlist for top {max_tickers} setups...",
@@ -49,7 +49,11 @@ class PipelineService:
                 from app.v3.agents.portfolio_manager import SYSTEM_PROMPT, AGENT_NAME
                 import json
                 
-                active_tickers = [t["ticker"] for t in get_active()]
+                if tickers:
+                    active_tickers = tickers
+                else:
+                    active_tickers = [t["ticker"] for t in get_active()]
+                    
                 if not active_tickers:
                     logger.warning("[PipelineService] Watchlist is empty, falling back to default.")
                     tickers = ["AAPL"]
