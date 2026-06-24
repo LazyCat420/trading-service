@@ -173,6 +173,21 @@ class PipelineService:
                 "progress": "V3 cycle complete",
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
+        except asyncio.CancelledError:
+            logger.info("[PipelineService] V3 Cycle CANCELLED — killing active VLLM connections")
+            # Force-close all TCP connections to VLLM endpoints so GPUs stop inference
+            try:
+                from app.services.vllm_client import llm
+                await llm.abort_active_requests()
+            except Exception as abort_err:
+                logger.error("[PipelineService] abort_active_requests failed: %s", abort_err)
+            cls._state.update({
+                "status": "stopped",
+                "progress": "Cycle stopped by user",
+                "finished_at": datetime.now(timezone.utc).isoformat()
+            })
+            # Do NOT re-raise — let the finally block clean up and let
+            # stop_cycle() see the task as done.
         except Exception as e:
             logger.error("[PipelineService] V3 Cycle failed: %s", e)
             cls._state.update({
@@ -198,9 +213,16 @@ class PipelineService:
         cls.request_stop()
         if cls._cycle_task and not cls._cycle_task.done():
             try:
-                await asyncio.wait_for(cls._cycle_task, timeout=2.0)
+                await asyncio.wait_for(cls._cycle_task, timeout=5.0)
             except (Exception, asyncio.CancelledError):
                 pass
+        # Nuclear kill: force-close all TCP connections to VLLM endpoints
+        # so GPUs immediately stop inference even if the task didn't clean up
+        try:
+            from app.services.vllm_client import llm
+            await llm.abort_active_requests()
+        except Exception as abort_err:
+            logger.error("[PipelineService] abort_active_requests in stop_cycle failed: %s", abort_err)
         cls._state.update({
             "status": "stopped",
             "progress": "Cycle stopped by user",

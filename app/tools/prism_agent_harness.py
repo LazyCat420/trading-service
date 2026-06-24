@@ -924,6 +924,16 @@ async def run_prism_agent(
             tools_override=tools_override,
         )
 
+    except asyncio.CancelledError:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            "[PrismHarness] %s CANCELLED after %dms — stop requested, not falling back",
+            agent_name, elapsed_ms,
+        )
+        from app.telemetry import send_system_log
+        send_system_log("AGENT", f"[{agent_name}] Execution CANCELLED by stop request after {elapsed_ms}ms", level="warning")
+        raise  # Re-raise — do NOT fall back to local (we are stopping)
+
     except Exception as e:
         logger.exception(
             "[PrismHarness] %s failed via Prism — falling back to local",

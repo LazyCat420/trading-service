@@ -223,6 +223,21 @@ async def run_v3_agent(
         _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "TIMED_OUT")
         return PhaseOutcome.TIMED_OUT
 
+    except asyncio.CancelledError:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        logger.info(
+            "[V3Runner] %s CANCELLED for %s after %dms — stop requested",
+            agent_name, desk.ticker, elapsed_ms,
+        )
+        emit(
+            "analyzing",
+            f"v3_{agent_name}_cancelled_{desk.ticker}",
+            f"🛑 {desk.ticker}: V3 {agent_name} CANCELLED after {elapsed_ms}ms",
+            status="error",
+        )
+        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "CANCELLED")
+        raise  # Re-raise so orchestrator and pipeline_service see the cancellation
+
     except Exception as e:
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
         logger.error(
