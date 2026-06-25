@@ -38,6 +38,7 @@ memory/
 plans/
 reports/
 test_mkdir_exist/
+latest_desk.json
 
 # ─── Debug & Query Scripts (local-only utilities) ────────────
 scripts/debug/
