@@ -528,7 +528,7 @@ class PrismClient:
             if _caller_supplied_parent:
                 conversation_id = str(uuid.uuid4())
             else:
-                conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
+                conversation_id = parent_conversation_id if agent_name == "user_chat" else str(uuid.uuid4())
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
             session_id, is_new = self._get_or_create_session(group_key)
@@ -672,7 +672,7 @@ class PrismClient:
             if _caller_supplied_parent:
                 conversation_id = str(uuid.uuid4())
             else:
-                conversation_id = parent_conversation_id if agentic_mode else str(uuid.uuid4())
+                conversation_id = parent_conversation_id if agent_name == "user_chat" else str(uuid.uuid4())
         else:
             group_key = f"chat-{agent_name}" if agent_name == "user_chat" else ""
             session_id, is_new = self._get_or_create_session(group_key)
