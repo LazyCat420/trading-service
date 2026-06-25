@@ -39,7 +39,7 @@ explicit signal weighting so the system can audit WHY a decision was made.
 5. Confidence must be between 0 and 100. Under 40 = HOLD regardless of action.
 
 ## OUTPUT FORMAT
-You MUST output valid JSON:
+CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 72,

@@ -39,7 +39,7 @@ You are making the FINAL trading decision for this ticker.
 4. If risk metrics are missing or estimated, err on the side of CAUTION.
 
 ## OUTPUT
-You MUST output valid JSON:
+CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 75,
@@ -72,7 +72,7 @@ You are making the FINAL trading decision for this ticker.
    for conviction, he doesn't gamble on incomplete information.
 
 ## OUTPUT
-You MUST output valid JSON:
+CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 80,
@@ -105,7 +105,7 @@ You are making the FINAL trading decision for this ticker.
    that's your trade.
 
 ## OUTPUT
-You MUST output valid JSON:
+CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 65,
