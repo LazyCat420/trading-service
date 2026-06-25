@@ -116,12 +116,7 @@ async def run_agent_loop(
     if budget is None:
         budget = AgentBudget()
 
-    from app.cognition.evolution.reflector import (
-        get_agent_lessons,
-        adjust_lesson_score,
-        reflect_on_trajectory,
-        get_spotlight_tools,
-    )
+    # (Cognition/Evolution features removed)
 
     if not previous_messages:
         firm_context = (
@@ -152,8 +147,8 @@ async def run_agent_loop(
         logger.debug(f"FULL SYSTEM PROMPT:\n{enhanced_system_prompt[:800]}")
         
         # Cap lessons to top 5
-        lessons = get_agent_lessons(agent_name)[:5]
-        spotlight = get_spotlight_tools(limit=5)
+        lessons = []
+        spotlight = []
         
         dynamic_instructions = ""
 
@@ -694,32 +689,8 @@ async def run_agent_loop(
 
     # Trigger Autoresearch reflection on success AND failure for organic learning
     # We always reflect to capture what worked (success) or what failed
-    _reflect_task = asyncio.create_task(
-        reflect_on_trajectory(
-            agent_name=agent_name,
-            ticker=ticker,
-            cycle_id=cycle_id,
-            loops_used=budget.current_turns,
-            yielded=hit_limit_with_pending_tools,
-            chat_history=messages,
-            success=success,
-            spotlight_tools=spotlight,
-        )
-    )
-    # Prevent "Task exception was never retrieved" warnings
-    _reflect_task.add_done_callback(
-        lambda t: (
-            logger.warning(
-                "[AgentLoop] reflect_on_trajectory failed for %s/%s: %s",
-                agent_name, ticker, t.exception(),
-            )
-            if t.exception()
-            else None
-        )
-    )
-
-    # Adjust success score for any recently applied lessons
-    adjust_lesson_score(agent_name, success)
+    # _reflect_task = asyncio.create_task(...)
+    # adjust_lesson_score(agent_name, success)
 
     # Record tool optimization stats in a background task
     try:

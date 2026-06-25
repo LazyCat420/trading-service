@@ -50,7 +50,7 @@ def _is_blocked_ticker(ticker: str) -> bool:
 
 async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
     """Fetch OHLCV history as a DataFrame without writing to DB."""
-    stock = yf.Ticker(ticker, session=_yf_session)
+    stock = yf.Ticker(ticker)
     try:
         df = await asyncio.to_thread(stock.history, period=period, auto_adjust=True)
         if df is None or df.empty:
@@ -119,7 +119,7 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
 
 async def fetch_fundamentals_dict(ticker: str) -> dict | None:
     """Fetch fundamentals dictionary without writing to DB."""
-    stock = yf.Ticker(ticker, session=_yf_session)
+    stock = yf.Ticker(ticker)
     try:
         info = await asyncio.to_thread(lambda: stock.info)
         if not info or "symbol" not in info:
@@ -289,7 +289,7 @@ async def collect_financials(ticker: str) -> int:
     Fetch income statement (quarterly + annual) and upsert into financial_history.
     Returns number of rows inserted.
     """
-    stock = yf.Ticker(ticker, session=_yf_session)
+    stock = yf.Ticker(ticker)
     count = 0
     try:
         sources = await asyncio.to_thread(
@@ -353,7 +353,7 @@ async def collect_balance_sheet(ticker: str) -> int:
     Fetch balance sheet and upsert into balance_sheet table.
     Returns number of rows inserted.
     """
-    stock = yf.Ticker(ticker, session=_yf_session)
+    stock = yf.Ticker(ticker)
     try:
         bs = await asyncio.to_thread(lambda: stock.balance_sheet)
         if bs is None or bs.empty:
