@@ -510,17 +510,7 @@ class VLLMClient:
         """
         import re
 
-        # CRITICAL: Force Qwen 35B models to route strictly to Jetson Orin AGX 64GB
-        if requested_model and ("qwen3.6-35b" in requested_model.lower() or "35b" in requested_model.lower()):
-            jetson_ep = self._endpoints.get("jetson")
-            if jetson_ep and jetson_ep.enabled and jetson_ep.model:
-                logger.info("[VLLM] Forcing Jetson Orin AGX 64GB routing for 35B model: %s", requested_model)
-                return jetson_ep
-            else:
-                raise RuntimeError(
-                    f"Requested model '{requested_model}' requires Jetson (vLLM 1) but it is disabled or offline. "
-                    "Refusing to failover to vLLM 2 because Prism will reject it."
-                )
+
 
         # Step 1: All endpoints with models loaded
         all_ready = [
@@ -3749,14 +3739,8 @@ class VLLMClient:
             if ep:
                 return _url_to_prism_provider(ep.url)
 
-        # Heuristic fallback (guessing based on model size/names) only if not found on endpoints
-        model_lower = model.lower() if model else ""
-        if "qwen3.6-35b" in model_lower or "35b" in model_lower:
-            # Jetson hosts the 35B models
-            return "vllm-1"
-        elif "122b" in model_lower or "120b" in model_lower or "minimax" in model_lower:
-            # Gold Spark hosts the heavy models
-            return "vllm-2"
+        # Heuristic fallback if not found on endpoints (default to vllm-1)
+        return "vllm-1"
 
         return "vllm-1"
 
@@ -3778,7 +3762,7 @@ class VLLMClient:
                 if ep.role == "collector" and ep.enabled and ep.model:
                     return ep.model
             # Fallback to active model
-            return self.model or "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
+            return self.model or ""
         else:
             # Analyst/Trader model (Gold Spark)
             trader_model = self.get_trader_model()
@@ -3787,8 +3771,8 @@ class VLLMClient:
             analyst_model, _ = self.get_analyst_model_balanced()
             if analyst_model:
                 return analyst_model
-            # Fallback to default heavy model
-            return "cyankiwi/MiniMax-M2.7-AWQ-4bit"
+            # Fallback to active model
+            return self.model or ""
 
     async def close(self):
         """Shutdown the persistent HTTP client and dispatchers."""
