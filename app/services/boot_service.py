@@ -155,7 +155,23 @@ class BootService:
 
     @classmethod
     def _reset_app_state(cls):
-        pass
+        from app.db.connection import get_db
+        try:
+            with get_db() as db:
+                db.execute(
+                    "UPDATE pipeline_state SET status = 'error', error = 'Container restarted unexpectedly' "
+                    "WHERE singleton_id = 'current' AND status IN ('running', 'blocked', 'starting')"
+                )
+                db.execute(
+                    "UPDATE v3_system_commands SET status = 'error', error_message = 'Container restarted unexpectedly' "
+                    "WHERE status IN ('running', 'pending')"
+                )
+                db.execute(
+                    "UPDATE system_commands SET status = 'error', error_message = 'Container restarted unexpectedly' "
+                    "WHERE status IN ('running', 'pending')"
+                )
+        except Exception as e:
+            logger.error("[Boot] Failed to reset stuck pipeline state on boot: %s", e)
 
         # Reset any zombie-state pruned tools from the ToolOptimizer.
         # Prism-routed agents never reported tool usage, causing all tools to
