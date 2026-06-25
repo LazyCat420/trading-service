@@ -21,8 +21,6 @@ TOOL_WHITELIST = [
     "get_market_data",
     "post_finding",
     "create_team",
-    "send_message",
-    "stop_agent",
 ]
 
 SYSTEM_PROMPT = """You are the Senior Fundamental Analyst at a quantitative trading firm.

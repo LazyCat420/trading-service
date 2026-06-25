@@ -13,9 +13,11 @@ AGENT_NAME = "v3_junior_analyst"
 TOOL_WHITELIST = [
     "get_finnhub_news",
     "search_web",
+    "scrape_url",
     "get_market_data",
     "search_internal_database",
     "post_finding",
+    "create_team",
 ]
 
 SYSTEM_PROMPT = """You are the Junior Analyst at a quantitative trading firm.

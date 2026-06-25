@@ -23,6 +23,7 @@ TOOL_WHITELIST = [
     "get_portfolio_state",
     "get_position_pnl",
     "post_finding",
+    "create_team",
 ]
 
 SYSTEM_PROMPT = """You are the Quant/Risk Analyst at a quantitative trading firm.

@@ -329,6 +329,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_market_data",
         "search_internal_database",
         "post_finding",
+        "create_team",
     ],
     "v3_fundamental_analyst": [
         "get_sec_filings",
@@ -339,6 +340,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "scrape_url",
         "get_market_data",
         "post_finding",
+        "create_team",
     ],
     "v3_quant_analyst": [
         "get_market_data",
@@ -352,6 +354,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_portfolio_state",
         "get_position_pnl",
         "post_finding",
+        "create_team",
     ],
     "v3_bull_agent": [],       # Pure reasoning — no tools
     "v3_bear_agent": [],       # Pure reasoning — no tools

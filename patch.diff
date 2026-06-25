@@ -1,0 +1,14 @@
+--- app/utils/text_utils.py
++++ app/utils/text_utils.py
+@@ -369,4 +369,11 @@
+     # Remove empty fields
+     res = {k: v for k, v in res.items() if v is not None and v != ""}
+ 
++    # ── Map rationale to reasoning for schema compliance ──
++    if "rationale" in res and "reasoning" not in res:
++        res["reasoning"] = res["rationale"]
++    # Ultimate fallback: if neither exists, grab the raw text
++    if "reasoning" not in res:
++        res["reasoning"] = text.strip()[:2000]
++
+     return res
