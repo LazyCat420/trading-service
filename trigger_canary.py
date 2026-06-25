@@ -54,6 +54,16 @@ def trigger_canary():
             print(f"Bull: {bull is not None}, Bear: {bear is not None}, Regime: {regime is not None}")
             print(f"Decision: {decision}")
             print(f"Outcomes: {outcomes}")
+            
+            # Wait for pipeline_state to be 'done' to prevent race conditions with the next cycle
+            print("Waiting for PipelineService to finalize 'done' state...")
+            for _ in range(30):
+                time.sleep(2)
+                cur.execute("SELECT status FROM pipeline_state WHERE singleton_id = 'current';")
+                state_row = cur.fetchone()
+                if state_row and state_row[0] == 'done':
+                    print("Pipeline finalized.")
+                    break
             break
             
     conn.close()
