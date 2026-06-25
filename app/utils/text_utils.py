@@ -423,6 +423,13 @@ def parse_malformed_text_response(text: str) -> dict:
                     res[key] = [item.strip() for item in items]
                     break
 
+    # ── Map rationale to reasoning for schema compliance ──
+    if "rationale" in res and "reasoning" not in res:
+        res["reasoning"] = res["rationale"]
+    # Ultimate fallback: if neither exists, grab the raw text
+    if "reasoning" not in res:
+        res["reasoning"] = text.strip()[:2000]
+
     return res
 
 
