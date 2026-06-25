@@ -344,9 +344,7 @@ async def run_agent_loop(
         except Exception as e:
             logger.error(f"[AgentLoop] chat_with_tools failed: {e}")
             err_msg = str(e) or type(e).__name__
-            final_content = f"Error during agent execution: {err_msg}"
-            stop_reason = "blocked"
-            break
+            raise RuntimeError(f"Error during agent execution: {err_msg}") from e
 
         content = result.get("text", "")
         tool_calls = result.get("tool_calls")

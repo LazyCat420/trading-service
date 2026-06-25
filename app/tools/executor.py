@@ -120,8 +120,7 @@ async def run_tool_agent(
             )
         except Exception as e:
             logger.error(f"[ToolExecutor] chat_with_tools failed: {e}")
-            final_content = f"Error during agent execution: {str(e)}"
-            break
+            raise RuntimeError(f"Error during agent execution: {str(e)}") from e
 
         content = result.get("text", "")
         tool_calls = result.get("tool_calls")
