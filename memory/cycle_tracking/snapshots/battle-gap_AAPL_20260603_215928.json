@@ -1,7 +1,0 @@
-{
-  "action": "HOLD",
-  "confidence": 0,
-  "rationale": "V2 ABSTAIN: Insufficient evidence. price_history",
-  "config_used": "v2_abstain",
-  "escalated": false
-}
