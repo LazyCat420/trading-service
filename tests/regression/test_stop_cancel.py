@@ -128,11 +128,10 @@ async def test_stop_during_prism_retry_cancels_cleanly():
 @pytest.mark.asyncio
 async def test_start_during_stopping_returns_deduplicated():
     """Verify that start_cycle returns deduplicated if the current status is 'stopping'."""
-    PipelineService._state["status"] = "stopping"
-
-    res = await PipelineService.start_cycle(["AAPL"])
-    assert res["status"] == "deduplicated"
-    assert "stopping" in res["message"]
+    with patch("app.services.pipeline_state.PipelineStateDB.get_state", return_value={"status": "stopping"}):
+        res = await PipelineService.start_cycle(["AAPL"])
+        assert res["status"] == "deduplicated"
+        assert "stopping" in res["message"]
 
 
 # ── Test 4: Repeated cycles — session/conversation leak check ──

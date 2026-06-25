@@ -38,6 +38,13 @@ class PipelineService:
         if cls._cycle_task and not cls._cycle_task.done():
             return {"status": "deduplicated", "message": "Cycle task still running"}
 
+        # Reset the VLLM client kill switch so requests can flow on the new cycle (including the gatekeeper)
+        try:
+            from app.services.vllm_client import llm
+            llm.reset_kill_switch()
+        except Exception as e:
+            logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
+
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         
         # ── Dynamic Watchlist Pre-Filter (Gatekeeper) ──
@@ -113,13 +120,6 @@ class PipelineService:
         })
         cls.save_state()
         cls._stop_requested = False
-
-        # Reset the VLLM client kill switch so requests can flow on the new cycle
-        try:
-            from app.services.vllm_client import llm
-            llm.reset_kill_switch()
-        except Exception as e:
-            logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
 
         cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers))
         return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}

@@ -128,8 +128,15 @@ async def poll_system_commands(shutdown: asyncio.Event):
                             "UPDATE v3_system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = %s WHERE id = %s", 
                             [json.dumps(result), job_id]
                         )
-                except asyncio.CancelledError:
-                    raise
+                except asyncio.CancelledError as e:
+                    if shutdown.is_set():
+                        raise
+                    logger.error("[cycle_backend] Command %s cancelled internally: %s", job_id, e)
+                    with get_db() as db:
+                        db.execute(
+                            "UPDATE v3_system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
+                            [f"Cancelled internally: {e}", job_id]
+                        )
                 except BaseException as e:
                     logger.error("[cycle_backend] Command %s failed: %s", job_id, e)
                     with get_db() as db:
@@ -140,6 +147,7 @@ async def poll_system_commands(shutdown: asyncio.Event):
         except BaseException as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
+            logger.exception("[cycle_backend] Unexpected error in command poller loop")
             
         try:
             await asyncio.wait_for(shutdown.wait(), timeout=1.0)
