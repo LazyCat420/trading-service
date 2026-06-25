@@ -64,17 +64,19 @@ async def run_battle_royale(cycle_id: str, bot_id: str):
         with get_db() as db:
             db.execute(
                 """
-                INSERT INTO research_reports (id, ticker, cycle_id, title, content, created_at, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO ticker_reports (id, cycle_id, ticker, action, confidence, report_markdown, result_summary, is_summary, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     report_id,
-                    "GLOBAL",
                     cycle_id,
-                    f"Battle Royale Allocation Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    "GLOBAL",
+                    "HOLD",
+                    0,
                     report_content,
-                    datetime.now(timezone.utc),
-                    "published"
+                    '{}',
+                    True,
+                    datetime.now(timezone.utc)
                 ]
             )
         logger.info("[BattleRoyale] Report saved with ID %s", report_id)
