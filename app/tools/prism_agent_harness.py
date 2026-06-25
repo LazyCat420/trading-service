@@ -379,6 +379,8 @@ async def run_prism_agent(
     if active_tools is None:
         # Default to core built-in tools when no specific override is set
         tool_names = list(built_ins)
+    elif len(active_tools) == 0:
+        tool_names = []
     else:
         # Prism built-in tools that must NEVER be enabled during automated cycles.
         # ask_user_question blocks the agentic loop for 5 minutes waiting for
@@ -387,14 +389,17 @@ async def run_prism_agent(
             "ask_user_question",
         }
         mcp_prefix = "mcp__lazy-tool-service__"
-        for t in active_tools:
-            if isinstance(t, dict):
-                name = t.get("name") or t.get("function", {}).get("name")
-                if name and name not in prism_blocked_tools:
-                    if name not in built_ins and not name.startswith(mcp_prefix):
-                        tool_names.append(f"{mcp_prefix}{name}")
-                    else:
-                        tool_names.append(name)
+        
+        # Get raw names so MCP tools that were dropped from schemas aren't lost
+        from app.agents.tool_whitelists import get_agent_enabled_tool_names
+        raw_names = get_agent_enabled_tool_names(agent_name)
+        
+        for name in raw_names:
+            if name and name not in prism_blocked_tools:
+                if name not in built_ins and not name.startswith(mcp_prefix):
+                    tool_names.append(f"{mcp_prefix}{name}")
+                else:
+                    tool_names.append(name)
 
     # Add Prism-native dynamic tool discovery meta-tools ONLY if active_tools is None
     if active_tools is None:

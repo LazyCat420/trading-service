@@ -340,10 +340,28 @@ class PrismClient:
             
         mcp_prefix = "mcp__lazy-tool-service__"
         
-        # 2. Build enabledTools list based on whitelist if provided, otherwise all registry tools
+        # 2. Build enabledTools list based on whitelist or tool discovery
         enabled_tools = []
-        if tools is not None:
-            # We have a specific whitelist of tools
+        agent_name = payload.get("agent", "")
+        # Remove the CUSTOM_ prefix to get the original agent name for lookup
+        if isinstance(agent_name, str) and agent_name.startswith("CUSTOM_"):
+            original_agent_name = agent_name[7:].lower()
+            from app.agents.tool_whitelists import get_agent_enabled_tool_names
+            raw_names = get_agent_enabled_tool_names(original_agent_name)
+            
+            built_ins_set = {
+                "execute_python", "search_web", "read_file", "write_file",
+                "str_replace_file", "file_info", "file_diff", "browser_action",
+                "browser_script", "precise_calculator"
+            }
+            
+            for name in raw_names:
+                if name:
+                    if name not in built_ins_set and not name.startswith(mcp_prefix):
+                        name = f"{mcp_prefix}{name}"
+                    enabled_tools.append(name)
+        elif tools is not None:
+            # Fallback if agent_name wasn't custom or found
             built_ins_set = {
                 "execute_python", "search_web", "read_file", "write_file",
                 "str_replace_file", "file_info", "file_diff", "browser_action",
@@ -356,9 +374,6 @@ class PrismClient:
                         if name not in built_ins_set and not name.startswith(mcp_prefix):
                             name = f"{mcp_prefix}{name}"
                         enabled_tools.append(name)
-        else:
-            # Fall back to only core tools (let the agent dynamically acquire other tools)
-            pass
             
         # Add core built-in tools ONLY if no strict whitelist is provided
         if tools is None:
