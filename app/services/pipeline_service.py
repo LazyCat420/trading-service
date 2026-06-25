@@ -28,8 +28,15 @@ class PipelineService:
 
     @classmethod
     async def start_cycle(cls, tickers: list[str], **kwargs):
-        if cls._state.get("status") in ("running", "starting", "stopping"):
-            return {"status": "deduplicated", "message": "Cycle already running or stopping"}
+        # Read from DB for dedup — in-memory _state can be stale after
+        # force-reset or container restart.
+        db_state = PipelineStateDB.get_state(summary_only=True)
+        db_status = db_state.get("status", "idle")
+        if db_status in ("running", "starting", "stopping"):
+            return {"status": "deduplicated", "message": f"Cycle already {db_status}"}
+        # Also check in-memory task to catch race where DB was reset but task is still running
+        if cls._cycle_task and not cls._cycle_task.done():
+            return {"status": "deduplicated", "message": "Cycle task still running"}
 
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         
@@ -259,16 +266,45 @@ class PipelineService:
         return {"status": "stopped"}
 
     @classmethod
+    async def force_reset(cls):
+        """Nuclear reset: cancel everything and return to idle.
+
+        Called by FORCE_RESET command. Unlike stop_cycle() which sets
+        status to 'stopped', this resets to 'idle' so a new cycle can
+        start immediately without the frontend needing another action.
+        """
+        logger.warning("[PipelineService] FORCE_RESET — cancelling task and resetting to idle")
+        cls._stop_requested = True
+        if cls._cycle_task and not cls._cycle_task.done():
+            cls._cycle_task.cancel()
+            try:
+                await asyncio.wait_for(cls._cycle_task, timeout=3.0)
+            except (Exception, asyncio.CancelledError):
+                pass
+        # Nuclear kill: force-close all TCP connections to VLLM endpoints
+        try:
+            from app.services.vllm_client import llm
+            await llm.abort_active_requests()
+        except Exception as abort_err:
+            logger.error("[PipelineService] abort_active_requests in force_reset failed: %s", abort_err)
+        # Reset all in-memory state
+        cls._cycle_task = None
+        cls._stop_requested = False
+        cls._state = PipelineStateDB.default_state()
+        cls.save_state()
+        return {"status": "idle"}
+
+    @classmethod
     def pause_cycle(cls):
-        return {"status": "error", "message": "Pause not supported in V3"}
+        return {"status": "not_supported", "message": "Pause not supported in V3"}
 
     @classmethod
     async def resume_cycle(cls):
-        return {"status": "error", "message": "Resume not supported in V3"}
+        return {"status": "not_supported", "message": "Resume not supported in V3"}
         
     @classmethod
     async def resume_interrupted_cycle(cls):
-        return {"status": "error", "message": "Resume not supported in V3"}
+        return {"status": "not_supported", "message": "Resume not supported in V3"}
 
     @classmethod
     def discard_checkpoint(cls):

@@ -99,10 +99,19 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         )
                     elif cmd_type == "STOP_CYCLE":
                         from app.services.pipeline_service import PipelineService
-                        result = await PipelineService.stop_cycle()
+                        if payload.get("fast"):
+                            # Non-blocking: set flag + cancel task, return immediately
+                            result = PipelineService.request_stop()
+                        else:
+                            # Blocking: wait up to 5s for task to finish
+                            result = await PipelineService.stop_cycle()
                     elif cmd_type == "FORCE_RESET":
                         from app.services.pipeline_service import PipelineService
-                        result = await PipelineService.stop_cycle()
+                        result = await PipelineService.force_reset()
+                    elif cmd_type in ("PAUSE_CYCLE", "RESUME_CYCLE"):
+                        # V3 pipeline doesn't support pause/resume — complete the
+                        # command cleanly instead of leaving it as 'running' forever.
+                        result = {"status": "not_supported", "message": f"{cmd_type} not supported in V3"}
                     elif cmd_type == "DISCARD_CHECKPOINT":
                         from app.services.pipeline_service import PipelineService
                         result = PipelineService.discard_checkpoint()
