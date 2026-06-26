@@ -8,16 +8,14 @@ from app.db.connection import get_db
 logger = logging.getLogger(__name__)
 
 async def startup_vllm_discovery():
-    # ── Auto-discover vLLM models on all endpoints ──
+    # ── Check if Prism is healthy ──
     try:
-        from app.services.prism_agent_caller import llm
-
-        roles = await llm.discover_roles()
-        ep_summary = []
-        for ep_name, ep_obj in llm._endpoints.items():
-            status = "✓" if ep_obj.model else "✗ OFFLINE"
-            ep_summary.append(f"{ep_name}={ep_obj.model or 'N/A'} [{status}]")
-        logger.info("vLLM endpoints discovered: %s", " | ".join(ep_summary))
+        from lazycat.llm import prism_client
+        is_healthy = await prism_client.check_health()
+        if is_healthy:
+            logger.info("Prism Gateway is ONLINE and reachable at %s", prism_client.url)
+        else:
+            logger.warning("Prism Gateway is OFFLINE or unreachable at %s", prism_client.url)
     except Exception as e:
         logger.warning("vLLM model discovery failed (non-fatal): %s", e)
 

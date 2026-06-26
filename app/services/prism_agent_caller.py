@@ -166,6 +166,10 @@ class PrismLLMShim:
         actor_label: str | None = None,
         stream_callback: Any = None,
     ) -> tuple[str, int, int]:
+        import asyncio
+        if self._killed:
+            raise asyncio.CancelledError("vLLM kill switch is armed — call reset_kill_switch() first")
+
         return await call_prism_agent(
             agent_id="",
             user_message=user,
