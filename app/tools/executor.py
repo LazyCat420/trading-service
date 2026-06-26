@@ -31,8 +31,13 @@ async def run_tool_agent(
     parent_agent_session_id: str | None = None,
 ) -> dict[str, Any]:
     
-    # lazycat-sdk implementation
-    agent = BaseAgent(name=agent_name, system_prompt=system_prompt, model=model_override or "gpt-4o")
+    from app.services.vllm_client import llm
+    agent = BaseAgent(
+        name=agent_name, 
+        system_prompt=system_prompt, 
+        model=model_override or "gpt-4o",
+        llm_client=llm.prism_client
+    )
     
     active_tools = tools_override if tools_override is not None else registry.schemas
     for t in active_tools:

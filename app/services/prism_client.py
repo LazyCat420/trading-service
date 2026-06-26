@@ -149,6 +149,44 @@ class PrismClient(SDKPrismClient):
                 session_count, conv_count,
             )
 
+    async def call_agent(
+        self,
+        model: str,
+        messages: list[dict],
+        system_prompt: str,
+        agent_name: str = "default",
+        tools: list[dict] | None = None,
+        max_tokens: int = 8192,
+        temperature: float = 0.0,
+        provider: str = "vllm-1",
+        project: str = "vllm-trading-bot",
+        username: str = "lazy-trader",
+        stream: bool = False,
+    ) -> httpx.Response:
+        # Register custom agent on the fly to satisfy Prism's /agent endpoint requirements
+        agent_id = await self.register_or_update_custom_agent(
+            name=agent_name,
+            identity="AgentHarness dynamically generated agent",
+            guidelines=system_prompt,
+            enabled_tools=[t.get("name") or t.get("function", {}).get("name") for t in (tools or [])] if tools else [],
+            project=project
+        )
+        
+        # Override the agent_name with the resolved Prism agent_id
+        return await super().call_agent(
+            model=model,
+            messages=messages,
+            system_prompt=system_prompt,
+            agent_name=agent_id,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            provider=provider,
+            project=project,
+            username=username,
+            stream=stream,
+        )
+
     async def _call_endpoint(
         self,
         client: httpx.AsyncClient,
