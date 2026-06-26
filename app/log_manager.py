@@ -50,109 +50,6 @@ class LogManager(SDKLogManager):
         except Exception:
             pass
 
-    # ── Agentic Turn Tracing (NEW) ───────────────────────────────────────
-
-    def log_agent_turn(
-        self,
-        cycle_id: str,
-        agent_name: str,
-        turn_index: int,
-        action_type: str,
-        *,
-        ticker: str = "",
-        content_preview: str = "",
-        tool_calls: list[dict] | None = None,
-        tool_results: list[dict] | None = None,
-        tokens_used: int = 0,
-        elapsed_ms: int = 0,
-        finish_reason: str = "",
-        extra: dict | None = None,
-    ):
-        """Log a single agent reasoning turn to the cycle JSONL file.
-
-        action_type values:
-            - 'reasoning': LLM produced text output (no tool calls)
-            - 'tool_request': LLM requested tool calls
-            - 'tool_result': Tool execution results returned to LLM
-            - 'error': LLM call or tool execution failed
-        """
-        ts = datetime.now(timezone.utc).isoformat()
-        payload = {
-            "agent_name": agent_name,
-            "turn_index": turn_index,
-            "action_type": action_type,
-            "content_preview": content_preview[:500] if content_preview else "",
-            "tokens_used": tokens_used,
-            "elapsed_ms": elapsed_ms,
-        }
-        if finish_reason:
-            payload["finish_reason"] = finish_reason
-        if tool_calls:
-            # Summarise tool calls (name + truncated args)
-            payload["tool_calls"] = [
-                {
-                    "name": tc.get("function", {}).get("name", "?"),
-                    "args_preview": str(tc.get("function", {}).get("arguments", ""))[:300],
-                }
-                for tc in tool_calls[:10]  # Cap at 10 to avoid log bloat
-            ]
-        if tool_results:
-            payload["tool_results"] = [
-                {
-                    "name": tr.get("name", "?"),
-                    "content_preview": str(tr.get("content", ""))[:300],
-                }
-                for tr in tool_results[:10]
-            ]
-        if extra:
-            payload.update(extra)
-
-        log_entry = {
-            "cycle_id": cycle_id,
-            "timestamp": ts,
-            "level": "info" if action_type != "error" else "warning",
-            "step": f"agent_turn_{action_type}",
-            "ticker": ticker,
-            "payload": payload,
-        }
-        self._write_jsonl(self._cycle_path(cycle_id), log_entry)
-
-    # ── LLM Truncation Warning (NEW) ─────────────────────────────────────
-
-    def log_truncation_warning(
-        self,
-        cycle_id: str,
-        agent_name: str,
-        ticker: str = "",
-        finish_reason: str = "",
-        response_preview: str = "",
-    ):
-        """Log a warning when an LLM response was truncated due to token limits."""
-        ts = datetime.now(timezone.utc).isoformat()
-        log_entry = {
-            "cycle_id": cycle_id,
-            "timestamp": ts,
-            "level": "warning",
-            "step": "llm_truncation",
-            "ticker": ticker,
-            "payload": {
-                "agent_name": agent_name,
-                "finish_reason": finish_reason,
-                "response_preview": response_preview[:500] if response_preview else "",
-                "message": (
-                    f"LLM output for {agent_name} was truncated (finish_reason={finish_reason}). "
-                    f"The response may be incomplete or contain malformed JSON."
-                ),
-            },
-        }
-        self._write_jsonl(self._cycle_path(cycle_id), log_entry)
-        logger.warning(
-            "[LogManager] LLM TRUNCATION: %s/%s finish_reason=%s",
-            agent_name, ticker, finish_reason,
-        )
-
-    # ── Error Logging (NEW) ──────────────────────────────────────────────
-
     def log_cycle_error(
         self,
         cycle_id: str,
@@ -165,38 +62,43 @@ class LogManager(SDKLogManager):
         elapsed_ms: int = 0,
         extra: dict | None = None,
     ):
-        """Log an error event to the cycle's JSONL file.
-
-        This captures errors that previously went only to DB or stdout,
-        ensuring they appear in the same file as step logs.
-        """
-        ts = datetime.now(timezone.utc).isoformat()
-        payload = {
-            "error_type": error_type,
-            "error": error[:2000] if error else "",
-            "stage": stage,
-            "elapsed_ms": elapsed_ms,
-        }
-        if stack_trace:
-            payload["stack_trace"] = stack_trace[:4000]
-        if extra:
-            payload.update(extra)
-        if ticker:
-            payload["ticker"] = ticker
-
-        log_entry = {
-            "cycle_id": cycle_id,
-            "timestamp": ts,
-            "level": "error",
-            "step": f"error_{error_type}",
-            "ticker": ticker,
-            "payload": payload,
-        }
-        self._write_jsonl(self._cycle_path(cycle_id), log_entry)
+        """Log an error event to the cycle's JSONL file and trigger webhook."""
+        super().log_cycle_error(
+            cycle_id,
+            error_type,
+            ticker=ticker,
+            error=error,
+            stack_trace=stack_trace,
+            stage=stage,
+            elapsed_ms=elapsed_ms,
+            extra=extra
+        )
         
         # --- WEBHOOK ALERT ---
         try:
             from app.services.logging.webhook_alerter import trigger_alert
+            ts = datetime.now(timezone.utc).isoformat()
+            payload = {
+                "error_type": error_type,
+                "error": error[:2000] if error else "",
+                "stage": stage,
+                "elapsed_ms": elapsed_ms,
+            }
+            if stack_trace:
+                payload["stack_trace"] = stack_trace[:4000]
+            if extra:
+                payload.update(extra)
+            if ticker:
+                payload["ticker"] = ticker
+
+            log_entry = {
+                "cycle_id": cycle_id,
+                "timestamp": ts,
+                "level": "error",
+                "step": f"error_{error_type}",
+                "ticker": ticker,
+                "payload": payload,
+            }
             trigger_alert(f"Cycle Error: {error_type}", log_entry)
         except Exception:
             pass
@@ -208,16 +110,7 @@ class LogManager(SDKLogManager):
 
         This is the single place to look for "what happened in this cycle?"
         """
-        ts = datetime.now(timezone.utc).isoformat()
-        log_entry = {
-            "cycle_id": cycle_id,
-            "timestamp": ts,
-            "level": "info",
-            "step": "cycle_summary",
-            "ticker": "",
-            "payload": summary,
-        }
-        self._write_jsonl(self._cycle_path(cycle_id), log_entry)
+        super().log_cycle_summary(cycle_id, summary)
 
         try:
             from app.db.connection import get_db
