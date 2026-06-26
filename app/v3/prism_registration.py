@@ -68,7 +68,7 @@ async def register_v3_agents() -> dict[str, bool]:
             enabled_tools = list(tool_whitelist) + list(PRISM_DYNAMIC_META_TOOLS)
 
             success = await PrismClient.register_or_update_custom_agent(
-                name=agent_id,
+                name=agent_name,
                 identity=system_prompt,
                 guidelines=_V3_COMMON_GUIDELINES,
                 enabled_tools=enabled_tools,
