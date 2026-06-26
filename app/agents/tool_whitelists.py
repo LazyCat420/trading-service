@@ -28,7 +28,8 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     "v3_portfolio_manager": [
         "mcp__lazy-tool-service__get_finnhub_news",
         "search_web",
-        "mcp__lazy-tool-service__get_market_data"
+        "mcp__lazy-tool-service__get_market_data",
+        "whiteboard_write"
     ],
     # ── OmniAgent / User Chat ──
     # Curated set for interactive chat — keeps context budget lean
@@ -115,6 +116,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_internal_database",
         "post_finding",
         "create_team",
+        "whiteboard_write",
     ],
     "v3_fundamental_analyst": [
         "get_sec_filings",
@@ -126,6 +128,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_market_data",
         "post_finding",
         "create_team",
+        "whiteboard_write",
     ],
     "v3_quant_analyst": [
         "get_market_data",
@@ -140,16 +143,20 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_position_pnl",
         "post_finding",
         "create_team",
+        "whiteboard_write",
     ],
     "v3_bull_agent": [
+        "whiteboard_read",
         "whiteboard_write",
         "whiteboard_annotate",
     ],
     "v3_bear_agent": [
+        "whiteboard_read",
         "whiteboard_write",
         "whiteboard_annotate",
     ],
     "v3_bull_defense": [
+        "whiteboard_read",
         "whiteboard_write",
         "whiteboard_annotate",
     ],
@@ -159,11 +166,14 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "search_web",
         "scrape_url",
         "get_technical_indicators",
+        "whiteboard_read",
         "whiteboard_write",
     ],
     "v3_board_of_directors": [
+        "whiteboard_read",
         "whiteboard_write",
         "whiteboard_annotate",
+        "whiteboard_summarize",
     ],
 }
 
