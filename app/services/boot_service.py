@@ -24,6 +24,7 @@ class BootService:
         cls._run_stage("Scheduler Start", cls._start_scheduler, required=False)
         cls._run_stage("Embedding Warmup", cls._warmup_models, required=False)
         cls._run_stage("Auto-Register MCP Servers", cls._register_mcp_servers, required=False)
+        cls._run_stage("Register V3 Prism Agents", cls._register_v3_agents, required=False)
 
         # --- Background Tasks ---
         # Spawns a background, non-blocking task for long-running startup data refreshes
@@ -139,6 +140,16 @@ class BootService:
     # -------------------------------------------------------------------------
     # INDIVIDUAL STAGES
     # -------------------------------------------------------------------------
+
+    @classmethod
+    def _register_v3_agents(cls):
+        from app.v3.prism_registration import register_v3_agents
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(register_v3_agents())
+        else:
+            loop.run_until_complete(register_v3_agents())
 
     @classmethod
     def _init_database(cls):

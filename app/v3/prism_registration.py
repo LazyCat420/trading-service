@@ -24,6 +24,8 @@ _V3_AGENT_MODULES = [
     "app.v3.agents.fundamental_analyst",
     "app.v3.agents.quant_analyst",
     "app.v3.agents.regime_engine",
+    "app.v3.agents.portfolio_manager",
+    "app.v3.agents.decision_agent",
     # Note: Bull, Bear, and Board of Directors are pure reasoning agents
     # with no tools — they don't need Prism registration since they
     # run with enable_tools=False through the standard LLM client.
