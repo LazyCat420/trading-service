@@ -147,6 +147,41 @@ def run_auto_migrations():
         except Exception as e:
             logger.warning("taskboard_findings migration check: %s", e)
 
+        # ── Auto-migrate: add whiteboard_entries table if missing ──
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS whiteboard_entries (
+                    id              SERIAL PRIMARY KEY,
+                    cycle_id        TEXT NOT NULL,
+                    ticker          TEXT NOT NULL,
+                    section         TEXT NOT NULL,
+                    author_agent    TEXT NOT NULL,
+                    content         JSONB DEFAULT '{}'::jsonb,
+                    version         INTEGER DEFAULT 1,
+                    edited_by       TEXT[] DEFAULT '{}',
+                    superseded_by   INTEGER,
+                    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            logger.info("Migrated: ensured whiteboard_entries table exists.")
+        except Exception as e:
+            logger.warning("whiteboard_entries migration check: %s", e)
+
+        # ── Auto-migrate: add whiteboard_annotations table if missing ──
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS whiteboard_annotations (
+                    id              SERIAL PRIMARY KEY,
+                    entry_id        INTEGER NOT NULL,
+                    author_agent    TEXT NOT NULL,
+                    note            TEXT NOT NULL,
+                    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            logger.info("Migrated: ensured whiteboard_annotations table exists.")
+        except Exception as e:
+            logger.warning("whiteboard_annotations migration check: %s", e)
+
         # ── Auto-migrate: add taskboard_investigations table if missing ──
         try:
             db.execute("""

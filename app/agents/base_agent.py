@@ -260,6 +260,16 @@ async def run_agent(
     from app.config.context_budget import get_context_budget
 
     ctx_budget = get_context_budget()
+
+    # Inject shared whiteboard state before truncation
+    try:
+        from app.agents.whiteboard import whiteboard
+        board_context = await whiteboard.summarize(ticker, cycle_id)
+        if board_context:
+            data_context = f"{board_context}\n\n{data_context}" if data_context else board_context
+    except Exception as e:
+        logger.error("[BaseAgent] Failed to fetch whiteboard context: %s", e)
+
     if data_context and len(data_context) > ctx_budget.data_context_chars:
         original_len = len(data_context)
         data_context = data_context[: ctx_budget.data_context_chars]

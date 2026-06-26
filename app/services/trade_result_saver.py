@@ -93,3 +93,4 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
             ticker,
             e,
         )
+        raise

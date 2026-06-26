@@ -281,6 +281,15 @@ async def run_v3_pipeline(
                     "[V3] %s: Failed to persist trade result: %s",
                     ticker, e,
                 )
+                desk.record_agent_telemetry({
+                    "agent_name": "system",
+                    "ticker": ticker,
+                    "elapsed_ms": 0,
+                    "loops_used": 0,
+                    "token_usage": 0,
+                    "outcome": "DB_PERSISTENCE_FAILED",
+                    "phase": desk.phase.value,
+                })
 
         emit(
             "analyzing", f"v3_decision_{ticker}",
@@ -513,8 +522,8 @@ def _build_cycle_metadata(
                 f"Held {pos_ctx.get('holding_days', 0)} days."
             )
             metadata["held"] = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[V3] %s: Failed to fetch portfolio context: %s", ticker, e)
 
     return metadata
 
@@ -650,9 +659,15 @@ def _extract_debate_result(desk: SharedDesk) -> dict[str, Any] | None:
     if not desk.bull_argument and not desk.bear_rebuttal:
         return None
 
-    bull_conf = (desk.bull_argument or {}).get("confidence", 0)
-    bear_conf = (desk.bear_rebuttal or {}).get("confidence", 0)
-    defense_conf = (desk.bull_defense or {}).get("final_confidence", bull_conf)
+    def _safe_int(val, default=0):
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
+
+    bull_conf = _safe_int((desk.bull_argument or {}).get("confidence", 0))
+    bear_conf = _safe_int((desk.bear_rebuttal or {}).get("confidence", 0))
+    defense_conf = _safe_int((desk.bull_defense or {}).get("final_confidence", bull_conf), default=bull_conf)
 
     # Determine winner based on confidence delta
     if defense_conf > bear_conf:
