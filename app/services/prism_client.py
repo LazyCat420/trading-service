@@ -36,6 +36,8 @@ class PrismClient(SDKPrismClient):
         self._cycle_generation: int = 0  # Increments on each new cycle
         self._registered_custom_agents: set[str] = set()
         self._custom_agent_locks: dict[str, asyncio.Lock] = {}
+        self.project = settings.PRISM_PROJECT
+        self.username = "lazy-trader"
 
     def _get_agent_lock(self, agent_id: str) -> asyncio.Lock:
         if agent_id not in self._custom_agent_locks:
