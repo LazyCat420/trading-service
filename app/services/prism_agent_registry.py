@@ -206,7 +206,9 @@ def resolve_agent_id(agent_name: str, default_agent: str = "CUSTOM_MARKET_ALPHA"
         return agent_id
 
     # Fuzzy matching for specific specialist agents first
-    if "retriever" in name_lower:
+    if name_lower.startswith("v3_"):
+        base_agent = f"CUSTOM_{agent_name.upper()}"
+    elif "retriever" in name_lower:
         base_agent = "CUSTOM_RETRIEVER_AGENT"
     elif "verifier" in name_lower:
         base_agent = "CUSTOM_VERIFIER_AGENT"

@@ -315,8 +315,11 @@ async def run_agent(
         from lazycat.llm import prism_client
         
 
+        from app.services.prism_agent_registry import resolve_agent_id
+        prism_agent_id = resolve_agent_id(agent_name)
+        
         agent = BaseAgent(
-            name=agent_name, 
+            name=prism_agent_id, 
             system_prompt=actual_system_prompt,
             llm_client=prism_client
         )
