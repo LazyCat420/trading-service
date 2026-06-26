@@ -279,24 +279,5 @@ class PipelineService:
         cls.save_state()
         return {"status": "idle"}
 
-    @classmethod
-    def pause_cycle(cls):
-        return {"status": "not_supported", "message": "Pause not supported in V3"}
-
-    @classmethod
-    async def resume_cycle(cls):
-        return {"status": "not_supported", "message": "Resume not supported in V3"}
-        
-    @classmethod
-    async def resume_interrupted_cycle(cls):
-        return {"status": "not_supported", "message": "Resume not supported in V3"}
-
-    @classmethod
-    def discard_checkpoint(cls):
-        return {"status": "ok"}
-        
-    @classmethod
-    def force_save_checkpoint(cls):
-        pass
 
 pipeline_service = PipelineService()

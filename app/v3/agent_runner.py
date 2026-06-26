@@ -140,7 +140,6 @@ async def run_v3_agent(
                 user_prompt=user_prompt,
                 max_tokens=8192,
                 enable_tools=bool(tool_whitelist),
-                enable_dynamic_prompt=False,  # V3 prompts are already specialized
             ),
             timeout=timeout_seconds,
         )

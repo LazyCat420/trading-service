@@ -94,72 +94,7 @@ def get_ticker_outcome_context(ticker: str) -> str:
         return ""
 
 
-async def _generate_dynamic_prompt(
-    agent_name: str,
-    static_prompt: str,
-    data_context: str,
-    ticker: str,
-    cycle_id: str,
-    bot_id: str,
-) -> tuple[str, str]:
-    """Generate a context-aware system prompt via meta-prompt.
 
-    Returns (dynamic_prompt, focus_rationale). Falls back to static_prompt on failure.
-    """
-    meta_user = AGENT_META_USER.format(
-        agent_name=agent_name,
-        static_prompt=static_prompt,
-        data_preview=data_context[:8000]
-        if data_context
-        else "No data preview available",
-    )
-
-    try:
-
-        @aresilient_call(
-            retries=2, backoff="exponential", base_delay=1.0, max_delay=10.0
-        )
-        async def _meta_llm_call():
-            from app.services.prism_agent_caller import call_prism_agent
-            return await call_prism_agent(
-                agent_id=f"CUSTOM_{agent_name.upper()}_META",
-                user_message=meta_user,
-                fallback_system_prompt=AGENT_META_SYSTEM,
-                fallback_agent_name=f"{agent_name}_meta",
-                temperature=0.5,
-                max_tokens=8192,
-                
-                ticker=ticker,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                actor_label=f"{agent_name}_meta",
-            )
-
-        response, tokens, ms = await _meta_llm_call()
-        parsed = _parse_json_response(response)
-        dynamic_prompt = parsed.get("system_prompt", "")
-        rationale = parsed.get("focus_rationale", "")
-
-        if dynamic_prompt and len(dynamic_prompt) > 50:
-            logger.info(
-                "[META] %s: generated dynamic prompt (%d chars, %d tokens, %dms) — %s",
-                agent_name,
-                len(dynamic_prompt),
-                tokens,
-                ms,
-                rationale[:80],
-            )
-            return dynamic_prompt, rationale
-
-        logger.warning(
-            "[META] %s: generated prompt too short, using static", agent_name
-        )
-        return static_prompt, "fallback: generated prompt too short"
-    except Exception as e:
-        logger.warning(
-            "[META] %s: meta-prompt failed (%s), using static", agent_name, e
-        )
-        return static_prompt, f"fallback: {e}"
 
 
 async def run_agent(
@@ -172,7 +107,6 @@ async def run_agent(
     data_context: str = "",
     temperature: float = 0.3,
     max_tokens: int = 1024,
-    enable_dynamic_prompt: bool = False,
     endpoint_override: str | None = None,
     enable_tools: bool = False,
     response_format: dict | None = None,
@@ -188,67 +122,7 @@ async def run_agent(
 
     Every specific agent builds its own prompts and calls this.
     """
-    # ── Optional: generate dynamic system prompt ──
-    dynamic_rationale = ""
-    actual_system_prompt = system_prompt
-    
-    # ── Override with Generated Prompt if available and better ──
-    try:
-        from app.db.connection import get_db
-        with get_db() as db:
-            row = db.execute(
-                """
-                SELECT system_prompt, performance_score 
-                FROM generated_agent_prompts 
-                WHERE active = TRUE AND lens_type = %s
-                ORDER BY performance_score DESC, win_rate DESC
-                LIMIT 1
-                """,
-                [agent_name]
-            ).fetchone()
-            if row and row[0]:
-                actual_system_prompt = row[0]
-                logger.info(f"[BaseAgent] Using dynamically generated prompt for {agent_name} (score: {row[1]})")
-    except Exception:
-        pass # Table might not exist or be empty
-    
-    # ── Fetch Tool Playbook Rules ──
-    playbook_rules = ""
-    try:
-        from app.db.connection import get_db
-        with get_db() as db:
-            cur = db.execute(
-                "SELECT recommended_tool_sequence, stop_conditions, bad_patterns_to_avoid "
-                "FROM tool_playbook WHERE agent_role = %s",
-                (agent_name,)
-            )
-            rows = cur.fetchall()
-            if rows:
-                rules = []
-                for r in rows:
-                    if r[0]: rules.append(f"- Sequence: {r[0]}")
-                    if r[1]: rules.append(f"- Stop Condition: {r[1]}")
-                    if r[2]: rules.append(f"- Avoid: {r[2]}")
-                if rules:
-                    playbook_rules = "\n\n### TOOL PLAYBOOK RULES:\n" + "\n".join(rules)
-    except Exception as e:
-        logger.error(f"[BaseAgent] Failed to fetch playbook rules: {e}")
-
-    dynamic_tail_instructions = ""
-    if playbook_rules:
-        dynamic_tail_instructions += playbook_rules
-
-    if enable_dynamic_prompt and data_context:
-        generated_sys_prompt, dynamic_rationale = await _generate_dynamic_prompt(
-            agent_name=agent_name,
-            static_prompt=system_prompt,
-            data_context=data_context,
-            ticker=ticker,
-            cycle_id=cycle_id,
-            bot_id=bot_id,
-        )
-        if generated_sys_prompt and generated_sys_prompt != system_prompt:
-            dynamic_tail_instructions += f"\n\n### DYNAMIC CONTEXT ADAPTATION:\n{generated_sys_prompt}"
+    # ── V3 relies on specialized static prompts and no DB queries ──
 
     # ── Inject prior trade outcome context for analysis agents ──
     outcome_ctx = ""
@@ -287,23 +161,16 @@ async def run_agent(
     else:
         full_prompt = f"{outcome_ctx}{user_prompt}" if outcome_ctx else user_prompt
         
-    if dynamic_tail_instructions:
-        full_prompt += dynamic_tail_instructions
+
 
     # ── Verbose input logging ──
-    prompt_label = (
-        "DYNAMIC"
-        if (enable_dynamic_prompt and actual_system_prompt != system_prompt)
-        else "STATIC"
-    )
+    prompt_label = "STATIC"
     print(f"\n  {'~' * 50}")
     print(f"  AGENT INPUT: {agent_name} ({ticker}) [{prompt_label} PROMPT]")
     print(f"  {'~' * 50}")
     print(f"  System Prompt ({len(actual_system_prompt)} chars):")
-    safe_sys = sanitize_ascii(actual_system_prompt)
+    safe_sys = sanitize_ascii(system_prompt)
     print(f"    {safe_sys}")
-    if dynamic_rationale and prompt_label == "DYNAMIC":
-        print(f"  Meta-Prompt Focus: {dynamic_rationale}")
     print(f"  User Prompt ({len(full_prompt)} chars):")
     safe_user = sanitize_ascii(full_prompt)
     print(f"    {safe_user}")
@@ -363,7 +230,7 @@ async def run_agent(
         
         agent = BaseAgent(
             name=prism_agent_id, 
-            system_prompt=actual_system_prompt,
+            system_prompt=system_prompt,
             llm_client=prism_client,
             project=settings.PROJECT_NAME
         )
@@ -412,7 +279,4 @@ async def run_agent(
         "tokens_used": tokens,
         "execution_ms": elapsed_ms,
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
-        "dynamic_prompt_used": enable_dynamic_prompt and dynamic_rationale != "",
-        "dynamic_prompt": dynamic_tail_instructions if dynamic_tail_instructions else None,
-        "dynamic_rationale": dynamic_rationale if dynamic_rationale else None,
     }
