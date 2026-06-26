@@ -167,8 +167,21 @@ class PrismClient(SDKPrismClient):
     ) -> httpx.Response:
         if model == "gpt-4o" and provider == "vllm":
             from app.services.vllm_client import llm
+            import asyncio
             ep = llm._pick_best_endpoint()
-            model = ep.model if ep and ep.model else model
+            
+            # Wait up to 5 seconds if still discovering models
+            if ep and ep.name == "fallback_ep":
+                for _ in range(20):
+                    await asyncio.sleep(0.25)
+                    ep = llm._pick_best_endpoint()
+                    if ep and ep.name != "fallback_ep":
+                        break
+                        
+            if ep and ep.model:
+                model = ep.model
+                if "gemini" in model:
+                    provider = "google"
         
         # Register custom agent on the fly to satisfy Prism's /agent endpoint requirements
         agent_id = await self.register_or_update_custom_agent(
