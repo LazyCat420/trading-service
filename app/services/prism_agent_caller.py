@@ -8,6 +8,8 @@ from app.services.prism_agent_registry import resolve_agent_id
 from app.telemetry.bus import publish_event
 from app.telemetry.schema import TelemetryEvent
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 FIRM_CONTEXT = (
@@ -84,7 +86,7 @@ async def call_prism_agent(
             agent_name=agent_id,
             max_tokens=max_tokens,
             temperature=temperature,
-            project="vllm-trading-bot"
+            project=settings.PROJECT_NAME
         )
         
         response_text = resp.text.strip()

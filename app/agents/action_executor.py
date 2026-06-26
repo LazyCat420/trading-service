@@ -19,6 +19,7 @@ from typing import Any
 from lazycat.agent import BaseAgent, AgentHarness
 from lazycat.session import ConversationSession
 import time
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ async def run_isolated_action_agent(
             system_prompt=ACTION_EXECUTOR_SYSTEM, 
             model=model_override or "gpt-4o",
             llm_client=llm.prism_client,
-            project="vllm-trading-bot"
+            project=settings.PROJECT_NAME
         )
         for t in tool_schemas:
             agent.add_tool(t)

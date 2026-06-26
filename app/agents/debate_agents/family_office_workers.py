@@ -237,6 +237,7 @@ Fetch this data using your tools and return the results."""
         # Use the local agent loop with tools for workers
         # Workers get a tight budget — they just fetch data
         from lazycat.agent import BaseAgent, AgentHarness
+from app.config import settings
         from lazycat.session import ConversationSession
         import time
 
@@ -247,7 +248,7 @@ Fetch this data using your tools and return the results."""
             name=agent_name, 
             system_prompt=system_prompt,
             llm_client=llm.prism_client,
-            project="vllm-trading-bot"
+            project=settings.PROJECT_NAME
         )
         for t in tool_schemas:
             agent.add_tool(t)

@@ -101,7 +101,7 @@ class PipelineService:
                         logger.info("[PipelineService] Gatekeeper selected: %s. Rationale: %s", tickers, rationale)
                     else:
                         logger.info("[PipelineService] Gatekeeper chose 0 tickers. Ending cycle early. Rationale: %s", rationale)
-                        cls._state.update({"status": "completed", "progress": "Gatekeeper bypassed."})
+                        cls._state.update({"status": "idle", "progress": "Gatekeeper bypassed."})
                         cls.save_state()
                         return {"status": "skipped", "message": "Gatekeeper found no compelling setups"}
             except Exception as e:

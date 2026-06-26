@@ -322,7 +322,7 @@ async def run_agent(
             name=prism_agent_id, 
             system_prompt=actual_system_prompt,
             llm_client=prism_client,
-            project="vllm-trading-bot"
+            project=settings.PROJECT_NAME
         )
         if enable_tools and agent_tools:
             for t in agent_tools:

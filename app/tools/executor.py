@@ -3,6 +3,7 @@ import time
 from typing import Any
 from lazycat.agent import BaseAgent, AgentHarness
 from lazycat.session import ConversationSession
+from app.config import settings
 from app.services.prism_agent_caller import Priority
 from app.tools.registry import registry
 
@@ -37,7 +38,7 @@ async def run_tool_agent(
         system_prompt=system_prompt, 
         model=model_override or "gpt-4o",
         llm_client=llm.prism_client,
-        project="vllm-trading-bot"
+        project=settings.PROJECT_NAME
     )
     
     active_tools = tools_override if tools_override is not None else registry.schemas

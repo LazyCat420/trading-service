@@ -59,6 +59,7 @@ MEMORY_DB_PATH = DATA_DIR / "memory.db"
 class Settings(BaseSettings):
     # ── Default Host ──
     DEFAULT_HOST: str = _default_host
+    PROJECT_NAME: str = "vllm-trading-bot"
 
     # ── Prism VLLM Providers (Source of Truth from vault-service/projects.json) ──
     PROVIDER_VLLM_1_URL: str = _config.get("PROVIDER_VLLM_1_URL", "http://10.0.0.30:8000")
