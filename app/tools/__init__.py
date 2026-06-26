@@ -85,8 +85,7 @@ from app.tools.context_tools import get_cycle_context, get_cycle_context_all
 # Phase 5: Sandboxed Python Execution (Quant Scripts)
 from app.tools.script_sandbox import execute_quant_script, execute_python
 
-# Phase 6: Prism Agent Harness (Onion Layer)
-from app.tools.prism_agent_harness import run_prism_agent
+
 from app.tools.dynamic_meta_tools import (
     discover_and_enable_tools,
     enable_tools,
@@ -165,8 +164,7 @@ __all__ = [
     "calculate_stop_loss",
     "calculate_risk_reward",
     "calculate_portfolio_allocation",
-    # Phase 6b: Prism Agent Harness
-    "run_prism_agent",
+
     # Phase 7: Schedule Management Tools
     "create_or_update_schedule",
     "list_active_schedules",

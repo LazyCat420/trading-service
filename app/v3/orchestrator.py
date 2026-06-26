@@ -399,7 +399,7 @@ async def _run_bull_defense(
 
     defense_module = types.ModuleType("bull_defense_module")
     defense_module.AGENT_NAME = "v3_bull_defense"
-    defense_module.TOOL_WHITELIST = []  # No tools — pure reasoning
+    defense_module.TOOL_WHITELIST = ["whiteboard_read", "whiteboard_write", "whiteboard_annotate"]
     defense_module.ARTIFACT_TYPE = "bull_defense"
     defense_module.SYSTEM_PROMPT = """You are the Bull Analyst at a quantitative trading firm.
 
@@ -458,7 +458,7 @@ async def _run_board_of_directors(
 
     bod_module = types.ModuleType("board_of_directors_module")
     bod_module.AGENT_NAME = AGENT_NAME
-    bod_module.TOOL_WHITELIST = []  # No tools — pure reasoning
+    bod_module.TOOL_WHITELIST = ["whiteboard_read", "whiteboard_write", "whiteboard_annotate", "whiteboard_summarize"]
     bod_module.ARTIFACT_TYPE = ARTIFACT_TYPE
     bod_module.SYSTEM_PROMPT = persona_prompt
 
