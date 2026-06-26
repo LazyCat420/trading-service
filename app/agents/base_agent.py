@@ -10,7 +10,7 @@ import datetime
 import logging
 
 from app.config import settings
-from app.services.vllm_client import llm, Priority
+
 from app.utils.text_utils import parse_json_response, sanitize_ascii
 from app.utils.resilience import aresilient_call
 
@@ -128,7 +128,7 @@ async def _generate_dynamic_prompt(
                 fallback_agent_name=f"{agent_name}_meta",
                 temperature=0.5,
                 max_tokens=8192,
-                priority=Priority.NORMAL,
+                
                 ticker=ticker,
                 cycle_id=cycle_id,
                 bot_id=bot_id,
@@ -312,12 +312,13 @@ async def run_agent(
         from lazycat.agent import BaseAgent, AgentHarness
         from lazycat.session import ConversationSession
         import time
-        from app.services.vllm_client import llm
+        from lazycat.llm import prism_client
+        
 
         agent = BaseAgent(
             name=agent_name, 
             system_prompt=actual_system_prompt,
-            llm_client=llm.prism_client
+            llm_client=prism_client
         )
         if enable_tools and agent_tools:
             for t in agent_tools:

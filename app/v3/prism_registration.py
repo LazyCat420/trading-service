@@ -47,7 +47,7 @@ async def register_v3_agents() -> dict[str, bool]:
     Returns a dict mapping agent_id → success status.
     Failures are logged but non-fatal.
     """
-    from app.services.prism_client import PrismClient
+    from lazycat.llm import prism_client as PrismClient
 
     results: dict[str, bool] = {}
 
@@ -66,7 +66,7 @@ async def register_v3_agents() -> dict[str, bool]:
             enabled_tools = list(tool_whitelist) + list(PRISM_DYNAMIC_META_TOOLS)
 
             success = await PrismClient.register_or_update_custom_agent(
-                agent_id=agent_id,
+                name=agent_id,
                 identity=system_prompt,
                 guidelines=_V3_COMMON_GUIDELINES,
                 enabled_tools=enabled_tools,

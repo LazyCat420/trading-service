@@ -38,12 +38,7 @@ class PipelineService:
         if cls._cycle_task and not cls._cycle_task.done():
             return {"status": "deduplicated", "message": "Cycle task still running"}
 
-        # Reset the VLLM client kill switch so requests can flow on the new cycle (including the gatekeeper)
-        try:
-            from app.services.vllm_client import llm
-            llm.reset_kill_switch()
-        except Exception as e:
-            logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
+
 
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         
@@ -209,12 +204,7 @@ class PipelineService:
             })
         except asyncio.CancelledError:
             logger.info("[PipelineService] V3 Cycle CANCELLED — killing active VLLM connections")
-            # Force-close all TCP connections to VLLM endpoints so GPUs stop inference
-            try:
-                from app.services.vllm_client import llm
-                await llm.abort_active_requests()
-            except Exception as abort_err:
-                logger.error("[PipelineService] abort_active_requests failed: %s", abort_err)
+
             cls._state.update({
                 "status": "stopped",
                 "progress": "Cycle stopped by user",
@@ -250,13 +240,7 @@ class PipelineService:
                 await asyncio.wait_for(cls._cycle_task, timeout=5.0)
             except (Exception, asyncio.CancelledError):
                 pass
-        # Nuclear kill: force-close all TCP connections to VLLM endpoints
-        # so GPUs immediately stop inference even if the task didn't clean up
-        try:
-            from app.services.vllm_client import llm
-            await llm.abort_active_requests()
-        except Exception as abort_err:
-            logger.error("[PipelineService] abort_active_requests in stop_cycle failed: %s", abort_err)
+
         cls._state.update({
             "status": "stopped",
             "progress": "Cycle stopped by user",
@@ -282,11 +266,7 @@ class PipelineService:
             except (Exception, asyncio.CancelledError):
                 pass
         # Nuclear kill: force-close all TCP connections to VLLM endpoints
-        try:
-            from app.services.vllm_client import llm
-            await llm.abort_active_requests()
-        except Exception as abort_err:
-            logger.error("[PipelineService] abort_active_requests in force_reset failed: %s", abort_err)
+
         # Reset all in-memory state
         cls._cycle_task = None
         cls._stop_requested = False
