@@ -356,17 +356,30 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "post_finding",
         "create_team",
     ],
-    "v3_bull_agent": [],       # Pure reasoning — no tools
-    "v3_bear_agent": [],       # Pure reasoning — no tools
-    "v3_bull_defense": [],     # Pure reasoning — no tools
+    "v3_bull_agent": [
+        "whiteboard_write",
+        "whiteboard_annotate",
+    ],
+    "v3_bear_agent": [
+        "whiteboard_write",
+        "whiteboard_annotate",
+    ],
+    "v3_bull_defense": [
+        "whiteboard_write",
+        "whiteboard_annotate",
+    ],
     "v3_regime_engine": [
         "get_market_data",
         "get_finnhub_news",
         "search_web",
         "scrape_url",
         "get_technical_indicators",
+        "whiteboard_write",
     ],
-    "v3_board_of_directors": [],  # Pure reasoning — no tools
+    "v3_board_of_directors": [
+        "whiteboard_write",
+        "whiteboard_annotate",
+    ],
 }
 
 

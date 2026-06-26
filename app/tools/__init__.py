@@ -33,6 +33,14 @@ from app.tools.coordination_tools import (
     check_open_investigations,
 )
 
+# Phase 3b: Whiteboard Tools
+from app.tools.whiteboard_tools import (
+    whiteboard_read,
+    whiteboard_write,
+    whiteboard_annotate,
+    whiteboard_summarize,
+)
+
 # Phase 4: Persistent Profile Memory
 from app.tools.profile_tools import (
     read_profile_tool,
@@ -137,6 +145,11 @@ __all__ = [
     "read_team_findings",
     "request_investigation",
     "check_open_investigations",
+    # Phase 3b: Whiteboard Tools
+    "whiteboard_read",
+    "whiteboard_write",
+    "whiteboard_annotate",
+    "whiteboard_summarize",
     # Phase 4: Profile Memory Tools
     "read_profile_tool",
     "update_preference_tool",
