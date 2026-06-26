@@ -72,7 +72,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "graph_learn",
         # Performance
         "get_performance_metrics",
-        "audit_decision_quality",
         # Trading Cycle Control
         "start_trading_cycle",
     ],

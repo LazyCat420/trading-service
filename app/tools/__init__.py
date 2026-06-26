@@ -21,7 +21,6 @@ from app.tools.youtube_tools import (
 
 # Phase 2: Pipeline Skills as Tools
 from app.tools.pipeline_tools import (
-    audit_decision_quality,
     check_hallucination,
 )
 
@@ -138,7 +137,6 @@ __all__ = [
     "run_playwright_script",
     "youtube_test_channel",
     # Phase 2: Pipeline Tools
-    "audit_decision_quality",
     "check_hallucination",
     # Phase 3: Coordination Tools
     "post_finding",
