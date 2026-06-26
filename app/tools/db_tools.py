@@ -116,52 +116,6 @@ async def update_youtube_channel_handle(
         return {"status": "error", "message": str(e)}
 
 
-@registry.register(
-    name="trigger_database_cleanup",
-    description="Trigger the database cleanup cycle (LLM Janitor). This archives old news/reddit data, prunes old analysis blobs, and purges expired entries.",
-    parameters={"type": "object", "properties": {}},
-    tier=1,
-    source="internal_db",
-)
-async def trigger_database_cleanup() -> dict[str, Any]:
-    """Execute the database cleanup/archive routine."""
-    try:
-        from app.agents.janitor_agent import run_janitor_cleanup
-        await run_janitor_cleanup()
-        return {"status": "success", "message": "Database cleanup completed successfully."}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@registry.register(
-    name="get_latest_janitor_run_log",
-    description="Query the latest run details/statistics of the LLM Janitor database cleanup.",
-    parameters={"type": "object", "properties": {}},
-    tier=1,
-    source="internal_db",
-)
-async def get_latest_janitor_run_log() -> dict[str, Any]:
-    """Query the janitor_run_log table for statistics from the most recent cleanup run."""
-    try:
-        from app.db.connection import get_db
-        import json
-        with get_db() as db:
-            row = db.execute(
-                "SELECT run_time, details FROM janitor_run_log ORDER BY run_time DESC LIMIT 1"
-            ).fetchone()
-        if not row:
-            return {"status": "success", "message": "No janitor run log found."}
-        
-        run_time, details_str = row[0], row[1]
-        details = json.loads(details_str) if isinstance(details_str, str) else details_str
-        return {
-            "status": "success",
-            "run_time": run_time.isoformat() if hasattr(run_time, "isoformat") else str(run_time),
-            "details": details
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
 
 @registry.register(
     name="get_agent_activity_log",

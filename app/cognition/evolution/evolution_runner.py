@@ -118,25 +118,12 @@ async def evaluate_pending_strategies(data_path: str):
                 if status == "success":
                     logger.info(f"[EvoRunner] Strategy {node_id[:8]} SUCCESS. Promoting to active lenses.")
                     
-                    from app.agents.meta_agent import generate_prompt
-                    
-                    # Fetch debate insights to inform the meta agent
-                    debate_insights = "No recent debates"
-                    try:
-                        debates = db.execute(
-                            "SELECT context FROM debate_history ORDER BY id DESC LIMIT 3"
-                        ).fetchall()
-                        if debates:
-                            debate_insights = "\\n".join([d[0][:200] for d in debates])
-                    except Exception:
-                        pass
-                    
-                    meta_lens = await generate_prompt(
-                        winning_patterns=f"Strategy code that worked:\\n{code}\\nMetrics:\\n{metrics_json}",
-                        losing_patterns="",
-                        debate_insights=debate_insights,
-                        cycle_id=session_id
-                    )
+                    meta_lens = {
+                        "name": f"Evolved_Strategy_{node_id[:8]}",
+                        "lens_type": "quant_strategy",
+                        "system_prompt": f"Evolved winning strategy:\\n{code}\\nMetrics:\\n{metrics_json}",
+                        "prompt_hash": "legacy_fallback"
+                    }
                     
                     if meta_lens and meta_lens.get("system_prompt"):
                         db.execute(

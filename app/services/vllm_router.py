@@ -705,60 +705,6 @@ def resolve_agent_details(agent_name: str) -> dict:
 
     # Try importing prompts dynamically to avoid circular dependencies
     system_prompt = None
-    if mapped_name == "planner":
-        try:
-            from app.agents.planner_agent import PLANNER_SYSTEM_PROMPT
-            system_prompt = PLANNER_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "verifier":
-        try:
-            from app.agents.verifier_agent import VERIFIER_SYSTEM_PROMPT
-            system_prompt = VERIFIER_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "pre_trade":
-        try:
-            from app.agents.pre_trade_agent import PRE_TRADE_SYSTEM_PROMPT
-            system_prompt = PRE_TRADE_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "retriever":
-        try:
-            from app.agents.retriever_agent import RETRIEVER_SYSTEM_PROMPT
-            system_prompt = RETRIEVER_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "quant_research":
-        try:
-            from app.agents.quant_research_agent import QUANT_RESEARCH_SYSTEM_PROMPT
-            system_prompt = QUANT_RESEARCH_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "technical_analyst":
-        try:
-            from app.agents.technical_analyst_agent import TECHNICAL_ANALYST_SYSTEM_PROMPT
-            system_prompt = TECHNICAL_ANALYST_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "meta_audit":
-        try:
-            from app.agents.meta_audit_agent import META_AUDIT_SYSTEM_PROMPT
-            system_prompt = META_AUDIT_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "post_mortem":
-        try:
-            from app.agents.post_mortem_auditor_agent import POST_MORTEM_SYSTEM_PROMPT
-            system_prompt = POST_MORTEM_SYSTEM_PROMPT
-        except Exception:
-            pass
-    elif mapped_name == "synthesizer":
-        try:
-            from app.agents.debate_agents.thesis_agent import SYNTHESIS_SYSTEM_PROMPT
-            system_prompt = SYNTHESIS_SYSTEM_PROMPT
-        except Exception:
-            pass
 
     # Fallback prompts if dynamic import failed or agent is a custom debate agent
     if not system_prompt:
