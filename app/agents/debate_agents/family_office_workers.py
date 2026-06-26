@@ -236,26 +236,28 @@ Fetch this data using your tools and return the results."""
     try:
         # Use the local agent loop with tools for workers
         # Workers get a tight budget — they just fetch data
-        from app.agents.agent_loop import run_agent_loop
-        from app.agents.agent_budget import AgentBudget
+        from lazycat.agent import BaseAgent, AgentHarness
+        from lazycat.session import ConversationSession
+        import time
 
         timeout_s = float(getattr(cognition_settings, "V3_WORKER_TIMEOUT_SECONDS", 60))
+        
+        agent = BaseAgent(name=agent_name, system_prompt=system_prompt)
+        for t in tool_schemas:
+            agent.add_tool(t)
+            
+        session = ConversationSession(session_id=f"worker_{int(time.time())}")
+        harness = AgentHarness(agent=agent, session=session)
+        harness.max_iterations = 3
 
-        result = await asyncio.wait_for(
-            run_agent_loop(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                ticker=request.ticker,
-                agent_name=agent_name,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                budget=AgentBudget(max_turns=3),  # Workers: max 3 tool turns
-                priority=Priority.NORMAL,
-                tools_override=tool_schemas,
-                require_json_schema=False,  # Workers return raw data, not JSON
-            ),
+        async def run_harness():
+            return await harness.run(user_prompt)
+
+        final_text = await asyncio.wait_for(
+            run_harness(),
             timeout=timeout_s,
         )
+        result = {"final_text": final_text}
 
         final_text = result.get("final_text", "")
         tokens_used = result.get("token_usage", 0)

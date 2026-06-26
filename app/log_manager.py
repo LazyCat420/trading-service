@@ -33,67 +33,22 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-class LogManager:
+from lazycat.logging import LogManager as SDKLogManager
+
+class LogManager(SDKLogManager):
     """Manages appending logs for V2 and A/B benchmark runs.
 
     All writes go to `logs_local/` which is always writable (even in Docker
     where `logs/` may be a read-only volume mount).
     """
 
-    BASE_DIR = Path("logs")
-    CYCLE_DIR = BASE_DIR / "cycles"
-    AB_DIR = CYCLE_DIR / "ab_results"
-
     def __init__(self):
-        try:
-            self.CYCLE_DIR.mkdir(parents=True, exist_ok=True)
-            # Test write access
-            test_file = self.CYCLE_DIR / ".write_test"
-            test_file.touch()
-            test_file.unlink()
-        except Exception:
-            # Fallback to local logs directory if default logs dir is not writable
-            self.BASE_DIR = Path("logs_local")
-            self.CYCLE_DIR = self.BASE_DIR / "cycles"
-            self.AB_DIR = self.CYCLE_DIR / "ab_results"
-            try:
-                self.CYCLE_DIR.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                pass
-
+        super().__init__()
+        self.AB_DIR = self.CYCLE_DIR / "ab_results"
         try:
             self.AB_DIR.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
-
-    # ── Core Write ───────────────────────────────────────────────────────
-
-    @staticmethod
-    def _write_jsonl(path: Path, data: dict):
-        try:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(data, default=str) + "\n")
-        except Exception as e:
-            # LogManager must NEVER crash the pipeline
-            logger.debug("[LogManager] Write failed for %s: %s", path.name, e)
-
-    def _cycle_path(self, cycle_id: str) -> Path:
-        return self.CYCLE_DIR / f"{cycle_id}.jsonl"
-
-    # ── Step Logging (existing — unchanged interface) ────────────────────
-
-    def log_v2_cycle(self, cycle_id: str, step_name: str, payload: dict):
-        """Append a step result to the v2 cycle log."""
-        ts = datetime.now(timezone.utc).isoformat()
-        log_entry = {
-            "cycle_id": cycle_id,
-            "timestamp": ts,
-            "level": "info",
-            "step": step_name,
-            "ticker": payload.get("ticker", ""),
-            "payload": payload,
-        }
-        self._write_jsonl(self._cycle_path(cycle_id), log_entry)
 
     # ── Agentic Turn Tracing (NEW) ───────────────────────────────────────
 

@@ -306,83 +306,29 @@ async def run_agent(
         # Per-agent tool whitelist: only show tools relevant to this agent's role
         agent_tools = get_agent_tools(agent_name) if enable_tools else []
 
-        # Try routing via Prism agent harness first if routing is enabled and healthy
-        # CRITICAL: Bypass planner agent to ensure it runs locally and uses our python-side create_team tool
-        # (which auto-publishes ANALYSIS_READY and sets correct sub-agent conversation titles).
-        if settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING and agent_name != "planner":
-            try:
-                prism_healthy = await llm.prism_client.check_health()
-                if prism_healthy:
-                    from app.tools.prism_agent_harness import run_prism_agent
-                    logger.info("[BaseAgent] Routing %s agentic loop to Prism /agent", agent_name)
-                    result = await run_prism_agent(
-                        system_prompt=actual_system_prompt,
-                        user_prompt=full_prompt,
-                        ticker=ticker,
-                        agent_name=agent_name,
-                        cycle_id=cycle_id,
-                        bot_id=bot_id,
-                        priority=Priority.NORMAL,
-                        tools_override=agent_tools,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        actor_label=agent_name,
-                        parent_conversation_id=parent_conversation_id,
-                        parent_agent_session_id=parent_agent_session_id,
-                    )
-                    return (
-                        result.get("final_text", ""),
-                        result.get("token_usage", 0),
-                        result.get("execution_ms", 0),
-                    )
-            except Exception as pe:
-                logger.error("[BaseAgent] Prism agent routing failed for %s, falling back to local: %s", agent_name, pe)
 
-        # Fallback to local agent loop
-        from app.agents.agent_loop import run_agent_loop, run_split_agent_loop
-        from app.agents.agent_budget import AgentBudget
 
-        # Role-differentiated budget: risk=5, verifier=5, meta_audit=10, default=3
-        budget_turns = get_agent_budget_turns(agent_name, enable_tools)
-        budget = AgentBudget(max_turns=budget_turns)
+        # Fallback to local agent loop using lazycat-sdk
+        from lazycat.agent import BaseAgent, AgentHarness
+        from lazycat.session import ConversationSession
+        import time
 
-        # Use Brain-Action split loop when tools are enabled to save context
-        # The split loop first selects which tools are needed (lightweight call),
-        # then runs the real agent loop with only the selected subset.
+        agent = BaseAgent(name=agent_name, system_prompt=actual_system_prompt)
         if enable_tools and agent_tools:
-            result = await run_split_agent_loop(
-                system_prompt=actual_system_prompt,
-                user_prompt=full_prompt,
-                ticker=ticker,
-                agent_name=agent_name,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                budget=budget,
-                priority=Priority.NORMAL,
-                tools_override=agent_tools,
-                require_json_schema=True,
-                parent_conversation_id=parent_conversation_id,
-                parent_agent_session_id=parent_agent_session_id,
-            )
-        else:
-            result = await run_agent_loop(
-                system_prompt=actual_system_prompt,
-                user_prompt=full_prompt,
-                ticker=ticker,
-                agent_name=agent_name,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                budget=budget,
-                priority=Priority.NORMAL,
-                tools_override=agent_tools,
-                require_json_schema=True,
-                parent_conversation_id=parent_conversation_id,
-                parent_agent_session_id=parent_agent_session_id,
-            )
+            for t in agent_tools:
+                agent.add_tool(t)
+
+        session = ConversationSession(session_id=parent_agent_session_id or f"sess_{int(time.time())}")
+        harness = AgentHarness(agent=agent, session=session)
+
+        t0 = time.time()
+        final_text = await harness.run(full_prompt)
+        elapsed_ms = int((time.time() - t0) * 1000)
+
         return (
-            result.get("final_text", ""),
-            result.get("token_usage", 0),
-            result.get("execution_ms", 0),
+            final_text,
+            0,  # Token usage not tracked by base SDK yet
+            elapsed_ms,
         )
 
     content, tokens, elapsed_ms = await _agent_llm_call()

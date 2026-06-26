@@ -16,9 +16,9 @@ Key design properties:
 import logging
 from typing import Any
 
-from app.services.vllm_client import llm, Priority
-from app.agents.agent_loop import run_agent_loop
-from app.agents.agent_budget import AgentBudget
+from lazycat.agent import BaseAgent, AgentHarness
+from lazycat.session import ConversationSession
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -71,32 +71,33 @@ async def run_isolated_action_agent(
         ticker,
     )
 
-    budget = AgentBudget(max_turns=max_turns)
-
     try:
-        result = await run_agent_loop(
-            system_prompt=ACTION_EXECUTOR_SYSTEM,
-            user_prompt=task_instruction,
-            ticker=ticker,
-            agent_name=action_agent_name,
-            cycle_id=cycle_id,
-            bot_id=bot_id,
-            budget=budget,
-            priority=priority,
-            tools_override=tool_schemas,
-            model_override=model_override,
-            require_json_schema=False,  # Action agents return free-text summaries
-        )
+        agent = BaseAgent(name=action_agent_name, system_prompt=ACTION_EXECUTOR_SYSTEM, model=model_override or "gpt-4o")
+        for t in tool_schemas:
+            agent.add_tool(t)
+            
+        session = ConversationSession(session_id=f"action_{int(time.time())}")
+        harness = AgentHarness(agent=agent, session=session)
+        harness.max_iterations = max_turns
+        
+        t0 = time.time()
+        final_text = await harness.run(task_instruction)
+        elapsed_ms = int((time.time() - t0) * 1000)
 
         logger.info(
-            "[ActionExecutor] Agent '%s' completed: %d turns, %d tokens, stop=%s",
+            "[ActionExecutor] Agent '%s' completed in %dms",
             action_agent_name,
-            result.get("loops_used", 0),
-            result.get("token_usage", 0),
-            result.get("stop_reason", "unknown"),
+            elapsed_ms,
         )
 
-        return result
+        return {
+            "final_text": final_text,
+            "token_usage": 0,
+            "execution_ms": elapsed_ms,
+            "loops_used": len(session.get_messages()) // 2,
+            "yielded": False,
+            "stop_reason": "completed",
+        }
 
     except Exception as e:
         logger.error(

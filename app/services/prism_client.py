@@ -23,23 +23,16 @@ def normalize_prism_model(model_name: str) -> str:
     return model_name
 
 
-class PrismClient:
+from lazycat.llm import PrismClient as SDKPrismClient
+
+class PrismClient(SDKPrismClient):
     """
     Standalone client for routing LLM requests through Prism Gateway.
     Handles session tracking, timeouts, and payload enrichment for Prism's /agent endpoint.
     """
 
     def __init__(self):
-        self._sessions: dict[str, str] = {}
-        self._conversations: dict[str, str] = {}
-        self._client: httpx.AsyncClient | None = None
-        self._is_healthy = False
-        self._last_health_check = 0.0
-        self._url: str | None = None
-        self._project: str | None = None
-        self._username: str | None = None
-        self._enabled: bool | None = None
-        self._agent: str | None = None
+        super().__init__()
         self._cycle_generation: int = 0  # Increments on each new cycle
         self._registered_custom_agents: set[str] = set()
         self._custom_agent_locks: dict[str, asyncio.Lock] = {}
@@ -67,46 +60,6 @@ class PrismClient:
             self._cycle_generation,
         )
         return self._cycle_generation
-
-    @property
-    def url(self) -> str:
-        return self._url if self._url is not None else settings.PRISM_URL
-
-    @url.setter
-    def url(self, value: str):
-        self._url = value
-
-    @property
-    def project(self) -> str:
-        return self._project if self._project is not None else settings.PRISM_PROJECT
-
-    @project.setter
-    def project(self, value: str):
-        self._project = value
-
-    @property
-    def username(self) -> str:
-        return self._username if self._username is not None else settings.PRISM_USERNAME
-
-    @username.setter
-    def username(self, value: str):
-        self._username = value
-
-    @property
-    def enabled(self) -> bool:
-        return self._enabled if self._enabled is not None else settings.PRISM_ENABLED
-
-    @enabled.setter
-    def enabled(self, value: bool):
-        self._enabled = value
-
-    @property
-    def agent(self) -> str:
-        return self._agent if self._agent is not None else settings.PRISM_AGENT
-
-    @agent.setter
-    def agent(self, value: str):
-        self._agent = value
 
     async def check_health(self) -> bool:
         """Dynamically check if Prism is available.

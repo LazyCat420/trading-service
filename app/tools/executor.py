@@ -1,28 +1,17 @@
 import logging
-import json
-import hashlib
+import time
 from typing import Any
-from app.services.vllm_client import llm, Priority
+from lazycat.agent import BaseAgent, AgentHarness
+from lazycat.session import ConversationSession
+from app.services.vllm_client import Priority
 from app.tools.registry import registry
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 class AgentYielded(Exception):
-    """Raised when an agent hits max_loops while still wanting to call tools.
-
-    Carries the partial state so the caller can decide how to handle it:
-      - Summarize and return partial results (subagent pattern)
-      - Resume later with the saved chat_history (continuation pattern)
-    """
-
     def __init__(self, partial_result: dict):
         self.partial_result = partial_result
-        super().__init__(
-            f"Agent yielded after {partial_result.get('loops_used', '?')} loops"
-        )
-
+        super().__init__(f"Agent yielded after {partial_result.get('loops_used', '?')} loops")
 
 async def run_tool_agent(
     system_prompt: str,
@@ -41,209 +30,42 @@ async def run_tool_agent(
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Run an LLM agent with tools. Automatically loops back to the LLM
-    if it requests tool executions, up to max_loops.
-
-    Args:
-        tools_override: If provided, only these tool schemas are sent to the LLM.
-                        Use registry.get_schemas_by_names() to build a whitelist.
-        yield_on_limit: If True, raise AgentYielded instead of silently returning
-                        when max_loops is exhausted while the LLM still wants tools.
-                        The caller can then decide to summarize, retry, or resume.
-    """
-    if not bypass_prism and settings.PRISM_ENABLED and settings.PRISM_AGENT_ROUTING:
-        try:
-            prism_healthy = await llm.prism_client.check_health()
-            if prism_healthy:
-                from app.tools.prism_agent_harness import run_prism_agent
-                logger.info("[Executor] Routing %s agentic loop to Prism /agent", agent_name)
-                return await run_prism_agent(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    ticker=ticker,
-                    agent_name=agent_name,
-                    cycle_id=cycle_id,
-                    bot_id=bot_id,
-                    priority=priority,
-                    tools_override=tools_override,
-                    temperature=0.3,
-                    actor_label=agent_name,
-                    parent_conversation_id=parent_conversation_id,
-                    parent_agent_session_id=parent_agent_session_id,
-                )
-        except Exception as pe:
-            logger.error("[Executor] Prism routing failed for %s, falling back to local: %s", agent_name, pe)
-
-    from app.telemetry import send_system_log
-    send_system_log("AGENT", f"[{agent_name}] Starting local agent loop (ticker={ticker})")
-
-    if previous_messages:
-        messages = previous_messages.copy()
-        # Ensure we don't duplicate user prompts if they're just appending
-        if user_prompt:
-            messages.append({"role": "user", "content": user_prompt})
-    else:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-    # Use restricted tool set if provided, otherwise full registry
-    active_tools = tools_override if tools_override is not None else registry.schemas
-
-
-
-    total_tokens_used = 0
-    total_time_ms = 0
-    final_content = ""
-    hit_limit_with_pending_tools = False
     
-    # State for repetition hardstop
-    last_action_signature = None
-    repetition_count = 0
+    # lazycat-sdk implementation
+    agent = BaseAgent(name=agent_name, system_prompt=system_prompt, model=model_override or "gpt-4o")
+    
+    active_tools = tools_override if tools_override is not None else registry.schemas
+    for t in active_tools:
+        agent.add_tool(t)
 
-    for i in range(max_loops):
-        from app.telemetry import send_system_log
-        send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Executing LLM reasoning step")
-        try:
-            result = await llm.chat_with_tools(
-                messages=messages,
-                tools=active_tools,
-                agent_name=agent_name,
-                ticker=ticker,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                priority=priority,
-                max_tokens=8192,
-                model_override=model_override,
-            )
-        except Exception as e:
-            logger.error(f"[ToolExecutor] chat_with_tools failed: {e}")
-            raise RuntimeError(f"Error during agent execution: {str(e)}") from e
+    session = ConversationSession(session_id=parent_agent_session_id or f"tool_agent_{int(time.time())}")
+    
+    if previous_messages:
+        for m in previous_messages:
+            session.add_message(m["role"], m["content"])
+            
+    harness = AgentHarness(agent=agent, session=session)
+    harness.max_iterations = max_loops
+    
+    t0 = time.time()
+    final_content = await harness.run(user_prompt)
+    total_time_ms = int((time.time() - t0) * 1000)
 
-        content = result.get("text", "")
-        tool_calls = result.get("tool_calls")
-        turn_tokens = result.get("total_tokens", 0)
-        turn_ms = result.get("elapsed_ms", 0)
-        finish_reason = result.get("finish_reason", "")
-        total_tokens_used += turn_tokens
-        total_time_ms += turn_ms
-        final_content = content
-
-        # ── Structured turn tracing ──
-        try:
-            from app.log_manager import log_manager
-            if tool_calls:
-                log_manager.log_agent_turn(
-                    cycle_id, agent_name, i,
-                    action_type="tool_request",
-                    ticker=ticker,
-                    content_preview=content,
-                    tool_calls=tool_calls,
-                    tokens_used=turn_tokens,
-                    elapsed_ms=turn_ms,
-                    finish_reason=finish_reason,
-                )
-            else:
-                log_manager.log_agent_turn(
-                    cycle_id, agent_name, i,
-                    action_type="reasoning",
-                    ticker=ticker,
-                    content_preview=content,
-                    tokens_used=turn_tokens,
-                    elapsed_ms=turn_ms,
-                    finish_reason=finish_reason,
-                )
-        except Exception:
-            pass  # Turn tracing must never crash the pipeline
-
-        # ── LLM truncation detection ──
-        if finish_reason == "length":
-            logger.warning(
-                "[ToolExecutor] LLM output TRUNCATED for %s/%s (finish_reason=length, turn=%d)",
-                agent_name, ticker, i + 1,
-            )
-            try:
-                from app.log_manager import log_manager
-                log_manager.log_truncation_warning(
-                    cycle_id, agent_name,
-                    ticker=ticker,
-                    finish_reason=finish_reason,
-                    response_preview=content,
-                )
-            except Exception:
-                pass
-
-        # Append assistant message
-        assistant_msg = {"role": "assistant"}
-        if content:
-            assistant_msg["content"] = content
-        if tool_calls:
-            assistant_msg["tool_calls"] = tool_calls
-        messages.append(assistant_msg)
-
-        if not tool_calls:
-            logger.info(
-                f"[ToolExecutor] Agent '{agent_name}' finished successfully after {i + 1} turns."
-            )
-            break
-
-        # Log tool calls
-        for tc in tool_calls:
-            logger.info(
-                f"[ToolExecutor] Turn {i + 1}: Agent requested tool -> {tc.get('function', {}).get('name')}"
-            )
-            from app.telemetry import send_system_log
-            send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Requesting tool '{tc.get('function', {}).get('name')}'")
-
-        # Execute tool calls
-        tool_results_for_log = []
-        for tc in tool_calls:
-            tool_res = await registry.execute_tool_call(
-                tc, agent_name=agent_name, ticker=ticker, cycle_id=cycle_id,
-                parent_conversation_id=parent_conversation_id,
-                parent_agent_session_id=parent_agent_session_id,
-            )
-            messages.append(tool_res)
-            tool_results_for_log.append(tool_res)
-            from app.telemetry import send_system_log
-            send_system_log("AGENT", f"[{agent_name}] Turn {i+1}/{max_loops}: Tool executed with status: {'ok' if not tool_res.get('error') else 'error'}")
-
-        # Log tool execution results
-        try:
-            from app.log_manager import log_manager
-            log_manager.log_agent_turn(
-                cycle_id, agent_name, i,
-                action_type="tool_result",
-                ticker=ticker,
-                tool_results=tool_results_for_log,
-            )
-        except Exception:
-            pass  # Turn tracing must never crash the pipeline
-    else:
-        # for/else: the loop completed without break → max_loops exhausted
-        # Check if the last turn had tool_calls (meaning the agent wanted to keep going)
-        if tool_calls:
-            hit_limit_with_pending_tools = True
-            logger.warning(
-                f"[ToolExecutor] Agent '{agent_name}' hit max_loops={max_loops} "
-                f"with pending tool calls — {'yielding' if yield_on_limit else 'returning partial'}."
-            )
-
-    from app.telemetry import send_system_log
-    send_system_log("AGENT", f"[{agent_name}] Completed local agent loop in {total_time_ms}ms ({total_tokens_used} tokens)")
+    # Note: AgentYielded is not currently used by AgentHarness out-of-the-box
+    # because the SDK just returns when max iterations are hit.
+    # To mock the old behavior, we just assume it completed cleanly or hit the limit.
+    hit_limit = len(session.get_messages()) // 2 >= max_loops
 
     base_result = {
         "final_text": final_content,
-        "token_usage": total_tokens_used,
+        "token_usage": 0,
         "execution_ms": total_time_ms,
-        "chat_history": messages,
-        "loops_used": min(i + 1, max_loops) if "i" in dir() else 0,
-        "yielded": hit_limit_with_pending_tools,
+        "chat_history": session.get_messages(),
+        "loops_used": len(session.get_messages()) // 2,
+        "yielded": hit_limit,
     }
 
-    if hit_limit_with_pending_tools and yield_on_limit:
+    if hit_limit and yield_on_limit:
         raise AgentYielded(base_result)
 
     return base_result
