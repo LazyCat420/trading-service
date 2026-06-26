@@ -129,17 +129,8 @@ def _parse_parameter_size(model_id: str) -> float | None:
 
 
 def _url_to_prism_provider(url: str | None) -> str:
-    """Resolve the canonical Prism provider name ('vllm-1', 'vllm-2', 'vllm-3')
-    based on the endpoint URL.
-    """
-    if not url:
-        return "vllm-1"
-    if settings.PROVIDER_VLLM_1_URL and settings.PROVIDER_VLLM_1_URL in url:
-        return "vllm-1"
-    if settings.PROVIDER_VLLM_2_URL and settings.PROVIDER_VLLM_2_URL in url:
-        return "vllm-2"
-    if settings.PROVIDER_VLLM_3_URL and settings.PROVIDER_VLLM_3_URL in url:
-        return "vllm-3"
+    """Resolve the canonical Prism provider name based on the endpoint URL."""
+    return "vllm"
         
     # Fallback to hostname checks if exact URL didn't match
     from urllib.parse import urlparse
