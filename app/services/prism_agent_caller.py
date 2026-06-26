@@ -83,7 +83,8 @@ async def call_prism_agent(
             system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
             agent_name=agent_id,
             max_tokens=max_tokens,
-            temperature=temperature
+            temperature=temperature,
+            project="trading-service"
         )
         
         response_text = resp.text.strip()
