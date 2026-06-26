@@ -19,58 +19,6 @@ logger = logging.getLogger(__name__)
 
 
 
-# ── Tool 2: Decision Quality Audit ─────────────────────────────────────
-@registry.register(
-    name="audit_decision_quality",
-    description=(
-        "Audit the decision quality for a specific trading cycle. "
-        "Checks BUY/SELL/HOLD ratios, confidence distribution, and identifies "
-        "issues like high HOLD ratio or uniform confidence (sign of LLM laziness)."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "cycle_id": {
-                "type": "string",
-                "description": "The cycle ID to audit (e.g. 'abc123def456').",
-            },
-        },
-        "required": ["cycle_id"],
-    },
-    tier=1,
-    source="internal_db",
-    tags=["audit", "decision", "confidence", "quality"],
-)
-async def audit_decision_quality(cycle_id: str) -> str:
-    """Audit decision quality for a specific cycle."""
-    try:
-        from app.autoresearch.auditors.decision_audit import _audit_decisions
-
-        # Build a minimal cycle_summary from the DB
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT (result_json::jsonb)->>'action' AS action, confidence FROM analysis_results WHERE cycle_id = %s",
-                [cycle_id],
-            ).fetchall()
-
-        buy_count = sum(1 for r in rows if r[0] and r[0].upper() == "BUY")
-        sell_count = sum(1 for r in rows if r[0] and r[0].upper() == "SELL")
-        hold_count = sum(1 for r in rows if r[0] and r[0].upper() == "HOLD")
-
-        cycle_summary = {
-            "buy_count": buy_count,
-            "sell_count": sell_count,
-            "hold_count": hold_count,
-        }
-
-        result = _audit_decisions(cycle_id, cycle_summary)
-        return json.dumps({"status": "success", "cycle_id": cycle_id, **result})
-    except Exception as e:
-        logger.exception("[PipelineTools] audit_decision_quality failed")
-        return json.dumps({"status": "error", "cycle_id": cycle_id, "message": str(e)})
-
 
 # ── Tool 3: Hallucination Check ────────────────────────────────────────
 @registry.register(
