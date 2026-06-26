@@ -114,7 +114,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_market_data",
         "search_internal_database",
         "post_finding",
-        "create_team",
         "whiteboard_write",
     ],
     "v3_fundamental_analyst": [
@@ -126,7 +125,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "scrape_url",
         "get_market_data",
         "post_finding",
-        "create_team",
         "whiteboard_write",
     ],
     "v3_quant_analyst": [
@@ -141,7 +139,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_portfolio_state",
         "get_position_pnl",
         "post_finding",
-        "create_team",
         "whiteboard_write",
     ],
     "v3_bull_agent": [
