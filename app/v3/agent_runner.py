@@ -41,7 +41,7 @@ async def run_v3_agent(
     cycle_id: str = "",
     bot_id: str = "",
     emit: Any = None,
-    timeout_seconds: float = 1800.0,
+    timeout_seconds: float = 600.0,
     include_debate_context: bool = False,
 ) -> PhaseOutcome:
     """Run a V3 agent against the SharedDesk.
@@ -150,6 +150,14 @@ async def run_v3_agent(
         loops_used = result.get("loops_used", 1)  # run_agent doesn't track loops
         token_usage = result.get("tokens_used", 0)
         stop_reason = result.get("stop_reason", "completed")
+
+        # Check for token-limit truncation — the LLM may have been cut off mid-JSON
+        if stop_reason in ("max_tokens", "length", "token_limit"):
+            logger.warning(
+                "[V3Runner] %s output was TRUNCATED by %s for %s — "
+                "artifact parsing may fail. Consider increasing max_tokens.",
+                agent_name, stop_reason, desk.ticker,
+            )
 
         # Parse the artifact from the agent's output
         artifact = _parse_artifact(final_text, artifact_type, agent_name)

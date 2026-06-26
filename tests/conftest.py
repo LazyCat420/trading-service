@@ -137,14 +137,19 @@ def mock_llm():
 
 @pytest.fixture(autouse=True)
 def patch_llm(mock_llm):
-    """Patch the global llm singleton in-place so all modules share the mock."""
-    from app.services.vllm_client import llm
-    with patch.object(llm, "chat", mock_llm.chat), \
-         patch.object(llm, "chat_with_tools", mock_llm.chat_with_tools), \
-         patch.object(llm, "discover_roles", mock_llm.discover_roles), \
-         patch.object(llm, "get_least_busy_model", mock_llm.get_least_busy_model), \
-         patch.object(llm, "get_trader_model", mock_llm.get_trader_model), \
-         patch.object(llm, "queue_status", mock_llm.queue_status):
+    """Patch the LLM singleton so all modules share the mock.
+    
+    Originally patched app.services.vllm_client (now removed).
+    Now patches lazycat.llm.prism_client which is the current LLM entry point.
+    Falls back to no-op if neither module is available.
+    """
+    try:
+        from lazycat.llm import prism_client
+        with patch.object(prism_client, "call_agent", mock_llm.chat), \
+             patch.object(prism_client, "check_health", AsyncMock(return_value=True)):
+            yield mock_llm
+    except (ImportError, AttributeError):
+        # If lazycat-sdk is not installed in the test env, yield the mock as-is
         yield mock_llm
 
 

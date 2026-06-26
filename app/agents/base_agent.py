@@ -306,14 +306,47 @@ async def run_agent(
         # Per-agent tool whitelist: only show tools relevant to this agent's role
         agent_tools = get_agent_tools(agent_name) if enable_tools else []
 
+        # Per-agent turn budget: reasoning-only agents get 1, tool agents get role-specific limits
+        max_turns = get_agent_budget_turns(agent_name, enable_tools)
 
-
-        # Fallback to local agent loop using lazycat-sdk
+        # Agent loop using lazycat-sdk
         from lazycat.agent import BaseAgent, AgentHarness
         from lazycat.session import ConversationSession
         import time
         from lazycat.llm import prism_client
-        
+
+        # ── Tool Loop Detection ──
+        # Prevents agents from calling the same failing tool endlessly.
+        # The detector tracks (tool_name, args_hash, status) and blocks
+        # calls that have failed 3+ times with identical arguments.
+        from app.v3.guardrails import ToolLoopDetector
+        loop_detector = ToolLoopDetector(max_identical_failures=3)
+
+        def _on_tool_call(tool_name: str, arguments: dict) -> str | None:
+            """Pre-call hook: check if this tool+args combo should be blocked."""
+            # Check if this exact combo has already been blocked
+            check_result = loop_detector.record_call(tool_name, arguments, failed=True)
+            if check_result is not None:
+                return check_result
+            # Undo the speculative failure record — actual outcome will be recorded in _on_tool_result
+            key = loop_detector._make_key(tool_name, arguments, failed=True)
+            loop_detector._history[key] = max(0, loop_detector._history.get(key, 1) - 1)
+            return None
+
+        def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool) -> None:
+            """Post-call hook: record the actual outcome."""
+            if was_blocked:
+                return  # Already recorded as failure in pre-check
+            # Determine if the tool call failed
+            failed = False
+            if isinstance(result, dict):
+                if result.get("error") or result.get("is_error"):
+                    failed = True
+                elif not result:
+                    failed = True
+            elif result is None:
+                failed = True
+            loop_detector.record_call(tool_name, arguments, failed=failed)
 
         from app.services.prism_agent_registry import resolve_agent_id
         prism_agent_id = resolve_agent_id(agent_name)
@@ -329,7 +362,13 @@ async def run_agent(
                 agent.add_tool(t)
 
         session = ConversationSession(session_id=parent_agent_session_id or f"sess_{int(time.time())}")
-        harness = AgentHarness(agent=agent, session=session)
+        harness = AgentHarness(
+            agent=agent,
+            session=session,
+            max_iterations=max_turns,
+            on_tool_call=_on_tool_call if enable_tools else None,
+            on_tool_result=_on_tool_result if enable_tools else None,
+        )
 
         t0 = time.time()
         final_text = await harness.run(full_prompt)

@@ -264,13 +264,20 @@ class CircuitBreaker:
 
         Aborts if the outcome is not SUCCESS or DATA_GAP and retries
         are exhausted.
+
+        NOTE: This is a READ-ONLY check. It does NOT increment retry counts.
+        The orchestrator's _run_agent_with_circuit_breaker() handles retries
+        via should_retry(). This method only checks whether the budget is
+        exhausted after those retries have been consumed.
         """
         non_fatal = {PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP}
         if outcome in non_fatal:
             return False
 
-        # Check if we can retry
-        if self.should_retry(phase_name, outcome):
+        # Check if retries are exhausted (read-only — no side effects)
+        count = self._retry_counts.get(phase_name, 0)
+        if count < self.max_retries:
+            # Still have retries left — don't abort yet
             return False
 
         return True
