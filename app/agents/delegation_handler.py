@@ -15,7 +15,7 @@ import logging
 import re
 
 from app.config.personas import PERSONAS, get_persona_prompt, get_persona_config
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 from app.config.config_cognition import LLM_TEMPERATURES
 

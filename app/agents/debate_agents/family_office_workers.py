@@ -9,7 +9,7 @@ tools to call.
 Workers are lightweight — they fetch data and return it, they don't
 analyze or reason. Analysis is the PM's job.
 
-All LLM calls go through app.services.vllm_client (Rule 2).
+All LLM calls go through app.services.prism_agent_caller (Rule 2).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from app.cognition.contracts.family_office import (
     WorkerResult,
     WorkerType,
 )
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +242,7 @@ Fetch this data using your tools and return the results."""
 
         timeout_s = float(getattr(cognition_settings, "V3_WORKER_TIMEOUT_SECONDS", 60))
         
-        from app.services.vllm_client import llm
+        from app.services.prism_agent_caller import llm
         agent = BaseAgent(
             name=agent_name, 
             system_prompt=system_prompt,

@@ -10,7 +10,7 @@ Each Manager:
   - Submits a ManagerArgument with structured claims
   - Can request additional data via DataRequest
 
-All LLM calls go through app.services.vllm_client (Rule 2).
+All LLM calls go through app.services.prism_agent_caller (Rule 2).
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from app.config.investment_philosophy import (
     CONVICTION_FRAMEWORK,
     LONG_TERM_INVESTMENT_MANDATE,
 )
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)

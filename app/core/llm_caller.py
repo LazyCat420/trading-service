@@ -24,7 +24,7 @@ import logging
 import time
 from typing import Any
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 
 logger = logging.getLogger(__name__)
 

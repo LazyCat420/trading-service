@@ -15,9 +15,11 @@ services:
       - USE_LAZY_TOOL_SERVICE=true
       - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:5591
       - PIPELINE_VERSION=v3
+      - PYTHONPATH=/app/lazycat-sdk
     volumes:
       - /usr/share/zoneinfo/America/Los_Angeles:/etc/localtime:ro
       - ./logs:/app/logs
+      - ../lazycat-sdk:/app/lazycat-sdk:ro
     ports:
       - "3031:8080"
     logging:

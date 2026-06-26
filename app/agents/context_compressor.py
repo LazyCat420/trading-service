@@ -8,7 +8,7 @@ tool outputs *before* they enter the message history.
 import logging
 from typing import List, Dict
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.config.context_budget import get_context_budget, estimate_tokens
 
 logger = logging.getLogger(__name__)

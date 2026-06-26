@@ -484,7 +484,7 @@ class PipelineStateMixin:
     def get_current_state(cls, summary_only: bool = False) -> dict:
         state = PipelineStateDB.get_state(summary_only=summary_only)
         try:
-            from app.services.vllm_client import llm
+            from app.services.prism_agent_caller import llm
             from app.monitoring.llm_tracker import tracker
 
             active_requests = 0

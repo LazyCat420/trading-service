@@ -1,6 +1,6 @@
 import asyncio
 from deepeval.models import DeepEvalBaseLLM
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 
 
 class VLLMDeepEvalWrapper(DeepEvalBaseLLM):

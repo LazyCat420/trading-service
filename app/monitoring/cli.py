@@ -9,7 +9,7 @@ Shows real-time token flows, latency, and agent activity.
 
 import asyncio
 import os
-from app.services.vllm_client import llm
+from app.services.prism_agent_caller import llm
 from app.monitoring.llm_tracker import tracker
 from app.monitoring.metrics_collector import metrics
 from app.config import settings

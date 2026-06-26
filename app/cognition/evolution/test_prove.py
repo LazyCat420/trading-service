@@ -96,7 +96,7 @@ async def _validate_prompt(
     # Test 3: Live LLM smoke test — send the prompt and check output parses as JSON
     tests_run += 1
     try:
-        from app.services.vllm_client import llm, Priority
+        from app.services.prism_agent_caller import llm, Priority
 
         test_user = (
             "Given the stock ticker AAPL, provide a brief analysis. "

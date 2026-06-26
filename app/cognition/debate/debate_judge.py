@@ -8,12 +8,12 @@ rationale.
 The "court judge" framing prevents the LLM from introducing new data —
 it can only reason about evidence already in the record.
 
-All LLM calls go through app.services.vllm_client (Rule 2).
+All LLM calls go through app.services.prism_agent_caller (Rule 2).
 """
 
 import logging
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.config.config_cognition import LLM_TEMPERATURES
 from app.utils.text_utils import parse_json_response
 

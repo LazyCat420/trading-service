@@ -7,7 +7,7 @@ import logging
 import uuid
 from typing import Any
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)

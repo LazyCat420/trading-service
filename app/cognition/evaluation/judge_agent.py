@@ -4,7 +4,7 @@ import logging
 import os
 from enum import Enum
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import (
     parse_json_response,
     extract_reasoning_text,

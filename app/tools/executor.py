@@ -3,7 +3,7 @@ import time
 from typing import Any
 from lazycat.agent import BaseAgent, AgentHarness
 from lazycat.session import ConversationSession
-from app.services.vllm_client import Priority
+from app.services.prism_agent_caller import Priority
 from app.tools.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ async def run_tool_agent(
     parent_agent_session_id: str | None = None,
 ) -> dict[str, Any]:
     
-    from app.services.vllm_client import llm
+    from app.services.prism_agent_caller import llm
     agent = BaseAgent(
         name=agent_name, 
         system_prompt=system_prompt, 

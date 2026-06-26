@@ -12,14 +12,14 @@ Architecture:
      and flags unverifiable/contradictory claims   ┘
   4. Returns raw debate output for ClaimVerifier + DebateJudge
 
-All LLM calls go through app.services.vllm_client (Rule 2).
+All LLM calls go through app.services.prism_agent_caller (Rule 2).
 """
 
 import asyncio
 import logging
 from datetime import datetime, timezone
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.config.config_cognition import LLM_TEMPERATURES, cognition_settings
 from app.config.context_budget import get_context_budget
 from app.cognition.contracts.evidence import EvidencePacket

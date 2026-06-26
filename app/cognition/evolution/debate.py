@@ -19,7 +19,7 @@ import uuid
 from typing import Optional
 
 from app.db.connection import get_db
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 
 logger = logging.getLogger(__name__)
 

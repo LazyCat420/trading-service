@@ -28,7 +28,7 @@ from rlm.logger import RLMLogger
 from app.config import settings
 from app.services.rlm.rlm_tools import TRADING_TOOLS
 from app.utils.text_utils import strip_think_tags, parse_json_response, sanitize_ascii, parse_trading_decision
-from app.services.vllm_client import _is_qwen_model
+from app.services.prism_agent_caller import _is_qwen_model
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ def _build_rlm(
     _ensure_patched()
 
     # Resolve the best endpoint + model based on target_role
-    from app.services.vllm_client import llm as _llm_singleton
+    from app.services.prism_agent_caller import llm as _llm_singleton
 
     if target_role == "trader":
         target_model = _llm_singleton.get_trader_model()
@@ -327,7 +327,7 @@ async def rlm_analyze(
 
         try:
             # Resolve the active model for logging
-            from app.services.vllm_client import llm as _llm_singleton
+            from app.services.prism_agent_caller import llm as _llm_singleton
 
             if target_role == "trader":
                 active_model = _llm_singleton.get_trader_model()

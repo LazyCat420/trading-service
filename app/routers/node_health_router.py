@@ -28,7 +28,7 @@ async def node_health(token: str = Depends(_verify_api_key)):
     """Return per-node LLM endpoint health, independent of cycle state."""
     try:
         import asyncio
-        from app.services.vllm_client import llm
+        from app.services.prism_agent_caller import llm
         from app.monitoring.llm_tracker import tracker
 
         endpoints = getattr(llm, "_endpoints", {})

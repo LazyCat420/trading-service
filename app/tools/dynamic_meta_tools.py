@@ -7,7 +7,7 @@ import logging
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from app.tools.registry import registry, PermissionLevel
-from app.services.vllm_client import Priority
+from app.services.prism_agent_caller import Priority
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ value creation potential — not just short-term price targets.
 """
 
 import logging
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 from app.utils.text_utils import parse_json_response
 from app.config.config_cognition import LLM_TEMPERATURES

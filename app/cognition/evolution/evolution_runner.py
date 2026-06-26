@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from app.db.connection import get_db
 from app.trading.sandbox_executor import run_sandboxed_backtest
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)

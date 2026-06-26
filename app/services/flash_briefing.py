@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 
 logger = logging.getLogger(__name__)

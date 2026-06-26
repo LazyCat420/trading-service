@@ -171,7 +171,7 @@ def _cluster_lessons(rows: list, similarity_threshold: float = 0.85) -> list[lis
 async def _llm_consolidate(lesson_texts: list[str]) -> str | None:
     """Use LLM to consolidate multiple lessons into one unified rule."""
     try:
-        from app.services.vllm_client import llm, Priority
+        from app.services.prism_agent_caller import llm, Priority
 
         lessons_block = "\n".join(f"- {t}" for t in lesson_texts[:10])
 

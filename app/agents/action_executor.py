@@ -72,7 +72,7 @@ async def run_isolated_action_agent(
     )
 
     try:
-        from app.services.vllm_client import llm
+        from app.services.prism_agent_caller import llm
         agent = BaseAgent(
             name=action_agent_name, 
             system_prompt=ACTION_EXECUTOR_SYSTEM, 

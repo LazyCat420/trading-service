@@ -88,7 +88,7 @@ class AdaptiveConcurrencyController:
         (safe default = full concurrency).
         """
         try:
-            from app.services.vllm_client import llm
+            from app.services.prism_agent_caller import llm
 
             return [
                 ep for ep in llm._endpoints.values()

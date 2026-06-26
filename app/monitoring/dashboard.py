@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse, PlainTextResponse
 from app.monitoring.llm_tracker import tracker
 from app.monitoring.metrics_collector import metrics
 from app.monitoring.pipeline_profiler import profiler as pipeline_profiler
-from app.services.vllm_client import llm
+from app.services.prism_agent_caller import llm
 from app.config import settings
 from app.db.connection import get_db
 import logging

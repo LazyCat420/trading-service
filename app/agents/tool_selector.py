@@ -18,7 +18,7 @@ import logging
 import re
 from typing import Optional
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.tools.registry import registry
 
 logger = logging.getLogger(__name__)

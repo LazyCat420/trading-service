@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import httpx
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.config.personas import get_persona_prompt
 from app.config.guardrails import ANTI_HALLUCINATION_BLOCK
 

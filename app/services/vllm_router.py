@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.services import bot_manager
 from app.collectors import congress_scanner, fund_scanner
 from app.trading import order_triggers, strategy_tracker

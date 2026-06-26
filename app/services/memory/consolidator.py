@@ -12,7 +12,7 @@ from app.db.memory_repo import (
     mark_observations_promoted,
     log_consolidation_run,
 )
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 
 logger = logging.getLogger(__name__)

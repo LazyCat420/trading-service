@@ -23,7 +23,7 @@ async def run_phase1_health(
     )
 
     # 1. Bot Health Check
-    from app.services.vllm_client import llm
+    from app.services.prism_agent_caller import llm
 
     health_status = await llm.health_all()
     jetson_ok = health_status.get("jetson", False)

@@ -4,7 +4,7 @@ import asyncio
 from collections import defaultdict
 from app.tools.registry import registry, current_agent_name
 from app.tools.executor import run_tool_agent, AgentYielded
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 
 logger = logging.getLogger(__name__)

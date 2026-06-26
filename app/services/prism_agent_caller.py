@@ -125,3 +125,61 @@ async def call_prism_agent(
             pass
             
         raise e
+
+from enum import IntEnum
+
+class Priority(IntEnum):
+    HIGH = 0
+    NORMAL = 1
+    LOW = 2
+
+class PrismLLMShim:
+    """Shim class that mimics the old VLLM client interface."""
+    def __init__(self):
+        self._killed = False
+        self.prism_client = prism_client
+        
+    def reset_kill_switch(self):
+        self._killed = False
+        
+    async def abort_active_requests(self):
+        self._killed = True
+        
+    async def chat(
+        self,
+        system: str,
+        user: str,
+        temperature: float = 0.3,
+        max_tokens: int = 8192,
+        enable_thinking: bool = False,
+        priority: Priority = Priority.NORMAL,
+        agent_name: str = "unknown",
+        ticker: str = "",
+        cycle_id: str = "",
+        bot_id: str = "",
+        model_override: str | None = None,
+        endpoint_override: str | None = None,
+        history: list[dict] | None = None,
+        images: list[str] | None = None,
+        tools: list[dict] | None = None,
+        actor_label: str | None = None,
+        stream_callback: Any = None,
+    ) -> tuple[str, int, int]:
+        return await call_prism_agent(
+            agent_id="",
+            user_message=user,
+            fallback_system_prompt=system,
+            fallback_agent_name=agent_name,
+            priority=priority,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            ticker=ticker,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            actor_label=actor_label
+        )
+        
+    async def close(self):
+        pass
+
+llm = PrismLLMShim()

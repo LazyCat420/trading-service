@@ -7,7 +7,7 @@ rather than reasoning from scratch.
 """
 
 import logging
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response
 from app.config.config_cognition import LLM_TEMPERATURES
 from app.cognition.contracts.evidence import EvidencePacket

@@ -3,7 +3,7 @@ import logging
 import json
 import re
 from app.tools.executor import run_tool_agent
-from app.services.vllm_client import Priority
+from app.services.prism_agent_caller import Priority
 
 logger = logging.getLogger(__name__)
 

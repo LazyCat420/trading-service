@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 async def startup_vllm_discovery():
     # ── Auto-discover vLLM models on all endpoints ──
     try:
-        from app.services.vllm_client import llm
+        from app.services.prism_agent_caller import llm
 
         roles = await llm.discover_roles()
         ep_summary = []

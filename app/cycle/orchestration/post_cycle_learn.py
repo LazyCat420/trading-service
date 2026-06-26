@@ -48,7 +48,7 @@ async def maybe_learn(
         if len(rationale) > 500:
             rationale = rationale[:500] + "..."
 
-        from app.services.vllm_client import llm, Priority
+        from app.services.prism_agent_caller import llm, Priority
 
         prompt = (
             f"Ticker: {ticker}\n"

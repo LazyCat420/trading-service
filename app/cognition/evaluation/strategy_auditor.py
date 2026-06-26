@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response
 from app.db.connection import get_db
 from .judge_agent import evaluate_decision

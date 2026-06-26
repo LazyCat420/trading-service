@@ -93,7 +93,7 @@ class BootService:
 
         # Close the vLLM HTTP client
         try:
-            from app.services.vllm_client import llm
+            from app.services.prism_agent_caller import llm
 
             await llm.close()
         except Exception as e:

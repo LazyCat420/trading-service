@@ -69,7 +69,7 @@ async def _reflect(audit_bundle: dict) -> dict:
     )
 
     try:
-        from app.services.vllm_client import llm, Priority
+        from app.services.prism_agent_caller import llm, Priority
         response, tokens, elapsed = await llm.chat(
             system="You are a trading system auditor. Output valid JSON only.",
             user=prompt,

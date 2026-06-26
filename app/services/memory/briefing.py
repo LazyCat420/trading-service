@@ -9,7 +9,7 @@ via the vLLM queue.
 import logging
 from typing import Any
 
-from app.services.vllm_client import llm, Priority
+from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)

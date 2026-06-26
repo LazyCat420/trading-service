@@ -1,5 +1,5 @@
 import logging
-from app.services.vllm_client import llm
+from app.services.prism_agent_caller import llm
 from app.utils.text_utils import parse_json_response
 from app.services.logging.cycle_auditor import auditor
 
