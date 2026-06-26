@@ -312,8 +312,13 @@ async def run_agent(
         from lazycat.agent import BaseAgent, AgentHarness
         from lazycat.session import ConversationSession
         import time
+        from app.services.vllm_client import llm
 
-        agent = BaseAgent(name=agent_name, system_prompt=actual_system_prompt)
+        agent = BaseAgent(
+            name=agent_name, 
+            system_prompt=actual_system_prompt,
+            llm_client=llm.prism_client
+        )
         if enable_tools and agent_tools:
             for t in agent_tools:
                 agent.add_tool(t)

@@ -72,7 +72,13 @@ async def run_isolated_action_agent(
     )
 
     try:
-        agent = BaseAgent(name=action_agent_name, system_prompt=ACTION_EXECUTOR_SYSTEM, model=model_override or "gpt-4o")
+        from app.services.vllm_client import llm
+        agent = BaseAgent(
+            name=action_agent_name, 
+            system_prompt=ACTION_EXECUTOR_SYSTEM, 
+            model=model_override or "gpt-4o",
+            llm_client=llm.prism_client
+        )
         for t in tool_schemas:
             agent.add_tool(t)
             

@@ -242,7 +242,12 @@ Fetch this data using your tools and return the results."""
 
         timeout_s = float(getattr(cognition_settings, "V3_WORKER_TIMEOUT_SECONDS", 60))
         
-        agent = BaseAgent(name=agent_name, system_prompt=system_prompt)
+        from app.services.vllm_client import llm
+        agent = BaseAgent(
+            name=agent_name, 
+            system_prompt=system_prompt,
+            llm_client=llm.prism_client
+        )
         for t in tool_schemas:
             agent.add_tool(t)
             
