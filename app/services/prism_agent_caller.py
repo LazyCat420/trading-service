@@ -84,7 +84,7 @@ async def call_prism_agent(
             agent_name=agent_id,
             max_tokens=max_tokens,
             temperature=temperature,
-            project="trading-service"
+            project="vllm-trading-bot"
         )
         
         response_text = resp.text.strip()

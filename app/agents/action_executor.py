@@ -78,7 +78,7 @@ async def run_isolated_action_agent(
             system_prompt=ACTION_EXECUTOR_SYSTEM, 
             model=model_override or "gpt-4o",
             llm_client=llm.prism_client,
-            project="trading-service"
+            project="vllm-trading-bot"
         )
         for t in tool_schemas:
             agent.add_tool(t)

@@ -37,7 +37,7 @@ async def run_tool_agent(
         system_prompt=system_prompt, 
         model=model_override or "gpt-4o",
         llm_client=llm.prism_client,
-        project="trading-service"
+        project="vllm-trading-bot"
     )
     
     active_tools = tools_override if tools_override is not None else registry.schemas

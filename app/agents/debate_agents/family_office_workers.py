@@ -247,7 +247,7 @@ Fetch this data using your tools and return the results."""
             name=agent_name, 
             system_prompt=system_prompt,
             llm_client=llm.prism_client,
-            project="trading-service"
+            project="vllm-trading-bot"
         )
         for t in tool_schemas:
             agent.add_tool(t)
