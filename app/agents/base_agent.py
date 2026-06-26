@@ -168,7 +168,7 @@ async def run_agent(
     print(f"\n  {'~' * 50}")
     print(f"  AGENT INPUT: {agent_name} ({ticker}) [{prompt_label} PROMPT]")
     print(f"  {'~' * 50}")
-    print(f"  System Prompt ({len(actual_system_prompt)} chars):")
+    print(f"  System Prompt ({len(system_prompt)} chars):")
     safe_sys = sanitize_ascii(system_prompt)
     print(f"    {safe_sys}")
     print(f"  User Prompt ({len(full_prompt)} chars):")
