@@ -166,8 +166,8 @@ class PrismClient(SDKPrismClient):
         stream: bool = False,
     ) -> httpx.Response:
         if model == "gpt-4o" and provider == "vllm":
-            from app.services.vllm_client import llm, Priority
-            ep = llm.dispatch(priority=Priority.NORMAL)
+            from app.services.vllm_client import llm
+            ep = llm._pick_best_endpoint()
             model = ep.model if ep and ep.model else model
         
         # Register custom agent on the fly to satisfy Prism's /agent endpoint requirements
