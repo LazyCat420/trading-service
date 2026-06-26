@@ -321,7 +321,8 @@ async def run_agent(
         agent = BaseAgent(
             name=prism_agent_id, 
             system_prompt=actual_system_prompt,
-            llm_client=prism_client
+            llm_client=prism_client,
+            project="trading-service"
         )
         if enable_tools and agent_tools:
             for t in agent_tools:
