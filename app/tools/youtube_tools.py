@@ -106,3 +106,61 @@ async def youtube_test_channel(handle: str) -> str:
     except Exception as e:
         logger.error(f"[YouTubeTools] Error testing channel: {e}")
         return json.dumps({"status": "error", "error": str(e)})
+
+
+@registry.register(
+    name="youtube_search",
+    description="Search YouTube for videos matching a query. Returns a list of video objects (video_id, title, channel, duration_secs, url). Use this to find correct video IDs before adding youtube player widgets.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query (e.g. 'Bloomberg News Live').",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of results to return (default 5).",
+                "minimum": 1,
+                "maximum": 20,
+            }
+        },
+        "required": ["query"],
+    },
+    tier=0,
+    source="local",
+)
+async def youtube_search(query: str, limit: int = 5) -> str:
+    """Search YouTube using scraper-service."""
+    import os
+    import httpx
+    scraper_url = os.getenv("SCRAPER_SERVICE_URL", "http://10.0.0.16:8001")
+    logger.info(f"[YouTubeTools] Searching YouTube for '{query}' via scraper-service at {scraper_url}")
+    try:
+        payload = {
+            "source": "youtube",
+            "query": query,
+            "limit": limit,
+            "require_transcript": False,
+            "days_back": 0
+        }
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(f"{scraper_url}/collect", json=payload, timeout=25.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get("items", [])
+                formatted = []
+                for item in items:
+                    formatted.append({
+                        "video_id": item.get("video_id"),
+                        "title": item.get("title"),
+                        "channel": item.get("channel"),
+                        "duration_secs": item.get("duration_secs"),
+                        "url": f"https://www.youtube.com/watch?v={item.get('video_id')}"
+                    })
+                return json.dumps({"status": "success", "results": formatted})
+            else:
+                return json.dumps({"status": "error", "error": f"Scraper service returned status {resp.status_code}: {resp.text}"})
+    except Exception as e:
+        logger.error(f"[YouTubeTools] Search failed: {e}")
+        return json.dumps({"status": "error", "error": str(e)})

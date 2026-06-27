@@ -8,7 +8,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 export_script = os.path.join(current_dir, "export_tool_schemas.py")
 
-result = subprocess.run(["python", export_script], capture_output=True, text=True, check=True)
+import sys
+
+result = subprocess.run([sys.executable, export_script], capture_output=True, text=True, check=True)
 native_schemas = json.loads(result.stdout)
 
 # 2. Fetch prism-service aggregated tools (which includes tools-service)
