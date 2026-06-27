@@ -5,25 +5,37 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def get_watchlist_snapshots(tickers: list[str]) -> str:
+async def get_watchlist_snapshots(ticker_data: list[dict]) -> tuple[str, list]:
     """
-    Bulk fetches recent market data (5d) for a list of tickers using yfinance.
+    Bulk fetches recent market data (5d) for a list of ticker dictionaries using yfinance.
     Calculates Price, % Change (daily), and Relative Volume.
-    Returns a Markdown formatted table.
+    Returns a tuple of (Markdown formatted table, raw_results_list).
     """
-    if not tickers:
-        return "No tickers provided."
+    if not ticker_data:
+        return "No tickers provided.", []
 
-    # Remove duplicates and limit to prevent massive payload size issues
-    tickers = list(set(tickers))[:100]
+    # Extract unique tickers for yfinance
+    tickers_list = []
+    ticker_meta = {}
+    for t_obj in ticker_data:
+        tkr = t_obj.get("ticker", "").upper().strip()
+        if tkr and tkr not in ticker_meta:
+            tickers_list.append(tkr)
+            ticker_meta[tkr] = {
+                "source": t_obj.get("source", "Watchlist"),
+                "days_since_analysis": t_obj.get("days_since_analysis", "Never")
+            }
+            
+    # Limit to prevent massive payload size issues
+    tickers_list = tickers_list[:100]
     
-    logger.info(f"[batch_screener] Fetching bulk yfinance data for {len(tickers)} tickers...")
+    logger.info(f"[batch_screener] Fetching bulk yfinance data for {len(tickers_list)} tickers...")
     
     try:
         # Run yfinance download in a thread to prevent blocking the async loop
         df = await asyncio.to_thread(
             yf.download,
-            " ".join(tickers),
+            " ".join(tickers_list),
             period="2mo",
             group_by="ticker",
             auto_adjust=True,
@@ -37,7 +49,7 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
         results = []
         
         # Process tickers cleanly handling both MultiIndex and flat Index (yfinance behavior varies by version)
-        for t in tickers:
+        for t in tickers_list:
             try:
                 # If MultiIndex (new behavior or multi-ticker)
                 if isinstance(df.columns, pd.MultiIndex):
@@ -67,25 +79,25 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
                     rs = gain / loss
                     rsi = float((100 - (100 / (1 + rs))).iloc[-1])
                     
-                    results.append((t, current_price, change_pct, rel_vol, sma20, rsi))
+                    results.append((t, current_price, change_pct, rel_vol, sma20, rsi, ticker_meta[t]["source"], ticker_meta[t]["days_since_analysis"]))
             except Exception as e:
                 logger.warning(f"[batch_screener] Error parsing {t}: {e}")
 
 
         if not results:
-            return "No valid data parsed."
+            return "No valid data parsed.", []
 
         # Sort by relative volume descending
         results.sort(key=lambda x: x[3], reverse=True)
 
         md_lines = []
-        md_lines.append("| Ticker | Price | Change % | Rel Volume | SMA-20 | RSI (14) |")
-        md_lines.append("|--------|-------|----------|------------|--------|----------|")
-        for t, px, chg, rvol, sma, rsi in results:
+        md_lines.append("| Ticker | Source | Days Since Analysis | Price | Change % | Rel Volume | SMA-20 | RSI (14) |")
+        md_lines.append("|--------|--------|---------------------|-------|----------|------------|--------|----------|")
+        for t, px, chg, rvol, sma, rsi, src, dsa in results:
             sma_rel = ((px - sma) / sma) * 100 if sma > 0 else 0
-            md_lines.append(f"| {t} | ${px:.2f} | {chg:+.2f}% | {rvol:.2f}x | {sma_rel:+.2f}% | {rsi:.1f} |")
+            md_lines.append(f"| {t} | {src} | {dsa} | ${px:.2f} | {chg:+.2f}% | {rvol:.2f}x | {sma_rel:+.2f}% | {rsi:.1f} |")
 
-        return "\n".join(md_lines)
+        return "\n".join(md_lines), results
     except Exception as e:
         logger.error(f"[batch_screener] Bulk fetch failed: {e}")
-        return f"Error fetching snapshot data: {e}"
+        return f"Error fetching snapshot data: {e}", []

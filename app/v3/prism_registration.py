@@ -65,7 +65,15 @@ async def register_v3_agents() -> dict[str, bool]:
 
             # Merge with Prism dynamic meta-tools
             from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
-            enabled_tools = list(tool_whitelist) + list(PRISM_DYNAMIC_META_TOOLS)
+            
+            prefixed_whitelist = []
+            for t in tool_whitelist:
+                if t.startswith("mcp__") or t.startswith("domain:") or t in ("search_web", "discover_and_enable_tools", "enable_tools", "disable_tools", "search_tools"):
+                    prefixed_whitelist.append(t)
+                else:
+                    prefixed_whitelist.append(f"mcp__lazy-tool-service__{t}")
+            
+            enabled_tools = prefixed_whitelist + list(PRISM_DYNAMIC_META_TOOLS)
 
             success = await PrismClient.register_or_update_custom_agent(
                 name=agent_name,

@@ -87,7 +87,7 @@ async def run_v3_pipeline(
     )
     try:
         from app.v3.data_report import build_ticker_data_report
-        data_report = await build_ticker_data_report(ticker)
+        data_report = await build_ticker_data_report(ticker, emit=emit)
         emit(
             "analyzing", f"v3_precollect_ok_{ticker}",
             f"📥 {ticker}: Market & news pre-collection complete",

@@ -74,18 +74,125 @@ class PipelineService:
                 import json
                 
                 if tickers:
-                    active_tickers = tickers
+                    base_tickers = tickers
                 else:
-                    active_tickers = [t["ticker"] for t in get_active()]
+                    base_tickers = [t["ticker"] for t in get_active()]
                     
-                if not active_tickers:
+                # --- DISCOVERY ENGINE ---
+                active_ticker_dicts = []
+                # Find trending tickers from the last 24h (News, Reddit, YouTube) that aren't in the static watchlist
+                try:
+                    from app.db.connection import get_db
+                    with get_db() as db:
+                        # 1. Pull Trending
+                        news_trends = db.execute("""
+                            SELECT ticker FROM news_articles 
+                            WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 5
+                        """).fetchall()
+                        reddit_trends = db.execute("""
+                            SELECT ticker FROM reddit_posts 
+                            WHERE ticker IS NOT NULL AND created_utc > NOW() - INTERVAL '24 hours'
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 5
+                        """).fetchall()
+                        youtube_trends = db.execute("""
+                            SELECT ticker FROM youtube_transcripts 
+                            WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 3
+                        """).fetchall()
+                        
+                        trending_discovered = {}
+                        for row, source in [(r, "Trending News") for r in news_trends] + \
+                                           [(r, "Trending Reddit") for r in reddit_trends] + \
+                                           [(r, "Trending YouTube") for r in youtube_trends]:
+                            tkr = row[0].upper().strip()
+                            if tkr and tkr not in base_tickers and tkr not in trending_discovered:
+                                trending_discovered[tkr] = source
+                                
+                        all_pool = {t: "Watchlist" for t in base_tickers}
+                        all_pool.update(trending_discovered)
+                        
+                        # 2. Fetch Last Analysis Date for all
+                        if all_pool:
+                            placeholders = ','.join(['%s'] * len(all_pool))
+                            last_analysis_rows = db.execute(f"""
+                                SELECT ticker, MAX(created_at) as last_date 
+                                FROM analysis_results 
+                                WHERE ticker IN ({placeholders}) 
+                                GROUP BY ticker
+                            """, list(all_pool.keys())).fetchall()
+                            
+                            last_analysis_map = {r[0]: r[1] for r in last_analysis_rows}
+                        else:
+                            last_analysis_map = {}
+                            
+                        # 3. Construct dictionary structure
+                        for tkr, src in all_pool.items():
+                            last_date = last_analysis_map.get(tkr)
+                            if last_date:
+                                days_ago = (datetime.now(timezone.utc) - last_date).days
+                                dsa_str = f"{days_ago} days ago" if days_ago > 0 else "Today"
+                            else:
+                                dsa_str = "Never"
+                                
+                            active_ticker_dicts.append({
+                                "ticker": tkr,
+                                "source": src,
+                                "days_since_analysis": dsa_str
+                            })
+                            
+                        if trending_discovered:
+                            logger.info(f"[PipelineService] Discovery Engine injected {len(trending_discovered)} trending leads.")
+                except Exception as e:
+                    logger.error(f"[PipelineService] Discovery Engine failed to fetch trends: {e}")
+                # ------------------------
+
+                if not active_ticker_dicts:
                     logger.warning("[PipelineService] Watchlist is empty, falling back to default.")
                     tickers = ["AAPL"]
                 else:
-                    snapshot_table = await get_watchlist_snapshots(active_tickers)
+                    _, raw_results = await get_watchlist_snapshots(active_ticker_dicts)
                     
-                    system_prompt = SYSTEM_PROMPT.replace("{max_tickers}", str(max_tickers))
-                    user_prompt = f"Here is the active watchlist snapshot:\n\n{snapshot_table}\n\nIMPORTANT: You must output ONLY a valid JSON object. Do NOT output any conversational text or formatting blocks. Your response must begin with {{ and end with }}."
+                    if not raw_results:
+                        logger.warning("[PipelineService] No valid data returned from yfinance screener.")
+                        tickers = ["AAPL"]
+                    else:
+                        # --- SCORING ENGINE ---
+                        scored_results = []
+                        # raw_results format: (t, px, chg, rvol, sma, rsi, src, dsa)
+                        for t, px, chg, rvol, sma, rsi, src, dsa in raw_results:
+                            score = rvol * 10.0
+                            
+                            if "Trending" in src:
+                                score += 15.0
+                                
+                            scored_results.append({
+                                "ticker": t, "price": px, "chg": chg, "rvol": rvol, 
+                                "sma": sma, "rsi": rsi, "src": src, "dsa": dsa, "score": score
+                            })
+                            
+                        # Sort by score descending and take top 20
+                        scored_results.sort(key=lambda x: x["score"], reverse=True)
+                        top_scorers = scored_results[:20]
+                        
+                        logger.info(f"[PipelineService] Scoring Engine top picks: {[s['ticker'] for s in top_scorers]}")
+                        
+                        # Rebuild markdown table for Gatekeeper
+                        md_lines = [
+                            "| Ticker | Score | Source | Days Since Analysis | Price | Change % | Rel Volume | SMA-20 | RSI (14) |",
+                            "|--------|-------|--------|---------------------|-------|----------|------------|--------|----------|"
+                        ]
+                        for s in top_scorers:
+                            sma_rel = ((s["price"] - s["sma"]) / s["sma"]) * 100 if s["sma"] > 0 else 0
+                            md_lines.append(f"| {s['ticker']} | {s['score']:.1f} | {s['src']} | {s['dsa']} | ${s['price']:.2f} | {s['chg']:+.2f}% | {s['rvol']:.2f}x | {sma_rel:+.2f}% | {s['rsi']:.1f} |")
+                            
+                        snapshot_table = "\n".join(md_lines)
+                        # -----------------------
+                    
+                    min_tickers = 5
+                    max_tickers = 15
+                    system_prompt = SYSTEM_PROMPT.replace("{min_tickers}", str(min_tickers)).replace("{max_tickers}", str(max_tickers))
+                    user_prompt = f"Here is the active watchlist snapshot (Top 20):\n\n{snapshot_table}\n\nIMPORTANT: You must output ONLY a valid JSON object. Do NOT output any conversational text or formatting blocks. Your response must begin with {{ and end with }}."
                     
                     from app.utils.text_utils import parse_json_response
                     result = await run_agent(

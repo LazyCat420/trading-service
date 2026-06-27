@@ -250,6 +250,17 @@ class TestFullPipelineMocked:
             "persona_used": "warren_buffett",
             "regime": "DEEP_DISCOUNT",
         }
+        trade_decision = {
+            "action": "BUY",
+            "confidence": 78,
+            "reasoning": "Synthesized decision based on deep discount regime.",
+            "signal_weights": {"quant": 0.1, "fundamental": 0.5, "debate": 0.2, "board": 0.2},
+            "signal_assessments": {"quant": "ok", "fundamental": "strong", "debate": "bullish", "board": "buy"},
+            "risk_flags": [],
+            "stop_loss": 145.5,
+            "take_profit": 165.0,
+            "position_size_pct": 3.0
+        }
 
         # Sequential mock responses for run_agent
         mock_responses = [
@@ -261,6 +272,7 @@ class TestFullPipelineMocked:
             _mock_agent_response(bull_defense),
             _mock_agent_response(regime),
             _mock_agent_response(final_decision),
+            _mock_agent_response(trade_decision),
         ]
         call_idx = {"i": 0}
 

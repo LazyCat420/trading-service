@@ -15,6 +15,7 @@ from app.tools.browser_tools import (
     browser_navigate,
     run_playwright_script,
 )
+from app.tools.locate_anything_tools import locate_anything
 from app.tools.youtube_tools import (
     youtube_test_channel,
 )
@@ -134,6 +135,7 @@ __all__ = [
     "run_local_command",
     "browser_navigate",
     "run_playwright_script",
+    "locate_anything",
     "youtube_test_channel",
     # Phase 2: Pipeline Tools
     "check_hallucination",
