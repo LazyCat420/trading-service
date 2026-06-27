@@ -34,9 +34,17 @@ for schema in native_schemas:
 
 for schema in prism_schemas:
     name = schema.get("name")
-    if name and name not in seen_names:
-        merged_schemas.append(schema)
-        seen_names.add(name)
+    if name:
+        if name.startswith("mcp__lazy-tool-service__"):
+            name = name.replace("mcp__lazy-tool-service__", "")
+            schema["name"] = name
+        elif name.startswith("mcp__"):
+            # Skip tools from other MCP servers
+            continue
+        
+        if name not in seen_names:
+            merged_schemas.append(schema)
+            seen_names.add(name)
 
 # Write to tool_schemas.json in the project root
 out_file = os.path.join(project_root, "tool_schemas.json")
