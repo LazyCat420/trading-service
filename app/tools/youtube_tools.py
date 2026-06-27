@@ -140,7 +140,7 @@ async def youtube_search(query: str, limit: int = 5) -> str:
         payload = {
             "source": "youtube",
             "query": query,
-            "limit": limit,
+            "limit": limit + 3,
             "require_transcript": False,
             "days_back": 0
         }
@@ -151,14 +151,16 @@ async def youtube_search(query: str, limit: int = 5) -> str:
                 items = data.get("items", [])
                 formatted = []
                 for item in items:
-                    formatted.append({
-                        "video_id": item.get("video_id"),
-                        "title": item.get("title"),
-                        "channel": item.get("channel"),
-                        "duration_secs": item.get("duration_secs"),
-                        "url": f"https://www.youtube.com/watch?v={item.get('video_id')}"
-                    })
-                return json.dumps({"status": "success", "results": formatted})
+                    video_id = item.get("video_id")
+                    if video_id and len(video_id) == 11:
+                        formatted.append({
+                            "video_id": video_id,
+                            "title": item.get("title"),
+                            "channel": item.get("channel"),
+                            "duration_secs": item.get("duration_secs"),
+                            "url": f"https://www.youtube.com/watch?v={video_id}"
+                        })
+                return json.dumps({"status": "success", "results": formatted[:limit]})
             else:
                 return json.dumps({"status": "error", "error": f"Scraper service returned status {resp.status_code}: {resp.text}"})
     except Exception as e:
