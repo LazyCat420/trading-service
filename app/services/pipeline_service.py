@@ -101,6 +101,14 @@ class PipelineService:
                         logger.info("[PipelineService] Gatekeeper selected: %s. Rationale: %s", tickers, rationale)
                     else:
                         logger.info("[PipelineService] Gatekeeper chose 0 tickers. Ending cycle early. Rationale: %s", rationale)
+                        PipelineStateDB.append_events(cycle_id, [{
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "phase": "gatekeeper",
+                            "step": "GATEKEEPER_SKIPPED",
+                            "detail": f"Gatekeeper found no compelling setups. {rationale}",
+                            "status": "skipped",
+                            "data": {"rationale": rationale}
+                        }])
                         cls._state.update({"status": "idle", "progress": "Gatekeeper bypassed."})
                         cls.save_state()
                         return {"status": "skipped", "message": "Gatekeeper found no compelling setups"}
@@ -133,6 +141,9 @@ class PipelineService:
                     "phase": phase,
                     "step": step,
                     "detail": detail,
+                    "status": kwargs.pop("status", "running"),
+                    "data": kwargs.pop("data", {}),
+                    "elapsed_ms": kwargs.pop("elapsed_ms", 0),
                 }
                 event.update(kwargs)
                 logger.info(f"[{cycle_id}][{phase}][{step}] {detail}")

@@ -199,8 +199,12 @@ async def run_agent(
         from app.v3.guardrails import ToolLoopDetector
         loop_detector = ToolLoopDetector(max_identical_failures=3)
 
+        tool_call_count = 0
+
         def _on_tool_call(tool_name: str, arguments: dict) -> str | None:
             """Pre-call hook: check if this tool+args combo should be blocked."""
+            nonlocal tool_call_count
+            tool_call_count += 1
             # Check if this exact combo has already been blocked
             check_result = loop_detector.record_call(tool_name, arguments, failed=True)
             if check_result is not None:
@@ -262,9 +266,10 @@ async def run_agent(
             final_text,
             0,  # Token usage not tracked by base SDK yet
             elapsed_ms,
+            tool_call_count + 1,
         )
 
-    content, tokens, elapsed_ms = await _agent_llm_call()
+    content, tokens, elapsed_ms, loops_used = await _agent_llm_call()
 
     if not content or not str(content).strip():
         content = f"Agent failed: empty response from {agent_name}"
@@ -285,5 +290,6 @@ async def run_agent(
         "response": content,
         "tokens_used": tokens,
         "execution_ms": elapsed_ms,
+        "loops_used": loops_used,
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
     }
