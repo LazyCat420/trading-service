@@ -79,6 +79,24 @@ async def run_v3_pipeline(
     # ═══════════════════════════════════════════════════════════════════
     desk = SharedDesk(cycle_id=cycle_id, ticker=ticker)
 
+    # Pre-collect data report in parallel
+    emit(
+        "analyzing", f"v3_precollect_{ticker}",
+        f"📥 {ticker}: Pre-collecting market & news datasets...",
+        status="running",
+    )
+    try:
+        from app.v3.data_report import build_ticker_data_report
+        data_report = await build_ticker_data_report(ticker)
+        emit(
+            "analyzing", f"v3_precollect_ok_{ticker}",
+            f"📥 {ticker}: Market & news pre-collection complete",
+            status="ok",
+        )
+    except Exception as e:
+        logger.error("[V3] Failed to pre-collect data for %s: %s", ticker, e)
+        data_report = f"Failed to pre-collect stock data: {e}"
+
     # Inject cycle metadata
     desk.cycle_metadata = _build_cycle_metadata(
         ticker=ticker,
@@ -87,10 +105,13 @@ async def run_v3_pipeline(
         research_focus=research_focus,
         trigger_type=trigger_type,
     )
+    
+    # Store the pre-collected report
+    desk.cycle_metadata["data_report"] = data_report
 
     emit(
         "analyzing", f"v3_ctx_{ticker}",
-        f"📋 {ticker}: SharedDesk created, cycle metadata injected",
+        f"📋 {ticker}: SharedDesk created, cycle metadata & data report injected",
         status="ok",
     )
 

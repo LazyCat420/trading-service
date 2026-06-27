@@ -95,11 +95,16 @@ async def run_v3_agent(
             f"## Cycle: {cycle_id}\n\n"
         )
 
-        # Add cycle metadata if available
+        # Add cycle metadata & portfolio context if available
         if desk.cycle_metadata:
             portfolio_ctx = desk.cycle_metadata.get("portfolio_context", "")
             if portfolio_ctx:
                 user_prompt += f"## Portfolio Context\n{portfolio_ctx}\n\n"
+                
+            # Inject Pre-Collected Ticker Data Report
+            data_report = desk.cycle_metadata.get("data_report", "")
+            if data_report:
+                user_prompt += f"## Pre-Collected Data Report\n{data_report}\n\n"
 
         if desk_context and desk_context != "No artifacts on desk yet.":
             user_prompt += (
@@ -110,7 +115,9 @@ async def run_v3_agent(
         if tool_whitelist:
             user_prompt += (
                 "You have access to external data tools. "
-                "You MUST call tools to fetch data — no data has been pre-loaded for you.\n"
+                "Core quantitative metrics, news, YouTube, and filings are already provided in the 'Pre-Collected Data Report' section. "
+                "Your job is to act as a data janitor: review the pre-collected data and ONLY use your tools if you spot missing data, corrupted data, or clickbait that needs verification. "
+                "If the data is solid, proceed directly to analysis without calling redundant tools.\n"
                 "Begin your analysis now.\n"
             )
         else:
