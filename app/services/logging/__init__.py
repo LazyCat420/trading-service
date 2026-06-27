@@ -5,7 +5,6 @@ Unified Logging, Auditing, and Self-Improvement Loops package.
 from app.services.logging.cycle_auditor import auditor
 from app.services.logging.unified_logger import setup_db_logger, DbLoggingHandler
 from app.services.logging.tool_logging import log_tool_call
-from app.autoresearch import run_autoresearch
 from app.services.logging.pending_review import (
     get_pending_outliers,
     approve_outlier,
