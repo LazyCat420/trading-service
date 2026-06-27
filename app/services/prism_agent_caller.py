@@ -89,6 +89,9 @@ async def call_prism_agent(
             {"role": "user", "content": "Acknowledged. I am ready to process the quantitative data."},
             {"role": "user", "content": user_message}
         ]
+        from app.v3.guardrails import get_budget_for_role
+        max_iter = get_budget_for_role(agent_id).max_turns
+
         resp = await prism_client.call_agent(
             model=model_override or "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit",
             messages=messages,
@@ -96,7 +99,8 @@ async def call_prism_agent(
             agent_name=agent_id,
             max_tokens=max_tokens,
             temperature=temperature,
-            project=project or settings.PROJECT_NAME
+            project=project or settings.PROJECT_NAME,
+            max_iterations=max_iter,
         )
         
         response_text = resp.text.strip()
