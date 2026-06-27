@@ -93,9 +93,11 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     
                     if cmd_type in ("START_CYCLE", "START_V3_CYCLE"):
                         from app.services.pipeline_service import PipelineService
+                        kwargs = {k: v for k, v in payload.items() if k not in ("tickers", "cycle_id")}
                         result = await PipelineService.start_cycle(
                             tickers=payload.get("tickers", []),
                             cycle_id=payload.get("cycle_id"),
+                            **kwargs
                         )
                     elif cmd_type == "STOP_CYCLE":
                         from app.services.pipeline_service import PipelineService
