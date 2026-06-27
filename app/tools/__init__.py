@@ -18,6 +18,7 @@ from app.tools.browser_tools import (
 from app.tools.youtube_tools import (
     youtube_test_channel,
 )
+from app.tools.vllm_vision_tools import vllm_vision_analyze
 
 # Phase 2: Pipeline Skills as Tools
 from app.tools.pipeline_tools import (
@@ -135,6 +136,7 @@ __all__ = [
     "browser_navigate",
     "run_playwright_script",
     "youtube_test_channel",
+    "vllm_vision_analyze",
     # Phase 2: Pipeline Tools
     "check_hallucination",
     # Phase 3: Coordination Tools
