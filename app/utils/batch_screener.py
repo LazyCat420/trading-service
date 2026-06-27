@@ -70,11 +70,7 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
                     results.append((t, current_price, change_pct, rel_vol, sma20, rsi))
             except Exception as e:
                 logger.warning(f"[batch_screener] Error parsing {t}: {e}")
-                            rsi = float((100 - (100 / (1 + rs))).iloc[-1])
-                            
-                            results.append((t, current_price, change_pct, rel_vol, sma20, rsi))
-                except Exception as e:
-                    logger.warning(f"[batch_screener] Error parsing {t}: {e}")
+
 
         if not results:
             return "No valid data parsed."
