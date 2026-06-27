@@ -239,17 +239,24 @@ async def run_agent(
                 agent.add_tool(t)
 
         session = ConversationSession(session_id=parent_agent_session_id or f"sess_{int(time.time())}")
-        harness = AgentHarness(
-            agent=agent,
-            session=session,
-            max_iterations=max_turns,
-            on_tool_call=_on_tool_call if enable_tools else None,
-            on_tool_result=_on_tool_result if enable_tools else None,
-        )
+        
+        from app.agents.inbox import inbox_manager
+        inbox_manager.register_instance(session.session_id, agent_name, ticker)
+        
+        try:
+            harness = AgentHarness(
+                agent=agent,
+                session=session,
+                max_iterations=max_turns,
+                on_tool_call=_on_tool_call if enable_tools else None,
+                on_tool_result=_on_tool_result if enable_tools else None,
+            )
 
-        t0 = time.time()
-        final_text = await harness.run(full_prompt)
-        elapsed_ms = int((time.time() - t0) * 1000)
+            t0 = time.time()
+            final_text = await harness.run(full_prompt)
+            elapsed_ms = int((time.time() - t0) * 1000)
+        finally:
+            inbox_manager.unregister_instance(session.session_id)
 
         return (
             final_text,

@@ -101,12 +101,6 @@ class PipelineService:
                         logger.info("[PipelineService] Gatekeeper selected: %s. Rationale: %s", tickers, rationale)
                     else:
                         logger.info("[PipelineService] Gatekeeper chose 0 tickers. Ending cycle early. Rationale: %s", rationale)
-                        await cls._publish_event(
-                            cycle_id,
-                            "GATEKEEPER_SKIPPED",
-                            "info",
-                            f"Gatekeeper chose 0 tickers. Ending cycle early. Rationale: {rationale}"
-                        )
                         cls._state.update({"status": "idle", "progress": "Gatekeeper bypassed."})
                         cls.save_state()
                         return {"status": "skipped", "message": "Gatekeeper found no compelling setups"}
@@ -139,10 +133,9 @@ class PipelineService:
                     "phase": phase,
                     "step": step,
                     "detail": detail,
-                    "status": kwargs.get("status", "ok"),
-                    "data": kwargs.get("data", {}),
-                    "elapsed_ms": kwargs.get("elapsed_ms", 0),
                 }
+                event.update(kwargs)
+                logger.info(f"[{cycle_id}][{phase}][{step}] {detail}")
                 PipelineStateDB.append_events(cycle_id, [event])
 
             from app.services.adaptive_concurrency import concurrency_controller

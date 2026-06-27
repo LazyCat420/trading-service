@@ -592,6 +592,8 @@ def get_active_agents():
         from app.agents.inbox import inbox_manager
         return {"instances": inbox_manager.get_active_instances()}
     except Exception as e:
+        import traceback
+        logger.error(f"[vllm_router] /agents/active failed: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
