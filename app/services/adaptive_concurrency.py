@@ -272,6 +272,10 @@ class AdaptiveConcurrencyController:
             self._label_active[label] = self._label_active.get(label, 0) + 1
             try:
                 results[idx] = await coro
+            except asyncio.CancelledError:
+                # Do NOT swallow CancelledError even if return_exceptions is True.
+                # If we swallow it, the outer orchestrator doesn't abort correctly.
+                raise
             except Exception as e:
                 if return_exceptions:
                     results[idx] = e

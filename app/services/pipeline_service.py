@@ -38,10 +38,13 @@ class PipelineService:
         if cls._cycle_task and not cls._cycle_task.done():
             return {"status": "deduplicated", "message": "Cycle task still running"}
 
-        # Reset the VLLM client kill switch so requests can flow on the new cycle (including the gatekeeper)
+        # Reset the SDK kill switch so requests can flow on the new cycle
         try:
-            from app.services.prism_agent_caller import llm
-            llm.reset_kill_switch()
+            from lazycat.llm import PrismClient
+            # Assuming trading-service uses a singleton prism_client from somewhere
+            # Let's import it from prism_agent_caller
+            from app.services.prism_agent_caller import prism_client
+            prism_client.reset_kill_switch()
         except Exception as e:
             logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
 
@@ -218,7 +221,7 @@ class PipelineService:
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
         except asyncio.CancelledError:
-            logger.info("[PipelineService] V3 Cycle CANCELLED — killing active VLLM connections")
+            logger.info("[PipelineService] V3 Cycle CANCELLED — pipeline aborted")
 
             cls._state.update({
                 "status": "stopped",
@@ -243,6 +246,14 @@ class PipelineService:
         cls._stop_requested = True
         cls._state.update({"status": "stopping", "progress": "Stopping V3 cycle..."})
         cls.save_state()
+        
+        # Arm kill switch to instantly abort any running HTTP streams
+        try:
+            from app.services.prism_agent_caller import prism_client
+            prism_client.arm_kill_switch()
+        except Exception as e:
+            logger.error("[PipelineService] Failed to arm kill switch: %s", e)
+            
         if cls._cycle_task and not cls._cycle_task.done():
             cls._cycle_task.cancel()
         return {"status": "stopping"}

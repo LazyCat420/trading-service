@@ -80,7 +80,7 @@ async def call_prism_agent(
     try:
         messages = [{"role": "user", "content": user_message}]
         resp = await prism_client.call_agent(
-            model="cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit",
+            model=model_override or "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit",
             messages=messages,
             system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
             agent_name=agent_id,

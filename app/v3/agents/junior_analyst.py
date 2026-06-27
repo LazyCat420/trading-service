@@ -9,7 +9,6 @@ on the SharedDesk — it builds the initial picture from scratch.
 """
 
 AGENT_NAME = "v3_junior_analyst"
-MODEL_OVERRIDE = "google/gemma-4-26B-A4B-it"
 
 TOOL_WHITELIST = [
     "get_finnhub_news",
