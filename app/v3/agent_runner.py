@@ -130,6 +130,8 @@ async def run_v3_agent(
         # - Resilient retries
         from app.agents.base_agent import run_agent
 
+        model_override = getattr(agent_module, "MODEL_OVERRIDE", None)
+
         result = await asyncio.wait_for(
             run_agent(
                 agent_name=agent_name,
@@ -140,6 +142,7 @@ async def run_v3_agent(
                 user_prompt=user_prompt,
                 max_tokens=8192,
                 enable_tools=bool(tool_whitelist),
+                model_override=model_override,
             ),
             timeout=timeout_seconds,
         )

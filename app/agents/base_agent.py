@@ -112,6 +112,7 @@ async def run_agent(
     response_format: dict | None = None,
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
+    model_override: str | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -232,12 +233,16 @@ async def run_agent(
         from app.services.prism_agent_registry import resolve_agent_id
         prism_agent_id = resolve_agent_id(agent_name)
         
-        agent = BaseAgent(
-            name=prism_agent_id, 
-            system_prompt=system_prompt,
-            llm_client=prism_client,
-            project=settings.PROJECT_NAME
-        )
+        kwargs = {
+            "name": prism_agent_id, 
+            "system_prompt": system_prompt,
+            "llm_client": prism_client,
+            "project": settings.PROJECT_NAME
+        }
+        if model_override:
+            kwargs["model"] = model_override
+            
+        agent = BaseAgent(**kwargs)
         if enable_tools and agent_tools:
             for t in agent_tools:
                 agent.add_tool(t)
