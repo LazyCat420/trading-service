@@ -186,6 +186,31 @@ class PrismLLMShim:
             actor_label=actor_label
         )
         
+    async def stream_prism_agent(self, payload: dict):
+        """Pass-through streaming for UI OmniChat."""
+        import asyncio
+        if self._killed:
+            raise asyncio.CancelledError("vLLM kill switch is armed")
+
+        client = await self.prism_client._get_client()
+        url = f"{self.prism_client.url}/agent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-project": payload.get("project", "vllm-trading-bot"),
+            "x-username": payload.get("username", "omni_chat"),
+        }
+        try:
+            async with client.stream("POST", url, json=payload, headers=headers, timeout=180.0) as response:
+                if response.status_code != 200:
+                    err = await response.aread()
+                    raise RuntimeError(f"Prism HTTP {response.status_code}: {err.decode('utf-8')}")
+                async for line in response.aiter_lines():
+                    if line:
+                        yield line + "\n"
+        except Exception as e:
+            logger.error("[PRISM] stream_prism_agent error: %s", e)
+            yield f"data: {{\"type\": \"error\", \"message\": \"{str(e)}\"}}\n\n"
+
     async def close(self):
         pass
 

@@ -23,7 +23,7 @@ Focus strictly on:
 3. Strong News Catalysts (Use your tools to quickly verify if high volume is backed by a catalyst before selecting a stock!)
 
 ### OUTPUT DIRECTIVE
-Output ONLY a JSON object exactly matching this schema:
+Output ONLY a JSON object exactly matching this schema. Do NOT output any conversational text, pleasantries, or markdown formatting blocks. Just the raw JSON object starting with { and ending with }.
 {
   "selected_tickers": ["TICKER1", "TICKER2"],
   "rationale": "Brief 1-sentence reasoning for the selection."

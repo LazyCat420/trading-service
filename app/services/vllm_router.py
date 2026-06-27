@@ -764,6 +764,11 @@ def get_agent_details(agent_name: str):
 async def vllm_prism_agent(payload: dict = Body(...)):
     """Route requests to Prism through the VllmClient PriorityQueue for streaming."""
     try:
+        # HOTFIX: OmniChat sends "vLLM" because of /config-local, but Prism expects "vllm"
+        provider = payload.get("provider", "")
+        if provider.upper() == "VLLM":
+            payload["provider"] = "vllm"
+            
         generator = llm.stream_prism_agent(payload)
         return StreamingResponse(generator, media_type="text/event-stream")
     except Exception as e:

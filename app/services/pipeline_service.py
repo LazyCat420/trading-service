@@ -85,7 +85,7 @@ class PipelineService:
                     snapshot_table = await get_watchlist_snapshots(active_tickers)
                     
                     system_prompt = SYSTEM_PROMPT.replace("{max_tickers}", str(max_tickers))
-                    user_prompt = f"Here is the active watchlist snapshot:\n\n{snapshot_table}"
+                    user_prompt = f"Here is the active watchlist snapshot:\n\n{snapshot_table}\n\nIMPORTANT: You must output ONLY a valid JSON object. Do NOT output any conversational text or formatting blocks. Your response must begin with {{ and end with }}."
                     
                     from app.utils.text_utils import parse_json_response
                     result = await run_agent(
@@ -99,7 +99,9 @@ class PipelineService:
                     )
                     
                     final_text = result.get("response", "{}")
+                    logger.info("[PipelineService] Raw gatekeeper response: %s", final_text)
                     parsed = parse_json_response(final_text)
+                    logger.info("[PipelineService] Parsed gatekeeper JSON: %s", parsed)
                     if not parsed:
                         parsed = {}
                         
@@ -216,6 +218,8 @@ class PipelineService:
             tasks = [_process_ticker(i, t) for i, t in enumerate(tickers)]
             await concurrency_controller.gather(tasks, label="v3_pipeline")
 
+            if cls._stop_requested:
+                raise asyncio.CancelledError("Cycle stopped by user")
 
             from app.v3.debate_coordinator import run_battle_royale
             await run_battle_royale(cycle_id=cycle_id, bot_id="cycle-backend")
