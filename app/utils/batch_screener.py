@@ -36,21 +36,31 @@ async def get_watchlist_snapshots(tickers: list[str]) -> str:
 
         results = []
         
-        # If only one ticker is requested, yfinance doesn't use the MultiIndex column
+        # If only one ticker is requested, yfinance might still use a MultiIndex if group_by='ticker' isn't explicitly false,
+        # but latest versions always use it. We squash or extract properly.
         if len(tickers) == 1:
             t = tickers[0]
             try:
-                if len(df) >= 20:
-                    current_price = float(df['Close'].iloc[-1])
-                    prev_price = float(df['Close'].iloc[-2])
+                # check if it's a multiindex
+                if isinstance(df.columns, pd.MultiIndex):
+                    if t in df.columns.levels[1]:
+                        ticker_df = df.xs(t, level=1, axis=1)
+                    else:
+                        ticker_df = df
+                else:
+                    ticker_df = df
+                    
+                if len(ticker_df) >= 20:
+                    current_price = float(ticker_df['Close'].iloc[-1])
+                    prev_price = float(ticker_df['Close'].iloc[-2])
                     change_pct = ((current_price - prev_price) / prev_price) * 100
                     
-                    vol_today = float(df['Volume'].iloc[-1])
-                    avg_vol = float(df['Volume'].mean())
+                    vol_today = float(ticker_df['Volume'].iloc[-1])
+                    avg_vol = float(ticker_df['Volume'].mean())
                     rel_vol = vol_today / avg_vol if avg_vol > 0 else 0
                     
-                    sma20 = float(df['Close'].rolling(window=20).mean().iloc[-1])
-                    delta = df['Close'].diff()
+                    sma20 = float(ticker_df['Close'].rolling(window=20).mean().iloc[-1])
+                    delta = ticker_df['Close'].diff()
                     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
                     rs = gain / loss
