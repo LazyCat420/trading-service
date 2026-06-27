@@ -42,7 +42,14 @@ async def benchmark_endpoint(name: str, url: str, model_id: str, prompt: str):
                 return
                 
             data = resp.json()
-            response_text = data["choices"][0]["message"]["content"].strip()
+            message = data["choices"][0]["message"]
+            response_text = message.get("content")
+            
+            if response_text is None:
+                print(f"❌ {name} returned null content. Full response: {data}")
+                return
+                
+            response_text = response_text.strip()
             
             # Estimate tokens
             tokens = len(response_text) // 4
