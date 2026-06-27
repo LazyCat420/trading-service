@@ -48,17 +48,23 @@ class PipelineService:
         except Exception as e:
             logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
 
-        cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
+        cycle_id = f"cycle-v3-{int(time.time())}"
         
-        # ── Dynamic Watchlist Pre-Filter (Gatekeeper) ──
-        if not tickers or kwargs.get("dynamic_selection_mode") or len(tickers) > 5:
-            max_tickers = kwargs.get("max_tickers") or 5
-            cls._state.update({
-                "status": "starting",
-                "progress": f"Screening watchlist for top {max_tickers} setups...",
-            })
-            cls.save_state()
-            
+        cls._state.update({
+            "status": "starting",
+            "cycle_id": cycle_id,
+            "progress": "Screening watchlist for top setups..."
+        })
+        cls.save_state()
+        cls._stop_requested = False
+
+        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers, max_tickers))
+        return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
+
+    @classmethod
+    async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int = 5):
+        try:
+            # 1. Run Gatekeeper
             try:
                 from app.trading.watchlist import get_active
                 from app.utils.batch_screener import get_watchlist_snapshots
@@ -88,7 +94,7 @@ class PipelineService:
                         bot_id="cycle-backend",
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
-                        enable_tools=True,
+                        enable_tools=False, # DISABLED tools so it strictly outputs JSON!
                     )
                     
                     final_text = result.get("response", "{}")
@@ -114,30 +120,28 @@ class PipelineService:
                         }])
                         cls._state.update({"status": "idle", "progress": "Gatekeeper bypassed."})
                         cls.save_state()
-                        return {"status": "skipped", "message": "Gatekeeper found no compelling setups"}
+                        return
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error("[PipelineService] Portfolio screener failed, falling back to AAPL: %s", e)
                 tickers = ["AAPL"]
 
-        cls._state.update({
-            "status": "running",
-            "cycle_id": cycle_id,
-            "tickers": tickers,
-            "progress": f"Starting V3 cycle for {len(tickers)} tickers",
-            "phase": "running",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "finished_at": None,
-            "error": None
-        })
-        cls.save_state()
-        cls._stop_requested = False
+            # Set status to running now that gatekeeper is done
+            cls._state.update({
+                "status": "running",
+                "tickers": tickers,
+                "progress": f"Starting V3 cycle for {len(tickers)} tickers",
+                "phase": "running",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": None,
+                "error": None
+            })
+            cls.save_state()
 
-        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers))
-        return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
+            if cls._stop_requested:
+                raise asyncio.CancelledError()
 
-    @classmethod
-    async def _run_all_v3(cls, cycle_id: str, tickers: list[str]):
-        try:
             def emit_cb(phase: str, step: str, detail: str, **kwargs):
                 event = {
                     "ts": datetime.now(timezone.utc).isoformat(),
