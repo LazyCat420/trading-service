@@ -84,11 +84,18 @@ AGENT_ROLE_BUDGETS: dict[str, dict[str, int]] = {
 
 def get_budget_for_role(role: str) -> V3AgentBudget:
     """Create a V3AgentBudget with role-specific limits."""
-    config = AGENT_ROLE_BUDGETS.get(role, {"max_turns": 7, "max_tool_calls": 10})
+    cleaned = role.lower().strip()
+    if cleaned.startswith("custom_v3_"):
+        cleaned = cleaned[10:]
+    elif cleaned.startswith("custom_"):
+        cleaned = cleaned[7:]
+    
+    config = AGENT_ROLE_BUDGETS.get(cleaned, {"max_turns": 7, "max_tool_calls": 10})
     return V3AgentBudget(
         max_turns=config["max_turns"],
         max_tool_calls=config["max_tool_calls"],
     )
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════

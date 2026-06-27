@@ -83,10 +83,24 @@ class TestBudgetForRole:
         assert budget.max_tool_calls == 12
         assert budget.max_turns == 7
 
+    def test_prefix_cleaning_and_case_insensitivity(self):
+        budget_quant = get_budget_for_role("CUSTOM_V3_QUANT_ANALYST")
+        assert budget_quant.max_turns == 7
+        assert budget_quant.max_tool_calls == 12
+
+        budget_junior = get_budget_for_role("custom_junior_analyst")
+        assert budget_junior.max_turns == 5
+        assert budget_junior.max_tool_calls == 8
+
+        budget_bear = get_budget_for_role("  CUSTOM_V3_BEAR_AGENT  ")
+        assert budget_bear.max_turns == 3
+        assert budget_bear.max_tool_calls == 0
+
     def test_unknown_role_defaults(self):
         budget = get_budget_for_role("unknown_agent")
         assert budget.max_turns == 7
         assert budget.max_tool_calls == 10
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
