@@ -115,8 +115,10 @@ async def call_prism_agent(
         max_iter = get_budget_for_role(agent_id).max_turns
 
         default_model = resolve_default_model_for_agent(fallback_agent_name or agent_id)
+        model = model_override or default_model
+        provider = "vllm-2" if model == "google/gemma-4-26B-A4B-it" else "vllm"
         resp = await prism_client.call_agent(
-            model=model_override or default_model,
+            model=model,
             messages=messages,
             system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
             agent_name=agent_id,
@@ -124,9 +126,13 @@ async def call_prism_agent(
             temperature=temperature,
             project=project or settings.PROJECT_NAME,
             max_iterations=max_iter,
+            provider=provider,
         )
         
-        response_text = resp.text.strip()
+        try:
+            response_text = resp.json().get("text", "").strip()
+        except Exception:
+            response_text = resp.text.strip()
         elapsed_ms = int((time.monotonic() - start) * 1000)
         tokens = len(response_text) // 4
         
@@ -178,6 +184,7 @@ class PrismLLMShim:
     def __init__(self):
         self._killed = False
         self.prism_client = prism_client
+        self.model = "google/gemma-4-26B-A4B-it"
         
     def reset_kill_switch(self):
         self._killed = False

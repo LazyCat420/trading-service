@@ -313,9 +313,8 @@ async def evaluate_decision(decision_id: str) -> bool:
                             f"DeepEval Faithfulness Error: {type(eval_err).__name__}: {eval_err}"
                         )
                         if failure_reason == FailureReason.NONE:
-                            failure_reason = FailureReason.DEEPEVAL_ERROR
-
-            # ── Answer Relevancy check (with retry + semaphore) ──
+                           # ── Answer Relevancy check (with retry + semaphore) ──
+            relevancy_succeeded = False
             for attempt in range(DEEPEVAL_MAX_RETRIES):
                 try:
                     async with _deepeval_semaphore:
@@ -329,6 +328,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                         relevancy.score or 0,
                         (relevancy.reason or "")[:200],
                     )
+                    relevancy_succeeded = True
                     if not relevancy.is_successful():
                         reasoning = relevancy.reason or str(relevancy.score)
                         red_cards.append(
@@ -388,7 +388,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                     # is covered by reasoning" — this is always near zero because the
                     # context is 10-25 KB while reasoning is ~500-1000 chars.
                     # Precision answers the right question: "How much of what the bot
-                    # said actually came from the context%s" — i.e., is it grounded%s
+                    # said actually came from the context?" — i.e., is it grounded?
                     rouge_l = round(rouge_scores["rougeL"].precision, 3)
                 else:
                     rouge_l = 0.0
@@ -470,6 +470,19 @@ async def evaluate_decision(decision_id: str) -> bool:
             evidence = oracle_results["checklist"].copy()
             if failure_reason != FailureReason.NONE:
                 evidence["failure_reason"] = failure_reason.value
+
+            evidence["deepeval_scorecard"] = {
+                "faithfulness": {
+                    "score": faithfulness.score if faith_succeeded else None,
+                    "reason": faithfulness.reason if faith_succeeded else None,
+                    "passed": faithfulness.is_successful() if faith_succeeded else False
+                },
+                "relevancy": {
+                    "score": relevancy.score if relevancy_succeeded else None,
+                    "reason": relevancy.reason if relevancy_succeeded else None,
+                    "passed": relevancy.is_successful() if relevancy_succeeded else False
+                }
+            }
 
             evidence_json = json.dumps(evidence)
             red_cards_json = json.dumps(red_cards)
