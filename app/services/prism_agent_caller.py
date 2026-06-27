@@ -34,6 +34,8 @@ async def call_prism_agent(
     actor_label: str | None = None,
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
+    model_override: str | None = None,
+    project: str | None = None,
 ) -> tuple[str, int, int]:
     """Route an LLM call through Prism SDK."""
     start = time.monotonic()
@@ -78,7 +80,15 @@ async def call_prism_agent(
         pass
     
     try:
-        messages = [{"role": "user", "content": user_message}]
+        # Prepend system prompt directly to messages list for OpenAI/vLLM compatibility.
+        # We interleave a dummy user message between our system prompt and the actual user message.
+        # This forces prism-service's vLLM patch to rewrite the injected system context block
+        # to a user message, maintaining exactly one leading system message for Qwen.
+        messages = [
+            {"role": "system", "content": FIRM_CONTEXT + (fallback_system_prompt or "")},
+            {"role": "user", "content": "Acknowledged. I am ready to process the quantitative data."},
+            {"role": "user", "content": user_message}
+        ]
         resp = await prism_client.call_agent(
             model=model_override or "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit",
             messages=messages,
@@ -86,7 +96,7 @@ async def call_prism_agent(
             agent_name=agent_id,
             max_tokens=max_tokens,
             temperature=temperature,
-            project=settings.PROJECT_NAME
+            project=project or settings.PROJECT_NAME
         )
         
         response_text = resp.text.strip()
@@ -183,7 +193,8 @@ class PrismLLMShim:
             ticker=ticker,
             cycle_id=cycle_id,
             bot_id=bot_id,
-            actor_label=actor_label
+            actor_label=actor_label,
+            model_override=model_override,
         )
         
     async def stream_prism_agent(self, payload: dict):
