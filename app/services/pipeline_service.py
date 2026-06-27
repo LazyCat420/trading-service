@@ -48,12 +48,13 @@ class PipelineService:
         except Exception as e:
             logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
 
-        cycle_id = f"cycle-v3-{int(time.time())}"
+        cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
+        max_tickers = kwargs.get("max_tickers") or 5
         
         cls._state.update({
             "status": "starting",
             "cycle_id": cycle_id,
-            "progress": "Screening watchlist for top setups..."
+            "progress": f"Screening watchlist for top {max_tickers} setups..."
         })
         cls.save_state()
         cls._stop_requested = False
