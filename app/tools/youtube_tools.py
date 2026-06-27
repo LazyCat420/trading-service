@@ -110,13 +110,25 @@ async def youtube_test_channel(handle: str) -> str:
 
 @registry.register(
     name="youtube_search",
-    description="Search YouTube for videos matching a query. Returns a list of video objects (video_id, title, channel, duration_secs, url). Use this to find correct video IDs before adding youtube player widgets.",
+    description="Search YouTube for videos matching a query, or get latest videos from specific channel(s). Returns a list of video objects (video_id, title, channel, duration_secs, url, published_at).",
     parameters={
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "The search query (e.g. 'Bloomberg News Live').",
+                "description": "The search query (e.g. 'Bloomberg News Live'). Optional if channels is provided.",
+            },
+            "channels": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "Optional list of YouTube channel handles or IDs (e.g. ['@ThePrimeagen']) to fetch recent videos from directly.",
+            },
+            "sort": {
+                "type": "string",
+                "enum": ["relevance", "date"],
+                "description": "Optional sort order for search: 'relevance' (default) or 'date' (to get latest videos).",
             },
             "limit": {
                 "type": "integer",
@@ -125,41 +137,75 @@ async def youtube_test_channel(handle: str) -> str:
                 "maximum": 20,
             }
         },
-        "required": ["query"],
     },
     tier=0,
     source="local",
 )
-async def youtube_search(query: str, limit: int = 5) -> str:
-    """Search YouTube using scraper-service."""
+async def youtube_search(query: str = None, channels: list[str] = None, sort: str = None, limit: int = 5) -> str:
+    """Search YouTube or fetch channel videos using scraper-service."""
     import os
     import httpx
+
+    if not query and not channels:
+        return json.dumps({"status": "error", "error": "Either 'query' or 'channels' must be provided."})
+
     scraper_url = os.getenv("SCRAPER_SERVICE_URL", "http://10.0.0.16:8001")
-    logger.info(f"[YouTubeTools] Searching YouTube for '{query}' via scraper-service at {scraper_url}")
+
+    # Auto-detect "latest" search queries
+    is_latest_query = False
+    if query:
+        q_lower = query.lower()
+        if any(w in q_lower for w in ["latest", "recent", "newest", "new"]):
+            is_latest_query = True
+            if not sort:
+                sort = "date"
+
+    logger.info(f"[YouTubeTools] Searching YouTube (query='{query}', channels={channels}, sort='{sort}') via scraper-service at {scraper_url}")
+
     try:
         payload = {
             "source": "youtube",
-            "query": query,
-            "limit": limit + 3,
+            "limit": limit + 5,
             "require_transcript": False,
             "days_back": 0
         }
+
+        if channels:
+            payload["channels"] = channels
+        else:
+            payload["query"] = query
+            if sort:
+                payload["sort"] = sort
+
         async with httpx.AsyncClient() as client:
             resp = await client.post(f"{scraper_url}/collect", json=payload, timeout=25.0)
             if resp.status_code == 200:
                 data = resp.json()
                 items = data.get("items", [])
                 formatted = []
+
                 for item in items:
                     video_id = item.get("video_id")
                     if video_id and len(video_id) == 11:
+                        published_at = item.get("published_at")
                         formatted.append({
                             "video_id": video_id,
                             "title": item.get("title"),
                             "channel": item.get("channel"),
                             "duration_secs": item.get("duration_secs"),
-                            "url": f"https://www.youtube.com/watch?v={video_id}"
+                            "url": f"https://www.youtube.com/watch?v={video_id}",
+                            "published_at": published_at
                         })
+
+                # If sorting by date is requested or implied, perform Python-side sort to be absolutely sure
+                if sort == "date" or is_latest_query or channels:
+                    def get_pub_date(x):
+                        p = x.get("published_at")
+                        if not p:
+                            return ""
+                        return p
+                    formatted.sort(key=get_pub_date, reverse=True)
+
                 return json.dumps({"status": "success", "results": formatted[:limit]})
             else:
                 return json.dumps({"status": "error", "error": f"Scraper service returned status {resp.status_code}: {resp.text}"})
