@@ -63,6 +63,12 @@ You MUST output valid JSON matching this schema:
 }
 
 IMPORTANT: The 'summary' field is what downstream analysts will read.
-Make it information-dense and specific. No filler."""
+Make it information-dense and specific. No filler.
+
+CRITICAL OUTPUT DIRECTIVE:
+You MUST respond ONLY with a raw JSON object matching the schema above.
+Do NOT include any conversational introduction, summary takeaways, preambles, or markdown headings.
+Do NOT wrap the JSON response in markdown code blocks (do NOT use ```json).
+Your response MUST start with '{' and end with '}'."""
 
 ARTIFACT_TYPE = "desk_note"

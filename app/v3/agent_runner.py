@@ -119,6 +119,17 @@ async def run_v3_agent(
                 "Begin your analysis now.\n"
             )
 
+        # Force JSON response format reminder in the conversation history
+        user_prompt += (
+            "\n"
+            "## OUTPUT DIRECTIVE REMINDER\n"
+            f"When you generate your final response containing your analysis report (i.e. when you do NOT call any tools), "
+            f"you MUST output ONLY a valid JSON object matching the `{artifact_type}` schema.\n"
+            f"Do NOT include any conversational intro/outro, preambles, summary comments, or markdown headings.\n"
+            f"Do NOT wrap the JSON in markdown code blocks (do NOT use ```json).\n"
+            f"Your entire response MUST start with '{{' and end with '}}'.\n"
+        )
+
         # Get role-specific budget (informational — run_agent uses its own budget)
         budget = get_budget_for_role(agent_name)
 

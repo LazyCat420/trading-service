@@ -87,6 +87,12 @@ You MUST output valid JSON matching this schema:
     "position_sizing_note": "Recommendation based on risk",
     "stop_loss_suggestion": 145.50,
     "data_gaps": ["Estimate: description if data was approximated"]
-}"""
+}
+
+CRITICAL OUTPUT DIRECTIVE:
+You MUST respond ONLY with a raw JSON object matching the schema above.
+Do NOT include any conversational introduction, summary takeaways, preambles, or markdown headings.
+Do NOT wrap the JSON response in markdown code blocks (do NOT use ```json).
+Your response MUST start with '{' and end with '}'."""
 
 ARTIFACT_TYPE = "quant_report"

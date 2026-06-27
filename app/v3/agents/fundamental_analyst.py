@@ -81,6 +81,12 @@ You MUST output valid JSON matching this schema:
     "data_gaps": ["DataGap: description of what is missing"],
     "catalysts": ["Specific upcoming catalysts"],
     "risks": ["Specific risks identified"]
-}"""
+}
+
+CRITICAL OUTPUT DIRECTIVE:
+You MUST respond ONLY with a raw JSON object matching the schema above.
+Do NOT include any conversational introduction, summary takeaways, preambles, or markdown headings.
+Do NOT wrap the JSON response in markdown code blocks (do NOT use ```json).
+Your response MUST start with '{' and end with '}'."""
 
 ARTIFACT_TYPE = "fundamental_report"
