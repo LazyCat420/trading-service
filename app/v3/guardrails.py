@@ -72,9 +72,9 @@ class V3AgentBudget:
 
 # Default budgets per agent role
 AGENT_ROLE_BUDGETS: dict[str, dict[str, int]] = {
-    "junior_analyst": {"max_turns": 5, "max_tool_calls": 8},
-    "fundamental_analyst": {"max_turns": 7, "max_tool_calls": 12},
-    "quant_analyst": {"max_turns": 7, "max_tool_calls": 12},
+    "junior_analyst": {"max_turns": 10, "max_tool_calls": 15},
+    "fundamental_analyst": {"max_turns": 12, "max_tool_calls": 20},
+    "quant_analyst": {"max_turns": 12, "max_tool_calls": 20},
     "bull_agent": {"max_turns": 3, "max_tool_calls": 0},  # No tools — pure reasoning
     "bear_agent": {"max_turns": 3, "max_tool_calls": 0},  # No tools — pure reasoning
     "regime_engine": {"max_turns": 5, "max_tool_calls": 8},
