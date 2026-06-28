@@ -61,14 +61,14 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
         # Only run the fast, dynamic scrapers
         tasks = [
             run_with_telemetry("yfinance_price", collect_price_history(ticker, period="6mo")),
-            run_with_telemetry("finnhub_news", collect_finnhub_news(ticker))
+            run_with_telemetry("finnhub_news", collect_finnhub_news(ticker, emit_cb=_emit))
         ]
     else:
         # Run full scrape
         tasks = [
             run_with_telemetry("yfinance_price", collect_price_history(ticker, period="6mo")),
             run_with_telemetry("yfinance_fund", collect_fundamentals(ticker)),
-            run_with_telemetry("finnhub_news", collect_finnhub_news(ticker)),
+            run_with_telemetry("finnhub_news", collect_finnhub_news(ticker, emit_cb=_emit)),
             run_with_telemetry("reddit", collect_reddit(ticker)),
             run_with_telemetry("youtube", collect_youtube(ticker))
         ]

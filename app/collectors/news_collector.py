@@ -262,7 +262,22 @@ def _get_article_id(title: str, ticker: str | None) -> str:
     return hashlib.sha256(f"{norm}_{ticker or 'NONE'}".encode()).hexdigest()
 
 
-async def collect_feed(feed_name: str, feed_url: str) -> int:
+def safe_emit(emit_cb, step: str, detail: str, status: str = "ok"):
+    if not emit_cb:
+        return
+    try:
+        import inspect
+        sig = inspect.signature(emit_cb)
+        params = list(sig.parameters.values())
+        if len(params) >= 4:
+            emit_cb("discovery", step, detail, status=status)
+        else:
+            emit_cb(step, detail, status)
+    except Exception:
+        pass
+
+
+async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None) -> int:
     """
     Fetch and parse a single RSS feed via scraper-service, write articles to news_articles.
     Returns number of new articles written.
@@ -363,6 +378,12 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                             ],
                         )
                         count += 1
+                    safe_emit(
+                        emit_cb,
+                        "news_scraped",
+                        f"📰 {publisher}: '{title[:80]}' -> Extracted: {list(detected_tickers)}",
+                        status="ok"
+                    )
                 else:
                     # No specific ticker detected -- store as general market news
                     article_id = _get_article_id(title, None)
@@ -385,13 +406,19 @@ async def collect_feed(feed_name: str, feed_url: str) -> int:
                         ],
                     )
                     count += 1
+                    safe_emit(
+                        emit_cb,
+                        "news_scraped",
+                        f"📰 {publisher}: '{title[:80]}' -> Extracted: General",
+                        status="ok"
+                    )
     except Exception as e:
         logger.error(f"[news] {feed_name} FAILED: {type(e).__name__}: {e}", exc_info=True)
 
     return count
 
 
-async def collect_all(limit_feeds: int | None = None) -> int:
+async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> int:
     """Fetch all RSS feeds. Returns total articles written."""
     total = 0
     failed = 0
@@ -401,7 +428,7 @@ async def collect_all(limit_feeds: int | None = None) -> int:
 
     for name, url in feeds_to_check:
         try:
-            count = await collect_feed(name, url)
+            count = await collect_feed(name, url, emit_cb=emit_cb)
             if count > 0:
                 logger.info(f"[news] {name}: {count} articles")
             total += count
@@ -440,7 +467,7 @@ async def collect_for_ticker(ticker: str, since: datetime.datetime | None = None
 
 
 async def collect_finnhub_news(
-    ticker: str, days: int = 7, max_articles: int = 15, since: datetime.datetime | None = None
+    ticker: str, days: int = 7, max_articles: int = 15, since: datetime.datetime | None = None, emit_cb: any = None
 ) -> int:
     """Fetch per-ticker news from Finnhub API."""
     import os
@@ -553,6 +580,12 @@ async def collect_finnhub_news(
                     "summary": summary,
                     "content_hash": content_hash,
                 })
+            safe_emit(
+                emit_cb,
+                "news_scraped",
+                f"📰 Finnhub: '{headline[:80]}' -> Extracted: {tickers_to_insert}",
+                status="ok"
+            )
             return res
 
         # Run concurrent scraping, ticker extraction, and relevance gating

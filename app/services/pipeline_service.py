@@ -80,6 +80,29 @@ class PipelineService:
                     
                 # --- DISCOVERY ENGINE ---
                 active_ticker_dicts = []
+                
+                # Dynamic scraper run at the start of auto-discovery
+                if not tickers:
+                    def discovery_emit(step: str, detail: str, status: str = "running"):
+                        event = {
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "phase": "discovery",
+                            "step": step,
+                            "detail": detail,
+                            "status": status,
+                            "data": {}
+                        }
+                        logger.info(f"[{cycle_id}][discovery][{step}] {detail}")
+                        PipelineStateDB.append_events(cycle_id, [event])
+                        
+                    discovery_emit("scraper_start", "📡 Starting news scraper sweep to collect trending catalysts...", "running")
+                    try:
+                        from app.collectors.news_collector import collect_all
+                        total_scraped = await collect_all(limit_feeds=10, emit_cb=discovery_emit)
+                        discovery_emit("scraper_done", f"✅ News scraper sweep complete: collected {total_scraped} articles", "ok")
+                    except Exception as e:
+                        logger.error(f"[PipelineService] Discovery scraping failed: {e}")
+                        discovery_emit("scraper_err", f"❌ Scraper sweep failed: {e}", "error")
                 # Find trending tickers from the last 24h (News, Reddit, YouTube) that aren't in the static watchlist
                 try:
                     from app.db.connection import get_db
