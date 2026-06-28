@@ -505,6 +505,15 @@ class BootService:
                     "transport": "sse",
                     "url": mcp_url,
                     "enabled": True,
+                },
+                {
+                    "project": "html-notes-client",
+                    "username": "lazycat",
+                    "name": "lazy-tool-service",
+                    "displayName": "Lazy Tool Service",
+                    "transport": "sse",
+                    "url": mcp_url,
+                    "enabled": True,
                 }
             ]
 
