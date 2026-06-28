@@ -83,36 +83,62 @@ class PipelineService:
                 # Find trending tickers from the last 24h (News, Reddit, YouTube) that aren't in the static watchlist
                 try:
                     from app.db.connection import get_db
+                    from app.processors.ticker_extractor import FALSE_TICKERS
                     with get_db() as db:
-                        # 1. Pull Trending
+                        # 1. Pull Trending from each source independently
                         news_trends = db.execute("""
-                            SELECT ticker FROM news_articles 
+                            SELECT ticker, COUNT(*) as mentions FROM news_articles 
                             WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 5
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 10
                         """).fetchall()
                         reddit_trends = db.execute("""
-                            SELECT ticker FROM reddit_posts 
+                            SELECT ticker, COUNT(*) as mentions FROM reddit_posts 
                             WHERE ticker IS NOT NULL AND created_utc > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 5
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 10
                         """).fetchall()
                         youtube_trends = db.execute("""
-                            SELECT ticker FROM youtube_transcripts 
+                            SELECT ticker, COUNT(*) as mentions FROM youtube_transcripts 
                             WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 3
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 5
                         """).fetchall()
                         
+                        # 2. Phase 4A: Cross-reference — track source count per ticker
+                        source_tracker: dict[str, dict] = {}  # ticker -> {"sources": set, "mentions": int}
+                        for rows, source_label in [
+                            (news_trends, "News"),
+                            (reddit_trends, "Reddit"),
+                            (youtube_trends, "YouTube"),
+                        ]:
+                            for row in rows:
+                                tkr = row[0].upper().strip()
+                                if not tkr or tkr in base_tickers:
+                                    continue
+                                # Phase 4A: FALSE_TICKERS pre-filter
+                                if tkr in FALSE_TICKERS:
+                                    logger.debug("[PipelineService] Filtered out FALSE_TICKER: %s from %s", tkr, source_label)
+                                    continue
+                                if tkr not in source_tracker:
+                                    source_tracker[tkr] = {"sources": set(), "mentions": 0}
+                                source_tracker[tkr]["sources"].add(source_label)
+                                source_tracker[tkr]["mentions"] += row[1] if len(row) > 1 else 1
+                        
+                        # 3. Phase 4A: Build trending_discovered with source counts
                         trending_discovered = {}
-                        for row, source in [(r, "Trending News") for r in news_trends] + \
-                                           [(r, "Trending Reddit") for r in reddit_trends] + \
-                                           [(r, "Trending YouTube") for r in youtube_trends]:
-                            tkr = row[0].upper().strip()
-                            if tkr and tkr not in base_tickers and tkr not in trending_discovered:
-                                trending_discovered[tkr] = source
-                                
-                        all_pool = {t: "Watchlist" for t in base_tickers}
+                        for tkr, info in source_tracker.items():
+                            source_count = len(info["sources"])
+                            source_label = f"Trending {'+'.join(sorted(info['sources']))}"
+                            if source_count >= 2:
+                                source_label += f" ({source_count} sources)"
+                            trending_discovered[tkr] = {
+                                "label": source_label,
+                                "source_count": source_count,
+                                "total_mentions": info["mentions"],
+                            }
+                        
+                        all_pool = {t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers}
                         all_pool.update(trending_discovered)
                         
-                        # 2. Fetch Last Analysis Date for all
+                        # 4. Fetch Last Analysis Date for all
                         if all_pool:
                             placeholders = ','.join(['%s'] * len(all_pool))
                             last_analysis_rows = db.execute(f"""
@@ -126,8 +152,8 @@ class PipelineService:
                         else:
                             last_analysis_map = {}
                             
-                        # 3. Construct dictionary structure
-                        for tkr, src in all_pool.items():
+                        # 5. Construct dictionary structure
+                        for tkr, info in all_pool.items():
                             last_date = last_analysis_map.get(tkr)
                             if last_date:
                                 days_ago = (datetime.now(timezone.utc) - last_date).days
@@ -137,12 +163,18 @@ class PipelineService:
                                 
                             active_ticker_dicts.append({
                                 "ticker": tkr,
-                                "source": src,
-                                "days_since_analysis": dsa_str
+                                "source": info["label"],
+                                "days_since_analysis": dsa_str,
+                                "source_count": info["source_count"],
+                                "total_mentions": info["total_mentions"],
                             })
                             
                         if trending_discovered:
-                            logger.info(f"[PipelineService] Discovery Engine injected {len(trending_discovered)} trending leads.")
+                            multi_source = [t for t, i in trending_discovered.items() if i["source_count"] >= 2]
+                            logger.info(
+                                "[PipelineService] Discovery Engine: %d trending leads (%d multi-source: %s)",
+                                len(trending_discovered), len(multi_source), multi_source[:5],
+                            )
                 except Exception as e:
                     logger.error(f"[PipelineService] Discovery Engine failed to fetch trends: {e}")
                 # ------------------------
@@ -159,12 +191,19 @@ class PipelineService:
                     else:
                         # --- SCORING ENGINE ---
                         scored_results = []
+                        # Build a lookup for source_count from active_ticker_dicts
+                        source_count_map = {d["ticker"]: d.get("source_count", 0) for d in active_ticker_dicts}
                         # raw_results format: (t, px, chg, rvol, sma, rsi, src, dsa)
                         for t, px, chg, rvol, sma, rsi, src, dsa in raw_results:
                             score = rvol * 10.0
                             
                             if "Trending" in src:
                                 score += 15.0
+                            
+                            # Phase 4A: Multi-source cross-reference boost
+                            sc = source_count_map.get(t, 0)
+                            if sc >= 2:
+                                score += (sc - 1) * 10.0  # +10 per additional source
                                 
                             scored_results.append({
                                 "ticker": t, "price": px, "chg": chg, "rvol": rvol, 
