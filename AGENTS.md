@@ -43,6 +43,8 @@ Layer 5: Synthesis        → Decision Synthesizer (optional, controlled by DECI
 
 **Token tracking**: `consume_tokens()` is **informational only** — it does NOT enforce a hard limit. The actual output cap is `max_tokens=8192` passed to the LLM call in `agent_runner.py`.
 
+> **Phase 1 Note**: Prompt-level iteration limits ("MUST NOT make more than 5 tool calls") have been removed from all agent prompts. The `V3AgentBudget` system is now the **single source of truth** for all budget enforcement.
+
 **Source**: `app/v3/guardrails.py` lines 74-82
 
 ---
