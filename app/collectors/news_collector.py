@@ -295,10 +295,10 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None) -> in
                 }
             )
 
-            for article in items:
+            async def process_rss_article(article):
                 title = article.get("title", "").strip()
                 if not title:
-                    continue
+                    return []
 
                 url = article.get("url", "")
                 summary = article.get("summary", "").strip()
@@ -328,12 +328,12 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None) -> in
                         "[news][DROP] collect_feed: dropped '%s' from %s — truncated/paywalled (len=%d)",
                         title[:60], feed_name, len(summary),
                     )
-                    continue
+                    return []
 
                 from app.processors.dedup_engine import DedupEngine
                 dedup = DedupEngine(table="news_articles")
                 if dedup.is_duplicate(title, summary):
-                    continue
+                    return []
                 content_hash = dedup.compute_hash(title, summary)
 
                 # Detect tickers in title + summary
@@ -347,46 +347,48 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None) -> in
                         t for t in detected_tickers
                         if _is_article_relevant_to_ticker(t, full_text)
                     }
-                    irrelevant = detected_tickers - relevant_tickers
-                    if irrelevant:
-                        logger.debug(
-                            "[news] Relevance gate filtered tickers %s from article: %s",
-                            irrelevant, title[:80],
-                        )
                     detected_tickers = relevant_tickers
 
+                res_items = []
                 if detected_tickers:
-                    # Store one row per detected ticker for easy querying
                     for ticker in detected_tickers:
                         ticker_article_id = _get_article_id(title, ticker)
-                        db.execute(
-                            """
-                            INSERT INTO news_articles
-                            (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP)
-                            ON CONFLICT (id) DO NOTHING
-                            """,
-                            [
-                                ticker_article_id,
-                                ticker,
-                                title[:500],
-                                publisher,
-                                url,
-                                published_at,
-                                summary,
-                                content_hash,
-                            ],
-                        )
-                        count += 1
-                    safe_emit(
-                        emit_cb,
-                        "news_scraped",
-                        f"📰 {publisher}: '{title[:80]}' -> Extracted: {list(detected_tickers)}",
-                        status="ok"
-                    )
+                        res_items.append({
+                            "id": ticker_article_id,
+                            "ticker": ticker,
+                            "title": title,
+                            "publisher": publisher,
+                            "url": url,
+                            "published_at": published_at,
+                            "summary": summary,
+                            "content_hash": content_hash,
+                            "is_general": False,
+                            "tickers_list": list(detected_tickers),
+                        })
                 else:
-                    # No specific ticker detected -- store as general market news
                     article_id = _get_article_id(title, None)
+                    res_items.append({
+                        "id": article_id,
+                        "ticker": None,
+                        "title": title,
+                        "publisher": publisher,
+                        "url": url,
+                        "published_at": published_at,
+                        "summary": summary,
+                        "content_hash": content_hash,
+                        "is_general": True,
+                        "tickers_list": [],
+                    })
+                return res_items
+
+            # Process up to 15 items in parallel to speed up RSS sweeps
+            tasks = [process_rss_article(art) for art in items[:15]]
+            results_lists = await asyncio.gather(*tasks)
+
+            for item_list in results_lists:
+                if not item_list:
+                    continue
+                for item in item_list:
                     db.execute(
                         """
                         INSERT INTO news_articles
@@ -395,21 +397,32 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None) -> in
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
-                            article_id,
-                            None,
-                            title[:500],
-                            publisher,
-                            url,
-                            published_at,
-                            summary,
-                            content_hash,
+                            item["id"],
+                            item["ticker"],
+                            item["title"][:500],
+                            item["publisher"],
+                            item["url"],
+                            item["published_at"],
+                            item["summary"],
+                            item["content_hash"],
                         ],
                     )
                     count += 1
+
+                # Emit news scraped log for this unique item list
+                first_item = item_list[0]
+                if not first_item.get("is_general"):
                     safe_emit(
                         emit_cb,
                         "news_scraped",
-                        f"📰 {publisher}: '{title[:80]}' -> Extracted: General",
+                        f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: {first_item['tickers_list']}",
+                        status="ok"
+                    )
+                else:
+                    safe_emit(
+                        emit_cb,
+                        "news_scraped",
+                        f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: General",
                         status="ok"
                     )
     except Exception as e:

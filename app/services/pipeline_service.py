@@ -59,11 +59,11 @@ class PipelineService:
         cls.save_state()
         cls._stop_requested = False
 
-        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers, max_tickers))
+        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers, max_tickers, **kwargs))
         return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
 
     @classmethod
-    async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int = 5):
+    async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int = 5, **kwargs):
         try:
             # 1. Run Gatekeeper
             try:
@@ -340,7 +340,8 @@ class PipelineService:
                     logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
                     return
                 
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb)
+                harness_provider = kwargs.get("harness_provider", "local") if "kwargs" in locals() else "local"
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, harness_provider=harness_provider)
                 
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result

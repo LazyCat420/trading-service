@@ -23,9 +23,9 @@ from typing import Any
 from app.v3.shared_desk import SharedDesk, PhaseOutcome
 from app.v3.guardrails import (
     V3AgentBudget,
-    ToolLoopDetector,
     get_budget_for_role,
     compress_artifact_for_downstream,
+
     enter_v3_session,
     exit_v3_session,
 )
@@ -142,39 +142,41 @@ async def run_v3_agent(
             f"Your entire response MUST start with '{{' and end with '}}'.\n"
         )
 
-        # Get role-specific budget (informational — run_agent uses its own budget)
-        budget = get_budget_for_role(agent_name)
+        # Call the remote harness endpoint (Local or Prism)
+        # Check cycle metadata for harness override, else default to Local
+        harness_provider = desk.cycle_metadata.get("harness_provider", "local").lower()
+        
+        import httpx
+        from app.config.config import Settings
+        settings = Settings()
+        
+        # Build the URL based on the selected harness
+        if harness_provider == "prism":
+            # Assume prism-service runs on the PRISM_URL
+            agent_endpoint = f"{settings.PRISM_URL}/agent"
+        else:
+            # Default to our new lazy-agent-service
+            # We assume it runs on a known port, e.g., 8037 (from ecosystem configs)
+            agent_endpoint = f"http://{settings.DEFAULT_HOST}:8037/agent"
+            
+        payload = {
+            "role": agent_name,
+            "prompt": user_prompt,
+            "system_prompt": system_prompt,
+            "tools_enabled": bool(tool_whitelist),
+            "timeout_sec": timeout_seconds
+        }
+        
+        async with httpx.AsyncClient(timeout=timeout_seconds + 30.0) as client:
+            resp = await client.post(agent_endpoint, json=payload)
+            resp.raise_for_status()
+            result = resp.json()
 
-        # Call via base_agent.run_agent() which handles:
-        # - Prism routing (if enabled and healthy)
-        # - Tool whitelisting via tool_whitelists.py
-        # - Dynamic prompt generation
-        # - Split agent loop for tools-enabled agents
-        # - Resilient retries
-        from app.agents.base_agent import run_agent
-
-        model_override = getattr(agent_module, "MODEL_OVERRIDE", None)
-
-        result = await asyncio.wait_for(
-            run_agent(
-                agent_name=agent_name,
-                ticker=desk.ticker,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                max_tokens=8192,
-                enable_tools=bool(tool_whitelist),
-                model_override=model_override,
-            ),
-            timeout=timeout_seconds,
-        )
-
-        elapsed_ms = int((time.monotonic() - t_start) * 1000)
-        final_text = result.get("response", "")
-        loops_used = result.get("loops_used", 1)  # run_agent doesn't track loops
-        token_usage = result.get("tokens_used", 0)
-        stop_reason = result.get("stop_reason", "completed")
+        elapsed_ms = result.get("metrics", {}).get("elapsed", int((time.monotonic() - t_start) * 1000))
+        final_text = result.get("artifact", "")
+        loops_used = result.get("metrics", {}).get("tool_calls", 1)
+        token_usage = result.get("metrics", {}).get("tokens_used", 0)
+        stop_reason = result.get("status", "completed")
 
         # Check for token-limit truncation — the LLM may have been cut off mid-JSON
         if stop_reason in ("max_tokens", "length", "token_limit"):

@@ -313,7 +313,9 @@ async def evaluate_decision(decision_id: str) -> bool:
                             f"DeepEval Faithfulness Error: {type(eval_err).__name__}: {eval_err}"
                         )
                         if failure_reason == FailureReason.NONE:
-                           # ── Answer Relevancy check (with retry + semaphore) ──
+                            failure_reason = FailureReason.EVAL_ERROR
+            
+            # ── Answer Relevancy check (with retry + semaphore) ──
             relevancy_succeeded = False
             for attempt in range(DEEPEVAL_MAX_RETRIES):
                 try:

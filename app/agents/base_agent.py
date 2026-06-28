@@ -193,50 +193,19 @@ async def run_agent(
         import time
         from lazycat.llm import prism_client
 
-        # ── Tool Loop Detection ──
-        # Prevents agents from calling the same failing tool endlessly.
-        # The detector tracks (tool_name, args_hash, status) and blocks
-        # calls that have failed 3+ times with identical arguments.
-        from app.v3.guardrails import ToolLoopDetector
-        loop_detector = ToolLoopDetector(max_identical_failures=3)
-
         tool_call_count = 0
 
-        def _on_tool_call(tool_name: str, arguments: dict) -> str | None:
-            """Pre-call hook: check if this tool+args combo should be blocked."""
+        def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool) -> None:
+            """Post-call hook: record the actual outcome to V3 telemetry."""
             nonlocal tool_call_count
             tool_call_count += 1
-            # Check if this exact combo has already been blocked
-            check_result = loop_detector.record_call(tool_name, arguments, failed=True)
-            if check_result is not None:
-                # Record blocked call to telemetry
-                try:
-                    from app.v3.tool_telemetry import record_tool_call, _hash_args
-                    record_tool_call(
-                        cycle_id=cycle_id,
-                        agent_name=agent_name,
-                        tool_name=tool_name,
-                        args_hash=_hash_args(arguments),
-                        success=False,
-                        was_blocked=True,
-                        error_message="Blocked by ToolLoopDetector",
-                    )
-                except Exception:
-                    pass
-                return check_result
-            # Undo the speculative failure record — actual outcome will be recorded in _on_tool_result
-            key = loop_detector._make_key(tool_name, arguments, failed=True)
-            loop_detector._history[key] = max(0, loop_detector._history.get(key, 1) - 1)
-            return None
-
-        def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool) -> None:
-            """Post-call hook: record the actual outcome."""
-            if was_blocked:
-                return  # Already recorded as failure in pre-check
-            # Determine if the tool call failed
+            
             failed = False
             error_msg = ""
-            if isinstance(result, dict):
+            if was_blocked:
+                failed = True
+                error_msg = "Blocked by ToolLoopDetector"
+            elif isinstance(result, dict):
                 if result.get("error") or result.get("is_error"):
                     failed = True
                     error_msg = str(result.get("error", result.get("message", "")))[:500]
@@ -246,9 +215,7 @@ async def run_agent(
             elif result is None:
                 failed = True
                 error_msg = "None result"
-            loop_detector.record_call(tool_name, arguments, failed=failed)
 
-            # Record to telemetry DB (non-fatal)
             try:
                 from app.v3.tool_telemetry import record_tool_call, _hash_args
                 record_tool_call(
@@ -257,10 +224,11 @@ async def run_agent(
                     tool_name=tool_name,
                     args_hash=_hash_args(arguments),
                     success=not failed,
+                    was_blocked=was_blocked,
                     error_message=error_msg,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Telemetry failed: {e}")
 
         from app.services.prism_agent_registry import resolve_agent_id
         prism_agent_id = resolve_agent_id(agent_name)
@@ -289,7 +257,6 @@ async def run_agent(
                 agent=agent,
                 session=session,
                 max_iterations=max_turns,
-                on_tool_call=_on_tool_call if enable_tools else None,
                 on_tool_result=_on_tool_result if enable_tools else None,
             )
 

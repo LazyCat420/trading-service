@@ -374,6 +374,17 @@ async def run_v3_pipeline(
         logger.warning("[V3] %s: Memory persistence failed (non-fatal): %s", ticker, e)
 
     # ═══════════════════════════════════════════════════════════════════
+    # LAYER 6: Policy Gates (Trade Execution Rules)
+    # ═══════════════════════════════════════════════════════════════════
+    policy_action = _apply_policy_gates(desk)
+    
+    emit(
+        "analyzing", f"v3_policy_{ticker}",
+        f"🛡️ {ticker}: Policy Gates evaluated → {policy_action}",
+        status="ok",
+    )
+
+    # ═══════════════════════════════════════════════════════════════════
     # BUILD RESULT — V1-compatible shape for downstream phases
     # ═══════════════════════════════════════════════════════════════════
     elapsed_s = time.monotonic() - t_pipeline
@@ -405,7 +416,28 @@ async def run_v3_pipeline(
         "agent_telemetry": desk.agent_telemetry,
     })
 
+    # Inject the actual policy action so upstream callers (like cycle_main) can respect it
+    result["policy_action"] = policy_action
+
     return result
+
+def _apply_policy_gates(desk: SharedDesk) -> str:
+    """Apply explicit orchestration policy gates to the final decision."""
+    decision = desk.trade_decision or desk.final_decision or {}
+    action = decision.get("action", "HOLD").upper()
+    confidence = decision.get("confidence", 0)
+
+    if action == "HOLD":
+        return "HOLD_NO_SIGNAL"
+
+    if confidence < 60:
+        return "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+        
+    if not desk.has_artifact("regime_classification"):
+        return "HOLD_POLICY_BLOCKED_MISSING_REGIME"
+
+    return f"EXECUTE_{action}"
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
