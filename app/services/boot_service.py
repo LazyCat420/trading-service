@@ -9,6 +9,15 @@ class BootService:
     @classmethod
     async def startup(cls):
         """Main startup sequence coordinator."""
+        # --- Configure SDK client routing ---
+        from app.config.config import settings
+        from lazycat.llm import prism_client
+        if settings.PRISM_ENABLED:
+            prism_client.url = settings.PRISM_URL
+        else:
+            prism_client.url = f"http://{settings.DEFAULT_HOST}:8037"
+        logger.info("[Boot] Configured prism_client.url: %s (PRISM_ENABLED=%s)", prism_client.url, settings.PRISM_ENABLED)
+
         logger.info("[Boot] Starting application boot sequence...")
 
         # --- Required Boot Stages ---
