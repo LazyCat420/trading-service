@@ -41,14 +41,14 @@ async def scrape_url(url: str) -> str:
 
                 text = soup.get_text(separator=" ", strip=True)
                 # Truncate to avoid massive context window usage
-                truncated_text = text[:8000]
+                truncated_text = text[:4000]
 
                 return json.dumps(
                     {
                         "status": "success",
                         "url": url,
                         "content": truncated_text,
-                        "truncated": len(text) > 8000,
+                        "truncated": len(text) > 4000,
                     }
                 )
     except Exception as e:

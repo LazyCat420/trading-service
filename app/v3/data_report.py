@@ -130,7 +130,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
     #
     # Priority order (highest to lowest): market data > technicals > news > reddit > youtube
     # If the full report exceeds _MAX_DATA_REPORT_CHARS, drop lower-priority sections first.
-    _MAX_DATA_REPORT_CHARS = 15000
+    _MAX_DATA_REPORT_CHARS = 10000
 
     header = (
         f"# Pre-Collected Ticker Data Report: {ticker}\n"

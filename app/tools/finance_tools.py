@@ -123,7 +123,7 @@ async def get_finnhub_news(ticker: str) -> str:
         rows = db.execute(
             """
             SELECT title, publisher, published_at, url, COALESCE(llm_summary, summary)
-            FROM news_articles WHERE ticker = %s ORDER BY published_at DESC LIMIT 15
+            FROM news_articles WHERE ticker = %s ORDER BY published_at DESC LIMIT 8
         """,
             [ticker],
         ).fetchall()
