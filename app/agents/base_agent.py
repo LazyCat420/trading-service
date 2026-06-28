@@ -209,6 +209,20 @@ async def run_agent(
             # Check if this exact combo has already been blocked
             check_result = loop_detector.record_call(tool_name, arguments, failed=True)
             if check_result is not None:
+                # Record blocked call to telemetry
+                try:
+                    from app.v3.tool_telemetry import record_tool_call, _hash_args
+                    record_tool_call(
+                        cycle_id=cycle_id,
+                        agent_name=agent_name,
+                        tool_name=tool_name,
+                        args_hash=_hash_args(arguments),
+                        success=False,
+                        was_blocked=True,
+                        error_message="Blocked by ToolLoopDetector",
+                    )
+                except Exception:
+                    pass
                 return check_result
             # Undo the speculative failure record — actual outcome will be recorded in _on_tool_result
             key = loop_detector._make_key(tool_name, arguments, failed=True)
@@ -221,14 +235,32 @@ async def run_agent(
                 return  # Already recorded as failure in pre-check
             # Determine if the tool call failed
             failed = False
+            error_msg = ""
             if isinstance(result, dict):
                 if result.get("error") or result.get("is_error"):
                     failed = True
+                    error_msg = str(result.get("error", result.get("message", "")))[:500]
                 elif not result:
                     failed = True
+                    error_msg = "Empty result"
             elif result is None:
                 failed = True
+                error_msg = "None result"
             loop_detector.record_call(tool_name, arguments, failed=failed)
+
+            # Record to telemetry DB (non-fatal)
+            try:
+                from app.v3.tool_telemetry import record_tool_call, _hash_args
+                record_tool_call(
+                    cycle_id=cycle_id,
+                    agent_name=agent_name,
+                    tool_name=tool_name,
+                    args_hash=_hash_args(arguments),
+                    success=not failed,
+                    error_message=error_msg,
+                )
+            except Exception:
+                pass
 
         from app.services.prism_agent_registry import resolve_agent_id
         prism_agent_id = resolve_agent_id(agent_name)

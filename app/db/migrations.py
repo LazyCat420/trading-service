@@ -3156,3 +3156,39 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Agent Tool Telemetry (Phase 3: per-tool-call metrics) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_tool_telemetry (
+                    id                  TEXT PRIMARY KEY,
+                    cycle_id            TEXT NOT NULL,
+                    agent_name          TEXT NOT NULL,
+                    tool_name           TEXT NOT NULL,
+                    args_hash           TEXT,
+                    success             BOOLEAN NOT NULL DEFAULT TRUE,
+                    elapsed_ms          INTEGER DEFAULT 0,
+                    error_message       TEXT,
+                    was_blocked         BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_agent_tool_telemetry_cycle
+                ON agent_tool_telemetry(cycle_id);
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_agent_tool_telemetry_agent
+                ON agent_tool_telemetry(agent_name);
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_agent_tool_telemetry_tool
+                ON agent_tool_telemetry(tool_name);
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

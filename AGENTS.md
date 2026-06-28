@@ -72,13 +72,21 @@ Layer 5: Synthesis        → Decision Synthesizer (optional, controlled by DECI
 
 ---
 
-## 5. Tool Loop Detection
+## 5. Tool Loop Detection & Telemetry
 
+### Doom-Loop Protection (Phase 3C Upgraded)
 - **Max identical failures**: 3 (same tool, same args hash, same failure status)
-- **Action on detection**: Injects a `[SYSTEM OVERRIDE]` message telling the agent to stop calling the tool and reason from existing data
+- **Warning**: First threshold hit injects `[SYSTEM OVERRIDE]` message telling the agent to stop and reason from existing data
+- **Escalation**: If the agent persists after the warning (4th+ attempt), `escalation_triggered` is set to `True` and a stronger `[SYSTEM OVERRIDE — ESCALATION]` message is injected. Future: triggers hot-swap failover to alternative vLLM box.
+- **Duplicate query detection**: If a successful tool call is repeated >2 times with identical args, a `[SYSTEM NOTICE]` is injected telling the agent to use existing data
 - **Scope**: One `ToolLoopDetector` per agent run (not shared across agents)
 
-**Source**: `app/v3/guardrails.py` lines 105-166
+### Tool Telemetry (Phase 3A)
+- Every tool call (success, failure, or blocked) is recorded to the `agent_tool_telemetry` Postgres table
+- Columns: `id`, `cycle_id`, `agent_name`, `tool_name`, `args_hash`, `success`, `elapsed_ms`, `error_message`, `was_blocked`, `created_at`
+- Non-fatal: telemetry recording failures never abort the pipeline
+
+**Source**: `app/v3/guardrails.py`, `app/v3/tool_telemetry.py`, `app/agents/base_agent.py`
 
 ---
 

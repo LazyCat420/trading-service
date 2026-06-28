@@ -108,11 +108,20 @@ class ToolLoopDetector:
     Tracks (tool_name, args_hash, status) history per session.
     If the same combo fails N times, returns a stop injection message
     instructing the agent to reason from what it already has.
+
+    Phase 3C upgrades:
+    - Escalation tracking: after the warning, if the agent persists,
+      mark for hot-swap failover.
+    - Duplicate query detection: identical successful calls are tracked
+      to catch agents re-requesting the same data.
     """
 
-    def __init__(self, max_identical_failures: int = 3):
+    def __init__(self, max_identical_failures: int = 3, max_duplicate_queries: int = 2):
         self.max_identical_failures = max_identical_failures
+        self.max_duplicate_queries = max_duplicate_queries
         self._history: dict[str, int] = {}  # "tool:args_hash:failed" -> count
+        self._warning_issued: set[str] = set()  # keys that got a warning injection
+        self.escalation_triggered: bool = False  # True = agent persisted after warning
 
     def _make_key(self, tool_name: str, args: Any, failed: bool) -> str:
         """Create a dedup key from tool name, args hash, and failure status."""
@@ -137,7 +146,27 @@ class ToolLoopDetector:
         key = self._make_key(tool_name, args, failed)
         self._history[key] = self._history.get(key, 0) + 1
 
+        # ── Failure loop detection ──
         if failed and self._history[key] >= self.max_identical_failures:
+            # Check if we already issued a warning for this exact failure
+            if key in self._warning_issued:
+                # Agent persisted after warning — escalate for failover
+                self.escalation_triggered = True
+                logger.error(
+                    "[ToolLoopDetector] ESCALATION: %s persisted after warning (%d failures). "
+                    "Hot-swap failover recommended.",
+                    tool_name, self._history[key],
+                )
+                return (
+                    f"[SYSTEM OVERRIDE — ESCALATION] The tool '{tool_name}' has now failed "
+                    f"{self._history[key]} times. The previous warning was ignored. "
+                    f"You MUST stop calling this tool immediately and produce your "
+                    f"final artifact with the data you have. Mark missing data as "
+                    f"'DataGap: [description]'."
+                )
+
+            # First time hitting the threshold — issue warning
+            self._warning_issued.add(key)
             logger.warning(
                 "[ToolLoopDetector] Loop detected: %s failed %d times with same args",
                 tool_name,
@@ -150,6 +179,18 @@ class ToolLoopDetector:
                 f"already have and produce your final artifact. If critical "
                 f"data is missing, mark it as 'DataGap: [description]' in "
                 f"your output."
+            )
+
+        # ── Duplicate query detection (successful calls) ──
+        if not failed and self._history[key] > self.max_duplicate_queries:
+            logger.warning(
+                "[ToolLoopDetector] Duplicate query: %s called %d times with same args (successful)",
+                tool_name, self._history[key],
+            )
+            return (
+                f"[SYSTEM NOTICE] You have already called '{tool_name}' with these "
+                f"exact arguments {self._history[key]} times and received the same data. "
+                f"Use the data you already have — do not re-request it."
             )
 
         return None

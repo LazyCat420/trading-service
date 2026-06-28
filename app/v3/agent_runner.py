@@ -230,6 +230,7 @@ async def run_v3_agent(
                 "confidence": confidence,
                 "elapsed_ms": elapsed_ms,
                 "loops_used": loops_used,
+                "tool_calls_made": max(0, loops_used - 1),
             },
         )
 
