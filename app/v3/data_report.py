@@ -126,21 +126,57 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
                 ["Channel", "Title", "Published", "Summary"]
             )
 
-    # 4. Construct Final Document
-    report = (
+    # 4. Construct Final Document — with size cap to prevent context overflow
+    #
+    # Priority order (highest to lowest): market data > technicals > news > reddit > youtube
+    # If the full report exceeds _MAX_DATA_REPORT_CHARS, drop lower-priority sections first.
+    _MAX_DATA_REPORT_CHARS = 15000
+
+    header = (
         f"# Pre-Collected Ticker Data Report: {ticker}\n"
         f"Generated at: {datetime.now(timezone.utc).isoformat()}\n\n"
         f"{previous_analysis_md}"
+    )
+
+    # Build sections in priority order (highest priority first)
+    core_sections = (
         f"## 1. Market Data & Fundamentals\n"
         f"{market_data_md}\n\n"
         f"## 2. Technical Indicators\n"
         f"{tech_md}\n\n"
         f"## 3. Recent News & Sentiment\n"
         f"{news_md}\n\n"
-        f"## 4. Reddit Social Sentiment\n"
-        f"{reddit_md}\n\n"
-        f"## 5. YouTube Mentions & Transcripts\n"
-        f"{youtube_md}\n"
     )
-    
+
+    social_sections = [
+        (f"## 4. Reddit Social Sentiment\n{reddit_md}\n\n", "Reddit"),
+        (f"## 5. YouTube Mentions & Transcripts\n{youtube_md}\n", "YouTube"),
+    ]
+
+    report = header + core_sections
+    budget_remaining = _MAX_DATA_REPORT_CHARS - len(report)
+
+    if budget_remaining > 0:
+        for section_text, section_name in social_sections:
+            if len(section_text) <= budget_remaining:
+                report += section_text
+                budget_remaining -= len(section_text)
+            else:
+                # Partial fit — truncate this section
+                truncated = section_text[: budget_remaining - 80]
+                report += truncated + f"\n[... {section_name} TRUNCATED — data available via tools ...]\n"
+                budget_remaining = 0
+                break
+
+    # Hard safety net — if core sections alone exceed the cap
+    if len(report) > _MAX_DATA_REPORT_CHARS:
+        logger.warning(
+            "[V3] Data report for %s exceeded %d chars (%d) — hard-truncating",
+            ticker, _MAX_DATA_REPORT_CHARS, len(report),
+        )
+        report = (
+            report[: _MAX_DATA_REPORT_CHARS - 100]
+            + "\n\n[... DATA REPORT TRUNCATED — full data available via tools ...]\n"
+        )
+
     return report

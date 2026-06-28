@@ -11,7 +11,7 @@
 The V3 pipeline is a **4+1 layer linear state machine**:
 
 ```
-Layer 1: Context Init    → SharedDesk created, cycle_metadata + data_report injected
+Layer 1: Context Init    → SharedDesk created, cycle_metadata + data_report + memory_context injected
 Layer 2: Research         → Junior Analyst → Fundamental Analyst → Quant Analyst (sequential)
 Layer 3: Debate           → Bull → Bear → Bull Defense (sequential, SharedDesk-mediated)
 Layer 4: Decision         → Regime Engine → Board of Directors (persona-swapped by regime)
@@ -139,3 +139,47 @@ These constraints apply to ALL agents in the V3 pipeline:
 - **Single-process only**: The `_active_v3_sessions` recursion guard is a process-local Python set. Multi-worker deployments (Gunicorn workers, Docker scale) will break this guard silently.
 - **No live trading**: The V3 pipeline produces `trade_decision` artifacts and persists them to the `trade_results` DB table. There is no broker integration or order execution path.
 - **DECISION_AGENT_ENABLED**: Defaults to `True` in `app/config/config.py`. Controls whether Layer 5 (Decision Synthesizer) runs.
+
+---
+
+## 11. Memory System Integration
+
+The V3 pipeline reads from and writes to long-term memory:
+
+- **Layer 1 (Read)**: `MemoryRetriever.retrieve(ticker)` fetches past cycle observations. Results are formatted via `build_memory_brief()` and injected into `cycle_metadata["memory_context"]`, which appears in each agent's user prompt as `## Past Cycle Memory`.
+- **Post-Pipeline (Write)**: After `save_desk()`, an episodic observation is recorded via `MemoryStore.add_episodic_observation()` with the cycle outcome (action, confidence, regime, reasoning).
+- **Non-Fatal**: All memory calls are wrapped in try/except. Memory system failures do NOT abort the pipeline.
+
+**Source**: `app/services/memory/retriever.py`, `app/services/memory/store.py`, `app/v3/orchestrator.py`
+
+---
+
+## 12. Strategy Tracking
+
+After `save_trade_result()`, the pipeline calls `strategy_tracker.record_strategy()` with `agent_prompt_hash="v3_pipeline"`. This enables P&L tracking per pipeline version.
+
+- Only BUY and SELL signals are recorded (HOLD is skipped by design)
+- Non-fatal: wrapped in try/except
+
+**Source**: `app/trading/strategy_tracker.py`, `app/v3/orchestrator.py`
+
+---
+
+## 13. Data Report Size Cap
+
+The pre-collected data report (`data_report.py`) is capped at **15,000 characters** to prevent context window overflow on smaller models.
+
+**Truncation priority** (drops lowest priority first):
+1. Market Data & Fundamentals (keep)
+2. Technical Indicators (keep)
+3. News & Sentiment (keep)
+4. Reddit Social Sentiment (drop first)
+5. YouTube Transcripts (drop second)
+
+**Source**: `app/v3/data_report.py` — `_MAX_DATA_REPORT_CHARS = 15000`
+
+---
+
+## 14. Inactive Agents
+
+- **`portfolio_manager.py`**: INACTIVE. Part of V2 scoring/gatekeeper system. Registered with Prism but NOT invoked by V3 orchestrator. Reserved for future Layer 6 (Portfolio Optimization).

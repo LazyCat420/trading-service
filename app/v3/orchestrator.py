@@ -109,6 +109,22 @@ async def run_v3_pipeline(
     # Store the pre-collected report
     desk.cycle_metadata["data_report"] = data_report
 
+    # Retrieve past cycle memory for this ticker (non-fatal)
+    try:
+        from app.services.memory.retriever import MemoryRetriever
+        retrieval_results = MemoryRetriever.retrieve(ticker=ticker)
+        if retrieval_results:
+            memory_brief = MemoryRetriever.build_memory_brief(retrieval_results)
+            brief_text = memory_brief.get("brief_text", "")
+            if brief_text:
+                desk.cycle_metadata["memory_context"] = brief_text
+                logger.info(
+                    "[V3] %s: Injected %d memory entries (%d chars)",
+                    ticker, len(retrieval_results), len(brief_text),
+                )
+    except Exception as e:
+        logger.warning("[V3] %s: Memory retrieval failed (non-fatal): %s", ticker, e)
+
     emit(
         "analyzing", f"v3_ctx_{ticker}",
         f"📋 {ticker}: SharedDesk created, cycle metadata & data report injected",
@@ -297,6 +313,21 @@ async def run_v3_pipeline(
                         "persona_used", _persona_label(regime)
                     )
                 save_trade_result(ticker, cycle_id, trade_decision)
+
+                # Record strategy for P&L tracking (non-fatal)
+                try:
+                    from app.trading.strategy_tracker import record_strategy
+                    action = trade_decision.get("action", "HOLD")
+                    record_strategy(
+                        strategy_candidate_id=None,
+                        decision_outcome_id=None,
+                        agent_prompt_hash="v3_pipeline",
+                        ticker=ticker,
+                        signal=action,
+                        entry_price=None,
+                    )
+                except Exception as st_err:
+                    logger.warning("[V3] %s: Strategy tracking failed (non-fatal): %s", ticker, st_err)
             except Exception as e:
                 logger.error(
                     "[V3] %s: Failed to persist trade result: %s",
@@ -319,6 +350,28 @@ async def run_v3_pipeline(
         )
 
     save_desk(desk)
+
+    # Persist cycle outcome to episodic memory (non-fatal)
+    try:
+        from app.services.memory.store import MemoryStore
+        decision = desk.trade_decision or desk.final_decision or {}
+        action = decision.get("action", "HOLD")
+        confidence = decision.get("confidence", 0)
+        reasoning = decision.get("reasoning", "")
+        MemoryStore().add_episodic_observation({
+            "cycle_id": cycle_id,
+            "ticker": ticker,
+            "source_type": "v3_pipeline",
+            "observation_text": (
+                f"V3 cycle completed for {ticker}: {action} @ {confidence}% confidence. "
+                f"Regime: {regime}. Reasoning: {reasoning[:500]}"
+            ),
+            "confidence_at_creation": confidence / 100.0 if confidence else 0.0,
+            "outcome_label": action,
+        })
+        logger.info("[V3] %s: Episodic observation recorded", ticker)
+    except Exception as e:
+        logger.warning("[V3] %s: Memory persistence failed (non-fatal): %s", ticker, e)
 
     # ═══════════════════════════════════════════════════════════════════
     # BUILD RESULT — V1-compatible shape for downstream phases

@@ -106,6 +106,11 @@ async def run_v3_agent(
             if data_report:
                 user_prompt += f"## Pre-Collected Data Report\n{data_report}\n\n"
 
+            # Inject Past Cycle Memory if available
+            memory_context = desk.cycle_metadata.get("memory_context", "")
+            if memory_context:
+                user_prompt += f"## Past Cycle Memory\n{memory_context}\n\n"
+
         if desk_context and desk_context != "No artifacts on desk yet.":
             user_prompt += (
                 f"## SharedDesk Context (from prior analysts)\n"

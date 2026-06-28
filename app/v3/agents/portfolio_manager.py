@@ -1,3 +1,10 @@
+"""
+INACTIVE — This agent is NOT used in the current V3 pipeline.
+It was part of the V2 scoring/gatekeeper system and is registered
+with Prism but never invoked by the V3 orchestrator.
+Reserved for future Layer 6 (Portfolio Optimization) or removal.
+"""
+
 AGENT_NAME = "v3_portfolio_manager"
 
 ARTIFACT_TYPE = "portfolio_screener"
