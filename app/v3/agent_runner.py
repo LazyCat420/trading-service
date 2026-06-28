@@ -156,8 +156,8 @@ async def run_v3_agent(
             agent_endpoint = f"{settings.PRISM_URL}/agent"
         else:
             # Default to our new lazy-agent-service
-            # We assume it runs on a known port, e.g., 8037 (from ecosystem configs)
-            agent_endpoint = f"http://{settings.DEFAULT_HOST}:8037/agent"
+            # We assume it runs on a known port, e.g., 7778 (from ecosystem configs)
+            agent_endpoint = f"http://{settings.DEFAULT_HOST}:7778/agent"
             
         payload = {
             "role": agent_name,

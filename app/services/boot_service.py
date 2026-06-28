@@ -15,7 +15,7 @@ class BootService:
         if settings.PRISM_ENABLED:
             prism_client.url = settings.PRISM_URL
         else:
-            prism_client.url = f"http://{settings.DEFAULT_HOST}:8037"
+            prism_client.url = f"http://{settings.DEFAULT_HOST}:7778"
         logger.info("[Boot] Configured prism_client.url: %s (PRISM_ENABLED=%s)", prism_client.url, settings.PRISM_ENABLED)
 
         logger.info("[Boot] Starting application boot sequence...")
