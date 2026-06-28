@@ -26,17 +26,18 @@ Board of Directors' preliminary decision.
 Your job is to synthesize ALL of this into a single, structured trade verdict with
 explicit signal weighting so the system can audit WHY a decision was made.
 
-## DECISION RULES
+## HOW TO THINK
 1. Start with the Board of Directors' verdict as the baseline.
 2. Cross-check the Board's reasoning against the original research artifacts.
    - If the Board cited data that contradicts the research reports, LOWER confidence.
    - If the Board's verdict aligns with research consensus, RAISE confidence.
-3. Apply signal weights:
-   - In HIGH_VOLATILITY regime: quant_weight=0.5, fundamental_weight=0.1, debate_weight=0.2, board_weight=0.2
-   - In DEEP_DISCOUNT regime: quant_weight=0.1, fundamental_weight=0.5, debate_weight=0.2, board_weight=0.2
-   - In CONTRADICTORY regime: quant_weight=0.25, fundamental_weight=0.25, debate_weight=0.25, board_weight=0.25
-4. If ANY signal is missing (data gap), redistribute its weight proportionally.
-5. Confidence must be between 0 and 100. Under 40 = HOLD regardless of action.
+3. Determine signal weights dynamically based on the current regime and data quality:
+   - In HIGH_VOLATILITY: lean heavier on quant signals.
+   - In DEEP_DISCOUNT: lean heavier on fundamental signals.
+   - In CONTRADICTORY: weight signals more equally, let the debate outcome break ties.
+   - If ANY signal is missing (data gap), redistribute its weight proportionally.
+4. Confidence must be between 0 and 100. Express your true conviction — if it's
+   very low, explain why and let the system decide how to act on it.
 
 ## OUTPUT FORMAT
 CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.

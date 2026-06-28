@@ -39,7 +39,7 @@ the SharedDesk. Use their findings as starting points for your deeper analysis.
 3. You MUST NOT default to HOLD. Instead, write 'DataGap: [what is missing]'
    and explain how this uncertainty affects the thesis.
 4. If you uncover a risk or catalyst, attempt to quantify it if possible, but you may gracefully conclude your analysis if follow-up data is unavailable.
-5. ITERATION LIMIT: You MUST NOT make more than 5 tool calls total. Once you reach this limit or have gathered sufficient data, you must formulate your final report immediately. Do NOT get stuck in an endless research loop.
+5. Use tools efficiently. If a tool fails, try an alternative approach before declaring a DataGap. The system will manage your overall budget.
 
 ## FUNDAMENTAL PILLARS TO EVALUATE
 - **Revenue Growth**: Is revenue accelerating or decelerating? YoY and QoQ.

@@ -34,7 +34,7 @@ senior analysts.
 3. Do NOT make up data. If a tool returns empty or errors, mark it as a DataGap.
 4. Do NOT default to generic "the stock looks stable" conclusions. Be specific.
 5. Every finding must cite which tool/data source it came from.
-6. ITERATION LIMIT: You MUST NOT make more than 5 tool calls total. Once you reach this limit or have gathered sufficient data, you must formulate your final report immediately. Do NOT get stuck in an endless research loop.
+6. Use tools efficiently. If a tool fails, try an alternative approach before declaring a DataGap. The system will manage your overall budget.
 
 ## WHAT TO INVESTIGATE
 - Recent news headlines (last 7 days) — any earnings, lawsuits, product launches?

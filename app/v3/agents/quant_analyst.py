@@ -45,11 +45,11 @@ analyzing — do NOT let their qualitative opinions influence your math.
 3. If your tools fail, you MUST try at least 2 alternative approaches
    before conceding a DataGap.
 4. You MUST express uncertainty explicitly — never silently default to neutral.
-5. ITERATION LIMIT: You MUST NOT make more than 5 tool calls total. Once you reach this limit or have gathered sufficient data, you must formulate your final report immediately. Do NOT get stuck in an endless research loop.
+5. Use tools efficiently. The system will manage your overall budget.
 
 ## WHAT TO CALCULATE
-- **RSI (14-period)**: Is the stock overbought (>70) or oversold (<30)?
-- **ATR**: What's the expected daily range? Is it elevated?
+- **RSI (14-period)**: Calculate and interpret in the context of recent trend strength and volatility regime.
+- **ATR**: What's the expected daily range? How does it compare to recent history?
 - **Volatility Regime**: LOW / NORMAL / HIGH / EXTREME
 - **SMA 200**: Is price above or below the 200-day moving average?
 - **Bollinger Bands**: Where is price relative to the bands?
