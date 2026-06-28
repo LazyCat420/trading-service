@@ -113,6 +113,7 @@ async def run_agent(
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
     model_override: str | None = None,
+    harness_provider: str | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -192,6 +193,16 @@ async def run_agent(
         from lazycat.session import ConversationSession
         import time
         from lazycat.llm import prism_client
+
+        # Dynamically route prism_client URL based on active harness provider
+        from app.config.config import settings as app_settings
+        prov = (harness_provider or "").lower()
+        if prov == "prism":
+            prism_client.url = app_settings.PRISM_URL
+        elif prov == "local" or prov == "lazy" or not app_settings.PRISM_ENABLED:
+            prism_client.url = f"http://{app_settings.DEFAULT_HOST}:7778"
+        else:
+            prism_client.url = app_settings.PRISM_URL
 
         tool_call_count = 0
 
