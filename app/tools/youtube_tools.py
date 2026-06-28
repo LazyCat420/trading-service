@@ -128,7 +128,7 @@ async def youtube_test_channel(handle: str) -> str:
             "sort": {
                 "type": "string",
                 "enum": ["relevance", "date"],
-                "description": "Optional sort order for search: 'relevance' (default) or 'date' (to get latest videos).",
+                "description": "Optional sort order for search: 'date' (default) or 'relevance'.",
             },
             "limit": {
                 "type": "integer",
@@ -141,7 +141,7 @@ async def youtube_test_channel(handle: str) -> str:
     tier=0,
     source="local",
 )
-async def youtube_search(query: str = None, channels: list[str] = None, sort: str = None, limit: int = 5) -> str:
+async def youtube_search(query: str = None, channels: list[str] = None, sort: str = "date", limit: int = 5) -> str:
     """Search YouTube or fetch channel videos using scraper-service."""
     import os
     import httpx
