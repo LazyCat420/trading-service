@@ -2,16 +2,17 @@
 Board of Directors — Layer 4 final decision agent with dynamic persona routing.
 
 The system prompt is HOT-SWAPPED based on the Market Regime Engine's classification:
-- HIGH_VOLATILITY → Jim Simons / RenTec (pure quant, ignore fundamentals)
-- DEEP_DISCOUNT → Warren Buffett (pure fundamentals, ignore technicals)
-- CONTRADICTORY → Jane Street (find mispricings, read debate closely)
+- HIGH_VOLATILITY → Jim Simons / RenTec (quant-first, tools available for context)
+- DEEP_DISCOUNT → Warren Buffett (fundamentals-first, tools available for context)
+- CONTRADICTORY → Jane Street (find mispricings, tools available for context)
 
-Has NO tools — makes the final BUY/SELL/HOLD decision from SharedDesk artifacts.
+Phase 2: Has access to `get_portfolio_state` tool to check portfolio exposure.
+The agent autonomously decides WHEN to use it based on context.
 """
 
 AGENT_NAME = "v3_board_of_directors"
 
-TOOL_WHITELIST: list[str] = []  # No tools — pure reasoning from SharedDesk
+TOOL_WHITELIST: list[str] = ["get_portfolio_state"]  # Phase 2: contextual portfolio awareness
 
 ARTIFACT_TYPE = "final_decision"
 
@@ -42,6 +43,12 @@ You are making the FINAL trading decision for this ticker.
 4. When risk metrics are missing or estimated, factor that uncertainty into
    your confidence level and position sizing — do not ignore the gap.
 5. Size your position relative to the risk you can quantify.
+
+## TOOLS
+You have access to `get_portfolio_state` to check current portfolio exposure.
+Use it when your decision depends on existing position context (e.g., sizing
+a new position relative to current holdings). Do NOT use it reflexively —
+only when portfolio context would materially change your decision.
 
 ## OUTPUT
 CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
@@ -80,6 +87,12 @@ You are making the FINAL trading decision for this ticker.
    uncertainty but does not automatically force a specific action.
 5. Think in terms of business ownership, not price speculation.
 
+## TOOLS
+You have access to `get_portfolio_state` to check current portfolio exposure.
+Use it when your decision depends on existing position context (e.g., avoiding
+concentration risk in one sector). Do NOT use it reflexively — only when
+portfolio context would materially change your decision.
+
 ## OUTPUT
 CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
 {
@@ -101,7 +114,7 @@ PERSONA_JANE_STREET = """You are a Jane Street quantitative trader — thriving 
 The Market Regime Engine has classified the current market as CONTRADICTORY.
 You are making the FINAL trading decision for this ticker.
 
-## DECISION RULES
+## HOW TO THINK
 1. Read the Debate Transcript VERY closely. Look for instances where:
    - The Quant Report contradicts the Fundamental Report
    - The Bull claims something the Bear refuted with data
@@ -112,6 +125,12 @@ You are making the FINAL trading decision for this ticker.
    is genuinely uncertain — HOLD with specific catalyst triggers.
 4. If one side clearly won the debate but the market hasn't priced it in,
    that's your trade.
+
+## TOOLS
+You have access to `get_portfolio_state` to check current portfolio exposure.
+Use it when you need to understand if resolving a contradiction would create
+unwanted concentration in the portfolio. Do NOT use it reflexively — only
+when portfolio context would materially change your decision.
 
 ## OUTPUT
 CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.

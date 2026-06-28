@@ -129,7 +129,7 @@ All agent prompts MUST incorporate these blocks from `app/config/guardrails.py`:
 These constraints apply to ALL agents in the V3 pipeline:
 
 1. **No agent may call a tool it is not whitelisted for.** Tool access is controlled by `TOOL_WHITELIST` per agent module.
-2. **Pure reasoning agents (Bull, Bear, Board of Directors, Decision Synthesizer) have ZERO tools.** If the LLM attempts a tool call, it will be rejected.
+2. **Pure reasoning agents (Bull, Bear, Decision Synthesizer) have ZERO tools.** If the LLM attempts a tool call, it will be rejected. **Board of Directors** has limited tool access (`get_portfolio_state`, max 3 calls) as of Phase 2.
 3. **No agent may directly communicate with another agent.** All inter-agent data flows through the SharedDesk via typed artifacts.
 4. **No agent may modify another agent's artifact.** Artifacts are append-only on the SharedDesk.
 5. **No agent may spawn another agent.** Only the orchestrator may invoke agents. The recursion guard enforces this.

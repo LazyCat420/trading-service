@@ -532,7 +532,10 @@ async def _run_board_of_directors(
 
     bod_module = types.ModuleType("board_of_directors_module")
     bod_module.AGENT_NAME = AGENT_NAME
-    bod_module.TOOL_WHITELIST = ["whiteboard_read", "whiteboard_write", "whiteboard_annotate", "whiteboard_summarize"]
+    bod_module.TOOL_WHITELIST = [
+        "whiteboard_read", "whiteboard_write", "whiteboard_annotate", "whiteboard_summarize",
+        "get_portfolio_state",  # Phase 2: contextual portfolio awareness
+    ]
     bod_module.ARTIFACT_TYPE = ARTIFACT_TYPE
     bod_module.SYSTEM_PROMPT = persona_prompt
 

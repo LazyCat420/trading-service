@@ -78,7 +78,7 @@ AGENT_ROLE_BUDGETS: dict[str, dict[str, int]] = {
     "bull_agent": {"max_turns": 3, "max_tool_calls": 0},  # No tools — pure reasoning
     "bear_agent": {"max_turns": 3, "max_tool_calls": 0},  # No tools — pure reasoning
     "regime_engine": {"max_turns": 5, "max_tool_calls": 8},
-    "board_of_directors": {"max_turns": 5, "max_tool_calls": 0},  # No tools — reasoning from SharedDesk
+    "board_of_directors": {"max_turns": 5, "max_tool_calls": 3},  # Phase 2: tools enabled for contextual decisions
 }
 
 
