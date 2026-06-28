@@ -492,7 +492,7 @@ class BootService:
                 except Exception:
                     pass
 
-            port = os.getenv("LAZY_TOOL_SERVICE_PORT", "5591")
+            port = os.getenv("LAZY_TOOL_SERVICE_PORT", "7778")
             mcp_url = f"http://{prism_host}:{port}/mcp/sse"
             logger.info(f"[MCP-Reg] Calculated MCP URL: {mcp_url}")
 
@@ -500,8 +500,8 @@ class BootService:
                 {
                     "project": "coding",
                     "username": "admin",
-                    "name": "lazy-tool-service",
-                    "displayName": "Lazy Tool Service",
+                    "name": "lazy-agent-service",
+                    "displayName": "Lazy Agent Service",
                     "transport": "sse",
                     "url": mcp_url,
                     "enabled": True,
