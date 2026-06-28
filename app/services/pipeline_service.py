@@ -156,6 +156,8 @@ class PipelineService:
                         for tkr, info in all_pool.items():
                             last_date = last_analysis_map.get(tkr)
                             if last_date:
+                                if last_date.tzinfo is None:
+                                    last_date = last_date.replace(tzinfo=timezone.utc)
                                 days_ago = (datetime.now(timezone.utc) - last_date).days
                                 dsa_str = f"{days_ago} days ago" if days_ago > 0 else "Today"
                             else:
