@@ -259,12 +259,15 @@ class PipelineService:
                     system_prompt = SYSTEM_PROMPT.replace("{min_tickers}", str(min_tickers)).replace("{max_tickers}", str(max_tickers))
                     user_prompt = f"Here is the active watchlist snapshot (Top 20):\n\n{snapshot_table}\n\nIMPORTANT: You must output ONLY a valid JSON object. Do NOT output any conversational text or formatting blocks. Your response must begin with {{ and end with }}."
                     
+                    from app.services.bot_manager import get_active_bot_id
+                    active_bot_id = get_active_bot_id()
+                    
                     from app.utils.text_utils import parse_json_response
                     result = await run_agent(
                         agent_name=AGENT_NAME,
                         ticker="WATCHLIST",
                         cycle_id=cycle_id,
-                        bot_id="cycle-backend",
+                        bot_id=active_bot_id,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
                         enable_tools=False, # DISABLED tools so it strictly outputs JSON!
@@ -356,6 +359,8 @@ class PipelineService:
                 try:
                     from app.config import settings as _cfg
                     from app.trading.paper_trader import buy, sell
+                    from app.services.bot_manager import get_active_bot_id
+                    active_bot_id = get_active_bot_id()
 
                     if confidence is None:
                         logger.warning(
@@ -371,9 +376,9 @@ class PipelineService:
                         )
                     elif action == "BUY":
                         size_pct = max(0.02, min(0.10, confidence / 100.0 * 0.10))
-                        await buy(bot_id="cycle-backend", ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
+                        await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
                     elif action == "SELL":
-                        await sell(bot_id="cycle-backend", ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
+                        await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
                         
                     # Handle Triggers (limit orders)
                     decision = result.get("estimate", {})
@@ -382,9 +387,9 @@ class PipelineService:
                     if stop_loss or take_profit:
                         from app.trading.order_triggers import create_trigger
                         if stop_loss:
-                            await create_trigger(bot_id="cycle-backend", ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
+                            await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
                         if take_profit:
-                            await create_trigger(bot_id="cycle-backend", ticker=ticker_name, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
+                            await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
                 except Exception as e:
                     logger.error("[PipelineService] Trade execution failed for %s: %s", ticker_name, e)
 
@@ -395,8 +400,11 @@ class PipelineService:
             if cls._stop_requested:
                 raise asyncio.CancelledError("Cycle stopped by user")
 
+            from app.services.bot_manager import get_active_bot_id
+            active_bot_id = get_active_bot_id()
+
             from app.v3.debate_coordinator import run_battle_royale
-            await run_battle_royale(cycle_id=cycle_id, bot_id="cycle-backend")
+            await run_battle_royale(cycle_id=cycle_id, bot_id=active_bot_id)
 
             cls._state.update({
                 "status": "done",
