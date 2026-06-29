@@ -242,7 +242,7 @@ class Settings(BaseSettings):
     WAR_CONTEXT_ENABLED: bool = True
 
     # ── Prism AI Gateway (MongoDB mirror) ──
-    PRISM_URL: str = _config.get("PRISM_URL", f"http://{_default_host}:7777")
+    PRISM_URL: str = _config.get("PRISM_URL", f"http://{_default_host}:7778")
     PRISM_PROJECT: str = "vllm-trading-bot"
     PRISM_USERNAME: str = "lazy-trader"
     PRISM_ENABLED: bool = True
