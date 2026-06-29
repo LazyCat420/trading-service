@@ -142,41 +142,36 @@ async def run_v3_agent(
             f"Your entire response MUST start with '{{' and end with '}}'.\n"
         )
 
-        # Call the remote harness endpoint (Local or Prism)
-        # Check cycle metadata for harness override, else default to Local
-        harness_provider = desk.cycle_metadata.get("harness_provider", "local").lower()
-        
-        import httpx
-        from app.config.config import Settings
-        settings = Settings()
-        
-        # Build the URL based on the selected harness
-        if harness_provider == "prism":
-            # Assume prism-service runs on the PRISM_URL
-            agent_endpoint = f"{settings.PRISM_URL}/agent"
-        else:
-            # Default to our new lazy-agent-service
-            # We assume it runs on a known port, e.g., 7778 (from ecosystem configs)
-            agent_endpoint = f"http://{settings.DEFAULT_HOST}:7778/agent"
-            
-        payload = {
-            "role": agent_name,
-            "prompt": user_prompt,
-            "system_prompt": system_prompt,
-            "tools_enabled": bool(tool_whitelist),
-            "timeout_sec": timeout_seconds
-        }
-        
-        async with httpx.AsyncClient(timeout=timeout_seconds + 30.0) as client:
-            resp = await client.post(agent_endpoint, json=payload)
-            resp.raise_for_status()
-            result = resp.json()
+        # Call via base_agent.run_agent() which handles:
+        # - Dynamic prompt generation
+        # - Harness routing (Local/Prism)
+        # - Real message & tool execution flow
+        from app.agents.base_agent import run_agent
 
-        elapsed_ms = result.get("metrics", {}).get("elapsed", int((time.monotonic() - t_start) * 1000))
-        final_text = result.get("artifact", "")
-        loops_used = result.get("metrics", {}).get("tool_calls", 1)
-        token_usage = result.get("metrics", {}).get("tokens_used", 0)
-        stop_reason = result.get("status", "completed")
+        harness_provider = desk.cycle_metadata.get("harness_provider", "local").lower()
+        model_override = getattr(agent_module, "MODEL_OVERRIDE", None)
+
+        result = await asyncio.wait_for(
+            run_agent(
+                agent_name=agent_name,
+                ticker=desk.ticker,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=8192,
+                enable_tools=bool(tool_whitelist),
+                model_override=model_override,
+                harness_provider=harness_provider,
+            ),
+            timeout=timeout_seconds,
+        )
+
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        final_text = result.get("response", "")
+        loops_used = result.get("loops_used", 1)
+        token_usage = result.get("tokens_used", 0)
+        stop_reason = result.get("stop_reason", "completed")
 
         # Check for token-limit truncation — the LLM may have been cut off mid-JSON
         if stop_reason in ("max_tokens", "length", "token_limit"):
