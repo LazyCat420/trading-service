@@ -11,6 +11,7 @@ Has NO tools — pure reasoning from SharedDesk data.
 """
 
 AGENT_NAME = "v3_decision_synthesizer"
+MODEL_OVERRIDE = "Qwen/Qwen3.6-35B-A3B-FP8"
 
 TOOL_WHITELIST: list[str] = []  # No tools — pure reasoning from SharedDesk
 

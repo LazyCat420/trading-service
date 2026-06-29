@@ -7,6 +7,7 @@ This classification determines which Board of Directors persona makes the final 
 """
 
 AGENT_NAME = "v3_regime_engine"
+MODEL_OVERRIDE = "Qwen/Qwen3.6-35B-A3B-FP8"
 
 TOOL_WHITELIST = [
     "get_market_data",
