@@ -27,17 +27,17 @@ def run_test():
     }
     
     cur.execute(
-        "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
+        "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
         (job_id, "START_CYCLE", json.dumps(payload))
     )
     conn.commit()
     print("Command inserted. Waiting for processing...")
     
     cycle_id = None
-    # Poll system_commands for completion of the trigger itself
+    # Poll v3_system_commands for completion of the trigger itself
     for _ in range(30):
         time.sleep(1)
-        cur.execute("SELECT status, result, error_message FROM system_commands WHERE id = %s;", (job_id,))
+        cur.execute("SELECT status, result, error_message FROM v3_system_commands WHERE id = %s;", (job_id,))
         row = cur.fetchone()
         if not row:
             continue
