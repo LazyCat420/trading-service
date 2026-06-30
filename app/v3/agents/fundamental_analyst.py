@@ -157,11 +157,11 @@ Scratchpad:
 {p2p_scratchpad}
 
 Identify key consensus points and contradictions. Output valid JSON:
-{
+{{
     "consensus_points": ["Verified consensus point"],
     "contradictions": ["Contradiction or concern flagged"],
     "adjusted_confidence": 75
-}"""
+}}"""
 
     audit_res = await run_agent(
         agent_name="v3_worker_fundamental",
