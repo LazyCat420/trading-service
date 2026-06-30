@@ -98,6 +98,7 @@ async def run_custom_agent(
             max_tokens=4096,
             enable_tools=True,
             harness_provider=desk.cycle_metadata.get("harness_provider", "local"),
+            model_override="Qwen/Qwen3.6-35B-A3B-FP8",
         )
         return role_name, res.get("response", "")
 
