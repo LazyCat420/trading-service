@@ -96,13 +96,31 @@ def parse_json_response(text: str) -> dict:
         )
 
     # Try markdown JSON block first (find all code blocks, non-greedy to avoid capturing across multiple blocks)
+    markdown_candidates = []
     for match in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL):
         try:
-            return json.loads(match.group(1))
+            parsed = json.loads(match.group(1))
+            if isinstance(parsed, dict):
+                markdown_candidates.append(parsed)
         except json.JSONDecodeError:
             pass
+    
+    def is_placeholder_json(d: dict) -> bool:
+        for val in d.values():
+            if isinstance(val, str) and any(p in val for p in ("TICKER1", "TICKER2", "TICKER_NAME", "<TICKER>")):
+                return True
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, str) and any(p in item for p in ("TICKER1", "TICKER2", "TICKER_NAME", "<TICKER>")):
+                        return True
+        return False
+
+    if markdown_candidates:
+        non_placeholder = [c for c in markdown_candidates if not is_placeholder_json(c)]
+        return non_placeholder[-1] if non_placeholder else markdown_candidates[-1]
 
     # Find balanced JSON objects using brace counting
+    brace_candidates = []
     for start_idx in range(len(cleaned)):
         if cleaned[start_idx] != "{":
             continue
@@ -117,9 +135,13 @@ def parse_json_response(text: str) -> dict:
                 try:
                     parsed = json.loads(candidate)
                     if isinstance(parsed, dict):
-                        return parsed
+                        brace_candidates.append(parsed)
                 except json.JSONDecodeError:
                     break  # This opening brace didn't work, try next
+
+    if brace_candidates:
+        non_placeholder = [c for c in brace_candidates if not is_placeholder_json(c)]
+        return non_placeholder[-1] if non_placeholder else brace_candidates[-1]
 
     # Last resort: try the entire cleaned text
     try:

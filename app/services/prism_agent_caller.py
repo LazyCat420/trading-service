@@ -56,7 +56,7 @@ def resolve_default_model_for_agent(agent_name: str) -> tuple[str, str]:
         "maintenance", "consensus", "ticker_validator"
     )
     if any(kw in name_lower for kw in collector_keywords):
-        return get_live_model_from_vllm(settings.PROVIDER_VLLM_1_URL, "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"), "vllm"
+        return get_live_model_from_vllm(settings.PROVIDER_VLLM_1_URL, "Qwen/Qwen3.6-35B-A3B-FP8"), "vllm"
         
     # Default to Gold Spark for heavy tasks
     return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "google/gemma-4-26B-A4B-it"), "vllm-2"
