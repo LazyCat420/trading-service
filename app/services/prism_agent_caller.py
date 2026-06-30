@@ -19,26 +19,47 @@ FIRM_CONTEXT = (
     "extract structured financial data to make profitable trading decisions.\n\n"
 )
 
-def resolve_default_model_for_agent(agent_name: str) -> str:
+import httpx
+
+_dynamic_model_cache = {}
+
+def get_live_model_from_vllm(url: str, fallback: str) -> str:
+    if url in _dynamic_model_cache:
+        return _dynamic_model_cache[url]
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(f"{url}/v1/models")
+            if resp.status_code == 200:
+                models = resp.json().get("data", [])
+                if models:
+                    model_id = models[0].get("id")
+                    if model_id:
+                        _dynamic_model_cache[url] = model_id
+                        return model_id
+    except Exception as e:
+        logger.warning(f"Failed to fetch model from {url}: {e}")
+    return fallback
+
+def resolve_default_model_for_agent(agent_name: str) -> tuple[str, str]:
     """Resolve default model based on agent role to balance load.
-    Jetson (Qwen 35B) handles lightweight janitorial, consensus, and curation tasks.
-    Gold Spark (Gemma 4 26B) handles heavy quant research, debates, and final decisions.
+    Jetson handles lightweight janitorial, consensus, and curation tasks.
+    Gold Spark handles heavy quant research, debates, and final decisions.
     """
     if not agent_name:
-        return "google/gemma-4-26B-A4B-it"
+        return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "google/gemma-4-26B-A4B-it"), "vllm-2"
 
     name_lower = agent_name.lower()
     
-    # Collector & lightweight agents route to Jetson (Qwen 35B)
+    # Collector & lightweight agents route to Jetson
     collector_keywords = (
         "janitor", "curator", "summarizer", "scout", "purge",
         "maintenance", "consensus", "ticker_validator"
     )
     if any(kw in name_lower for kw in collector_keywords):
-        return "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
+        return get_live_model_from_vllm(settings.PROVIDER_VLLM_1_URL, "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"), "vllm"
         
-    # Default to Gemma on Gold Spark for heavy tasks
-    return "google/gemma-4-26B-A4B-it"
+    # Default to Gold Spark for heavy tasks
+    return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "google/gemma-4-26B-A4B-it"), "vllm-2"
 
 
 async def call_prism_agent(
@@ -114,9 +135,9 @@ async def call_prism_agent(
         from app.v3.guardrails import get_budget_for_role
         max_iter = get_budget_for_role(agent_id).max_turns
 
-        default_model = resolve_default_model_for_agent(fallback_agent_name or agent_id)
+        default_model, default_provider = resolve_default_model_for_agent(fallback_agent_name or agent_id)
         model = model_override or default_model
-        provider = "vllm-2" if model == "google/gemma-4-26B-A4B-it" else "vllm"
+        provider = default_provider if not model_override else ("vllm-2" if model_override == "google/gemma-4-26B-A4B-it" else "vllm")
         resp = await prism_client.call_agent(
             model=model,
             messages=messages,
