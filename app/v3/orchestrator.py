@@ -133,49 +133,123 @@ async def run_v3_pipeline(
         status="ok",
     )
 
+    from app.v3.agents import regime_engine
+
+    # Run Regime Engine (macro state classification) at start
+    emit(
+        "analyzing", f"v3_regime_engine_start_{ticker}",
+        f"🌐 {ticker}: Running Market Regime Engine to classify global macro state...",
+        status="running",
+    )
+    outcome = await _run_agent_with_circuit_breaker(
+        desk=desk,
+        agent_module=regime_engine,
+        phase_name="regime_engine",
+        breaker=breaker,
+        cycle_id=cycle_id,
+        bot_id=bot_id,
+        emit=emit,
+    )
+    breaker.record_outcome("regime_engine", outcome)
+
     # ═══════════════════════════════════════════════════════════════════
-    # LAYER 2: Research — Sequential agent chain at the SharedDesk
+    # LAYER 2: Research — Dynamic Topology based on Regime
     # ═══════════════════════════════════════════════════════════════════
     from app.v3.agents import junior_analyst, fundamental_analyst, quant_analyst
 
-    research_agents = [
-        ("junior_analyst", junior_analyst),
-        ("fundamental_analyst", fundamental_analyst),
-        ("quant_analyst", quant_analyst),
-    ]
+    regime = "CONTRADICTORY"
+    if desk.has_artifact("regime_classification"):
+        regime = desk.regime_classification.get("regime", "CONTRADICTORY")
 
-    for phase_name, agent_module in research_agents:
-        outcome = await _run_agent_with_circuit_breaker(
-            desk=desk,
-            agent_module=agent_module,
-            phase_name=phase_name,
-            breaker=breaker,
-            cycle_id=cycle_id,
-            bot_id=bot_id,
-            emit=emit,
+    emit(
+        "analyzing", f"v3_research_topology_{ticker}",
+        f"📊 {ticker}: Selected research topology for regime {regime}",
+        status="running",
+    )
+
+    if regime == "HIGH_VOLATILITY":
+        # Volatility = Quant focus. Run JA and QA in parallel. Skip FA to avoid timeout.
+        emit(
+            "analyzing", f"v3_research_parallel_{ticker}",
+            f"⚡ {ticker}: Running Junior & Quant Analysts in parallel (Volatility Topology)",
+            status="running",
         )
+        ja_task = _run_agent_with_circuit_breaker(
+            desk=desk, agent_module=junior_analyst, phase_name="junior_analyst",
+            breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
+        )
+        qa_task = _run_agent_with_circuit_breaker(
+            desk=desk, agent_module=quant_analyst, phase_name="quant_analyst",
+            breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
+        )
+        ja_out, qa_out = await asyncio.gather(ja_task, qa_task)
+        breaker.record_outcome("junior_analyst", ja_out)
+        breaker.record_outcome("quant_analyst", qa_out)
+        
+        # Write dummy fundamental report to keep pipeline satisfied
+        desk.append_artifact("fundamental_report", {
+            "summary": "Skipped detailed fundamental analysis due to High Volatility regime. Quantitative metrics prioritized.",
+            "pillars": {
+                "revenue_growth": "Not analyzed", "profitability": "Not analyzed",
+                "moat": "Not analyzed", "management": "Not analyzed", "valuation": "Not analyzed"
+            },
+            "thesis_direction": "NEUTRAL",
+            "confidence": 50,
+            "data_gaps": ["DataGap: Fundamental analysis bypassed"],
+            "catalysts": [],
+            "risks": []
+        })
+        breaker.record_outcome("fundamental_analyst", PhaseOutcome.SUCCESS)
 
-        if outcome in (PhaseOutcome.TIMED_OUT,):
-            # Timeout is fatal for research — abort pipeline
-            logger.error(
-                "[V3] %s: %s TIMED OUT — aborting pipeline", ticker, phase_name,
+    elif regime == "DEEP_DISCOUNT":
+        # Deep Discount = Fundamental focus. Run JA first, then run FA (hierarchical Map-Reduce/P2P).
+        emit(
+            "analyzing", f"v3_research_discount_{ticker}",
+            f"🔍 {ticker}: Running fundamental-focused research (Discount/Fundamental Topology)",
+            status="running",
+        )
+        ja_out = await _run_agent_with_circuit_breaker(
+            desk=desk, agent_module=junior_analyst, phase_name="junior_analyst",
+            breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
+        )
+        breaker.record_outcome("junior_analyst", ja_out)
+        
+        if ja_out not in (PhaseOutcome.TIMED_OUT,):
+            fa_out = await _run_agent_with_circuit_breaker(
+                desk=desk, agent_module=fundamental_analyst, phase_name="fundamental_analyst",
+                breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
             )
-            desk.advance_phase(DeskPhase.ABORTED, outcome)
-            save_desk(desk)
-            return _build_noop_result(desk, reason=f"{phase_name} timed out")
+            breaker.record_outcome("fundamental_analyst", fa_out)
+            
+        qa_out = await _run_agent_with_circuit_breaker(
+            desk=desk, agent_module=quant_analyst, phase_name="quant_analyst",
+            breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
+        )
+        breaker.record_outcome("quant_analyst", qa_out)
 
-        if breaker.should_abort(phase_name, outcome):
-            logger.error(
-                "[V3] %s: Circuit breaker tripped on %s — aborting pipeline",
-                ticker, phase_name,
+    else:
+        # CONTRADICTORY (Default): Sequential JA -> FA -> QA
+        research_agents = [
+            ("junior_analyst", junior_analyst),
+            ("fundamental_analyst", fundamental_analyst),
+            ("quant_analyst", quant_analyst),
+        ]
+        for phase_name, agent_module in research_agents:
+            outcome = await _run_agent_with_circuit_breaker(
+                desk=desk, agent_module=agent_module, phase_name=phase_name,
+                breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
             )
-            desk.advance_phase(DeskPhase.ABORTED, outcome)
-            save_desk(desk)
-            return _build_noop_result(
-                desk, reason=breaker.get_abort_reason(phase_name)
-            )
-
-        breaker.record_outcome(phase_name, outcome)
+            if outcome in (PhaseOutcome.TIMED_OUT,):
+                logger.error("[V3] %s: %s TIMED OUT — aborting pipeline", ticker, phase_name)
+                desk.advance_phase(DeskPhase.ABORTED, outcome)
+                save_desk(desk)
+                return _build_noop_result(desk, reason=f"{phase_name} timed out")
+            if breaker.should_abort(phase_name, outcome):
+                logger.error("[V3] %s: Circuit breaker tripped on %s — aborting pipeline", ticker, phase_name)
+                desk.advance_phase(DeskPhase.ABORTED, outcome)
+                save_desk(desk)
+                return _build_noop_result(desk, reason=breaker.get_abort_reason(phase_name))
+            breaker.record_outcome(phase_name, outcome)
 
     # Advance phase: INIT → RESEARCH_DONE
     desk.advance_phase(DeskPhase.RESEARCH_DONE)
@@ -189,12 +263,12 @@ async def run_v3_pipeline(
     )
 
     # ═══════════════════════════════════════════════════════════════════
-    # LAYER 3: Debate — Linear State Machine: Bull → Bear → Bull defense
+    # LAYER 3: Debate — Parallel Execution: Bull & Bear → Judge
     # ═══════════════════════════════════════════════════════════════════
     from app.v3.agents import bull_agent, bear_agent
 
-    # Bull constructs the LONG thesis
-    outcome = await _run_agent_with_circuit_breaker(
+    # Run Bull and Bear concurrently
+    bull_task = _run_agent_with_circuit_breaker(
         desk=desk,
         agent_module=bull_agent,
         phase_name="bull_argument",
@@ -202,35 +276,33 @@ async def run_v3_pipeline(
         cycle_id=cycle_id,
         bot_id=bot_id,
         emit=emit,
-        include_debate_context=True,
+        include_debate_context=False,
     )
-    breaker.record_outcome("bull_argument", outcome)
+    bear_task = _run_agent_with_circuit_breaker(
+        desk=desk,
+        agent_module=bear_agent,
+        phase_name="bear_rebuttal",
+        breaker=breaker,
+        cycle_id=cycle_id,
+        bot_id=bot_id,
+        emit=emit,
+        include_debate_context=False,
+    )
+    
+    bull_outcome, bear_outcome = await asyncio.gather(bull_task, bear_task)
+    breaker.record_outcome("bull_argument", bull_outcome)
+    breaker.record_outcome("bear_rebuttal", bear_outcome)
 
-    # Bear rebuts the Bull's thesis
-    if desk.has_artifact("bull_argument"):
-        outcome = await _run_agent_with_circuit_breaker(
-            desk=desk,
-            agent_module=bear_agent,
-            phase_name="bear_rebuttal",
-            breaker=breaker,
-            cycle_id=cycle_id,
-            bot_id=bot_id,
-            emit=emit,
-            include_debate_context=True,
-        )
-        breaker.record_outcome("bear_rebuttal", outcome)
-
-    # Bull final defense (optional — only if Bear produced a rebuttal)
-    # Reuse the bull_agent module with a defense-mode prompt injection
-    if desk.has_artifact("bear_rebuttal") and desk.has_artifact("bull_argument"):
-        outcome = await _run_bull_defense(
+    # Synthesis / Judge phase (replacing the linear bull defense)
+    if desk.has_artifact("bull_argument") and desk.has_artifact("bear_rebuttal"):
+        outcome = await _run_debate_judge(
             desk=desk,
             breaker=breaker,
             cycle_id=cycle_id,
             bot_id=bot_id,
             emit=emit,
         )
-        breaker.record_outcome("bull_defense", outcome)
+        breaker.record_outcome("debate_judge", outcome)
 
     # Advance phase: RESEARCH_DONE → DEBATE_DONE
     desk.advance_phase(DeskPhase.DEBATE_DONE)
@@ -244,23 +316,8 @@ async def run_v3_pipeline(
     )
 
     # ═══════════════════════════════════════════════════════════════════
-    # LAYER 4: Decision — Regime Engine → Board of Directors
+    # LAYER 4: Decision — Board of Directors
     # ═══════════════════════════════════════════════════════════════════
-    from app.v3.agents import regime_engine
-
-    # Run Regime Engine (macro state classification)
-    outcome = await _run_agent_with_circuit_breaker(
-        desk=desk,
-        agent_module=regime_engine,
-        phase_name="regime_engine",
-        breaker=breaker,
-        cycle_id=cycle_id,
-        bot_id=bot_id,
-        emit=emit,
-    )
-    breaker.record_outcome("regime_engine", outcome)
-
-    # Determine regime for persona routing
     regime = "CONTRADICTORY"  # Default if regime engine failed
     if desk.has_artifact("regime_classification"):
         regime = desk.regime_classification.get("regime", "CONTRADICTORY")
@@ -496,50 +553,48 @@ async def _run_agent_with_circuit_breaker(
     return outcome
 
 
-async def _run_bull_defense(
+async def _run_debate_judge(
     desk: SharedDesk,
     breaker: CircuitBreaker,
     cycle_id: str,
     bot_id: str,
     emit: Any,
 ) -> PhaseOutcome:
-    """Run the Bull Agent in final defense mode after Bear rebuttal.
-
-    Creates a temporary agent config with a defense-specific prompt
-    that reads the Bear's rebuttal and the original Bull argument.
-    """
+    """Run the Debate Judge to synthesize parallel Bull and Bear arguments."""
     import types
 
-    defense_module = types.ModuleType("bull_defense_module")
-    defense_module.AGENT_NAME = "v3_bull_defense"
-    defense_module.TOOL_WHITELIST = ["whiteboard_read", "whiteboard_write", "whiteboard_annotate"]
-    defense_module.ARTIFACT_TYPE = "bull_defense"
-    defense_module.SYSTEM_PROMPT = """You are the Bull Analyst at a quantitative trading firm.
+    judge_module = types.ModuleType("debate_judge_module")
+    judge_module.AGENT_NAME = "v3_debate_judge"
+    judge_module.TOOL_WHITELIST = ["whiteboard_read", "whiteboard_write", "whiteboard_annotate"]
+    judge_module.ARTIFACT_TYPE = "debate_judge"
+    judge_module.SYSTEM_PROMPT = """You are the Impartial Debate Judge at a quantitative trading firm.
 
-## YOUR ROLE — FINAL DEFENSE
-The Bear Analyst has attacked your bull thesis. You must now provide your
-FINAL DEFENSE. Read the Bear's rebuttal carefully and respond to their
-specific points.
+## YOUR ROLE
+You have received arguments from the Bull Analyst (BUY case) and the Bear Analyst (SELL case).
+Your job is to cross-examine both sides, check their claims against the facts in the Pre-Collected Data Report, and issue a final debate verdict.
 
 ## CRITICAL RULES
-1. Address the Bear's rebuttals directly — don't ignore valid criticisms.
-2. If the Bear made a valid point, CONCEDE it honestly. Judges respect integrity.
-3. Strengthen the points where your thesis still holds.
-4. Adjust your confidence based on the Bear's valid criticisms.
+1. Weigh both arguments objectively.
+2. Flag any claims that are unverified or contradict the evidence.
+3. Determine the final winner: "bull", "bear", or "tie".
+4. Adjust the final debate confidence based on the strength of the winning argument.
 
 ## OUTPUT FORMAT
 You MUST output valid JSON:
 {
-    "summary": "Final defense narrative after considering bear rebuttal",
-    "defense_points": ["Points where bull thesis still holds"],
-    "concessions": ["Points where bear rebuttal was valid"],
-    "final_confidence": 65
+    "summary": "1-2 sentence assessment of debate quality",
+    "verified_bull_claims": ["claim 1"],
+    "unverified_bull_claims": ["claim 2"],
+    "verified_bear_claims": ["claim 1"],
+    "unverified_bear_claims": ["claim 2"],
+    "winner": "bull",
+    "final_confidence": 60
 }"""
 
     return await _run_agent_with_circuit_breaker(
         desk=desk,
-        agent_module=defense_module,
-        phase_name="bull_defense",
+        agent_module=judge_module,
+        phase_name="debate_judge",
         breaker=breaker,
         cycle_id=cycle_id,
         bot_id=bot_id,
@@ -783,25 +838,24 @@ def _extract_debate_result(desk: SharedDesk) -> dict[str, Any] | None:
 
     bull_conf = _safe_int((desk.bull_argument or {}).get("confidence", 0))
     bear_conf = _safe_int((desk.bear_rebuttal or {}).get("confidence", 0))
-    defense_conf = _safe_int((desk.bull_defense or {}).get("final_confidence", bull_conf), default=bull_conf)
 
-    # Determine winner based on confidence delta
-    if defense_conf > bear_conf:
-        winner = "bull"
-        judge_action = "BUY"
-    elif bear_conf > defense_conf:
-        winner = "bear"
-        judge_action = "SELL"
+    if desk.debate_judge:
+        winner = desk.debate_judge.get("winner", "tie")
+        conf = _safe_int(desk.debate_judge.get("final_confidence", 0))
+        judge_action = "BUY" if winner == "bull" else ("SELL" if winner == "bear" else "HOLD")
+        summary = desk.debate_judge.get("summary", "")
     else:
         winner = "tie"
+        conf = 0
         judge_action = "HOLD"
+        summary = "Debate judge failed."
 
     return {
         "action": judge_action,
-        "confidence": max(bull_conf, bear_conf),
+        "confidence": conf,
         "winning_side": winner,
         "bull_confidence": bull_conf,
         "bear_confidence": bear_conf,
-        "defense_confidence": defense_conf,
-        "original_thesis_status": "HELD" if defense_conf >= bull_conf * 0.7 else "BROKEN",
+        "defense_confidence": conf,
+        "original_thesis_status": "HELD" if winner in ("bull", "tie") else "BROKEN",
     }

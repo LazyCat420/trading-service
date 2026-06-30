@@ -162,6 +162,11 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "whiteboard_write",
         "whiteboard_annotate",
     ],
+    "v3_debate_judge": [
+        "whiteboard_read",
+        "whiteboard_write",
+        "whiteboard_annotate",
+    ],
     "v3_regime_engine": [
         "get_market_data",
         "get_finnhub_news",
@@ -263,6 +268,7 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "v3_bull_agent": 3,          # No tools — pure reasoning
     "v3_bear_agent": 3,          # No tools — pure reasoning
     "v3_bull_defense": 3,        # No tools — pure reasoning
+    "v3_debate_judge": 3,        # No tools — pure reasoning
     "v3_regime_engine": 5,
     "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk
 }

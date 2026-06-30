@@ -293,6 +293,42 @@ BULL_DEFENSE_SCHEMA: dict = {
     },
 }
 
+DEBATE_JUDGE_SCHEMA: dict = {
+    "type": "object",
+    "required": ["summary", "winner", "final_confidence"],
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": "1-2 sentence assessment of debate quality",
+        },
+        "verified_bull_claims": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "unverified_bull_claims": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "verified_bear_claims": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "unverified_bear_claims": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "winner": {
+            "type": "string",
+            "enum": ["bull", "bear", "tie"],
+        },
+        "final_confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+        },
+    },
+}
+
 REGIME_CLASSIFICATION_SCHEMA: dict = {
     "type": "object",
     "required": ["regime", "confidence"],
@@ -437,6 +473,7 @@ ARTIFACT_SCHEMAS: dict[str, dict] = {
     "bull_argument": BULL_ARGUMENT_SCHEMA,
     "bear_rebuttal": BEAR_REBUTTAL_SCHEMA,
     "bull_defense": BULL_DEFENSE_SCHEMA,
+    "debate_judge": DEBATE_JUDGE_SCHEMA,
     "regime_classification": REGIME_CLASSIFICATION_SCHEMA,
     "final_decision": FINAL_DECISION_SCHEMA,
     "trade_decision": TRADE_DECISION_SCHEMA,

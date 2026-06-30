@@ -71,6 +71,21 @@ async def run_v3_agent(
 
     agent_name = agent_module.AGENT_NAME
     artifact_type = agent_module.ARTIFACT_TYPE
+
+    # Check for custom agent override execution
+    if hasattr(agent_module, "run_custom_agent"):
+        try:
+            return await agent_module.run_custom_agent(
+                desk=desk,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+                emit=emit,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as custom_err:
+            logger.error("[V3Runner] Custom agent execution failed: %s", custom_err)
+            return PhaseOutcome.AGENT_ERROR
+
     system_prompt = agent_module.SYSTEM_PROMPT
     tool_whitelist = agent_module.TOOL_WHITELIST
 
@@ -95,52 +110,53 @@ async def run_v3_agent(
             f"## Cycle: {cycle_id}\n\n"
         )
 
-        # Add cycle metadata & portfolio context if available
+        # Add cycle metadata & portfolio context if available (STATIC)
         if desk.cycle_metadata:
             portfolio_ctx = desk.cycle_metadata.get("portfolio_context", "")
             if portfolio_ctx:
                 user_prompt += f"## Portfolio Context\n{portfolio_ctx}\n\n"
                 
-            # Inject Pre-Collected Ticker Data Report
+            # Inject Pre-Collected Ticker Data Report (STATIC)
             data_report = desk.cycle_metadata.get("data_report", "")
             if data_report:
                 user_prompt += f"## Pre-Collected Data Report\n{data_report}\n\n"
 
-            # Inject Past Cycle Memory if available
+            # Inject Past Cycle Memory if available (STATIC)
             memory_context = desk.cycle_metadata.get("memory_context", "")
             if memory_context:
                 user_prompt += f"## Past Cycle Memory\n{memory_context}\n\n"
 
+        # Add Tool/Reasoning Instructions (STATIC)
+        if tool_whitelist:
+            user_prompt += (
+                "You have access to external data tools. "
+                "Core quantitative metrics, news, YouTube, and filings are already provided in the 'Pre-Collected Data Report' section. "
+                "Your job is to act as a data janitor: review the pre-collected data and ONLY use your tools if you spot missing data, corrupted data, or clickbait that needs verification. "
+                "If the data is solid, proceed directly to analysis without calling redundant tools.\n\n"
+            )
+        else:
+            user_prompt += (
+                "You have NO external tools. Reason from the SharedDesk data.\n\n"
+            )
+
+        # Force JSON response format reminder in the conversation history (STATIC)
+        user_prompt += (
+            "## OUTPUT DIRECTIVE REMINDER\n"
+            f"When you generate your final response containing your analysis report (i.e. when you do NOT call any tools), "
+            f"you MUST output ONLY a valid JSON object matching the `{artifact_type}` schema.\n"
+            f"Do NOT include any conversational intro/outro, preambles, summary comments, or markdown headings.\n"
+            f"Do NOT wrap the JSON in markdown code blocks (do NOT use ```json).\n"
+            f"Your entire response MUST start with '{{' and end with '}}'.\n\n"
+        )
+
+        # Append dynamic SharedDesk Context at the very end
         if desk_context and desk_context != "No artifacts on desk yet.":
             user_prompt += (
                 f"## SharedDesk Context (from prior analysts)\n"
                 f"{desk_context}\n\n"
             )
 
-        if tool_whitelist:
-            user_prompt += (
-                "You have access to external data tools. "
-                "Core quantitative metrics, news, YouTube, and filings are already provided in the 'Pre-Collected Data Report' section. "
-                "Your job is to act as a data janitor: review the pre-collected data and ONLY use your tools if you spot missing data, corrupted data, or clickbait that needs verification. "
-                "If the data is solid, proceed directly to analysis without calling redundant tools.\n"
-                "Begin your analysis now.\n"
-            )
-        else:
-            user_prompt += (
-                "You have NO external tools. Reason from the SharedDesk data above.\n"
-                "Begin your analysis now.\n"
-            )
-
-        # Force JSON response format reminder in the conversation history
-        user_prompt += (
-            "\n"
-            "## OUTPUT DIRECTIVE REMINDER\n"
-            f"When you generate your final response containing your analysis report (i.e. when you do NOT call any tools), "
-            f"you MUST output ONLY a valid JSON object matching the `{artifact_type}` schema.\n"
-            f"Do NOT include any conversational intro/outro, preambles, summary comments, or markdown headings.\n"
-            f"Do NOT wrap the JSON in markdown code blocks (do NOT use ```json).\n"
-            f"Your entire response MUST start with '{{' and end with '}}'.\n"
-        )
+        user_prompt += "Begin your analysis now.\n"
 
         # Call via base_agent.run_agent() which handles:
         # - Dynamic prompt generation

@@ -204,7 +204,9 @@ async def run_agent(
         else:
             prism_client.url = app_settings.PRISM_URL
 
+        t0 = time.time()
         tool_call_count = 0
+        prior_calls = []
 
         def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool) -> None:
             """Post-call hook: record the actual outcome to V3 telemetry."""
@@ -240,6 +242,41 @@ async def run_agent(
                 )
             except Exception as e:
                 logger.debug(f"Telemetry failed: {e}")
+
+            # Doom loop check
+            current_call = {"name": tool_name, "args": arguments, "error": error_msg}
+            prior_calls.append(current_call)
+
+            # Check 1: Tool loop repetition (same tool + args >= 3 times)
+            same_calls = [c for c in prior_calls if c["name"] == tool_name and c["args"] == arguments]
+            if len(same_calls) >= 3:
+                from app.services.streaming_observer import DoomLoopException
+                logger.error(
+                    "[ManagerAgent] Caught tool doom loop for %s: repeating %s with %s",
+                    agent_name, tool_name, arguments
+                )
+                raise DoomLoopException(f"Agent {agent_name} caught in tool doom loop calling {tool_name} 3 times.")
+
+            # Check 2: Error loop repetition (same tool + same error >= 3 times)
+            if failed and error_msg:
+                same_errors = [c for c in prior_calls if c["name"] == tool_name and c["error"] == error_msg]
+                if len(same_errors) >= 3:
+                    from app.services.streaming_observer import DoomLoopException
+                    logger.error(
+                        "[ManagerAgent] Caught tool error doom loop for %s on %s: %s",
+                        agent_name, tool_name, error_msg
+                    )
+                    raise DoomLoopException(f"Agent {agent_name} caught in tool error loop for {tool_name}: {error_msg}")
+
+            # Check 3: Active session time limit check
+            elapsed_s = time.time() - t0
+            if elapsed_s > 180 and tool_call_count > 4:
+                from app.services.streaming_observer import DoomLoopException
+                logger.error(
+                    "[ManagerAgent] Agent %s took too much time (%.1fs) over %d tool turns without completing.",
+                    agent_name, elapsed_s, tool_call_count
+                )
+                raise DoomLoopException(f"Agent {agent_name} exceeded active progress time limit (elapsed: {elapsed_s:.1f}s, turns: {tool_call_count})")
 
         from app.services.prism_agent_registry import resolve_agent_id
         prism_agent_id = resolve_agent_id(agent_name)

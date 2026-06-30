@@ -55,6 +55,7 @@ _VALID_ARTIFACT_TYPES = frozenset({
     "bull_argument",
     "bear_rebuttal",
     "bull_defense",
+    "debate_judge",
     "regime_classification",
     "final_decision",
     "trade_decision",
@@ -87,6 +88,7 @@ class SharedDesk:
     bull_argument: dict | None = None       # Bull Agent output
     bear_rebuttal: dict | None = None       # Bear Agent output
     bull_defense: dict | None = None        # Bull Agent final defense
+    debate_judge: dict | None = None        # Debate Judge output
     regime_classification: dict | None = None  # Market Regime Engine output
     final_decision: dict | None = None      # Board of Directors output
     trade_decision: dict | None = None      # Decision Synthesizer output (Layer 5)
@@ -179,7 +181,7 @@ class SharedDesk:
     def get_debate_artifacts(self) -> dict[str, dict]:
         """Return all debate layer artifacts (non-None)."""
         result = {}
-        for name in ("bull_argument", "bear_rebuttal", "bull_defense"):
+        for name in ("bull_argument", "bear_rebuttal", "bull_defense", "debate_judge"):
             val = getattr(self, name, None)
             if val is not None:
                 result[name] = val
@@ -267,6 +269,12 @@ class SharedDesk:
                 summary = self.bull_defense.get("summary", "")
                 sections.append(f"## Bull Final Defense\n{summary}")
 
+            if self.debate_judge:
+                summary = self.debate_judge.get("summary", "")
+                winner = self.debate_judge.get("winner", "")
+                conf = self.debate_judge.get("final_confidence", 0)
+                sections.append(f"## Debate Judge Verdict (Winner: {winner} @ {conf}% confidence)\n{summary}")
+
         # Regime
         if self.regime_classification:
             regime = self.regime_classification.get("regime", "?")
@@ -312,6 +320,7 @@ class SharedDesk:
             "bull_argument": self.bull_argument,
             "bear_rebuttal": self.bear_rebuttal,
             "bull_defense": self.bull_defense,
+            "debate_judge": self.debate_judge,
             "regime_classification": self.regime_classification,
             "final_decision": self.final_decision,
             "trade_decision": self.trade_decision,
@@ -335,6 +344,7 @@ class SharedDesk:
         desk.bull_argument = data.get("bull_argument")
         desk.bear_rebuttal = data.get("bear_rebuttal")
         desk.bull_defense = data.get("bull_defense")
+        desk.debate_judge = data.get("debate_judge")
         desk.regime_classification = data.get("regime_classification")
         desk.final_decision = data.get("final_decision")
         desk.trade_decision = data.get("trade_decision")
