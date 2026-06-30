@@ -9,7 +9,6 @@ Part of the Linear State Machine Debate: Bull → Bear → Bull (defense).
 """
 
 AGENT_NAME = "v3_bear_agent"
-MODEL_OVERRIDE = "Qwen/Qwen3.6-35B-A3B-FP8"
 
 TOOL_WHITELIST: list[str] = []  # No tools — pure reasoning
 

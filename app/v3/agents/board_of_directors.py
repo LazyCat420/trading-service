@@ -11,7 +11,6 @@ The agent autonomously decides WHEN to use it based on context.
 """
 
 AGENT_NAME = "v3_board_of_directors"
-MODEL_OVERRIDE = "Qwen/Qwen3.6-35B-A3B-FP8"
 
 TOOL_WHITELIST: list[str] = ["get_portfolio_state"]  # Phase 2: contextual portfolio awareness
 
