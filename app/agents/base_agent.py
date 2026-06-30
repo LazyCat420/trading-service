@@ -289,8 +289,6 @@ async def run_agent(
         }
         if model_override:
             kwargs["model"] = model_override
-            if model_override in ("Qwen/Qwen3.6-35B-A3B-FP8", "google/gemma-4-26B-A4B-it"):
-                kwargs["provider"] = "vllm-2"
             
         agent = BaseAgent(**kwargs)
         if enable_tools and agent_tools:

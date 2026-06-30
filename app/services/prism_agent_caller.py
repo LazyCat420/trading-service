@@ -23,9 +23,13 @@ import httpx
 
 _dynamic_model_cache = {}
 
-def get_live_model_from_vllm(url: str, fallback: str) -> str:
-    if url in _dynamic_model_cache:
-        return _dynamic_model_cache[url]
+def get_live_model_from_vllm(url: str, fallback: str, force_refresh: bool = False) -> str:
+    now = time.time()
+    if not force_refresh and url in _dynamic_model_cache:
+        model_id, timestamp = _dynamic_model_cache[url]
+        if now - timestamp < 300: # 5 minutes TTL
+            return model_id
+
     try:
         with httpx.Client(timeout=2.0) as client:
             resp = client.get(f"{url}/v1/models")
@@ -34,19 +38,19 @@ def get_live_model_from_vllm(url: str, fallback: str) -> str:
                 if models:
                     model_id = models[0].get("id")
                     if model_id:
-                        _dynamic_model_cache[url] = model_id
+                        _dynamic_model_cache[url] = (model_id, now)
                         return model_id
     except Exception as e:
         logger.warning(f"Failed to fetch model from {url}: {e}")
     return fallback
 
-def resolve_default_model_for_agent(agent_name: str) -> tuple[str, str]:
+def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False) -> tuple[str, str]:
     """Resolve default model based on agent role to balance load.
     Jetson handles lightweight janitorial, consensus, and curation tasks.
     Gold Spark handles heavy quant research, debates, and final decisions.
     """
     if not agent_name:
-        return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "google/gemma-4-26B-A4B-it"), "vllm-2"
+        return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "default-model", force_refresh=force_refresh), "vllm-2"
 
     name_lower = agent_name.lower()
     
@@ -56,10 +60,9 @@ def resolve_default_model_for_agent(agent_name: str) -> tuple[str, str]:
         "maintenance", "consensus", "ticker_validator"
     )
     if any(kw in name_lower for kw in collector_keywords):
-        return get_live_model_from_vllm(settings.PROVIDER_VLLM_1_URL, "Qwen/Qwen3.6-35B-A3B-FP8"), "vllm"
+        return get_live_model_from_vllm(settings.PROVIDER_VLLM_1_URL, "default-model", force_refresh=force_refresh), "vllm"
         
-    # Default to Gold Spark for heavy tasks
-    return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "google/gemma-4-26B-A4B-it"), "vllm-2"
+    return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "default-model", force_refresh=force_refresh), "vllm-2"
 
 
 async def call_prism_agent(
@@ -137,18 +140,38 @@ async def call_prism_agent(
 
         default_model, default_provider = resolve_default_model_for_agent(fallback_agent_name or agent_id)
         model = model_override or default_model
-        provider = default_provider if not model_override else ("vllm-2" if model_override == "google/gemma-4-26B-A4B-it" else "vllm")
-        resp = await prism_client.call_agent(
-            model=model,
-            messages=messages,
-            system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
-            agent_name=agent_id,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            project=project or settings.PROJECT_NAME,
-            max_iterations=max_iter,
-            provider=provider,
-        )
+        provider = default_provider if not model_override else default_provider
+        
+        try:
+            resp = await prism_client.call_agent(
+                model=model,
+                messages=messages,
+                system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
+                agent_name=agent_id,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                project=project or settings.PROJECT_NAME,
+                max_iterations=max_iter,
+                provider=provider,
+            )
+        except Exception as e:
+            if "404" in str(e) or "not exist" in str(e).lower() or "not found" in str(e).lower():
+                logger.warning(f"[PrismAgentCaller] 404 Model Not Found. Forcing refresh and retrying...")
+                # Fetch fresh model and try exactly one more time
+                fresh_model, _ = resolve_default_model_for_agent(fallback_agent_name or agent_id, force_refresh=True)
+                resp = await prism_client.call_agent(
+                    model=fresh_model,
+                    messages=messages,
+                    system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
+                    agent_name=agent_id,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    project=project or settings.PROJECT_NAME,
+                    max_iterations=max_iter,
+                    provider=provider,
+                )
+            else:
+                raise e
         
         try:
             response_text = resp.json().get("text", "").strip()

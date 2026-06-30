@@ -334,6 +334,17 @@ class PipelineService:
                 event.update(kwargs)
                 logger.info(f"[{cycle_id}][{phase}][{step}] {detail}")
                 PipelineStateDB.append_events(cycle_id, [event])
+                
+                try:
+                    # Sync backend in-memory progress and status to DB to prevent stuck state false-positives
+                    cls._state.update({
+                        "status": "running",
+                        "progress": f"[{phase.upper()}] {detail}",
+                        "phase": phase
+                    })
+                    cls.save_state()
+                except Exception as db_sync_err:
+                    logger.warning("[PipelineService] Failed to sync progress to DB: %s", db_sync_err)
 
             cls._state["progress"] = f"Processing {len(tickers)} tickers concurrently"
             cls.save_state()
