@@ -102,13 +102,18 @@ async def run_custom_agent(
         )
         return role_name, res.get("response", "")
 
-    tasks = [
-        run_worker("earnings", SUBAGENT_EARNINGS_PROMPT),
-        run_worker("balance_sheet", SUBAGENT_BALANCE_SHEET_PROMPT),
-        run_worker("valuation", SUBAGENT_VALUATION_PROMPT),
-    ]
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = []
+    for role_name, subagent_prompt in [
+        ("earnings", SUBAGENT_EARNINGS_PROMPT),
+        ("balance_sheet", SUBAGENT_BALANCE_SHEET_PROMPT),
+        ("valuation", SUBAGENT_VALUATION_PROMPT),
+    ]:
+        try:
+            role, text = await run_worker(role_name, subagent_prompt)
+            results.append((role, text))
+        except Exception as e:
+            logger.error("[V3 fundamental_analyst] Subagent %s failed: %s", role_name, e)
+            results.append(e)
     
     # Parse subagent responses
     subagent_reports = {}
