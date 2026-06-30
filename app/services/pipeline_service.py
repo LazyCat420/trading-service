@@ -335,8 +335,6 @@ class PipelineService:
                 logger.info(f"[{cycle_id}][{phase}][{step}] {detail}")
                 PipelineStateDB.append_events(cycle_id, [event])
 
-            from app.services.adaptive_concurrency import concurrency_controller
-            
             cls._state["progress"] = f"Processing {len(tickers)} tickers concurrently"
             cls.save_state()
 
@@ -393,9 +391,11 @@ class PipelineService:
                 except Exception as e:
                     logger.error("[PipelineService] Trade execution failed for %s: %s", ticker_name, e)
 
-            # Build tasks and execute concurrently via adaptive concurrency
+            # Build tasks and execute concurrently
+            # We use standard asyncio.gather here because the underlying LLM calls
+            # (inside _run_agent_with_circuit_breaker) are globally throttled by the AdaptiveConcurrencyController.
             tasks = [_process_ticker(i, t) for i, t in enumerate(tickers)]
-            await concurrency_controller.gather(tasks, label="v3_pipeline")
+            await asyncio.gather(*tasks)
 
             if cls._stop_requested:
                 raise asyncio.CancelledError("Cycle stopped by user")

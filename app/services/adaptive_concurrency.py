@@ -33,14 +33,15 @@ import asyncio
 import logging
 import time
 from typing import Any
+from contextlib import asynccontextmanager
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 # ── Configurable bounds (via .env) ───────────────────────────────────
-_MIN = getattr(settings, "ADAPTIVE_MIN_CONCURRENCY", 8)
-_MAX = getattr(settings, "ADAPTIVE_MAX_CONCURRENCY", 16)
+_MIN = getattr(settings, "ADAPTIVE_MIN_CONCURRENCY", 1)
+_MAX = getattr(settings, "ADAPTIVE_MAX_CONCURRENCY", 4)
 
 # How often (seconds) the controller re-evaluates the limit.
 _REEVALUATE_INTERVAL = 5.0
@@ -227,6 +228,22 @@ class AdaptiveConcurrencyController:
             "per_label": dict(self._label_active),
             "per_endpoint": per_endpoint,
         }
+
+    @asynccontextmanager
+    async def track(self, label: str = "unknown"):
+        """Use as an async context manager for individual tasks."""
+        await self._acquire_slot()
+        self._label_active[label] = self._label_active.get(label, 0) + 1
+        try:
+            # We don't yield the slot explicitly since it's global, just yield control
+            yield
+        finally:
+            self._label_active[label] = max(
+                0, self._label_active.get(label, 1) - 1
+            )
+            if self._label_active.get(label, 0) == 0:
+                self._label_active.pop(label, None)
+            await self._release_slot()
 
     async def gather(
         self,

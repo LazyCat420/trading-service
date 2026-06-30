@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from app.v3.shared_desk import SharedDesk, DeskPhase, PhaseOutcome
 from app.v3.guardrails import CircuitBreaker
+from app.services.adaptive_concurrency import concurrency_controller
 from app.v3.agent_runner import run_v3_agent
 from app.v3.desk_persistence import save_desk
 
@@ -576,32 +577,33 @@ async def _run_agent_with_circuit_breaker(
     from app.config import settings
     timeout = float(settings.ANALYSIS_WORKER_TIMEOUT_SECONDS)
 
-    outcome = await run_v3_agent(
-        desk=desk,
-        agent_module=agent_module,
-        cycle_id=cycle_id,
-        bot_id=bot_id,
-        emit=emit,
-        include_debate_context=include_debate_context,
-        timeout_seconds=timeout,
-    )
+    async with concurrency_controller.track(label="v3_agent"):
+        outcome = await run_v3_agent(
+            desk=desk,
+            agent_module=agent_module,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            emit=emit,
+            include_debate_context=include_debate_context,
+            timeout_seconds=timeout,
+        )
 
-    # If failed and retryable, try once more
-    if outcome not in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP):
-        if breaker.should_retry(phase_name, outcome):
-            logger.info(
-                "[V3] %s/%s: Retrying after %s",
-                desk.ticker, phase_name, outcome.value,
-            )
-            outcome = await run_v3_agent(
-                desk=desk,
-                agent_module=agent_module,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                emit=emit,
-                include_debate_context=include_debate_context,
-                timeout_seconds=timeout,
-            )
+        # If failed and retryable, try once more
+        if outcome not in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP):
+            if breaker.should_retry(phase_name, outcome):
+                logger.info(
+                    "[V3] %s/%s: Retrying after %s",
+                    desk.ticker, phase_name, outcome.value,
+                )
+                outcome = await run_v3_agent(
+                    desk=desk,
+                    agent_module=agent_module,
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                    emit=emit,
+                    include_debate_context=include_debate_context,
+                    timeout_seconds=timeout,
+                )
 
     return outcome
 
