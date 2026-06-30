@@ -463,6 +463,9 @@ async def _run_agent_with_circuit_breaker(
     On second failure, returns the failure outcome for the orchestrator
     to decide whether to abort or continue.
     """
+    from app.config import settings
+    timeout = float(settings.ANALYSIS_WORKER_TIMEOUT_SECONDS)
+
     outcome = await run_v3_agent(
         desk=desk,
         agent_module=agent_module,
@@ -470,6 +473,7 @@ async def _run_agent_with_circuit_breaker(
         bot_id=bot_id,
         emit=emit,
         include_debate_context=include_debate_context,
+        timeout_seconds=timeout,
     )
 
     # If failed and retryable, try once more
@@ -486,6 +490,7 @@ async def _run_agent_with_circuit_breaker(
                 bot_id=bot_id,
                 emit=emit,
                 include_debate_context=include_debate_context,
+                timeout_seconds=timeout,
             )
 
     return outcome
