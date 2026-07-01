@@ -61,7 +61,7 @@ async def test_lazy_tool_service_forwarding():
                 "id": "call_123",
                 "type": "function",
                 "function": {
-                    "name": "test_remote_only_tool",
+                    "name": "test_dummy_tool",
                     "arguments": '{"val": 42}'
                 }
             }
@@ -70,12 +70,12 @@ async def test_lazy_tool_service_forwarding():
             # Check response structure
             assert res["role"] == "tool"
             assert res["tool_call_id"] == "call_123"
-            assert res["name"] == "test_remote_only_tool"
+            assert res["name"] == "test_dummy_tool"
             assert res["content"] == "sidecar-result"
 
             # Check request details
             mock_client_instance.post.assert_called_once_with(
-                "http://10.0.0.16:7778/execute/test_remote_only_tool",
+                "http://10.0.0.16:7778/execute/test_dummy_tool",
                 json={"val": 42}
             )
 
@@ -123,7 +123,7 @@ async def test_lazy_tool_service_http_failure():
                 "id": "call_789",
                 "type": "function",
                 "function": {
-                    "name": "test_remote_only_tool",
+                    "name": "test_dummy_tool",
                     "arguments": '{"val": 42}'
                 }
             }
@@ -132,7 +132,7 @@ async def test_lazy_tool_service_http_failure():
             # Response should capture the error
             assert res["role"] == "tool"
             assert res["tool_call_id"] == "call_789"
-            assert res["name"] == "test_remote_only_tool"
+            assert res["name"] == "test_dummy_tool"
             
             error_data = json.loads(res["content"])
             assert "error" in error_data
