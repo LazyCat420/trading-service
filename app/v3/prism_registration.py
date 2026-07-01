@@ -51,8 +51,17 @@ async def register_v3_agents() -> dict[str, bool]:
     Failures are logged but non-fatal.
     """
     from lazycat.llm import prism_client as PrismClient
+    from app.config import settings as app_settings
 
     results: dict[str, bool] = {}
+
+    # Target both the primary PRISM_URL (port 7777 via proxy/direct) and local runner port 7778 directly
+    urls = {
+        app_settings.PRISM_URL,
+        f"http://{app_settings.DEFAULT_HOST}:7778"
+    }
+    urls = {u for u in urls if u}
+    original_url = PrismClient.url
 
     for module_path in _V3_AGENT_MODULES:
         try:
@@ -76,22 +85,32 @@ async def register_v3_agents() -> dict[str, bool]:
             
             enabled_tools = prefixed_whitelist + list(PRISM_DYNAMIC_META_TOOLS)
 
-            success = await PrismClient.register_or_update_custom_agent(
-                name=agent_name,
-                identity=system_prompt,
-                guidelines=_V3_COMMON_GUIDELINES,
-                enabled_tools=enabled_tools,
-            )
+            agent_success = True
+            for target_url in urls:
+                try:
+                    PrismClient.url = target_url
+                    success = await PrismClient.register_or_update_custom_agent(
+                        name=agent_name,
+                        identity=system_prompt,
+                        guidelines=_V3_COMMON_GUIDELINES,
+                        enabled_tools=enabled_tools,
+                    )
+                    if not success:
+                        agent_success = False
+                        logger.warning(
+                            "[V3Prism] Failed to register agent %s at %s", agent_id, target_url
+                        )
+                except Exception as ex:
+                    agent_success = False
+                    logger.error(
+                        "[V3Prism] Exception registering agent %s at %s: %s", agent_id, target_url, ex
+                    )
 
-            results[agent_id] = success
-            if success:
+            results[agent_id] = agent_success
+            if agent_success:
                 logger.info(
-                    "[V3Prism] Registered agent %s with %d tools",
+                    "[V3Prism] Registered agent %s with %d tools across all targets",
                     agent_id, len(enabled_tools),
-                )
-            else:
-                logger.warning(
-                    "[V3Prism] Failed to register agent %s", agent_id,
                 )
 
         except Exception as e:
@@ -99,6 +118,8 @@ async def register_v3_agents() -> dict[str, bool]:
                 "[V3Prism] Error registering %s: %s", module_path, e,
             )
             results[module_path] = False
+
+    PrismClient.url = original_url
 
     logger.info(
         "[V3Prism] Registration complete: %d/%d agents registered",

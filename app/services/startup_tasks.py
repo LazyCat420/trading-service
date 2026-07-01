@@ -8,22 +8,75 @@ from app.db.connection import get_db
 logger = logging.getLogger(__name__)
 
 async def startup_vllm_discovery():
-    # ── Check if Prism is healthy ──
+    import httpx
+    import asyncio
     from lazycat.llm import prism_client
-    is_healthy = await prism_client.check_health()
-    if not is_healthy:
-        raise RuntimeError(f"Prism Gateway is OFFLINE or unreachable at {prism_client.url}")
-    logger.info("Prism Gateway is ONLINE and reachable at %s", prism_client.url)
-
-    # ── Query endpoints to sync actual models on boot ──
+    from app.config import settings as app_settings
     from app.services.prism_agent_caller import llm
-    endpoints = getattr(llm, "_endpoints", {})
-    for ep in endpoints.values():
-        if ep and ep.enabled:
-            model = await llm._sync_endpoint_model(ep, force=True)
-            if not model:
-                raise RuntimeError(f"Failed to discover model for active endpoint '{ep.name}' ({ep.url})")
-            logger.info("[startup] Discovered model '%s' for endpoint '%s'", model, ep.name)
+
+    # Determine unique Prism URLs to verify agent registration
+    agent_targets = {
+        app_settings.PRISM_URL,
+        f"http://{app_settings.DEFAULT_HOST}:7778"
+    }
+    agent_targets = {u for u in agent_targets if u}
+
+    max_attempts = 36
+    delay_seconds = 5
+
+    logger.info("[startup] Starting Prism, vLLM, and Custom Agent readiness verification...")
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            logger.info("[startup] Readiness check attempt %d/%d...", attempt, max_attempts)
+
+            # 1. Verify Prism client connection is online
+            is_healthy = await prism_client.check_health()
+            if not is_healthy:
+                raise ValueError(f"Prism Gateway is OFFLINE or unreachable at {prism_client.url}")
+
+            # 2. Verify all active vLLM endpoints have resolved models
+            endpoints = getattr(llm, "_endpoints", {})
+            for ep in endpoints.values():
+                if ep and ep.enabled:
+                    model = await llm._sync_endpoint_model(ep, force=True)
+                    if not model:
+                        raise ValueError(f"Model not yet resolved for active endpoint '{ep.name}' ({ep.url})")
+
+            # 3. Verify V3 agents are loaded in both live registries (via /config/agents)
+            from app.v3.prism_registration import _V3_AGENT_MODULES
+            import importlib
+            expected_agent_ids = []
+            for path in _V3_AGENT_MODULES:
+                try:
+                    mod = importlib.import_module(path)
+                    expected_agent_ids.append(f"CUSTOM_{mod.AGENT_NAME.upper()}")
+                except Exception:
+                    pass
+
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                for target_url in agent_targets:
+                    base_url = target_url.rstrip("/")
+                    url = f"{base_url}/config/agents"
+
+                    r = await client.get(url)
+                    if r.status_code != 200:
+                        raise ValueError(f"Agent list check failed on {url} (status {r.status_code})")
+
+                    agents_list = r.json()
+                    registered_ids = [ag.get("id") for ag in agents_list]
+                    for expected_id in expected_agent_ids:
+                        if expected_id not in registered_ids:
+                            raise ValueError(f"Agent {expected_id} is missing from registry at {url}")
+
+            logger.info("[startup] ✅ Readiness verification successful! All systems ready.")
+            return
+
+        except Exception as e:
+            logger.info("[startup] Readiness check failed: %s. Retrying in %ds...", e, delay_seconds)
+            await asyncio.sleep(delay_seconds)
+
+    raise RuntimeError("Prism/vLLM/Agent readiness check TIMED OUT after 3 minutes.")
 
 async def warmup_embedder():
     try:
