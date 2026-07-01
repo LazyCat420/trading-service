@@ -23,7 +23,7 @@ import httpx
 
 _dynamic_model_cache = {}
 
-def get_live_model_from_vllm(url: str, fallback: str, force_refresh: bool = False) -> str:
+def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
     now = time.time()
     if not force_refresh and url in _dynamic_model_cache:
         model_id, timestamp = _dynamic_model_cache[url]
@@ -41,8 +41,10 @@ def get_live_model_from_vllm(url: str, fallback: str, force_refresh: bool = Fals
                         _dynamic_model_cache[url] = (model_id, now)
                         return model_id
     except Exception as e:
-        logger.warning(f"Failed to fetch model from {url}: {e}")
-    return fallback
+        logger.error(f"Failed to fetch model from {url}: {e}")
+        raise RuntimeError(f"VLLM endpoint offline: {url} (error: {e})")
+    
+    raise RuntimeError(f"No models found at vLLM endpoint: {url}")
 
 def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False) -> tuple[str, str]:
     """Resolve default model based on agent role to balance load.
@@ -66,10 +68,14 @@ def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False
             endpoint_key = "jetson"
 
     ep = llm._endpoints.get(endpoint_key)
-    fallback = ep.model if ep else ("google/gemma-4-26B-A4B-it" if endpoint_key == "dgx_spark" else "Qwen/Qwen3.6-35B-A3B-FP8")
-    url = ep.url if ep else (settings.PROVIDER_VLLM_2_URL if endpoint_key == "dgx_spark" else settings.PROVIDER_VLLM_1_URL)
+    if not ep or not ep.enabled:
+        raise RuntimeError(f"VLLM endpoint '{endpoint_key}' is not configured or disabled.")
+    
+    url = ep.url
+    if not url:
+        raise RuntimeError(f"VLLM endpoint '{endpoint_key}' has no configured URL.")
 
-    discovered_model = get_live_model_from_vllm(url, fallback, force_refresh=force_refresh)
+    discovered_model = get_live_model_from_vllm(url, force_refresh=force_refresh)
     return discovered_model, provider
 
 
@@ -249,7 +255,7 @@ class PrismLLMShim:
     def __init__(self):
         self._killed = False
         self.prism_client = prism_client
-        self.model = "google/gemma-4-26B-A4B-it"
+        self.model = None
         
         self._endpoints: dict[str, VLLMEndpoint] = {}
         
@@ -260,14 +266,14 @@ class PrismLLMShim:
                 name="jetson",
                 url=settings.PROVIDER_VLLM_1_URL,
                 max_concurrent=getattr(settings, "PROVIDER_VLLM_1_CONCURRENCY", 8),
-                model="Qwen/Qwen3.6-35B-A3B-FP8"
+                model=None
             )
         if settings.PROVIDER_VLLM_2_URL:
             self._endpoints["dgx_spark"] = VLLMEndpoint(
                 name="dgx_spark",
                 url=settings.PROVIDER_VLLM_2_URL,
                 max_concurrent=getattr(settings, "PROVIDER_VLLM_2_CONCURRENCY", 16),
-                model="google/gemma-4-26B-A4B-it"
+                model=None
             )
             
         self._metrics_task = None

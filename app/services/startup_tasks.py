@@ -9,26 +9,21 @@ logger = logging.getLogger(__name__)
 
 async def startup_vllm_discovery():
     # ── Check if Prism is healthy ──
-    try:
-        from lazycat.llm import prism_client
-        is_healthy = await prism_client.check_health()
-        if is_healthy:
-            logger.info("Prism Gateway is ONLINE and reachable at %s", prism_client.url)
-        else:
-            logger.warning("Prism Gateway is OFFLINE or unreachable at %s", prism_client.url)
-    except Exception as e:
-        logger.warning("Prism health check failed: %s", e)
+    from lazycat.llm import prism_client
+    is_healthy = await prism_client.check_health()
+    if not is_healthy:
+        raise RuntimeError(f"Prism Gateway is OFFLINE or unreachable at {prism_client.url}")
+    logger.info("Prism Gateway is ONLINE and reachable at %s", prism_client.url)
 
     # ── Query endpoints to sync actual models on boot ──
-    try:
-        from app.services.prism_agent_caller import llm
-        endpoints = getattr(llm, "_endpoints", {})
-        for ep in endpoints.values():
-            if ep and ep.enabled:
-                await llm._sync_endpoint_model(ep, force=True)
-                logger.info("[startup] Discovered model '%s' for endpoint '%s'", ep.model, ep.name)
-    except Exception as e:
-        logger.warning("vLLM model discovery failed (non-fatal): %s", e)
+    from app.services.prism_agent_caller import llm
+    endpoints = getattr(llm, "_endpoints", {})
+    for ep in endpoints.values():
+        if ep and ep.enabled:
+            model = await llm._sync_endpoint_model(ep, force=True)
+            if not model:
+                raise RuntimeError(f"Failed to discover model for active endpoint '{ep.name}' ({ep.url})")
+            logger.info("[startup] Discovered model '%s' for endpoint '%s'", model, ep.name)
 
 async def warmup_embedder():
     try:
