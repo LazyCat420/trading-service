@@ -307,7 +307,8 @@ async def run_agent(
             for t in agent_tools:
                 agent.add_tool(t)
 
-        session = ConversationSession(session_id=parent_agent_session_id or f"sess_{int(time.time())}")
+        import uuid
+        session = ConversationSession(session_id=parent_agent_session_id or f"sess_{int(time.time())}_{uuid.uuid4().hex[:6]}")
         
         from app.agents.inbox import inbox_manager
         inbox_manager.register_instance(session.session_id, agent_name, ticker)
