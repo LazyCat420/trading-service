@@ -75,7 +75,7 @@ async def test_lazy_tool_service_forwarding():
 
             # Check request details
             mock_client_instance.post.assert_called_once_with(
-                "http://10.0.0.16:5591/execute/test_remote_only_tool",
+                "http://10.0.0.16:7778/execute/test_remote_only_tool",
                 json={"val": 42}
             )
 
