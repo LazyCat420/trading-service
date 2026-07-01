@@ -288,16 +288,19 @@ async def run_agent(
             "project": settings.PROJECT_NAME
         }
         resolved_model = model_override
+        resolved_provider = None
         if not resolved_model:
             from app.services.prism_agent_caller import resolve_default_model_for_agent
             try:
-                resolved_model, _ = resolve_default_model_for_agent(agent_name)
-                logger.info("[BaseAgent] Dynamically resolved default model for %s: %s", agent_name, resolved_model)
+                resolved_model, resolved_provider = resolve_default_model_for_agent(agent_name)
+                logger.info("[BaseAgent] Dynamically resolved default model for %s: %s (provider: %s)", agent_name, resolved_model, resolved_provider)
             except Exception as e:
                 logger.warning("[BaseAgent] Failed to resolve default model for %s: %s. Using default fallback.", agent_name, e)
         
         if resolved_model:
             kwargs["model"] = resolved_model
+        if resolved_provider:
+            kwargs["provider"] = resolved_provider
             
         agent = BaseAgent(**kwargs)
         if enable_tools and agent_tools:
