@@ -52,11 +52,10 @@ async def test_lazy_tool_service_forwarding():
         mock_response.json.return_value = {"content": "sidecar-result"}
         mock_client_instance.post.return_value = mock_response
 
-        mock_client_ctx = MagicMock()
-        mock_client_ctx.__aenter__.return_value = mock_client_instance
-        mock_client_ctx.__aexit__.return_value = None
+        mock_client_instance.__aenter__.return_value = mock_client_instance
+        mock_client_instance.__aexit__.return_value = None
 
-        with patch("httpx.AsyncClient", return_value=mock_client_ctx):
+        with patch("httpx.AsyncClient", return_value=mock_client_instance):
             tool_call = {
                 "id": "call_123",
                 "type": "function",
@@ -76,7 +75,7 @@ async def test_lazy_tool_service_forwarding():
             # Check request details
             mock_client_instance.post.assert_called_once_with(
                 "http://10.0.0.16:7778/execute/test_dummy_tool",
-                json={"val": 42}
+                json={"arguments": {"val": 42}}
             )
 
 
@@ -114,11 +113,10 @@ async def test_lazy_tool_service_http_failure():
         mock_response.text = "Internal Service Error"
         mock_client_instance.post.return_value = mock_response
 
-        mock_client_ctx = MagicMock()
-        mock_client_ctx.__aenter__.return_value = mock_client_instance
-        mock_client_ctx.__aexit__.return_value = None
+        mock_client_instance.__aenter__.return_value = mock_client_instance
+        mock_client_instance.__aexit__.return_value = None
 
-        with patch("httpx.AsyncClient", return_value=mock_client_ctx):
+        with patch("httpx.AsyncClient", return_value=mock_client_instance):
             tool_call = {
                 "id": "call_789",
                 "type": "function",
