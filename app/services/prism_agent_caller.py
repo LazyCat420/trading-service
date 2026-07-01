@@ -234,6 +234,7 @@ class VLLMEndpoint:
     cache_usage: float = 0.0
     requests_running: int = 0
     requests_waiting: int = 0
+    last_model_sync: float = 0.0
 
 class PrismLLMShim:
     """Shim class that mimics the old VLLM client interface."""
@@ -263,6 +264,28 @@ class PrismLLMShim:
             
         self._metrics_task = None
         
+    async def _sync_endpoint_model(self, ep: VLLMEndpoint, force: bool = False) -> str | None:
+        import httpx
+        import time
+        if not ep or not getattr(ep, "url", None):
+            return None
+        now_time = time.monotonic()
+        last_sync = getattr(ep, "last_model_sync", 0.0)
+        if force or now_time - last_sync > 5.0:
+            setattr(ep, "last_model_sync", now_time)
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    r = await client.get(f"{ep.url}/v1/models")
+                    if r.status_code == 200:
+                        data = r.json()
+                        models = data.get("data", [])
+                        if models:
+                            new_model = models[0]["id"]
+                            ep.model = new_model
+            except Exception as e:
+                logger.debug("[PrismLLMShim] Failed to sync model for %s: %s", ep.name, e)
+        return getattr(ep, "model", None)
+
     def reset_kill_switch(self):
         self._killed = False
         
