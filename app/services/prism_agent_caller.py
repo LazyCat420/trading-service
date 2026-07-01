@@ -49,20 +49,28 @@ def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False
     Jetson handles lightweight janitorial, consensus, and curation tasks.
     Gold Spark handles heavy quant research, debates, and final decisions.
     """
-    if not agent_name:
-        return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "default-model", force_refresh=force_refresh), "vllm-2"
+    from app.services.prism_agent_caller import llm
 
-    name_lower = agent_name.lower()
-    
-    # Collector & lightweight agents route to Jetson
-    collector_keywords = (
-        "janitor", "curator", "summarizer", "scout", "purge",
-        "maintenance", "consensus", "ticker_validator"
-    )
-    if any(kw in name_lower for kw in collector_keywords):
-        return get_live_model_from_vllm(settings.PROVIDER_VLLM_1_URL, "default-model", force_refresh=force_refresh), "vllm"
-        
-    return get_live_model_from_vllm(settings.PROVIDER_VLLM_2_URL, "default-model", force_refresh=force_refresh), "vllm-2"
+    provider = "vllm-2"
+    endpoint_key = "dgx_spark"
+
+    if agent_name:
+        name_lower = agent_name.lower()
+        # Collector & lightweight agents route to Jetson
+        collector_keywords = (
+            "janitor", "curator", "summarizer", "scout", "purge",
+            "maintenance", "consensus", "ticker_validator"
+        )
+        if any(kw in name_lower for kw in collector_keywords):
+            provider = "vllm"
+            endpoint_key = "jetson"
+
+    ep = llm._endpoints.get(endpoint_key)
+    fallback = ep.model if ep else ("google/gemma-4-26B-A4B-it" if endpoint_key == "dgx_spark" else "Qwen/Qwen3.6-35B-A3B-FP8")
+    url = ep.url if ep else (settings.PROVIDER_VLLM_2_URL if endpoint_key == "dgx_spark" else settings.PROVIDER_VLLM_1_URL)
+
+    discovered_model = get_live_model_from_vllm(url, fallback, force_refresh=force_refresh)
+    return discovered_model, provider
 
 
 async def call_prism_agent(

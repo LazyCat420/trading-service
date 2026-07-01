@@ -17,6 +17,17 @@ async def startup_vllm_discovery():
         else:
             logger.warning("Prism Gateway is OFFLINE or unreachable at %s", prism_client.url)
     except Exception as e:
+        logger.warning("Prism health check failed: %s", e)
+
+    # ── Query endpoints to sync actual models on boot ──
+    try:
+        from app.services.prism_agent_caller import llm
+        endpoints = getattr(llm, "_endpoints", {})
+        for ep in endpoints.values():
+            if ep and ep.enabled:
+                await llm._sync_endpoint_model(ep, force=True)
+                logger.info("[startup] Discovered model '%s' for endpoint '%s'", ep.model, ep.name)
+    except Exception as e:
         logger.warning("vLLM model discovery failed (non-fatal): %s", e)
 
 async def warmup_embedder():
