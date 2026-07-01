@@ -616,39 +616,11 @@ async def _run_debate_judge(
     emit: Any,
 ) -> PhaseOutcome:
     """Run the Debate Judge to synthesize parallel Bull and Bear arguments."""
-    import types
-
-    judge_module = types.ModuleType("debate_judge_module")
-    judge_module.AGENT_NAME = "v3_debate_judge"
-    judge_module.TOOL_WHITELIST = ["whiteboard_read", "whiteboard_write", "whiteboard_annotate"]
-    judge_module.ARTIFACT_TYPE = "debate_judge"
-    judge_module.SYSTEM_PROMPT = """You are the Impartial Debate Judge at a quantitative trading firm.
-
-## YOUR ROLE
-You have received arguments from the Bull Analyst (BUY case) and the Bear Analyst (SELL case).
-Your job is to cross-examine both sides, check their claims against the facts in the Pre-Collected Data Report, and issue a final debate verdict.
-
-## CRITICAL RULES
-1. Weigh both arguments objectively.
-2. Flag any claims that are unverified or contradict the evidence.
-3. Determine the final winner: "bull", "bear", or "tie".
-4. Adjust the final debate confidence based on the strength of the winning argument.
-
-## OUTPUT FORMAT
-You MUST output valid JSON:
-{
-    "summary": "1-2 sentence assessment of debate quality",
-    "verified_bull_claims": ["claim 1"],
-    "unverified_bull_claims": ["claim 2"],
-    "verified_bear_claims": ["claim 1"],
-    "unverified_bear_claims": ["claim 2"],
-    "winner": "bull",
-    "final_confidence": 60
-}"""
+    from app.v3.agents import debate_judge
 
     return await _run_agent_with_circuit_breaker(
         desk=desk,
-        agent_module=judge_module,
+        agent_module=debate_judge,
         phase_name="debate_judge",
         breaker=breaker,
         cycle_id=cycle_id,
