@@ -47,6 +47,9 @@ _MAX = getattr(settings, "ADAPTIVE_MAX_CONCURRENCY", 4)
 _REEVALUATE_INTERVAL = 5.0
 
 
+# The total active token budget allowed on the cluster
+_MAX_TOKEN_BUDGET = getattr(settings, "ADAPTIVE_MAX_TOKEN_BUDGET", 128000)
+
 class AdaptiveConcurrencyController:
     """Dynamic concurrency limiter tied to vLLM /metrics hardware state."""
 
@@ -54,26 +57,45 @@ class AdaptiveConcurrencyController:
         self,
         min_concurrency: int = _MIN,
         max_concurrency: int = _MAX,
+        max_token_budget: int = _MAX_TOKEN_BUDGET,
     ):
         self.min_concurrency = max(1, min_concurrency)
         self.max_concurrency = max(self.min_concurrency, max_concurrency)
+        self.max_token_budget = max(10000, max_token_budget)
         self._current_limit: int = self.max_concurrency
         self._last_eval: float = 0.0
         # Track per-label active counts for observability
         self._label_active: dict[str, int] = {}
         # Global concurrency tracking across all gathers
         self._active_tasks_count = 0
+        self._active_tokens = 0
         self._cv = asyncio.Condition()
 
-    async def _acquire_slot(self):
-        async with self._cv:
-            while self._active_tasks_count >= self._maybe_update_limit():
-                await self._cv.wait()
-            self._active_tasks_count += 1
+    async def _acquire_slot(self, tokens: int = 0, priority: int = 1):
+        is_heavy = tokens >= 10000
+        is_high_priority = priority == 0
 
-    async def _release_slot(self):
+        async with self._cv:
+            while True:
+                # 1. Request limit check
+                limit_ok = self._active_tasks_count < self._maybe_update_limit()
+                # 2. Token budget check: heavy non-high priority requests must fit in budget
+                # (or run immediately if no other tasks are running to prevent deadlock)
+                budget_ok = True
+                if is_heavy and not is_high_priority:
+                    budget_ok = (self._active_tokens + tokens <= self.max_token_budget) or (self._active_tasks_count == 0)
+
+                if limit_ok and budget_ok:
+                    break
+                await self._cv.wait()
+
+            self._active_tasks_count += 1
+            self._active_tokens += tokens
+
+    async def _release_slot(self, tokens: int = 0):
         # Decrement synchronously to prevent leaking slots if cancelled during the await
         self._active_tasks_count = max(0, self._active_tasks_count - 1)
+        self._active_tokens = max(0, self._active_tokens - tokens)
         try:
             async with self._cv:
                 self._cv.notify_all()
@@ -90,6 +112,9 @@ class AdaptiveConcurrencyController:
         """
         try:
             from app.services.prism_agent_caller import llm
+
+            if hasattr(llm, "start_metrics_polling"):
+                llm.start_metrics_polling()
 
             return [
                 ep for ep in llm._endpoints.values()
@@ -122,46 +147,40 @@ class AdaptiveConcurrencyController:
     def _compute_limit(self) -> int:
         """Compute concurrency limit from live vLLM /metrics data.
 
-        Uses three signals:
-          1. Queue backpressure: if vLLM is queueing more requests than
-             it's processing, we're sending too fast → back off to MIN.
-          2. KV cache saturation: high cache % means the GPU is running
-             out of room for new request KV blocks → throttle.
-          3. Available capacity: if the server has plenty of room
-             (low waiting, low cache) → allow MAX.
-
-        The limit is a single integer in [min_concurrency, max_concurrency].
+        Calculates concurrency limit strictly based on the remaining KV cache percentage:
+          - <= 20% remaining cache (>= 0.80 used): Drop allowed limit to min_concurrency (1)
+          - <= 40% remaining cache (>= 0.60 used): Limit max concurrency to min(2, max_concurrency)
+          - >= 80% remaining cache (<= 0.20 used): Allow up to max_concurrency
+          - In between: Interpolate linearly between min_concurrency and max_concurrency
         """
         cache_pct = self._avg_cache_usage()
         waiting = self._total_waiting()
         running = self._total_running()
         capacity = self._total_capacity()
 
-        # ── Signal 1: Queue backpressure ─────────────────────────────
-        # If more requests are waiting than running, vLLM is saturated.
-        # This is the strongest signal — override everything else.
+        # If queue backpressure is severe, drop to min immediately
         if waiting > 0 and running > 0 and waiting >= running:
             return self.min_concurrency
 
-        # ── Signal 2: KV cache pressure ──────────────────────────────
-        if cache_pct >= 0.80:
+        remaining_cache = 1.0 - cache_pct
+
+        # 1. Critical ceiling: if remaining cache is under 20%, force min_concurrency (1)
+        if remaining_cache <= 0.20:
             return self.min_concurrency
 
-        # ── Signal 3: Combined score ─────────────────────────────────
-        # Blend cache pressure + queue ratio into a 0.0–1.0 pressure score.
-        # 0.0 = completely idle, 1.0 = fully saturated.
-        cache_pressure = max(0.0, (cache_pct - 0.40) / 0.40)  # 0 at 40%, 1 at 80%
-        queue_pressure = 0.0
-        if capacity > 0:
-            # How full is the server? running/capacity → 0.0–1.0
-            queue_pressure = min(1.0, (running + waiting) / capacity)
+        # 2. Moderate load cliff: if remaining cache is under 40%, cap at 2
+        if remaining_cache <= 0.40:
+            return max(self.min_concurrency, min(2, self.max_concurrency))
 
-        # Weighted blend: cache matters more than queue count
-        pressure = (cache_pressure * 0.6) + (queue_pressure * 0.4)
+        # 3. Light load: if remaining cache is above 80%, return max_concurrency
+        if remaining_cache >= 0.80:
+            return self.max_concurrency
 
-        # Linear interpolation: pressure 0 → MAX, pressure 1 → MIN
+        # 4. Ramped interpolation: remaining cache between 40% and 80%
+        # Maps 0.40 -> 0.0, 0.80 -> 1.0
+        cache_ratio = (remaining_cache - 0.40) / 0.40
         span = self.max_concurrency - self.min_concurrency
-        limit = self.max_concurrency - int(pressure * span)
+        limit = self.min_concurrency + int(cache_ratio * span)
         return max(self.min_concurrency, min(self.max_concurrency, limit))
 
     def _maybe_update_limit(self) -> int:
@@ -230,9 +249,10 @@ class AdaptiveConcurrencyController:
         }
 
     @asynccontextmanager
-    async def track(self, label: str = "unknown"):
+    async def track(self, label: str = "unknown", tokens: int = 0, priority: int = 1):
         """Use as an async context manager for individual tasks."""
-        await self._acquire_slot()
+        priority_val = priority.value if hasattr(priority, "value") else int(priority)
+        await self._acquire_slot(tokens=tokens, priority=priority_val)
         self._label_active[label] = self._label_active.get(label, 0) + 1
         try:
             # We don't yield the slot explicitly since it's global, just yield control
@@ -243,7 +263,7 @@ class AdaptiveConcurrencyController:
             )
             if self._label_active.get(label, 0) == 0:
                 self._label_active.pop(label, None)
-            await self._release_slot()
+            await self._release_slot(tokens=tokens)
 
     async def gather(
         self,
@@ -251,14 +271,18 @@ class AdaptiveConcurrencyController:
         *,
         label: str = "unknown",
         return_exceptions: bool = True,
+        tokens: int | list[int] = 0,
+        priority: int = 1,
     ) -> list[Any]:
-        """Drop-in replacement for asyncio.gather with adaptive concurrency.
+        """Drop-in replacement for asyncio.gather with adaptive concurrency and token budget scheduling.
 
         Args:
             tasks: List of coroutines or awaitables.
             label: Human-readable label for logging (e.g. "data_janitor").
             return_exceptions: If True, exceptions are returned in the
                 result list instead of being raised (same as asyncio.gather).
+            tokens: Single estimated token size per task, or list of token sizes aligned with tasks.
+            priority: Priority level (0=HIGH, 1=NORMAL, 2=LOW).
 
         Returns:
             List of results in the same order as the input tasks.
@@ -285,7 +309,14 @@ class AdaptiveConcurrencyController:
         errors: list[Exception | None] = [None] * len(tasks)
 
         async def _run(idx: int, coro):
-            await self._acquire_slot()
+            task_tokens = 0
+            if isinstance(tokens, list) and len(tokens) > idx:
+                task_tokens = tokens[idx]
+            elif isinstance(tokens, int):
+                task_tokens = tokens
+
+            priority_val = priority.value if hasattr(priority, "value") else int(priority)
+            await self._acquire_slot(tokens=task_tokens, priority=priority_val)
             self._label_active[label] = self._label_active.get(label, 0) + 1
             try:
                 results[idx] = await coro
@@ -305,7 +336,7 @@ class AdaptiveConcurrencyController:
                 # Clean up zero-count labels
                 if self._label_active.get(label, 0) == 0:
                     self._label_active.pop(label, None)
-                await self._release_slot()
+                await self._release_slot(tokens=task_tokens)
 
         await asyncio.gather(
             *[_run(i, t) for i, t in enumerate(tasks)],
