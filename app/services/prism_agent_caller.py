@@ -156,6 +156,11 @@ async def call_prism_agent(
         model = model_override or default_model
         provider = default_provider if not model_override else default_provider
         
+        # Calculate dynamic max_tokens to prevent vLLM 400 errors for 8k context models
+        est_input_tokens = len(FIRM_CONTEXT + (fallback_system_prompt or "")) // 4 + len(user_message) // 4 + 100
+        if max_tokens >= 8192:
+            max_tokens = max(512, 8192 - est_input_tokens)
+        
         try:
             resp = await prism_client.call_agent(
                 model=model,
@@ -400,6 +405,10 @@ class PrismLLMShim:
             from app.v3.guardrails import get_budget_for_role
             max_iter = get_budget_for_role(agent_name).max_turns
 
+            final_max_tokens = max_tokens or 8192
+            if final_max_tokens >= 8192:
+                final_max_tokens = max(512, 8192 - est_tokens - 100)
+
             client = await self.prism_client._get_client()
             resp = await self.prism_client.call_agent(
                 model=model,
@@ -407,7 +416,7 @@ class PrismLLMShim:
                 system_prompt="",
                 agent_name=agent_name,
                 tools=tools,
-                max_tokens=max_tokens or 8192,
+                max_tokens=final_max_tokens,
                 temperature=temperature,
                 project=settings.PROJECT_NAME,
                 max_iterations=max_iter,
