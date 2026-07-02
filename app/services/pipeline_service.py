@@ -420,6 +420,18 @@ class PipelineService:
             from app.v3.debate_coordinator import run_battle_royale
             await run_battle_royale(cycle_id=cycle_id, bot_id=active_bot_id)
 
+            # Fire and forget the post-cycle evolution and evaluation
+            try:
+                from app.cognition.evolution.evaluator import run_post_cycle_evaluation
+                from app.cognition.evolution.evolution_runner import run_evolution_loop
+                # Run the LLM reviewer
+                asyncio.create_task(run_post_cycle_evaluation(cycle_id))
+                # Run the quant strategy generator
+                asyncio.create_task(run_evolution_loop(data_path="data/latest_market_data.csv"))
+                logger.info("[PipelineService] Triggered post-cycle evolution tasks.")
+            except Exception as ev_err:
+                logger.error(f"[PipelineService] Failed to trigger evolution: {ev_err}")
+
             cls._state.update({
                 "status": "done",
                 "progress": "V3 cycle complete",

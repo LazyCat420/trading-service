@@ -145,8 +145,25 @@ async def evaluate_pending_strategies(data_path: str):
     except Exception as e:
         logger.error(f"[EvoRunner] Failed to evaluate strategies: {e}")
 
-async def run_evolution_loop(data_path: str):
+async def run_evolution_loop(data_path: str = None):
     """Main orchestration loop for evolution runner."""
+    import os
+    
+    if not data_path or not os.path.exists(data_path):
+        from app.trading.backtest_data import get_backtest_data
+        try:
+            # Fall back to synthetic data if no real data is immediately available
+            data_path = get_backtest_data(
+                tickers=["AAPL", "MSFT", "GOOGL"], 
+                start_date="2023-01-01", 
+                end_date="2023-12-31", 
+                allow_synthetic=True
+            )
+            logger.info(f"[EvoRunner] Generated backtest data at {data_path}")
+        except Exception as e:
+            logger.error(f"[EvoRunner] Failed to generate backtest data: {e}")
+            return
+
     session_id = f"evo_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}"
     logger.info(f"[EvoRunner] Starting evolution loop {session_id}")
     
