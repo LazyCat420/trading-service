@@ -218,7 +218,7 @@ async def generate_flash_briefing(report_type: str | None = None) -> str | None:
         )
 
     response, tokens, ms = await call_prism_agent(
-        agent_id="CUSTOM_FLASH_BRIEFING_AGENT",
+        agent_id="CUSTOM_V3_JUNIOR_ANALYST",
         user_message=context,
         fallback_system_prompt=system_prompt,
         fallback_agent_name="flash_briefing",
