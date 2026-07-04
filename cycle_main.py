@@ -114,6 +114,10 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         # V3 pipeline doesn't support pause/resume — complete the
                         # command cleanly instead of leaving it as 'running' forever.
                         result = {"status": "not_supported", "message": f"{cmd_type} not supported in V3"}
+                    elif cmd_type == "FLASH_BRIEFING":
+                        from app.services.flash_briefing import generate_flash_briefing
+                        await generate_flash_briefing()
+                        result = {"status": "ok"}
                     elif cmd_type == "DISCARD_CHECKPOINT":
                         result = {"status": "ok"}
                     elif cmd_type == "FORCE_CHECKPOINT":
