@@ -843,11 +843,20 @@ def _extract_agent_results(desk: SharedDesk) -> dict[str, Any]:
     results: dict[str, Any] = {}
 
     if desk.desk_note:
-        results["junior_analyst"] = desk.desk_note.get("summary", "")
+        results["junior_analyst"] = {
+            "response": desk.desk_note.get("summary", ""),
+            "tokens": 0
+        }
     if desk.fundamental_report:
-        results["fundamental_analyst"] = desk.fundamental_report.get("summary", "")
+        results["fundamental_analyst"] = {
+            "response": desk.fundamental_report.get("summary", ""),
+            "tokens": 0
+        }
     if desk.quant_report:
-        results["quant_analyst"] = desk.quant_report.get("summary", "")
+        results["quant_analyst"] = {
+            "response": desk.quant_report.get("summary", ""),
+            "tokens": 0
+        }
 
     return results
 

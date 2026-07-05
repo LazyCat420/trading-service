@@ -52,15 +52,38 @@ def _extract_council_votes(result: dict) -> list[dict]:
     """Extract individual archetype votes from the new debate structure."""
     agent_results = result.get("agent_results", [])
     votes = []
-    for agent in agent_results:
-        votes.append({
-            "archetype": agent.get("archetype", "UNKNOWN"),
-            "agent_id": agent.get("agent_id", "UNKNOWN"),
-            "vote": agent.get("action", "HOLD"),
-            "confidence": agent.get("confidence", 0),
-            "rationale": agent.get("rationale", ""),
-            "metrics": agent.get("metrics", {})
-        })
+    
+    if isinstance(agent_results, dict):
+        for role, agent in agent_results.items():
+            if isinstance(agent, dict):
+                votes.append({
+                    "archetype": agent.get("archetype", role.replace("_", " ").title()),
+                    "agent_id": agent.get("agent_id", role),
+                    "vote": agent.get("action", agent.get("vote", "UNKNOWN")),
+                    "confidence": agent.get("confidence", 0),
+                    "rationale": agent.get("rationale", agent.get("response", "")),
+                    "metrics": agent.get("metrics", {})
+                })
+            elif isinstance(agent, str):
+                votes.append({
+                    "archetype": role.replace("_", " ").title(),
+                    "agent_id": role,
+                    "vote": "UNKNOWN",
+                    "confidence": 0,
+                    "rationale": agent,
+                    "metrics": {}
+                })
+    elif isinstance(agent_results, list):
+        for agent in agent_results:
+            if isinstance(agent, dict):
+                votes.append({
+                    "archetype": agent.get("archetype", "UNKNOWN"),
+                    "agent_id": agent.get("agent_id", "UNKNOWN"),
+                    "vote": agent.get("action", "HOLD"),
+                    "confidence": agent.get("confidence", 0),
+                    "rationale": agent.get("rationale", ""),
+                    "metrics": agent.get("metrics", {})
+                })
     return votes
 
 def _extract_transcript(result: dict) -> list[dict]:
