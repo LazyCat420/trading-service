@@ -175,13 +175,32 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
 
     await BootService.startup()
     poller_task = asyncio.create_task(poll_system_commands(shutdown))
+    
+    # Run autoresearch poller task concurrently
+    autoresearch_task = None
+    try:
+        from app.autoresearch.eval_worker import poll_system_commands as poll_autoresearch_commands
+        autoresearch_task = asyncio.create_task(poll_autoresearch_commands())
+        logger.info("[cycle_backend] Started Autoresearch poller task.")
+    except Exception as e:
+        logger.error("[cycle_backend] Failed to start Autoresearch poller: %s", e)
+
     await shutdown.wait()
     
     poller_task.cancel()
+    if autoresearch_task:
+        autoresearch_task.cancel()
+        
     try:
         await poller_task
     except asyncio.CancelledError:
         pass
+        
+    if autoresearch_task:
+        try:
+            await autoresearch_task
+        except asyncio.CancelledError:
+            pass
 
     await BootService.shutdown()
 
