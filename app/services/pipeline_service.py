@@ -70,16 +70,16 @@ class PipelineService:
             # This prevents a race condition where concurrent agent calls
             # stomp on the global singleton URL. All agents in a V3 cycle
             # use the same harness_provider, so we resolve it here.
+            # Mirror the boot_service.py logic exactly:
+            #   PRISM_ENABLED=True  → PRISM_URL (which may include /prism-proxy)
+            #   PRISM_ENABLED=False → bare http://{host}:7778
             from lazycat.llm import prism_client
             from app.config.config import settings as _cfg
-            prov = (kwargs.get("harness_provider", "local") or "").lower()
-            if prov == "prism":
+            if _cfg.PRISM_ENABLED:
                 prism_client.url = _cfg.PRISM_URL
-            elif prov in ("local", "lazy") or not _cfg.PRISM_ENABLED:
-                prism_client.url = f"http://{_cfg.DEFAULT_HOST}:7778"
             else:
-                prism_client.url = _cfg.PRISM_URL
-            logger.info("[PipelineService] Cycle %s: prism_client.url set to %s (provider=%s)", cycle_id, prism_client.url, prov)
+                prism_client.url = f"http://{_cfg.DEFAULT_HOST}:7778"
+            logger.info("[PipelineService] Cycle %s: prism_client.url set to %s (PRISM_ENABLED=%s)", cycle_id, prism_client.url, _cfg.PRISM_ENABLED)
 
             # 1. Run Gatekeeper
 
