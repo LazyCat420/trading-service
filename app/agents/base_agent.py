@@ -165,18 +165,16 @@ async def run_agent(
         
 
 
-    # ── Verbose input logging ──
-    prompt_label = "STATIC"
-    print(f"\n  {'~' * 50}")
-    print(f"  AGENT INPUT: {agent_name} ({ticker}) [{prompt_label} PROMPT]")
-    print(f"  {'~' * 50}")
-    print(f"  System Prompt ({len(system_prompt)} chars):")
-    safe_sys = sanitize_ascii(system_prompt)
-    print(f"    {safe_sys}")
-    print(f"  User Prompt ({len(full_prompt)} chars):")
-    safe_user = sanitize_ascii(full_prompt)
-    print(f"    {safe_user}")
-    print(f"  {'~' * 50}")
+    # ── Verbose input logging (structured, truncated to prevent log spam) ──
+    _sys_preview = sanitize_ascii(system_prompt[:500])
+    _user_preview = sanitize_ascii(full_prompt[:1000])
+    logger.debug(
+        "[BaseAgent] INPUT %s (%s) | sys_prompt=%d chars | user_prompt=%d chars\n"
+        "  System: %s%s\n  User: %s%s",
+        agent_name, ticker, len(system_prompt), len(full_prompt),
+        _sys_preview, "..." if len(system_prompt) > 500 else "",
+        _user_preview, "..." if len(full_prompt) > 1000 else "",
+    )
 
     @aresilient_call(retries=3, backoff="exponential", base_delay=1.0, max_delay=15.0)
     async def _agent_llm_call():
@@ -194,15 +192,10 @@ async def run_agent(
         import time
         from lazycat.llm import prism_client
 
-        # Dynamically route prism_client URL based on active harness provider
-        from app.config.config import settings as app_settings
-        prov = (harness_provider or "").lower()
-        if prov == "prism":
-            prism_client.url = app_settings.PRISM_URL
-        elif prov == "local" or prov == "lazy" or not app_settings.PRISM_ENABLED:
-            prism_client.url = f"http://{app_settings.DEFAULT_HOST}:7778"
-        else:
-            prism_client.url = app_settings.PRISM_URL
+        # NOTE: prism_client.url is set ONCE per cycle in PipelineService._run_all_v3()
+        # to prevent a race condition where concurrent agent calls stomp on the global
+        # singleton URL. Do NOT override prism_client.url here.
+
 
         t0 = time.time()
         tool_call_count = 0
@@ -339,13 +332,13 @@ async def run_agent(
     if not content or not str(content).strip():
         content = f"Agent failed: empty response from {agent_name}"
 
-    # ── Verbose output logging ──
-    print(f"\n  {'~' * 50}")
-    print(f"  AGENT OUTPUT: {agent_name} ({ticker}) [{tokens} tokens, {elapsed_ms}ms]")
-    print(f"  {'~' * 50}")
-    safe_content = sanitize_ascii(content) if content else ""
-    print(f"    {safe_content}")
-    print(f"  {'~' * 50}")
+    # ── Verbose output logging (structured, truncated to prevent log spam) ──
+    _out_preview = sanitize_ascii(content[:1500]) if content else ""
+    logger.debug(
+        "[BaseAgent] OUTPUT %s (%s) | %d tokens | %dms | response=%d chars\n  %s%s",
+        agent_name, ticker, tokens, elapsed_ms, len(content) if content else 0,
+        _out_preview, "..." if content and len(content) > 1500 else "",
+    )
 
     return {
         "agent": agent_name,

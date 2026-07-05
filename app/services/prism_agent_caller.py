@@ -41,7 +41,7 @@ def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
                         _dynamic_model_cache[url] = (model_id, now)
                         return model_id
     except Exception as e:
-        logger.error(f"Failed to fetch model from {url}: {e}")
+        logger.error("Failed to fetch model from %s: %s", url, e, exc_info=True)
         raise RuntimeError(f"VLLM endpoint offline: {url} (error: {e})")
     
     raise RuntimeError(f"No models found at vLLM endpoint: {url}")
@@ -218,7 +218,7 @@ async def call_prism_agent(
         
     except Exception as e:
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        logger.error(f"[PrismAgentCaller] Call failed: {e}")
+        logger.error("[PrismAgentCaller] Call failed: %s", e, exc_info=True)
         
         try:
             publish_event(TelemetryEvent(

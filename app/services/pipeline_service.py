@@ -66,7 +66,23 @@ class PipelineService:
     @classmethod
     async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int = 5, **kwargs):
         try:
+            # ── Set prism_client.url ONCE for the entire cycle ──
+            # This prevents a race condition where concurrent agent calls
+            # stomp on the global singleton URL. All agents in a V3 cycle
+            # use the same harness_provider, so we resolve it here.
+            from lazycat.llm import prism_client
+            from app.config.config import settings as _cfg
+            prov = (kwargs.get("harness_provider", "local") or "").lower()
+            if prov == "prism":
+                prism_client.url = _cfg.PRISM_URL
+            elif prov in ("local", "lazy") or not _cfg.PRISM_ENABLED:
+                prism_client.url = f"http://{_cfg.DEFAULT_HOST}:7778"
+            else:
+                prism_client.url = _cfg.PRISM_URL
+            logger.info("[PipelineService] Cycle %s: prism_client.url set to %s (provider=%s)", cycle_id, prism_client.url, prov)
+
             # 1. Run Gatekeeper
+
             try:
                 from app.trading.watchlist import get_active
                 from app.utils.batch_screener import get_watchlist_snapshots
