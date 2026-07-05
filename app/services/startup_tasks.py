@@ -15,11 +15,7 @@ async def startup_vllm_discovery():
     from app.services.prism_agent_caller import llm
 
     # Determine unique Prism URLs to verify agent registration
-    agent_targets = {
-        app_settings.PRISM_URL,
-        f"http://{app_settings.DEFAULT_HOST}:7778"
-    }
-    agent_targets = {u for u in agent_targets if u}
+    agent_targets = {prism_client.url}
 
     max_attempts = 36
     delay_seconds = 5
