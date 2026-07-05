@@ -31,7 +31,8 @@ import hashlib
 import datetime
 import re
 from app.db.connection import get_db
-from app.services.request_utils import SmartClient
+import cloudscraper
+import asyncio
 
 BASE_URL = "https://www.capitoltrades.com/trades"
 
@@ -109,80 +110,87 @@ async def collect_trades(
     """
     with get_db() as db:
         total_count = 0
+        scraper = cloudscraper.create_scraper()
 
-        async with SmartClient(base_delay=2.0, max_retries=3) as client:
-            for page in range(1, pages + 1):
-                params = {
-                    "page": page,
-                    "txType": ["buy", "sell"],
-                    "assetType": "stock",
-                }
-                r = await client.get(BASE_URL, params=params)
-                if r.status_code != 200:
-                    logger.info(f"[congress] Page {page}: HTTP {r.status_code}")
-                    break
+        for page in range(1, pages + 1):
+            params = {
+                "page": page,
+                "txType": ["buy", "sell"],
+                "assetType": "stock",
+            }
+            
+            try:
+                r = await asyncio.to_thread(scraper.get, BASE_URL, params=params, timeout=20)
+            except Exception as e:
+                logger.error(f"[congress] Page {page}: Request error: {e}")
+                break
 
-                try:
-                    from bs4 import BeautifulSoup
+            if r.status_code != 200:
+                logger.info(f"[congress] Page {page}: HTTP {r.status_code}")
+                break
 
-                    soup = BeautifulSoup(r.text, "lxml")
-                except ImportError:
-                    from bs4 import BeautifulSoup
+            try:
+                from bs4 import BeautifulSoup
 
-                    soup = BeautifulSoup(r.text, "html.parser")
+                soup = BeautifulSoup(r.text, "lxml")
+            except ImportError:
+                from bs4 import BeautifulSoup
 
-                rows = soup.select("table tbody tr")
+                soup = BeautifulSoup(r.text, "html.parser")
 
-                if not rows:
-                    logger.info(f"[congress] Page {page}: no rows found")
-                    break
+            rows = soup.select("table tbody tr")
 
-                page_count = 0
-                for row in rows:
-                    trade = _parse_row(row)
-                    if not trade or not trade.get("ticker"):
-                        continue
+            if not rows:
+                logger.info(f"[congress] Page {page}: no rows found")
+                break
 
-                    # Filter by ticker if requested
-                    if ticker_filter and trade["ticker"] != ticker_filter.upper():
-                        continue
+            page_count = 0
+            for row in rows:
+                trade = _parse_row(row)
+                if not trade or not trade.get("ticker"):
+                    continue
 
-                    # Build unique ID
-                    trade_id = hashlib.md5(
-                        f"{trade['politician']}{trade['ticker']}"
-                        f"{trade['trade_date']}{trade['transaction_type']}".encode()
-                    ).hexdigest()
+                # Filter by ticker if requested
+                if ticker_filter and trade["ticker"] != ticker_filter.upper():
+                    continue
 
-                    db.execute(
-                        """
-                        INSERT INTO congress_trades
-                        (id, politician, party, chamber, state, ticker,
-                         transaction_type, amount_range, trade_date,
-                         disclosure_date, days_to_disclose)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO NOTHING
-                    """,
-                        [
-                            trade_id,
-                            trade["politician"],
-                            trade["party"],
-                            trade["chamber"],
-                            trade["state"],
-                            trade["ticker"],
-                            trade["transaction_type"],
-                            trade["amount_range"],
-                            trade["trade_date"],
-                            trade["disclosure_date"],
-                            trade["days_to_disclose"],
-                        ],
-                    )
-                    total_count += 1
-                    page_count += 1
+                # Build unique ID
+                trade_id = hashlib.md5(
+                    f"{trade['politician']}{trade['ticker']}"
+                    f"{trade['trade_date']}{trade['transaction_type']}".encode()
+                ).hexdigest()
 
-                logger.info(
-                    f"[congress] Page {page}: {len(rows)} rows, {page_count} valid trades"
+                db.execute(
+                    """
+                    INSERT INTO congress_trades
+                    (id, politician, party, chamber, state, ticker,
+                     transaction_type, amount_range, trade_date,
+                     disclosure_date, days_to_disclose)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+                """,
+                    [
+                        trade_id,
+                        trade["politician"],
+                        trade["party"],
+                        trade["chamber"],
+                        trade["state"],
+                        trade["ticker"],
+                        trade["transaction_type"],
+                        trade["amount_range"],
+                        trade["trade_date"],
+                        trade["disclosure_date"],
+                        trade["days_to_disclose"],
+                    ],
                 )
-                await client.pace(2.0, 4.0)
+                total_count += 1
+                page_count += 1
+
+            logger.info(
+                f"[congress] Page {page}: {len(rows)} rows, {page_count} valid trades"
+            )
+            import random
+            await asyncio.sleep(random.uniform(2.0, 4.0))
 
         logger.info(
             f"[congress] {total_count} trades written"

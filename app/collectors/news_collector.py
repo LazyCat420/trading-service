@@ -55,6 +55,16 @@ RSS_FEEDS = {
     "ZeroHedge": "https://feeds.feedburner.com/zerohedge/feed",
 }
 
+# Foreign Language RSS Feeds (Requires Translation)
+FOREIGN_RSS_FEEDS = {
+    # ── Asian Markets (Japanese & Chinese) ──
+    "Nikkei JP": "https://assets.nikkei.jp/data/rss/news/market.rdf",
+    "Sina Finance CN": "https://rss.sina.com.cn/roll/finance/hot_roll.xml",
+    # ── European Markets (German & French) ──
+    "Handelsblatt DE": "https://www.handelsblatt.com/contentexport/feed/finanzen",
+    "Les Echos FR": "https://services.lesechos.fr/rss/les-echos-finance-marches.xml",
+}
+
 # Company name -> ticker mapping
 COMPANY_TICKERS = {
     # Tech mega-caps
@@ -140,6 +150,32 @@ COMPANY_TICKERS = {
     "taiwan semi": "TSM",
     "tsmc": "TSM",
 }
+
+
+async def _translate_foreign_text(text: str, publisher: str) -> str:
+    """Use the LLM to translate foreign text to English."""
+    if not text or len(text.strip()) < 5:
+        return text
+    
+    from app.services.prism_agent_caller import call_prism_agent
+    
+    prompt = f"You are a professional financial translator. Translate the following news snippet from {publisher} into English. Only return the English translation, no other text or explanation.\n\nText: {text}"
+    
+    try:
+        reply, _, _ = await call_prism_agent(
+            agent_id="translator",
+            user_message=prompt,
+            fallback_system_prompt="You are a professional financial translator. Output only the requested translation.",
+            fallback_agent_name="Translator",
+            temperature=0.1,
+            max_tokens=1000,
+        )
+        if reply and len(reply.strip()) > 5:
+            return reply.strip()
+    except Exception as e:
+        logger.warning("[news] Translation failed for %s: %s", publisher, e)
+    
+    return text
 
 
 async def _scrape_article_body_via_service(url: str, max_chars: int = 15000) -> str:
@@ -277,7 +313,7 @@ def safe_emit(emit_cb, step: str, detail: str, status: str = "ok"):
         pass
 
 
-async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None) -> int:
+async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_foreign: bool = False) -> int:
     """
     Fetch and parse a single RSS feed via scraper-service, write articles to news_articles.
     Returns number of new articles written.
@@ -303,6 +339,12 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None) -> in
                 url = article.get("url", "")
                 summary = article.get("summary", "").strip()
                 publisher = article.get("publisher", feed_name)
+
+                # Translate if foreign
+                if is_foreign:
+                    title = await _translate_foreign_text(title, publisher)
+                    if summary:
+                        summary = await _translate_foreign_text(summary, publisher)
 
                 pub_val = article.get("published_at")
                 if isinstance(pub_val, str):
@@ -435,15 +477,19 @@ async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> in
     """Fetch all RSS feeds. Returns total articles written."""
     total = 0
     failed = 0
-    feeds_to_check = list(RSS_FEEDS.items())
+    
+    # Combine regular and foreign feeds
+    feeds_to_check = [(name, url, False) for name, url in RSS_FEEDS.items()]
+    feeds_to_check += [(name, url, True) for name, url in FOREIGN_RSS_FEEDS.items()]
+    
     if limit_feeds and limit_feeds > 0 and limit_feeds < len(feeds_to_check):
         feeds_to_check = feeds_to_check[:limit_feeds]
 
-    for name, url in feeds_to_check:
+    for name, url, is_foreign in feeds_to_check:
         try:
-            count = await collect_feed(name, url, emit_cb=emit_cb)
+            count = await collect_feed(name, url, emit_cb=emit_cb, is_foreign=is_foreign)
             if count > 0:
-                logger.info(f"[news] {name}: {count} articles")
+                logger.info(f"[news] {name} (Foreign={is_foreign}): {count} articles")
             total += count
         except Exception as e:
             failed += 1

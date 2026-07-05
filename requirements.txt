@@ -70,6 +70,8 @@ click==8.3.3
     #   deepeval
     #   nltk
     #   uvicorn
+cloudscraper==1.2.71
+    # via -r requirements.in
 concurrent-log-handler==0.9.29
     # via -r requirements.in
 cryptography==48.0.0
@@ -105,6 +107,8 @@ filelock==3.29.0
     # via httpxthrottlecache
 finnhub-python==2.4.27
     # via -r requirements.in
+flatbuffers==25.12.19
+    # via onnxruntime
 fredapi==0.5.2
     # via -r requirements.in
 frozendict==2.4.7
@@ -201,6 +205,7 @@ nltk==3.9.4
 numpy==2.4.6
     # via
     #   -r requirements.in
+    #   onnxruntime
     #   pandas
     #   pgvector
     #   rank-bm25
@@ -209,6 +214,10 @@ numpy==2.4.6
     #   scipy
     #   ta
     #   yfinance
+onnxruntime==1.27.0
+    # via
+    #   -r requirements.in
+    #   piper-tts
 openai==2.38.0
     # via
     #   deepeval
@@ -228,6 +237,7 @@ orjson==3.11.9
     #   edgartools
 packaging==26.2
     # via
+    #   onnxruntime
     #   pandera
     #   pytest
     #   pytest-rerunfailures
@@ -243,9 +253,13 @@ pandera==0.31.1
     # via -r requirements.in
 paramiko==4.0.0
     # via -r requirements.in
+pathvalidate==3.3.1
+    # via piper-tts
 peewee==4.0.6
     # via yfinance
 pgvector==0.3.6
+    # via -r requirements.in
+piper-tts==1.4.2
     # via -r requirements.in
 platformdirs==4.9.6
     # via yfinance
@@ -266,7 +280,9 @@ propcache==0.5.2
     #   aiohttp
     #   yarl
 protobuf==7.35.0
-    # via yfinance
+    # via
+    #   onnxruntime
+    #   yfinance
 psycopg[binary,pool]==3.2.6
     # via -r requirements.in
 psycopg-binary==3.2.6
@@ -310,6 +326,8 @@ pymongo==4.8.0
     #   motor
 pynacl==1.6.2
     # via paramiko
+pyparsing==3.3.2
+    # via cloudscraper
 pyrate-limiter==4.1.0
     # via
     #   edgartools
@@ -354,16 +372,23 @@ rank-bm25==0.2.2
 rapidfuzz==3.14.5
     # via edgartools
 regex==2026.5.9
-    # via nltk
+    # via
+    #   nltk
+    #   tiktoken
 requests==2.34.2
     # via
+    #   cloudscraper
     #   deepeval
     #   finnhub-python
     #   google-auth
     #   google-genai
     #   posthog
+    #   requests-toolbelt
     #   rlms
+    #   tiktoken
     #   yfinance
+requests-toolbelt==1.0.0
+    # via cloudscraper
 rich==14.3.4
     # via
     #   deepeval
@@ -421,6 +446,8 @@ textdistance==4.6.3
     # via edgartools
 threadpoolctl==3.6.0
     # via scikit-learn
+tiktoken==0.13.0
+    # via -r requirements.in
 tqdm==4.67.3
     # via
     #   deepeval
@@ -428,8 +455,6 @@ tqdm==4.67.3
     #   nltk
     #   openai
     #   portkey-ai
-tiktoken>=0.7.0
-    # via -r requirements.in
 truststore==0.10.4
     # via edgartools
 typeguard==4.5.2
@@ -499,4 +524,3 @@ yfinance==1.2.0
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
-

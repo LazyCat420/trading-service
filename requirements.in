@@ -73,3 +73,4 @@ chardet==5.2.0
 # Neural TTS
 piper-tts>=1.2.0
 onnxruntime>=1.15.0
+cloudscraper>=1.2.71
