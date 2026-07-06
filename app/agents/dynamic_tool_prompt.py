@@ -10,12 +10,16 @@ how and when to use these capabilities.
 
 # ── Prism Meta-Tool Names ──────────────────────────────────────────────
 # These are Prism-local tools (NOT MCP-prefixed) that allow agents to
-# dynamically modify their tool set during an agentic loop.
+# dynamically modify their tool set during an agentic loop, and spawn subagents.
 PRISM_DYNAMIC_META_TOOLS = [
     "discover_and_enable_tools",
     "enable_tools",
     "disable_tools",
     "search_tools",
+    "create_subagent",
+    "create_subagents",
+    "send_subagent_message",
+    "stop_subagent",
 ]
 
 # ── System Prompt Fragment ─────────────────────────────────────────────

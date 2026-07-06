@@ -29,7 +29,7 @@ EXTRA_SSH_SYNC() {
   ssh "$DEPLOY_SSH_HOST" "cp '${DEPLOY_COMPOSE_ROOT}/vault-service/env/.env' '${DEPLOY_COMPOSE_DIR}/.env'"
   info "Appending concurrency overrides to remote .env..."
   ssh "$DEPLOY_SSH_HOST" "echo '' >> '${DEPLOY_COMPOSE_DIR}/.env'"
-  ssh "$DEPLOY_SSH_HOST" "echo 'PRISM_URL=http://10.0.0.16:7778/prism-proxy' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  ssh "$DEPLOY_SSH_HOST" "echo 'PRISM_URL=http://10.0.0.16:5591/prism-proxy' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'V2_TICKER_CONCURRENCY=4' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'ADAPTIVE_MIN_CONCURRENCY=4' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'ADAPTIVE_MAX_CONCURRENCY=8' >> '${DEPLOY_COMPOSE_DIR}/.env'"

@@ -116,10 +116,13 @@ async def run_v3_agent(
             if portfolio_ctx:
                 user_prompt += f"## Portfolio Context\n{portfolio_ctx}\n\n"
                 
-            # Inject Pre-Collected Ticker Data Report (STATIC)
+            # Use compressed data_report (summary only) if possible
             data_report = desk.cycle_metadata.get("data_report", "")
             if data_report:
-                user_prompt += f"## Pre-Collected Data Report\n{data_report}\n\n"
+                # Keep it concise to prevent prompt blowup
+                if len(data_report) > 5000:
+                    data_report = data_report[:5000] + "\n...[TRUNCATED FOR LENGTH]..."
+                user_prompt += f"## Pre-Collected Data Report (Summary)\n{data_report}\n\n"
 
             # Inject Past Cycle Memory if available (STATIC)
             memory_context = desk.cycle_metadata.get("memory_context", "")
@@ -129,10 +132,9 @@ async def run_v3_agent(
         # Add Tool/Reasoning Instructions (STATIC)
         if tool_whitelist:
             user_prompt += (
-                "You have access to external data tools. "
-                "Core quantitative metrics, news, YouTube, and filings are already provided in the 'Pre-Collected Data Report' section. "
-                "Your job is to act as a data janitor: review the pre-collected data and ONLY use your tools if you spot missing data, corrupted data, or clickbait that needs verification. "
-                "If the data is solid, proceed directly to analysis without calling redundant tools.\n\n"
+                "You have access to a specific subset of tools for your domain. "
+                "Use them only if you need deeper research beyond the pre-collected data. "
+                "Do not redundantly fetch data already provided.\n\n"
             )
         else:
             user_prompt += (
@@ -149,10 +151,10 @@ async def run_v3_agent(
             f"Your entire response MUST start with '{{' and end with '}}'.\n\n"
         )
 
-        # Append dynamic SharedDesk Context at the very end
+        # Append concise SharedDesk Context summary
         if desk_context and desk_context != "No artifacts on desk yet.":
             user_prompt += (
-                f"## SharedDesk Context (from prior analysts)\n"
+                f"## SharedDesk Context Summary\n"
                 f"{desk_context}\n\n"
             )
 
