@@ -2344,3 +2344,14 @@ CREATE TABLE IF NOT EXISTS economic_calendar (
 );
 
 CREATE INDEX IF NOT EXISTS idx_econ_cal_date ON economic_calendar(event_date);
+
+CREATE TABLE IF NOT EXISTS congress_members (
+    bioguide_id VARCHAR PRIMARY KEY,
+    first_name VARCHAR,
+    last_name VARCHAR,
+    full_name VARCHAR,
+    party VARCHAR,
+    chamber VARCHAR,
+    state VARCHAR,
+    collected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

@@ -21,6 +21,7 @@ services:
       - ./logs:/app/logs
       - ../lazycat-sdk:/app/lazycat-sdk:ro
       - ./.agents:/.agents
+      - ../notes:/app/notes
     ports:
       - "3031:8080"
     logging:
