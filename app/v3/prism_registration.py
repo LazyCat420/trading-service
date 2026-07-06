@@ -70,7 +70,7 @@ async def register_v3_agents() -> dict[str, bool]:
 
             agent_name = module.AGENT_NAME
             agent_id = f"CUSTOM_{agent_name.upper()}"
-            system_prompt = module.SYSTEM_PROMPT
+            system_prompt = getattr(module, "SYSTEM_PROMPT", "You are an autonomous V3 trading agent. Your identity will be provided dynamically at runtime.")
             tool_whitelist = module.TOOL_WHITELIST
 
             # Merge with Prism dynamic meta-tools
