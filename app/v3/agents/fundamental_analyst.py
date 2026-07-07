@@ -7,10 +7,7 @@ using `create_subagents` or `create_subagent` for Earnings, Balance Sheet, and V
 """
 
 import logging
-from typing import Any
-from app.v3.shared_desk import SharedDesk, PhaseOutcome
-from app.agents.base_agent import run_agent
-from app.v3.artifacts import validate_artifact
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,41 +49,3 @@ Do NOT include any conversational introduction, summary takeaways, preambles, or
 Do NOT wrap the JSON response in markdown code blocks (do NOT use ```json).
 Your response MUST start with '{' and end with '}'."""
 
-async def run_custom_agent(
-    desk: SharedDesk,
-    cycle_id: str,
-    bot_id: str,
-    emit: Any,
-    timeout_seconds: float,
-) -> PhaseOutcome:
-    """Supervisor execution logic using dynamic subagent spawning."""
-    
-    data_report = desk.cycle_metadata.get("data_report", "")
-    
-    prompt = f"## Ticker: {desk.ticker}\n\n## Pre-Collected Data Report\n{data_report}\n\nAnalyze this data and synthesize the fundamental report."
-    
-    res = await run_agent(
-        agent_name=AGENT_NAME,
-        ticker=desk.ticker,
-        cycle_id=cycle_id,
-        bot_id=bot_id,
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=prompt,
-        max_tokens=8192,
-        enable_tools=True,
-        harness_provider=desk.cycle_metadata.get("harness_provider", "local"),
-    )
-
-    try:
-        from app.utils.text_utils import parse_json_response
-        artifact = parse_json_response(res.get("response", ""))
-    except Exception as e:
-        logger.error("[V3 fundamental_analyst] Failed to parse supervisor output: %s", e)
-        return PhaseOutcome.AGENT_ERROR
-
-    errors = validate_artifact(ARTIFACT_TYPE, artifact)
-    if errors:
-        artifact["_validation_warnings"] = errors
-
-    desk.append_artifact(ARTIFACT_TYPE, artifact)
-    return PhaseOutcome.SUCCESS
