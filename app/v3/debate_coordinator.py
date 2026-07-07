@@ -1,5 +1,9 @@
+import json
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import Any
+
 from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
@@ -8,7 +12,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str):
     """
     Stage 1: Sector-Based Battle Royale
     Stage 2: Cross-Sector Allocation
-    Saves the final report into `research_reports` or `swarm_verdicts` so the UI picks it up.
+    Saves the final report into `ticker_reports` so the UI picks it up.
     """
     logger.info("[BattleRoyale] Starting Battle Royale for cycle %s", cycle_id)
     
@@ -25,10 +29,13 @@ async def run_battle_royale(cycle_id: str, bot_id: str):
         
     # Build summary of tickers
     tickers_data = []
-    import json
-    for ticker, result_str in rows:
+    for ticker, result_raw in rows:
         try:
-            result = json.loads(result_str)
+            # Handle both JSONB (already dict) and TEXT (string) column types
+            if isinstance(result_raw, str):
+                result = json.loads(result_raw)
+            else:
+                result = result_raw
             action = result.get("action", "HOLD")
             confidence = result.get("confidence", 0)
             rationale = result.get("rationale", "")
@@ -55,9 +62,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str):
     if not buys and not sells:
         report_content += "No actionable signals generated in this cycle.\n"
         
-    # Save to research_reports
-    import uuid
-    from datetime import datetime, timezone
+    # Save to ticker_reports
     report_id = str(uuid.uuid4())
     
     try:
@@ -82,4 +87,3 @@ async def run_battle_royale(cycle_id: str, bot_id: str):
         logger.info("[BattleRoyale] Report saved with ID %s", report_id)
     except Exception as e:
         logger.error("[BattleRoyale] Failed to save report: %s", e)
-

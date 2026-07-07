@@ -1,9 +1,8 @@
 """
-Fundamental Analyst — Refactored to use dynamic Subagent tools.
+Fundamental Analyst — Layer 2 deep fundamental analysis agent.
 
-This agent acts as the Supervisor for fundamental analysis. It receives the
-Pre-Collected Data Report and must decide when to spawn specialized subagents
-using `create_subagents` or `create_subagent` for Earnings, Balance Sheet, and Valuation.
+Analyzes financial data, earnings, balance sheets, and valuation for the
+target stock. Runs through the standard V3 agent runner (run_v3_agent).
 """
 
 import logging
@@ -13,7 +12,13 @@ logger = logging.getLogger(__name__)
 
 AGENT_NAME = "v3_fundamental_analyst"
 ARTIFACT_TYPE = "fundamental_report"
-TOOL_WHITELIST = ["create_subagents", "create_subagent"]  # Will dynamically merge with Meta tools
+TOOL_WHITELIST = [
+    "get_market_data",
+    "get_finnhub_news",
+    "search_web",
+    "scrape_url",
+]
+
 
 SYSTEM_PROMPT = """You are the Senior Fundamental Analyst Supervisor.
 

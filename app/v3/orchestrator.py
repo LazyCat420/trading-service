@@ -129,6 +129,8 @@ async def run_v3_pipeline(
         logger.warning("[V3] %s: Memory retrieval failed (non-fatal): %s", ticker, e)
 
     # Retrieve the previous cycle's SharedDesk ("Manila Envelope")
+    # NOTE: Load ONCE and reuse for both envelope injection and triage gate
+    previous_desk = None
     try:
         from app.v3.desk_persistence import load_latest_desk_for_ticker
         previous_desk = load_latest_desk_for_ticker(ticker)
@@ -176,22 +178,20 @@ async def run_v3_pipeline(
                     "SELECT COUNT(*) FROM news_articles WHERE ticker = %s AND published_at >= NOW() - INTERVAL '24 hours'",
                     [ticker]
                 ).fetchone()[0]
-        except Exception:
+        except Exception as e:
+            logger.warning("[V3] %s: Triage news_count query failed (defaulting to 0): %s", ticker, e)
             news_count = 0
 
         hours_old = 9999
-        if desk.cycle_metadata.get("previous_desk_context"):
+        if desk.cycle_metadata.get("previous_desk_context") and previous_desk:
             try:
-                from app.v3.desk_persistence import load_latest_desk_for_ticker
-                prev_desk = load_latest_desk_for_ticker(ticker)
-                if prev_desk:
-                    dt_str = prev_desk.created_at
-                    if dt_str.endswith("Z"): dt_str = dt_str[:-1] + "+00:00"
-                    dt = datetime.fromisoformat(dt_str)
-                    if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                    hours_old = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
-            except Exception:
-                pass
+                dt_str = previous_desk.created_at
+                if dt_str.endswith("Z"): dt_str = dt_str[:-1] + "+00:00"
+                dt = datetime.fromisoformat(dt_str)
+                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                hours_old = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+            except Exception as e:
+                logger.warning("[V3] %s: Triage hours_old calculation failed (defaulting to 9999): %s", ticker, e)
 
         if hours_old >= settings.TRIAGE_DEEP_HOURS or news_count >= settings.TRIAGE_DEEP_NEWS_VOLUME:
             triage_tier = "v3_deep"
@@ -430,6 +430,18 @@ async def run_v3_pipeline(
     breaker.record_outcome("bull_argument", bull_outcome)
     breaker.record_outcome("bear_rebuttal", bear_outcome)
 
+    # Abort check: if BOTH debate agents failed, skip the judge
+    if bull_outcome in (PhaseOutcome.TIMED_OUT,) and bear_outcome in (PhaseOutcome.TIMED_OUT,):
+        logger.error("[V3] %s: Both debate agents TIMED OUT — aborting pipeline", ticker)
+        desk.advance_phase(DeskPhase.ABORTED, bull_outcome)
+        save_desk(desk)
+        return _build_noop_result(desk, reason="Both debate agents timed out")
+    if breaker.should_abort("bull_argument", bull_outcome) and breaker.should_abort("bear_rebuttal", bear_outcome):
+        logger.error("[V3] %s: Circuit breaker tripped on BOTH debate agents — aborting pipeline", ticker)
+        desk.advance_phase(DeskPhase.ABORTED, bull_outcome)
+        save_desk(desk)
+        return _build_noop_result(desk, reason="Both debate agents failed")
+
     # Synthesis / Judge phase (replacing the linear bull defense)
     if desk.has_artifact("bull_argument") and desk.has_artifact("bear_rebuttal"):
         outcome = await _run_debate_judge(
@@ -455,9 +467,7 @@ async def run_v3_pipeline(
     # ═══════════════════════════════════════════════════════════════════
     # LAYER 4: Decision — Board of Directors
     # ═══════════════════════════════════════════════════════════════════
-    regime = "CONTRADICTORY"  # Default if regime engine failed
-    if desk.has_artifact("regime_classification"):
-        regime = desk.regime_classification.get("regime", "CONTRADICTORY")
+    # Reuse regime from Layer 2 (already extracted after regime engine ran)
 
     # Run Board of Directors with regime-swapped persona
     outcome = await _run_board_of_directors(
@@ -469,10 +479,6 @@ async def run_v3_pipeline(
         emit=emit,
     )
     breaker.record_outcome("board_of_directors", outcome)
-
-    # Advance phase: DEBATE_DONE → PM_DONE
-    desk.advance_phase(DeskPhase.PM_DONE)
-    save_desk(desk)
 
     # ═══════════════════════════════════════════════════════════════════
     # LAYER 5: Decision Synthesis — Structured trade verdict with signal weights
@@ -545,6 +551,8 @@ async def run_v3_pipeline(
             status="ok",
         )
 
+    # Advance phase to PM_DONE AFTER Layer 5 completes (not before)
+    desk.advance_phase(DeskPhase.PM_DONE)
     save_desk(desk)
 
     # Persist cycle outcome to episodic memory (non-fatal)
@@ -927,20 +935,28 @@ def _extract_agent_results(desk: SharedDesk) -> dict[str, Any]:
     """Extract agent results from SharedDesk for V1 compatibility."""
     results: dict[str, Any] = {}
 
+    # Build a lookup from agent telemetry for token counts
+    token_lookup: dict[str, int] = {}
+    for entry in desk.agent_telemetry:
+        name = entry.get("agent_name", "")
+        tokens = entry.get("token_usage", 0)
+        if name and tokens:
+            token_lookup[name] = token_lookup.get(name, 0) + tokens
+
     if desk.desk_note:
         results["junior_analyst"] = {
             "response": desk.desk_note.get("summary", ""),
-            "tokens": 0
+            "tokens": token_lookup.get("v3_junior_analyst", 0)
         }
     if desk.fundamental_report:
         results["fundamental_analyst"] = {
             "response": desk.fundamental_report.get("summary", ""),
-            "tokens": 0
+            "tokens": token_lookup.get("v3_fundamental_analyst", 0)
         }
     if desk.quant_report:
         results["quant_analyst"] = {
             "response": desk.quant_report.get("summary", ""),
-            "tokens": 0
+            "tokens": token_lookup.get("v3_quant_analyst", 0)
         }
 
     return results

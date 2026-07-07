@@ -387,7 +387,7 @@ class PipelineService:
                     logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
                     return
                 
-                harness_provider = kwargs.get("harness_provider", "local") if "kwargs" in locals() else "local"
+                harness_provider = kwargs.get("harness_provider", "local")
                 result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, harness_provider=harness_provider)
                 
                 # Save verdict to DB
