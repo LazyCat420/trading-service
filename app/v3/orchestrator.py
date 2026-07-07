@@ -133,25 +133,27 @@ async def run_v3_pipeline(
         from app.v3.desk_persistence import load_latest_desk_for_ticker
         previous_desk = load_latest_desk_for_ticker(ticker)
         if previous_desk:
-            # Enforce 7-day cutoff
-            dt_str = previous_desk.created_at
-            if dt_str.endswith("Z"):
-                dt_str = dt_str[:-1] + "+00:00"
-            try:
-                dt = datetime.fromisoformat(dt_str)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                days_old = (datetime.now(timezone.utc) - dt).days
-                if days_old <= 7:
-                    prev_context = previous_desk.get_compressed_context(include_debate=True)
-                    if prev_context and prev_context != "No artifacts on desk yet.":
-                        desk.cycle_metadata["previous_desk_context"] = prev_context
-                        logger.info(
-                            "[V3] %s: Injected previous SharedDesk context from %d days ago (%d chars)",
-                            ticker, days_old, len(prev_context)
-                        )
-            except ValueError:
-                pass
+            prev_context = previous_desk.get_compressed_context(include_debate=True)
+            if prev_context and prev_context != "No artifacts on desk yet.":
+                desk.cycle_metadata["previous_desk_context"] = prev_context
+                
+                # Calculate days old for logging
+                dt_str = previous_desk.created_at
+                days_old = -1
+                if dt_str.endswith("Z"):
+                    dt_str = dt_str[:-1] + "+00:00"
+                try:
+                    dt = datetime.fromisoformat(dt_str)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    days_old = (datetime.now(timezone.utc) - dt).days
+                except ValueError:
+                    pass
+                
+                logger.info(
+                    "[V3] %s: Injected previous SharedDesk context from %d days ago (%d chars)",
+                    ticker, days_old, len(prev_context)
+                )
     except Exception as e:
         logger.warning("[V3] %s: Failed to load previous SharedDesk (non-fatal): %s", ticker, e)
 
@@ -160,6 +162,60 @@ async def run_v3_pipeline(
         f"📋 {ticker}: SharedDesk created, cycle metadata & data report injected",
         status="ok",
     )
+
+    # ═══════════════════════════════════════════════════════════════════
+    # PHASE 0: Triage Gate
+    # ═══════════════════════════════════════════════════════════════════
+    from app.config import settings
+    triage_tier = "v3_full"
+    if settings.TRIAGE_ENABLED:
+        try:
+            from app.db.connection import get_db
+            with get_db() as db:
+                news_count = db.execute(
+                    "SELECT COUNT(*) FROM news_articles WHERE ticker = %s AND published_at >= NOW() - INTERVAL '24 hours'",
+                    [ticker]
+                ).fetchone()[0]
+        except Exception:
+            news_count = 0
+
+        hours_old = 9999
+        if desk.cycle_metadata.get("previous_desk_context"):
+            try:
+                from app.v3.desk_persistence import load_latest_desk_for_ticker
+                prev_desk = load_latest_desk_for_ticker(ticker)
+                if prev_desk:
+                    dt_str = prev_desk.created_at
+                    if dt_str.endswith("Z"): dt_str = dt_str[:-1] + "+00:00"
+                    dt = datetime.fromisoformat(dt_str)
+                    if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                    hours_old = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+            except Exception:
+                pass
+
+        if hours_old >= settings.TRIAGE_DEEP_HOURS or news_count >= settings.TRIAGE_DEEP_NEWS_VOLUME:
+            triage_tier = "v3_deep"
+        elif hours_old <= settings.TRIAGE_GLANCE_HOURS and news_count < settings.TRIAGE_DEEP_NEWS_VOLUME:
+            triage_tier = "v3_glance"
+        else:
+            triage_tier = "v3_standard"
+
+        emit("analyzing", f"v3_triage_{ticker}", f"🚦 {ticker}: Triage Gate evaluated → {triage_tier} (News: {news_count}, Age: {int(hours_old)}h)", status="ok")
+        
+        if triage_tier == "v3_glance":
+            logger.info("[V3] %s: Skipped by Triage Gate (GLANCE tier)", ticker)
+            desk.append_artifact("final_decision", {
+                "action": "HOLD",
+                "confidence": 0,
+                "reasoning": f"Skipped by Triage Gate (Age: {int(hours_old)}h, News: {news_count}). No new catalysts.",
+                "persona_used": "Triage Gate"
+            })
+            desk.advance_phase(DeskPhase.PM_DONE)
+            elapsed_s = time.monotonic() - t_pipeline
+            result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
+            result["triage_tier"] = triage_tier
+            result["escalated"] = False
+            return result
 
     from app.v3.agents import regime_engine
 
