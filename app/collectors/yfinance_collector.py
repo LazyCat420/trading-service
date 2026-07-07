@@ -335,7 +335,13 @@ async def collect_financials(ticker: str) -> int:
                         revenue, gross_profit, operating_income,
                         net_income, eps, free_cash_flow
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ticker, period_type, period_end) DO NOTHING
+                ON CONFLICT (ticker, period_type, period_end) DO UPDATE SET
+                    revenue = EXCLUDED.revenue,
+                    gross_profit = EXCLUDED.gross_profit,
+                    operating_income = EXCLUDED.operating_income,
+                    net_income = EXCLUDED.net_income,
+                    eps = EXCLUDED.eps,
+                    free_cash_flow = EXCLUDED.free_cash_flow
                 """,
                     rows,
                 )
@@ -393,7 +399,13 @@ async def collect_balance_sheet(ticker: str) -> int:
                         ticker, period_end, total_assets, total_liabilities,
                         total_equity, cash, total_debt, working_capital
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, period_end) DO NOTHING
+                    ON CONFLICT (ticker, period_end) DO UPDATE SET
+                        total_assets = EXCLUDED.total_assets,
+                        total_liabilities = EXCLUDED.total_liabilities,
+                        total_equity = EXCLUDED.total_equity,
+                        cash = EXCLUDED.cash,
+                        total_debt = EXCLUDED.total_debt,
+                        working_capital = EXCLUDED.working_capital
                 """,
                     rows,
                 )

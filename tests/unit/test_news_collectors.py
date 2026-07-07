@@ -144,3 +144,41 @@ async def test_collect_finnhub_news_jaccard_dedup(mock_db):
         inserted_titles = [c[0][1][2] for c in insert_calls] # Index 2 is the title
         assert any("WWDC" in title for title in inserted_titles)
 
+
+def test_analyst_only_reference_filter():
+    """
+    Test that the analyst-only reference filter correctly distinguishes when a financial
+    institution is mentioned as an analyst agency vs the subject of the news article.
+    """
+    from app.collectors.news_collector import _is_article_relevant_to_ticker
+
+    # Case 1: Mentioned only as rating agency (should be filtered out for BAC)
+    rating_article = (
+        "Goldman Sachs analyst Catherine O'Brien raised the firm's price target on JetBlue "
+        "Airways Corporation (JBLU) to $4.50 from $3.50. A day earlier, BofA analyst Andrew Didora "
+        "increased his price target on JetBlue Airways Corporation (JBLU) to $4 from $3.50 while "
+        "maintaining an Underperform rating."
+    )
+    assert not _is_article_relevant_to_ticker("BAC", rating_article)
+
+    # Case 2: Bank stock itself is the subject (should NOT be filtered out)
+    bank_news_article = (
+        "Bank of America (BAC) shares climbed 2% in premarket trading after posting Q2 earnings "
+        "that beat analyst consensus estimates on net interest income."
+    )
+    assert _is_article_relevant_to_ticker("BAC", bank_news_article)
+
+    # Case 3: $BAC symbol is present (should NOT be filtered out)
+    symbol_article = (
+        "Active traders are tracking options activity for $BAC as large block trades suggest "
+        "bullish positioning ahead of interest rate decisions."
+    )
+    assert _is_article_relevant_to_ticker("BAC", symbol_article)
+
+    # Case 4: General article mentioning BofA Securities target, but no direct bank stock indicator
+    general_rating = (
+        "Apple target raised to $230 from $220 at BofA Securities on expectations of strong AI demand."
+    )
+    assert not _is_article_relevant_to_ticker("BAC", general_rating)
+
+

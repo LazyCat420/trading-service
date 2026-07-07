@@ -230,6 +230,73 @@ async def _detect_tickers_in_text(text: str) -> set[str]:
     return set(symbols)
 
 
+
+def _is_analyst_only_reference(ticker: str, text: str) -> bool:
+    """Check if the ticker is a financial institution that is only mentioned
+    as an analyst or rating agency, rather than being the subject of the article.
+    """
+    analyst_map = {
+        "BAC": ["bank of america", "bofa"],
+        "JPM": ["jpmorgan", "jp morgan", "chase"],
+        "GS": ["goldman sachs", "goldman"],
+        "MS": ["morgan stanley"],
+        "C": ["citigroup", "citi"],
+        "WFC": ["wells fargo"]
+    }
+    if ticker not in analyst_map:
+        return False
+        
+    aliases = analyst_map[ticker]
+    text_lower = text.lower()
+    
+    # If the text has $TICKER (e.g. $BAC), it's explicitly about the financial instrument
+    if re.search(rf"\${re.escape(ticker)}\b", text_lower):
+        return False
+        
+    # If the text directly talks about the bank's own stock/shares/earnings
+    own_stock_patterns = [
+        rf"\b{re.escape(ticker)}\s+(stock|shares|earnings|dividend|results|equity|assets|debt|ceo|valuation)\b",
+        rf"{re.escape(ticker)}\b.*?\b(report|announced|released|posted)\b.*?\b(earnings|revenue|profit|income)\b",
+    ]
+    for alias in aliases:
+        own_stock_patterns.append(rf"\b{re.escape(alias)}\s+(stock|shares|earnings|dividend|results|equity|assets|debt|ceo|valuation)\b")
+        own_stock_patterns.append(rf"\b{re.escape(alias)}'s\s+(stock|shares|earnings|dividend|results|equity)\b")
+        
+    for pattern in own_stock_patterns:
+        if re.search(pattern, text_lower):
+            return False
+            
+    # Check if all occurrences of the aliases/names are followed or preceded by analyst keywords
+    analyst_kws = [
+        "analyst", "securities", "equity research", "strategist", "economist", 
+        "brokerage", "firm", "research", "note", "report", "index", "upgrades", 
+        "downgrades", "rating", "price target", "target price"
+    ]
+    
+    has_any_mention = False
+    all_are_analyst_refs = True
+    
+    for alias in aliases:
+        for m in re.finditer(rf"\b{re.escape(alias)}\b", text_lower):
+            has_any_mention = True
+            # Check a window of 4 words after and before the match
+            start_idx = max(0, m.start() - 50)
+            end_idx = min(len(text_lower), m.end() + 50)
+            window = text_lower[start_idx:end_idx]
+            
+            # Check if any analyst keyword is in this local window
+            if not any(kw in window for kw in analyst_kws):
+                all_are_analyst_refs = False
+                break
+        if not all_are_analyst_refs:
+            break
+            
+    if has_any_mention and all_are_analyst_refs:
+        return True
+        
+    return False
+
+
 def _is_article_relevant_to_ticker(ticker: str, text: str) -> bool:
     """Check if an article actually discusses a ticker as a financial instrument.
 
@@ -239,6 +306,9 @@ def _is_article_relevant_to_ticker(ticker: str, text: str) -> bool:
 
     Returns True if the article passes the relevance check.
     """
+    if _is_analyst_only_reference(ticker, text):
+        return False
+
     # Long tickers (4+ chars) and $TICKER syntax are inherently less ambiguous
     if len(ticker) >= 4:
         return True

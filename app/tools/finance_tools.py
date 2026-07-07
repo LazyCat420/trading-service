@@ -78,22 +78,43 @@ async def get_market_data(ticker: str) -> str:
             )
         )
 
-        # Financials
-        fin_rows = db.execute(
+        # Quarterly Financials
+        q_rows = db.execute(
             """
             SELECT period_end, revenue, gross_profit, operating_income, net_income, eps, free_cash_flow
-            FROM financial_history WHERE ticker = %s ORDER BY period_end DESC LIMIT 4
+            FROM financial_history 
+            WHERE ticker = %s AND period_type = 'quarterly' 
+            ORDER BY period_end DESC LIMIT 4
         """,
             [ticker],
         ).fetchall()
-        if fin_rows:
-            fin_lines = ["\n## Recent Financials"]
-            for row in fin_rows:
+        if q_rows:
+            q_lines = ["\n## Recent Quarterly Financials"]
+            for row in q_rows:
                 rev = fmt_usd(row[1]) if row[1] else "N/A"
                 ni = fmt_usd(row[4]) if row[4] else "N/A"
                 eps = f"EPS=${row[5]:.2f}" if row[5] else ""
-                fin_lines.append(f"  {row[0]}: Rev={rev}, Net Income={ni}, {eps}")
-            sections.append("\n".join(fin_lines))
+                q_lines.append(f"  {row[0]}: Rev={rev}, Net Income={ni}, {eps}")
+            sections.append("\n".join(q_lines))
+
+        # Annual Financials
+        a_rows = db.execute(
+            """
+            SELECT period_end, revenue, gross_profit, operating_income, net_income, eps, free_cash_flow
+            FROM financial_history 
+            WHERE ticker = %s AND period_type = 'annual' 
+            ORDER BY period_end DESC LIMIT 4
+        """,
+            [ticker],
+        ).fetchall()
+        if a_rows:
+            a_lines = ["\n## Recent Annual Financials"]
+            for row in a_rows:
+                rev = fmt_usd(row[1]) if row[1] else "N/A"
+                ni = fmt_usd(row[4]) if row[4] else "N/A"
+                eps = f"EPS=${row[5]:.2f}" if row[5] else ""
+                a_lines.append(f"  {row[0]}: Rev={rev}, Net Income={ni}, {eps}")
+            sections.append("\n".join(a_lines))
 
     return "\n".join(sections)
 
