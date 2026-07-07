@@ -7,6 +7,7 @@ Supports:
   - buy_limit:     Buy when price drops to or below trigger_price
   - sell_limit:    Sell when price rises to or above trigger_price
   - trailing_stop: Sell when price drops trailing_pct from highest recorded price
+  - dynamic:       Evaluates dynamic_trigger_type (e.g. sma_crossover, rsi_oversold, trailing_drop)
 
 All triggers are evaluated every 1 minute by the background scheduler.
 The bot can also set triggers via agent tools during analysis.
@@ -30,6 +31,8 @@ async def create_trigger(
     action: str = "SELL",
     qty_pct: float = 1.0,
     trailing_pct: float | None = None,
+    dynamic_trigger_type: str | None = None,
+    dynamic_trigger_value: float | None = None,
     reason: str | None = None,
     created_by: str = "bot",
 ) -> dict:
@@ -43,6 +46,8 @@ async def create_trigger(
         action: BUY or SELL
         qty_pct: Fraction of position (0.0-1.0, default 1.0 = full)
         trailing_pct: For trailing_stop: percentage drop from peak to trigger
+        dynamic_trigger_type: e.g. sma_100_drop, rsi_14_oversold
+        dynamic_trigger_value: The threshold for the dynamic trigger
         reason: Human-readable reason for the trigger
         created_by: bot | user | pipeline
 
@@ -55,13 +60,14 @@ async def create_trigger(
         "buy_limit",
         "sell_limit",
         "trailing_stop",
+        "dynamic",
     )
     if trigger_type not in valid_types:
         return {
             "error": f"Invalid trigger_type: {trigger_type}. Must be one of {valid_types}"
         }
 
-    if trigger_price <= 0:
+    if trigger_type != "dynamic" and trigger_price <= 0:
         return {"error": f"trigger_price must be positive, got {trigger_price}"}
 
     if trigger_type == "trailing_stop" and (not trailing_pct or trailing_pct <= 0):
@@ -82,8 +88,8 @@ async def create_trigger(
             INSERT INTO price_triggers (
                 id, bot_id, ticker, trigger_type, trigger_price, action,
                 qty_pct, trailing_pct, highest_price, reason, active,
-                created_at, created_by
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+                created_at, created_by, dynamic_trigger_type, dynamic_trigger_value
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s)
             """,
             [
                 trigger_id,
@@ -98,6 +104,8 @@ async def create_trigger(
                 reason,
                 now,
                 created_by,
+                dynamic_trigger_type,
+                dynamic_trigger_value,
             ],
         )
 
@@ -135,7 +143,8 @@ async def check_triggers(bot_id: str) -> list[dict]:
         triggers = db.execute(
             """
             SELECT id, ticker, trigger_type, trigger_price, action,
-                   qty_pct, trailing_pct, highest_price, reason
+                   qty_pct, trailing_pct, highest_price, reason,
+                   dynamic_trigger_type, dynamic_trigger_value
             FROM price_triggers
             WHERE bot_id = %s AND active = TRUE
             """,
@@ -159,6 +168,8 @@ async def check_triggers(bot_id: str) -> list[dict]:
             trailing_pct,
             highest_price,
             reason,
+            dynamic_trigger_type,
+            dynamic_trigger_value,
         ) = row
 
         current_price, _ = _get_current_price(ticker)
@@ -193,6 +204,40 @@ async def check_triggers(bot_id: str) -> list[dict]:
             if trailing_pct and highest_price and highest_price > 0:
                 trail_price = highest_price * (1 - trailing_pct)
                 triggered = current_price <= trail_price
+
+        elif trigger_type == "dynamic":
+            if dynamic_trigger_type and dynamic_trigger_value is not None:
+                if dynamic_trigger_type.startswith("sma_") or dynamic_trigger_type.startswith("rsi_"):
+                    # Extract metric name, e.g., 'sma_200' from 'sma_200_drop'
+                    parts = dynamic_trigger_type.split("_")
+                    if len(parts) >= 2:
+                        metric_col = f"{parts[0]}_{parts[1]}"
+                        with get_db() as db:
+                            tech_row = db.execute(
+                                f"SELECT {metric_col} FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+                                [ticker],
+                            ).fetchone()
+                            
+                        if tech_row and tech_row[0] is not None:
+                            metric_val = tech_row[0]
+                            if "drop" in dynamic_trigger_type or "below" in dynamic_trigger_type or "oversold" in dynamic_trigger_type:
+                                triggered = current_price < metric_val
+                            elif "rise" in dynamic_trigger_type or "above" in dynamic_trigger_type or "overbought" in dynamic_trigger_type:
+                                triggered = current_price > metric_val
+
+                elif dynamic_trigger_type == "trailing_drop":
+                    # Initialize or update highest_price
+                    if highest_price is None or current_price > highest_price:
+                        highest_price = current_price
+                        with get_db() as db:
+                            db.execute(
+                                "UPDATE price_triggers SET highest_price = %s WHERE id = %s",
+                                [highest_price, trigger_id],
+                            )
+                    
+                    if highest_price and highest_price > 0:
+                        trail_price = highest_price * (1 - dynamic_trigger_value)
+                        triggered = current_price <= trail_price
 
         if triggered:
             logger.warning(

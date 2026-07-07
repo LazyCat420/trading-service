@@ -26,13 +26,15 @@ As a guideline, you should aim to select between {min_tickers} and {max_tickers}
 ### EVALUATION DIRECTIVES
 1. MAXIMUM ONE MEGA-CAP: Do not pick more than 1 mega-cap tech stock (e.g., AAPL, MSFT, GOOGL, NVDA, AMZN) per cycle.
 2. VERIFY THE CATALYSTS: The Scoring Engine only looks at raw numbers and social mention counts. Your job is to check if the volume/trend is actually backed by a logical news catalyst before selecting the stock. 
-3. EMBRACE RISK AND VOLATILITY: You are looking for explosive setups or major momentum shifts on smaller or newly discovered tickers. Do not just pick the safest baseline momentum. 
-4. STRIKE A BALANCE: Try to find a healthy mix of heavily-trending new discoveries (e.g., "Trending Reddit") and fresh, un-penalized setups from the static Watchlist. Do not waste our compute on dead stocks.
+3. AVOID REPEATED REJECTIONS: Look closely at the "Past Verdict" and "Past Reason" columns. If we recently analyzed a stock and rejected it (HOLD/SELL) for a fundamental flaw (e.g. "valuation too high", "no clear moat"), do NOT select it again unless the price has significantly dropped or a massive new catalyst has appeared.
+4. EMBRACE RISK AND VOLATILITY: You are looking for explosive setups or major momentum shifts on smaller or newly discovered tickers. Do not just pick the safest baseline momentum. 
+5. STRIKE A BALANCE: Try to find a healthy mix of heavily-trending new discoveries (e.g., "Trending Reddit") and fresh, un-penalized setups from the static Watchlist. Do not waste our compute on dead stocks.
 
 Focus strictly on:
 1. High Engine Score
 2. Validating the News/Social Catalyst 
-3. Significant Price Deviations or Momentum Shifts (RSI extremes, SMA crossovers)
+3. Filtering out stocks that were recently rejected (Past Verdict) without a new catalyst
+4. Significant Price Deviations or Momentum Shifts (RSI extremes, SMA crossovers)
 
 ### OUTPUT DIRECTIVE
 Output ONLY a JSON object exactly matching this schema. Do NOT output any conversational text, pleasantries, or markdown formatting blocks. Just the raw JSON object starting with { and ending with }.

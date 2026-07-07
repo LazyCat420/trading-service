@@ -470,7 +470,17 @@ CREATE TABLE IF NOT EXISTS price_triggers (
     trigger_type    TEXT,
     price           DOUBLE PRECISION,
     active          BOOLEAN DEFAULT TRUE,
-    created_at      TIMESTAMP
+    created_at      TIMESTAMP,
+    action          TEXT DEFAULT 'SELL',
+    qty_pct         DOUBLE PRECISION DEFAULT 1.0,
+    trailing_pct    DOUBLE PRECISION,
+    highest_price   DOUBLE PRECISION,
+    reason          TEXT,
+    triggered_at    TIMESTAMPTZ,
+    created_by      TEXT DEFAULT 'bot',
+    trigger_price   DOUBLE PRECISION,
+    dynamic_trigger_type TEXT,
+    dynamic_trigger_value DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS decision_outcomes (

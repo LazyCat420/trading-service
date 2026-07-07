@@ -261,14 +261,28 @@ class PipelineService:
                         
                         logger.info(f"[PipelineService] Scoring Engine top picks: {[s['ticker'] for s in top_scorers]}")
                         
+                        # Phase 4B: Fetch past verdicts for top 20
+                        placeholders = ','.join(['%s'] * len(top_scorers))
+                        with get_db() as db:
+                            past_results_rows = db.execute(f"""
+                                SELECT DISTINCT ON (ticker) ticker, action, confidence, reasoning, created_at
+                                FROM trade_results
+                                WHERE ticker IN ({placeholders})
+                                ORDER BY ticker, created_at DESC
+                            """, [s['ticker'] for s in top_scorers]).fetchall()
+                            past_results_map = {r[0]: {"action": r[1], "conf": r[2], "reason": r[3]} for r in past_results_rows}
+                        
                         # Rebuild markdown table for Gatekeeper
                         md_lines = [
-                            "| Ticker | Score | Source | Days Since Analysis | Price | Change % | Rel Volume | SMA-20 | RSI (14) |",
-                            "|--------|-------|--------|---------------------|-------|----------|------------|--------|----------|"
+                            "| Ticker | Score | Source | Days Since Analysis | Price | Change % | Rel Vol | SMA-20 | RSI | Past Verdict | Past Reason |",
+                            "|--------|-------|--------|---------------------|-------|----------|---------|--------|-----|--------------|-------------|"
                         ]
                         for s in top_scorers:
                             sma_rel = ((s["price"] - s["sma"]) / s["sma"]) * 100 if s["sma"] > 0 else 0
-                            md_lines.append(f"| {s['ticker']} | {s['score']:.1f} | {s['src']} | {s['dsa']} | ${s['price']:.2f} | {s['chg']:+.2f}% | {s['rvol']:.2f}x | {sma_rel:+.2f}% | {s['rsi']:.1f} |")
+                            past = past_results_map.get(s["ticker"])
+                            past_verdict = f"{past['action']} ({past['conf']}%)" if past else "N/A"
+                            past_reason = (past['reason'][:100] + "...").replace('|', '') if past and past.get('reason') else "N/A"
+                            md_lines.append(f"| {s['ticker']} | {s['score']:.1f} | {s['src']} | {s['dsa']} | ${s['price']:.2f} | {s['chg']:+.2f}% | {s['rvol']:.2f}x | {sma_rel:+.2f}% | {s['rsi']:.1f} | {past_verdict} | {past_reason} |")
                             
                         snapshot_table = "\n".join(md_lines)
                         # -----------------------
@@ -412,12 +426,18 @@ class PipelineService:
                     decision = result.get("estimate", {})
                     stop_loss = decision.get("stop_loss")
                     take_profit = decision.get("take_profit")
-                    if stop_loss or take_profit:
+                    dynamic_trigger = decision.get("dynamic_trigger")
+                    if stop_loss or take_profit or dynamic_trigger:
                         from app.trading.order_triggers import create_trigger
                         if stop_loss:
                             await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
                         if take_profit:
                             await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
+                        if dynamic_trigger and isinstance(dynamic_trigger, dict):
+                            dt_type = dynamic_trigger.get("type")
+                            dt_val = dynamic_trigger.get("value")
+                            if dt_type:
+                                await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="dynamic", trigger_price=0.0, action="BUY", qty_pct=1.0, dynamic_trigger_type=dt_type, dynamic_trigger_value=dt_val, created_by="pipeline", reason=f"Dynamic Buy Trigger: {dt_type}")
                 except Exception as e:
                     logger.error("[PipelineService] Trade execution failed for %s: %s", ticker_name, e)
 

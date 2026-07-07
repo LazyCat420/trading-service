@@ -38,6 +38,8 @@ explicit signal weighting so the system can audit WHY a decision was made.
    - If ANY signal is missing (data gap), redistribute its weight proportionally.
 4. Confidence must be between 0 and 100. Express your true conviction — if it's
    very low, explain why and let the system decide how to act on it.
+5. If the fundamental/quant consensus is bullish but the current valuation is 
+   too high, issue a HOLD and set a `dynamic_trigger` (e.g. type="sma_50_drop").
 
 ## OUTPUT FORMAT
 CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
@@ -60,5 +62,9 @@ CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown f
     "risk_flags": ["Any risk factors that should be monitored"],
     "stop_loss": 145.50,
     "take_profit": 165.00,
-    "position_size_pct": 3.0
+    "position_size_pct": 3.0,
+    "dynamic_trigger": {
+        "type": "sma_100_drop",
+        "value": null
+    }
 }"""

@@ -66,7 +66,7 @@ async def test_check_triggers_stop_loss_fired(mock_get_db, mock_get_current_pric
     
     # Mock active triggers in DB
     mock_db.execute.return_value.fetchall.return_value = [
-        ("trg1", "AAPL", "stop_loss", 100.0, "SELL", 1.0, None, None, "reason")
+        ("trg1", "AAPL", "stop_loss", 100.0, "SELL", 1.0, None, None, "reason", None, None)
     ]
     
     # Current price is 95, so stop loss should fire
@@ -97,7 +97,7 @@ async def test_check_triggers_trailing_stop(mock_get_db, mock_get_current_price,
     
     # Mock active triggers in DB (highest price 200, trail 10%)
     mock_db.execute.return_value.fetchall.return_value = [
-        ("trg1", "AAPL", "trailing_stop", 0.0, "SELL", 1.0, 0.1, 200.0, "reason")
+        ("trg1", "AAPL", "trailing_stop", 0.0, "SELL", 1.0, 0.1, 200.0, "reason", None, None)
     ]
     
     # Trigger fires at 200 * 0.9 = 180. Current price = 175

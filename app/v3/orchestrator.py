@@ -838,6 +838,7 @@ def _build_v1_compatible_result(
     regime = decision.get("regime", "unknown")
     stop_loss = decision.get("stop_loss")
     take_profit = decision.get("take_profit")
+    dynamic_trigger = decision.get("dynamic_trigger")
 
     # Token sum from telemetry
     total_tokens = sum(
@@ -855,7 +856,8 @@ def _build_v1_compatible_result(
         "agent_results": _extract_agent_results(desk),
         "estimate": {
             "stop_loss": stop_loss,
-            "take_profit": take_profit
+            "take_profit": take_profit,
+            "dynamic_trigger": dynamic_trigger
         },
         "c_result": {
             "action": action,

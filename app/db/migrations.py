@@ -666,6 +666,8 @@ def _fix_eth_cagr_data(conn):
     _safe_add_column(conn, "price_triggers", "triggered_at", "TIMESTAMPTZ")
     _safe_add_column(conn, "price_triggers", "created_by", "TEXT DEFAULT 'bot'")
     _safe_add_column(conn, "price_triggers", "trigger_price", "DOUBLE PRECISION")
+    _safe_add_column(conn, "price_triggers", "dynamic_trigger_type", "TEXT")
+    _safe_add_column(conn, "price_triggers", "dynamic_trigger_value", "DOUBLE PRECISION")
 
     # ── Autoresearch Experiences (Reflector Loop) ──
     try:

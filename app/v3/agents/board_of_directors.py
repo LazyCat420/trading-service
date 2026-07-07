@@ -59,6 +59,10 @@ CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown f
     "position_size_pct": 2.5,
     "stop_loss": 145.50,
     "take_profit": 165.00,
+    "dynamic_trigger": {
+        "type": "sma_100_drop",
+        "value": null
+    },
     "persona_used": "jim_simons",
     "regime": "HIGH_VOLATILITY"
 }"""
@@ -102,6 +106,10 @@ CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown f
     "position_size_pct": 5.0,
     "stop_loss": 140.00,
     "take_profit": 200.00,
+    "dynamic_trigger": {
+        "type": "rsi_14_oversold",
+        "value": null
+    },
     "persona_used": "warren_buffett",
     "regime": "DEEP_DISCOUNT"
 }"""
@@ -141,6 +149,10 @@ CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown f
     "position_size_pct": 3.0,
     "stop_loss": 148.00,
     "take_profit": 172.00,
+    "dynamic_trigger": {
+        "type": "trailing_drop",
+        "value": 0.15
+    },
     "persona_used": "jane_street",
     "regime": "CONTRADICTORY"
 }"""
