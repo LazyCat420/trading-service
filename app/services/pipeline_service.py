@@ -296,16 +296,24 @@ class PipelineService:
                     active_bot_id = get_active_bot_id()
                     
                     from app.utils.text_utils import parse_json_response
-                    result = await run_agent(
-                        agent_name=AGENT_NAME,
-                        ticker="WATCHLIST",
-                        cycle_id=cycle_id,
-                        bot_id=active_bot_id,
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        enable_tools=False, # DISABLED tools so it strictly outputs JSON!
-                        harness_provider=kwargs.get("harness_provider", "local"),
-                    )
+                    # Wrap gatekeeper in a timeout to prevent indefinite hangs
+                    try:
+                        result = await asyncio.wait_for(
+                            run_agent(
+                                agent_name=AGENT_NAME,
+                                ticker="WATCHLIST",
+                                cycle_id=cycle_id,
+                                bot_id=active_bot_id,
+                                system_prompt=system_prompt,
+                                user_prompt=user_prompt,
+                                enable_tools=False, # DISABLED tools so it strictly outputs JSON!
+                                harness_provider=kwargs.get("harness_provider", "local"),
+                            ),
+                            timeout=120.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error("[PipelineService] Gatekeeper LLM call timed out after 120s — falling back to top scorers")
+                        result = {"response": "{}"}
                     
                     final_text = result.get("response", "{}")
                     logger.info("[PipelineService] Raw gatekeeper response: %s", final_text)
@@ -316,6 +324,14 @@ class PipelineService:
                         
                     selected = parsed.get("selected_tickers", [])
                     rationale = parsed.get("rationale", "")
+                    
+                    # Validate: drop any tickers not in the known pool
+                    if selected and all_pool:
+                        valid_selected = [t for t in selected if t in all_pool]
+                        invalid = set(selected) - set(valid_selected)
+                        if invalid:
+                            logger.warning("[PipelineService] Gatekeeper hallucinated tickers (dropped): %s", invalid)
+                        selected = valid_selected
                     
                     if selected:
                         tickers = selected

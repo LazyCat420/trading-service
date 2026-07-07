@@ -268,31 +268,12 @@ async def run_v3_pipeline(
         )
         ja_out, qa_out = await asyncio.gather(ja_task, qa_task)
 
-        # Check JA abort
-        if ja_out in (PhaseOutcome.TIMED_OUT,):
-            logger.error("[V3] %s: junior_analyst TIMED OUT — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, ja_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason="junior_analyst timed out")
-        if breaker.should_abort("junior_analyst", ja_out):
-            logger.error("[V3] %s: Circuit breaker tripped on junior_analyst — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, ja_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason=breaker.get_abort_reason("junior_analyst"))
-        breaker.record_outcome("junior_analyst", ja_out)
-
-        # Check QA abort
-        if qa_out in (PhaseOutcome.TIMED_OUT,):
-            logger.error("[V3] %s: quant_analyst TIMED OUT — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, qa_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason="quant_analyst timed out")
-        if breaker.should_abort("quant_analyst", qa_out):
-            logger.error("[V3] %s: Circuit breaker tripped on quant_analyst — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, qa_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason=breaker.get_abort_reason("quant_analyst"))
-        breaker.record_outcome("quant_analyst", qa_out)
+        abort = _check_abort(desk, breaker, "junior_analyst", ja_out)
+        if abort:
+            return abort
+        abort = _check_abort(desk, breaker, "quant_analyst", qa_out)
+        if abort:
+            return abort
         
         # Write dummy fundamental report to keep pipeline satisfied
         desk.append_artifact("fundamental_report", {
@@ -316,77 +297,33 @@ async def run_v3_pipeline(
             f"🔍 {ticker}: Running fundamental-focused research (Discount/Fundamental Topology)",
             status="running",
         )
-        ja_out = await _run_agent_with_circuit_breaker(
-            desk=desk, agent_module=junior_analyst, phase_name="junior_analyst",
-            breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
-        )
-        if ja_out in (PhaseOutcome.TIMED_OUT,):
-            logger.error("[V3] %s: junior_analyst TIMED OUT — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, ja_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason="junior_analyst timed out")
-        if breaker.should_abort("junior_analyst", ja_out):
-            logger.error("[V3] %s: Circuit breaker tripped on junior_analyst — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, ja_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason=breaker.get_abort_reason("junior_analyst"))
-        breaker.record_outcome("junior_analyst", ja_out)
-        
-        fa_out = await _run_agent_with_circuit_breaker(
-            desk=desk, agent_module=fundamental_analyst, phase_name="fundamental_analyst",
-            breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
-        )
-        if fa_out in (PhaseOutcome.TIMED_OUT,):
-            logger.error("[V3] %s: fundamental_analyst TIMED OUT — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, fa_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason="fundamental_analyst timed out")
-        if breaker.should_abort("fundamental_analyst", fa_out):
-            logger.error("[V3] %s: Circuit breaker tripped on fundamental_analyst — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, fa_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason=breaker.get_abort_reason("fundamental_analyst"))
-        breaker.record_outcome("fundamental_analyst", fa_out)
-            
-        qa_out = await _run_agent_with_circuit_breaker(
-            desk=desk, agent_module=quant_analyst, phase_name="quant_analyst",
-            breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
-        )
-        if qa_out in (PhaseOutcome.TIMED_OUT,):
-            logger.error("[V3] %s: quant_analyst TIMED OUT — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, qa_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason="quant_analyst timed out")
-        if breaker.should_abort("quant_analyst", qa_out):
-            logger.error("[V3] %s: Circuit breaker tripped on quant_analyst — aborting pipeline", ticker)
-            desk.advance_phase(DeskPhase.ABORTED, qa_out)
-            save_desk(desk)
-            return _build_noop_result(desk, reason=breaker.get_abort_reason("quant_analyst"))
-        breaker.record_outcome("quant_analyst", qa_out)
-
-    else:
-        # CONTRADICTORY (Default): Sequential JA -> FA -> QA
-        research_agents = [
+        for phase_name, agent_module in [
             ("junior_analyst", junior_analyst),
             ("fundamental_analyst", fundamental_analyst),
             ("quant_analyst", quant_analyst),
-        ]
-        for phase_name, agent_module in research_agents:
+        ]:
             outcome = await _run_agent_with_circuit_breaker(
                 desk=desk, agent_module=agent_module, phase_name=phase_name,
                 breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
             )
-            if outcome in (PhaseOutcome.TIMED_OUT,):
-                logger.error("[V3] %s: %s TIMED OUT — aborting pipeline", ticker, phase_name)
-                desk.advance_phase(DeskPhase.ABORTED, outcome)
-                save_desk(desk)
-                return _build_noop_result(desk, reason=f"{phase_name} timed out")
-            if breaker.should_abort(phase_name, outcome):
-                logger.error("[V3] %s: Circuit breaker tripped on %s — aborting pipeline", ticker, phase_name)
-                desk.advance_phase(DeskPhase.ABORTED, outcome)
-                save_desk(desk)
-                return _build_noop_result(desk, reason=breaker.get_abort_reason(phase_name))
-            breaker.record_outcome(phase_name, outcome)
+            abort = _check_abort(desk, breaker, phase_name, outcome)
+            if abort:
+                return abort
+
+    else:
+        # CONTRADICTORY (Default): Sequential JA -> FA -> QA
+        for phase_name, agent_module in [
+            ("junior_analyst", junior_analyst),
+            ("fundamental_analyst", fundamental_analyst),
+            ("quant_analyst", quant_analyst),
+        ]:
+            outcome = await _run_agent_with_circuit_breaker(
+                desk=desk, agent_module=agent_module, phase_name=phase_name,
+                breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
+            )
+            abort = _check_abort(desk, breaker, phase_name, outcome)
+            if abort:
+                return abort
 
     # Advance phase: INIT → RESEARCH_DONE
     desk.advance_phase(DeskPhase.RESEARCH_DONE)
@@ -647,6 +584,35 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 # Helper functions
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+def _check_abort(
+    desk: SharedDesk,
+    breaker: CircuitBreaker,
+    phase_name: str,
+    outcome: PhaseOutcome,
+) -> dict[str, Any] | None:
+    """Check if a phase outcome should abort the pipeline.
+
+    Returns a noop result dict if aborting, or None if the pipeline should continue.
+    This deduplicates the 6-line abort-check pattern repeated across research topologies.
+    """
+    ticker = desk.ticker
+
+    if outcome in (PhaseOutcome.TIMED_OUT,):
+        logger.error("[V3] %s: %s TIMED OUT — aborting pipeline", ticker, phase_name)
+        desk.advance_phase(DeskPhase.ABORTED, outcome)
+        save_desk(desk)
+        return _build_noop_result(desk, reason=f"{phase_name} timed out")
+
+    if breaker.should_abort(phase_name, outcome):
+        logger.error("[V3] %s: Circuit breaker tripped on %s — aborting pipeline", ticker, phase_name)
+        desk.advance_phase(DeskPhase.ABORTED, outcome)
+        save_desk(desk)
+        return _build_noop_result(desk, reason=breaker.get_abort_reason(phase_name))
+
+    breaker.record_outcome(phase_name, outcome)
+    return None
 
 
 async def _run_agent_with_circuit_breaker(
