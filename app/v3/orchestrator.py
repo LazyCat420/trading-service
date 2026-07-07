@@ -128,6 +128,33 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: Memory retrieval failed (non-fatal): %s", ticker, e)
 
+    # Retrieve the previous cycle's SharedDesk ("Manila Envelope")
+    try:
+        from app.v3.desk_persistence import load_latest_desk_for_ticker
+        previous_desk = load_latest_desk_for_ticker(ticker)
+        if previous_desk:
+            # Enforce 7-day cutoff
+            dt_str = previous_desk.created_at
+            if dt_str.endswith("Z"):
+                dt_str = dt_str[:-1] + "+00:00"
+            try:
+                dt = datetime.fromisoformat(dt_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                days_old = (datetime.now(timezone.utc) - dt).days
+                if days_old <= 7:
+                    prev_context = previous_desk.get_compressed_context(include_debate=True)
+                    if prev_context and prev_context != "No artifacts on desk yet.":
+                        desk.cycle_metadata["previous_desk_context"] = prev_context
+                        logger.info(
+                            "[V3] %s: Injected previous SharedDesk context from %d days ago (%d chars)",
+                            ticker, days_old, len(prev_context)
+                        )
+            except ValueError:
+                pass
+    except Exception as e:
+        logger.warning("[V3] %s: Failed to load previous SharedDesk (non-fatal): %s", ticker, e)
+
     emit(
         "analyzing", f"v3_ctx_{ticker}",
         f"📋 {ticker}: SharedDesk created, cycle metadata & data report injected",

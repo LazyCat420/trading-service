@@ -129,6 +129,11 @@ async def run_v3_agent(
             if memory_context:
                 user_prompt += f"## Past Cycle Memory\n{memory_context}\n\n"
 
+            # Inject Previous Cycle's SharedDesk (Manila Envelope)
+            previous_desk_context = desk.cycle_metadata.get("previous_desk_context", "")
+            if previous_desk_context:
+                user_prompt += f"## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}\n\n"
+
         # Add Tool/Reasoning Instructions (STATIC)
         if tool_whitelist:
             user_prompt += (

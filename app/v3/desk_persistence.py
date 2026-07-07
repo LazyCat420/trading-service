@@ -168,3 +168,33 @@ def delete_desk(desk_id: str) -> bool:
     except Exception as e:
         logger.error("[DeskPersistence] Failed to delete desk %s: %s", desk_id, e)
         return False
+
+
+def load_latest_desk_for_ticker(ticker: str) -> SharedDesk | None:
+    """Load the most recent SharedDesk for a given ticker, regardless of cycle_id."""
+    _ensure_table()
+    from app.db.connection import get_db
+
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT desk_data FROM shared_desk WHERE ticker = %s ORDER BY created_at DESC LIMIT 1",
+                [ticker.upper()],
+            ).fetchone()
+
+        if not row:
+            return None
+
+        raw = row[0]
+        if isinstance(raw, str):
+            data = json.loads(raw)
+        else:
+            data = raw
+
+        return SharedDesk.from_dict(data)
+    except Exception as e:
+        logger.error(
+            "[DeskPersistence] Failed to load latest desk for ticker %s: %s",
+            ticker, e,
+        )
+        return None
