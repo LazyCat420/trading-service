@@ -27,7 +27,7 @@ EMBEDDING_DIM = 384
 MAX_EMBED_TOKENS = 2048  # embeddinggemma positional embedding limit
 DEFAULT_CHUNK_SIZE = 512  # tokens (~2048 chars)
 DEFAULT_CHUNK_OVERLAP = 51  # ~10% overlap
-CHARS_PER_TOKEN = 4  # rough approximation
+CHARS_PER_TOKEN = 3  # Conservative approximation to avoid 2049 token crash
 
 
 import threading
