@@ -6,6 +6,7 @@ from typing import Any
 
 from app.services.pipeline_state import PipelineStateDB
 from app.v3.orchestrator import run_v3_pipeline
+from app.telemetry import send_system_log
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,10 @@ class PipelineService:
                         }
                         logger.info(f"[{cycle_id}][discovery][{step}] {detail}")
                         PipelineStateDB.append_events(cycle_id, [event])
+                        try:
+                            send_system_log("AGENT", detail)
+                        except Exception as sys_log_err:
+                            logger.warning(f"[PipelineService] Failed to send system log: {sys_log_err}")
                         
                     async def run_scraper_bg():
                         try:
@@ -458,6 +463,11 @@ class PipelineService:
                 event.update(kwargs)
                 logger.info(f"[{cycle_id}][{phase}][{step}] {detail}")
                 PipelineStateDB.append_events(cycle_id, [event])
+                
+                try:
+                    send_system_log("AGENT", detail)
+                except Exception as sys_log_err:
+                    logger.warning(f"[PipelineService] Failed to send system log: {sys_log_err}")
                 
                 try:
                     # Sync backend in-memory progress and status to DB to prevent stuck state false-positives
