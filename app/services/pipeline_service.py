@@ -197,6 +197,38 @@ class PipelineService:
                                 "total_mentions": info["mentions"],
                             }
                         
+                        # Phase 4C: Institutional Discovery — tickers with hedge fund consensus
+                        try:
+                            from app.collectors.fund_scanner import get_top_conviction_tickers
+                            institutional_leads = get_top_conviction_tickers(min_funds=2, max_results=20)
+                            for lead in institutional_leads:
+                                tkr = lead["ticker"]
+                                if tkr in base_tickers:
+                                    continue  # already in watchlist
+                                if tkr not in source_tracker:
+                                    source_tracker[tkr] = {"sources": set(), "mentions": 0}
+                                source_tracker[tkr]["sources"].add("Institutional")
+                                source_tracker[tkr]["mentions"] += lead["fund_count"]
+                                # Also add to trending_discovered if not already there
+                                if tkr not in trending_discovered:
+                                    sc = len(source_tracker[tkr]["sources"])
+                                    src_label = f"Institutional ({lead['fund_count']} funds)"
+                                    if sc >= 2:
+                                        src_label = f"Trending {'+'.join(sorted(source_tracker[tkr]['sources']))} ({sc} sources)"
+                                    trending_discovered[tkr] = {
+                                        "label": src_label,
+                                        "source_count": sc,
+                                        "total_mentions": source_tracker[tkr]["mentions"],
+                                    }
+                            if institutional_leads:
+                                logger.info(
+                                    "[PipelineService] Institutional Discovery: %d conviction leads (top: %s)",
+                                    len(institutional_leads),
+                                    [l["ticker"] for l in institutional_leads[:5]],
+                                )
+                        except Exception as e:
+                            logger.warning("[PipelineService] Institutional discovery failed (non-fatal): %s", e)
+
                         all_pool = {t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers}
                         all_pool.update(trending_discovered)
                         
@@ -257,6 +289,16 @@ class PipelineService:
                         scored_results = []
                         # Build a lookup for source_count from active_ticker_dicts
                         source_count_map = {d["ticker"]: d.get("source_count", 0) for d in active_ticker_dicts}
+                        
+                        # Phase 4D: Pre-fetch institutional signals for scoring boost
+                        inst_signal_cache = {}
+                        try:
+                            from app.collectors.fund_scanner import get_institutional_signal
+                            for t, px, chg, rvol, sma, rsi, src, dsa in raw_results:
+                                inst_signal_cache[t] = get_institutional_signal(t)
+                        except Exception as e:
+                            logger.warning("[PipelineService] Institutional signal pre-fetch failed (non-fatal): %s", e)
+                        
                         # raw_results format: (t, px, chg, rvol, sma, rsi, src, dsa)
                         for t, px, chg, rvol, sma, rsi, src, dsa in raw_results:
                             score = rvol * 10.0
@@ -268,10 +310,23 @@ class PipelineService:
                             sc = source_count_map.get(t, 0)
                             if sc >= 2:
                                 score += (sc - 1) * 10.0  # +10 per additional source
+                            
+                            # Phase 4D: Institutional conviction boost
+                            inst = inst_signal_cache.get(t, {})
+                            inst_fund_count = inst.get("fund_count", 0)
+                            if inst_fund_count >= 3:
+                                score += 20.0  # Strong consensus
+                            elif inst_fund_count >= 2:
+                                score += 10.0  # Moderate consensus
+                            if inst.get("has_new_position"):
+                                score += 15.0  # Fresh institutional interest
+                            if inst.get("has_top_performer"):
+                                score += 10.0  # Top-performer conviction
                                 
                             scored_results.append({
                                 "ticker": t, "price": px, "chg": chg, "rvol": rvol, 
-                                "sma": sma, "rsi": rsi, "src": src, "dsa": dsa, "score": score
+                                "sma": sma, "rsi": rsi, "src": src, "dsa": dsa, "score": score,
+                                "inst_funds": inst_fund_count,
                             })
                             
                         # Sort by score descending and take top 20
@@ -291,17 +346,18 @@ class PipelineService:
                             """, [s['ticker'] for s in top_scorers]).fetchall()
                             past_results_map = {r[0]: {"action": r[1], "conf": r[2], "reason": r[3]} for r in past_results_rows}
                         
-                        # Rebuild markdown table for Gatekeeper
+                        # Rebuild markdown table for Gatekeeper (now includes Inst. Funds column)
                         md_lines = [
-                            "| Ticker | Score | Source | Days Since Analysis | Price | Change % | Rel Vol | SMA-20 | RSI | Past Verdict | Past Reason |",
-                            "|--------|-------|--------|---------------------|-------|----------|---------|--------|-----|--------------|-------------|"
+                            "| Ticker | Score | Source | Days Since Analysis | Price | Change % | Rel Vol | SMA-20 | RSI | Inst. Funds | Past Verdict | Past Reason |",
+                            "|--------|-------|--------|---------------------|-------|----------|---------|--------|-----|-------------|--------------|-------------|"
                         ]
                         for s in top_scorers:
                             sma_rel = ((s["price"] - s["sma"]) / s["sma"]) * 100 if s["sma"] > 0 else 0
                             past = past_results_map.get(s["ticker"])
                             past_verdict = f"{past['action']} ({past['conf']}%)" if past else "N/A"
                             past_reason = (past['reason'][:100] + "...").replace('|', '') if past and past.get('reason') else "N/A"
-                            md_lines.append(f"| {s['ticker']} | {s['score']:.1f} | {s['src']} | {s['dsa']} | ${s['price']:.2f} | {s['chg']:+.2f}% | {s['rvol']:.2f}x | {sma_rel:+.2f}% | {s['rsi']:.1f} | {past_verdict} | {past_reason} |")
+                            inst_str = f"{s.get('inst_funds', 0)}" if s.get('inst_funds', 0) > 0 else "-"
+                            md_lines.append(f"| {s['ticker']} | {s['score']:.1f} | {s['src']} | {s['dsa']} | ${s['price']:.2f} | {s['chg']:+.2f}% | {s['rvol']:.2f}x | {sma_rel:+.2f}% | {s['rsi']:.1f} | {inst_str} | {past_verdict} | {past_reason} |")
                             
                         snapshot_table = "\n".join(md_lines)
                         # -----------------------

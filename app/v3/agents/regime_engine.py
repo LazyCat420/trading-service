@@ -11,6 +11,7 @@ AGENT_NAME = "v3_regime_engine"
 TOOL_WHITELIST = [
     "get_market_data",
     "get_technical_indicators",
+    "get_institutional_holdings",
     "get_finnhub_news",
     "search_web",
 ]
@@ -35,6 +36,7 @@ investment persona will make the final trading decisions.
 - **Bond Yields**: Is the 10-Year Treasury rising (tightening) or falling (easing)?
 - **US Dollar (DXY)**: Strengthening or weakening?
 - **Top News Headlines**: Any macro shocks? Fed decisions? Geopolitical events?
+- **Institutional Flow**: Use `get_institutional_holdings` on SPY/QQQ — are top hedge funds net accumulating or reducing? This signals whether smart money is risk-on or risk-off.
 
 ## REGIME DEFINITIONS
 1. **HIGH_VOLATILITY**: Fear/panic mode. VIX > 25, indices falling, flight to safety.

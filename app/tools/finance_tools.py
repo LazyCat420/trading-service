@@ -185,3 +185,76 @@ async def get_technical_indicators(ticker: str) -> str:
 
     signals = get_signals(ticker)
     return signals if signals else "No technical signals available."
+
+
+@registry.register(
+    name="get_institutional_holdings",
+    description="Get institutional hedge fund ownership data for a stock. Shows which top hedge funds hold it, position sizes, new positions, quarterly momentum, and whether top-performing funds are invested.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {
+                "type": "string",
+                "description": "The stock ticker symbol (e.g., AAPL)",
+            }
+        },
+        "required": ["ticker"],
+    },
+    tier=0,
+    source="sec_13f",
+    input_model=TickerInput,
+)
+async def get_institutional_holdings(ticker: str) -> str:
+    """Query SEC 13F institutional holdings data for a ticker.
+
+    Returns a markdown summary of which top hedge funds hold this stock,
+    how their positions have changed, and whether top-performing funds
+    have conviction in it.
+    """
+    from app.collectors.fund_scanner import get_institutional_signal, get_fund_momentum
+
+    signal = get_institutional_signal(ticker)
+    momentum = get_fund_momentum(ticker)
+
+    if signal["fund_count"] == 0:
+        return f"No tracked institutional hedge fund holds {ticker} in their latest 13F filing."
+
+    lines = [f"## Institutional Holdings: {ticker}"]
+    lines.append(f"**{signal['fund_count']} tracked hedge fund(s)** hold this stock.")
+    lines.append(
+        f"Total institutional value: ${signal['total_institutional_value']:,.0f}"
+    )
+
+    if signal["has_top_performer"]:
+        lines.append(
+            f"⭐ **Top-performing fund(s):** {', '.join(signal['top_performer_names'])}"
+        )
+
+    lines.append(f"Institutional momentum: **{signal['momentum']}**")
+
+    if signal["has_new_position"]:
+        lines.append("🆕 At least one fund opened a **new position** this quarter.")
+
+    # Top holders table
+    if signal["holders"]:
+        lines.append("\n| Fund | Shares | Value | New? | Chg% |")
+        lines.append("|------|--------|-------|------|------|")
+        for h in signal["holders"][:7]:
+            val_fmt = f"${h['value_usd']:,.0f}" if h["value_usd"] else "$0"
+            new_flag = "🆕" if h["is_new"] else ""
+            chg = f"{h['pct_change']:+.1f}%" if h["pct_change"] else "N/A"
+            lines.append(
+                f"| {h['fund']} | {h['shares']:,} | {val_fmt} | {new_flag} | {chg} |"
+            )
+
+    # Quarterly momentum
+    if momentum["direction"] != "NO_HISTORY":
+        lines.append(f"\n**Quarterly Momentum ({momentum['latest_quarter']} vs {momentum['previous_quarter']}):** {momentum['direction']}")
+        if momentum["new_buyers"]:
+            lines.append(f"  New buyers: {', '.join(momentum['new_buyers'][:5])}")
+        if momentum["exiters"]:
+            lines.append(f"  Exited: {', '.join(momentum['exiters'][:5])}")
+        if momentum["net_share_change"]:
+            lines.append(f"  Net share change: {momentum['net_share_change']:+,}")
+
+    return "\n".join(lines)

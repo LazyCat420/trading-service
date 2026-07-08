@@ -15,6 +15,7 @@ TOOL_WHITELIST = [
     "search_web",
     "scrape_url",
     "get_market_data",
+    "get_institutional_holdings",
     "search_internal_database",
     "post_finding",
     "whiteboard_write",
@@ -39,7 +40,8 @@ senior analysts.
 ## WHAT TO INVESTIGATE
 - Recent news headlines (last 7 days) — any earnings, lawsuits, product launches?
 - Market data snapshot — current price, volume, recent trend direction
-- Any insider or institutional activity signals
+- Institutional ownership — use `get_institutional_holdings` to check which top hedge funds hold this ticker, whether positions are increasing or decreasing, and if any top-performing funds have conviction
+- Any insider activity signals
 - Social sentiment if available
 
 ## DEPTH-FIRST LEAD TRACING

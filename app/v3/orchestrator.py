@@ -823,6 +823,22 @@ def _build_v1_compatible_result(
         entry.get("token_usage", 0) for entry in desk.agent_telemetry
     )
 
+    # Institutional conviction data (non-fatal — gracefully degrade)
+    institutional_conviction = {}
+    try:
+        from app.collectors.fund_scanner import get_institutional_signal
+        inst = get_institutional_signal(desk.ticker)
+        institutional_conviction = {
+            "fund_count": inst["fund_count"],
+            "total_value": inst["total_institutional_value"],
+            "has_top_performer": inst["has_top_performer"],
+            "top_performer_names": inst["top_performer_names"],
+            "momentum": inst["momentum"],
+            "has_new_position": inst["has_new_position"],
+        }
+    except Exception:
+        pass
+
     return {
         "ticker": desk.ticker,
         "action": action,
@@ -843,6 +859,7 @@ def _build_v1_compatible_result(
             "rationale": rationale,
         },
         "d_result": _extract_debate_result(desk),
+        "institutional_conviction": institutional_conviction,
         "human_review": False,
         "agent_tokens": total_tokens,
         "rlm_tokens": 0,

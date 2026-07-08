@@ -24,9 +24,11 @@ from app.db.connection import get_db
 # SEC EDGAR requires a User-Agent header identifying you
 set_identity("TradingBot analysis@example.com")
 
-# Top 20 hedge funds / institutional investors by AUM
+# Top hedge funds / institutional investors
 # CIK numbers verified from SEC EDGAR
-# List updated quarterly — ranked by assets under management
+# List updated quarterly — two tiers:
+#   1. Mega/Large by AUM (original 20)
+#   2. Top performers by 3-year annualized return (HedgeFollow-style ranking)
 TRACKED_FUNDS = [
     # -- Mega Funds (>$100B AUM) --
     ("Berkshire Hathaway", "0001067983"),
@@ -51,6 +53,14 @@ TRACKED_FUNDS = [
     ("Greenlight Capital", "0001079114"),
     ("Third Point", "0001040273"),
     ("Coatue Management", "0001535392"),
+    # -- Top Performers (High 3yr Returns) --
+    # Added to capture performance-ranked conviction signals
+    ("TCI Fund Management", "0001647251"),
+    ("Lone Pine Capital", "0001061165"),
+    ("Whale Rock Capital", "0001598336"),
+    ("Maverick Capital", "0001010621"),
+    ("Light Street Capital", "0001697575"),
+    ("Altimeter Capital", "0001737926"),
 ]
 
 # Per-fund timeout for edgartools (seconds)

@@ -126,6 +126,37 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
                 ["Channel", "Title", "Published", "Summary"]
             )
 
+        # Institutional fund holdings (DB-only, no API call)
+        institutional_md = "No institutional fund holdings data available."
+        try:
+            from app.collectors.fund_scanner import get_institutional_signal, get_fund_momentum
+            inst_signal = get_institutional_signal(ticker)
+            if inst_signal["fund_count"] > 0:
+                inst_lines = []
+                inst_lines.append(f"**{inst_signal['fund_count']}** tracked hedge fund(s) hold this stock.")
+                inst_lines.append(f"Total institutional value: ${inst_signal['total_institutional_value']:,.0f}")
+                inst_lines.append(f"Momentum: **{inst_signal['momentum']}**")
+                if inst_signal["has_top_performer"]:
+                    inst_lines.append(f"⭐ Top-performing fund(s): {', '.join(inst_signal['top_performer_names'])}")
+                if inst_signal["has_new_position"]:
+                    inst_lines.append("🆕 New position opened this quarter by at least one fund.")
+                # Top 5 holders
+                for h in inst_signal["holders"][:5]:
+                    val_fmt = f"${h['value_usd']:,.0f}" if h['value_usd'] else '$0'
+                    new_flag = ' 🆕' if h['is_new'] else ''
+                    inst_lines.append(f"  - {h['fund']}: {h['shares']:,} shares ({val_fmt}){new_flag}")
+                # Quarterly momentum
+                momentum = get_fund_momentum(ticker)
+                if momentum["direction"] != "NO_HISTORY":
+                    inst_lines.append(f"Q/Q trend: {momentum['direction']} ({momentum['latest_quarter']} vs {momentum['previous_quarter']})")
+                    if momentum["new_buyers"]:
+                        inst_lines.append(f"  New buyers: {', '.join(momentum['new_buyers'][:3])}")
+                    if momentum["exiters"]:
+                        inst_lines.append(f"  Exited: {', '.join(momentum['exiters'][:3])}")
+                institutional_md = "\n".join(inst_lines)
+        except Exception as e:
+            logger.warning("[V3] %s: Failed to build institutional section (non-fatal): %s", ticker, e)
+
     # 4. Construct Final Document — with size cap to prevent context overflow
     #
     # Priority order (highest to lowest): market data > technicals > news > reddit > youtube
@@ -149,8 +180,9 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
     )
 
     social_sections = [
-        (f"## 4. Reddit Social Sentiment\n{reddit_md}\n\n", "Reddit"),
-        (f"## 5. YouTube Mentions & Transcripts\n{youtube_md}\n", "YouTube"),
+        (f"## 4. Institutional Fund Holdings\n{institutional_md}\n\n", "Institutional"),
+        (f"## 5. Reddit Social Sentiment\n{reddit_md}\n\n", "Reddit"),
+        (f"## 6. YouTube Mentions & Transcripts\n{youtube_md}\n", "YouTube"),
     ]
 
     report = header + core_sections

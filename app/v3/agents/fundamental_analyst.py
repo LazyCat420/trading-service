@@ -15,6 +15,7 @@ ARTIFACT_TYPE = "fundamental_report"
 TOOL_WHITELIST = [
     "get_market_data",
     "get_finnhub_news",
+    "get_institutional_holdings",
     "search_web",
     "scrape_url",
 ]

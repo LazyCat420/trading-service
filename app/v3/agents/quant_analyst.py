@@ -14,6 +14,7 @@ AGENT_NAME = "v3_quant_analyst"
 TOOL_WHITELIST = [
     "get_market_data",
     "get_technical_indicators",
+    "get_institutional_holdings",
     "get_polygon_price_history",
     "get_options_flow",
     "query_technical_indicator",

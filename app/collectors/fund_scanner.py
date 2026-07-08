@@ -394,3 +394,263 @@ def generate_report(watchlist_tickers: list[str] | None = None) -> str:
 
     lines.append(f"\n{'=' * 70}")
     return "\n".join(lines)
+
+
+# ── Top Performer Fund Tiers ──
+# Funds known for exceptional 3-year annualized returns.
+# Used to weight conviction signals: a position held by a top performer
+# is more meaningful than one held only by a mega-AUM indexer.
+TOP_PERFORMER_CIKS = {
+    "0001037389",  # Renaissance Technologies
+    "0001535392",  # Coatue Management
+    "0001536411",  # Druckenmiller (Duquesne)
+    "0001167483",  # Tiger Global Management
+    "0001603466",  # Point72 Asset Management
+    "0001103804",  # Viking Global Investors
+    "0001061768",  # Baupost Group
+    "0001040273",  # Third Point
+    "0001079114",  # Greenlight Capital
+    "0001336528",  # Pershing Square Capital
+}
+
+
+def get_institutional_signal(ticker: str) -> dict:
+    """Get institutional positioning signal for a single ticker.
+
+    Returns a dict with:
+      - fund_count: how many tracked funds hold this ticker
+      - holders: list of {fund, shares, value_usd, is_new, pct_of_portfolio}
+      - total_institutional_value: aggregate value across all holders
+      - has_new_position: True if any fund opened a new position this quarter
+      - has_top_performer: True if any top-performing fund holds it
+      - top_performer_names: list of top-performer fund names holding it
+      - momentum: "INCREASING" | "DECREASING" | "FLAT" | "UNKNOWN"
+    """
+    ticker = ticker.upper().strip()
+    with get_db() as db:
+        rows = db.execute(
+            """
+            WITH latest_quarters AS (
+                SELECT cik, MAX(filing_quarter) as q
+                FROM sec_13f_holdings GROUP BY cik
+            )
+            SELECT f.filer_name, h.cik, h.shares, h.value_usd,
+                   h.is_new_position, h.pct_change
+            FROM sec_13f_holdings h
+            JOIN latest_quarters lq ON h.cik = lq.cik AND h.filing_quarter = lq.q
+            JOIN sec_13f_filers f ON h.cik = f.cik
+            WHERE h.ticker = %s
+            ORDER BY h.value_usd DESC
+            """,
+            [ticker],
+        ).fetchall()
+
+        if not rows:
+            return {
+                "fund_count": 0,
+                "holders": [],
+                "total_institutional_value": 0,
+                "has_new_position": False,
+                "has_top_performer": False,
+                "top_performer_names": [],
+                "momentum": "UNKNOWN",
+            }
+
+        holders = []
+        total_value = 0
+        has_new = False
+        top_perf_names = []
+
+        for r in rows:
+            fund_name, cik, shares, value, is_new, pct_change = r
+            value = value or 0
+            total_value += value
+            if is_new:
+                has_new = True
+            if cik in TOP_PERFORMER_CIKS:
+                top_perf_names.append(fund_name)
+            holders.append({
+                "fund": fund_name,
+                "shares": shares or 0,
+                "value_usd": value,
+                "is_new": bool(is_new),
+                "pct_change": float(pct_change) if pct_change else 0.0,
+            })
+
+        # Determine aggregate momentum from pct_change values
+        changes = [h["pct_change"] for h in holders if h["pct_change"] != 0.0]
+        if not changes:
+            momentum = "FLAT"
+        else:
+            avg_change = sum(changes) / len(changes)
+            if avg_change > 5.0:
+                momentum = "INCREASING"
+            elif avg_change < -5.0:
+                momentum = "DECREASING"
+            else:
+                momentum = "FLAT"
+
+        return {
+            "fund_count": len(holders),
+            "holders": holders[:10],  # cap at top 10 by value
+            "total_institutional_value": total_value,
+            "has_new_position": has_new,
+            "has_top_performer": len(top_perf_names) > 0,
+            "top_performer_names": top_perf_names,
+            "momentum": momentum,
+        }
+
+
+def get_top_conviction_tickers(min_funds: int = 2, max_results: int = 30) -> list[dict]:
+    """Return tickers ranked by institutional conviction score.
+
+    Conviction score = fund_count * 10 + top_performer_count * 15 + new_position_bonus.
+    This feeds the Discovery Engine as an additional lead source alongside
+    news/Reddit/YouTube trending.
+    """
+    with get_db() as db:
+        rows = db.execute(
+            """
+            WITH latest_quarters AS (
+                SELECT cik, MAX(filing_quarter) as q
+                FROM sec_13f_holdings GROUP BY cik
+            )
+            SELECT h.ticker,
+                   COUNT(DISTINCT h.cik) as fund_count,
+                   STRING_AGG(DISTINCT f.filer_name, ', ') as fund_names,
+                   SUM(h.value_usd) as total_value,
+                   BOOL_OR(COALESCE(h.is_new_position, FALSE)) as any_new,
+                   STRING_AGG(DISTINCT h.cik, ',') as cik_list
+            FROM sec_13f_holdings h
+            JOIN latest_quarters lq ON h.cik = lq.cik AND h.filing_quarter = lq.q
+            JOIN sec_13f_filers f ON h.cik = f.cik
+            WHERE h.ticker != 'nan' AND h.ticker != '' AND LENGTH(h.ticker) <= 5
+            GROUP BY h.ticker
+            HAVING COUNT(DISTINCT h.cik) >= %s
+            ORDER BY COUNT(DISTINCT h.cik) DESC, SUM(h.value_usd) DESC
+            """,
+            [min_funds],
+        ).fetchall()
+
+        results = []
+        for r in rows:
+            ticker, fund_count, fund_names, total_value, any_new, cik_list = r
+            # Count how many top-performer funds hold this ticker
+            ciks = set((cik_list or "").split(","))
+            top_perf_count = len(ciks & TOP_PERFORMER_CIKS)
+
+            # Conviction score
+            score = (fund_count * 10) + (top_perf_count * 15)
+            if any_new:
+                score += 10  # new position bonus
+
+            results.append({
+                "ticker": ticker,
+                "fund_count": fund_count,
+                "fund_names": (fund_names or "").split(", ")[:5],
+                "total_value": total_value or 0,
+                "has_new_position": bool(any_new),
+                "top_performer_count": top_perf_count,
+                "conviction_score": score,
+            })
+
+        # Sort by conviction score descending
+        results.sort(key=lambda x: x["conviction_score"], reverse=True)
+        return results[:max_results]
+
+
+def get_fund_momentum(ticker: str) -> dict:
+    """Compare latest vs previous quarter holdings for a ticker.
+
+    Returns:
+      - direction: "INCREASING" | "DECREASING" | "FLAT" | "NO_HISTORY"
+      - new_buyers: funds that opened a new position this quarter
+      - exiters: funds that exited this quarter
+      - net_share_change: total share count change across all holders
+      - net_value_change: total value change across all holders
+      - latest_quarter: the quarter being compared
+      - previous_quarter: the baseline quarter
+    """
+    ticker = ticker.upper().strip()
+    with get_db() as db:
+        # Get two most recent quarters that have data for this ticker
+        quarters = db.execute(
+            """
+            SELECT DISTINCT filing_quarter FROM sec_13f_holdings
+            WHERE ticker = %s
+            ORDER BY filing_quarter DESC LIMIT 2
+            """,
+            [ticker],
+        ).fetchall()
+
+        if len(quarters) < 2:
+            return {
+                "direction": "NO_HISTORY",
+                "new_buyers": [],
+                "exiters": [],
+                "net_share_change": 0,
+                "net_value_change": 0,
+                "latest_quarter": quarters[0][0] if quarters else None,
+                "previous_quarter": None,
+            }
+
+        latest_q = quarters[0][0]
+        prev_q = quarters[1][0]
+
+        # Latest quarter holdings
+        latest = db.execute(
+            """
+            SELECT f.filer_name, h.shares, h.value_usd
+            FROM sec_13f_holdings h
+            JOIN sec_13f_filers f ON h.cik = f.cik
+            WHERE h.ticker = %s AND h.filing_quarter = %s
+            """,
+            [ticker, latest_q],
+        ).fetchall()
+
+        # Previous quarter holdings
+        prev = db.execute(
+            """
+            SELECT f.filer_name, h.shares, h.value_usd
+            FROM sec_13f_holdings h
+            JOIN sec_13f_filers f ON h.cik = f.cik
+            WHERE h.ticker = %s AND h.filing_quarter = %s
+            """,
+            [ticker, prev_q],
+        ).fetchall()
+
+        latest_map = {r[0]: {"shares": r[1] or 0, "value": r[2] or 0} for r in latest}
+        prev_map = {r[0]: {"shares": r[1] or 0, "value": r[2] or 0} for r in prev}
+
+        new_buyers = [f for f in latest_map if f not in prev_map]
+        exiters = [f for f in prev_map if f not in latest_map]
+
+        # Net changes for funds present in both quarters
+        net_shares = 0
+        net_value = 0
+        for fund in latest_map:
+            lat = latest_map[fund]
+            prv = prev_map.get(fund, {"shares": 0, "value": 0})
+            net_shares += lat["shares"] - prv["shares"]
+            net_value += lat["value"] - prv["value"]
+        # Subtract exited positions
+        for fund in exiters:
+            net_shares -= prev_map[fund]["shares"]
+            net_value -= prev_map[fund]["value"]
+
+        if net_shares > 0 or len(new_buyers) > len(exiters):
+            direction = "INCREASING"
+        elif net_shares < 0 or len(exiters) > len(new_buyers):
+            direction = "DECREASING"
+        else:
+            direction = "FLAT"
+
+        return {
+            "direction": direction,
+            "new_buyers": new_buyers,
+            "exiters": exiters,
+            "net_share_change": net_shares,
+            "net_value_change": net_value,
+            "latest_quarter": latest_q,
+            "previous_quarter": prev_q,
+        }
