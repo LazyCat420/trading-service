@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # Model config
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIM = 384
+MAX_EMBED_TOKENS = 2048  # embeddinggemma positional embedding limit
 DEFAULT_CHUNK_SIZE = 512  # tokens (~2048 chars)
 DEFAULT_CHUNK_OVERLAP = 51  # ~10% overlap
 CHARS_PER_TOKEN = 4  # rough approximation
@@ -83,6 +84,21 @@ class EmbeddingService:
             
         if prefix:
             texts = [prefix + t for t in texts]
+
+        # Truncate texts that exceed the embedding model's token limit
+        # embeddinggemma has a 2048-token positional embedding table;
+        # inputs beyond that cause a fatal GPU index-out-of-bounds crash.
+        max_chars = MAX_EMBED_TOKENS * CHARS_PER_TOKEN
+        truncated_texts = []
+        for t in texts:
+            if len(t) > max_chars:
+                logger.warning(
+                    "[EmbeddingService] Truncating text from %d to %d chars (~%d tokens) to fit embedding model limit",
+                    len(t), max_chars, MAX_EMBED_TOKENS,
+                )
+                t = t[:max_chars]
+            truncated_texts.append(t)
+        texts = truncated_texts
 
         if show_progress and len(texts) > batch_size:
             logger.info(f"Embedding {len(texts)} texts via API at {self.api_url}")
