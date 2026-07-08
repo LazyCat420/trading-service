@@ -24,22 +24,26 @@ def get_latest_verdicts(limit: int = 100) -> list[dict]:
     with get_db() as db:
         rows = db.execute(
             """
-            SELECT DISTINCT ON (ar.ticker)
-                ar.ticker,
-                ar.result_json,
-                ar.confidence,
-                ar.created_at,
-                ar.cycle_id,
-                ar.triage_tier,
-                ar.price_at_analysis,
-                ar.thesis_verdict,
-                ar.thesis_confidence,
-                ar.thesis_summary,
-                tun.note,
-                tun.updated_at AS note_updated_at
-            FROM analysis_results ar
-            LEFT JOIN ticker_user_notes tun ON ar.ticker = tun.ticker
-            ORDER BY ar.ticker, ar.created_at DESC
+            WITH LatestVerdicts AS (
+                SELECT DISTINCT ON (ar.ticker)
+                    ar.ticker,
+                    ar.result_json,
+                    ar.confidence,
+                    ar.created_at,
+                    ar.cycle_id,
+                    ar.triage_tier,
+                    ar.price_at_analysis,
+                    ar.thesis_verdict,
+                    ar.thesis_confidence,
+                    ar.thesis_summary,
+                    tun.note,
+                    tun.updated_at AS note_updated_at
+                FROM analysis_results ar
+                LEFT JOIN ticker_user_notes tun ON ar.ticker = tun.ticker
+                ORDER BY ar.ticker, ar.created_at DESC
+            )
+            SELECT * FROM LatestVerdicts
+            ORDER BY created_at DESC
             LIMIT %s
             """,
             [limit],

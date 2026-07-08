@@ -15,15 +15,19 @@ def get_latest_debates(limit: int = 100) -> list[dict]:
     with get_db() as db:
         rows = db.execute(
             """
-            SELECT DISTINCT ON (ar.ticker)
-                ar.ticker,
-                ar.result_json,
-                ar.created_at,
-                ar.cycle_id,
-                tun.note
-            FROM analysis_results ar
-            LEFT JOIN ticker_user_notes tun ON ar.ticker = tun.ticker
-            ORDER BY ar.ticker, ar.created_at DESC
+            WITH LatestDebates AS (
+                SELECT DISTINCT ON (ar.ticker)
+                    ar.ticker,
+                    ar.result_json,
+                    ar.created_at,
+                    ar.cycle_id,
+                    tun.note
+                FROM analysis_results ar
+                LEFT JOIN ticker_user_notes tun ON ar.ticker = tun.ticker
+                ORDER BY ar.ticker, ar.created_at DESC
+            )
+            SELECT * FROM LatestDebates
+            ORDER BY created_at DESC
             LIMIT %s
             """,
             [limit],
