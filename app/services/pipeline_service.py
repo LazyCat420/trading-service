@@ -389,11 +389,13 @@ class PipelineService:
                                 enable_tools=False, # DISABLED tools so it strictly outputs JSON!
                                 harness_provider=kwargs.get("harness_provider", "local"),
                             ),
-                            timeout=120.0,
+                            timeout=180.0,
                         )
                     except asyncio.TimeoutError:
-                        logger.error("[PipelineService] Gatekeeper LLM call timed out after 120s — falling back to top scorers")
-                        result = {"response": "{}"}
+                        logger.error("[PipelineService] Gatekeeper LLM call timed out after 180s — falling back to top scorers")
+                        fallback_tickers = [s["ticker"] for s in top_scorers[:max_tickers]]
+                        logger.warning("[PipelineService] Timeout fallback: using top %d scorers: %s", len(fallback_tickers), fallback_tickers)
+                        result = {"response": json.dumps({"selected_tickers": fallback_tickers, "rationale": "Gatekeeper timed out — auto-selected by scoring engine"})}
                     
                     final_text = result.get("response", "{}")
                     logger.info("[PipelineService] Raw gatekeeper response: %s", final_text)
