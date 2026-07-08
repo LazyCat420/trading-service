@@ -157,11 +157,11 @@ async def run_agent(
             ctx_budget.data_context_chars,
         )
 
-    # Inject pre-computed data before the analysis request
-    if data_context:
-        full_prompt = f"{outcome_ctx}{data_context}\n\n{user_prompt}"
-    else:
-        full_prompt = f"{outcome_ctx}{user_prompt}" if outcome_ctx else user_prompt
+    # Inject pre-computed data into the SYSTEM prompt to prevent Prism from embedding it.
+    # Prism's workflow-query embeds user messages; if data_context > 2048 tokens, the embedding model crashes.
+    if data_context or outcome_ctx:
+        system_prompt = f"{system_prompt}\n\n[PRE-COLLECTED DATA CONTEXT]\n{outcome_ctx}{data_context}"
+    full_prompt = user_prompt
         
 
 
