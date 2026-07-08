@@ -149,7 +149,7 @@ class EmbeddingService:
                         # Call Prism's /embed endpoint
                         url = f"{settings.PRISM_URL}/embed"
                         payload = {
-                            "provider": "vllm",
+                            "provider": "vllm-3",
                             "text": text
                         }
                         headers = {
