@@ -114,7 +114,7 @@ async def run_v3_agent(
         if desk.cycle_metadata:
             portfolio_ctx = desk.cycle_metadata.get("portfolio_context", "")
             if portfolio_ctx:
-                user_prompt += f"## Portfolio Context\n{portfolio_ctx}\n\n"
+                system_prompt += f"\n\n## Portfolio Context\n{portfolio_ctx}"
                 
             # Use compressed data_report (summary only) if possible
             data_report = desk.cycle_metadata.get("data_report", "")
@@ -122,17 +122,17 @@ async def run_v3_agent(
                 # Keep it concise to prevent prompt blowup
                 if len(data_report) > 5000:
                     data_report = data_report[:5000] + "\n...[TRUNCATED FOR LENGTH]..."
-                user_prompt += f"## Pre-Collected Data Report (Summary)\n{data_report}\n\n"
+                system_prompt += f"\n\n## Pre-Collected Data Report (Summary)\n{data_report}"
 
             # Inject Past Cycle Memory if available (STATIC)
             memory_context = desk.cycle_metadata.get("memory_context", "")
             if memory_context:
-                user_prompt += f"## Past Cycle Memory\n{memory_context}\n\n"
+                system_prompt += f"\n\n## Past Cycle Memory\n{memory_context}"
 
             # Inject Previous Cycle's SharedDesk (Manila Envelope)
             previous_desk_context = desk.cycle_metadata.get("previous_desk_context", "")
             if previous_desk_context:
-                user_prompt += f"## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}\n\n"
+                system_prompt += f"\n\n## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}"
 
         # Add Tool/Reasoning Instructions (STATIC)
         if tool_whitelist:
@@ -158,9 +158,9 @@ async def run_v3_agent(
 
         # Append concise SharedDesk Context summary
         if desk_context and desk_context != "No artifacts on desk yet.":
-            user_prompt += (
-                f"## SharedDesk Context Summary\n"
-                f"{desk_context}\n\n"
+            system_prompt += (
+                f"\n\n## SharedDesk Context Summary\n"
+                f"{desk_context}"
             )
 
         user_prompt += "Begin your analysis now.\n"
