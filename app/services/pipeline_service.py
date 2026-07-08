@@ -38,12 +38,19 @@ class PipelineService:
             # or when an exception kills the task without cleaning up state.
             if cls._cycle_task is None or cls._cycle_task.done():
                 logger.warning(
-                    "[PipelineService] Detected orphaned '%s' state — resetting to idle",
+                    "[PipelineService] ORPHANED STATE DETECTED: DB says '%s' but "
+                    "no in-memory task exists. Use Force Reset to clear.",
                     db_status,
                 )
-                cls._state = PipelineStateDB.default_state()
-                cls.save_state()
-                # Fall through to start a new cycle
+                return {
+                    "status": "error",
+                    "message": (
+                        f"Pipeline state is stuck at '{db_status}' from a previous "
+                        f"crashed cycle (cycle_id={db_state.get('cycle_id', '?')}). "
+                        f"Error: {db_state.get('error', 'unknown')}. "
+                        f"Use Force Reset to clear the stuck state before starting a new cycle."
+                    ),
+                }
             else:
                 return {"status": "deduplicated", "message": f"Cycle already {db_status}"}
         # Also check in-memory task to catch race where DB was reset but task is still running
