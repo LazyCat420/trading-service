@@ -615,8 +615,10 @@ class PipelineService:
         
         # Arm kill switch to instantly abort any running HTTP streams
         try:
-            from app.services.prism_agent_caller import prism_client
+            import asyncio
+            from app.services.prism_agent_caller import prism_client, llm
             prism_client.arm_kill_switch()
+            asyncio.create_task(llm.abort_active_requests())
         except Exception as e:
             logger.error("[PipelineService] Failed to arm kill switch: %s", e)
             

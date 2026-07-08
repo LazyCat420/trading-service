@@ -187,6 +187,14 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
 
     await shutdown.wait()
     
+    from app.services.pipeline_service import PipelineService
+    if PipelineService._cycle_task and not PipelineService._cycle_task.done():
+        logger.info("[cycle_backend] Shutting down: stopping active cycle...")
+        try:
+            await asyncio.wait_for(PipelineService.stop_cycle(), timeout=5.0)
+        except Exception as e:
+            logger.error("[cycle_backend] Error stopping cycle on shutdown: %s", e)
+
     poller_task.cancel()
     if autoresearch_task:
         autoresearch_task.cancel()
