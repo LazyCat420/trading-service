@@ -656,6 +656,11 @@ class PipelineService:
             except (Exception, asyncio.CancelledError):
                 pass
         # Nuclear kill: force-close all TCP connections to VLLM endpoints
+        try:
+            from app.services.prism_agent_caller import prism_client
+            prism_client.arm_kill_switch()
+        except Exception as e:
+            logger.error("[PipelineService] Failed to arm kill switch during force_reset: %s", e)
 
         # Reset all in-memory state
         cls._cycle_task = None
