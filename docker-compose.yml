@@ -16,12 +16,14 @@ services:
       - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:7778
       - PIPELINE_VERSION=v3
       - PYTHONPATH=/app/lazycat-sdk
+      - CHART_OUTPUT_DIR=/app/data/charts
     volumes:
       - /usr/share/zoneinfo/America/Los_Angeles:/etc/localtime:ro
       - ./logs:/app/logs
       - ../lazycat-sdk:/app/lazycat-sdk:ro
       - ./.agents:/.agents
       - ../notes:/app/notes
+      - ./data/charts:/app/data/charts
     ports:
       - "3031:8080"
     logging:

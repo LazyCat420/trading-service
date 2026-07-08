@@ -56,5 +56,6 @@ ENABLED_TOOLS = [
     "read_team_findings",
     "request_investigation",
     "check_open_investigations",
+    "save_trading_chart",
 ]
 
