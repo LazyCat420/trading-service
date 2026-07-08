@@ -210,7 +210,11 @@ async def run_v3_pipeline(
                 "reasoning": f"Skipped by Triage Gate (Age: {int(hours_old)}h, News: {news_count}). No new catalysts.",
                 "persona_used": "Triage Gate"
             })
-            desk.advance_phase(DeskPhase.PM_DONE)
+            # NOTE: Do NOT advance phase here. The only valid transitions from
+            # INIT are RESEARCH_DONE and ABORTED. A glance-skipped ticker never
+            # ran research/debate/decision so advancing to PM_DONE is invalid.
+            # The desk stays at INIT which is correct for a skipped ticker.
+            save_desk(desk)
             elapsed_s = time.monotonic() - t_pipeline
             result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
             result["triage_tier"] = triage_tier

@@ -33,9 +33,21 @@ class PipelineService:
         db_state = PipelineStateDB.get_state(summary_only=True)
         db_status = db_state.get("status", "idle")
         if db_status in ("running", "starting", "stopping"):
-            return {"status": "deduplicated", "message": f"Cycle already {db_status}"}
+            # Orphan detection: DB says active but in-memory task is gone.
+            # This happens when the container restarts while a cycle is running,
+            # or when an exception kills the task without cleaning up state.
+            if cls._cycle_task is None or cls._cycle_task.done():
+                logger.warning(
+                    "[PipelineService] Detected orphaned '%s' state — resetting to idle",
+                    db_status,
+                )
+                cls._state = PipelineStateDB.default_state()
+                cls.save_state()
+                # Fall through to start a new cycle
+            else:
+                return {"status": "deduplicated", "message": f"Cycle already {db_status}"}
         # Also check in-memory task to catch race where DB was reset but task is still running
-        if cls._cycle_task and not cls._cycle_task.done():
+        elif cls._cycle_task and not cls._cycle_task.done():
             return {"status": "deduplicated", "message": "Cycle task still running"}
 
         # Reset the SDK kill switch so requests can flow on the new cycle
@@ -386,6 +398,12 @@ class PipelineService:
                 
                 try:
                     # Sync backend in-memory progress and status to DB to prevent stuck state false-positives
+                    # BUT: Do NOT overwrite terminal states (error/stopped/done/idle).
+                    # Ticker tasks may still be emitting events after the pipeline
+                    # manager has already caught an exception and set the error state.
+                    current_status = cls._state.get("status", "")
+                    if current_status in ("error", "stopped", "done", "idle"):
+                        return
                     cls._state.update({
                         "status": "running",
                         "progress": f"[{phase.upper()}] {detail}",
@@ -460,8 +478,12 @@ class PipelineService:
             # Build tasks and execute concurrently
             # We use standard asyncio.gather here because the underlying LLM calls
             # (inside _run_agent_with_circuit_breaker) are globally throttled by the AdaptiveConcurrencyController.
+            # return_exceptions=True ensures one crashed ticker doesn't kill the whole batch.
             tasks = [_process_ticker(i, t) for i, t in enumerate(tickers)]
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for t, r in zip(tickers, results):
+                if isinstance(r, Exception):
+                    logger.error("[PipelineService] Ticker %s failed: %s", t, r, exc_info=r)
 
             if cls._stop_requested:
                 raise asyncio.CancelledError("Cycle stopped by user")
