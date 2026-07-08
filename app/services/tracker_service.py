@@ -14,6 +14,8 @@ from app.schemas.tracker import (
     OverlapRow,
     HoldingHistoryResponse,
     HistoryRow,
+    LeaderboardRow,
+    FundLeaderboardResponse,
 )
 
 
@@ -234,4 +236,41 @@ class TrackerService:
             ticker=ticker.upper(),
             history=history,
             quarters_held=len(history),
+        )
+
+    def get_fund_leaderboard(self) -> FundLeaderboardResponse:
+        rows = self.repo.get_fund_leaderboard()
+        leaderboard = []
+        for cik, filer_name, r1, r3, wr, last_calc in rows:
+            leaderboard.append(
+                LeaderboardRow(
+                    cik=cik,
+                    filer_name=filer_name,
+                    return_1y=r1 or 0.0,
+                    return_3y_ann=r3 or 0.0,
+                    win_rate=wr or 0.0,
+                    last_calculated_at=str(last_calc) if last_calc else ""
+                )
+            )
+            
+        # Also include top active funds that might not be calculated yet (fallback)
+        if not leaderboard:
+            all_funds = self.repo.get_fund_list()
+            from app.collectors.fund_scanner import TOP_PERFORMER_CIKS
+            for cik, name, quarter, active, count, value in all_funds:
+                if cik in TOP_PERFORMER_CIKS:
+                    leaderboard.append(
+                        LeaderboardRow(
+                            cik=cik,
+                            filer_name=name,
+                            return_1y=0.0,
+                            return_3y_ann=0.0,
+                            win_rate=0.0,
+                            last_calculated_at="pending"
+                        )
+                    )
+                    
+        return FundLeaderboardResponse(
+            leaderboard=leaderboard,
+            count=len(leaderboard)
         )

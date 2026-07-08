@@ -1548,6 +1548,14 @@ CREATE TABLE IF NOT EXISTS sec_13f_filers (
     next_expected_filing DATE
 );
 
+CREATE TABLE IF NOT EXISTS sec_13f_performance (
+    cik            TEXT PRIMARY KEY,
+    return_1y      DOUBLE PRECISION,
+    return_3y_ann  DOUBLE PRECISION,
+    win_rate       DOUBLE PRECISION,
+    last_calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ══════════════════════════════════════════
 -- PIPELINE STATE
 -- ══════════════════════════════════════════

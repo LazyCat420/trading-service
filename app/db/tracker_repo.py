@@ -60,3 +60,13 @@ class TrackerRepo:
             "SELECT filing_quarter, filing_date, shares, value_usd FROM sec_13f_holdings WHERE cik = %s AND ticker = %s ORDER BY filing_quarter ASC",
             [cik, ticker.upper()],
         ).fetchall()
+
+    def get_fund_leaderboard(self) -> List[Tuple]:
+        return self.db.execute(
+            """
+            SELECT p.cik, f.filer_name, p.return_1y, p.return_3y_ann, p.win_rate, p.last_calculated_at
+            FROM sec_13f_performance p
+            JOIN sec_13f_filers f ON p.cik = f.cik
+            ORDER BY p.return_3y_ann DESC
+            """
+        ).fetchall()

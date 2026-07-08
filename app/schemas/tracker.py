@@ -73,3 +73,18 @@ class HoldingHistoryResponse(BaseModel):
     ticker: str
     history: List[HistoryRow]
     quarters_held: int
+
+
+class LeaderboardRow(BaseModel):
+    cik: str
+    filer_name: str
+    return_1y: float
+    return_3y_ann: float
+    win_rate: float
+    last_calculated_at: str
+
+
+class FundLeaderboardResponse(BaseModel):
+    leaderboard: List[LeaderboardRow]
+    count: int
+    message: Optional[str] = None
