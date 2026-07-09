@@ -70,21 +70,23 @@ class PipelineService:
 
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         max_tickers = kwargs.get("max_tickers") or 5
+        agent_locale = kwargs.get("agent_locale") or "default"
         
         cls._state.update({
             "status": "starting",
             "cycle_id": cycle_id,
+            "agent_locale": agent_locale,
             "progress": f"Screening watchlist for top {max_tickers} setups..."
         })
         cls.save_state()
         cls._stop_requested = False
 
         clean_kwargs = {k: v for k, v in kwargs.items() if k not in ("cycle_id", "tickers", "max_tickers")}
-        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers, max_tickers, **clean_kwargs))
+        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers, max_tickers, agent_locale=agent_locale, **clean_kwargs))
         return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
 
     @classmethod
-    async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int = 5, **kwargs):
+    async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int = 5, agent_locale: str = "default", **kwargs):
         try:
             # ── Set prism_client.url ONCE for the entire cycle ──
             # This prevents a race condition where concurrent agent calls
@@ -497,7 +499,8 @@ class PipelineService:
                     return
                 
                 harness_provider = kwargs.get("harness_provider", "local")
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, harness_provider=harness_provider)
+                agent_locale = cls._state.get("agent_locale", "default")
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, harness_provider=harness_provider, agent_locale=agent_locale)
                 
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result

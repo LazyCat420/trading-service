@@ -163,6 +163,17 @@ async def run_v3_agent(
                 f"{desk_context}"
             )
 
+        # Append locale directive if set
+        agent_locale = desk.cycle_metadata.get("agent_locale", "default")
+        if agent_locale and agent_locale != "default":
+            try:
+                from app.config.locales import AGENT_LOCALES
+                locale_override = AGENT_LOCALES.get(agent_locale)
+                if locale_override:
+                    system_prompt += locale_override
+            except Exception as e:
+                logger.warning("[V3Runner] Failed to apply agent_locale %s: %s", agent_locale, e)
+
         user_prompt += "Begin your analysis now.\n"
 
         # Call via base_agent.run_agent() which handles:

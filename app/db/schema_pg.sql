@@ -1583,6 +1583,7 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
     max_tickers INTEGER,
     discovered_tickers INTEGER,
     dynamic_selection_mode BOOLEAN DEFAULT FALSE,
+    agent_locale TEXT DEFAULT 'default',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
