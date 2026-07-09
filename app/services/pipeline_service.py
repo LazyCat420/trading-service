@@ -81,8 +81,14 @@ class PipelineService:
         cls.save_state()
         cls._stop_requested = False
 
-        clean_kwargs = {k: v for k, v in kwargs.items() if k not in ("cycle_id", "tickers", "max_tickers")}
-        cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers, max_tickers, agent_locale=agent_locale, **clean_kwargs))
+        clean_kwargs = {k: v for k, v in kwargs.items() if k not in ("cycle_id", "tickers", "max_tickers", "agent_locale")}
+        try:
+            cls._cycle_task = asyncio.create_task(cls._run_all_v3(cycle_id, tickers, max_tickers, agent_locale=agent_locale, **clean_kwargs))
+        except Exception as e:
+            logger.error("[PipelineService] Failed to spawn cycle task: %s", e)
+            cls._state.update({"status": "error", "error": str(e)})
+            cls.save_state()
+            raise
         return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
 
     @classmethod
