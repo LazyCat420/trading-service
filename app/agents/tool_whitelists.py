@@ -48,7 +48,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
         "get_congress_trades",
         # Research
-        
+        "search_web",
         "scrape_url",
         "search_internal_database",
         "search_trading_skills",
