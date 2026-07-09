@@ -283,6 +283,15 @@ class SharedDesk:
                 f"## Market Regime: {regime} ({conf}% confidence)\n{rationale}"
             )
 
+        # Board of Directors
+        if self.final_decision:
+            action = self.final_decision.get("action", "?")
+            conf = self.final_decision.get("confidence", 0)
+            reasoning = self.final_decision.get("reasoning", "")
+            sections.append(
+                f"## Board of Directors Verdict\n**Action: {action} @ {conf}% confidence**\n{reasoning}"
+            )
+
         combined = (
             "\n\n---\n\n".join(sections)
             if sections

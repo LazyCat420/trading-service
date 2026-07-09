@@ -51,7 +51,7 @@ a new position relative to current holdings). Do NOT use it reflexively —
 only when portfolio context would materially change your decision.
 
 ## OUTPUT
-CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
+CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` block first, followed immediately by ONLY valid JSON. Do NOT include markdown fences around the JSON. Start your final JSON payload immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 75,
@@ -98,7 +98,7 @@ concentration risk in one sector). Do NOT use it reflexively — only when
 portfolio context would materially change your decision.
 
 ## OUTPUT
-CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
+CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` block first, followed immediately by ONLY valid JSON. Do NOT include markdown fences around the JSON. Start your final JSON payload immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 80,
@@ -141,7 +141,7 @@ unwanted concentration in the portfolio. Do NOT use it reflexively — only
 when portfolio context would materially change your decision.
 
 ## OUTPUT
-CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
+CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` block first, followed immediately by ONLY valid JSON. Do NOT include markdown fences around the JSON. Start your final JSON payload immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 65,

@@ -42,7 +42,7 @@ explicit signal weighting so the system can audit WHY a decision was made.
    too high, issue a HOLD and set a `dynamic_trigger` (e.g. type="sma_50_drop").
 
 ## OUTPUT FORMAT
-CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include markdown fences, prefixes, or conversational text like "Here is the analysis". Start your output immediately with { and end with }.
+CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` block first, followed immediately by ONLY valid JSON. Do NOT include markdown fences around the JSON. Start your final JSON payload immediately with { and end with }.
 {
     "action": "BUY|SELL|HOLD",
     "confidence": 72,
