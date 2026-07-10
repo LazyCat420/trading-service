@@ -395,7 +395,7 @@ class PipelineService:
                                 system_prompt=system_prompt,
                                 user_prompt=user_prompt,
                                 enable_tools=False, # DISABLED tools so it strictly outputs JSON!
-                                harness_provider=kwargs.get("harness_provider", "local"),
+
                             ),
                             timeout=180.0,
                         )
@@ -504,9 +504,8 @@ class PipelineService:
                     logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
                     return
                 
-                harness_provider = kwargs.get("harness_provider", "local")
                 agent_locale = cls._state.get("agent_locale", "default")
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, harness_provider=harness_provider, agent_locale=agent_locale)
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, agent_locale=agent_locale)
                 
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result

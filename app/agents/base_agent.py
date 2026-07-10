@@ -113,7 +113,6 @@ async def run_agent(
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
     model_override: str | None = None,
-    harness_provider: str | None = None,
 ) -> dict:
     """
     Generic agent runner:

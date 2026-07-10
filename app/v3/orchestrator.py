@@ -39,7 +39,7 @@ async def run_v3_pipeline(
     research_focus: str = "",
     trigger_type: str = "manual",
     active_directives: list[dict] | None = None,
-    harness_provider: str = "local",
+
     agent_locale: str = "default",
 ) -> dict[str, Any]:
     """Run the full V3 Pure Agentic Linear Pipeline for a single ticker.
@@ -108,7 +108,7 @@ async def run_v3_pipeline(
         research_focus=research_focus,
         trigger_type=trigger_type,
     )
-    desk.cycle_metadata["harness_provider"] = harness_provider
+
     desk.cycle_metadata["agent_locale"] = agent_locale
     
     # Store the pre-collected report

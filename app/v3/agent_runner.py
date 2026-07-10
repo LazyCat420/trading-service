@@ -182,7 +182,7 @@ async def run_v3_agent(
         # - Real message & tool execution flow
         from app.agents.base_agent import run_agent
 
-        harness_provider = desk.cycle_metadata.get("harness_provider", "local").lower()
+
         model_override = getattr(agent_module, "MODEL_OVERRIDE", None)
 
         result = await asyncio.wait_for(
@@ -196,7 +196,7 @@ async def run_v3_agent(
                 max_tokens=8192,
                 enable_tools=bool(tool_whitelist),
                 model_override=model_override,
-                harness_provider=harness_provider,
+
             ),
             timeout=timeout_seconds,
         )
