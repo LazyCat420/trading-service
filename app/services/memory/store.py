@@ -124,6 +124,21 @@ class MemoryStore:
                 memory.get("updated_at", now),
             ],
         )
+        
+        try:
+            from app.services.embedding_service import embedder
+            from app.db.vector_store import vector_store
+            emb = embedder.embed_text(memory["summary"])
+            vector_store.store_embedding(
+                source_table="canonical_memories",
+                source_id=mem_id,
+                ticker=memory.get("ticker"),
+                content_preview=memory["summary"],
+                embedding=emb
+            )
+        except Exception as e:
+            logger.error(f"Failed to embed and store canonical memory {mem_id}: {e}")
+
         return mem_id
 
     def get_memories_by_ticker(

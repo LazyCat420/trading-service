@@ -154,6 +154,21 @@ def upsert_canonical_memories(memories: List[Dict[str, Any]]):
                     now_str,
                 ],
             )
+            
+            try:
+                from app.services.embedding_service import embedder
+                from app.db.vector_store import vector_store
+                emb = embedder.embed_text(m["summary"])
+                vector_store.store_embedding(
+                    source_table="canonical_memories",
+                    source_id=m["id"],
+                    ticker=m.get("ticker"),
+                    content_preview=m["summary"],
+                    embedding=emb
+                )
+            except Exception as e:
+                logger.error(f"Failed to embed canonical memory {m['id']}: {e}")
+
         logger.info(f"Upserted {len(memories)} canonical memories.")
 
 

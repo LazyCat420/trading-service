@@ -113,6 +113,25 @@ class MemoryRetriever:
         # TODO: fallback missing - no vector search implemented yet (currently uses SQL keyword/tag match)
         """
         raw_memories = fetch_candidate_memories(ticker, sector)
+        
+        # Semantic vector search boost
+        vector_scores = {}
+        try:
+            from app.services.embedding_service import embedder
+            from app.db.vector_store import vector_store
+            query_str = f"{ticker} {sector or ''} {' '.join(tags or [])} stock trading memories".strip()
+            query_vec = embedder.embed_text(query_str, prefix="Represent this financial query: ")
+            vector_results = vector_store.search_cosine(
+                query_vec,
+                ticker=ticker,
+                source_filter="canonical_memories",
+                top_k=50
+            )
+            for vr in vector_results:
+                vector_scores[vr["source_id"]] = vr["score"]
+        except Exception as e:
+            logger.warning(f"[MemoryRetriever] Semantic vector search failed/skipped: {e}")
+
         candidates = []
 
         for m in raw_memories:
@@ -130,6 +149,10 @@ class MemoryRetriever:
             score = score_memory(
                 m, query_ticker=ticker, query_sector=sector, query_tags=tags
             )
+            
+            # Boost score by up to 10 points based on cosine similarity if found in vector search
+            if m["id"] in vector_scores:
+                score += vector_scores[m["id"]] * 10.0
 
             # Determine "reason"
             m_ticker = m.get("ticker")

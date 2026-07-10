@@ -159,7 +159,7 @@ class Settings(BaseSettings):
 
     # ── Smart Ticker Triage ──
     TRIAGE_ENABLED: bool = True  # toggle triage on/off (flat list if disabled)
-    TRIAGE_GLANCE_HOURS: int = 24  # analyzed within N hours → Glance tier
+    TRIAGE_GLANCE_HOURS: int = 48  # analyzed within N hours → Glance tier
     TRIAGE_DEEP_HOURS: int = 72  # not analyzed in N hours → Deep tier
     TRIAGE_NEGLECT_MAX_DAYS: int = 5  # flag neglected after N days
     TRIAGE_MAX_CONSECUTIVE_GLANCE: int = 5  # force Standard after N Glance skips

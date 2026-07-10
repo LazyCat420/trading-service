@@ -26,7 +26,9 @@ As a guideline, you should aim to select between {min_tickers} and {max_tickers}
 ### EVALUATION DIRECTIVES
 1. MAXIMUM ONE MEGA-CAP: Do not pick more than 1 mega-cap tech stock (e.g., AAPL, MSFT, GOOGL, NVDA, AMZN) per cycle.
 2. VERIFY THE CATALYSTS: The Scoring Engine only looks at raw numbers and social mention counts. Your job is to check if the volume/trend is actually backed by a logical news catalyst before selecting the stock. 
-3. AVOID REPEATED REJECTIONS: Look closely at the "Past Verdict" and "Past Reason" columns. If we recently analyzed a stock and rejected it (HOLD/SELL) for a fundamental flaw (e.g. "valuation too high", "no clear moat"), do NOT select it again unless the price has significantly dropped or a massive new catalyst has appeared.
+3. AVOID REPEATED REJECTIONS & REDUNDANT RESEARCH: Look closely at the "Past Verdict", "Past Reason", and "Days Since Analysis" columns.
+   - If we recently analyzed a stock and rejected it (HOLD/SELL) for a fundamental flaw (e.g. "valuation too high", "no clear moat"), do NOT select it again unless the price has significantly dropped or a massive new catalyst has appeared.
+   - Avoid re-selecting tickers that were already analyzed in the last 3 days (e.g. "Today", "1 days ago", "2 days ago") even if the past verdict was BUY, unless there is a brand-new, major catalyst (e.g., fresh earnings release, SEC filing, or significant shift in institutional funds). Do not waste compute reprocessing the same stock without new data.
 4. EMBRACE RISK AND VOLATILITY: You are looking for explosive setups or major momentum shifts on smaller or newly discovered tickers. Do not just pick the safest baseline momentum. 
 5. STRIKE A BALANCE: Try to find a healthy mix of heavily-trending new discoveries (e.g., "Trending Reddit") and fresh, un-penalized setups from the static Watchlist. Do not waste our compute on dead stocks.
 

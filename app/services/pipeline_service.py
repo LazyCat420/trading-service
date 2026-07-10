@@ -338,6 +338,19 @@ class PipelineService:
                             if inst.get("has_top_performer"):
                                 score += 10.0  # Top-performer conviction
                                 
+                            # Recency penalty: penalize score if analyzed in the last 3 days
+                            last_date = last_analysis_map.get(t)
+                            if last_date:
+                                if last_date.tzinfo is None:
+                                    last_date = last_date.replace(tzinfo=timezone.utc)
+                                days_ago = (datetime.now(timezone.utc) - last_date).days
+                                if days_ago <= 0:
+                                    score -= 30.0
+                                elif days_ago == 1:
+                                    score -= 20.0
+                                elif days_ago == 2:
+                                    score -= 10.0
+
                             scored_results.append({
                                 "ticker": t, "price": px, "chg": chg, "rvol": rvol, 
                                 "sma": sma, "rsi": rsi, "src": src, "dsa": dsa, "score": score,
