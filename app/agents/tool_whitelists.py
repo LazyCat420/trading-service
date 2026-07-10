@@ -27,7 +27,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     # ── V3 Gatekeeper ──
     "v3_portfolio_manager": [
         "get_finnhub_news",
-        "search_web",
+        "lazy_web_search",
         "get_market_data",
         "whiteboard_write"
     ],
@@ -48,7 +48,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
         "get_congress_trades",
         # Research
-        "search_web",
+        "lazy_web_search",
         "scrape_url",
         "search_internal_database",
         "search_trading_skills",
@@ -94,7 +94,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     "v3_worker_news": [
         "get_finnhub_news",
-        "search_web",
+        "lazy_web_search",
         "scrape_url",
         "search_internal_database",
         "publish_event",
@@ -109,7 +109,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     # ── V3 Pure Agentic Pipeline Agents ──
     "v3_junior_analyst": [
         "get_finnhub_news",
-        "search_web",
+        "lazy_web_search",
         "scrape_url",
         "get_market_data",
         "search_internal_database",
@@ -123,7 +123,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_finviz_fundamentals",
         "get_earnings_data",
         "query_financial_metrics",
-        "search_web",
+        "lazy_web_search",
         "scrape_url",
         "get_market_data",
         "post_finding",
@@ -170,7 +170,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     "v3_regime_engine": [
         "get_market_data",
         "get_finnhub_news",
-        "search_web",
+        "lazy_web_search",
         "scrape_url",
         "get_technical_indicators",
         "whiteboard_read",

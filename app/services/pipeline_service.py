@@ -144,7 +144,7 @@ class PipelineService:
                         except Exception as sys_log_err:
                             logger.warning(f"[PipelineService] Failed to send system log: {sys_log_err}")
                         
-                    async def run_scraper_bg():
+                    async def run_scraper_sync():
                         try:
                             from app.collectors.news_collector import collect_all
                             total_scraped = await collect_all(limit_feeds=10, emit_cb=discovery_emit)
@@ -153,8 +153,8 @@ class PipelineService:
                             logger.error(f"[PipelineService] Discovery scraping failed: {e}")
                             discovery_emit("scraper_err", f"❌ Scraper sweep failed: {e}", "error")
 
-                    discovery_emit("scraper_start", "📡 Starting news scraper sweep in background...", "running")
-                    asyncio.create_task(run_scraper_bg())
+                    discovery_emit("scraper_start", "📡 Starting news scraper sweep... This will take 1-2 minutes.", "running")
+                    await run_scraper_sync()
                 # Find trending tickers from the last 24h (News, Reddit, YouTube) that aren't in the static watchlist
                 try:
                     from app.db.connection import get_db

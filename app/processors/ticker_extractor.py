@@ -1477,6 +1477,16 @@ async def extract_and_validate(
 
 
 async def get_ticker_symbols(text: str, title: str | None = None) -> list[str]:
-    """Simple wrapper: returns just the symbol strings (no metadata)."""
+    """Simple wrapper: returns just the symbol strings (no metadata), with dynamic validation."""
     matches = await extract_and_validate(text, title=title)
-    return [m.symbol for m in matches if m.confidence >= 0.60]
+    candidates = [m.symbol for m in matches if m.confidence >= 0.40]
+    
+    registry = get_registry()
+    unknowns = [t for t in candidates if not registry.is_known(t)]
+    
+    if unknowns:
+        # validate_unknown_tickers caches the result inside the registry and returns a dict mapping
+        valid_map = await validate_unknown_tickers(unknowns)
+        candidates = [t for t in candidates if registry.is_known(t) or valid_map.get(t, False)]
+        
+    return candidates
