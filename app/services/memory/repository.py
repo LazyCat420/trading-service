@@ -24,6 +24,8 @@ class MemoryRepository:
         cls, ticker: str, active_only: bool = True
     ) -> List[Dict[str, Any]]:
         """Fetches memory rules pertinent to a specific ticker."""
+        from app.db.memory_repo import _ensure_schema
+        _ensure_schema()
         with get_db() as db:
             query = """
                 SELECT id, type, ticker, sector, summary, tags, 
@@ -52,6 +54,8 @@ class MemoryRepository:
         cls, ticker: str, sector: str | None = None
     ) -> List[Dict[str, Any]]:
         """Fetch active canonical memories for a specific ticker OR its sector."""
+        from app.db.memory_repo import _ensure_schema
+        _ensure_schema()
         with get_db() as db:
             query = """
                 SELECT * FROM canonical_memories 

@@ -21,8 +21,6 @@ import logging
 import pandas as pd
 import yfinance as yf
 from pydantic import BaseModel, Field
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from app.tools.registry import registry
 
@@ -80,6 +78,9 @@ def fetch_data(symbol: str, period: str = "6mo") -> pd.DataFrame:
 
 def render_chart(df: pd.DataFrame, spec: dict, symbol: str) -> str:
     """Render an HTML Plotly chart with overlays and return the filename."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
     fig = make_subplots(
         rows=2,
         cols=1,
