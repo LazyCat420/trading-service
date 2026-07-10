@@ -41,6 +41,7 @@ async def run_v3_pipeline(
     active_directives: list[dict] | None = None,
 
     agent_locale: str = "default",
+    prism_overrides: dict | None = None,
 ) -> dict[str, Any]:
     """Run the full V3 Pure Agentic Linear Pipeline for a single ticker.
 
@@ -110,6 +111,7 @@ async def run_v3_pipeline(
     )
 
     desk.cycle_metadata["agent_locale"] = agent_locale
+    desk.cycle_metadata["prism_overrides"] = prism_overrides or {}
     
     # Store the pre-collected report
     desk.cycle_metadata["data_report"] = data_report

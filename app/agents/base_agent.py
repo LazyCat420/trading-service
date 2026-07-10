@@ -113,6 +113,7 @@ async def run_agent(
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
     model_override: str | None = None,
+    prism_overrides: dict | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -179,8 +180,12 @@ async def run_agent(
     async def _agent_llm_call():
         from app.agents.tool_whitelists import get_agent_tools, get_agent_budget_turns
 
+        # Extract overrides from Settings panel
+        overrides = prism_overrides or {}
+        domain_blocklist = overrides.get("tool_domain_blocklist", [])
+
         # Per-agent tool whitelist: only show tools relevant to this agent's role
-        agent_tools = get_agent_tools(agent_name) if enable_tools else []
+        agent_tools = get_agent_tools(agent_name, domain_blocklist=domain_blocklist) if enable_tools else []
 
         # Per-agent turn budget: reasoning-only agents get 1, tool agents get role-specific limits
         max_turns = get_agent_budget_turns(agent_name, enable_tools)
@@ -308,7 +313,9 @@ async def run_agent(
             "name": prism_agent_id, 
             "system_prompt": system_prompt,
             "llm_client": prism_client,
-            "project": settings.PROJECT_NAME
+            "project": settings.PROJECT_NAME,
+            "auto_approve": overrides.get("prism_auto_approve", True),
+            "thinking_enabled": overrides.get("prism_thinking_enabled", True),
         }
         resolved_model = model_override
         resolved_provider = None

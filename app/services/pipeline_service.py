@@ -71,11 +71,13 @@ class PipelineService:
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         max_tickers = kwargs.get("max_tickers") or 5
         agent_locale = kwargs.get("agent_locale") or "default"
+        prism_overrides = kwargs.get("prism_overrides") or {}
         
         cls._state.update({
             "status": "starting",
             "cycle_id": cycle_id,
             "agent_locale": agent_locale,
+            "prism_overrides": prism_overrides,
             "progress": f"Screening watchlist for top {max_tickers} setups..."
         })
         cls.save_state()
@@ -505,7 +507,8 @@ class PipelineService:
                     return
                 
                 agent_locale = cls._state.get("agent_locale", "default")
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, agent_locale=agent_locale)
+                prism_overrides = cls._state.get("prism_overrides", {})
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, agent_locale=agent_locale, prism_overrides=prism_overrides)
                 
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result

@@ -185,6 +185,8 @@ async def run_v3_agent(
 
         model_override = getattr(agent_module, "MODEL_OVERRIDE", None)
 
+        prism_overrides = desk.cycle_metadata.get("prism_overrides", {})
+
         result = await asyncio.wait_for(
             run_agent(
                 agent_name=agent_name,
@@ -196,7 +198,7 @@ async def run_v3_agent(
                 max_tokens=8192,
                 enable_tools=bool(tool_whitelist),
                 model_override=model_override,
-
+                prism_overrides=prism_overrides,
             ),
             timeout=timeout_seconds,
         )
