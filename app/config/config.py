@@ -253,12 +253,10 @@ class Settings(BaseSettings):
     PRISM_SKIP_CONVERSATION: bool = False
     PRISM_AUTO_APPROVE: bool = True
     PRISM_WORKSPACE_ENABLED: bool = False
-    PRISM_THINKING_ENABLED: bool = True
     PRISM_MAX_ITERATIONS: int = 100
     PRISM_MAX_SUB_AGENT_ITERATIONS: int = 100
     PRISM_MAX_RECURSION_DEPTH: int = 2
     PRISM_THOUGHT_STRUCTURE: str = "chain_of_thought"
-    PRISM_TOPOLOGY: str = "peer_to_peer"
 
     # ── SEC 13F Tracking ──
     SEC_USER_AGENT: str = "vllm-trading-bot LazyCat420@users.noreply.github.com"
@@ -269,10 +267,6 @@ class Settings(BaseSettings):
 
     # ── Tool Calling Bypass ──
     USE_TOOL_CALLING: bool = False
-
-    # ── Fallback LLM ──
-    FALLBACK_TO_PRISM_CLOUD: bool = True
-    PRISM_FALLBACK_MODEL: str = "gemini-3.5-flash"
 
     API_SERVER_KEY: str = "change-me-local-dev"
 

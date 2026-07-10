@@ -315,7 +315,6 @@ async def run_agent(
             "llm_client": prism_client,
             "project": settings.PROJECT_NAME,
             "auto_approve": overrides.get("prism_auto_approve", True),
-            "thinking_enabled": overrides.get("prism_thinking_enabled", True),
         }
         resolved_model = model_override
         resolved_provider = None
