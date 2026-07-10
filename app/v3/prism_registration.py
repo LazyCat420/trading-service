@@ -55,10 +55,9 @@ async def register_v3_agents() -> dict[str, bool]:
 
     results: dict[str, bool] = {}
 
-    # Target both the primary PRISM_URL (port 7777 via proxy/direct) and local runner port 7778 directly
+    # Target the primary PRISM_URL (port 5591 proxy)
     urls = {
-        app_settings.PRISM_URL,
-        f"http://{app_settings.DEFAULT_HOST}:7778"
+        app_settings.PRISM_URL
     }
     urls = {u for u in urls if u}
 
