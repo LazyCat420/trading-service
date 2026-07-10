@@ -222,38 +222,46 @@ async def run_agent(
                 failed = True
                 error_msg = "None result"
 
+            final_tool_name = tool_name
+            provider = None
+            if tool_name == "lazy_web_search" and not failed:
+                try:
+                    import json
+                    res_dict = result if isinstance(result, dict) else json.loads(result)
+                    provider = res_dict.get("provider")
+                    if provider:
+                        final_tool_name = f"lazy_web_search_{provider.lower()}"
+                except Exception:
+                    pass
+
             try:
                 from app.v3.tool_telemetry import record_tool_call, _hash_args
                 record_tool_call(
                     cycle_id=cycle_id,
                     agent_name=agent_name,
-                    tool_name=tool_name,
+                    tool_name=final_tool_name,
                     args_hash=_hash_args(arguments),
                     success=not failed,
                     was_blocked=was_blocked,
                     error_message=error_msg,
                 )
                 
-                if tool_name == "lazy_web_search" and not failed:
+                if provider:
                     try:
-                        import json
-                        res_dict = result if isinstance(result, dict) else json.loads(result)
-                        provider = res_dict.get("provider")
-                        if provider:
-                            from app.telemetry.bus import publish_event
-                            from app.telemetry.schema import TelemetryEvent
-                            from datetime import datetime, timezone
-                            publish_event(TelemetryEvent(
-                                ts=datetime.now(timezone.utc).isoformat(),
-                                cycle_id=cycle_id,
-                                ticker=ticker,
-                                kind="pipeline",
-                                source="agent_tool",
-                                status="ok",
-                                step=f"{provider.lower()}_{ticker}",
-                                phase="collecting",
-                                detail=f"Web search via {provider}",
-                            ))
+                        from app.telemetry.bus import publish_event
+                        from app.telemetry.schema import TelemetryEvent
+                        from datetime import datetime, timezone
+                        publish_event(TelemetryEvent(
+                            ts=datetime.now(timezone.utc).isoformat(),
+                            cycle_id=cycle_id,
+                            ticker=ticker,
+                            kind="pipeline",
+                            source="agent_tool",
+                            status="ok",
+                            step=f"{provider.lower()}_{ticker}",
+                            phase="collecting",
+                            detail=f"Web search via {provider}",
+                        ))
                     except Exception as ev_err:
                         logger.debug(f"Failed to emit web search telemetry: {ev_err}")
             except Exception as e:
