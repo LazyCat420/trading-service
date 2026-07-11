@@ -43,8 +43,16 @@ def _ensure_telemetry_table() -> None:
                     loops_used INTEGER DEFAULT 0,
                     token_usage INTEGER DEFAULT 0,
                     artifact_size_bytes INTEGER DEFAULT 0,
+                    quality_score INTEGER DEFAULT -1,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
+            """)
+            # Add quality_score column to existing tables (idempotent)
+            db.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS quality_score INTEGER DEFAULT -1;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
             """)
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_v3_telemetry_cycle
@@ -80,8 +88,8 @@ def persist_telemetry(desk: SharedDesk) -> None:
                     """
                     INSERT INTO v3_agent_telemetry
                         (cycle_id, ticker, agent_name, phase, outcome,
-                         elapsed_ms, loops_used, token_usage)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                         elapsed_ms, loops_used, token_usage, quality_score)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         desk.cycle_id,
@@ -92,6 +100,7 @@ def persist_telemetry(desk: SharedDesk) -> None:
                         entry.get("elapsed_ms", 0),
                         entry.get("loops_used", 0),
                         entry.get("token_usage", 0),
+                        entry.get("quality_score", -1),
                     ],
                 )
         logger.info(

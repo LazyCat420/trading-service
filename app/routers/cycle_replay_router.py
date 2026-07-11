@@ -179,7 +179,8 @@ def get_cycle_flow(cycle_id: str, ticker: str = Query(default="")):
             # Fetch agent telemetry for this cycle
             query = """
                 SELECT agent_name, phase, outcome, elapsed_ms,
-                       loops_used, token_usage, ticker, created_at
+                       loops_used, token_usage, ticker, created_at,
+                       quality_score
                 FROM v3_agent_telemetry
                 WHERE cycle_id = %s
             """
@@ -211,6 +212,7 @@ def get_cycle_flow(cycle_id: str, ticker: str = Query(default="")):
                     "icon": "🔧",
                     "layer": 99,
                 })
+                qs = row[8] if len(row) > 8 else -1
                 nodes.append({
                     "id": agent_name,
                     "label": meta["label"],
@@ -222,6 +224,8 @@ def get_cycle_flow(cycle_id: str, ticker: str = Query(default="")):
                     "token_usage": row[5] or 0,
                     "ticker": row[6],
                     "started_at": row[7].isoformat() if row[7] else None,
+                    "quality_score": qs if qs is not None else -1,
+                    "quality_flag": "good" if (qs or 0) >= 70 else "weak" if (qs or 0) >= 40 else "dead_end" if (qs or 0) >= 0 else "unknown",
                 })
 
             # Build edges (only include edges where both agents are present)
@@ -560,8 +564,12 @@ def _build_mermaid(nodes: list[dict], edges: list[dict]) -> str:
         icon = node.get("icon", "")
         label = node.get("label", aid)
         outcome_icon = "✅" if node["outcome"] == "SUCCESS" else "❌" if node["outcome"] in ("AGENT_ERROR", "TIMED_OUT") else "⚠️"
+
+        # Show quality score if available
+        qs = node.get("quality_score", -1)
+        quality_label = f" Q:{qs}" if qs >= 0 else ""
         lines.append(
-            f'    {sid}["{icon} {label}<br/>{elapsed_s:.1f}s {outcome_icon}"]'
+            f'    {sid}["{icon} {label}<br/>{elapsed_s:.1f}s {outcome_icon}{quality_label}"]'
         )
 
     # Build edges
@@ -571,14 +579,24 @@ def _build_mermaid(nodes: list[dict], edges: list[dict]) -> str:
         if src in [short_ids.get(n) for n in seen_agents] and dst in [short_ids.get(n) for n in seen_agents]:
             lines.append(f"    {src} --> {dst}")
 
-    # Style nodes by outcome
+    # Style nodes by quality + outcome (quality takes priority for SUCCESS nodes)
     for node in seen_agents.values():
         aid = node["id"]
         sid = short_ids.get(aid, aid[:6].upper())
-        if node["outcome"] == "SUCCESS":
-            lines.append(f"    style {sid} fill:#059669,color:#fff")
-        elif node["outcome"] in ("AGENT_ERROR", "TIMED_OUT"):
+        qs = node.get("quality_score", -1)
+
+        if node["outcome"] in ("AGENT_ERROR", "TIMED_OUT"):
             lines.append(f"    style {sid} fill:#dc2626,color:#fff")
+        elif node["outcome"] == "SUCCESS" and qs >= 0:
+            # Color by quality score
+            if qs >= 70:
+                lines.append(f"    style {sid} fill:#059669,color:#fff")  # Green — good
+            elif qs >= 40:
+                lines.append(f"    style {sid} fill:#d97706,color:#fff")  # Yellow — weak
+            else:
+                lines.append(f"    style {sid} fill:#dc2626,color:#fff")  # Red — dead end
+        elif node["outcome"] == "SUCCESS":
+            lines.append(f"    style {sid} fill:#059669,color:#fff")
         elif node["outcome"] == "DATA_GAP":
             lines.append(f"    style {sid} fill:#d97706,color:#fff")
         else:

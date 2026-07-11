@@ -30,6 +30,7 @@ from app.v3.guardrails import (
     exit_v3_session,
 )
 from app.v3.artifacts import validate_artifact
+from app.v3.quality_scorer import score_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -247,15 +248,41 @@ async def run_v3_agent(
         # Append to SharedDesk
         desk.append_artifact(artifact_type, artifact)
 
+        # Quality scoring — detect dead ends / weak artifacts
+        quality_result = score_artifact(artifact_type, artifact)
+        quality_score = quality_result.get("quality_score", -1)
+        quality_flag = quality_result.get("flag", "unknown")
+        failure_patterns = quality_result.get("failure_patterns", [])
+
+        if quality_flag == "dead_end":
+            logger.warning(
+                "[V3Runner] %s produced DEAD END artifact for %s "
+                "(quality=%d, patterns=%s)",
+                agent_name, desk.ticker, quality_score, failure_patterns,
+            )
+        elif quality_flag == "weak":
+            logger.info(
+                "[V3Runner] %s produced WEAK artifact for %s (quality=%d)",
+                agent_name, desk.ticker, quality_score,
+            )
+
+        # Store quality info on the artifact itself for downstream visibility
+        artifact["_quality_score"] = quality_score
+        artifact["_quality_flag"] = quality_flag
+        if failure_patterns:
+            artifact["_failure_patterns"] = failure_patterns
+
         # Log success
         direction = artifact.get("thesis_direction", artifact.get("action", "?"))
         confidence = artifact.get("confidence", artifact.get("final_confidence", 0))
+
+        quality_emoji = "🟢" if quality_flag == "good" else "🟡" if quality_flag == "weak" else "🔴"
 
         emit(
             "analyzing",
             f"v3_{agent_name}_done_{desk.ticker}",
             f"✅ {desk.ticker}: V3 {agent_name} → {direction} @ {confidence}% "
-            f"({loops_used} turns, {elapsed_ms}ms)",
+            f"({loops_used} turns, {elapsed_ms}ms) {quality_emoji} Q:{quality_score}",
             status="ok",
             data={
                 "agent": agent_name,
@@ -264,10 +291,12 @@ async def run_v3_agent(
                 "elapsed_ms": elapsed_ms,
                 "loops_used": loops_used,
                 "tool_calls_made": max(0, loops_used - 1),
+                "quality_score": quality_score,
+                "quality_flag": quality_flag,
             },
         )
 
-        _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS")
+        _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score)
 
         # Classify outcome
         data_gaps = artifact.get("data_gaps", [])
@@ -394,9 +423,10 @@ def _record_telemetry(
     loops_used: int,
     token_usage: int,
     outcome: str,
+    quality_score: int = -1,
 ) -> None:
     """Record telemetry for a V3 agent run."""
-    desk.record_agent_telemetry({
+    entry = {
         "agent_name": agent_name,
         "ticker": desk.ticker,
         "elapsed_ms": elapsed_ms,
@@ -404,4 +434,6 @@ def _record_telemetry(
         "token_usage": token_usage,
         "outcome": outcome,
         "phase": desk.phase.value,
-    })
+        "quality_score": quality_score,
+    }
+    desk.record_agent_telemetry(entry)
