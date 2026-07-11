@@ -7,6 +7,12 @@ from typing import Any
 from app.services.pipeline_state import PipelineStateDB
 from app.v3.orchestrator import run_v3_pipeline
 from app.telemetry import send_system_log
+from app.utils.us_ticker_resolver import (
+    is_us_tradeable,
+    resolve_to_us_ticker,
+    resolve_tickers_batch,
+    resolve_tickers_batch_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +88,17 @@ class PipelineService:
         })
         cls.save_state()
         cls._stop_requested = False
+
+        # ── US Ticker Gate: resolve foreign tickers before they enter the pipeline ──
+        if tickers:
+            original_tickers = list(tickers)
+            tickers = resolve_tickers_batch(tickers)
+            dropped = set(original_tickers) - set(tickers)
+            if dropped:
+                logger.warning(
+                    "[PipelineService] US Ticker Gate dropped/resolved foreign tickers at entry: %s → %s",
+                    original_tickers, tickers,
+                )
 
         clean_kwargs = {k: v for k, v in kwargs.items() if k not in ("cycle_id", "tickers", "max_tickers", "agent_locale")}
         try:
@@ -193,6 +210,10 @@ class PipelineService:
                                 # Phase 4A: FALSE_TICKERS pre-filter
                                 if tkr in FALSE_TICKERS:
                                     logger.debug("[PipelineService] Filtered out FALSE_TICKER: %s from %s", tkr, source_label)
+                                    continue
+                                # Phase 4E: Foreign ticker filter — reject non-US tickers from discovery
+                                if not is_us_tradeable(tkr):
+                                    logger.debug("[PipelineService] Filtered foreign ticker from discovery: %s from %s", tkr, source_label)
                                     continue
                                 if tkr not in source_tracker:
                                     source_tracker[tkr] = {"sources": set(), "mentions": 0}
@@ -439,6 +460,15 @@ class PipelineService:
                         selected = valid_selected
                     
                     if selected:
+                        # ── US Ticker Gate: resolve any foreign tickers the gatekeeper selected ──
+                        pre_resolve = list(selected)
+                        selected = resolve_tickers_batch(selected)
+                        resolved_diff = set(pre_resolve) - set(selected)
+                        if resolved_diff:
+                            logger.warning(
+                                "[PipelineService] US Ticker Gate resolved gatekeeper selections: %s → %s",
+                                pre_resolve, selected,
+                            )
                         tickers = selected
                         logger.info("[PipelineService] Gatekeeper selected: %s. Rationale: %s", tickers, rationale)
                     else:

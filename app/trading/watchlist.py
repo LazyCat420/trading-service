@@ -38,8 +38,20 @@ def add_ticker(
     """Add a ticker to the watchlist. Returns True if newly added.
 
     Refuses to add if ticker is banned.
+    Automatically resolves foreign tickers to US-listed equivalents.
     """
     ticker = ticker.upper().strip()
+
+    # Gate: resolve foreign tickers to US equivalents
+    from app.utils.us_ticker_resolver import is_us_tradeable, resolve_to_us_ticker
+    if not is_us_tradeable(ticker):
+        us_alt = resolve_to_us_ticker(ticker)
+        if us_alt:
+            logger.info("watchlist: resolved foreign ticker %s → %s", ticker, us_alt)
+            ticker = us_alt
+        else:
+            logger.warning("watchlist: rejected non-US ticker %s (no US listing found)", ticker)
+            return False
 
     # Gate: check ban list first
     if is_banned(ticker):
