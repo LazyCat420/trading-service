@@ -245,6 +245,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         from app.routers.verdict_router import router as verdict_router
         from app.routers.chart_router import router as chart_router
         from app.routers.market_router import router as market_router
+        from app.routers.cycle_replay_router import router as cycle_replay_router
 
         app.include_router(vllm_router)
         app.include_router(agent_persona_router)
@@ -256,6 +257,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         app.include_router(verdict_router)
         app.include_router(chart_router)
         app.include_router(market_router)
+        app.include_router(cycle_replay_router)
     except Exception as e:
         logger.error(f"Failed to include routers: {e}")
 
