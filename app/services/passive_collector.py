@@ -136,7 +136,7 @@ async def run_passive_collector_loop():
     while True:
         try:
             # ── Gate: skip collection if system is paused ──
-            from app.pipeline.orchestration.cycle_control import cycle_control
+            from app.services.cycle_control import cycle_control
             if cycle_control.is_paused:
                 logger.debug("[PASSIVE] System is PAUSED — skipping rotation.")
                 _set_state("sleeping",

@@ -178,7 +178,7 @@ def set_active_bot(bot_id: str) -> None:
     # Reset pipeline state — the old bot's cycle state is irrelevant to the new bot.
     # Any interrupted/stopped checkpoint belongs to the previous bot and should not
     # be offered for resume under a different profile.
-    from app.pipeline.orchestration.state_manager import PipelineStateDB
+    from app.services.pipeline_state import PipelineStateDB
 
     PipelineStateDB.save_state(PipelineStateDB.default_state())
     logger.info("[BOT_MANAGER] Pipeline state reset to idle for new profile %s", bot_id)
