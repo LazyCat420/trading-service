@@ -22,15 +22,32 @@ except Exception as e:
     print(f"Warning: Failed to fetch prism-service schemas: {e}")
     prism_schemas = []
 
-# Merge them (avoiding duplicates by name)
+# Merge them (avoiding duplicates by name) and filter by whitelist/native
+import sys
+sys.path.insert(0, project_root)
+try:
+    from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
+    from app.tools import registry
+    allowed_tools = set()
+    for tools_list in AGENT_TOOL_WHITELISTS.values():
+        allowed_tools.update(tools_list)
+    # Also keep all native tools defined in trading-service
+    real_native_names = {name for name, func in registry.tools.items() if func is not None}
+    allowed_tools.update(real_native_names)
+    print(f"Loaded whitelist filtering. {len(allowed_tools)} unique tools allowed (including {len(real_native_names)} native python tools).")
+except Exception as e:
+    print(f"Warning: Failed to load tool whitelists: {e}")
+    allowed_tools = None
+
 merged_schemas = []
 seen_names = set()
 
 for schema in native_schemas:
     name = schema.get("name")
     if name and name not in seen_names:
-        merged_schemas.append(schema)
-        seen_names.add(name)
+        if allowed_tools is None or name in allowed_tools:
+            merged_schemas.append(schema)
+            seen_names.add(name)
 
 for schema in prism_schemas:
     name = schema.get("name")
@@ -43,8 +60,9 @@ for schema in prism_schemas:
             continue
         
         if name not in seen_names:
-            merged_schemas.append(schema)
-            seen_names.add(name)
+            if allowed_tools is None or name in allowed_tools:
+                merged_schemas.append(schema)
+                seen_names.add(name)
 
 # Write to tool_schemas.json in the project root
 out_file = os.path.join(project_root, "tool_schemas.json")
@@ -52,3 +70,4 @@ with open(out_file, "w") as f:
     json.dump(merged_schemas, f, indent=2)
 
 print(f"Successfully generated {out_file} with {len(merged_schemas)} tools.")
+
