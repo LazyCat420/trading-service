@@ -110,13 +110,3 @@ async def list_agent_tool_access():
     return {"agents": result}
 
 
-@router.get("/delegation/budget")
-async def get_delegation_budget():
-    """Check current delegation budget state."""
-    from app.agents.delegation_handler import (
-        _delegation_counts, MAX_DELEGATIONS_PER_TICKER,
-    )
-    return {
-        "max_per_ticker": MAX_DELEGATIONS_PER_TICKER,
-        "active_budgets": dict(_delegation_counts),
-    }

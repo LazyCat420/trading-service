@@ -198,29 +198,8 @@ async def generate_agent_quote(agent_id: str, archetype: str, context: dict, quo
                 override = f"{target_name}, {message}"
                 logger.info(f"[AgentVoice] Extracted delegation for {agent_id}: '{override}'")
     
-    # 3. Base the generated quote on actual findings from TaskBoard if available
+    # 3. Use the raw insight (TaskBoard was deprecated with V3)
     finding_context = ""
-    if not override and ticker and cycle_id:
-        try:
-            from app.agents.task_board import task_board
-            findings = await task_board.get_findings(ticker=ticker, cycle_id=cycle_id)
-            agent_to_source = {
-                "FUNDAMENTAL_AGENT": "fundamentals_agent",
-                "SENTIMENT_AGENT": "sentiment_agent",
-                "MACRO_RISK_AGENT": "macro_risk_agent",
-                "DEEP_RESEARCH_AGENT": "deep_research_agent",
-                "DATA_JANITOR_AGENT": "data_janitor_agent",
-                "QUANT_CRITIQUE_AGENT": "quant_critique_agent",
-            }
-            target_source = agent_to_source.get(agent_id.upper())
-            if target_source:
-                agent_finding = next((f for f in findings if f.get("source_agent") == target_source), None)
-                if agent_finding:
-                    finding_context = f"\nYour actual analysis/finding for this ticker is: {agent_finding.get('content', '')}"
-                    logger.info(f"[AgentVoice] Injected TaskBoard finding context for {agent_id}")
-        except Exception as tb_err:
-            logger.debug("[AgentVoice] TaskBoard retrieval failed: %s", tb_err)
-
     if override:
         quote = override
         logger.info(f"[AgentVoice] Using override quote for {agent_id}: '{quote}'")

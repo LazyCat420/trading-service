@@ -137,15 +137,6 @@ async def run_agent(
 
     ctx_budget = get_context_budget()
 
-    # Inject shared whiteboard state before truncation
-    try:
-        from app.agents.whiteboard import whiteboard
-        board_context = await whiteboard.summarize(ticker, cycle_id)
-        if board_context:
-            data_context = f"{board_context}\n\n{data_context}" if data_context else board_context
-    except Exception as e:
-        logger.error("[BaseAgent] Failed to fetch whiteboard context: %s", e)
-
     if data_context and len(data_context) > ctx_budget.data_context_chars:
         original_len = len(data_context)
         data_context = data_context[: ctx_budget.data_context_chars]
@@ -321,7 +312,7 @@ async def run_agent(
         if not resolved_model:
             from app.services.prism_agent_caller import resolve_default_model_for_agent
             try:
-                resolved_model, resolved_provider = resolve_default_model_for_agent(agent_name)
+                resolved_model, resolved_provider = await resolve_default_model_for_agent(agent_name)
                 logger.info("[BaseAgent] Dynamically resolved default model for %s: %s (provider: %s)", agent_name, resolved_model, resolved_provider)
             except Exception as e:
                 logger.warning("[BaseAgent] Failed to resolve default model for %s: %s. Using default fallback.", agent_name, e)
@@ -339,8 +330,7 @@ async def run_agent(
         import uuid
         session = ConversationSession(session_id=parent_agent_session_id or f"sess_{int(time.time())}_{uuid.uuid4().hex[:6]}")
         
-        from app.agents.inbox import inbox_manager
-        inbox_manager.register_instance(session.session_id, agent_name, ticker)
+        _active_agents.add(agent_name)
         
         try:
             harness = AgentHarness(
@@ -354,7 +344,7 @@ async def run_agent(
             final_text = await harness.run(full_prompt)
             elapsed_ms = int((time.time() - t0) * 1000)
         finally:
-            inbox_manager.unregister_instance(session.session_id)
+            _active_agents.discard(agent_name)
 
         return (
             final_text,

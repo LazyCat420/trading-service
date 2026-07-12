@@ -23,7 +23,7 @@ import httpx
 
 _dynamic_model_cache = {}
 
-def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
+async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
     now = time.time()
     if not force_refresh and url in _dynamic_model_cache:
         model_id, timestamp = _dynamic_model_cache[url]
@@ -31,8 +31,8 @@ def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
             return model_id
 
     try:
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(f"{url}/v1/models")
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{url}/v1/models")
             if resp.status_code == 200:
                 models = resp.json().get("data", [])
                 if models:
@@ -46,7 +46,7 @@ def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
     
     raise RuntimeError(f"No models found at vLLM endpoint: {url}")
 
-def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False) -> tuple[str, str]:
+async def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False) -> tuple[str, str]:
     """Resolve default model based on agent role to balance load.
     Jetson handles lightweight janitorial, consensus, and curation tasks.
     Gold Spark handles heavy quant research, debates, and final decisions.
@@ -75,7 +75,7 @@ def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False
     if not url:
         raise RuntimeError(f"VLLM endpoint '{endpoint_key}' has no configured URL.")
 
-    discovered_model = get_live_model_from_vllm(url, force_refresh=force_refresh)
+    discovered_model = await get_live_model_from_vllm(url, force_refresh=force_refresh)
     return discovered_model, provider
 
 
@@ -136,8 +136,8 @@ async def call_prism_agent(
             step="prism_agent_start",
             detail=f"Starting call to {agent_id}"
         ))
-    except Exception:
-        pass
+    except Exception as tel_err:
+        logger.warning("Failed to publish telemetry start event: %s", tel_err)
     
     try:
         # Prepend system prompt directly to messages list for OpenAI/vLLM compatibility.
@@ -152,13 +152,30 @@ async def call_prism_agent(
         from app.v3.guardrails import get_budget_for_role
         max_iter = get_budget_for_role(agent_id).max_turns
 
-        default_model, default_provider = resolve_default_model_for_agent(fallback_agent_name or agent_id)
+        default_model, default_provider = await resolve_default_model_for_agent(fallback_agent_name or agent_id)
         model = model_override or default_model
-        provider = default_provider if not model_override else default_provider
+        
+        if model_override:
+            name_lower = model_override.lower()
+            if "gpt-" in name_lower:
+                provider = "openai"
+            elif "claude-" in name_lower:
+                provider = "anthropic"
+            elif "gemini-" in name_lower:
+                provider = "google"
+            else:
+                provider = default_provider
+        else:
+            provider = default_provider
         
         # vLLM will reject requests if (prompt_tokens + max_tokens > max_model_len).
         # We subtract the estimated prompt tokens from max_tokens to give the largest possible budget without crashing.
-        est_input_tokens = len(FIRM_CONTEXT + (fallback_system_prompt or "")) // 4 + len(user_message) // 4 + 100
+        all_text = (
+            FIRM_CONTEXT + (fallback_system_prompt or "") +
+            "Acknowledged. I am ready to process the quantitative data." +
+            user_message
+        )
+        est_input_tokens = len(all_text) // 4 + 100
         if max_tokens >= 4096:
             max_tokens = max(512, max_tokens - est_input_tokens)
         
@@ -178,7 +195,7 @@ async def call_prism_agent(
             if "404" in str(e) or "not exist" in str(e).lower() or "not found" in str(e).lower():
                 logger.warning(f"[PrismAgentCaller] 404 Model Not Found. Forcing refresh and retrying...")
                 # Fetch fresh model and try exactly one more time
-                fresh_model, _ = resolve_default_model_for_agent(fallback_agent_name or agent_id, force_refresh=True)
+                fresh_model, _ = await resolve_default_model_for_agent(fallback_agent_name or agent_id, force_refresh=True)
                 resp = await prism_client.call_agent(
                     model=fresh_model,
                     messages=messages,
@@ -211,8 +228,8 @@ async def call_prism_agent(
                 step="prism_agent_success",
                 detail=f"Completed {agent_id} in {elapsed_ms}ms"
             ))
-        except Exception:
-            pass
+        except Exception as tel_err:
+            logger.warning("Failed to publish telemetry success event: %s", tel_err)
             
         return response_text, tokens, elapsed_ms
         
@@ -231,8 +248,8 @@ async def call_prism_agent(
                 step="prism_agent_error",
                 detail=str(e)
             ))
-        except Exception:
-            pass
+        except Exception as tel_err:
+            logger.warning("Failed to publish telemetry error event: %s", tel_err)
             
         raise e
 
@@ -399,9 +416,21 @@ class PrismLLMShim:
         priority_val = priority.value if hasattr(priority, "value") else int(priority)
 
         async with concurrency_controller.track(label=agent_name, tokens=est_tokens, priority=priority_val):
-            default_model, default_provider = resolve_default_model_for_agent(agent_name)
+            default_model, default_provider = await resolve_default_model_for_agent(agent_name)
             model = model_override or default_model
-            provider = default_provider if not model_override else default_provider
+            
+            if model_override:
+                name_lower = model_override.lower()
+                if "gpt-" in name_lower:
+                    provider = "openai"
+                elif "claude-" in name_lower:
+                    provider = "anthropic"
+                elif "gemini-" in name_lower:
+                    provider = "google"
+                else:
+                    provider = default_provider
+            else:
+                provider = default_provider
 
             from app.v3.guardrails import get_budget_for_role
             max_iter = get_budget_for_role(agent_name).max_turns
@@ -410,7 +439,6 @@ class PrismLLMShim:
             if final_max_tokens >= 4096:
                 final_max_tokens = max(512, final_max_tokens - est_tokens - 100)
 
-            client = await self.prism_client._get_client()
             resp = await self.prism_client.call_agent(
                 model=model,
                 messages=messages,

@@ -581,31 +581,6 @@ def strategies_bench_underperformers():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class AgentInboxMessage(BaseModel):
-    message: str
-    ticker: Optional[str] = None
-
-
-@router.get("/api/v1/agents/active")
-def get_active_agents():
-    try:
-        from app.agents.inbox import inbox_manager
-        return {"instances": inbox_manager.get_active_instances()}
-    except Exception as e:
-        import traceback
-        logger.error(f"[vllm_router] /agents/active failed: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/api/v1/agents/{agent_name}/inbox")
-def post_agent_inbox(agent_name: str, msg: AgentInboxMessage):
-    try:
-        from app.agents.inbox import inbox_manager
-        inbox_manager.add_message(agent_name=agent_name, message=msg.message, ticker=msg.ticker)
-        return {"status": "success", "agent_name": agent_name}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 def _get_agent_recent_activity_summary(agent_name: str) -> str:
     """Query recent activity/traces from the database to present as context to the agent."""

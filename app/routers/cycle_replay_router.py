@@ -61,6 +61,9 @@ def list_cycles(
     offset: int = Query(default=0, ge=0),
 ):
     """List recent pipeline cycles with summary stats."""
+    from app.v3.telemetry import _ensure_telemetry_table
+    _ensure_telemetry_table()
+    
     try:
         with get_db() as db:
             # Get distinct cycles from pipeline_events (most reliable source)
@@ -131,6 +134,27 @@ def list_cycles(
                 started = row[1].isoformat() if row[1] else None
                 finished = row[2].isoformat() if row[2] else None
 
+                # Fallback for historical cycles without telemetry
+                if not tickers:
+                    tr_tickers = db.execute(
+                        "SELECT DISTINCT ticker FROM trade_results WHERE cycle_id = %s",
+                        [cycle_id]
+                    ).fetchall()
+                    if tr_tickers:
+                        tickers = [t[0] for t in tr_tickers]
+
+                is_completed = any(o == "SUCCESS" for o in outcomes.values())
+                if not is_completed:
+                    if actions:
+                        is_completed = True
+                    else:
+                        done_evt = db.execute(
+                            "SELECT 1 FROM pipeline_events WHERE cycle_id = %s AND step LIKE '%%done%%' LIMIT 1",
+                            [cycle_id]
+                        ).fetchone()
+                        if done_evt:
+                            is_completed = True
+
                 cycles.append({
                     "cycle_id": cycle_id,
                     "started_at": started,
@@ -140,9 +164,7 @@ def list_cycles(
                     "tickers": tickers,
                     "agent_count": agent_count,
                     "actions": actions,
-                    "status": "completed" if any(
-                        o == "SUCCESS" for o in outcomes.values()
-                    ) else "aborted",
+                    "status": "completed" if is_completed else "aborted",
                 })
 
             # Get total count for pagination

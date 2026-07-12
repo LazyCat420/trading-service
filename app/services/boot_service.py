@@ -93,13 +93,7 @@ class BootService:
         except Exception as e:
             logger.warning("[Boot] Cycle cancellation on shutdown: %s", e)
 
-        # Stop cycle scheduler
-        try:
-            from app.services.cycle_scheduler import SchedulerService
-
-            SchedulerService.stop()
-        except Exception as e:
-            logger.warning("[Boot] Scheduler shutdown error: %s", e)
+        # Stop cycle scheduler (removed in V3)
 
         # Close the vLLM HTTP client
         try:
@@ -249,9 +243,7 @@ class BootService:
 
     @classmethod
     def _start_scheduler(cls):
-        from app.services.cycle_scheduler import SchedulerService
-
-        SchedulerService.start()
+        pass
 
     @classmethod
     def _warmup_models(cls):

@@ -19,6 +19,7 @@ from typing import Any, Callable
 from app.v3.shared_desk import SharedDesk, DeskPhase, PhaseOutcome
 from app.v3.guardrails import CircuitBreaker
 from app.services.adaptive_concurrency import concurrency_controller
+from app.v3.telemetry import persist_telemetry
 from app.v3.agent_runner import run_v3_agent
 from app.v3.desk_persistence import save_desk
 
@@ -949,6 +950,9 @@ def _extract_agent_results(desk: SharedDesk) -> dict[str, Any]:
             "response": desk.quant_report.get("summary", ""),
             "tokens": token_lookup.get("v3_quant_analyst", 0)
         }
+
+    # IMPORTANT: Save telemetry and quality scores to DB
+    persist_telemetry(desk)
 
     return results
 

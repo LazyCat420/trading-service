@@ -46,18 +46,41 @@ class PipelineService:
             if cls._cycle_task is None or cls._cycle_task.done():
                 logger.warning(
                     "[PipelineService] ORPHANED STATE DETECTED: DB says '%s' but "
-                    "no in-memory task exists. Use Force Reset to clear.",
+                    "no in-memory task exists. Checking started_at for auto-clear.",
                     db_status,
                 )
-                return {
-                    "status": "error",
-                    "message": (
-                        f"Pipeline state is stuck at '{db_status}' from a previous "
-                        f"crashed cycle (cycle_id={db_state.get('cycle_id', '?')}). "
-                        f"Error: {db_state.get('error', 'unknown')}. "
-                        f"Use Force Reset to clear the stuck state before starting a new cycle."
-                    ),
-                }
+                started_at = db_state.get("started_at")
+                is_stale = False
+                if started_at:
+                    if isinstance(started_at, str):
+                        try:
+                            from dateutil.parser import parse as parse_date
+                            started_at = parse_date(started_at)
+                        except Exception:
+                            pass
+                    if isinstance(started_at, datetime):
+                        if started_at.tzinfo is None:
+                            started_at = started_at.replace(tzinfo=timezone.utc)
+                        delta = datetime.now(timezone.utc) - started_at
+                        if delta.total_seconds() > 1800: # 30 minutes
+                            is_stale = True
+                
+                if is_stale:
+                    logger.warning(
+                        "[PipelineService] Auto-clearing orphaned state older than 30 minutes (started_at=%s).",
+                        started_at,
+                    )
+                    await cls.force_reset()
+                else:
+                    return {
+                        "status": "error",
+                        "message": (
+                            f"Pipeline state is stuck at '{db_status}' from a previous "
+                            f"crashed cycle (cycle_id={db_state.get('cycle_id', '?')}). "
+                            f"Error: {db_state.get('error', 'unknown')}. "
+                            f"Use Force Reset to clear the stuck state before starting a new cycle."
+                        ),
+                    }
             else:
                 return {"status": "deduplicated", "message": f"Cycle already {db_status}"}
         # Also check in-memory task to catch race where DB was reset but task is still running
@@ -561,6 +584,7 @@ class PipelineService:
                 action = result.get("action", "HOLD")
                 confidence = result.get("confidence", 0)
                 
+                trade_failed = False
                 try:
                     from app.config import settings as _cfg
                     from app.trading.paper_trader import buy, sell
@@ -603,6 +627,11 @@ class PipelineService:
                                 await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="dynamic", trigger_price=0.0, action="BUY", qty_pct=1.0, dynamic_trigger_type=dt_type, dynamic_trigger_value=dt_val, created_by="pipeline", reason=f"Dynamic Buy Trigger: {dt_type}")
                 except Exception as e:
                     logger.error("[PipelineService] Trade execution failed for %s: %s", ticker_name, e)
+                    trade_failed = True
+
+                if trade_failed:
+                    result["trade_failed"] = True
+                    save_analysis_result(ticker_name, cycle_id, result)
 
             # Build tasks and execute concurrently
             # We use standard asyncio.gather here because the underlying LLM calls
@@ -627,10 +656,32 @@ class PipelineService:
             try:
                 from app.cognition.evolution.evaluator import run_post_cycle_evaluation
                 from app.cognition.evolution.evolution_runner import run_evolution_loop
+                
+                def make_done_callback(name):
+                    def callback(t):
+                        try:
+                            t.result()
+                        except asyncio.CancelledError:
+                            logger.info(f"[PipelineService] Background task {name} cancelled.")
+                        except Exception as e:
+                            logger.error(f"[PipelineService] Background task {name} failed: {e}", exc_info=True)
+                    return callback
+
                 # Run the LLM reviewer
-                asyncio.create_task(run_post_cycle_evaluation(cycle_id))
+                t1 = asyncio.create_task(run_post_cycle_evaluation(cycle_id))
+                t1.add_done_callback(make_done_callback("run_post_cycle_evaluation"))
+                
                 # Run the quant strategy generator
-                asyncio.create_task(run_evolution_loop(data_path="data/latest_market_data.csv"))
+                t2 = asyncio.create_task(run_evolution_loop(data_path="data/latest_market_data.csv"))
+                t2.add_done_callback(make_done_callback("run_evolution_loop"))
+                
+                if not hasattr(cls, "_background_tasks"):
+                    cls._background_tasks = set()
+                cls._background_tasks.add(t1)
+                cls._background_tasks.add(t2)
+                t1.add_done_callback(cls._background_tasks.discard)
+                t2.add_done_callback(cls._background_tasks.discard)
+
                 logger.info("[PipelineService] Triggered post-cycle evolution tasks.")
             except Exception as ev_err:
                 logger.error(f"[PipelineService] Failed to trigger evolution: {ev_err}")
@@ -672,7 +723,11 @@ class PipelineService:
             import asyncio
             from app.services.prism_agent_caller import prism_client, llm
             prism_client.arm_kill_switch()
-            asyncio.create_task(llm.abort_active_requests())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(llm.abort_active_requests())
+            except RuntimeError:
+                pass
         except Exception as e:
             logger.error("[PipelineService] Failed to arm kill switch: %s", e)
             
@@ -715,7 +770,7 @@ class PipelineService:
                 pass
         # Nuclear kill: force-close all TCP connections to VLLM endpoints
         try:
-            from app.services.prism_agent_caller import prism_client
+            from app.services.prism_agent_caller import prism_client, llm
             prism_client.arm_kill_switch()
         except Exception as e:
             logger.error("[PipelineService] Failed to arm kill switch during force_reset: %s", e)
@@ -725,6 +780,14 @@ class PipelineService:
         cls._stop_requested = False
         cls._state = PipelineStateDB.default_state()
         cls.save_state()
+
+        # Reset all kill switches so that future cycles are unblocked immediately
+        try:
+            prism_client.reset_kill_switch()
+            llm.reset_kill_switch()
+        except Exception as e:
+            logger.error("[PipelineService] Failed to reset kill switches in force_reset: %s", e)
+
         return {"status": "idle"}
 
 

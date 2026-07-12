@@ -136,9 +136,9 @@ async def run_passive_collector_loop():
     while True:
         try:
             # ── Gate: skip collection if system is paused ──
-            from app.services.cycle_control import cycle_control
-            if cycle_control.is_paused:
-                logger.debug("[PASSIVE] System is PAUSED — skipping rotation.")
+            from app.services.pipeline_service import PipelineService
+            if PipelineService._stop_requested:
+                logger.debug("[PASSIVE] System is PAUSED/STOPPED — skipping rotation.")
                 _set_state("sleeping",
                            next_rotation_at=datetime.now(timezone.utc) + timedelta(seconds=60))
                 await asyncio.sleep(60)
