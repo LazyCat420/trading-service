@@ -118,6 +118,30 @@ async def register_v3_agents() -> dict[str, bool]:
             )
             results[module_path] = False
 
+    # Register fallback agent
+    fallback_agent_id = "CUSTOM_SYSTEM_JANITOR_AGENT"
+    try:
+        agent_success = True
+        for target_url in urls:
+            try:
+                temp_client = PrismClientClass()
+                temp_client.url = target_url
+                success = await temp_client.register_or_update_custom_agent(
+                    name="SYSTEM_JANITOR_AGENT",
+                    identity="You are a system fallback agent handling triage.",
+                    guidelines=_V3_COMMON_GUIDELINES,
+                    enabled_tools=["mcp__lazy-tool-service__lazy_web_search"],
+                )
+                if not success:
+                    agent_success = False
+                    logger.warning("[V3Prism] Failed to register fallback agent %s at %s", fallback_agent_id, target_url)
+            except Exception as ex:
+                agent_success = False
+                logger.error("[V3Prism] Exception registering fallback agent %s at %s: %s", fallback_agent_id, target_url, ex)
+        results[fallback_agent_id] = agent_success
+    except Exception as e:
+        logger.error("[V3Prism] Error registering fallback agent %s: %s", fallback_agent_id, e)
+
     logger.info(
         "[V3Prism] Registration complete: %d/%d agents registered",
         sum(1 for v in results.values() if v),

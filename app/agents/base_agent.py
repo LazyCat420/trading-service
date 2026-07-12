@@ -16,6 +16,8 @@ from app.utils.resilience import aresilient_call
 
 logger = logging.getLogger(__name__)
 
+_active_agents = set()
+
 # ─── Meta-prompt: generates a context-aware system prompt ───────────
 AGENT_META_SYSTEM = """You are an expert at creating specialized analyst system prompts for stock market analysis.
 
