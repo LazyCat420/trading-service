@@ -119,9 +119,11 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         await generate_flash_briefing()
                         result = {"status": "ok"}
                     elif cmd_type == "DISCARD_CHECKPOINT":
-                        result = {"status": "ok"}
+                        # intentional no-op
+                        result = {"status": "ok", "message": "No checkpoint system active"}
                     elif cmd_type == "FORCE_CHECKPOINT":
-                        result = {"status": "ok"}
+                        # intentional no-op
+                        result = {"status": "ok", "message": "No checkpoint system active"}
                     else:
                         logger.error("[cycle_backend] Ignored legacy command type '%s'", cmd_type)
                         result = {"status": "ignored", "message": "Legacy command ignored in V3"}
@@ -235,7 +237,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         return PipelineService.get_current_state(summary_only=summary_only)
 
     try:
-        from app.services.vllm_router import router as vllm_router
+        from app.routers.vllm_router import router as vllm_router
         from app.routers.agent_persona_router import router as agent_persona_router
         from app.routers.agent_tools_router import router as agent_tools_router
         from app.routers.chat_router import router as chat_router

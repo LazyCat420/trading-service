@@ -1,0 +1,53 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Prism Service Agent API",
+    "version": "1.0.0",
+    "description": "Contract for Prism Agent SSE Endpoint"
+  },
+  "paths": {
+    "/agent": {
+      "post": {
+        "summary": "Execute an agent task via Server Sent Events",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "project": { "type": "string", "default": "vllm-trading-bot" },
+                  "username": { "type": "string" },
+                  "persona": { "type": "string" },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "role": { "type": "string" },
+                        "content": { "type": "string" }
+                      }
+                    }
+                  }
+                },
+                "required": ["messages", "persona"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Server Sent Events Stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

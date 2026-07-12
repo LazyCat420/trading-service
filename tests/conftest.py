@@ -160,3 +160,25 @@ def pytest_unconfigure(config):
     os._exit(exitstatus)
 
 
+
+@pytest.fixture
+def mock_prism_agent(respx_mock):
+    """Mocks the /agent endpoint of prism-service with a streaming SSE response."""
+    import httpx
+
+    # A generator that simulates the SSE events
+    async def sse_generator():
+        yield b'data: {"status": "starting"}\n\n'
+        yield b'data: {"status": "running", "chunk": "I am a mocked response."}\n\n'
+        yield b'data: {"status": "completed", "result": "I am a mocked response."}\n\n'
+
+    respx_mock.post(
+        re.compile(r"^.*/agent$")
+    ).mock(
+        return_value=httpx.Response(
+            200, 
+            headers={"Content-Type": "text/event-stream"},
+            content=sse_generator()
+        )
+    )
+    return respx_mock

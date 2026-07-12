@@ -1,3 +1,21 @@
+"""Boot Service — Orchestrates application startup and shutdown.
+
+Startup Sequence:
+1. DB Connection & Schema (Required)
+2. Vector Store Indexes (Required)
+3. Reset Application State (Required)
+4. Restore Stable Fixes (Optional)
+5. Crash Recovery Scan (Optional)
+6. Scheduler Start / Embedding Warmup (Optional)
+7. MCP / Prism Agent Registration (Optional)
+8. Background Tasks (FRED, SP500, Market Regime, Audit Worker)
+
+Shutdown Sequence (Reverse Order):
+1. Cancel Running Trading Cycle
+2. Close vLLM HTTP Client
+3. Stop Audit Worker
+4. Close PostgreSQL Connection Pool
+"""
 import asyncio
 import logging
 import time
