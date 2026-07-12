@@ -35,7 +35,7 @@ def get_position_context(ticker: str, bot_id: str = "") -> dict:
         stop_loss_pct = float(row[2]) if row[2] else 0.0
         opened_at = row[3]
 
-        current_price = _get_current_price(ticker)
+        current_price, _ = _get_current_price(ticker)
         unrealized_pnl = 0.0
         unrealized_pnl_pct = 0.0
 
