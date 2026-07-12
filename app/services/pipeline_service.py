@@ -151,6 +151,38 @@ class PipelineService:
                 prism_client.url = f"http://{_cfg.DEFAULT_HOST}:7778"
             logger.info("[PipelineService] Cycle %s: prism_client.url set to %s (PRISM_ENABLED=%s)", cycle_id, prism_client.url, _cfg.PRISM_ENABLED)
 
+            def emit(phase: str, step: str, detail: str, **kwargs):
+                event = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "phase": phase,
+                    "step": step,
+                    "detail": detail,
+                    "status": kwargs.pop("status", "running"),
+                    "data": kwargs.pop("data", {}),
+                    "elapsed_ms": kwargs.pop("elapsed_ms", 0),
+                }
+                event.update(kwargs)
+                logger.info(f"[{cycle_id}][{phase}][{step}] {detail}")
+                PipelineStateDB.append_events(cycle_id, [event])
+                
+                try:
+                    send_system_log("AGENT", detail)
+                except Exception as sys_log_err:
+                    logger.warning(f"[PipelineService] Failed to send system log: {sys_log_err}")
+                
+                try:
+                    current_status = cls._state.get("status", "")
+                    if current_status in ("error", "stopped", "done", "idle"):
+                        return
+                    cls._state.update({
+                        "status": "running",
+                        "progress": f"[{phase.upper()}] {detail}",
+                        "phase": phase
+                    })
+                    cls.save_state()
+                except Exception as db_sync_err:
+                    logger.warning("[PipelineService] Failed to sync progress to DB: %s", db_sync_err)
+
             # 1. Run Gatekeeper
 
             try:
@@ -584,42 +616,6 @@ class PipelineService:
             if cls._stop_requested:
                 raise asyncio.CancelledError()
 
-            def emit_cb(phase: str, step: str, detail: str, **kwargs):
-                event = {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "phase": phase,
-                    "step": step,
-                    "detail": detail,
-                    "status": kwargs.pop("status", "running"),
-                    "data": kwargs.pop("data", {}),
-                    "elapsed_ms": kwargs.pop("elapsed_ms", 0),
-                }
-                event.update(kwargs)
-                logger.info(f"[{cycle_id}][{phase}][{step}] {detail}")
-                PipelineStateDB.append_events(cycle_id, [event])
-                
-                try:
-                    send_system_log("AGENT", detail)
-                except Exception as sys_log_err:
-                    logger.warning(f"[PipelineService] Failed to send system log: {sys_log_err}")
-                
-                try:
-                    # Sync backend in-memory progress and status to DB to prevent stuck state false-positives
-                    # BUT: Do NOT overwrite terminal states (error/stopped/done/idle).
-                    # Ticker tasks may still be emitting events after the pipeline
-                    # manager has already caught an exception and set the error state.
-                    current_status = cls._state.get("status", "")
-                    if current_status in ("error", "stopped", "done", "idle"):
-                        return
-                    cls._state.update({
-                        "status": "running",
-                        "progress": f"[{phase.upper()}] {detail}",
-                        "phase": phase
-                    })
-                    cls.save_state()
-                except Exception as db_sync_err:
-                    logger.warning("[PipelineService] Failed to sync progress to DB: %s", db_sync_err)
-
             cls._state["progress"] = f"Processing {len(tickers)} tickers concurrently"
             cls.save_state()
 
@@ -630,7 +626,7 @@ class PipelineService:
                 
                 agent_locale = cls._state.get("agent_locale", "default")
                 prism_overrides = cls._state.get("prism_overrides", {})
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit_cb, agent_locale=agent_locale, prism_overrides=prism_overrides)
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides)
                 
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result
