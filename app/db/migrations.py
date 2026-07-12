@@ -3195,3 +3195,40 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Freshness Gate: analysis snapshot columns ──
+    _safe_add_column(conn, "analysis_results", "analysis_price", "FLOAT")
+    _safe_add_column(conn, "analysis_results", "analysis_rsi", "FLOAT")
+    _safe_add_column(conn, "analysis_results", "analysis_fund_count", "INTEGER DEFAULT 0")
+
+    # ── Freshness Gate: tunable threshold config ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS freshness_gate_config (
+                    id SERIAL PRIMARY KEY,
+                    threshold_name VARCHAR(64) UNIQUE NOT NULL,
+                    threshold_value FLOAT NOT NULL,
+                    weight FLOAT NOT NULL DEFAULT 1.0,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    updated_by VARCHAR(64) DEFAULT 'system',
+                    rationale TEXT
+                );
+            """)
+            # Seed defaults (idempotent)
+            cur.execute("""
+                INSERT INTO freshness_gate_config (threshold_name, threshold_value, weight, rationale) VALUES
+                    ('price_delta_max_pct', 5.0, 0.30, '~2σ daily move for large-cap stocks'),
+                    ('news_count_max', 3.0, 0.25, 'Median ticker gets 1-2 articles/day'),
+                    ('volume_ratio_max', 2.0, 0.20, 'Standard institutional activity threshold'),
+                    ('rsi_boundary_weight', 1.0, 0.15, 'Binary: RSI crossed 30 or 70'),
+                    ('fund_delta_max', 3.0, 0.10, 'Meaningful shift in institutional positioning'),
+                    ('composite_threshold', 0.40, 1.0, 'Minimum delta_score to classify as CHANGED')
+                ON CONFLICT (threshold_name) DO NOTHING;
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

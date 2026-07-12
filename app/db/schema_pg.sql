@@ -573,7 +573,21 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     thesis_confidence INTEGER,
     thesis_summary TEXT,
     thesis_updated_at TIMESTAMP,
-    thesis_unchanged BOOLEAN
+    thesis_unchanged BOOLEAN,
+    -- Freshness Gate snapshot: baseline state at analysis time
+    analysis_price FLOAT,
+    analysis_rsi FLOAT,
+    analysis_fund_count INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS freshness_gate_config (
+    id SERIAL PRIMARY KEY,
+    threshold_name VARCHAR(64) UNIQUE NOT NULL,
+    threshold_value FLOAT NOT NULL,
+    weight FLOAT NOT NULL DEFAULT 1.0,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    updated_by VARCHAR(64) DEFAULT 'system',
+    rationale TEXT
 );
 
 CREATE TABLE IF NOT EXISTS decision_evaluations (
