@@ -30,7 +30,7 @@ def _ensure_table(db):
             motivation      VARCHAR,
             code            VARCHAR,
             metrics         VARCHAR,
-            score           DOUBLE,
+            score           DOUBLE PRECISION,
             status          VARCHAR,
             analysis        VARCHAR,
             timestamp       VARCHAR
@@ -157,7 +157,7 @@ def get_best_node(session_id: str) -> Optional[EvolutionNode]:
         row = db.execute(
             "SELECT id, session_id, round, parent_id, motivation, code, metrics, "
             "score, status, analysis, timestamp FROM evolution_nodes "
-            "WHERE session_id = %s AND status = 'KEEP' "
+            "WHERE session_id = %s AND UPPER(status) IN ('KEEP', 'SUCCESS') "
             "ORDER BY score DESC LIMIT 1",
             [session_id],
         ).fetchone()
@@ -181,14 +181,15 @@ def get_session_summary(session_id: str) -> dict:
         best_score = None
         for status, cnt, mx, mn, avg in rows:
             total += cnt
-            if status == "KEEP":
-                summary.kept_count = cnt
-            elif status == "DISCARD":
-                summary.discarded_count = cnt
-            elif status in ("SYNTAX_ERROR", "RUNTIME_ERROR"):
+            status_upper = (status or "").upper()
+            if status_upper in ("KEEP", "SUCCESS"):
+                summary.kept_count += cnt
+            elif status_upper in ("DISCARD", "REJECTED"):
+                summary.discarded_count += cnt
+            elif status_upper in ("SYNTAX_ERROR", "RUNTIME_ERROR", "ERROR"):
                 summary.error_count += cnt
-            elif status == "TIMEOUT":
-                summary.timeout_count = cnt
+            elif status_upper in ("TIMEOUT",):
+                summary.timeout_count += cnt
             if mx is not None:
                 if best_score is None or mx > best_score:
                     best_score = mx
@@ -233,9 +234,9 @@ def get_sessions() -> list[dict]:
         rows = db.execute(
             "SELECT session_id, COUNT(*) as rounds, MAX(score) as best_score, "
             "MIN(timestamp) as started, MAX(timestamp) as last_updated, "
-            "SUM(CASE WHEN status='KEEP' THEN 1 ELSE 0 END) as kept, "
-            "SUM(CASE WHEN status='DISCARD' THEN 1 ELSE 0 END) as discarded, "
-            "SUM(CASE WHEN status IN ('SYNTAX_ERROR','RUNTIME_ERROR','TIMEOUT') THEN 1 ELSE 0 END) as errors "
+            "SUM(CASE WHEN UPPER(status) IN ('KEEP', 'SUCCESS') THEN 1 ELSE 0 END) as kept, "
+            "SUM(CASE WHEN UPPER(status) IN ('DISCARD', 'REJECTED') THEN 1 ELSE 0 END) as discarded, "
+            "SUM(CASE WHEN UPPER(status) IN ('SYNTAX_ERROR','RUNTIME_ERROR','TIMEOUT', 'ERROR', 'FAILED') THEN 1 ELSE 0 END) as errors "
             "FROM evolution_nodes GROUP BY session_id ORDER BY MAX(timestamp) DESC"
         ).fetchall()
         return [
