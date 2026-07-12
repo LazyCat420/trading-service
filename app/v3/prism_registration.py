@@ -71,17 +71,17 @@ async def register_v3_agents() -> dict[str, bool]:
             system_prompt = getattr(module, "SYSTEM_PROMPT", "You are an autonomous V3 trading agent. Your identity will be provided dynamically at runtime.")
             tool_whitelist = module.TOOL_WHITELIST
 
-            # Merge with Prism dynamic meta-tools
-            from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
-            
+            # V3 agents get ONLY their strict role-specific whitelists.
+            # No dynamic tool discovery — discover_and_enable_tools caused
+            # agents to pull in 766 tools and blow the 262k context limit.
             prefixed_whitelist = []
             for t in tool_whitelist:
-                if t.startswith("mcp__") or t.startswith("domain:") or t in ("discover_and_enable_tools", "enable_tools", "disable_tools", "search_tools"):
+                if t.startswith("mcp__") or t.startswith("domain:"):
                     prefixed_whitelist.append(t)
                 else:
                     prefixed_whitelist.append(f"mcp__lazy-tool-service__{t}")
             
-            enabled_tools = prefixed_whitelist + list(PRISM_DYNAMIC_META_TOOLS)
+            enabled_tools = prefixed_whitelist
 
             agent_success = True
             for target_url in urls:

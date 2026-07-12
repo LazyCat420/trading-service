@@ -119,14 +119,11 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "whiteboard_summarize",
     ],
     "v3_fundamental_analyst": [
-        "get_sec_filings",
-        "get_finviz_fundamentals",
-        "get_earnings_data",
-        "query_financial_metrics",
+        "get_market_data",
+        "get_finnhub_news",
+        "get_institutional_holdings",
         "lazy_web_search",
         "scrape_url",
-        "get_market_data",
-        "post_finding",
         "whiteboard_write",
         "whiteboard_read",
         "whiteboard_summarize",
@@ -169,10 +166,10 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     ],
     "v3_regime_engine": [
         "get_market_data",
+        "get_technical_indicators",
+        "get_institutional_holdings",
         "get_finnhub_news",
         "lazy_web_search",
-        "scrape_url",
-        "get_technical_indicators",
         "whiteboard_read",
         "whiteboard_write",
     ],
@@ -276,8 +273,6 @@ def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
         A list of tool name strings. If the agent has no whitelist, returns
         all registry tool names + meta-tools.
     """
-    from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
-
     if agent_name in AGENT_TOOL_WHITELISTS:
         base_names = list(AGENT_TOOL_WHITELISTS[agent_name])
     else:
@@ -285,10 +280,14 @@ def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
         from app.tools.registry import registry
         base_names = list(registry.tools.keys())
 
-    # Merge Prism dynamic discovery meta-tools (deduplicated)
-    for meta_tool in PRISM_DYNAMIC_META_TOOLS:
-        if meta_tool not in base_names:
-            base_names.append(meta_tool)
+    # V3 agents get ONLY their strict whitelists — no dynamic discovery.
+    # discover_and_enable_tools caused agents to pull in 766 tools and
+    # blow the 262k context limit.
+    if not agent_name.startswith("v3_"):
+        from app.agents.dynamic_tool_prompt import PRISM_DYNAMIC_META_TOOLS
+        for meta_tool in PRISM_DYNAMIC_META_TOOLS:
+            if meta_tool not in base_names:
+                base_names.append(meta_tool)
 
     return base_names
 

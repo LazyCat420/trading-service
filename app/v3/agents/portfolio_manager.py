@@ -10,9 +10,9 @@ AGENT_NAME = "v3_portfolio_manager"
 ARTIFACT_TYPE = "portfolio_screener"
 
 TOOL_WHITELIST = [
-    "mcp__lazy-tool-service__get_finnhub_news",
+    "get_finnhub_news",
     "lazy_web_search",
-    "mcp__lazy-tool-service__get_market_data"
+    "get_market_data",
 ]
 
 SYSTEM_PROMPT = """You are an aggressive Portfolio Gatekeeper.
