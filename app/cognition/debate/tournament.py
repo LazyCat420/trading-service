@@ -502,6 +502,15 @@ async def _run_jury_scoring(
                 juror_name, parsed.get("reasoning", "")[:200],
             )
 
+        # Deterministic veto: Risk Manager score < 5 = automatic veto
+        # (per plan: "If the Risk Manager scores below a 5/10, the trade is vetoed")
+        if juror_name == "Risk_Manager" and parsed.get("score", 5) < 5:
+            vetoed = True
+            logger.warning(
+                "[TOURNAMENT] AUTO-VETO: Risk Manager score %d/10 < 5 threshold",
+                parsed.get("score", 5),
+            )
+
     avg_score = sum(scores) / len(scores) if scores else 5.0
 
     return {

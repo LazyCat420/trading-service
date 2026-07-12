@@ -361,23 +361,29 @@ async def run_v3_pipeline(
         try:
             from app.cognition.debate.tournament import run_tournament_debate
             from app.cognition.contracts.evidence import EvidencePacket
+            from app.cognition.contracts.retrieval import StructuredFact
 
-            # Build a minimal EvidencePacket from SharedDesk research artifacts
-            packet = EvidencePacket(entity_id=ticker, structured_facts=[], claims=[])
-
-            # Inject research context from desk artifacts
+            # Build a list of structured facts from SharedDesk research artifacts
+            facts = []
             for artifact_name in ("desk_note", "fundamental_report", "quant_report"):
                 artifact = getattr(desk, artifact_name, None)
                 if artifact and isinstance(artifact, dict):
                     summary = artifact.get("summary", "")
                     if summary:
-                        from app.cognition.contracts.evidence import StructuredFact
-                        packet.structured_facts.append(
+                        facts.append(
                             StructuredFact(
                                 fact_type=artifact_name,
                                 value=summary[:2000],
+                                timestamp=datetime.now(timezone.utc),
                             )
                         )
+
+            # EvidencePacket is frozen — must pass all data at construction
+            packet = EvidencePacket(
+                entity_id=ticker,
+                structured_facts=facts,
+                claims=[],
+            )
 
             tournament_result = await run_tournament_debate(
                 ticker=ticker,
