@@ -19,6 +19,8 @@ from app.autoresearch.auditors.triage_audit import _audit_triage
 from app.autoresearch.auditors.schedule_audit import _audit_schedule_health
 from app.autoresearch.reflection import _reflect, _store_lessons
 from app.autoresearch.directives import _generate_directives, _expire_old_directives
+from app.autoresearch.outcome_tracker import record_cycle_decisions, resolve_pending_outcomes
+from app.autoresearch.janitor import run_janitor
 
 def _update_ar_state(report_id: str, **kwargs):
     updates = []
@@ -102,6 +104,15 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
                 "INSERT INTO autoresearch_reports (id, cycle_id, status, phase) VALUES (%s, %s, 'running', 'starting')",
                 (report_id, cycle_id),
             )
+
+        # Resolve pending decision outcomes before scoring
+        _update_ar_state(report_id, phase="outcome_resolution")
+        try:
+            outcome_result = resolve_pending_outcomes()
+            if outcome_result.get("resolved", 0) > 0:
+                logger.info("[AUTORESEARCH] Resolved %d pending outcomes", outcome_result["resolved"])
+        except Exception as oe:
+            logger.warning("[AUTORESEARCH] Outcome resolution failed: %s", oe)
 
         _update_ar_state(report_id, phase="data_quality")
         data_quality = _audit_data_quality(tickers)
@@ -266,6 +277,22 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as mj_err:
             logger.warning("[AUTORESEARCH] Meta-Agent Judge failed: %s", mj_err)
 
+        # Record this cycle's decisions for future outcome tracking
+        _update_ar_state(report_id, phase="outcome_recording")
+        try:
+            recorded = record_cycle_decisions(cycle_id, cycle_summary)
+            if recorded > 0:
+                logger.info("[AUTORESEARCH] Recorded %d decision outcomes for tracking", recorded)
+        except Exception as rec_err:
+            logger.warning("[AUTORESEARCH] Decision recording failed: %s", rec_err)
+
+        # Run janitor to clean up old data
+        _update_ar_state(report_id, phase="cleanup")
+        try:
+            janitor_result = run_janitor()
+        except Exception as jan_err:
+            logger.warning("[AUTORESEARCH] Janitor failed: %s", jan_err)
+
         _update_ar_state(report_id, phase="done")
         return {"id": report_id, "overall_score": round(overall, 1), "status": "done"}
 
@@ -317,7 +344,7 @@ async def _resolve_data_gaps(gaps: list[dict], cycle_id: str) -> dict:
                     [f'%"{ticker}"%']
                 ).fetchone()
 
-            if occurrence_row and occurrence_row[0] >= 5:
+            if occurrence_row and occurrence_row[0] >= 3:
                 from app.trading.watchlist import ban_ticker
                 ban_ticker(ticker, f"AutoResearch: persistent data gap across {occurrence_row[0]} cycles")
                 banned += 1

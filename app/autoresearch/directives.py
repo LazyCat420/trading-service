@@ -27,7 +27,7 @@ def _generate_directives(reflection: dict, cycle_id: str, triage_audit: dict) ->
             directive_id = f"dir-{uuid.uuid4().hex[:12]}"
             db.execute(
                 """INSERT INTO cycle_directives (id, cycle_id, directive_type, directive_text, severity, status, expires_after)
-                VALUES (%s, %s, 'recommendation', %s, %s, 'active', 5) ON CONFLICT DO NOTHING""",
+                VALUES (%s, %s, 'recommendation', %s, %s, 'active', 2) ON CONFLICT DO NOTHING""",
                 [directive_id, cycle_id, rec[:300], severity]
             )
             directives_created += 1
@@ -40,7 +40,7 @@ def _generate_directives(reflection: dict, cycle_id: str, triage_audit: dict) ->
             severity = "warning" if issue["type"] in ("neglect", "over_glancing") else "info"
             db.execute(
                 """INSERT INTO cycle_directives (id, cycle_id, directive_type, directive_text, target_ticker, severity, status, expires_after)
-                VALUES (%s, %s, %s, %s, %s, %s, 'active', 3) ON CONFLICT DO NOTHING""",
+                VALUES (%s, %s, %s, %s, %s, %s, 'active', 2) ON CONFLICT DO NOTHING""",
                 [directive_id, cycle_id, f"triage_{issue['type']}", issue["detail"][:300], target_ticker, severity]
             )
             directives_created += 1
@@ -50,7 +50,7 @@ def _generate_directives(reflection: dict, cycle_id: str, triage_audit: dict) ->
             directive_id = f"dir-{uuid.uuid4().hex[:12]}"
             db.execute(
                 """INSERT INTO cycle_directives (id, cycle_id, directive_type, directive_text, target_ticker, severity, status, expires_after)
-                VALUES (%s, %s, 'data_gap', %s, %s, 'warning', 'active', 3) ON CONFLICT DO NOTHING""",
+                VALUES (%s, %s, 'data_gap', %s, %s, 'warning', 'active', 2) ON CONFLICT DO NOTHING""",
                 [directive_id, cycle_id, f"Critical data gap for {ticker}", ticker]
             )
             directives_created += 1
@@ -60,7 +60,7 @@ def _generate_directives(reflection: dict, cycle_id: str, triage_audit: dict) ->
             directive_id = f"dir-{uuid.uuid4().hex[:12]}"
             db.execute(
                 """INSERT INTO cycle_directives (id, cycle_id, directive_type, directive_text, severity, status, expires_after)
-                VALUES (%s, %s, 'schedule_recommendation', %s, 'info', 'active', 3) ON CONFLICT DO NOTHING""",
+                VALUES (%s, %s, 'schedule_recommendation', %s, 'info', 'active', 2) ON CONFLICT DO NOTHING""",
                 [directive_id, cycle_id, sched_rec[:300]]
             )
             directives_created += 1

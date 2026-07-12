@@ -20,21 +20,6 @@ async def run_autoresearch(job_id: str, payload: dict):
         except Exception as e:
             logger.error("Failed running core run_autoresearch: %s", e)
             raise Exception(f"Core run_autoresearch failed: {e}")
-
-    # Phase 1: Critic (Process Evaluation) & Phase 3: Benchmark Gauntlet
-    from app.autoresearch.gauntlet import run_benchmark_gauntlet
-    
-    gauntlet_result = await run_benchmark_gauntlet({"job_id": job_id, "payload": payload})
-    
-    if gauntlet_result.get("passed"):
-        logger.info("Gauntlet passed! Deploying harness update.")
-        from app.autoresearch.deployment import deploy_harness_update
-        # Example proposed change
-        deploy_harness_update(f"Job {job_id}: Ensure logic is sound and tools are used accurately.")
-    else:
-        logger.warning("Gauntlet failed! Initiating rollback if necessary.")
-        from app.autoresearch.deployment import rollback_harness
-        rollback_harness()
     
     # Process pending traces from recent cycles (part of eval_engine)
     logger.info("Processing pending traces...")

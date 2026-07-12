@@ -20,7 +20,20 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
     outcome_stats = {}
 
     if total == 0:
-        return {"score": 0, "issues": [{"issue": "No decisions produced", "severity": "critical"}]}
+        # No decisions this cycle, but check if we have historical outcomes to score from
+        try:
+            with get_db() as db:
+                hist_count = db.execute(
+                    "SELECT COUNT(*) FROM decision_outcomes WHERE resolved_at IS NOT NULL AND outcome != 'CANCELED'"
+                ).fetchone()
+                if hist_count and hist_count[0] >= 3:
+                    # Fall through to the outcome-based scoring below
+                    issues.append({"issue": "No decisions produced this cycle (using historical outcomes)", "severity": "info"})
+                else:
+                    return {"score": 0, "issues": [{"issue": "No decisions produced and no historical outcomes to score", "severity": "warning"}]}
+        except Exception:
+            return {"score": 0, "issues": [{"issue": "No decisions produced", "severity": "critical"}]}
+
 
     try:
         with get_db() as db:
