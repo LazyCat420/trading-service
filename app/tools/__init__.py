@@ -6,5 +6,6 @@ from app.tools import web_tools
 from . import notes_tools
 from . import charting_tools
 from . import market_tools
+from . import quant_tools
 
 __all__ = ["registry", "PermissionLevel"]

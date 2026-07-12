@@ -239,6 +239,36 @@ def run_auto_migrations():
         except Exception as e:
             logger.warning("agent_audit_log migration check: %s", e)
 
+        # ── Auto-migrate: add quant_equation_library table ──
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS quant_equation_library (
+                    id              TEXT PRIMARY KEY,
+                    name            TEXT NOT NULL UNIQUE,
+                    description     TEXT NOT NULL DEFAULT '',
+                    code            TEXT NOT NULL,
+                    parameters      JSONB DEFAULT '{}',
+                    author_agent    TEXT DEFAULT 'unknown',
+                    ticker_origin   TEXT DEFAULT '',
+                    backtest_results JSONB DEFAULT '{}',
+                    usage_count     INTEGER DEFAULT 0,
+                    avg_pnl_pct     DOUBLE PRECISION DEFAULT 0.0,
+                    win_rate_pct    DOUBLE PRECISION DEFAULT 0.0,
+                    sharpe_ratio    DOUBLE PRECISION DEFAULT 0.0,
+                    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_equation_library_name
+                    ON quant_equation_library (name);
+                CREATE INDEX IF NOT EXISTS idx_equation_library_sharpe
+                    ON quant_equation_library (sharpe_ratio DESC);
+                CREATE INDEX IF NOT EXISTS idx_equation_library_win_rate
+                    ON quant_equation_library (win_rate_pct DESC);
+            """)
+            logger.info("Migrated: ensured quant_equation_library table exists.")
+        except Exception as e:
+            logger.warning("quant_equation_library migration check: %s", e)
+
 
 if __name__ == "__main__":
     run_auto_migrations()

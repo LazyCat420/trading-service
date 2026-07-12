@@ -182,6 +182,31 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "whiteboard_annotate",
         "whiteboard_summarize",
     ],
+    # ── Tournament Debate Agents ──
+    "tournament_pitch": [
+        # Core data
+        "get_market_data",
+        "get_technical_indicators",
+        "get_polygon_price_history",
+        "get_finviz_fundamentals",
+        "get_options_flow",
+        "get_finnhub_news",
+        "get_sec_filings",
+        "get_earnings_data",
+        # Research
+        "lazy_web_search",
+        "scrape_url",
+        "search_internal_database",
+        # Quant tools
+        "calculate_risk_reward",
+        "calculate_stop_loss",
+        "calculate_position_size",
+        # Equation Library
+        "search_equations",
+        "save_equation",
+        "run_equation",
+        "run_backtest",
+    ],
 }
 
 

@@ -26,6 +26,7 @@ class CognitionSettings(BaseSettings):
     FAST_DEBATE_MODE: bool = True  # Halve debate latency with capped prompt sizes
     MAX_DEBATE_HISTORY_AGE_HOURS: int = 4  # Don't use debates older than this for context
     CONFIRMATION_LOOP_THRESHOLD: int = 3  # Force skepticism if N+ consecutive same verdicts
+    TOURNAMENT_MODE: bool = True  # Use 4-stage tournament debate instead of simple adversarial
 
     # Layer 4: Reflective Memory (Dev 5)
     ENABLE_REFLECTIVE_MEMORY: bool = True

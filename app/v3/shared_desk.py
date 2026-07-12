@@ -58,6 +58,7 @@ _VALID_ARTIFACT_TYPES = frozenset({
     "regime_classification",
     "final_decision",
     "trade_decision",
+    "tournament_result",
 })
 
 # Max compressed context size to prevent context snowball
@@ -91,6 +92,7 @@ class SharedDesk:
     regime_classification: dict | None = None  # Market Regime Engine output
     final_decision: dict | None = None      # Board of Directors output
     trade_decision: dict | None = None      # Decision Synthesizer output (Layer 5)
+    tournament_result: dict | None = None    # Tournament Debate output (Layer 3 alt)
 
     # ── Phase outcome tracking ──
     phase_outcomes: dict[str, str] = field(default_factory=dict)

@@ -71,6 +71,12 @@ class DebateResult(BaseModel):
     total_tokens: int = 0
     persona_outcomes: dict = Field(default_factory=dict)
     minority_report: str = ""
+    # Tournament metadata (populated when tournament mode is active)
+    tournament_pitches: List[dict] = Field(default_factory=list)
+    tournament_survivors: List[dict] = Field(default_factory=list)
+    tournament_jury_verdict: dict = Field(default_factory=dict)
+    tournament_vetoed: bool = False
+    tournament_elapsed_seconds: float = 0.0
 
     class Config:
         frozen = True

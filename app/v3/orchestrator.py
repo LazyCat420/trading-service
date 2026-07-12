@@ -346,58 +346,145 @@ async def run_v3_pipeline(
     )
 
     # ═══════════════════════════════════════════════════════════════════
-    # LAYER 3: Debate — Parallel Execution: Bull & Bear → Judge
+    # LAYER 3: Debate — Tournament Mode or Classic Bull/Bear → Judge
     # ═══════════════════════════════════════════════════════════════════
-    from app.v3.agents import bull_agent, bear_agent
+    from app.config.config_cognition import cognition_settings as _cog_settings
 
-    # Run Bull and Bear concurrently
-    bull_task = _run_agent_with_circuit_breaker(
-        desk=desk,
-        agent_module=bull_agent,
-        phase_name="bull_argument",
-        breaker=breaker,
-        cycle_id=cycle_id,
-        bot_id=bot_id,
-        emit=emit,
-        include_debate_context=False,
-    )
-    bear_task = _run_agent_with_circuit_breaker(
-        desk=desk,
-        agent_module=bear_agent,
-        phase_name="bear_rebuttal",
-        breaker=breaker,
-        cycle_id=cycle_id,
-        bot_id=bot_id,
-        emit=emit,
-        include_debate_context=False,
-    )
-    
-    bull_outcome, bear_outcome = await asyncio.gather(bull_task, bear_task)
-    breaker.record_outcome("bull_argument", bull_outcome)
-    breaker.record_outcome("bear_rebuttal", bear_outcome)
+    if _cog_settings.TOURNAMENT_MODE:
+        # ── Tournament Mode: 4-Stage Pipeline ──
+        emit(
+            "analyzing", f"v3_tournament_{ticker}",
+            f"🏆 {ticker}: Tournament Debate starting (4-stage pipeline)",
+            status="running",
+        )
 
-    # Abort check: if BOTH debate agents failed, skip the judge
-    if bull_outcome in (PhaseOutcome.TIMED_OUT,) and bear_outcome in (PhaseOutcome.TIMED_OUT,):
-        logger.error("[V3] %s: Both debate agents TIMED OUT — aborting pipeline", ticker)
-        desk.advance_phase(DeskPhase.ABORTED, bull_outcome)
-        save_desk(desk)
-        return _build_noop_result(desk, reason="Both debate agents timed out")
-    if breaker.should_abort("bull_argument", bull_outcome) and breaker.should_abort("bear_rebuttal", bear_outcome):
-        logger.error("[V3] %s: Circuit breaker tripped on BOTH debate agents — aborting pipeline", ticker)
-        desk.advance_phase(DeskPhase.ABORTED, bull_outcome)
-        save_desk(desk)
-        return _build_noop_result(desk, reason="Both debate agents failed")
+        try:
+            from app.cognition.debate.tournament import run_tournament_debate
+            from app.cognition.contracts.evidence import EvidencePacket
 
-    # Synthesis / Judge phase (replacing the linear bull defense)
-    if desk.has_artifact("bull_argument") and desk.has_artifact("bear_rebuttal"):
-        outcome = await _run_debate_judge(
+            # Build a minimal EvidencePacket from SharedDesk research artifacts
+            packet = EvidencePacket(entity_id=ticker, structured_facts=[], claims=[])
+
+            # Inject research context from desk artifacts
+            for artifact_name in ("desk_note", "fundamental_report", "quant_report"):
+                artifact = getattr(desk, artifact_name, None)
+                if artifact and isinstance(artifact, dict):
+                    summary = artifact.get("summary", "")
+                    if summary:
+                        from app.cognition.contracts.evidence import StructuredFact
+                        packet.structured_facts.append(
+                            StructuredFact(
+                                fact_type=artifact_name,
+                                value=summary[:2000],
+                            )
+                        )
+
+            tournament_result = await run_tournament_debate(
+                ticker=ticker,
+                packet=packet,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+                position_context=None,
+            )
+
+            # Write tournament result to SharedDesk
+            desk.append_artifact("tournament_result", {
+                "summary": tournament_result.get("rationale", "Tournament complete"),
+                "action": tournament_result.get("action", "HOLD"),
+                "confidence": tournament_result.get("confidence", 0),
+                "winning_side": tournament_result.get("winning_side", "split"),
+                "pitches": tournament_result.get("pitches", []),
+                "survivors": tournament_result.get("survivors", []),
+                "jury_verdict": tournament_result.get("jury_verdict", {}),
+                "vetoed": tournament_result.get("jury_verdict", {}).get("vetoed", False),
+                "total_tokens": tournament_result.get("total_tokens", 0),
+            })
+
+            # Also write a debate_judge artifact for compatibility with Layer 4
+            desk.append_artifact("debate_judge", {
+                "summary": tournament_result.get("rationale", ""),
+                "action": tournament_result.get("action", "HOLD"),
+                "confidence": tournament_result.get("confidence", 0),
+                "winning_side": tournament_result.get("winning_side", "split"),
+                "source": "tournament_debate",
+            })
+
+            emit(
+                "analyzing", f"v3_tournament_done_{ticker}",
+                f"🏆 {ticker}: Tournament complete → {tournament_result.get('action', 'HOLD')} "
+                f"@ {tournament_result.get('confidence', 0)}% "
+                f"(winner: {tournament_result.get('winning_side', 'split')})",
+                status="ok",
+            )
+
+        except Exception as tournament_err:
+            logger.error(
+                "[V3] %s: Tournament debate failed, falling back to classic debate: %s",
+                ticker, tournament_err,
+                exc_info=True,
+            )
+            emit(
+                "analyzing", f"v3_tournament_fallback_{ticker}",
+                f"⚠️ {ticker}: Tournament failed, using classic debate",
+                status="warning",
+            )
+            # Fall through to classic debate below
+            _cog_settings_tournament_failed = True
+    else:
+        _cog_settings_tournament_failed = False
+
+    # Classic debate path (used when tournament is disabled or failed)
+    if not _cog_settings.TOURNAMENT_MODE or locals().get("_cog_settings_tournament_failed", False):
+        from app.v3.agents import bull_agent, bear_agent
+
+        # Run Bull and Bear concurrently
+        bull_task = _run_agent_with_circuit_breaker(
             desk=desk,
+            agent_module=bull_agent,
+            phase_name="bull_argument",
             breaker=breaker,
             cycle_id=cycle_id,
             bot_id=bot_id,
             emit=emit,
+            include_debate_context=False,
         )
-        breaker.record_outcome("debate_judge", outcome)
+        bear_task = _run_agent_with_circuit_breaker(
+            desk=desk,
+            agent_module=bear_agent,
+            phase_name="bear_rebuttal",
+            breaker=breaker,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            emit=emit,
+            include_debate_context=False,
+        )
+
+        bull_outcome, bear_outcome = await asyncio.gather(bull_task, bear_task)
+        breaker.record_outcome("bull_argument", bull_outcome)
+        breaker.record_outcome("bear_rebuttal", bear_outcome)
+
+        # Abort check: if BOTH debate agents failed, skip the judge
+        if bull_outcome in (PhaseOutcome.TIMED_OUT,) and bear_outcome in (PhaseOutcome.TIMED_OUT,):
+            logger.error("[V3] %s: Both debate agents TIMED OUT — aborting pipeline", ticker)
+            desk.advance_phase(DeskPhase.ABORTED, bull_outcome)
+            save_desk(desk)
+            return _build_noop_result(desk, reason="Both debate agents timed out")
+        if breaker.should_abort("bull_argument", bull_outcome) and breaker.should_abort("bear_rebuttal", bear_outcome):
+            logger.error("[V3] %s: Circuit breaker tripped on BOTH debate agents — aborting pipeline", ticker)
+            desk.advance_phase(DeskPhase.ABORTED, bull_outcome)
+            save_desk(desk)
+            return _build_noop_result(desk, reason="Both debate agents failed")
+
+        # Synthesis / Judge phase (replacing the linear bull defense)
+        if desk.has_artifact("bull_argument") and desk.has_artifact("bear_rebuttal"):
+            outcome = await _run_debate_judge(
+                desk=desk,
+                breaker=breaker,
+                cycle_id=cycle_id,
+                bot_id=bot_id,
+                emit=emit,
+            )
+            breaker.record_outcome("debate_judge", outcome)
 
     # Advance phase: RESEARCH_DONE → DEBATE_DONE
     desk.advance_phase(DeskPhase.DEBATE_DONE)
