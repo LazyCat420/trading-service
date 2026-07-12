@@ -44,6 +44,8 @@ async def run_v3_agent(
     emit: Any = None,
     timeout_seconds: float = 600.0,
     include_debate_context: bool = False,
+    custom_instructions: str = "",
+    parent_agent: str = "",
 ) -> PhaseOutcome:
     """Run a V3 agent against the SharedDesk.
 
@@ -98,6 +100,7 @@ async def run_v3_agent(
         f"v3_{agent_name}_{desk.ticker}",
         f"🔬 {desk.ticker}: V3 {agent_name} starting...",
         status="running",
+        data={"parent": parent_agent} if parent_agent else None,
     )
 
     try:
@@ -106,6 +109,16 @@ async def run_v3_agent(
 
         # Build the user prompt from SharedDesk context
         desk_context = desk.get_compressed_context(include_debate=include_debate_context)
+        
+        # Inject current whiteboard summary (if any entries exist) for collaborative blackboard context
+        try:
+            from app.agents.whiteboard import whiteboard
+            wb_summary = await whiteboard.summarize(ticker=desk.ticker, cycle_id=cycle_id)
+            if wb_summary:
+                system_prompt += f"\n\n{wb_summary}"
+        except Exception as wb_err:
+            logger.warning("[V3Runner] Failed to fetch whiteboard summary: %s", wb_err)
+
         user_prompt = (
             f"## Ticker: {desk.ticker}\n"
             f"## Cycle: {cycle_id}\n\n"
@@ -162,6 +175,15 @@ async def run_v3_agent(
             system_prompt += (
                 f"\n\n## SharedDesk Context Summary\n"
                 f"{desk_context}"
+            )
+
+        # Append custom peer instructions if requested
+        if custom_instructions:
+            user_prompt += (
+                f"\n## Peer Request / Instructions\n"
+                f"A peer agent requested your specific analysis:\n"
+                f"\"{custom_instructions}\"\n\n"
+                f"Address this request directly in your findings.\n\n"
             )
 
         # Append locale directive if set
