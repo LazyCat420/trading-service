@@ -13,7 +13,7 @@ services:
       - API_SERVER_KEY=sun-trading-secure-api-key-2026
       - SCRAPER_SERVICE_URL=http://10.0.0.16:8001
       - USE_LAZY_TOOL_SERVICE=true
-      - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:7778
+      - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:5591
       - PIPELINE_VERSION=v3
       - PYTHONPATH=/app/lazycat-sdk
       - CHART_OUTPUT_DIR=/app/data/charts
