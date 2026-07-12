@@ -262,4 +262,3 @@ def run_freshness_gate(
         len(eligible), len(stale),
     )
     return {"eligible": eligible, "stale": stale}
-""", "Description": "Freshness Gate pre-filter for PM agent. Classifies stocks as NEW/CHANGED/STALE using weighted composite delta score.", "Overwrite": false, "TargetFile": "/home/lazycat/github/projects/sun/trading-service/app/services/freshness_gate.py"}
