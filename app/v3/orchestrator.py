@@ -516,6 +516,15 @@ async def run_v3_pipeline(
             whiteboard.unsubscribe(whiteboard_subscriber)
             return _build_noop_result(desk, reason="Regime engine timed out")
 
+        if outcome == PhaseOutcome.SUCCESS and desk.regime_classification:
+            await whiteboard.write_section(
+                ticker=ticker,
+                cycle_id=cycle_id,
+                section="regime_classification",
+                content=desk.regime_classification,
+                author_agent="regime_engine"
+            )
+
         # Scheduler task processing loop
         loop_counter = 0
         MAX_LOOP_ITERATIONS = 20
