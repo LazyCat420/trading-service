@@ -320,13 +320,13 @@ def test_prism_client_agent_mapping():
         model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
         agent_name="maintenance_agent", ticker="", cycle_id="", enable_thinking=False
     )
-    assert p["agent"] == "CUSTOM_MARKET_SCOUT"
+    assert p["agent"] == "CUSTOM_SYSTEM_JANITOR_AGENT"
     
     p, _, _ = client.get_chat_payload_and_url(
         model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
         agent_name="data_janitor", ticker="", cycle_id="", enable_thinking=False
     )
-    assert p["agent"] == "CUSTOM_MARKET_SCOUT"
+    assert p["agent"] == "CUSTOM_SYSTEM_JANITOR_AGENT"
 
     # Test technical analysis mapping
     p, _, _ = client.get_chat_payload_and_url(
@@ -353,7 +353,7 @@ def test_prism_client_agent_mapping():
         model="test", messages=[], max_tokens=10, temperature=0.1, system_prompt="",
         agent_name="unknown_random_agent", ticker="", cycle_id="", enable_thinking=False
     )
-    assert p["agent"] == "CUSTOM_MARKET_SCOUT"
+    assert p["agent"] == "CUSTOM_SYSTEM_JANITOR_AGENT"
 
     # Test post_cycle_learner mapping
     p, _, _ = client.get_chat_payload_and_url(
