@@ -16,7 +16,7 @@ TOOL_WHITELIST = [
     "get_market_data",
     "get_finnhub_news",
     "get_institutional_holdings",
-    "search_web",
+    "lazy_web_search",
     "scrape_url",
 ]
 

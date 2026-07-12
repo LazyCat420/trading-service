@@ -13,7 +13,7 @@ TOOL_WHITELIST = [
     "get_technical_indicators",
     "get_institutional_holdings",
     "get_finnhub_news",
-    "search_web",
+    "lazy_web_search",
 ]
 
 SYSTEM_PROMPT = """You are the Market Regime Engine at a quantitative trading firm.

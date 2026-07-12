@@ -12,7 +12,7 @@ AGENT_NAME = "v3_junior_analyst"
 
 TOOL_WHITELIST = [
     "get_finnhub_news",
-    "search_web",
+    "lazy_web_search",
     "scrape_url",
     "get_market_data",
     "get_institutional_holdings",

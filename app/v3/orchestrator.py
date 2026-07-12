@@ -620,10 +620,11 @@ async def run_v3_pipeline(
     finally:
         whiteboard.unsubscribe(whiteboard_subscriber)
 
-    desk.advance_phase(DeskPhase.PM_DONE)
-    save_desk(desk)
-
-    # Persist cycle outcome to episodic memory (non-fatal)
+    try:
+        desk.advance_phase(DeskPhase.PM_DONE)
+        save_desk(desk)
+    except ValueError as e:
+        logger.error("[V3] %s: Pipeline failed before reaching PM_DONE. Status: %s. Error: %s", ticker, desk.phase, e)
     try:
         from app.services.memory.store import MemoryStore
         decision = desk.trade_decision or desk.final_decision or {}

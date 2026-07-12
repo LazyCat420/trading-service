@@ -11,7 +11,7 @@ ARTIFACT_TYPE = "portfolio_screener"
 
 TOOL_WHITELIST = [
     "mcp__lazy-tool-service__get_finnhub_news",
-    "search_web",
+    "lazy_web_search",
     "mcp__lazy-tool-service__get_market_data"
 ]
 

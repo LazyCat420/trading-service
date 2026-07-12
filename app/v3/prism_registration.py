@@ -76,7 +76,7 @@ async def register_v3_agents() -> dict[str, bool]:
             
             prefixed_whitelist = []
             for t in tool_whitelist:
-                if t.startswith("mcp__") or t.startswith("domain:") or t in ("search_web", "discover_and_enable_tools", "enable_tools", "disable_tools", "search_tools"):
+                if t.startswith("mcp__") or t.startswith("domain:") or t in ("discover_and_enable_tools", "enable_tools", "disable_tools", "search_tools"):
                     prefixed_whitelist.append(t)
                 else:
                     prefixed_whitelist.append(f"mcp__lazy-tool-service__{t}")
