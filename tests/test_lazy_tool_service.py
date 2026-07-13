@@ -44,6 +44,7 @@ async def test_lazy_tool_service_forwarding():
     """Test forwarding to lazy-tool-service when USE_LAZY_TOOL_SERVICE=true."""
     with patch.dict(os.environ, {
         "USE_LAZY_TOOL_SERVICE": "true",
+        "LAZY_TOOL_SERVICE_URL": "http://10.0.0.16:7788",
         "LAZY_TOOL_SERVICE_PORT": "7788",
     }):
         mock_client_instance = AsyncMock()
@@ -74,7 +75,7 @@ async def test_lazy_tool_service_forwarding():
 
             # Check request details
             mock_client_instance.post.assert_called_once_with(
-                "http://10.0.0.16:7778/execute/test_dummy_tool",
+                "http://10.0.0.16:7788/execute/test_dummy_tool",
                 json={"arguments": {"val": 42}}
             )
 
@@ -105,6 +106,7 @@ async def test_lazy_tool_service_http_failure():
     """Test that HTTP non-200 responses are handled gracefully."""
     with patch.dict(os.environ, {
         "USE_LAZY_TOOL_SERVICE": "true",
+        "LAZY_TOOL_SERVICE_URL": "http://10.0.0.16:7788",
         "LAZY_TOOL_SERVICE_PORT": "7788",
     }):
         mock_client_instance = AsyncMock()

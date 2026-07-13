@@ -307,6 +307,7 @@ async def run_agent(
             "system_prompt": system_prompt,
             "llm_client": prism_client,
             "project": settings.PROJECT_NAME,
+            "username": settings.PRISM_USERNAME,
             "auto_approve": overrides.get("prism_auto_approve", True),
         }
         resolved_model = model_override
