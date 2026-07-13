@@ -7,16 +7,17 @@ Endpoint:
 This is the endpoint fetched by AgenticChart.jsx in the trading-client:
     fetch(`/tools-api/charts/${ticker}.json`)
 
-The trading-client proxies /tools-api/* to the lazy-agent-service (port 5591),
-BUT the trading-service also needs to expose its own /charts endpoint so that
-the lazy-agent-service can redirect to it, or the charting tool can write
-JSON to a shared volume served by both.
+The trading-client proxies /tools-api/* to the lazy-tool-service (port 5591),
+which then routes it internally. If a chart is requested,
+the lazy-tool-service can redirect to it, or the charting tool can write
+directly to the shared volume mount.
 
-The simpler approach used here:
-- The trading-service writes chart JSON to /app/data/charts/{TICKER}.json
+This router serves charts directly from trading-service locally as a backup,
+or if the client wants to hit trading-service directly
+  instead of lazy-tool-service for chart data/charts/{TICKER}.json
 - This endpoint reads and returns it directly
 - The trading-client's tools-api proxy can be updated to hit trading-service
-  instead of lazy-agent-service for chart data
+  instead of lazy-tool-service for chart data
 
 For backward compat with the existing /tools-api proxy route hitting 5591,
 both services should have this route available.

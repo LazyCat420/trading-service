@@ -510,8 +510,8 @@ class BootService:
                 {
                     "project": "coding",
                     "username": "admin",
-                    "name": "lazy-agent-service",
-                    "displayName": "Lazy Agent Service",
+                    "name": "lazy-tool-service",
+                    "displayName": "Lazy Tool Service",
                     "transport": "sse",
                     "url": mcp_url,
                     "enabled": True,

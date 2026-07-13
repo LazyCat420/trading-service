@@ -27,7 +27,7 @@ from app.tools.registry import registry
 logger = logging.getLogger(__name__)
 
 # CHART_OUTPUT_DIR env var overrides the default.
-# In the lazy-agent-service container: /app/data/charts (volume-mounted).
+# In the lazy-tool-service container: /app/data/charts (volume-mounted).
 # Locally / trading-service: falls back to the sibling data/charts directory.
 _default_charts_dir = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../../data/charts")

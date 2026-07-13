@@ -1,13 +1,13 @@
 import asyncio
 import pytest
 from app.v3.orchestrator import _run_agent_with_circuit_breaker
-from app.v3.shared_desk import SharedDesk, Phase
-from app.v3.circuit_breaker import CircuitBreaker
+from app.v3.shared_desk import SharedDesk, DeskPhase
+from app.v3.guardrails import CircuitBreaker
 
 @pytest.mark.asyncio
 async def test_regime_engine_failure_mode():
     desk = SharedDesk("META")
-    breaker = CircuitBreaker("META")
+    breaker = CircuitBreaker()
     
     # Mock agent_module
     class MockRegimeEngine:
@@ -26,12 +26,12 @@ async def test_regime_engine_failure_mode():
     # Let's just patch it.
     
     import app.v3.agent_runner
-    original_run_agent = app.v3.agent_runner.run_agent
+    original_run_agent = app.v3.agent_runner.run_v3_agent
     
     def mocked_run_agent(*args, **kwargs):
         return None  # Simulate failure
         
-    app.v3.agent_runner.run_agent = mocked_run_agent
+    app.v3.agent_runner.run_v3_agent = mocked_run_agent
     
     try:
         outcome = await _run_agent_with_circuit_breaker(
@@ -45,17 +45,17 @@ async def test_regime_engine_failure_mode():
         )
         
         print(f"Outcome: {outcome}")
-        print(f"Desk Phase after failure: {desk.current_phase}")
+        print(f"Desk Phase after failure: {desk.phase}")
         
         # Now simulate orchestrator's wrap-up
         try:
-            desk.transition(Phase.PM_DONE)
+            desk.advance_phase(DeskPhase.PM_DONE)
             print("Successfully transitioned to PM_DONE (THIS SHOULD NOT HAPPEN)")
         except Exception as e:
             print(f"Orchestrator crash reproduced! Exception: {e}")
             
     finally:
-        app.v3.agent_runner.run_agent = original_run_agent
+        app.v3.agent_runner.run_v3_agent = original_run_agent
 
 if __name__ == "__main__":
     asyncio.run(test_regime_engine_failure_mode())
