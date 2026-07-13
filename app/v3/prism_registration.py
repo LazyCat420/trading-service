@@ -118,29 +118,46 @@ async def register_v3_agents() -> dict[str, bool]:
             )
             results[module_path] = False
 
-    # Register fallback agent
-    fallback_agent_id = "CUSTOM_SYSTEM_JANITOR_AGENT"
-    try:
-        agent_success = True
-        for target_url in urls:
-            try:
-                temp_client = PrismClientClass()
-                temp_client.url = target_url
-                success = await temp_client.register_or_update_custom_agent(
-                    name="SYSTEM_JANITOR_AGENT",
-                    identity="You are a system fallback agent handling triage.",
-                    guidelines=_V3_COMMON_GUIDELINES,
-                    enabled_tools=["mcp__lazy-tool-service__lazy_web_search"],
-                )
-                if not success:
+    # Register core custom agents and fallback agents
+    core_agents = {
+        "CUSTOM_SYSTEM_JANITOR_AGENT": "SYSTEM_JANITOR_AGENT",
+        "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT": "TRADING_CYCLE_ANALYSIS_AGENT",
+        "CUSTOM_QUANT_RESEARCH_AGENT": "QUANT_RESEARCH_AGENT",
+        "CUSTOM_TECHNICAL_ANALYSIS_AGENT": "TECHNICAL_ANALYSIS_AGENT",
+        "CUSTOM_AGENT_ARCHITECT": "AGENT_ARCHITECT",
+        "CUSTOM_AGENT_BUDGET_MANAGER": "AGENT_BUDGET_MANAGER",
+        "CUSTOM_BULLISH_DEBATER": "BULLISH_DEBATER",
+        "CUSTOM_MARKET_ALPHA": "MARKET_ALPHA",
+        "CUSTOM_RETRIEVER_AGENT": "RETRIEVER_AGENT",
+        "CUSTOM_VERIFIER_AGENT": "VERIFIER_AGENT",
+        "CUSTOM_SYNTHESIZER_AGENT": "SYNTHESIZER_AGENT",
+        "CUSTOM_PRE_TRADE_AGENT": "PRE_TRADE_AGENT",
+        "CUSTOM_META_AUDIT_AGENT": "META_AUDIT_AGENT",
+        "CUSTOM_DEBATE_COORDINATOR": "DEBATE_COORDINATOR",
+    }
+
+    for agent_id, agent_name in core_agents.items():
+        try:
+            agent_success = True
+            for target_url in urls:
+                try:
+                    temp_client = PrismClientClass()
+                    temp_client.url = target_url
+                    success = await temp_client.register_or_update_custom_agent(
+                        name=agent_name,
+                        identity=f"You are a core custom agent ({agent_name}) handling trading analysis and auxiliary tasks.",
+                        guidelines=_V3_COMMON_GUIDELINES,
+                        enabled_tools=["mcp__lazy-tool-service__lazy_web_search"],
+                    )
+                    if not success:
+                        agent_success = False
+                        logger.warning("[V3Prism] Failed to register core agent %s at %s", agent_id, target_url)
+                except Exception as ex:
                     agent_success = False
-                    logger.warning("[V3Prism] Failed to register fallback agent %s at %s", fallback_agent_id, target_url)
-            except Exception as ex:
-                agent_success = False
-                logger.error("[V3Prism] Exception registering fallback agent %s at %s: %s", fallback_agent_id, target_url, ex)
-        results[fallback_agent_id] = agent_success
-    except Exception as e:
-        logger.error("[V3Prism] Error registering fallback agent %s: %s", fallback_agent_id, e)
+                    logger.error("[V3Prism] Exception registering core agent %s at %s: %s", agent_id, target_url, ex)
+            results[agent_id] = agent_success
+        except Exception as e:
+            logger.error("[V3Prism] Error registering core agent %s: %s", agent_id, e)
 
     logger.info(
         "[V3Prism] Registration complete: %d/%d agents registered",

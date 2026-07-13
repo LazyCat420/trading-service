@@ -1046,6 +1046,51 @@ def _build_v1_compatible_result(
     except Exception:
         pass
 
+    # Build v2_metadata for backward compatibility with the frontend's debate view
+    v2_debate = {
+        "judge_action": action,
+        "judge_confidence": confidence,
+        "winning_side": "split",
+        "integrity_status": "passed",
+        "transcript": ""
+    }
+
+    if desk.tournament_result:
+        tr = desk.tournament_result
+        v2_debate["winning_side"] = tr.get("winning_side", "split")
+        v2_debate["judge_action"] = tr.get("action", action)
+        v2_debate["judge_confidence"] = tr.get("confidence", confidence)
+        v2_debate["integrity_status"] = "vetoed" if tr.get("vetoed") else "passed"
+        
+        transcript_parts = []
+        transcript_parts.append(f"🏆 TOURNAMENT DEBATE SUMMARY:\n{tr.get('summary', '')}\n")
+        transcript_parts.append("📐 PITCHES GENERATED:")
+        for p in tr.get("pitches", []):
+            transcript_parts.append(f"  • {p.get('persona', '?')}: {p.get('claim', '')} (Equation: {p.get('equation', '')})")
+        transcript_parts.append("\n🛡️ BACKTEST SURVIVORS:")
+        for s in tr.get("survivors", []):
+            transcript_parts.append(f"  • {s.get('persona', '?')}: {s.get('claim', '')} (Backtest PnL: {s.get('backtest_pnl', 0):.2f}%)")
+        jury = tr.get("jury_verdict", {})
+        if jury:
+            transcript_parts.append(f"\n⚖️ JURY VERDICT: Average Score: {jury.get('average_score', 5.0)}/10 | Vetoed: {jury.get('vetoed', False)}")
+        v2_debate["transcript"] = "\n".join(transcript_parts)
+    else:
+        # Classic debate fallbacks
+        d_res = _extract_debate_result(desk)
+        if d_res:
+            v2_debate["winning_side"] = d_res.get("winning_side", "tie")
+            v2_debate["judge_action"] = d_res.get("action", action)
+            v2_debate["judge_confidence"] = d_res.get("confidence", confidence)
+            
+            transcript_parts = []
+            if desk.bull_argument:
+                transcript_parts.append(f"🟢 BULL THESIS (Confidence: {desk.bull_argument.get('confidence', 0)}%):\n{desk.bull_argument.get('summary', '')}\n")
+            if desk.bear_rebuttal:
+                transcript_parts.append(f"🔴 BEAR REBUTTAL (Confidence: {desk.bear_rebuttal.get('confidence', 0)}%):\n{desk.bear_rebuttal.get('summary', '')}\n")
+            if desk.debate_judge:
+                transcript_parts.append(f"⚖️ JUDGE VERDICT (Confidence: {desk.debate_judge.get('confidence', 0)}%):\n{desk.debate_judge.get('summary', '')}\n")
+            v2_debate["transcript"] = "\n".join(transcript_parts)
+
     return {
         "ticker": desk.ticker,
         "action": action,
@@ -1073,6 +1118,10 @@ def _build_v1_compatible_result(
         "total_tokens": total_tokens,
         "total_time_s": round(elapsed_s, 2),
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "v2_metadata": {
+            "debate": v2_debate,
+            "stages_completed": ["regime_classification", "research", "debate", "decision"],
+        },
         "v3_metadata": {
             "pipeline_version": "v3",
             "phase": desk.phase.value,

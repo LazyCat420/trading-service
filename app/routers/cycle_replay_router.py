@@ -529,12 +529,68 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                 "desk_note", "fundamental_report", "quant_report",
                 "bull_argument", "bear_rebuttal", "bull_defense",
                 "debate_judge", "regime_classification",
-                "final_decision", "trade_decision",
+                "final_decision", "trade_decision", "tournament_result",
             ]
             for key in artifact_keys:
                 val = desk_data.get(key)
                 if val:
                     artifacts[key] = val
+
+            # Get whiteboard entries & annotations directly
+            wb_entries = []
+            try:
+                wb_rows = db.execute(
+                    """
+                    SELECT id, section, content, author_agent, version, edited_by, created_at
+                    FROM whiteboard_entries
+                    WHERE cycle_id = %s AND ticker = %s
+                    ORDER BY created_at ASC
+                    """,
+                    [cycle_id, ticker],
+                ).fetchall()
+
+                for row in (wb_rows or []):
+                    entry_id = row[0]
+                    section = row[1]
+                    content_raw = row[2]
+                    content = content_raw
+                    if isinstance(content_raw, str):
+                        try:
+                            content = json.loads(content_raw)
+                        except Exception:
+                            pass
+
+                    ann_rows = db.execute(
+                        """
+                        SELECT author_agent, note, created_at
+                        FROM whiteboard_annotations
+                        WHERE entry_id = %s
+                        ORDER BY created_at ASC
+                        """,
+                        [entry_id],
+                    ).fetchall()
+
+                    annotations = [
+                        {
+                            "author": a[0],
+                            "note": a[1],
+                            "created_at": a[2].isoformat() if a[2] else None
+                        }
+                        for a in (ann_rows or [])
+                    ]
+
+                    wb_entries.append({
+                        "id": entry_id,
+                        "section": section,
+                        "content": content,
+                        "author": row[3],
+                        "version": row[4],
+                        "edited_by": row[5],
+                        "created_at": row[6].isoformat() if row[6] else None,
+                        "annotations": annotations
+                    })
+            except Exception as wb_err:
+                logger.warning("Failed to load whiteboard entries: %s", wb_err)
 
             return {
                 "cycle_id": cycle_id,
@@ -545,6 +601,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                 "artifacts": artifacts,
                 "tool_calls": tools,
                 "trade_result": trade_result,
+                "whiteboard_entries": wb_entries,
                 "total_agent_ms": sum(a["elapsed_ms"] for a in agents),
                 "total_tool_calls": len(tools),
             }

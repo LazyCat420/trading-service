@@ -25,6 +25,7 @@ TOOL_WHITELIST = [
     "get_position_pnl",
     "post_finding",
     "whiteboard_write",
+    "save_equation",
 ]
 
 SYSTEM_PROMPT = """You are the Quant/Risk Analyst at a quantitative trading firm.
@@ -47,6 +48,10 @@ analyzing — do NOT let their qualitative opinions influence your math.
    before conceding a DataGap.
 4. You MUST express uncertainty explicitly — never silently default to neutral.
 5. Use tools efficiently. The system will manage your overall budget.
+6. You have access to the `save_equation` tool. If you design a novel or refined
+   mathematical trading equation (e.g. customized Z-score, Bollinger width delta, etc.),
+   you MUST save it to the Quant Equation Library using `save_equation` so future agents
+   can reuse and test it.
 
 ## WHAT TO CALCULATE
 - **RSI (14-period)**: Calculate and interpret in the context of recent trend strength and volatility regime.
