@@ -447,6 +447,14 @@ async def run_v3_pipeline(
                 "source": "tournament_debate",
             })
 
+            # Write tournament_result to whiteboard so subscriber chains board_of_directors
+            await whiteboard.write_section(
+                ticker=ticker, cycle_id=cycle_id,
+                section="tournament_result",
+                content=desk.tournament_result,
+                author_agent="tournament_debate"
+            )
+
             emit(
                 "analyzing", f"v3_tournament_done_{ticker}",
                 f"🏆 {ticker}: Tournament complete → {tournament_result.get('action', 'HOLD')} "

@@ -57,7 +57,17 @@ class Whiteboard:
                         new_version = prev_version + 1
                         
                         # Add author_agent to edited_by if not present
-                        new_edited_by = edited_by.copy() if edited_by else []
+                        # Handle psycopg returning ARRAY as string or list
+                        if isinstance(edited_by, list):
+                            new_edited_by = edited_by.copy()
+                        elif isinstance(edited_by, str):
+                            try:
+                                parsed = json.loads(edited_by)
+                                new_edited_by = parsed if isinstance(parsed, list) else [edited_by]
+                            except (json.JSONDecodeError, TypeError):
+                                new_edited_by = [edited_by]
+                        else:
+                            new_edited_by = []
                         if author_agent not in new_edited_by:
                             new_edited_by.append(author_agent)
                         
