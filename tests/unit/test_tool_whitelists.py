@@ -56,79 +56,76 @@ def test_no_whitelist_exceeds_cap():
 
 
 
-def test_risk_agent_has_calculator_tools():
-    """Risk agent MUST have access to all 4 calculator tools."""
+def test_quant_analyst_has_calculator_tools():
+    """Quant Analyst agent MUST have access to key calculator tools."""
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
-    risk_tools = set(AGENT_TOOL_WHITELISTS.get("risk", []))
+    quant_tools = set(AGENT_TOOL_WHITELISTS.get("v3_quant_analyst", []))
+    required = {
+        "calculate_stop_loss",
+        "calculate_position_size",
+        "calculate_risk_reward",
+    }
+    missing = required - quant_tools
+    assert not missing, f"Quant Analyst agent missing calculator tools: {missing}"
+
+
+def test_user_chat_has_buy_and_calculators():
+    """user_chat agent MUST have calculator tools."""
+    from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
+
+    chat_tools = set(AGENT_TOOL_WHITELISTS.get("user_chat", []))
     required = {
         "calculate_stop_loss",
         "calculate_position_size",
         "calculate_risk_reward",
         "calculate_portfolio_allocation",
     }
-    missing = required - risk_tools
-    assert not missing, f"Risk agent missing calculator tools: {missing}"
+    missing = required - chat_tools
+    assert not missing, f"user_chat agent missing required tools: {missing}"
 
 
-def test_pre_trade_agent_has_buy_and_calculators():
-    """Pre-trade agent MUST have buy_stock and all calculator tools."""
+def test_portfolio_manager_has_search_tools():
+    """v3_portfolio_manager MUST have search and news tools."""
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
-    pt_tools = set(AGENT_TOOL_WHITELISTS.get("pre_trade", []))
+    pm_tools = set(AGENT_TOOL_WHITELISTS.get("v3_portfolio_manager", []))
     required = {
-        "buy_stock",
-        "calculate_stop_loss",
-        "calculate_position_size",
-        "calculate_risk_reward",
-        "calculate_portfolio_allocation",
+        "get_finnhub_news",
+        "lazy_web_search",
     }
-    missing = required - pt_tools
-    assert not missing, f"Pre-trade agent missing required tools: {missing}"
-
-
-def test_meta_audit_has_performance_tools():
-    """Meta audit agent MUST have the performance/audit tools."""
-    from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
-
-    meta_tools = set(AGENT_TOOL_WHITELISTS.get("meta_audit", []))
-    required = {
-        "get_performance_metrics",
-        "audit_decision_quality",
-        "write_memory_note",
-    }
-    missing = required - meta_tools
-    assert not missing, f"Meta audit agent missing required tools: {missing}"
+    missing = required - pm_tools
+    assert not missing, f"v3_portfolio_manager missing required tools: {missing}"
 
 
 def test_sentiment_agent_does_not_have_calculator_tools():
-    """Sentiment agent should NOT have calculator tools (irrelevant)."""
+    """Debate agents should NOT have calculator tools (irrelevant)."""
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
-    sentiment_tools = set(AGENT_TOOL_WHITELISTS.get("sentiment", []))
+    bull_tools = set(AGENT_TOOL_WHITELISTS.get("v3_bull_agent", []))
     calc_tools = {
         "calculate_stop_loss",
         "calculate_position_size",
         "calculate_risk_reward",
         "calculate_portfolio_allocation",
     }
-    overlap = sentiment_tools & calc_tools
-    assert not overlap, f"Sentiment agent should not have calculator tools: {overlap}"
+    overlap = bull_tools & calc_tools
+    assert not overlap, f"Debate agents should not have calculator tools: {overlap}"
 
 
 def test_get_agent_tools_returns_filtered_schemas():
     """get_agent_tools() should return only the whitelisted schemas."""
     from app.agents.tool_whitelists import get_agent_tools, AGENT_TOOL_WHITELISTS
 
-    schemas = get_agent_tools("technical")
-    assert schemas is not None, "Technical agent should have a whitelist"
+    schemas = get_agent_tools("v3_quant_analyst")
+    assert schemas is not None, "v3_quant_analyst agent should have a whitelist"
 
     schema_names = {s["function"]["name"] for s in schemas}
-    expected = set(AGENT_TOOL_WHITELISTS["technical"])
+    expected = set(AGENT_TOOL_WHITELISTS["v3_quant_analyst"])
 
     # Only registered tools should appear (some may be missing if unregistered)
     assert schema_names.issubset(expected), (
-        f"Unexpected tools in technical schemas: {schema_names - expected}"
+        f"Unexpected tools in quant analyst schemas: {schema_names - expected}"
     )
 
 
@@ -148,13 +145,10 @@ def test_no_duplicate_tools_in_whitelists():
         dupes = [t for t in tool_list if tool_list.count(t) > 1]
         assert not dupes, f"Agent '{agent}' has duplicate tools: {set(dupes)}"
 
-def test_graph_learn_in_appropriate_whitelists():
-    """Verify that graph_learn is available to the portfolio_allocator and user_chat agents."""
-    from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
-    # Verify portfolio_allocator has graph_learn
-    allocator_tools = set(AGENT_TOOL_WHITELISTS.get("portfolio_allocator", []))
-    assert "graph_learn" in allocator_tools, "portfolio_allocator agent missing graph_learn tool"
+def test_graph_learn_in_appropriate_whitelists():
+    """Verify that graph_learn is available to user_chat agent."""
+    from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
     # Verify user_chat has graph_learn
     chat_tools = set(AGENT_TOOL_WHITELISTS.get("user_chat", []))

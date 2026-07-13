@@ -169,7 +169,11 @@ async def select_tools_for_task(
             )
             return available_tool_schemas
 
-        # Force-include critical charting tool if available
+        # Force-include critical charting tool if available and not already selected
+        if "save_trading_chart" in available_names and "save_trading_chart" not in valid_names:
+            if "quant" in agent_name or "technical" in agent_name:
+                valid_names.append("save_trading_chart")
+                logger.info("[ToolSelector] Force-included 'save_trading_chart' for agent '%s'", agent_name)
 
         # Build the filtered schema list
         selected_schemas = [

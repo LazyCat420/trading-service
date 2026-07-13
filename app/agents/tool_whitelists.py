@@ -143,6 +143,7 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "whiteboard_write",
         "whiteboard_read",
         "whiteboard_summarize",
+        "save_trading_chart",
     ],
     "v3_bull_agent": [
         "whiteboard_read",
@@ -211,7 +212,7 @@ def get_agent_tools(agent_name: str, domain_blocklist: list[str] | None = None) 
     """Resolve tool schemas for a given agent from the whitelist.
 
     Args:
-        agent_name: The agent's name key in AGENT_TOOL_WHITELISTS.
+        agent_name: The agent's name key in AGENT_TOOL_WHITELISTS or the persona store.
         domain_blocklist: Optional list of tool domains to exclude from
             the agent's available tools (e.g. ["Health", "Gaming"]).
             Only affects dynamically discovered tools — whitelisted tools
@@ -221,12 +222,29 @@ def get_agent_tools(agent_name: str, domain_blocklist: list[str] | None = None) 
         A filtered list of tool schemas if the agent has a whitelist,
         or None if the agent should receive all tools (legacy behavior).
     """
-    if agent_name not in AGENT_TOOL_WHITELISTS:
-        return None
-
     from app.tools.registry import registry
+    from app.db.agent_persona_store import _load_store
 
-    tool_names = AGENT_TOOL_WHITELISTS[agent_name]
+    tool_names = None
+    
+    # 1. Try to get allowed_tools from the dynamic persona store (Agent Studio UI)
+    try:
+        store = _load_store()
+        for p in store.values():
+            if (p.get("role") == agent_name or p.get("name") == agent_name) and p.get("is_active", True):
+                if p.get("allowed_tools"):
+                    tool_names = p.get("allowed_tools")
+                break
+    except Exception as e:
+        logger.warning(f"[ToolWhitelist] Failed to load dynamic tools for {agent_name}: {e}")
+
+    # 2. Fallback to hardcoded whitelist
+    if tool_names is None:
+        if agent_name in AGENT_TOOL_WHITELISTS:
+            tool_names = AGENT_TOOL_WHITELISTS[agent_name]
+        else:
+            return None
+
     schemas = registry.get_schemas_by_names(tool_names)
 
     # Filter out blocked domains (only for non-whitelisted tools that
@@ -273,12 +291,27 @@ def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
         A list of tool name strings. If the agent has no whitelist, returns
         all registry tool names + meta-tools.
     """
-    if agent_name in AGENT_TOOL_WHITELISTS:
-        base_names = list(AGENT_TOOL_WHITELISTS[agent_name])
-    else:
-        # No whitelist — agent gets all registered tools
-        from app.tools.registry import registry
-        base_names = list(registry.tools.keys())
+    from app.db.agent_persona_store import _load_store
+    
+    base_names = None
+    
+    try:
+        store = _load_store()
+        for p in store.values():
+            if (p.get("role") == agent_name or p.get("name") == agent_name) and p.get("is_active", True):
+                if p.get("allowed_tools"):
+                    base_names = list(p.get("allowed_tools"))
+                break
+    except Exception as e:
+        logger.warning(f"[ToolWhitelist] Failed to load dynamic enabledTools for {agent_name}: {e}")
+
+    if base_names is None:
+        if agent_name in AGENT_TOOL_WHITELISTS:
+            base_names = list(AGENT_TOOL_WHITELISTS[agent_name])
+        else:
+            # No whitelist — agent gets all registered tools
+            from app.tools.registry import registry
+            base_names = list(registry.tools.keys())
 
     # V3 agents get ONLY their strict whitelists — no dynamic discovery.
     # discover_and_enable_tools caused agents to pull in 766 tools and

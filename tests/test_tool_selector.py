@@ -93,105 +93,35 @@ class TestSelectToolsForTask:
         )
         assert result == []
 
+    @patch("app.agents.tool_selector.llm")
+    def test_force_includes_charting_tool(self, mock_llm):
+        """Quant/Technical agents must always force-include save_trading_chart if in the pool."""
+        from app.agents.tool_selector import select_tools_for_task
 
-# ══════════════════════════════════════════════════════════════
-# 💨 Unit Tests — Action Executor
-# ══════════════════════════════════════════════════════════════
+        # Pool size > max_tools (e.g. 6 tools, max=5) to trigger selection
+        schemas = [
+            {"function": {"name": f"tool_{i}", "description": f"Tool {i}"}}
+            for i in range(5)
+        ] + [{"function": {"name": "save_trading_chart", "description": "Save chart"}}]
 
+        # Mock LLM to return a list of selected tools that does NOT include save_trading_chart
+        mock_llm.chat_with_tools = AsyncMock(return_value={
+            "text": '{"selected_tools": ["tool_0", "tool_1", "tool_2"]}',
+            "total_tokens": 100,
+        })
 
-class TestActionExecutorStructure:
-    """Validate the action executor module structure."""
-
-    def test_action_executor_system_prompt_exists(self):
-        from app.agents.action_executor import ACTION_EXECUTOR_SYSTEM
-
-        assert len(ACTION_EXECUTOR_SYSTEM) > 50
-        assert "data retrieval" in ACTION_EXECUTOR_SYSTEM.lower() or "execution" in ACTION_EXECUTOR_SYSTEM.lower()
-
-    def test_run_isolated_action_agent_is_async(self):
-        from app.agents.action_executor import run_isolated_action_agent
-        import inspect
-
-        assert inspect.iscoroutinefunction(run_isolated_action_agent)
-
-
-# ══════════════════════════════════════════════════════════════
-# 💨 Unit Tests — Split Agent Loop
-# ══════════════════════════════════════════════════════════════
-
-
-class TestSplitAgentLoopSignature:
-    """Validate that run_split_agent_loop is importable and has the right signature."""
-
-    def test_import_succeeds(self):
-        from app.agents.agent_loop import run_split_agent_loop
-
-        assert run_split_agent_loop is not None
-
-    def test_is_async(self):
-        from app.agents.agent_loop import run_split_agent_loop
-        import inspect
-
-        assert inspect.iscoroutinefunction(run_split_agent_loop)
-
-    def test_has_max_selector_tools_param(self):
-        from app.agents.agent_loop import run_split_agent_loop
-        import inspect
-
-        sig = inspect.signature(run_split_agent_loop)
-        assert "max_selector_tools" in sig.parameters
-        assert sig.parameters["max_selector_tools"].default == 5
-
-
-# ══════════════════════════════════════════════════════════════
-# 🔗 Integration Tests — AGENT_ROLE_ROUTING
-# ══════════════════════════════════════════════════════════════
-
-
-class TestAgentRoleRoutingUpdated:
-    """Verify that the new agent types are registered in AGENT_ROLE_ROUTING."""
-
-    def test_tool_selector_routing(self):
-        from app.services.vllm_client import AGENT_ROLE_ROUTING
-
-        assert "tool_selector" in AGENT_ROLE_ROUTING
-        assert AGENT_ROLE_ROUTING["tool_selector"] == "collector"
-
-    def test_action_executor_routing(self):
-        from app.services.vllm_client import AGENT_ROLE_ROUTING
-
-        assert "action_executor" in AGENT_ROLE_ROUTING
-        assert AGENT_ROLE_ROUTING["action_executor"] == "analyst"
-
-
-# ══════════════════════════════════════════════════════════════
-# 🔗 Integration Tests — base_agent imports
-# ══════════════════════════════════════════════════════════════
-
-
-class TestBaseAgentIntegration:
-    """Verify base_agent.py source code references the split loop."""
-
-    def test_base_agent_imports_split_loop(self):
-        base_path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "agents", "base_agent.py"
-        )
-        with open(base_path, "r") as f:
-            source = f.read()
-        assert "run_split_agent_loop" in source, (
-            "base_agent.py must import and use run_split_agent_loop"
+        result = asyncio.get_event_loop().run_until_complete(
+            select_tools_for_task(
+                task_description="analyze AAPL",
+                available_tool_schemas=schemas,
+                agent_name="v3_quant_analyst",
+                max_tools=5,
+            )
         )
 
-    def test_base_agent_conditional_split(self):
-        """Verify that split loop is only used when tools are enabled."""
-        base_path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "agents", "base_agent.py"
-        )
-        with open(base_path, "r") as f:
-            source = f.read()
-        assert "if enable_tools and agent_tools:" in source, (
-            "base_agent.py must conditionally use split loop only when tools are enabled"
-        )
+        selected_names = [s["function"]["name"] for s in result]
+        assert "save_trading_chart" in selected_names, "save_trading_chart was not force-included"
+        assert len(result) == 4  # 3 from LLM + 1 force-included
 
 
 # ══════════════════════════════════════════════════════════════

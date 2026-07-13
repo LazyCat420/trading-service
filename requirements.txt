@@ -239,6 +239,7 @@ packaging==26.2
     # via
     #   onnxruntime
     #   pandera
+    #   plotly
     #   pytest
     #   pytest-rerunfailures
     #   wheel
@@ -263,6 +264,8 @@ piper-tts==1.4.2
     # via -r requirements.in
 platformdirs==4.9.6
     # via yfinance
+plotly==5.22.0
+    # via -r requirements.in
 pluggy==1.6.0
     # via pytest
 portalocker==3.2.0
@@ -441,6 +444,7 @@ tenacity==9.1.4
     #   -r requirements.in
     #   deepeval
     #   google-genai
+    #   plotly
     #   stamina
 textdistance==4.6.3
     # via edgartools
