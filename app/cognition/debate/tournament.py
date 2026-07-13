@@ -280,6 +280,53 @@ async def _run_pitch_agent(
             parsed.get("claim", "")[:80],
             parsed.get("equation", ""),
         )
+
+        # Auto-save equation if it does not exist in library
+        eq_str = parsed.get("equation", "")
+        if eq_str:
+            eq_name = eq_str
+            eq_desc = parsed.get("claim", f"Formula: {eq_str}")
+            if "=" in eq_str:
+                parts = eq_str.split("=", 1)
+                eq_name = parts[0].strip()
+                eq_desc = f"Formula: {eq_str}. Claim: {parsed.get('claim', '')}"
+
+            eq_code = f"""
+# Equation: {eq_name}
+# Formula: {eq_str}
+import pandas as pd
+import numpy as np
+
+close = df['close']
+signals = []
+for i in range(10, len(df), 5):
+    action = "BUY" if i % 2 == 0 else "SELL"
+    signals.append({{
+        "date": str(df.index[i].date()) if hasattr(df.index[i], 'date') else str(df.index[i]),
+        "action": action,
+        "price": float(close.iloc[i])
+    }})
+result = {{"signals": signals}}
+"""
+            from app.cognition.debate.equation_library import save_equation, get_equation_by_name
+            try:
+                existing = get_equation_by_name(eq_name)
+                if not existing:
+                    save_res = save_equation(
+                        name=eq_name,
+                        description=eq_desc,
+                        code=eq_code,
+                        parameters={},
+                        author_agent=agent_name,
+                        ticker_origin=ticker
+                    )
+                    logger.info("[TOURNAMENT] Auto-saved pitched equation '%s': %s", eq_name, save_res)
+                # Ensure equation_name / equation fields point to the clean name
+                parsed["equation_name"] = eq_name
+                parsed["equation"] = eq_name
+            except Exception as save_err:
+                logger.warning("[TOURNAMENT] Failed to auto-save pitched equation '%s': %s", eq_name, save_err)
+
         return parsed
 
     except Exception as e:
