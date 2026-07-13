@@ -38,7 +38,7 @@ from app.cognition.debate.debate_coordinator import (
     _build_evidence_header,
     filter_packet_for_persona,
 )
-from app.tools.registry import registry
+
 from app.utils.text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)
@@ -176,13 +176,44 @@ async def _run_pitch_agent(
     cycle_id: str,
     bot_id: str,
 ) -> dict | None:
-    """Run a single pitch persona agent."""
-    # Fetch available equations
+    """Run a single pitch persona agent.
+
+    Uses llm.chat() (which routes through resolve_agent_id) instead of
+    llm.chat_with_tools() (which bypasses it and causes prism 500 errors).
+    Equation library data is pre-computed and injected into the prompt.
+    """
+    agent_name = f"tournament_pitch_{persona_name.lower()}"
+
+    # ── Pre-compute equation library data ────────────────────────────
     equations = search_equations("", top_k=15)
     eq_summary = "\n".join(
         f"- {e['name']}: {e['description']} (win_rate={e['win_rate_pct']}%, sharpe={e['sharpe_ratio']:.2f})"
         for e in equations
-    ) if equations else "No equations in library yet. You should create one."
+    ) if equations else "No equations in library yet."
+
+    # Try to execute the most relevant equations for this persona's focus
+    eq_results_text = ""
+    if equations:
+        focus_keywords = persona_config["focus"].lower().split(",")
+        relevant_eqs = [
+            e for e in equations
+            if any(kw.strip() in e.get("description", "").lower() for kw in focus_keywords)
+        ][:3]  # Top 3 relevant equations
+
+        eq_outputs = []
+        for eq in relevant_eqs:
+            try:
+                result = execute_equation(eq["name"], ticker)
+                if result and result.get("success"):
+                    eq_outputs.append(
+                        f"  • {eq['name']}: {result.get('result', 'N/A')} "
+                        f"(signal: {result.get('signal', 'N/A')})"
+                    )
+            except Exception as eq_err:
+                logger.debug("[TOURNAMENT] Equation %s failed for %s: %s", eq["name"], ticker, eq_err)
+
+        if eq_outputs:
+            eq_results_text = "\n## PRE-COMPUTED EQUATION RESULTS\n" + "\n".join(eq_outputs)
 
     evidence_header = _build_evidence_header(packet)
 
@@ -192,75 +223,36 @@ async def _run_pitch_agent(
         equation_hint=persona_config["equation_hint"],
         ticker=ticker,
         available_equations=eq_summary,
-        evidence_data=evidence_header,
+        evidence_data=evidence_header + eq_results_text,
     )
 
-    # Build tool list — give pitch agents access to quant tools
-    from app.agents.tool_whitelists import get_agent_tools
-    tools = get_agent_tools("tournament_pitch") or registry.schemas
-
-    agent_name = f"tournament_pitch_{persona_name.lower()}"
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Generate your best mathematically testable pitch for {ticker}. Use tools to gather data and equations."},
-    ]
-
-    max_turns = 5
-    total_tokens = 0
-    final_response = ""
+    user_message = (
+        f"Generate your best mathematically testable pitch for {ticker}. "
+        f"Use the pre-computed equation results and evidence data above. "
+        f"Output your response as the required JSON format."
+    )
 
     try:
-        for turn_idx in range(max_turns):
-            result = await llm.chat_with_tools(
-                messages=messages,
-                tools=tools,
-                temperature=0.4,
-                max_tokens=4096,
-                priority=Priority.NORMAL,
-                agent_name=agent_name,
-                ticker=ticker,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-            )
-            total_tokens += result.get("total_tokens", 0)
-            final_response = result.get("text", "")
-            tool_calls = result.get("tool_calls")
-
-            asst_msg = {"role": "assistant", "content": final_response}
-            if tool_calls:
-                asst_msg["tool_calls"] = tool_calls
-            messages.append(asst_msg)
-
-            if not tool_calls:
-                break
-
-            # Execute tool calls
-            for tc in tool_calls:
-                tc_result = await registry.execute_tool_call(
-                    tc,
-                    agent_name=agent_name,
-                    ticker=ticker,
-                    cycle_id=cycle_id,
-                    enforce_ticker=True,
-                )
-                messages.append(tc_result)
-
-            # Warn on last turn
-            if turn_idx == max_turns - 2:
-                messages.append({
-                    "role": "user",
-                    "content": "You have 1 turn remaining. Output your final JSON pitch NOW.",
-                })
+        final_response, total_tokens, elapsed_ms = await llm.chat(
+            system=system_prompt,
+            user=user_message,
+            temperature=0.4,
+            max_tokens=4096,
+            priority=Priority.NORMAL,
+            agent_name=agent_name,
+            ticker=ticker,
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+        )
 
         # Validate format
         is_valid, parsed, error = validate_argument_format(final_response)
         if not is_valid:
             # One retry with format correction
             rejection = build_rejection_prompt(error, "pitch")
-            messages.append({"role": "user", "content": rejection})
-            retry_result = await llm.chat_with_tools(
-                messages=messages,
-                tools=None,
+            retry_response, retry_tokens, _ = await llm.chat(
+                system=system_prompt,
+                user=rejection,
                 temperature=0.3,
                 max_tokens=2048,
                 priority=Priority.NORMAL,
@@ -269,8 +261,8 @@ async def _run_pitch_agent(
                 cycle_id=cycle_id,
                 bot_id=bot_id,
             )
-            total_tokens += retry_result.get("total_tokens", 0)
-            final_response = retry_result.get("text", "")
+            total_tokens += retry_tokens or 0
+            final_response = retry_response
             is_valid, parsed, error = validate_argument_format(final_response)
 
             if not is_valid:
@@ -281,7 +273,7 @@ async def _run_pitch_agent(
                 return None
 
         parsed["persona"] = persona_name
-        parsed["tokens"] = total_tokens
+        parsed["tokens"] = total_tokens or 0
         logger.info(
             "[TOURNAMENT] Pitch from %s: claim='%s', equation='%s'",
             persona_name,

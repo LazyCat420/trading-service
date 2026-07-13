@@ -219,6 +219,8 @@ def resolve_agent_id(agent_name: str, default_agent: str = "CUSTOM_MARKET_ALPHA"
         base_agent = "CUSTOM_PRE_TRADE_AGENT"
     elif "meta_audit" in name_lower:
         base_agent = "CUSTOM_META_AUDIT_AGENT"
+    elif "tournament" in name_lower:
+        base_agent = "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT"
 
     # Fuzzy matching for standard analysis agents
     elif any(x in name_lower for x in _STANDARD_ANALYSIS_AGENTS):
