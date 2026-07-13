@@ -555,6 +555,14 @@ async def run_v3_pipeline(
                 if abort:
                     whiteboard.unsubscribe(whiteboard_subscriber)
                     return abort
+                # Write desk_note to whiteboard so subscriber chains FA/QA
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.desk_note:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="desk_note",
+                        content=desk.desk_note,
+                        author_agent="v3_junior_analyst"
+                    )
                 
             elif name == "fundamental_analyst":
                 outcome = await _run_agent_with_circuit_breaker(
@@ -566,6 +574,14 @@ async def run_v3_pipeline(
                 if abort:
                     whiteboard.unsubscribe(whiteboard_subscriber)
                     return abort
+                # Write fundamental_report to whiteboard so subscriber chains debate
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.fundamental_report:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="fundamental_report",
+                        content=desk.fundamental_report,
+                        author_agent="v3_fundamental_analyst"
+                    )
                 
             elif name == "quant_analyst":
                 outcome = await _run_agent_with_circuit_breaker(
@@ -577,6 +593,14 @@ async def run_v3_pipeline(
                 if abort:
                     whiteboard.unsubscribe(whiteboard_subscriber)
                     return abort
+                # Write quant_report to whiteboard so subscriber chains debate
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.quant_report:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="quant_report",
+                        content=desk.quant_report,
+                        author_agent="v3_quant_analyst"
+                    )
 
             elif name == "bull_argument":
                 outcome = await _run_agent_with_circuit_breaker(
@@ -585,6 +609,14 @@ async def run_v3_pipeline(
                     custom_instructions=query, parent_agent=parent
                 )
                 breaker.record_outcome("bull_argument", outcome)
+                # Write bull_argument to whiteboard so subscriber chains debate_judge
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.bull_argument:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="bull_argument",
+                        content=desk.bull_argument,
+                        author_agent="v3_bull_agent"
+                    )
 
             elif name == "bear_rebuttal":
                 outcome = await _run_agent_with_circuit_breaker(
@@ -593,12 +625,28 @@ async def run_v3_pipeline(
                     custom_instructions=query, parent_agent=parent
                 )
                 breaker.record_outcome("bear_rebuttal", outcome)
+                # Write bear_rebuttal to whiteboard so subscriber chains debate_judge
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.bear_rebuttal:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="bear_rebuttal",
+                        content=desk.bear_rebuttal,
+                        author_agent="v3_bear_agent"
+                    )
 
             elif name == "debate_judge":
                 outcome = await _run_debate_judge(
                     desk=desk, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
                 )
                 breaker.record_outcome("debate_judge", outcome)
+                # Write debate_judge to whiteboard so subscriber chains board_of_directors
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.debate_judge:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="debate_judge",
+                        content=desk.debate_judge,
+                        author_agent="v3_debate_judge"
+                    )
                 
             elif name == "tournament_debate":
                 await _execute_tournament_debate(parent=parent)
@@ -613,6 +661,14 @@ async def run_v3_pipeline(
                     desk=desk, regime=regime, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
                 )
                 breaker.record_outcome("board_of_directors", outcome)
+                # Write final_decision to whiteboard so subscriber chains decision_synthesizer
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.final_decision:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="final_decision",
+                        content=desk.final_decision,
+                        author_agent="v3_board_of_directors"
+                    )
 
             elif name == "decision_synthesizer":
                 outcome = await _run_agent_with_circuit_breaker(
