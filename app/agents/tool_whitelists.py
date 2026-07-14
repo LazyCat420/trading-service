@@ -295,7 +295,7 @@ def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
 
     Returns:
         A list of tool name strings. If the agent has no whitelist, returns
-        all registry tool names + meta-tools.
+        [] (plus meta-tools for non-v3 agents) — never the full registry.
     """
     from app.db.agent_persona_store import _load_store
     
@@ -315,9 +315,16 @@ def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
         if agent_name in AGENT_TOOL_WHITELISTS:
             base_names = list(AGENT_TOOL_WHITELISTS[agent_name])
         else:
-            # No whitelist — agent gets all registered tools
-            from app.tools.registry import registry
-            base_names = list(registry.tools.keys())
+            # No whitelist → ZERO tools, same contract as get_agent_tools.
+            # The registry now spans other apps' tools (html-notes,
+            # treesearch), so an all-registry fallback would hand a typo'd
+            # agent name every foreign tool in the system.
+            logger.error(
+                f"[ToolWhitelist] Agent '{agent_name}' has no whitelist entry and no "
+                f"persona-store tools — enabledTools will be EMPTY (plus meta-tools "
+                f"for non-v3 agents). Add it to AGENT_TOOL_WHITELISTS if it needs any."
+            )
+            base_names = []
 
     # V3 agents get ONLY their strict whitelists — no dynamic discovery.
     # discover_and_enable_tools caused agents to pull in 766 tools and
