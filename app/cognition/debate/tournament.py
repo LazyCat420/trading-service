@@ -435,10 +435,9 @@ async def _run_head_to_head(
             logger.error("[TOURNAMENT] H2H %s failed: %s", side_name, e)
             return thesis  # Return original thesis on failure
 
-    result_a, result_b = await asyncio.gather(
-        run_side(system_a, "bull", thesis_a),
-        run_side(system_b, "bear", thesis_b),
-    )
+    # Sequential — same Prism agent per side; concurrency 409s (see Stage 1).
+    result_a = await run_side(system_a, "bull", thesis_a)
+    result_b = await run_side(system_b, "bear", thesis_b)
 
     return result_a, result_b
 
@@ -534,8 +533,10 @@ async def _run_jury_scoring(
             logger.error("[TOURNAMENT] Jury %s failed: %s", juror_name, e)
             return {"score": 5, "reasoning": f"Jury failed: {e}", "veto": False, "juror": juror_name}, 0
 
-    tasks = [run_juror(name, config) for name, config in JURY_PERSONAS.items()]
-    results = await asyncio.gather(*tasks)
+    # Sequential — same Prism agent per juror; concurrency 409s (see Stage 1).
+    results = []
+    for name, config in JURY_PERSONAS.items():
+        results.append(await run_juror(name, config))
 
     scores = []
     for parsed, tokens in results:
@@ -592,11 +593,18 @@ async def run_tournament_debate(
     # ── Stage 1: Pitch Generation ────────────────────────────────────
     logger.info("[TOURNAMENT] Stage 1: Pitch Generation (%d personas)", len(PITCH_PERSONAS))
 
-    pitch_tasks = [
-        _run_pitch_agent(name, config, ticker, packet, cycle_id, bot_id)
-        for name, config in PITCH_PERSONAS.items()
-    ]
-    pitch_results = await asyncio.gather(*pitch_tasks, return_exceptions=True)
+    # SEQUENTIAL by design: all personas resolve to the same Prism custom
+    # agent, and Prism's admission control allows one active turn per
+    # agent-conversation — concurrent pitches get 409 GENERATION_IN_PROGRESS
+    # (observed live: every tournament degraded to 0-1/4 pitches → fallback).
+    pitch_results = []
+    for name, config in PITCH_PERSONAS.items():
+        try:
+            pitch_results.append(
+                await _run_pitch_agent(name, config, ticker, packet, cycle_id, bot_id)
+            )
+        except Exception as pitch_exc:
+            pitch_results.append(pitch_exc)
 
     pitches = []
     for i, result in enumerate(pitch_results):
