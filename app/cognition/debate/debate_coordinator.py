@@ -360,12 +360,11 @@ async def _run_biased_agent(
         whitelist_key = "sentiment"
     
     from app.agents.tool_whitelists import get_agent_tools
-    allowed_tools = None
-    if whitelist_key:
-        allowed_tools = get_agent_tools(whitelist_key)
-    
-    if allowed_tools is None:
-        allowed_tools = registry.schemas
+    # get_agent_tools returns [] (never None) for an unknown key. The old
+    # None-fallback here handed the debater the ENTIRE tool registry whenever
+    # the key wasn't whitelisted — the exact all-tools bloat the whitelists
+    # exist to prevent. No key → toolless debate turn.
+    allowed_tools = get_agent_tools(whitelist_key) if whitelist_key else []
 
     try:
         max_tool_turns = cognition_settings.DEBATE_MAX_TOOL_TURNS

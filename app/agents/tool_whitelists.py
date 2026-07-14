@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 # agent should have access to. Tools not in the whitelist are invisible
 # to that agent during its run_agent_loop() execution.
 #
-# If an agent_name is NOT in this dict, it gets ALL tools (legacy behavior).
+# If an agent_name is NOT in this dict (and has no persona-store entry), it
+# gets NO tools — get_agent_tools returns [] and logs an error. It used to
+# return None, which one caller (debate_coordinator) expanded to the ENTIRE
+# tool registry: a typo'd or unregistered agent name silently ran with every
+# tool in the system. An agent that needs tools gets whitelisted explicitly.
 
 AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     # ── V3 Gatekeeper ──
@@ -216,8 +220,8 @@ def get_agent_tools(agent_name: str, domain_blocklist: list[str] | None = None) 
             are always included regardless of domain.
 
     Returns:
-        A filtered list of tool schemas if the agent has a whitelist,
-        or None if the agent should receive all tools (legacy behavior).
+        A filtered list of tool schemas if the agent has a whitelist, or []
+        (with an error log) for an unknown agent — never the full registry.
     """
     from app.tools.registry import registry
     from app.db.agent_persona_store import _load_store
@@ -240,7 +244,12 @@ def get_agent_tools(agent_name: str, domain_blocklist: list[str] | None = None) 
         if agent_name in AGENT_TOOL_WHITELISTS:
             tool_names = AGENT_TOOL_WHITELISTS[agent_name]
         else:
-            return None
+            logger.error(
+                f"[ToolWhitelist] Agent '{agent_name}' has no whitelist entry and no "
+                f"persona-store tools — running with ZERO tools. Add it to "
+                f"AGENT_TOOL_WHITELISTS (or the Agent Studio persona store) if it needs any."
+            )
+            return []
 
     schemas = registry.get_schemas_by_names(tool_names)
 
