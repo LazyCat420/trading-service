@@ -258,3 +258,59 @@ async def get_institutional_holdings(ticker: str) -> str:
             lines.append(f"  Net share change: {momentum['net_share_change']:+,}")
 
     return "\n".join(lines)
+
+
+@registry.register(
+    name="get_ticker_summary",
+    description="Get a one-call fundamentals snapshot for a ticker: name, sector/industry, market cap, P/E and forward P/E, 52-week range, average volume, dividend yield, analyst price target, and next earnings date.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "The stock ticker symbol (e.g., AAPL)"}
+        },
+        "required": ["ticker"],
+    },
+    tier=0,
+    source="yfinance",
+    input_model=TickerInput,
+)
+async def get_ticker_summary(ticker: str) -> str:
+    """Consolidated fundamentals summary (ported from tradingchart-service data_proxy /api/summary)."""
+    import datetime as _dt
+
+    import yfinance as yf
+
+    from app.services.api_rate_limiter import rate_limiter
+
+    ticker = ticker.upper().strip()
+    async with rate_limiter.acquire("yfinance"):
+        info = yf.Ticker(ticker).info or {}
+
+    earnings_date = None
+    ts = info.get("earningsTimestamp")
+    if ts:
+        try:
+            earnings_date = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+        except Exception:
+            earnings_date = None
+
+    def _num(v, money=False):
+        if v is None:
+            return "N/A"
+        try:
+            return fmt_usd(v) if money else f"{v:,.2f}" if isinstance(v, float) else f"{v:,}"
+        except Exception:
+            return str(v)
+
+    lines = [
+        f"## {info.get('longName') or info.get('shortName') or ticker} ({ticker})",
+        f"Sector: {info.get('sector', 'N/A')} | Industry: {info.get('industry', 'N/A')}",
+        f"Market cap: {_num(info.get('marketCap'), money=True)}",
+        f"P/E: {_num(info.get('trailingPE'))} | Forward P/E: {_num(info.get('forwardPE'))}",
+        f"52-week range: {_num(info.get('fiftyTwoWeekLow'))} – {_num(info.get('fiftyTwoWeekHigh'))}",
+        f"Average volume: {_num(info.get('averageVolume'))}",
+        f"Dividend yield: {_num(info.get('dividendYield'))}",
+        f"Analyst mean target: {_num(info.get('targetMeanPrice'))}",
+        f"Next earnings date: {earnings_date or 'N/A'}",
+    ]
+    return "\n".join(lines)
