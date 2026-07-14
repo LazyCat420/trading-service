@@ -198,7 +198,7 @@ async def run_agent(
         tool_call_count = 0
         prior_calls = []
 
-        def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool) -> None:
+        def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool, elapsed_ms: int = 0) -> None:
             """Post-call hook: record the actual outcome to V3 telemetry."""
             nonlocal tool_call_count
             tool_call_count += 1
@@ -208,6 +208,10 @@ async def run_agent(
             if was_blocked:
                 failed = True
                 error_msg = "Blocked by ToolLoopDetector"
+            elif isinstance(result, str):
+                if result.startswith("Error:") or "Exception" in result:
+                    failed = True
+                    error_msg = result[:500]
             elif isinstance(result, dict):
                 if result.get("error") or result.get("is_error"):
                     failed = True
@@ -241,6 +245,8 @@ async def run_agent(
                     success=not failed,
                     was_blocked=was_blocked,
                     error_message=error_msg,
+                    elapsed_ms=elapsed_ms,
+                    ticker=ticker,
                 )
                 
                 if provider:

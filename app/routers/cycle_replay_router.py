@@ -304,7 +304,7 @@ def get_cycle_timeline(cycle_id: str, ticker: str = Query(default="")):
                 SELECT agent_name, tool_name, success, elapsed_ms,
                        was_blocked, created_at
                 FROM agent_tool_telemetry
-                WHERE cycle_id = %s
+                WHERE cycle_id = %s AND tool_name != ''
             """
             tool_params = [cycle_id]
             tool_query += " ORDER BY created_at ASC"
@@ -463,10 +463,10 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                 SELECT agent_name, tool_name, success, elapsed_ms,
                        was_blocked, error_message, created_at
                 FROM agent_tool_telemetry
-                WHERE cycle_id = %s
+                WHERE cycle_id = %s AND (ticker = %s OR ticker IS NULL OR ticker = '') AND tool_name != ''
                 ORDER BY created_at ASC
                 """,
-                [cycle_id],
+                [cycle_id, ticker],
             ).fetchall()
 
             tools = [

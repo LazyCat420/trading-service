@@ -3174,8 +3174,12 @@ def _fix_eth_cagr_data(conn):
                     elapsed_ms          INTEGER DEFAULT 0,
                     error_message       TEXT,
                     was_blocked         BOOLEAN NOT NULL DEFAULT FALSE,
+                    ticker              TEXT,
                     created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+            """)
+            cur.execute("""
+                ALTER TABLE agent_tool_telemetry ADD COLUMN IF NOT EXISTS ticker TEXT;
             """)
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_agent_tool_telemetry_cycle

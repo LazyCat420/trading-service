@@ -46,6 +46,7 @@ def record_tool_call(
     elapsed_ms: int = 0,
     error_message: str = "",
     was_blocked: bool = False,
+    ticker: str = "",
 ) -> None:
     """Record a single tool call to the agent_tool_telemetry table.
 
@@ -60,8 +61,8 @@ def record_tool_call(
                 """
                 INSERT INTO agent_tool_telemetry
                     (id, cycle_id, agent_name, tool_name, args_hash,
-                     success, elapsed_ms, error_message, was_blocked)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     success, elapsed_ms, error_message, was_blocked, ticker)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     str(uuid.uuid4()),
@@ -73,6 +74,7 @@ def record_tool_call(
                     elapsed_ms,
                     error_message or "",
                     was_blocked,
+                    ticker or "",
                 ],
             )
     except Exception as e:
