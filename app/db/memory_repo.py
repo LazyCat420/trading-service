@@ -8,25 +8,12 @@ logger = logging.getLogger(__name__)
 
 
 def _ensure_schema():
-    """Ensure the schema is present if Developer 1's schema is not yet merged."""
-    with get_db() as db:
-        db.execute("""
-        CREATE TABLE IF NOT EXISTS episodic_observations (
-            id TEXT PRIMARY KEY,
-            created_at TIMESTAMPTZ,
-            cycle_id TEXT,
-            ticker TEXT,
-            sector TEXT,
-            source_type TEXT,
-            observation_text TEXT,
-            rationale_excerpt TEXT,
-            confidence_at_creation DOUBLE PRECISION,
-            outcome_label TEXT,
-            outcome_score DOUBLE PRECISION,
-            promoted_to_memory BOOLEAN DEFAULT FALSE
-        );
-        """)
+    """Ensure this repo's memory tables exist.
 
+    episodic_observations is owned by app/db/migrations.py — do not
+    duplicate its DDL here (the definitions drifted once already).
+    """
+    with get_db() as db:
         db.execute("""
         CREATE TABLE IF NOT EXISTS canonical_memories (
             id TEXT PRIMARY KEY,
