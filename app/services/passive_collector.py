@@ -258,6 +258,15 @@ async def run_passive_collector_loop():
                 except Exception as e:
                     logger.warning("[PASSIVE] GDELT sweep failed: %s", e)
                 await asyncio.sleep(5)
+                
+                # Put/Call Ratio (Fear/Complacency Index via SPY Options)
+                try:
+                    from app.collectors.pcr_collector import collect_all as collect_pcr
+                    pcr_res = await collect_pcr()
+                    logger.info("[PASSIVE] PCR sweep success: %s", pcr_res)
+                except Exception as e:
+                    logger.warning("[PASSIVE] PCR sweep failed: %s", e)
+                await asyncio.sleep(5)
             else:
                 logger.info("[PASSIVE] Skipping RSS and Reddit Purge sweeps (runs every %d rotations)",
                             RSS_SWEEP_CADENCE)

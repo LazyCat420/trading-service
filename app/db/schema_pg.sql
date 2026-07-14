@@ -164,6 +164,18 @@ CREATE TABLE IF NOT EXISTS macro_indicators (
     PRIMARY KEY (indicator, date, country)
 );
 
+CREATE TABLE IF NOT EXISTS put_call_ratio (
+    symbol      TEXT DEFAULT 'SPY',
+    date        DATE,
+    pcr_volume  DOUBLE PRECISION,
+    pcr_oi      DOUBLE PRECISION,
+    total_put_vol  BIGINT,
+    total_call_vol BIGINT,
+    total_put_oi   BIGINT,
+    total_call_oi  BIGINT,
+    PRIMARY KEY (symbol, date)
+);
+
 -- ══════════════════════════════════════════
 -- ALT DATA (sentiment/social)
 -- Separate tables — each source has different
