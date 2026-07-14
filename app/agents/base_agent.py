@@ -169,7 +169,9 @@ async def run_agent(
         _user_preview, "..." if len(full_prompt) > 1000 else "",
     )
 
-    @aresilient_call(retries=3, backoff="exponential", base_delay=1.0, max_delay=15.0)
+    # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
+    # (prism-proxy) container redeploy instead of failing the whole pipeline.
+    @aresilient_call(retries=5, backoff="exponential", base_delay=5.0, max_delay=60.0)
     async def _agent_llm_call():
         from app.agents.tool_whitelists import get_agent_tools, get_agent_budget_turns
 

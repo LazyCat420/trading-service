@@ -112,11 +112,12 @@ def _classify_exception(exc: Exception) -> FailureType:
             exc,
             (
                 httpx.TimeoutException,
-                httpx.ConnectError,
-                httpx.ConnectTimeout,
-                httpx.ReadTimeout,
-                httpx.WriteTimeout,
-                httpx.PoolTimeout,
+                # NetworkError covers ConnectError, ReadError, WriteError,
+                # CloseError — dropped connections (e.g. the prism-proxy
+                # container restarting mid-stream) recover within a minute
+                # and must be retried, not treated as fatal.
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
             ),
         ):
             return FailureType.TRANSIENT
