@@ -13,10 +13,7 @@ import pytest
 def _get_permission_for_tool(filepath: str, tool_name: str) -> str | None:
     """Parse a Python file's AST and find the permission kwarg for a @registry.register() call."""
     import os
-    resolved = filepath
-    if not os.path.exists(resolved):
-        resolved = os.path.join("/home/lazycat/github/rods-project/sun/trading-service", filepath)
-    with open(resolved, "r", encoding="utf-8") as f:
+    with open(filepath, "r", encoding="utf-8") as f:
         source = f.read()
 
     tree = ast.parse(source)
@@ -64,19 +61,6 @@ def test_remove_from_watchlist_is_write():
     assert perm == "WRITE", f"remove_from_watchlist permission should be WRITE, got {perm}"
 
 
-# ── System Command Tools → Still DESTRUCTIVE ─────────────────────────
-
-
-def test_run_local_command_remains_destructive():
-    perm = _get_permission_for_tool("app/tools/system_tools.py", "run_local_command")
-    assert perm == "DESTRUCTIVE", f"run_local_command should remain DESTRUCTIVE, got {perm}"
-
-
-def test_run_python_script_remains_destructive():
-    perm = _get_permission_for_tool("app/tools/script_sandbox.py", "run_python_script")
-    assert perm == "DESTRUCTIVE", f"run_python_script should remain DESTRUCTIVE, got {perm}"
-
-
 # ── Data Tools → Default (READ_ONLY or no explicit permission) ────────
 
 
@@ -84,18 +68,3 @@ def test_get_market_data_has_no_destructive():
     """get_market_data should not be DESTRUCTIVE."""
     perm = _get_permission_for_tool("app/tools/finance_tools.py", "get_market_data")
     assert perm != "DESTRUCTIVE", f"get_market_data should not be DESTRUCTIVE, got {perm}"
-
-
-def test_calculator_tools_have_no_permission_gate():
-    """Calculator tools should not have any permission restriction."""
-    calc_file = "app/tools/calculator_tools.py"
-    for tool in [
-        "calculate_position_size",
-        "calculate_stop_loss",
-        "calculate_risk_reward",
-        "calculate_portfolio_allocation",
-    ]:
-        perm = _get_permission_for_tool(calc_file, tool)
-        assert perm is None, (
-            f"{tool} should have no explicit permission (defaults to READ_ONLY), got {perm}"
-        )

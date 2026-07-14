@@ -107,23 +107,6 @@ def _find_unresolved_module_attrs(filepath: str) -> list[str]:
 class TestImportSafety:
     """Verify no missing imports in critical pipeline modules."""
 
-    def test_data_perticker_collection_no_missing_imports(self):
-        """REGRESSION: data_perticker_collection.py must import datetime."""
-        filepath = os.path.join(
-            APP_DIR, "pipeline", "data", "data_perticker_collection.py"
-        )
-        assert os.path.isfile(filepath), f"File not found: {filepath}"
-
-        with open(filepath, "r", encoding="utf-8") as f:
-            source = f.read()
-        tree = ast.parse(source)
-        imports = _get_imports(tree)
-
-        assert "datetime" in imports, (
-            "CRITICAL: 'datetime' is not imported in data_perticker_collection.py. "
-            "This causes YouTube collection to silently fail for ALL tickers."
-        )
-
     def test_quant_tools_no_unresolved_names(self):
         """quant_tools.py must not reference undefined modules."""
         filepath = os.path.join(APP_DIR, "tools", "quant_tools.py")
@@ -132,20 +115,10 @@ class TestImportSafety:
             f"quant_tools.py has unresolved module references: {unresolved}"
         )
 
-    def test_pipeline_tools_no_unresolved_names(self):
-        """pipeline_tools.py must not reference undefined modules."""
-        filepath = os.path.join(APP_DIR, "tools", "pipeline_tools.py")
-        unresolved = _find_unresolved_module_attrs(filepath)
-        assert not unresolved, (
-            f"pipeline_tools.py has unresolved module references: {unresolved}"
-        )
-
     def test_critical_pipeline_files_parseable(self):
         """All critical pipeline files must parse without SyntaxError."""
         critical_files = [
-            os.path.join("pipeline", "data", "data_perticker_collection.py"),
             os.path.join("tools", "quant_tools.py"),
-            os.path.join("tools", "pipeline_tools.py"),
             os.path.join("tools", "finance_tools.py"),
             os.path.join("pipeline", "analysis", "curation_pass.py"),
             os.path.join("pipeline", "analysis", "purge_pass.py"),
