@@ -267,6 +267,15 @@ async def run_passive_collector_loop():
                 except Exception as e:
                     logger.warning("[PASSIVE] PCR sweep failed: %s", e)
                 await asyncio.sleep(5)
+
+                # SEC 13F Performance Engine Recalculation
+                try:
+                    from app.collectors.performance_engine import calculate_fund_performance
+                    await asyncio.to_thread(calculate_fund_performance)
+                    logger.info("[PASSIVE] 13F Performance recalculation success.")
+                except Exception as e:
+                    logger.warning("[PASSIVE] 13F Performance recalculation failed: %s", e)
+                await asyncio.sleep(5)
             else:
                 logger.info("[PASSIVE] Skipping RSS and Reddit Purge sweeps (runs every %d rotations)",
                             RSS_SWEEP_CADENCE)
