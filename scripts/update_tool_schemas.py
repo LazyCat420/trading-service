@@ -98,9 +98,14 @@ for schema in merged_schemas:
         if schema.get("name") in tools_list
     )
 
-# Write to tool_schemas.json in the project root
-out_file = os.path.join(project_root, "tool_schemas.json")
-with open(out_file, "w") as f:
-    json.dump(merged_schemas, f, indent=2)
+# 5. Write the per-domain source folder, then build the flat artifacts.
+# The split folder (lazy-tool-service/tool_schemas/) is the source of truth;
+# the flat tool_schemas.json copies are build outputs kept in sync across repos.
+sys.path.insert(0, current_dir)
+from build_tool_schemas import build, write_split
 
-print(f"Successfully generated {out_file} with {len(merged_schemas)} tools.")
+written = write_split(merged_schemas)
+for rel, count in written.items():
+    print(f"  {rel}: {count} tools")
+build()
+print(f"Successfully generated {len(merged_schemas)} tools into the split source + flat artifacts.")
