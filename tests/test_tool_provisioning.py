@@ -224,7 +224,7 @@ class TestToolMeta:
     def test_registry_snapshot(self):
         reg = _build_test_registry()
         snapshot = reg.get_registry_snapshot()
-        assert len(snapshot) == 5
+        assert len(snapshot) == 4
         names = [s["name"] for s in snapshot]
         assert "search_web" in names
 

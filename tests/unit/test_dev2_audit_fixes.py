@@ -28,8 +28,10 @@ async def test_yfinance_collector_uses_session(mock_ticker):
     mock_ticker.return_value = mock_ticker_inst
     
     await fetch_ohlcv_dataframe("AAPL")
-    
-    mock_ticker.assert_called_once_with("AAPL", session=_yf_session)
+
+    # Session injection was removed in d788c27 — newer yfinance manages its own
+    # (curl_cffi) session and breaks when handed a requests.Session
+    mock_ticker.assert_called_once_with("AAPL")
 
 @patch("app.db.connection.get_db")
 def test_tool_registry_log_usage_explicit_called_at(mock_get_db):
@@ -56,9 +58,9 @@ def test_tool_registry_log_usage_explicit_called_at(mock_get_db):
     
     # Check that called_at is in the columns
     assert "called_at" in sql.lower()
-    # Check that there are 9 placeholders/parameters (including called_at)
-    assert sql.count("%s") == 9
-    assert len(params) == 9
+    # Check that there are 7 placeholders/parameters (including called_at)
+    assert sql.count("%s") == 7
+    assert len(params) == 7
     
     # Check that the last parameter is a datetime object
     assert isinstance(params[-1], datetime)

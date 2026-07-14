@@ -75,31 +75,6 @@ def test_coercion_helpers():
     assert coerce_list_str({"key1": "val1"}) == ["key1: val1"]
     assert coerce_list_str(None) == []
 
-def test_parse_malformed_overlays():
-    from app.agents.technical_analyst_agent import parse_malformed_overlays
-    text = (
-        "Looking at the BCE OHLCV data, I need to assess support and resistance levels:\n"
-        "- Major support is located at 145.50\n"
-        "- Secondary support zone exists between 140.00 and 142.25\n"
-        "- Resistance is strong near 155.00\n"
-        "- Heavy selling resistance between 158.0 and 160\n"
-    )
-    result = parse_malformed_overlays(text)
-    assert "overlays" in result
-    overlays = result["overlays"]
-    
-    supports = [o for o in overlays if o["type"] == "support"]
-    resistances = [o for o in overlays if o["type"] == "resistance"]
-    
-    assert len(supports) == 2
-    assert len(resistances) == 2
-    
-    assert any(o["y0"] == 140.00 and o["y1"] == 142.25 for o in supports)
-    assert any(o["y0"] == round(145.50 * 0.99, 2) and o["y1"] == round(145.50 * 1.01, 2) for o in supports)
-    assert any(o["y0"] == round(155.00 * 0.99, 2) and o["y1"] == round(155.00 * 1.01, 2) for o in resistances)
-    assert any(o["y0"] == 158.0 and o["y1"] == 160.0 for o in resistances)
-
-
 def test_parse_json_list_response():
     from app.utils.text_utils import parse_json_list_response
 

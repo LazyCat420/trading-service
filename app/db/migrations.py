@@ -3242,3 +3242,49 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Collector tables present in schema_pg.sql but missing here ──
+    # (put_call_ratio, sec_13f_performance, congress_members) — keeps
+    # migrations.py complete for databases created before schema_pg.sql ran
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS put_call_ratio (
+                    symbol      TEXT DEFAULT 'SPY',
+                    date        DATE,
+                    pcr_volume  DOUBLE PRECISION,
+                    pcr_oi      DOUBLE PRECISION,
+                    total_put_vol  BIGINT,
+                    total_call_vol BIGINT,
+                    total_put_oi   BIGINT,
+                    total_call_oi  BIGINT,
+                    PRIMARY KEY (symbol, date)
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sec_13f_performance (
+                    cik            TEXT PRIMARY KEY,
+                    return_1y      DOUBLE PRECISION,
+                    return_3y_ann  DOUBLE PRECISION,
+                    win_rate       DOUBLE PRECISION,
+                    last_calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS congress_members (
+                    bioguide_id VARCHAR PRIMARY KEY,
+                    first_name VARCHAR,
+                    last_name VARCHAR,
+                    full_name VARCHAR,
+                    party VARCHAR,
+                    chamber VARCHAR,
+                    state VARCHAR,
+                    collected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

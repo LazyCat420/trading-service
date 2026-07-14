@@ -21,14 +21,20 @@ import pytest
 # Add the project root to path so imports resolve
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-# Point CHART_OUTPUT_DIR to a temp location for tests
+# Point chart output to a temp location for tests. The env var only works if
+# this file wins the import race for charting_tools (OUTPUT_DIR binds at module
+# import), so patch the module attribute directly — order-independent, and
+# save_trading_chart reads the module global at call time.
 import tempfile
 
 TEST_CHARTS_DIR = tempfile.mkdtemp(prefix="charts_test_")
 os.environ["CHART_OUTPUT_DIR"] = TEST_CHARTS_DIR
 
-# Now import after env var is set
-from app.tools.charting_tools import save_trading_chart, OUTPUT_DIR
+from app.tools import charting_tools
+
+charting_tools.OUTPUT_DIR = TEST_CHARTS_DIR
+save_trading_chart = charting_tools.save_trading_chart
+OUTPUT_DIR = charting_tools.OUTPUT_DIR
 
 
 class TestSaveTradingChart:

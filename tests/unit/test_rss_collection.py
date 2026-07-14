@@ -324,7 +324,7 @@ class TestCollectAll:
 
         call_count = 0
 
-        async def mock_collect_feed(name, url):
+        async def mock_collect_feed(name, url, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -345,7 +345,7 @@ class TestCollectAll:
 
         call_count = 0
 
-        async def mock_collect_feed(name, url):
+        async def mock_collect_feed(name, url, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

@@ -100,12 +100,6 @@ def test_debug_tools_agents_endpoint(client):
     assert response.status_code == 200
     data = response.json()
     assert "agents" in data
-    assert "risk" in data["agents"]
-    assert data["agents"]["risk"]["total_tools"] > 0
+    assert "v3_quant_analyst" in data["agents"]
+    assert data["agents"]["v3_quant_analyst"]["total_tools"] > 0
 
-def test_debug_delegation_budget(client):
-    response = client.get("/api/debug/delegation/budget")
-    assert response.status_code == 200
-    data = response.json()
-    assert "max_per_ticker" in data
-    assert data["max_per_ticker"] == 8

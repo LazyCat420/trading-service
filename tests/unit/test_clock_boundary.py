@@ -142,7 +142,7 @@ class TestScheduleClockBoundary:
         # Should NOT have inserted a system_command (skipped)
         insert_calls = [
             c for c in mock_db.execute.call_args_list
-            if "INSERT INTO system_commands" in str(c)
+            if "INSERT INTO v3_system_commands" in str(c)
         ]
         assert len(insert_calls) == 0, "Schedule should have been skipped outside market hours"
 
@@ -182,7 +182,7 @@ class TestScheduleClockBoundary:
         # Should have inserted a system_command (executed)
         insert_calls = [
             c for c in mock_db.execute.call_args_list
-            if "INSERT INTO system_commands" in str(c)
+            if "INSERT INTO v3_system_commands" in str(c)
         ]
         assert len(insert_calls) >= 1, "Schedule should have executed during market hours"
 
@@ -227,6 +227,6 @@ class TestPausedSystemSkipsSchedule:
         # Should NOT have inserted a system_command (skipped)
         insert_calls = [
             c for c in mock_db.execute.call_args_list
-            if "INSERT INTO system_commands" in str(c)
+            if "INSERT INTO v3_system_commands" in str(c)
         ]
         assert len(insert_calls) == 0, "Schedule should have been skipped when system is paused"

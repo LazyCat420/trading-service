@@ -5,6 +5,15 @@ from datetime import datetime, timezone
 from app.db.connection import get_db
 from app.services.pipeline_state import PipelineStateDB
 
+
+import os
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TRADING_BOT_TEST_DB"),
+    reason="mutates the shared pipeline-state singleton — only safe against a "
+    "dedicated test database (set TRADING_BOT_TEST_DB to enable)",
+)
 def test_pipeline_events_db_persistence():
     cycle_id = f"test-events-{uuid.uuid4().hex[:6]}"
     
