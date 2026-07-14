@@ -11,6 +11,10 @@ import sys
 # Set execution mode to staging during tests to bypass production API key validation check
 os.environ["EXECUTION_MODE"] = "staging"
 
+# Unit tests must execute locally-registered tool functions, never proxy tool
+# calls to the live lazy-tool-service (lazycat.tool_registry checks this at call time)
+os.environ["USE_LAZY_TOOL_SERVICE"] = "false"
+
 # Ensure project root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -153,11 +157,22 @@ def patch_llm(mock_llm):
         yield mock_llm
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Record the real exit status — config has no `exitstatus` attribute, so
+    pytest_unconfigure used to always exit 0, hiding every test failure from
+    scripts and CI."""
+    session.config._forced_exitstatus = int(exitstatus)
+
+
 def pytest_unconfigure(config):
     """Force exit to prevent hanging on background threads or connections."""
     import os
-    exitstatus = getattr(config, "exitstatus", 0)
-    os._exit(exitstatus)
+    import sys
+    # os._exit skips atexit AND stdio flushing — without these flushes the
+    # failure report is silently lost when output is piped (block-buffered).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(getattr(config, "_forced_exitstatus", 0))
 
 
 
