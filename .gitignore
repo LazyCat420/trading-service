@@ -52,3 +52,4 @@ tool_schemas.json
 Thumbs.db
 .vscode/
 backups/
+scripts/test_v3_agent.py
