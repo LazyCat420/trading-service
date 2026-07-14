@@ -32,7 +32,6 @@ SCRAPER_MAP: dict[str, str] = {
     "fundamentals": "app/collectors/yfinance_collector.py",
     "technicals": "app/collectors/yfinance_collector.py",
     "sec": "app/collectors/sec_collector.py",
-    "sec_13f": "app/services/sec_13f_service.py",
     "congress": "app/collectors/congress_collector.py",
     "congress_trades": "app/collectors/congress_collector.py",
     "fred": "app/collectors/fred_collector.py",
