@@ -88,12 +88,16 @@ async def execute_tool(
         },
     }
     try:
+        # force_local: this endpoint IS the execution target lazy-tool-service
+        # delegates to — honoring USE_LAZY_TOOL_SERVICE here would bounce the
+        # call straight back to lazy-tool-service in an infinite loop.
         result = await registry.execute_tool_call(
             tool_call,
             skip_permission_check=True,
             agent_name=payload.agent_name or "",
             ticker=payload.ticker or "",
             cycle_id=payload.cycle_id or "",
+            force_local=True,
         )
         return result
     except Exception as e:
