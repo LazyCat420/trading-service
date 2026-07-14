@@ -86,6 +86,14 @@ async def get_debate_transcripts(ticker: str = None, cycle_id: str = None):
         raise HTTPException(status_code=500, detail=f"Failed to fetch debate transcripts: {e}")
 
 
+@router.get("/active")
+async def get_active_agents():
+    """Retrieve currently active agent instances."""
+    from app.agents.inbox import agent_inbox
+    instances = agent_inbox.get_active_instances()
+    return {"instances": instances}
+
+
 @router.get("/{persona_id}")
 async def get_persona(persona_id: str):
     """Get a single persona by ID."""
