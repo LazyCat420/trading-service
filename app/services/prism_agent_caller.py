@@ -442,7 +442,9 @@ class PrismLLMShim:
 
             final_max_tokens = max_tokens or 8192
             if final_max_tokens >= 4096:
-                final_max_tokens = max(512, final_max_tokens - est_tokens - 100)
+                # Floor at 4096: Prism's ContextExhaustionGuard rejects any
+                # smaller output budget outright (no provider call is made).
+                final_max_tokens = max(4096, final_max_tokens - est_tokens - 100)
 
             resp = await self.prism_client.call_agent(
                 model=model,

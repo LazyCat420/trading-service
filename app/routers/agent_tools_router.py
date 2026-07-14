@@ -58,6 +58,49 @@ def report_tool_usage(
     )
     return {"status": "ok"}
 
+class ToolExecutePayload(BaseModel):
+    tool_name: str
+    arguments: dict = {}
+    agent_name: Optional[str] = ""
+    ticker: Optional[str] = ""
+    cycle_id: Optional[str] = ""
+
+
+@router.post("/execute")
+async def execute_tool(
+    payload: ToolExecutePayload,
+    token: str = Depends(_verify_api_key)
+):
+    """Execute a local-catalog tool and return its result.
+
+    HTTP replacement for the scripts/execute_tool.py subprocess bridge —
+    lazy-tool-service's container has no Python interpreter, so its
+    LocalToolRouter calls this endpoint for python-bridge tools.
+    """
+    from app.tools.registry import registry
+
+    tool_call = {
+        "id": "call_lazy_tool_bridge",
+        "type": "function",
+        "function": {
+            "name": payload.tool_name,
+            "arguments": json.dumps(payload.arguments or {}),
+        },
+    }
+    try:
+        result = await registry.execute_tool_call(
+            tool_call,
+            skip_permission_check=True,
+            agent_name=payload.agent_name or "",
+            ticker=payload.ticker or "",
+            cycle_id=payload.cycle_id or "",
+        )
+        return result
+    except Exception as e:
+        logger.error("[AgentTools] execute %s failed: %s", payload.tool_name, e)
+        raise HTTPException(status_code=500, detail=f"Tool execution failed: {e}")
+
+
 _SCHEMA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "tool_schemas.json"
 )
