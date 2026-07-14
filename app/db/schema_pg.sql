@@ -297,7 +297,8 @@ CREATE TABLE IF NOT EXISTS congress_trades (
     amount_range        TEXT,
     trade_date          DATE,
     disclosure_date     DATE,
-    days_to_disclose    INTEGER
+    days_to_disclose    INTEGER,
+    bioguide_id         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS fund_alerts (
@@ -978,6 +979,7 @@ CREATE TABLE IF NOT EXISTS discovered_channels (
 
 CREATE INDEX IF NOT EXISTS idx_congress_ticker ON congress_trades(ticker);
 CREATE INDEX IF NOT EXISTS idx_congress_trade_date ON congress_trades(trade_date);
+CREATE INDEX IF NOT EXISTS idx_congress_bioguide_id ON congress_trades(bioguide_id);
 CREATE INDEX IF NOT EXISTS idx_13f_ticker ON sec_13f_holdings(ticker);
 CREATE INDEX IF NOT EXISTS idx_13f_quarter ON sec_13f_holdings(filing_quarter);
 CREATE INDEX IF NOT EXISTS idx_alerts_ticker ON fund_alerts(ticker);

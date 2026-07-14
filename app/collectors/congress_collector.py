@@ -160,13 +160,17 @@ async def collect_trades(
                     f"{trade['trade_date']}{trade['transaction_type']}".encode()
                 ).hexdigest()
 
+                # Resolve bioguide ID
+                from app.utils.politician_matcher import resolve_bioguide_id
+                bio_id = resolve_bioguide_id(db, trade["politician"])
+
                 db.execute(
                     """
                     INSERT INTO congress_trades
                     (id, politician, party, chamber, state, ticker,
                      transaction_type, amount_range, trade_date,
-                     disclosure_date, days_to_disclose)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     disclosure_date, days_to_disclose, bioguide_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
                 """,
                     [
@@ -181,6 +185,7 @@ async def collect_trades(
                         trade["trade_date"],
                         trade["disclosure_date"],
                         trade["days_to_disclose"],
+                        bio_id,
                     ],
                 )
                 total_count += 1
