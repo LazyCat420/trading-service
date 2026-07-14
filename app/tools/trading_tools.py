@@ -161,7 +161,7 @@ def remove_from_watchlist(ticker: str) -> str:
 
 @registry.register(
     name="get_sec_filings",
-    description="Fetch recent SEC filings (10-K, 10-Q, 8-K) for a ticker.",
+    description="Collect SEC institutional (13F) holdings data for a ticker — which top funds hold it and how positions changed.",
     parameters={
         "type": "object",
         "properties": {"ticker": {"type": "string"}},
@@ -170,7 +170,10 @@ def remove_from_watchlist(ticker: str) -> str:
     tier=0,
     source="sec",
 )
-async def get_sec_filings_tool(ticker: str) -> str:
+async def get_sec_filings_tool(ticker: str, **_extra) -> str:
+    # **_extra swallows stray args (action/cik/limit/...) sent by agents that
+    # cached the old EDGAR-style schema from lazy-tool — they used to raise
+    # TypeError and fail every first call.
     from app.collectors.sec_collector import collect_ticker_institutional
 
     try:

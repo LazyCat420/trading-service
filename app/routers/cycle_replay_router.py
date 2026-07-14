@@ -63,7 +63,20 @@ def list_cycles(
     """List recent pipeline cycles with summary stats."""
     from app.v3.telemetry import _ensure_telemetry_table
     _ensure_telemetry_table()
-    
+
+    # Identify the currently-running cycle so it isn't mislabeled — the
+    # step LIKE '%done%' heuristic below matches per-agent "..._done_TICKER"
+    # steps minutes into a run and used to report running cycles as completed.
+    live_cycle_id = None
+    try:
+        from app.services.pipeline_service import PipelineService
+
+        live_state = PipelineService.get_current_state(summary_only=True)
+        if live_state.get("status") in ("running", "starting", "collecting", "analyzing", "trading"):
+            live_cycle_id = live_state.get("cycle_id")
+    except Exception:
+        pass
+
     try:
         with get_db() as db:
             # Get distinct cycles from pipeline_events (most reliable source)
@@ -164,7 +177,7 @@ def list_cycles(
                     "tickers": tickers,
                     "agent_count": agent_count,
                     "actions": actions,
-                    "status": "completed" if is_completed else "aborted",
+                    "status": "running" if cycle_id == live_cycle_id else ("completed" if is_completed else "aborted"),
                 })
 
             # Get total count for pagination
