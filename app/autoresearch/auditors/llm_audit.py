@@ -25,10 +25,23 @@ def _audit_llm_traces(cycle_id: str) -> dict:
             fail_rate = failed / total_calls
             current_score = max(0.0, 1.0 - fail_rate * 2)
 
-        # Query historical trends to detect drift
-        from app.pipeline.subsystem_benchmarks import get_trends
-        trends = get_trends("autoresearch", limit=10)
-        
+        # Query historical trends to detect drift. Sourced from prior
+        # autoresearch_reports rows — the old app.pipeline.subsystem_benchmarks
+        # module was deleted in the V3 purge and its import silently forced
+        # this whole audit onto the 0.5-default score every cycle.
+        trends = []
+        try:
+            from app.db.connection import get_db
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT llm_performance_score FROM autoresearch_reports "
+                    "WHERE llm_performance_score IS NOT NULL "
+                    "ORDER BY created_at DESC LIMIT 10"
+                ).fetchall()
+            trends = [{"metrics": {"llm_performance_score": r[0]}} for r in rows]
+        except Exception as trend_err:
+            logger.debug("[LLM-AUDIT] Trend lookup skipped: %s", trend_err)
+
         history_scores = []
         for t in trends:
             metrics = t.get("metrics")

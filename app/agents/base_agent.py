@@ -74,9 +74,30 @@ def get_ticker_outcome_context(ticker: str) -> str:
     if not ticker or ticker.startswith("_"):
         return ""  # Skip synthetic tickers like _AUDIT_
     try:
-        from app.pipeline.analysis.outcome_tracker import get_past_outcomes
+        # Query decision_outcomes directly — the old helper module
+        # (app.pipeline.analysis.outcome_tracker) was deleted in the V3 purge,
+        # which silently disabled outcome context for every agent.
+        from app.db.connection import get_db
 
-        outcomes = get_past_outcomes(ticker=ticker, limit=5)
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT outcome, entry_price, exit_price, pnl_pct, confidence, resolved_at "
+                "FROM decision_outcomes "
+                "WHERE ticker = %s AND outcome IS NOT NULL "
+                "ORDER BY resolved_at DESC NULLS LAST LIMIT 5",
+                [ticker],
+            ).fetchall()
+        outcomes = [
+            {
+                "outcome": r[0],
+                "entry_price": r[1] or 0,
+                "exit_price": r[2] or 0,
+                "pnl_pct": r[3] or 0,
+                "confidence": r[4] or 0,
+                "resolved_at": r[5],
+            }
+            for r in rows
+        ]
         if not outcomes:
             return ""
 

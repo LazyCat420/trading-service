@@ -171,3 +171,48 @@ def resolve_pending_outcomes() -> dict:
         logger.error("[OUTCOME] Batch resolution failed: %s", e)
 
     return {"resolved": resolved, "errors": errors, **stats}
+
+
+def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float | None = None) -> int:
+    """Immediately resolve pending decision_outcomes for a ticker when a
+    position exits (stop-loss / take-profit), instead of waiting for the
+    time-based batch resolver.
+
+    Returns the number of rows resolved.
+    """
+    resolved = 0
+    try:
+        with get_db() as db:
+            pending = db.execute(
+                "SELECT id, action, entry_price FROM decision_outcomes "
+                "WHERE ticker = %s AND resolved_at IS NULL",
+                [ticker],
+            ).fetchall()
+            for outcome_id, action, entry_price in pending:
+                if not entry_price or not exit_price:
+                    continue
+                if action == "BUY":
+                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                elif action == "SELL":
+                    pnl_pct = ((entry_price - exit_price) / entry_price) * 100
+                else:
+                    continue
+                if pnl_pct >= WIN_THRESHOLD_PCT:
+                    outcome = "WIN"
+                elif pnl_pct <= LOSS_THRESHOLD_PCT:
+                    outcome = "LOSS"
+                else:
+                    outcome = "FLAT"
+                db.execute(
+                    """UPDATE decision_outcomes
+                    SET exit_price = %s, pnl_pct = %s, outcome = %s, resolved_at = %s
+                    WHERE id = %s""",
+                    [round(exit_price, 4), round(pnl_pct, 2), outcome,
+                     datetime.now(timezone.utc), outcome_id],
+                )
+                resolved += 1
+        if resolved:
+            logger.info("[OUTCOME] Resolved %d outcome(s) for %s on position exit", resolved, ticker)
+    except Exception as e:
+        logger.error("[OUTCOME] Exit resolution failed for %s: %s", ticker, e)
+    return resolved

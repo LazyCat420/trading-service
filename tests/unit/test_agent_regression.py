@@ -37,8 +37,12 @@ def patch_llm():
             self.success = True
             return 1.0
 
+        # Patch this module's own reference via sys.modules — the string form
+        # ("tests.unit.test_agent_regression") breaks when pytest imports the
+        # file without `tests` being a package (no tests/__init__.py).
+        import sys
         with patch("app.services.prism_agent_caller.call_prism_agent", mock_call_prism_agent), \
-             patch("tests.unit.test_agent_regression.call_prism_agent", mock_call_prism_agent), \
+             patch.object(sys.modules[__name__], "call_prism_agent", mock_call_prism_agent), \
              patch.object(FaithfulnessMetric, "a_measure", mock_a_measure), \
              patch.object(AnswerRelevancyMetric, "a_measure", mock_a_measure):
             yield

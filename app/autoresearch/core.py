@@ -219,13 +219,8 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as gap_err:
             logger.warning("[AUTORESEARCH] Data gap resolution failed: %s", gap_err)
 
-        # Evolutionary Debate Council
-        _EVO_TIMEOUT = 60
-        try:
-            from app.pipeline.analysis.evolution_router import router
-            await asyncio.wait_for(router.run_router(cycle_id), timeout=_EVO_TIMEOUT)
-        except Exception as e:
-            logger.error("[AUTORESEARCH] Failed to trigger Evolution Router: %s", e)
+        # (Evolutionary Debate Council removed — app.pipeline.analysis.evolution_router
+        # was deleted in the V3 purge; the import failed silently every cycle.)
 
         # Directives generation
         _update_ar_state(report_id, phase="directives")
@@ -235,20 +230,9 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as dir_err:
             logger.warning("[AUTORESEARCH] Directive generation failed: %s", dir_err)
 
-        # Benchmark Agent (Constitution review)
-        _BENCH_TIMEOUT = 60
-        try:
-            from app.pipeline.analysis.benchmark_agent import run_benchmark_agent
-            await asyncio.wait_for(run_benchmark_agent(cycle_id), timeout=_BENCH_TIMEOUT)
-        except Exception as bench_err:
-            logger.error("[AUTORESEARCH] Failed to trigger Benchmark Agent: %s", bench_err)
-
-        # Record subsystem benchmarks
-        try:
-            from app.pipeline.subsystem_benchmarks import record_all
-            record_all(cycle_id)
-        except Exception as sb_err:
-            logger.warning("[AUTORESEARCH] Subsystem benchmark recording failed: %s", sb_err)
+        # (Benchmark Agent and subsystem-benchmark recording removed — their
+        # app.pipeline.* modules were deleted in the V3 purge; the imports
+        # failed silently every cycle.)
 
         # Probation Rollbacks
         try:

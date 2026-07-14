@@ -862,9 +862,9 @@ async def check_stop_losses(
                 triggered.append(result)
                 # Resolve outcome so the feedback loop captures stop-loss exits
                 try:
-                    from app.pipeline.analysis.outcome_tracker import resolve_outcome
+                    from app.autoresearch.outcome_tracker import resolve_outcome_for_exit
 
-                    resolve_outcome(
+                    resolve_outcome_for_exit(
                         ticker, current_price,
                         realized_pnl=result.get("realized_pnl"),
                     )
@@ -950,9 +950,9 @@ async def check_take_profits(
                 triggered.append(result)
                 # Resolve outcome so the feedback loop captures take-profit exits
                 try:
-                    from app.pipeline.analysis.outcome_tracker import resolve_outcome
+                    from app.autoresearch.outcome_tracker import resolve_outcome_for_exit
 
-                    resolve_outcome(
+                    resolve_outcome_for_exit(
                         ticker, current_price,
                         realized_pnl=result.get("realized_pnl"),
                     )

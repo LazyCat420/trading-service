@@ -173,6 +173,80 @@ def render_chart(df: pd.DataFrame, spec: dict, symbol: str) -> str:
     return filename
 
 
+_KNOWN_OVERLAY_TYPES = {"support", "resistance", "trendline", "line", "zone", "volume_void"}
+
+# Aliases the LLM has been observed to emit → canonical type
+_OVERLAY_TYPE_ALIASES = {
+    "horizontal_line": "zone",
+    "support_zone": "support",
+    "resistance_zone": "resistance",
+    "supply_zone": "resistance",
+    "demand_zone": "support",
+    "sma_200": "zone",
+    "sma_50": "zone",
+    "sma_20": "zone",
+}
+
+
+def _to_float(val):
+    try:
+        f = float(val)
+        return f if f == f else None  # reject NaN
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_overlays(overlays: list) -> list:
+    """Coerce LLM-authored overlays into the schema AgenticChart.jsx renders.
+
+    Agents routinely emit string prices ("81"), alias types (horizontal_line,
+    support_zone), a bare `price` field, or a nested `price_range` — all of
+    which either crash or silently vanish in the frontend. Normalize to:
+    {type, y0: float, y1: float, x0?, x1?, color?, reasoning}. Overlays with
+    no usable price coordinates are dropped.
+    """
+    normalized = []
+    for ov in overlays or []:
+        if not isinstance(ov, dict):
+            continue
+        raw_type = ov.get("type") or ov.get("kind") or ""
+        if not isinstance(raw_type, str):
+            raw_type = str(raw_type)
+        ov_type = raw_type.lower().strip()
+        label_hint = str(ov.get("label") or "").lower()
+        if ov_type not in _KNOWN_OVERLAY_TYPES:
+            # Map aliases; use the label to disambiguate generic lines
+            if "support" in ov_type or "support" in label_hint:
+                ov_type = "support"
+            elif "resist" in ov_type or "resist" in label_hint:
+                ov_type = "resistance"
+            else:
+                ov_type = _OVERLAY_TYPE_ALIASES.get(ov_type, "zone")
+
+        price_range = ov.get("price_range") if isinstance(ov.get("price_range"), dict) else {}
+        y0 = _to_float(ov.get("y0", price_range.get("y0", ov.get("price"))))
+        y1 = _to_float(ov.get("y1", price_range.get("y1", ov.get("price"))))
+        if y0 is None and y1 is None:
+            logger.warning("[charting_tools] Dropping overlay with no usable prices: %s", ov)
+            continue
+        y0 = y0 if y0 is not None else y1
+        y1 = y1 if y1 is not None else y0
+
+        clean = {
+            "type": ov_type,
+            "y0": y0,
+            "y1": y1,
+            "reasoning": str(ov.get("reasoning") or ov.get("label") or ""),
+        }
+        for key in ("x0", "x1"):
+            if ov.get(key):
+                clean[key] = str(ov[key])
+        if ov.get("color"):
+            clean["color"] = str(ov["color"])
+        normalized.append(clean)
+    return normalized
+
+
 @registry.register(
     name="save_trading_chart",
     description=(
@@ -249,6 +323,13 @@ async def save_trading_chart(
     """
     if overlays is None:
         overlays = []
+    if isinstance(overlays, str):
+        # Some agents pass overlays as a JSON string
+        try:
+            overlays = json.loads(overlays)
+        except Exception:
+            overlays = []
+    overlays = normalize_overlays(overlays)
 
     symbol = ticker.upper().strip()
     logger.info("[charting_tools] Generating chart for %s with %d overlays", symbol, len(overlays))

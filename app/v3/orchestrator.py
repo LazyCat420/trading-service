@@ -1223,14 +1223,30 @@ def _extract_agent_results(desk: SharedDesk) -> dict[str, Any]:
 
 def _extract_debate_result(desk: SharedDesk) -> dict[str, Any] | None:
     """Extract debate result from SharedDesk for V1 compatibility."""
-    if not desk.bull_argument and not desk.bear_rebuttal:
-        return None
 
     def _safe_int(val, default=0):
         try:
             return int(val)
         except (ValueError, TypeError):
             return default
+
+    # Tournament mode (the default): bull_argument/bear_rebuttal are never set,
+    # so derive the debate result from the tournament artifact instead.
+    tournament = getattr(desk, "tournament_result", None)
+    if tournament:
+        vetoed = bool(tournament.get("vetoed"))
+        return {
+            "action": tournament.get("action", "HOLD"),
+            "confidence": _safe_int(tournament.get("confidence", 0)),
+            "winning_side": tournament.get("winning_side", "split"),
+            "bull_confidence": 0,
+            "bear_confidence": 0,
+            "defense_confidence": _safe_int(tournament.get("confidence", 0)),
+            "original_thesis_status": "VETOED" if vetoed else "HELD",
+        }
+
+    if not desk.bull_argument and not desk.bear_rebuttal:
+        return None
 
     bull_conf = _safe_int((desk.bull_argument or {}).get("confidence", 0))
     bear_conf = _safe_int((desk.bear_rebuttal or {}).get("confidence", 0))

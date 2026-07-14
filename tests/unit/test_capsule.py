@@ -383,12 +383,21 @@ class TestWriteCapsuleToDb:
 
 class TestEstimateTokens:
     def test_basic_estimation(self):
+        # Delegates to the shared tiktoken-based counter (heuristic fallback),
+        # so assert sane bounds rather than chars/4-specific values.
         assert _estimate_tokens("") == 0
-        assert _estimate_tokens("test") == 1  # 4 chars / 4 = 1
-        assert _estimate_tokens("a" * 400) == 100  # 400 / 4 = 100
+        assert _estimate_tokens("test") >= 1
+        assert 25 <= _estimate_tokens("a" * 400) <= 200
 
     def test_realistic_text(self):
         text = "RSI=72 (overbought), vol 3x avg, EPS surprise +8%."
         tokens = _estimate_tokens(text)
-        assert 10 < tokens < 20  # ~50 chars → ~12 tokens
+        assert 5 < tokens < 40
+
+    def test_consistent_with_shared_counter(self):
+        # capsule budget math must agree with context_compressor's counter,
+        # otherwise AgentCapsule.tokens_estimated diverges from render budgets.
+        from app.agents.context_compressor import _estimate_tokens as compressor_estimate
+        text = "RSI=72 (overbought), vol 3x avg, EPS surprise +8%."
+        assert _estimate_tokens(text) == compressor_estimate(text)
 

@@ -69,7 +69,9 @@ async def _reflect(audit_bundle: dict) -> dict:
     )
 
     try:
-        from app.services.vllm_client import llm, Priority
+        # vllm_client was replaced by the SDK-backed shim in c82526b; the old
+        # import made this fail (silently) every cycle → canned fallback text.
+        from app.services.prism_agent_caller import llm, Priority
         response, tokens, elapsed = await llm.chat(
             system="You are a trading system auditor. Output valid JSON only.",
             user=prompt,

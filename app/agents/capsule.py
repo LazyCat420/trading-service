@@ -59,8 +59,14 @@ EMPTY_CAPSULE = AgentCapsule(
 
 
 def _estimate_tokens(text: str) -> int:
-    """Fast heuristic token estimation (~4 chars per token)."""
-    return len(text) // 4
+    """Token estimation — same tiktoken-based counter the rest of the context
+    budget uses (context_compressor computes AgentCapsule.tokens_estimated with
+    it; using a different heuristic here made the two disagree)."""
+    try:
+        from app.config.context_budget import estimate_tokens
+        return estimate_tokens(text)
+    except ImportError:
+        return len(text) // 4
 
 
 def format_capsule_for_prompt(capsule: AgentCapsule) -> str:

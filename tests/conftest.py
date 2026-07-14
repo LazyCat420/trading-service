@@ -18,6 +18,12 @@ os.environ["USE_LAZY_TOOL_SERVICE"] = "false"
 # Ensure project root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# The container gets the lazycat SDK via PYTHONPATH=/app/lazycat-sdk (docker-compose.yml);
+# mirror that locally from the sibling checkout so tests import the same code.
+_sdk_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lazycat-sdk"))
+if os.path.isdir(_sdk_dir) and _sdk_dir not in sys.path:
+    sys.path.insert(0, _sdk_dir)
+
 # Configure yfinance cache location early to prevent race conditions and permission errors in tests
 try:
     import yfinance as yf

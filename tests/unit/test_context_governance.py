@@ -74,12 +74,16 @@ class TestContextBudget:
             )
 
     def test_estimate_tokens(self):
-        """Token estimation should use 4-chars-per-token heuristic."""
+        """Token estimation delegates to context_gate's tiktoken-based counter
+        (falling back to the chars/4 heuristic), so assert consistency with the
+        delegate rather than heuristic-specific values."""
         from app.config.context_budget import estimate_tokens
+        from app.services.context_gate import estimate_tokens as gate_estimate
 
-        assert estimate_tokens("a" * 100) == 25
         assert estimate_tokens("") == 0
-        assert estimate_tokens("hello world") == 2  # 11 chars → 2 tokens
+        assert estimate_tokens("a" * 100) == gate_estimate("a" * 100)
+        assert estimate_tokens("hello world") == gate_estimate("hello world")
+        assert estimate_tokens("hello world") >= 1
 
     def test_partial_model_id_match(self):
         """Should match partial model IDs for HuggingFace-style paths."""

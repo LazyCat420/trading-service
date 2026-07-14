@@ -270,10 +270,26 @@ class SharedDesk:
                 summary = self.bull_defense.get("summary", "")
                 sections.append(f"## Bull Final Defense\n{summary}")
 
-            if self.debate_judge:
+            tournament = getattr(self, "tournament_result", None)
+            if tournament:
+                action = tournament.get("action", "?")
+                conf = tournament.get("confidence", 0)
+                side = tournament.get("winning_side", "split")
+                veto = " [JURY VETO]" if tournament.get("vetoed") else ""
+                sections.append(
+                    f"## Tournament Debate Verdict{veto}\n"
+                    f"**{action} @ {conf}% confidence (winner: {side})**\n"
+                    f"{tournament.get('summary', '')}"
+                )
+
+            # Skip the debate_judge artifact when it is just a copy of the
+            # tournament verdict already rendered above.
+            if self.debate_judge and not (tournament and self.debate_judge.get("source") == "tournament_debate"):
                 summary = self.debate_judge.get("summary", "")
-                winner = self.debate_judge.get("winner", "")
-                conf = self.debate_judge.get("final_confidence", 0)
+                # Tournament mode writes winning_side/confidence; the classic
+                # debate judge wrote winner/final_confidence — accept both.
+                winner = self.debate_judge.get("winning_side") or self.debate_judge.get("winner", "")
+                conf = self.debate_judge.get("confidence", self.debate_judge.get("final_confidence", 0))
                 sections.append(f"## Debate Judge Verdict (Winner: {winner} @ {conf}% confidence)\n{summary}")
 
         # Regime

@@ -17,6 +17,29 @@ from app.utils.us_ticker_resolver import (
 
 logger = logging.getLogger(__name__)
 
+
+class _ExplicitTickersPinned(Exception):
+    """Control-flow sentinel: an explicit ticker list was requested, so the
+    discovery/scoring/freshness/gatekeeper funnel is skipped entirely."""
+
+
+def summarize_ticker_results(results) -> dict:
+    """Aggregate per-ticker result dicts (from _process_ticker) into the
+    action/trade counts recorded in cycle_run_summaries. Non-dict entries
+    (None from skipped tickers, Exceptions from gather) are ignored."""
+    rs = [r for r in (results or []) if isinstance(r, dict)]
+    actions = [(r.get("action") or "").upper() for r in rs]
+    return {
+        "analysis_results_count": len(actions),
+        "buy_count": actions.count("BUY"),
+        "sell_count": actions.count("SELL"),
+        "hold_count": actions.count("HOLD"),
+        "trade_attempted": sum(1 for r in rs if r.get("trade_attempted")),
+        "trade_executed": sum(1 for r in rs if r.get("trade_executed")),
+        "trade_failed": sum(1 for r in rs if r.get("trade_failed")),
+    }
+
+
 class PipelineService:
     _state = PipelineStateDB.default_state()
     _cycle_task = None
@@ -99,16 +122,16 @@ class PipelineService:
             logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
 
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
-        max_tickers = kwargs.get("max_tickers") or 5
+        max_tickers = kwargs.get("max_tickers")  # None → auto (gatekeeper default)
         agent_locale = kwargs.get("agent_locale") or "default"
         prism_overrides = kwargs.get("prism_overrides") or {}
-        
+
         cls._state.update({
             "status": "starting",
             "cycle_id": cycle_id,
             "agent_locale": agent_locale,
             "prism_overrides": prism_overrides,
-            "progress": f"Screening watchlist for top {max_tickers} setups..."
+            "progress": f"Screening watchlist for top {max_tickers or 'auto'} setups..."
         })
         cls.save_state()
         cls._stop_requested = False
@@ -135,7 +158,42 @@ class PipelineService:
         return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
 
     @classmethod
-    async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int = 5, agent_locale: str = "default", **kwargs):
+    async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int | None = None, agent_locale: str = "default", **kwargs):
+        # Captured up-front so summaries can be written even when the cycle
+        # fails or is cancelled before reaching the success path.
+        t0 = time.monotonic()
+        requested_tickers = list(tickers or [])
+        collect_flag = bool(kwargs.get("collect", True))
+        trade_flag = bool(kwargs.get("trade", True))
+
+        def _persist_summary(status: str, tickers_final, results=None, error: str | None = None):
+            """Write the cycle_run_summaries row. Counts come from the per-ticker
+            result dicts returned by _process_ticker (None entries are skipped)."""
+            try:
+                from app.log_manager import log_manager
+
+                summary = {
+                    "trigger_type": "v3",
+                    "started_at": cls._state.get("started_at"),
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                    "status": status,
+                    "tickers_requested": requested_tickers or list(tickers_final or []),
+                    "tickers": list(tickers_final or []),
+                    "tickers_final": list(tickers_final or []),
+                    "collect_flag": collect_flag,
+                    "analyze_flag": True,
+                    "trade_flag": trade_flag,
+                    "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                    "no_trade_reason": None if trade_flag else "trade_disabled",
+                    "primary_failure_reason": error,
+                    **summarize_ticker_results(results),
+                }
+                log_manager.log_cycle_summary(cycle_id, summary)
+                return summary
+            except Exception as sum_err:
+                logger.error("[PipelineService] Failed to persist cycle summary: %s", sum_err)
+                return None
+
         try:
             # ── Set prism_client.url ONCE for the entire cycle ──
             # This prevents a race condition where concurrent agent calls
@@ -194,10 +252,21 @@ class PipelineService:
                 import json
                 
                 if tickers:
-                    base_tickers = tickers
-                else:
-                    base_tickers = [t["ticker"] for t in get_active()]
-                    
+                    # Explicit ticker request: honor it exactly. The discovery/
+                    # scoring/freshness/gatekeeper funnel below treats requested
+                    # tickers as mere candidates and can replace the whole list,
+                    # so it is skipped for explicit requests.
+                    if max_tickers:
+                        tickers = list(tickers)[:max_tickers]
+                    emit(
+                        "gatekeeper", "explicit_tickers",
+                        f"🎯 Explicit ticker request honored: {tickers} (discovery & gatekeeper bypassed)",
+                        status="ok",
+                    )
+                    raise _ExplicitTickersPinned()
+
+                base_tickers = [t["ticker"] for t in get_active()]
+
                 # --- DISCOVERY ENGINE ---
                 active_ticker_dicts = []
                 
@@ -511,7 +580,7 @@ class PipelineService:
                         # -----------------------
                     
                     min_tickers = 5
-                    max_tickers = 15
+                    max_tickers = max_tickers or 15
                     system_prompt = SYSTEM_PROMPT.replace("{min_tickers}", str(min_tickers)).replace("{max_tickers}", str(max_tickers))
                     stock_count = len(pm_stocks)
                     user_prompt = f"Here are {stock_count} stocks that passed our Freshness Gate (all have new data or material changes):\n\n{snapshot_table}\n\nIMPORTANT: You must output ONLY a valid JSON object. Do NOT output any conversational text or formatting blocks. Your response must begin with {{ and end with }}."
@@ -584,6 +653,8 @@ class PipelineService:
                         cls._state.update({"status": "idle", "progress": "Gatekeeper bypassed."})
                         cls.save_state()
                         return
+            except _ExplicitTickersPinned:
+                pass  # explicit ticker list already in `tickers`
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -623,23 +694,33 @@ class PipelineService:
             async def _process_ticker(i: int, ticker_name: str):
                 if cls._stop_requested:
                     logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
-                    return
-                
+                    return None
+
                 agent_locale = cls._state.get("agent_locale", "default")
                 prism_overrides = cls._state.get("prism_overrides", {})
                 result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides)
-                
+
                 # Save verdict to DB
                 from app.services.result_saver import save_analysis_result
                 save_analysis_result(
                     ticker_name, cycle_id, result,
                     snapshot=_ticker_snapshot_map.get(ticker_name),
                 )
-                
-                # Execute Trade — gated by confidence threshold
+
+                # Execute Trade — gated by the cycle's trade flag and confidence threshold
                 action = result.get("action", "HOLD")
                 confidence = result.get("confidence", 0)
-                
+                result["trade_attempted"] = False
+                result["trade_executed"] = False
+
+                if not trade_flag:
+                    if action in ("BUY", "SELL"):
+                        logger.info(
+                            "[PipelineService] %s: %s decision NOT executed — cycle started with trade=false",
+                            ticker_name, action,
+                        )
+                    return result
+
                 trade_failed = False
                 try:
                     from app.config import settings as _cfg
@@ -660,11 +741,21 @@ class PipelineService:
                             ticker_name, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
                         )
                     elif action == "BUY":
+                        result["trade_attempted"] = True
                         size_pct = max(0.02, min(0.10, confidence / 100.0 * 0.10))
-                        await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
+                        trade_res = await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
+                        if isinstance(trade_res, dict) and trade_res.get("error"):
+                            logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
+                        else:
+                            result["trade_executed"] = True
                     elif action == "SELL":
-                        await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
-                        
+                        result["trade_attempted"] = True
+                        trade_res = await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
+                        if isinstance(trade_res, dict) and trade_res.get("error"):
+                            logger.warning("[PipelineService] %s: SELL not executed: %s", ticker_name, trade_res["error"])
+                        else:
+                            result["trade_executed"] = True
+
                     # Handle Triggers (limit orders)
                     decision = result.get("estimate", {})
                     stop_loss = decision.get("stop_loss")
@@ -692,6 +783,8 @@ class PipelineService:
                         snapshot=_ticker_snapshot_map.get(ticker_name),
                     )
 
+                return result
+
             # Build tasks and execute concurrently
             # We use standard asyncio.gather here because the underlying LLM calls
             # (inside _run_agent_with_circuit_breaker) are globally throttled by the AdaptiveConcurrencyController.
@@ -714,44 +807,23 @@ class PipelineService:
             # Persist the cycle summary and enqueue post-cycle autoresearch.
             # cycle_run_summaries feeds the autoresearch audit and the
             # /autoresearch/run endpoint's "latest cycle" lookup.
+            cycle_summary = _persist_summary("done", tickers, results)
             try:
-                from app.log_manager import log_manager
-
-                actions = [
-                    (r.get("action") or "").upper()
-                    for r in results
-                    if isinstance(r, dict)
-                ]
-                cycle_summary = {
-                    "trigger_type": "v3",
-                    "started_at": cls._state.get("started_at"),
-                    "ended_at": datetime.now(timezone.utc).isoformat(),
-                    "status": "done",
-                    "tickers_requested": list(tickers),
-                    "tickers": list(tickers),
-                    "tickers_final": list(tickers),
-                    "analyze_flag": True,
-                    "analysis_results_count": len(actions),
-                    "buy_count": actions.count("BUY"),
-                    "sell_count": actions.count("SELL"),
-                    "hold_count": actions.count("HOLD"),
-                }
-                log_manager.log_cycle_summary(cycle_id, cycle_summary)
-
-                import uuid as _uuid
-                from app.db.connection import get_db
-                job_id = f"job_{_uuid.uuid4().hex[:8]}"
-                with get_db() as db:
-                    db.execute(
-                        "INSERT INTO system_commands (id, command_type, payload, status) "
-                        "VALUES (%s, 'AUTORESEARCH', %s, 'pending')",
-                        [job_id, json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary})],
+                if cycle_summary:
+                    import uuid as _uuid
+                    from app.db.connection import get_db
+                    job_id = f"job_{_uuid.uuid4().hex[:8]}"
+                    with get_db() as db:
+                        db.execute(
+                            "INSERT INTO system_commands (id, command_type, payload, status) "
+                            "VALUES (%s, 'AUTORESEARCH', %s, 'pending')",
+                            [job_id, json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary})],
+                        )
+                    logger.info(
+                        "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
                     )
-                logger.info(
-                    "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
-                )
             except Exception as ar_err:
-                logger.error("[PipelineService] Post-cycle summary/autoresearch enqueue failed: %s", ar_err)
+                logger.error("[PipelineService] Post-cycle autoresearch enqueue failed: %s", ar_err)
 
             # Fire and forget the post-cycle evolution and evaluation
             try:
@@ -800,6 +872,7 @@ class PipelineService:
                 "progress": "Cycle stopped by user",
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
+            _persist_summary("stopped", tickers, error="Cycle stopped/cancelled")
             # Do NOT re-raise — let the finally block clean up and let
             # stop_cycle() see the task as done.
         except Exception as e:
@@ -809,6 +882,7 @@ class PipelineService:
                 "error": str(e),
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
+            _persist_summary("error", tickers, error=str(e))
         finally:
             cls.save_state()
             cls._cycle_task = None
