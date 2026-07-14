@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ def _seed_from_hardcoded() -> dict:
     """Create initial personas from the hardcoded PERSONAS dict."""
     from app.config.personas import PERSONAS
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     store = {}
 
     # Deterministic IDs so re-seeding doesn't create duplicates
@@ -195,7 +195,7 @@ async def create_persona(data: dict) -> dict:
     async with _lock:
         store = _load_store()
         persona_id = data.get("id") or str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         record = {
             "id": persona_id,
@@ -234,7 +234,7 @@ async def update_persona(persona_id: str, updates: dict) -> Optional[dict]:
             if value is not None and key not in ("id", "created_at"):
                 record[key] = value
 
-        record["updated_at"] = datetime.utcnow().isoformat()
+        record["updated_at"] = datetime.now(timezone.utc).isoformat()
         store[persona_id] = record
         _save_store(store)
         logger.info("[AgentPersonaStore] Updated persona '%s' (%s)", record["name"], persona_id)

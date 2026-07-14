@@ -33,7 +33,8 @@ class BootService:
         if settings.PRISM_ENABLED:
             prism_client.url = settings.PRISM_URL
         else:
-            prism_client.url = f"http://{settings.DEFAULT_HOST}:7778"
+            # lazy-tool-service's external (host-mapped) port is 5591
+            prism_client.url = f"http://{settings.DEFAULT_HOST}:5591"
         logger.info("[Boot] Configured prism_client.url: %s (PRISM_ENABLED=%s)", prism_client.url, settings.PRISM_ENABLED)
 
         logger.info("[Boot] Starting application boot sequence...")
@@ -502,7 +503,8 @@ class BootService:
                 except Exception:
                     pass
 
-            port = os.getenv("LAZY_TOOL_SERVICE_PORT", "7778")
+            # 5591 is lazy-tool-service's external (host-mapped) port.
+            port = os.getenv("LAZY_TOOL_SERVICE_PORT", "5591")
             mcp_url = f"http://{prism_host}:{port}/mcp/sse"
             logger.info(f"[MCP-Reg] Calculated MCP URL: {mcp_url}")
 
@@ -536,7 +538,7 @@ class BootService:
                 }
             ]
 
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now(datetime.timezone.utc)
 
             for config in configs:
                 col.update_one(

@@ -45,8 +45,8 @@ source .venv/bin/activate
 # Run one cycle for AAPL
 python ../trading-cycle-backend/cycle_main.py --once --tickers AAPL
 
-# Run scheduler (every 30 minutes)
-python ../trading-cycle-backend/cycle_main.py --interval 30
+# Run the service (cycles are triggered via v3_system_commands START_CYCLE rows)
+python ../trading-cycle-backend/cycle_main.py
 ```
 
 ### Run with Docker
@@ -74,7 +74,6 @@ docker compose restart trading-cycle-backend
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CYCLE_INTERVAL` | `30` | Minutes between cycles |
 | `CYCLE_TICKERS` | auto-select | Comma-separated ticker override |
 | `CYCLE_ONCE` | `false` | Set to `true` for single-shot mode |
 | `DATABASE_URL` | — | PostgreSQL connection string |

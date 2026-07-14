@@ -274,6 +274,12 @@ async def run_v3_pipeline(
 
     async def whiteboard_subscriber(event):
         nonlocal regime
+        # Whiteboard broadcasts to every subscriber; concurrent tickers share
+        # the bus. Only react to this ticker's events or agents cross-trigger
+        # (duplicate queued tasks, re-runs of completed agents).
+        event_ticker = (event.get("ticker") or "").upper()
+        if event_ticker and event_ticker != ticker.upper():
+            return
         sec = event.get("section")
         auth = event.get("author")
         logger.info("[V3] Whiteboard event trigger: section '%s' updated by '%s'", sec, auth)
@@ -719,6 +725,12 @@ async def run_v3_pipeline(
         logger.info("[V3] %s: Episodic observation recorded", ticker)
     except Exception as e:
         logger.warning("[V3] %s: Memory persistence failed (non-fatal): %s", ticker, e)
+
+    try:
+        from app.cognition.ontology.graph_sync import sync_desk_to_graph
+        sync_desk_to_graph(desk, cycle_id)
+    except Exception as e:
+        logger.warning("[V3] %s: Brain graph sync failed (non-fatal): %s", ticker, e)
 
     # ═══════════════════════════════════════════════════════════════════
     # LAYER 6: Policy Gates (Trade Execution Rules)

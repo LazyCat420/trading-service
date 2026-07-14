@@ -242,7 +242,9 @@ class Settings(BaseSettings):
     WAR_CONTEXT_ENABLED: bool = True
 
     # ── Prism AI Gateway (MongoDB mirror) ──
-    PRISM_URL: str = _config.get("PRISM_URL", f"http://{_default_host}:7778")
+    # Default routes through lazy-tool-service's prism-proxy (external port
+    # 5591), matching production; direct prism is :7777.
+    PRISM_URL: str = _config.get("PRISM_URL", f"http://{_default_host}:5591/prism-proxy")
     PRISM_PROJECT: str = "vllm-trading-bot"
     PRISM_USERNAME: str = "lazy-trader"
     PRISM_ENABLED: bool = True

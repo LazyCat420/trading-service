@@ -735,6 +735,63 @@ async def run_tournament_debate(
     except Exception as audit_err:
         logger.error("[TOURNAMENT] Audit log failed: %s", audit_err)
 
+    # ── Log tournament to debate_history so the UI/history shows it ──
+    try:
+        from app.db.connection import get_db
+        import uuid as _uuid
+
+        persona_outcomes = {
+            "mode": "tournament",
+            "pitches": [
+                {"persona": p.get("persona"), "claim": p.get("claim")} for p in pitches
+            ],
+            "survivors": [
+                {"persona": s.get("persona"), "backtest_pnl": s.get("backtest_pnl", 0)}
+                for s in survivors
+            ],
+            "jury": jury_verdict.get("jury_results", {}),
+            "vetoed": vetoed,
+            "tokens": total_tokens,
+        }
+        with get_db() as db:
+            db.execute(
+                """
+                INSERT INTO debate_history
+                (id, ticker, cycle_id, pro_argument, con_argument, winner, final_action, final_confidence, persona_name, persona_outcomes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ticker, cycle_id) DO UPDATE SET
+                pro_argument = EXCLUDED.pro_argument,
+                con_argument = EXCLUDED.con_argument,
+                winner = EXCLUDED.winner,
+                final_action = EXCLUDED.final_action,
+                final_confidence = EXCLUDED.final_confidence,
+                persona_name = EXCLUDED.persona_name,
+                persona_outcomes = EXCLUDED.persona_outcomes
+                """,
+                [
+                    f"dh-{_uuid.uuid4().hex[:12]}",
+                    ticker,
+                    cycle_id or "manual",
+                    json.dumps({
+                        "persona": debated_a.get("persona"),
+                        "claim": debated_a.get("claim"),
+                        "attack_points": debated_a.get("attack_points", []),
+                    }),
+                    json.dumps({
+                        "persona": debated_b.get("persona"),
+                        "claim": debated_b.get("claim"),
+                        "attack_points": debated_b.get("attack_points", []),
+                    }),
+                    winning_side,
+                    action,
+                    confidence,
+                    "tournament",
+                    json.dumps(persona_outcomes),
+                ],
+            )
+    except Exception as db_err:
+        logger.error("[TOURNAMENT] Failed to log debate history: %s", db_err)
+
     # ── Build Result ─────────────────────────────────────────────────
     return {
         "action": action,

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -709,6 +710,48 @@ class PipelineService:
 
             from app.v3.debate_coordinator import run_battle_royale
             await run_battle_royale(cycle_id=cycle_id, bot_id=active_bot_id)
+
+            # Persist the cycle summary and enqueue post-cycle autoresearch.
+            # cycle_run_summaries feeds the autoresearch audit and the
+            # /autoresearch/run endpoint's "latest cycle" lookup.
+            try:
+                from app.log_manager import log_manager
+
+                actions = [
+                    (r.get("action") or "").upper()
+                    for r in results
+                    if isinstance(r, dict)
+                ]
+                cycle_summary = {
+                    "trigger_type": "v3",
+                    "started_at": cls._state.get("started_at"),
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                    "status": "done",
+                    "tickers_requested": list(tickers),
+                    "tickers": list(tickers),
+                    "tickers_final": list(tickers),
+                    "analyze_flag": True,
+                    "analysis_results_count": len(actions),
+                    "buy_count": actions.count("BUY"),
+                    "sell_count": actions.count("SELL"),
+                    "hold_count": actions.count("HOLD"),
+                }
+                log_manager.log_cycle_summary(cycle_id, cycle_summary)
+
+                import uuid as _uuid
+                from app.db.connection import get_db
+                job_id = f"job_{_uuid.uuid4().hex[:8]}"
+                with get_db() as db:
+                    db.execute(
+                        "INSERT INTO system_commands (id, command_type, payload, status) "
+                        "VALUES (%s, 'AUTORESEARCH', %s, 'pending')",
+                        [job_id, json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary})],
+                    )
+                logger.info(
+                    "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
+                )
+            except Exception as ar_err:
+                logger.error("[PipelineService] Post-cycle summary/autoresearch enqueue failed: %s", ar_err)
 
             # Fire and forget the post-cycle evolution and evaluation
             try:
