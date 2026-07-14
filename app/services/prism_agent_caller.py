@@ -103,11 +103,12 @@ async def call_prism_agent(
     if max_tokens is None:
         max_tokens = 8192
 
-    is_validator = "validator" in fallback_agent_name.lower()
-    is_thesis = "thesis" in fallback_agent_name.lower()
-    
+    # Prism's ContextExhaustionGuard rejects ANY request whose output budget
+    # is under MINIMUM_VIABLE_OUTPUT_TOKENS (4096) — there are no exemptions,
+    # so every call must be floored at 4096. Small budgets are expressed via
+    # the conciseness directive instead.
     instruction = ""
-    if max_tokens < 4096 and not is_validator and not is_thesis:
+    if max_tokens < 4096:
         if max_tokens <= 128:
             sentences = "1 or 2 sentences max"
         elif max_tokens <= 256:

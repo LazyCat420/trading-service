@@ -226,8 +226,13 @@ async def _run_pitch_agent(
         evidence_data=evidence_header + eq_results_text,
     )
 
+    # Persona name in the user message keeps each pitch in its own Prism
+    # conversation — the SDK groups conversations by (agent, first-user-msg
+    # hash), and identical messages made the 4 concurrent pitches collide
+    # on one conversation (Prism 409s all but the first).
     user_message = (
-        f"Generate your best mathematically testable pitch for {ticker}. "
+        f"As the {persona_name.replace('_', ' ')} persona, generate your best "
+        f"mathematically testable pitch for {ticker}. "
         f"Use the pre-computed equation results and evidence data above. "
         f"Output your response as the required JSON format."
     )
@@ -500,10 +505,13 @@ async def _run_jury_scoring(
 
     async def run_juror(juror_name, juror_config):
         agent_name = f"tournament_jury_{juror_name.lower()}"
+        # Unique first line per juror → separate Prism conversations for the
+        # concurrent jury calls (identical prompts collide → 409, see pitches).
+        juror_prompt = f"[Juror: {juror_name.replace('_', ' ')}]\n{user_prompt}"
         try:
             response, tokens, ms = await llm.chat(
                 system=juror_config["system_prompt"],
-                user=user_prompt,
+                user=juror_prompt,
                 temperature=0.3,
                 max_tokens=1024,
                 priority=Priority.NORMAL,
