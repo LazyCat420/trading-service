@@ -334,6 +334,7 @@ class SharedDesk:
             "regime_classification": self.regime_classification,
             "final_decision": self.final_decision,
             "trade_decision": self.trade_decision,
+            "tournament_result": self.tournament_result,
             "phase_outcomes": self.phase_outcomes,
             "cycle_metadata": self.cycle_metadata,
             "agent_telemetry": self.agent_telemetry,
@@ -358,6 +359,7 @@ class SharedDesk:
         desk.regime_classification = data.get("regime_classification")
         desk.final_decision = data.get("final_decision")
         desk.trade_decision = data.get("trade_decision")
+        desk.tournament_result = data.get("tournament_result")
         desk.phase_outcomes = data.get("phase_outcomes", {})
         desk.cycle_metadata = data.get("cycle_metadata", {})
         desk.agent_telemetry = data.get("agent_telemetry", [])

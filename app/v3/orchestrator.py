@@ -232,6 +232,7 @@ async def run_v3_pipeline(
     from app.v3.agents import regime_engine
     from app.v3.agents import junior_analyst, fundamental_analyst, quant_analyst
     from app.v3.agents import bull_agent, bear_agent, debate_judge
+    from app.v3.agents import decision_agent
     from app.config.config_cognition import cognition_settings as _cog_settings
     from app.config import settings as _settings
 

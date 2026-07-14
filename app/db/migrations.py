@@ -155,7 +155,6 @@ def run_migrations(conn):
     _safe_add_column(conn, "youtube_transcripts", "max_analyses", "INTEGER DEFAULT 5")
 
     # ── Analysis Results: Thesis storage ──
-    _safe_add_column(conn, "analysis_results", "triage_tier", "TEXT")
     _safe_add_column(conn, "analysis_results", "thesis_verdict", "TEXT")
     _safe_add_column(conn, "analysis_results", "thesis_confidence", "INTEGER")
     _safe_add_column(conn, "analysis_results", "thesis_summary", "TEXT")
@@ -219,9 +218,6 @@ def run_migrations(conn):
             conn.rollback()
         except Exception:
             pass
-
-    # ── Triage tier audit column on analysis_results ──
-    _safe_add_column(conn, "analysis_results", "triage_tier", "TEXT")
 
     # ── Maintenance agent retry tracking ──
     _safe_add_column(
@@ -2939,6 +2935,16 @@ def _fix_eth_cagr_data(conn):
     _safe_add_column(conn, "watchlist", "purge_reason", "TEXT")
 
     # --- Auto-synced missing tables from schema_pg.sql ---
+    try:
+        with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS global")
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     try:
         with conn.cursor() as cur:
             cur.execute("""
