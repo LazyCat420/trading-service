@@ -20,6 +20,14 @@ from app.db.connection import get_db
 router = APIRouter(prefix="/api/v1/cycles", tags=["cycle-replay"])
 logger = logging.getLogger(__name__)
 
+# Matches the orphaned-state auto-clear threshold in PipelineService.start_cycle:
+# a "running" cycle with no event in this long is a crashed cycle, not a live one.
+STALE_RUNNING_SECS = 1800
+
+
+def _as_utc(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
 
 # ── Agent display metadata ──
 
@@ -154,6 +162,13 @@ def list_cycles(
                 started = row[1].isoformat() if row[1] else None
                 finished = row[2].isoformat() if row[2] else None
 
+                # Wall-clock duration: per-event elapsed_ms is almost never
+                # populated, so SUM(elapsed_ms) reads 0s for every cycle.
+                total_ms = row[4] or 0
+                if row[1] and row[2]:
+                    span_ms = int((row[2] - row[1]).total_seconds() * 1000)
+                    total_ms = max(total_ms, span_ms)
+
                 # Fallback for historical cycles without telemetry
                 if not tickers:
                     tr_tickers = db.execute(
@@ -175,16 +190,29 @@ def list_cycles(
                         if done_evt:
                             is_completed = True
 
+                # A cycle only counts as running if the live singleton claims it
+                # AND its events are still fresh — a hard kill (crash-loop, OOM,
+                # container restart) skips the pipeline's except/finally and
+                # leaves pipeline_state stuck on "running" forever.
+                if cycle_id == live_cycle_id:
+                    stale = (
+                        row[2] is not None
+                        and (datetime.now(timezone.utc) - _as_utc(row[2])).total_seconds() > STALE_RUNNING_SECS
+                    )
+                    status = ("completed" if is_completed else "aborted") if stale else "running"
+                else:
+                    status = "completed" if is_completed else "aborted"
+
                 cycles.append({
                     "cycle_id": cycle_id,
                     "started_at": started,
                     "finished_at": finished,
-                    "total_ms": row[4] or 0,
+                    "total_ms": total_ms,
                     "ticker_count": len(tickers),
                     "tickers": tickers,
                     "agent_count": agent_count,
                     "actions": actions,
-                    "status": "running" if cycle_id == live_cycle_id else ("completed" if is_completed else "aborted"),
+                    "status": status,
                 })
 
             # Get total count for pagination
