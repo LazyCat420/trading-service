@@ -253,8 +253,10 @@ async def _run_pitch_agent(
         # Validate format
         is_valid, parsed, error = validate_argument_format(final_response)
         if not is_valid:
-            # One retry with format correction
-            rejection = build_rejection_prompt(error, "pitch")
+            # One retry with format correction. Persona prefix keeps the four
+            # concurrent retries in separate Prism conversations (identical
+            # retry prompts hash to one conversation → 409 GENERATION_IN_PROGRESS).
+            rejection = f"[Persona: {persona_name.replace('_', ' ')}] " + build_rejection_prompt(error, "pitch")
             retry_response, retry_tokens, _ = await llm.chat(
                 system=system_prompt,
                 user=rejection,

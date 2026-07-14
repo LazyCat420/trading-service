@@ -178,7 +178,11 @@ async def call_prism_agent(
         )
         est_input_tokens = len(all_text) // 4 + 100
         if max_tokens >= 4096:
-            max_tokens = max(512, max_tokens - est_input_tokens)
+            # Never drop below 4096: Prism's ContextExhaustionGuard rejects
+            # smaller output budgets outright (and Prism does its own output
+            # clamping against the real context window, so the subtraction is
+            # just a vLLM-overflow courtesy, not a correctness requirement).
+            max_tokens = max(4096, max_tokens - est_input_tokens)
         
         try:
             resp = await prism_client.call_agent(
