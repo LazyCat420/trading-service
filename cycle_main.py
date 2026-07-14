@@ -93,6 +93,9 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     
                     if cmd_type in ("START_CYCLE", "START_V3_CYCLE"):
                         from app.services.pipeline_service import PipelineService
+                        from lazycat.llm import prism_client
+                        prism_client.reset_kill_switch()
+                        
                         kwargs = {k: v for k, v in payload.items() if k not in ("tickers", "cycle_id")}
                         result = await PipelineService.start_cycle(
                             tickers=payload.get("tickers", []),

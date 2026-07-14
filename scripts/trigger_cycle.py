@@ -53,7 +53,7 @@ def check_active_commands():
     try:
         with get_db() as db:
             rows = db.execute(
-                "SELECT id, command_type, status, created_at FROM system_commands WHERE status IN ('pending', 'running') ORDER BY created_at DESC"
+                "SELECT id, command_type, status, created_at FROM v3_system_commands WHERE status IN ('pending', 'running') ORDER BY created_at DESC"
             ).fetchall()
             if rows:
                 print("⚠️  Warning: The following commands are already pending or running:")
@@ -97,7 +97,7 @@ def main():
         with get_db() as db:
             db.execute(
                 """
-                INSERT INTO system_commands (id, command_type, payload, status, created_at)
+                INSERT INTO v3_system_commands (id, command_type, payload, status, created_at)
                 VALUES (%s, 'START_CYCLE', %s, 'pending', CURRENT_TIMESTAMP)
                 """,
                 [cmd_id, json.dumps(payload)]
