@@ -64,11 +64,13 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
             run_with_telemetry("finnhub_news", collect_finnhub_news(ticker, emit_cb=_emit))
         ]
     else:
-        # Run full scrape
+        from app.collectors.news_api_rotator import collect_from_all_apis
+
         tasks = [
             run_with_telemetry("yfinance_price", collect_price_history(ticker, period="6mo")),
             run_with_telemetry("yfinance_fund", collect_fundamentals(ticker)),
             run_with_telemetry("finnhub_news", collect_finnhub_news(ticker, emit_cb=_emit)),
+            run_with_telemetry("multi_api_news", collect_from_all_apis([ticker])),
             run_with_telemetry("reddit", collect_reddit(ticker)),
             run_with_telemetry("youtube", collect_youtube(ticker))
         ]

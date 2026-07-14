@@ -139,319 +139,8 @@ def build_providers_from_settings() -> list[ProviderConfig]:
 
 
 # ---------------------------------------------------------------------------
-# Individual provider fetchers (all use SmartClient)
+# Individual provider fetchers were moved to scraper-service/finnews_collector.py
 # ---------------------------------------------------------------------------
-
-
-async def _fetch_marketaux(
-    api_key: str,
-    tickers: list[str],
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    symbols = ",".join(tickers[:5])
-    url = (
-        f"https://api.marketaux.com/v1/news/all"
-        f"?symbols={symbols}&filter_entities=true"
-        f"&language=en&limit={limit}&api_token={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] marketaux HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("data", []):
-        try:
-            pub = datetime.fromisoformat(item["published_at"].replace("Z", "+00:00"))
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("description", ""),
-                source="marketaux",
-                published_at=pub,
-                tickers=[
-                    e["symbol"] for e in item.get("entities", []) if e.get("symbol")
-                ],
-                sentiment=item.get("entities", [{}])[0].get("sentiment_score")
-                if item.get("entities")
-                else None,
-            )
-        )
-    return articles
-
-
-async def _fetch_newsapi(
-    api_key: str,
-    query: str,
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    url = (
-        f"https://newsapi.org/v2/everything"
-        f"?q={query}&language=en&sortBy=publishedAt"
-        f"&pageSize={limit}&apiKey={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] newsapi HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("articles", []):
-        try:
-            pub = datetime.fromisoformat(item["publishedAt"].replace("Z", "+00:00"))
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("description", "") or item.get("content", ""),
-                source="newsapi",
-                published_at=pub,
-            )
-        )
-    return articles
-
-
-async def _fetch_alphavantage_news(
-    api_key: str,
-    tickers: list[str],
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    symbols = ",".join(tickers[:5])
-    url = (
-        f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT"
-        f"&tickers={symbols}&limit={limit}&apikey={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] alphavantage HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("feed", []):
-        pub_str = item.get("time_published", "")
-        try:
-            pub_dt = datetime.strptime(pub_str, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
-        except ValueError:
-            pub_dt = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("summary", ""),
-                source="alphavantage",
-                published_at=pub_dt,
-                tickers=[ts["ticker"] for ts in item.get("ticker_sentiment", [])],
-                sentiment=float(item.get("overall_sentiment_score", 0) or 0),
-            )
-        )
-    return articles
-
-
-async def _fetch_polygon_news(
-    api_key: str,
-    ticker: str,
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    url = (
-        f"https://api.polygon.io/v2/reference/news"
-        f"?ticker={ticker}&limit={limit}&sort=published_utc"
-        f"&order=desc&apiKey={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] polygon HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("results", []):
-        try:
-            pub = datetime.fromisoformat(item["published_utc"].replace("Z", "+00:00"))
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("article_url", ""),
-                summary=item.get("description", ""),
-                source="polygon",
-                published_at=pub,
-                tickers=item.get("tickers", []),
-            )
-        )
-    return articles
-
-
-async def _fetch_gnews(
-    api_key: str,
-    query: str,
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    url = (
-        f"https://gnews.io/api/v4/search?q={query}&lang=en&max={limit}&token={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] gnews HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("articles", []):
-        try:
-            pub = datetime.fromisoformat(item["publishedAt"].replace("Z", "+00:00"))
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("description", "") or item.get("content", ""),
-                source="gnews",
-                published_at=pub,
-            )
-        )
-    return articles
-
-
-async def _fetch_currentsapi(
-    api_key: str,
-    query: str,
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    url = (
-        f"https://api.currentsapi.services/v1/search"
-        f"?keywords={query}&language=en&limit={limit}&apiKey={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] currentsapi HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("news", []):
-        try:
-            pub = datetime.fromisoformat(
-                item.get("published", datetime.now(UTC).isoformat())
-            )
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("description", ""),
-                source="currentsapi",
-                published_at=pub,
-            )
-        )
-    return articles
-
-
-async def _fetch_thenewsapi(
-    api_key: str,
-    query: str,
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    url = (
-        f"https://api.thenewsapi.com/v1/news/all"
-        f"?search={query}&language=en&limit={limit}&api_token={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] thenewsapi HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("data", []):
-        try:
-            pub = datetime.fromisoformat(item["published_at"].replace("Z", "+00:00"))
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("description", ""),
-                source="thenewsapi",
-                published_at=pub,
-            )
-        )
-    return articles
-
-
-async def _fetch_worldnewsapi(
-    api_key: str,
-    query: str,
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    url = (
-        f"https://api.worldnewsapi.com/search-news"
-        f"?text={query}&language=en&number={limit}"
-    )
-    resp = await client.get(url, headers={"x-api-key": api_key})
-    if resp.status_code != 200:
-        logger.warning("[rotator] worldnewsapi HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("news", []):
-        try:
-            pub = datetime.fromisoformat(
-                item.get("publish_date", datetime.now(UTC).isoformat())
-            )
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("text", "")[:500],
-                source="worldnewsapi",
-                published_at=pub,
-            )
-        )
-    return articles
-
-
-async def _fetch_stockdata(
-    api_key: str,
-    tickers: list[str],
-    client: SmartClient,
-    limit: int = 10,
-) -> list[NewsArticle]:
-    symbols = ",".join(tickers[:5])
-    url = (
-        f"https://api.stockdata.org/v1/news/all"
-        f"?symbols={symbols}&filter_entities=true"
-        f"&language=en&limit={limit}&api_token={api_key}"
-    )
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning("[rotator] stockdata HTTP %d", resp.status_code)
-        return []
-    articles = []
-    for item in resp.json().get("data", []):
-        try:
-            pub = datetime.fromisoformat(item["published_at"].replace("Z", "+00:00"))
-        except Exception:
-            pub = datetime.now(UTC)
-        articles.append(
-            NewsArticle(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                summary=item.get("description", "") or item.get("snippet", ""),
-                source="stockdata",
-                published_at=pub,
-                tickers=[
-                    e["symbol"] for e in item.get("entities", []) if e.get("symbol")
-                ],
-            )
-        )
-    return articles
 
 
 # ---------------------------------------------------------------------------
@@ -610,46 +299,59 @@ class NewsApiRotator:
         provider: ProviderConfig,
         query: str,
     ) -> list[NewsArticle]:
-        """Route to the correct fetcher based on provider name."""
-        c = self._get_client()
-        key = provider.api_key
+        """Route to scraper-service to fetch from provider."""
+        from app.services.scraper_client import scraper_client
 
-        match provider.name:
-            case "finnhub":
-                # Delegate to the real finnhub_collector module-level function
-                from app.collectors.finnhub_collector import collect_news as fh_collect
+        if provider.name == "finnhub":
+            # Delegate to the real finnhub_collector module-level function
+            from app.collectors.finnhub_collector import collect_news as fh_collect
 
-                # finnhub_collector writes directly to DB and returns count
-                # We call it for each ticker and return empty (already persisted)
-                for ticker in self.tickers[:5]:
-                    try:
-                        await fh_collect(ticker, days_back=3)
-                    except Exception as e:
-                        logger.warning("[rotator] finnhub failed for %s: %s", ticker, e)
-                return []  # Already written to DB by finnhub_collector
-            case "marketaux":
-                return await _fetch_marketaux(key, self.tickers, c)
-            case "newsapi":
-                return await _fetch_newsapi(key, query, c)
-            case "alphavantage":
-                return await _fetch_alphavantage_news(key, self.tickers, c)
-            case "polygon":
-                return await _fetch_polygon_news(
-                    key, self.tickers[0] if self.tickers else "SPY", c
+            # finnhub_collector writes directly to DB and returns count
+            # We call it for each ticker and return empty (already persisted)
+            for ticker in self.tickers[:5]:
+                try:
+                    await fh_collect(ticker, days_back=3)
+                except Exception as e:
+                    logger.warning("[rotator] finnhub failed for %s: %s", ticker, e)
+            return []  # Already written to DB by finnhub_collector
+
+        try:
+            items = await scraper_client.collect(
+                source="finnews",
+                req_data={
+                    "provider": provider.name,
+                    "tickers": self.tickers,
+                    "query": query,
+                    "limit": 10,
+                }
+            )
+        except Exception as e:
+            logger.warning("[rotator] Failed to collect from scraper-service for %s: %s", provider.name, e)
+            return []
+
+        articles = []
+        for item in items:
+            try:
+                pub_str = item.get("published_at")
+                if pub_str:
+                    pub = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                else:
+                    pub = datetime.now(UTC)
+            except Exception:
+                pub = datetime.now(UTC)
+            
+            articles.append(
+                NewsArticle(
+                    title=item.get("title", ""),
+                    url=item.get("url", ""),
+                    summary=item.get("summary", ""),
+                    source=provider.name,
+                    published_at=pub,
+                    tickers=item.get("tickers", []),
+                    sentiment=item.get("sentiment"),
                 )
-            case "gnews":
-                return await _fetch_gnews(key, query, c)
-            case "currentsapi":
-                return await _fetch_currentsapi(key, query, c)
-            case "thenewsapi":
-                return await _fetch_thenewsapi(key, query, c)
-            case "worldnewsapi":
-                return await _fetch_worldnewsapi(key, query, c)
-            case "stockdata":
-                return await _fetch_stockdata(key, self.tickers, c)
-            case _:
-                logger.warning("[rotator] Unknown provider: %s", provider.name)
-                return []
+            )
+        return articles
 
     async def fetch_news(
         self,
