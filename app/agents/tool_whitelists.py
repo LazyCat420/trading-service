@@ -81,7 +81,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_technical_indicators",
         "get_polygon_price_history",
         "get_options_flow",
-        "query_technical_indicator",
         "publish_event",
     ],
     "v3_worker_fundamental": [
@@ -89,7 +88,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_finviz_fundamentals",
         "get_sec_filings",
         "get_earnings_data",
-        "query_financial_metrics",
         "publish_event",
     ],
     "v3_worker_news": [
@@ -133,7 +131,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_technical_indicators",
         "get_polygon_price_history",
         "get_options_flow",
-        "query_technical_indicator",
         "calculate_risk_reward",
         "calculate_stop_loss",
         "calculate_position_size",

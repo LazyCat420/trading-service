@@ -17,7 +17,6 @@ TOOL_WHITELIST = [
     "get_institutional_holdings",
     "get_polygon_price_history",
     "get_options_flow",
-    "query_technical_indicator",
     "calculate_risk_reward",
     "calculate_stop_loss",
     "calculate_position_size",
