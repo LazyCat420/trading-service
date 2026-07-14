@@ -35,6 +35,13 @@ _AGENT_META = {
     "decision_synthesizer": {"label": "Decision Synthesizer", "icon": "📝", "layer": 5},
 }
 
+def _canonical_agent(name: str) -> str:
+    """Telemetry stores agent names with a v3_ prefix (v3_regime_engine);
+    _AGENT_META and _PIPELINE_EDGES use the bare names. Normalize for lookups
+    so flow edges connect and nodes get their labels/layers."""
+    return name[3:] if name and name.startswith("v3_") else (name or "")
+
+
 # Known edges in the V3 pipeline (from → to, artifact passed)
 _PIPELINE_EDGES = [
     ("regime_engine", "junior_analyst", "regime_classification"),
@@ -240,7 +247,7 @@ def get_cycle_flow(cycle_id: str, ticker: str = Query(default="")):
             nodes = []
             agents_present = set()
             for row in rows:
-                agent_name = row[0]
+                agent_name = _canonical_agent(row[0])
                 agents_present.add(agent_name)
                 meta = _AGENT_META.get(agent_name, {
                     "label": agent_name.replace("_", " ").title(),
@@ -334,7 +341,7 @@ def get_cycle_timeline(cycle_id: str, ticker: str = Query(default="")):
                     min_time = created
 
             for row in rows:
-                agent_name = row[0]
+                agent_name = _canonical_agent(row[0])
                 elapsed = row[3] or 0
                 created = row[7]
                 meta = _AGENT_META.get(agent_name, {
@@ -454,7 +461,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
 
             agents = []
             for row in agent_rows:
-                meta = _AGENT_META.get(row[0], {
+                meta = _AGENT_META.get(_canonical_agent(row[0]), {
                     "label": row[0].replace("_", " ").title(),
                     "icon": "🔧",
                 })
