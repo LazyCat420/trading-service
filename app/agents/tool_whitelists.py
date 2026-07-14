@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 # tool in the system. An agent that needs tools gets whitelisted explicitly.
 
 AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
-    # ── V3 Gatekeeper ──
-    "v3_portfolio_manager": [
-        "get_finnhub_news",
-        "lazy_web_search",
-        "get_market_data",
-        "whiteboard_write"
-    ],
+    # NOTE: the V3 Prism-registered pipeline agents (v3_portfolio_manager,
+    # v3_junior_analyst, v3_regime_engine, the debate chain, the board, …)
+    # are NOT listed here — their whitelists live as TOOL_WHITELIST in their
+    # own module under app/v3/agents/ (next to the system prompt written for
+    # that toolset) and are merged into this dict at import time below.
+    # Keeping a second hand-written copy here is what caused the two sources
+    # to drift apart.
     # ── OmniAgent / User Chat ──
     # Curated set for interactive chat — keeps context budget lean
     # while covering all common user needs (market data, research,
@@ -108,79 +108,10 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "publish_event",
     ],
     "ticker_validator": [],
-    # ── V3 Pure Agentic Pipeline Agents ──
-    "v3_junior_analyst": [
-        "get_finnhub_news",
-        "lazy_web_search",
-        "scrape_url",
-        "get_market_data",
-        "search_internal_database",
-        "post_finding",
-        "whiteboard_write",
-        "whiteboard_read",
-        "whiteboard_summarize",
-    ],
-    "v3_fundamental_analyst": [
-        "get_market_data",
-        "get_finnhub_news",
-        "get_institutional_holdings",
-        "lazy_web_search",
-        "scrape_url",
-        "whiteboard_write",
-        "whiteboard_read",
-        "whiteboard_summarize",
-    ],
-    "v3_quant_analyst": [
-        "get_market_data",
-        "get_technical_indicators",
-        "get_polygon_price_history",
-        "get_options_flow",
-        "calculate_risk_reward",
-        "calculate_stop_loss",
-        "calculate_position_size",
-        "get_portfolio_state",
-        "get_position_pnl",
-        "post_finding",
-        "whiteboard_write",
-        "whiteboard_read",
-        "whiteboard_summarize",
-        "save_trading_chart",
-    ],
-    "v3_bull_agent": [
-        "whiteboard_read",
-        "whiteboard_write",
-        "whiteboard_annotate",
-    ],
-    "v3_bear_agent": [
-        "whiteboard_read",
-        "whiteboard_write",
-        "whiteboard_annotate",
-    ],
-    "v3_bull_defense": [
-        "whiteboard_read",
-        "whiteboard_write",
-        "whiteboard_annotate",
-    ],
-    "v3_debate_judge": [
-        "whiteboard_read",
-        "whiteboard_write",
-        "whiteboard_annotate",
-    ],
-    "v3_regime_engine": [
-        "get_market_data",
-        "get_technical_indicators",
-        "get_institutional_holdings",
-        "get_finnhub_news",
-        "lazy_web_search",
-        "whiteboard_read",
-        "whiteboard_write",
-    ],
-    "v3_board_of_directors": [
-        "whiteboard_read",
-        "whiteboard_write",
-        "whiteboard_annotate",
-        "whiteboard_summarize",
-    ],
+    # ── V3 pipeline agents without a module in app/v3/agents/ ──
+    # Bull-defense runs harness-side only; like bull/bear it argues purely
+    # from the SharedDesk (see AGENT_BUDGET_OVERRIDES: "No tools").
+    "v3_bull_defense": [],
     # ── Tournament Debate Agents ──
     "tournament_pitch": [
         # Core data
@@ -207,6 +138,36 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "run_backtest",
     ],
 }
+
+
+def _merge_v3_module_whitelists() -> None:
+    """Merge each app/v3/agents module's TOOL_WHITELIST into the dict.
+
+    The modules are the single source of truth for the Prism-registered V3
+    pipeline agents (prism_registration reads module.TOOL_WHITELIST directly,
+    and each SYSTEM_PROMPT is written against its own toolset). Deriving the
+    dict entries here guarantees the harness path resolves the exact same
+    tools as the Prism path — the two used to be hand-maintained copies and
+    disagreed for 7 of the 9 agents.
+    """
+    import importlib
+    import pkgutil
+
+    import app.v3.agents as v3_agents_pkg
+
+    for mod_info in pkgutil.iter_modules(v3_agents_pkg.__path__):
+        try:
+            module = importlib.import_module(f"app.v3.agents.{mod_info.name}")
+        except Exception as e:
+            logger.error(f"[ToolWhitelist] Failed to import v3 agent module '{mod_info.name}': {e}")
+            continue
+        agent_name = getattr(module, "AGENT_NAME", None)
+        whitelist = getattr(module, "TOOL_WHITELIST", None)
+        if agent_name and whitelist is not None:
+            AGENT_TOOL_WHITELISTS[agent_name] = list(whitelist)
+
+
+_merge_v3_module_whitelists()
 
 
 def get_agent_tools(agent_name: str, domain_blocklist: list[str] | None = None) -> Optional[list[dict]]:
