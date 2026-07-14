@@ -579,8 +579,8 @@ class PipelineService:
                         snapshot_table = "\n".join(md_lines)
                         # -----------------------
                     
-                    min_tickers = 5
                     max_tickers = max_tickers or 15
+                    min_tickers = min(5, max_tickers)
                     system_prompt = SYSTEM_PROMPT.replace("{min_tickers}", str(min_tickers)).replace("{max_tickers}", str(max_tickers))
                     stock_count = len(pm_stocks)
                     user_prompt = f"Here are {stock_count} stocks that passed our Freshness Gate (all have new data or material changes):\n\n{snapshot_table}\n\nIMPORTANT: You must output ONLY a valid JSON object. Do NOT output any conversational text or formatting blocks. Your response must begin with {{ and end with }}."
@@ -629,6 +629,14 @@ class PipelineService:
                         selected = valid_selected
                     
                     if selected:
+                        # Hard cap: the prompt asks the gatekeeper for at most
+                        # max_tickers, but LLM output isn't guaranteed to comply.
+                        if len(selected) > max_tickers:
+                            logger.warning(
+                                "[PipelineService] Gatekeeper over-selected (%d > max %d) — truncating: %s",
+                                len(selected), max_tickers, selected[max_tickers:],
+                            )
+                            selected = selected[:max_tickers]
                         # ── US Ticker Gate: resolve any foreign tickers the gatekeeper selected ──
                         pre_resolve = list(selected)
                         selected = resolve_tickers_batch(selected)
