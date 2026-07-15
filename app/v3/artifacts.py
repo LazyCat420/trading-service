@@ -39,6 +39,15 @@ DESK_NOTE_SCHEMA: dict = {
                 "agents should pursue."
             ),
         },
+        "triage_recommendation": {
+            "type": "string",
+            "enum": ["FULL", "QUANT_ONLY", "SKIP"],
+            "description": (
+                "JA's pipeline-depth recommendation, honored by the "
+                "orchestrator: FULL = normal, QUANT_ONLY = skip the "
+                "Fundamental Analyst, SKIP = end the pipeline (no catalysts)"
+            ),
+        },
     },
 }
 
@@ -98,6 +107,14 @@ QUANT_REPORT_SCHEMA: dict = {
         "summary": {
             "type": "string",
             "description": "2-3 paragraph quantitative/risk analysis narrative",
+        },
+        "sub_analyses_requested": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Open quantitative questions the analyst could not resolve "
+                "this run; surfaced to the Board as unresolved uncertainty"
+            ),
         },
         "risk_metrics": {
             "type": "object",

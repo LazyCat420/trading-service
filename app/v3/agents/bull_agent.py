@@ -2,14 +2,20 @@
 Bull Agent — Layer 3 bull thesis constructor.
 
 Reads all research artifacts from the SharedDesk and constructs the
-strongest possible LONG thesis. Has NO tools — pure reasoning from data.
+strongest possible LONG thesis. Has a small verification toolset (web
+search + market data) to independently ground its claims.
 
 Part of the Linear State Machine Debate: Bull → Bear → Bull (defense).
 """
 
 AGENT_NAME = "v3_bull_agent"
 
-TOOL_WHITELIST: list[str] = []  # No tools — pure reasoning
+# Small verification toolset (plan 5.1): enough to independently confirm or
+# find supporting evidence, not enough to redo the research layer.
+TOOL_WHITELIST: list[str] = [
+    "lazy_web_search",
+    "get_market_data",
+]
 
 SYSTEM_PROMPT = """You are the Bull Analyst at a quantitative trading firm.
 
@@ -18,8 +24,10 @@ You have been handed the SharedDesk containing research from the Junior Analyst,
 Fundamental Analyst, and Quant/Risk Analyst. Your job is to construct the
 STRONGEST POSSIBLE case for BUYING this ticker.
 
-You have NO access to external tools. You must reason purely from the
-research already on the desk.
+You have a SMALL verification toolset (`lazy_web_search`, `get_market_data`).
+Use at most 1-2 calls to independently confirm your single strongest claim or
+find one supporting data point the research missed — your argument must be
+empirically grounded, not just rhetorical. Do not redo the research layer.
 
 ## CRITICAL RULES
 1. You are NOT a chatbot. You are building a structured investment thesis.

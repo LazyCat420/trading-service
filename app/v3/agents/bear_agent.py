@@ -3,14 +3,20 @@ Bear Agent — Layer 3 bear rebuttal agent.
 
 Reads all research artifacts AND the Bull's thesis from the SharedDesk.
 MUST directly address the Bull's specific claims — not construct an
-independent thesis. Exposes logical flaws and hidden risks.
+independent thesis. Has a small verification toolset (web search + market
+data) to find contradicting evidence.
 
 Part of the Linear State Machine Debate: Bull → Bear → Bull (defense).
 """
 
 AGENT_NAME = "v3_bear_agent"
 
-TOOL_WHITELIST: list[str] = []  # No tools — pure reasoning
+# Small verification toolset (plan 5.1): enough to independently refute a
+# bull claim with fresh evidence, not enough to redo the research layer.
+TOOL_WHITELIST: list[str] = [
+    "lazy_web_search",
+    "get_market_data",
+]
 
 SYSTEM_PROMPT = """You are the Bear Analyst at a quantitative trading firm.
 
@@ -19,8 +25,10 @@ You have been handed the SharedDesk containing all research reports AND the
 Bull Analyst's thesis. Your job is to DIRECTLY ATTACK the Bull's specific
 claims and expose the risks they missed.
 
-You have NO access to external tools. You must reason purely from the
-research already on the desk.
+You have a SMALL verification toolset (`lazy_web_search`, `get_market_data`).
+Use at most 1-2 calls to find contradicting evidence for the Bull's strongest
+claim — a rebuttal backed by fresh data beats rhetoric. Do not redo the
+research layer.
 
 ## CRITICAL RULES — THE DEBATE MANDATE
 1. You MUST directly address the specific claims made in the BullArgument.

@@ -280,6 +280,11 @@ class SharedDesk:
                 )
                 if metrics:
                     text += f"\n**Key Metrics:** {metrics}"
+            open_questions = self.quant_report.get("sub_analyses_requested") or []
+            if open_questions:
+                text += "\n**Open questions the Quant could not resolve:**\n" + "\n".join(
+                    f"- {q}" for q in open_questions[:5]
+                )
             sections.append(text)
 
         # Debate artifacts (only if requested)

@@ -332,7 +332,49 @@ async def run_v3_pipeline(
                 _queue_agent("junior_analyst", junior_analyst, parent="regime_engine")
 
         elif sec == "desk_note":  # junior_analyst completed
-            if not fa_skipped:
+            # JA is the first real intelligence gate (plan 2.2): honor its
+            # triage_recommendation. Anything unrecognized behaves as FULL.
+            triage = str((event.get("content") or {}).get("triage_recommendation") or "FULL").upper()
+
+            if triage == "SKIP":
+                logger.info("[V3] %s: JA triage says SKIP — ending pipeline (no catalysts).", ticker)
+                # Drop anything already queued (e.g. QA pre-queued by a
+                # regime-engine skip_fa path) — SKIP ends the pipeline.
+                tasks_to_run.clear()
+                # Local append only (no whiteboard write) so the synthesizer
+                # is NOT chained — mirrors the Triage Gate's early HOLD.
+                desk.append_artifact("final_decision", {
+                    "action": "HOLD",
+                    "confidence": 0,
+                    "reasoning": (
+                        "Junior Analyst triage: no new catalysts since the previous "
+                        f"cycle. JA summary: {(event.get('content') or {}).get('summary', '')[:300]}"
+                    ),
+                    "persona_used": "junior_analyst_triage",
+                })
+                emit("analyzing", f"v3_ja_triage_{ticker}",
+                     f"🚦 {ticker}: JA triage → SKIP (no new catalysts)", status="ok")
+            elif triage == "QUANT_ONLY" and not fa_skipped:
+                fa_skipped = True
+                logger.info("[V3] %s: JA triage says QUANT_ONLY — skipping Fundamental Analyst.", ticker)
+                desk.append_artifact("fundamental_report", {
+                    "summary": (
+                        "Fundamental analysis skipped on the Junior Analyst's triage "
+                        "recommendation (QUANT_ONLY): no qualitative catalysts found."
+                    ),
+                    "pillars": {
+                        "revenue_growth": "Not analyzed", "profitability": "Not analyzed",
+                        "moat": "Not analyzed", "management": "Not analyzed", "valuation": "Not analyzed"
+                    },
+                    "thesis_direction": "NEUTRAL",
+                    "confidence": 50,
+                    "data_gaps": ["DataGap: Fundamental analysis bypassed"],
+                    "catalysts": [],
+                    "risks": []
+                })
+                breaker.record_outcome("fundamental_analyst", PhaseOutcome.SUCCESS)
+                _queue_agent("quant_analyst", quant_analyst, parent="junior_analyst")
+            elif not fa_skipped:
                 _queue_agent("fundamental_analyst", fundamental_analyst, parent="junior_analyst")
                 _queue_agent("quant_analyst", quant_analyst, parent="junior_analyst")
 
@@ -650,21 +692,33 @@ async def run_v3_pipeline(
         # Scheduler task processing loop
         loop_counter = 0
         MAX_LOOP_ITERATIONS = 20
-        
+        # Observable topology (plan 2.4): record every scheduler iteration on
+        # the desk so runaway loops can be debugged after the fact. Persisted
+        # via cycle_metadata; never injected into agent prompts.
+        iteration_log: list[dict] = []
+        desk.cycle_metadata["pipeline_iteration_log"] = iteration_log
+
         while (tasks_to_run or await _has_pending_peer_requests()) and loop_counter < MAX_LOOP_ITERATIONS:
             loop_counter += 1
             await _process_peer_requests()
-            
+
             if not tasks_to_run:
                 break
-                
+
             task = tasks_to_run.pop(0)
             name = task["name"]
             module = task["module"]
             query = task["query"]
             parent = task["parent"]
-            
+
             run_counts[name] += 1
+            iteration_log.append({
+                "iteration": loop_counter,
+                "task": name,
+                "run": run_counts[name],
+                "parent": parent,
+                "query": (query or "")[:200],
+            })
             logger.info("[V3] Executing dynamic task: %s (run %d)", name, run_counts[name])
             
             if name == "junior_analyst":
@@ -821,14 +875,25 @@ async def run_v3_pipeline(
                 await _persist_trade_verdict()
 
         if loop_counter >= MAX_LOOP_ITERATIONS:
-            logger.warning("[V3] DynamicOrchestrator hit MAX_LOOP_ITERATIONS safeguard for %s.", ticker)
+            iteration_log.append({"iteration": loop_counter, "event": "max_loop_iterations_hit"})
+            logger.warning(
+                "[V3] DynamicOrchestrator hit MAX_LOOP_ITERATIONS safeguard for %s. Iteration log: %s",
+                ticker,
+                [f"{e.get('task', e.get('event'))}<-{e.get('parent', '')}" for e in iteration_log],
+            )
 
     finally:
         whiteboard.unsubscribe(whiteboard_subscriber)
 
     try:
-        desk.advance_phase(DeskPhase.PM_DONE)
-        save_desk(desk)
+        if desk.phase == DeskPhase.INIT and desk.has_artifact("final_decision"):
+            # JA triage SKIP: research/debate never ran, so INIT is the
+            # correct terminal phase (same as a Triage Gate glance skip).
+            logger.info("[V3] %s: JA-triage-skipped cycle — desk stays at INIT", ticker)
+            save_desk(desk)
+        else:
+            desk.advance_phase(DeskPhase.PM_DONE)
+            save_desk(desk)
     except ValueError as e:
         logger.error("[V3] %s: Pipeline failed before reaching PM_DONE. Status: %s. Error: %s", ticker, desk.phase, e)
     try:

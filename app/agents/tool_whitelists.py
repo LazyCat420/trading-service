@@ -300,8 +300,8 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "v3_junior_analyst": 5,
     "v3_fundamental_analyst": 7,
     "v3_quant_analyst": 7,
-    "v3_bull_agent": 3,          # No tools — pure reasoning
-    "v3_bear_agent": 3,          # No tools — pure reasoning
+    "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
+    "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bull_defense": 3,        # No tools — pure reasoning
     "v3_debate_judge": 3,        # No tools — pure reasoning
     "v3_regime_engine": 5,
