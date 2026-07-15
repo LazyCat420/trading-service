@@ -161,7 +161,12 @@ def remove_from_watchlist(ticker: str) -> str:
 
 @registry.register(
     name="get_sec_filings",
-    description="Collect SEC institutional (13F) holdings data for a ticker — which top funds hold it and how positions changed.",
+    description=(
+        "Refresh AND read SEC institutional (13F) holdings for a ticker — which "
+        "top funds hold it and how positions changed. Same data as "
+        "get_institutional_holdings, but this one re-collects from the source "
+        "first; prefer get_institutional_holdings when freshness doesn't matter."
+    ),
     parameters={
         "type": "object",
         "properties": {"ticker": {"type": "string"}},
@@ -175,12 +180,20 @@ async def get_sec_filings_tool(ticker: str, **_extra) -> str:
     # cached the old EDGAR-style schema from lazy-tool — they used to raise
     # TypeError and fail every first call.
     from app.collectors.sec_collector import collect_ticker_institutional
+    from app.tools.finance_tools import get_institutional_holdings
 
     try:
-        res = await collect_ticker_institutional(ticker)
-        return json.dumps({"status": "success", "holders_collected": res})
+        collected = await collect_ticker_institutional(ticker)
     except Exception as e:
         return json.dumps({"error": str(e)})
+    # Returning just {"holders_collected": N} left agents with a count and no
+    # data — they'd re-call in a loop hunting for the actual holdings.
+    try:
+        report = await get_institutional_holdings(ticker)
+        return f"(collected {collected} holder records)\n\n{report}"
+    except Exception as e:
+        return json.dumps({"status": "success", "holders_collected": collected,
+                           "note": f"collected but read-back failed: {e}"})
 
 
 @registry.register(

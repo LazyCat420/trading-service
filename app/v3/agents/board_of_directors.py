@@ -12,7 +12,16 @@ The agent autonomously decides WHEN to use it based on context.
 
 AGENT_NAME = "v3_board_of_directors"
 
-TOOL_WHITELIST: list[str] = ["get_portfolio_state"]  # Phase 2: contextual portfolio awareness
+# What the orchestrator actually runs the board with: the whiteboard desk
+# tools plus portfolio awareness (Phase 2). The orchestrator's synthetic
+# module imports this list — do not hand-copy it there.
+TOOL_WHITELIST: list[str] = [
+    "whiteboard_read",
+    "whiteboard_write",
+    "whiteboard_annotate",
+    "whiteboard_summarize",
+    "get_portfolio_state",
+]
 
 ARTIFACT_TYPE = "final_decision"
 

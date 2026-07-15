@@ -8,10 +8,12 @@ This classification determines which Board of Directors persona makes the final 
 
 AGENT_NAME = "v3_regime_engine"
 
+# No get_institutional_holdings: the regime engine classifies market-wide
+# state (SPY/QQQ/VIX trend, breadth, macro headlines) — per-ticker 13F
+# ownership is analyst-layer data, not regime data.
 TOOL_WHITELIST = [
     "get_market_data",
     "get_technical_indicators",
-    "get_institutional_holdings",
     "get_finnhub_news",
     "lazy_web_search",
 ]

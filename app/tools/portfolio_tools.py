@@ -1,7 +1,9 @@
+import json
 import logging
 from datetime import datetime, timezone
 from app.db.connection import get_db
 from app.config import settings
+from app.tools.registry import registry
 from app.trading.paper_trader import _get_current_price
 
 logger = logging.getLogger(__name__)
@@ -80,3 +82,66 @@ def get_position_context(ticker: str, bot_id: str = "") -> dict:
             pass
 
         return ctx
+
+
+# ── Tool Registration ──────────────────────────────────────────────
+# These two were whitelisted for user_chat, the quant analyst, and the board
+# ("Phase 2: contextual portfolio awareness") but never had an implementation —
+# every call raised "no local registration function".
+
+@registry.register(
+    name="get_portfolio_state",
+    description=(
+        "Get the bot's full portfolio state: cash balance, total P&L, every open "
+        "position (qty, entry price, stop-loss, opened date, mark-to-market value), "
+        "position count, and total portfolio value. Use this to understand current "
+        "exposure before sizing or recommending a trade."
+    ),
+    parameters={"type": "object", "properties": {}, "required": []},
+    tier=0,
+    source="paper_trader",
+)
+async def get_portfolio_state_tool(**_extra) -> str:
+    from app.trading.paper_trader import get_portfolio
+
+    bot_id = settings.BOT_ID
+    portfolio = get_portfolio(bot_id)
+
+    total_position_value = 0.0
+    for p in portfolio.get("positions", []):
+        price, _ = _get_current_price(p["ticker"])
+        if price is None:
+            price = p["avg_entry_price"]
+        p["current_price"] = price
+        p["market_value"] = round(float(p["qty"]) * float(price), 2)
+        entry = float(p["avg_entry_price"]) or 0.0
+        p["unrealized_pnl_pct"] = (
+            round(((float(price) - entry) / entry) * 100, 2) if entry else None
+        )
+        total_position_value += p["market_value"]
+
+    portfolio["total_position_value"] = round(total_position_value, 2)
+    portfolio["total_value"] = round(float(portfolio.get("cash") or 0.0) + total_position_value, 2)
+    return json.dumps(portfolio, default=str)
+
+
+@registry.register(
+    name="get_position_pnl",
+    description=(
+        "Check the P&L and health of a specific held position: entry price, current "
+        "price, unrealized P&L (absolute and %), holding duration, stop-loss price, "
+        "and the original buy thesis. Returns held=false if the bot has no position "
+        "in the ticker."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "The stock ticker to check."},
+        },
+        "required": ["ticker"],
+    },
+    tier=0,
+    source="paper_trader",
+)
+async def get_position_pnl_tool(ticker: str, **_extra) -> str:
+    return json.dumps(get_position_context(ticker), default=str)

@@ -8,5 +8,6 @@ from . import notes_tools
 from . import charting_tools
 from . import market_tools
 from . import quant_tools
+from . import portfolio_tools
 
 __all__ = ["registry", "PermissionLevel"]

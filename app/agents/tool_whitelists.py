@@ -39,6 +39,11 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
     # Curated set for interactive chat — keeps context budget lean
     # while covering all common user needs (market data, research,
     # portfolio, memory, database queries).
+    # Every entry here must be a REGISTERED tool (func is not None in the
+    # registry). The list used to carry ~19 schema-only or entirely phantom
+    # names (memory notes, brain graph, cycle control, hallucination check…)
+    # — the model kept calling them, got "no local registration function"
+    # back, and floundered. If a tool gets an implementation, re-add it here.
     "user_chat": [
         # Core market data
         "get_market_data",
@@ -54,58 +59,40 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         # Research
         "lazy_web_search",
         "scrape_url",
-        "search_internal_database",
-        "search_trading_skills",
-        "youtube_transcript",
+        "read_user_notes",
         # Portfolio & trading
         "get_portfolio_state",
         "get_position_pnl",
         "calculate_position_size",
         "calculate_risk_reward",
         "calculate_stop_loss",
-        "calculate_portfolio_allocation",
-        # Memory
-        "write_memory_note",
-        "read_memory_note",
-        "upsert_memory",
-        # Context & database
-        "get_cycle_context",
-        "run_sql_query",
-        "check_hallucination",
-        "query_brain_graph",
-        "graph_learn",
-        # Performance
-        "get_performance_metrics",
-        # Trading Cycle Control
-        "start_trading_cycle",
     ],
     # ── V3 Family Office Worker Agents ──
+    # publish_event was whitelisted on every worker but never implemented as a
+    # tool (app.telemetry.bus.publish_event is a Python function, not a
+    # registry tool) — each worker errored on the very call it was told to
+    # finish with. Workers signal completion via their artifacts instead.
     "v3_worker_quant": [
         "get_market_data",
         "get_technical_indicators",
         "get_polygon_price_history",
         "get_options_flow",
-        "publish_event",
     ],
     "v3_worker_fundamental": [
         "get_market_data",
         "get_finviz_fundamentals",
         "get_sec_filings",
         "get_earnings_data",
-        "publish_event",
     ],
     "v3_worker_news": [
         "get_finnhub_news",
         "lazy_web_search",
         "scrape_url",
-        "search_internal_database",
-        "publish_event",
     ],
     "v3_worker_insider": [
         "get_insider_trades",
         "get_congress_trades",
         "get_sec_filings",
-        "publish_event",
     ],
     "ticker_validator": [],
     # ── V3 pipeline agents without a module in app/v3/agents/ ──
@@ -126,7 +113,6 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         # Research
         "lazy_web_search",
         "scrape_url",
-        "search_internal_database",
         # Quant tools
         "calculate_risk_reward",
         "calculate_stop_loss",

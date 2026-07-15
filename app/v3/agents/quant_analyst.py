@@ -11,10 +11,12 @@ them as estimates. Never silently treats 'no data' as 'no risk'.
 
 AGENT_NAME = "v3_quant_analyst"
 
+# post_finding was a schema-only registry entry (no implementation) — dropped.
+# The full equation-library set is granted, not just save_equation: an agent
+# that can save an equation it can never search, run, or backtest is a dead end.
 TOOL_WHITELIST = [
     "get_market_data",
     "get_technical_indicators",
-    "get_institutional_holdings",
     "get_polygon_price_history",
     "get_options_flow",
     "calculate_risk_reward",
@@ -22,9 +24,11 @@ TOOL_WHITELIST = [
     "calculate_position_size",
     "get_portfolio_state",
     "get_position_pnl",
-    "post_finding",
     "whiteboard_write",
+    "search_equations",
     "save_equation",
+    "run_equation",
+    "run_backtest",
     "save_trading_chart",
 ]
 

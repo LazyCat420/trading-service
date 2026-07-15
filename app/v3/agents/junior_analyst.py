@@ -10,14 +10,14 @@ on the SharedDesk — it builds the initial picture from scratch.
 
 AGENT_NAME = "v3_junior_analyst"
 
+# search_internal_database and post_finding were schema-only registry entries
+# (no implementation, every call errored) — dropped until they exist for real.
 TOOL_WHITELIST = [
     "get_finnhub_news",
     "lazy_web_search",
     "scrape_url",
     "get_market_data",
     "get_institutional_holdings",
-    "search_internal_database",
-    "post_finding",
     "whiteboard_write",
 ]
 

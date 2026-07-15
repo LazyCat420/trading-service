@@ -69,10 +69,16 @@ async def whiteboard_write(ticker: str, section: str, content: str) -> str:
     source="whiteboard",
     permission=PermissionLevel.READ_ONLY,
 )
-async def whiteboard_read(ticker: str, section: str) -> str:
+async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
     cycle_id = os.getenv("CYCLE_ID", "default_cycle")
     logger.info("[WhiteboardTool] Reading section '%s' for %s (cycle=%s)", section, ticker, cycle_id)
     try:
+        # Models routinely omit section (the schema didn't require it) — that
+        # used to be a TypeError. An unscoped read gets the board summary.
+        if not section:
+            summary = await whiteboard.summarize(ticker=ticker, cycle_id=cycle_id)
+            return json.dumps({"status": "success", "data": summary,
+                               "message": "No section given; returning the full whiteboard summary."})
         res = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section=section)
         if res is None:
             return json.dumps({"status": "empty", "message": f"Section '{section}' is empty for {ticker}."})

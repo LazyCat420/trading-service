@@ -51,6 +51,57 @@ async def scrape_url(url: str) -> str:
         "required": ["query"],
     }
 )
-async def lazy_web_search(query: str) -> str:
-    """This is a dummy schema. The actual tool is executed via Prism MCP."""
-    return "This tool is executed server-side via MCP."
+async def lazy_web_search(query: str, limit: int = 6, **_extra) -> str:
+    """Keyless DuckDuckGo-lite search, executed HERE.
+
+    This used to be a placeholder that returned "This tool is executed
+    server-side via MCP." — but the gateway routes lazy_web_search straight
+    back to this function over the python bridge, so every trading agent's
+    web search returned that sentence instead of results. DDG's lite endpoint
+    is static HTML with no bot wall and answers in about a second (same
+    approach as HTML-Notes' html_notes_web_search).
+    """
+    import urllib.parse
+
+    import httpx
+    from bs4 import BeautifulSoup
+
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
+    limit = max(1, min(int(limit or 6), 10))
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            resp = await client.get(
+                "https://lite.duckduckgo.com/lite/",
+                params={"q": query},
+                headers={"User-Agent": ua},
+            )
+            resp.raise_for_status()
+    except Exception as e:
+        logger.warning(f"[WebTools] ddg lite search failed for {query!r}: {e}")
+        return json.dumps({"status": "error", "message": f"Search failed: {e}"})
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    results = []
+    for row in soup.find_all("tr"):
+        if "sponsored" in " ".join(row.get("class") or []):
+            continue
+        link = row.find("a", class_="result-link")
+        if link is not None:
+            href = link.get("href") or ""
+            if href.startswith("//"):
+                href = "https:" + href
+            # Organic links are wrapped as /l/?uddg=<percent-encoded target>.
+            target = urllib.parse.parse_qs(
+                urllib.parse.urlparse(href).query).get("uddg", [""])[0]
+            results.append({"title": link.get_text(strip=True),
+                            "url": target or href, "snippet": ""})
+            continue
+        cell = row.find("td", class_="result-snippet")
+        if cell is not None and results:
+            results[-1]["snippet"] = cell.get_text(strip=True)
+    results = [r for r in results if r["url"]][:limit]
+    if not results:
+        return json.dumps({"status": "success", "results": [],
+                           "message": "Search returned nothing. Retry with a shorter, simpler query."})
+    return json.dumps({"status": "success", "results": results})

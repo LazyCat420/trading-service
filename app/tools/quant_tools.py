@@ -337,3 +337,125 @@ async def run_backtest_tool(
             )
 
     return "\n".join(lines)
+
+
+# ── Risk calculators ───────────────────────────────────────────────
+# Whitelisted for the quant analyst, tournament pitches, and user chat since
+# the whitelists were written, but never implemented — every call errored.
+
+@registry.register(
+    name="calculate_stop_loss",
+    description=(
+        "Calculate a stop-loss price from ATR (Average True Range) volatility: "
+        "stop_loss = entry_price - (ATR * multiplier). Get the ATR from "
+        "get_technical_indicators first."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "entry_price": {"type": "number", "description": "Planned entry price per share"},
+            "atr": {"type": "number", "description": "Current ATR (Average True Range) value"},
+            "multiplier": {"type": "number", "description": "ATR multiplier (default 2.0, higher = wider stop)"},
+        },
+        "required": ["entry_price", "atr"],
+    },
+    tier=0,
+    source="risk_calculator",
+)
+async def calculate_stop_loss_tool(entry_price: float, atr: float, multiplier: float = 2.0, **_extra) -> str:
+    entry_price, atr, multiplier = float(entry_price), float(atr), float(multiplier or 2.0)
+    stop = entry_price - (atr * multiplier)
+    if stop <= 0:
+        return json.dumps({
+            "error": f"ATR {atr} x multiplier {multiplier} exceeds the entry price {entry_price}; "
+                     "use a smaller multiplier.", "is_error": True})
+    return json.dumps({
+        "stop_loss_price": round(stop, 2),
+        "stop_distance": round(entry_price - stop, 2),
+        "stop_distance_pct": round(((entry_price - stop) / entry_price) * 100, 2),
+        "entry_price": entry_price, "atr": atr, "multiplier": multiplier,
+    })
+
+
+@registry.register(
+    name="calculate_risk_reward",
+    description=(
+        "Calculate the risk-to-reward ratio for a trade setup: "
+        "(target - entry) / (entry - stop). A ratio >= 2.0 is generally favorable."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "entry_price": {"type": "number", "description": "Planned entry price per share"},
+            "target_price": {"type": "number", "description": "Price target for profit taking"},
+            "stop_loss_price": {"type": "number", "description": "Stop-loss price for the trade (alias: stop_loss)"},
+            "stop_loss": {"type": "number", "description": "Alternative key for stop-loss price"},
+        },
+        "required": ["entry_price", "target_price"],
+    },
+    tier=0,
+    source="risk_calculator",
+)
+async def calculate_risk_reward_tool(
+    entry_price: float, target_price: float,
+    stop_loss_price: float | None = None, stop_loss: float | None = None, **_extra,
+) -> str:
+    stop = stop_loss_price if stop_loss_price is not None else stop_loss
+    if stop is None:
+        return json.dumps({"error": "Provide stop_loss_price (or stop_loss).", "is_error": True})
+    entry_price, target_price, stop = float(entry_price), float(target_price), float(stop)
+    risk = entry_price - stop
+    reward = target_price - entry_price
+    if risk <= 0:
+        return json.dumps({"error": "Stop-loss must be below the entry price for a long setup.", "is_error": True})
+    ratio = reward / risk
+    return json.dumps({
+        "risk_reward_ratio": round(ratio, 2),
+        "risk_per_share": round(risk, 2),
+        "reward_per_share": round(reward, 2),
+        "favorable": ratio >= 2.0,
+        "entry_price": entry_price, "target_price": target_price, "stop_loss_price": stop,
+    })
+
+
+@registry.register(
+    name="calculate_position_size",
+    description=(
+        "Calculate the number of shares to buy with the fixed-risk method: "
+        "risk_amount = cash * risk_percent, shares = risk_amount / (entry - stop). "
+        "Caps the resulting notional at available cash."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "cash_available": {"type": "number", "description": "Total cash available for trading (e.g., 100000)"},
+            "risk_percent": {"type": "number", "description": "Max percentage of cash to risk on this trade (e.g., 0.02 for 2%)"},
+            "entry_price": {"type": "number", "description": "Planned entry price per share (e.g., 150.50)"},
+            "stop_loss_price": {"type": "number", "description": "Planned stop-loss price per share (e.g., 142.00)"},
+        },
+        "required": ["cash_available", "risk_percent", "entry_price", "stop_loss_price"],
+    },
+    tier=0,
+    source="risk_calculator",
+)
+async def calculate_position_size_tool(
+    cash_available: float, risk_percent: float, entry_price: float, stop_loss_price: float, **_extra,
+) -> str:
+    cash, risk_pct = float(cash_available), float(risk_percent)
+    entry, stop = float(entry_price), float(stop_loss_price)
+    if risk_pct > 1.0:  # tolerate "2" meaning 2%
+        risk_pct = risk_pct / 100.0
+    risk_per_share = entry - stop
+    if risk_per_share <= 0:
+        return json.dumps({"error": "Stop-loss must be below the entry price for a long setup.", "is_error": True})
+    risk_amount = cash * risk_pct
+    shares = int(risk_amount / risk_per_share)
+    max_affordable = int(cash / entry) if entry > 0 else 0
+    shares = min(shares, max_affordable)
+    return json.dumps({
+        "shares": shares,
+        "notional_value": round(shares * entry, 2),
+        "risk_amount": round(risk_amount, 2),
+        "risk_per_share": round(risk_per_share, 2),
+        "capped_by_cash": shares == max_affordable and max_affordable > 0,
+    })

@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
     permission=PermissionLevel.READ_ONLY
 )
 async def get_market_map_data(
-    top_n_per_sector: int = Field(default=5, description="Number of top gainers/losers to return per sector to avoid overwhelming the context.")
+    # Plain default, not Field(...): the registry calls this function directly,
+    # so a bare call got the FieldInfo object and int(FieldInfo) blew up.
+    top_n_per_sector: int = 5,
 ) -> dict:
     """
     Returns the market map for the S&P 500, summarizing the top gainers and losers per sector.
