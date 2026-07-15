@@ -107,7 +107,16 @@ async def run_v3_agent(
         f"v3_{agent_name}_{desk.ticker}",
         f"🔬 {desk.ticker}: V3 {agent_name} starting...",
         status="running",
-        data={"parent": parent_agent} if parent_agent else None,
+        data={
+            "kind": "agent_start",
+            "agent": agent_name,
+            "ticker": desk.ticker,
+            # parent_agent is the upstream agent whose artifact this one consumes —
+            # the office uses it as the "who talks to whom" edge for face-to-face
+            # talking/hand-off animations. `parent` kept for back-compat.
+            "parent": parent_agent,
+            "target": parent_agent,
+        },
     )
 
     try:
@@ -323,7 +332,13 @@ async def run_v3_agent(
             f"({loops_used} turns, {elapsed_ms}ms) {quality_emoji} Q:{quality_score}",
             status="ok",
             data={
+                "kind": "agent_done",
                 "agent": agent_name,
+                "ticker": desk.ticker,
+                "target": parent_agent,
+                # The office speaks this as the agent's TTS line and shows it in
+                # the speech bubble; trimmed so a long report isn't read aloud.
+                "summary": (artifact.get("summary") or "")[:240],
                 "direction": direction,
                 "confidence": confidence,
                 "elapsed_ms": elapsed_ms,

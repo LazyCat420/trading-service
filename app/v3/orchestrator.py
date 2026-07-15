@@ -468,6 +468,66 @@ async def run_v3_pipeline(
                 author_agent="tournament_debate"
             )
 
+            # ── Structured debate events for the 3D office ──
+            # The tournament is otherwise a black box (only start/done reach the
+            # office). Replay its stages as discrete, `kind`-tagged events so the
+            # War Room can animate pitches → head-to-head clash → jury votes →
+            # verdict. Purely additive; never allowed to break the cycle.
+            try:
+                jury = tournament_result.get("jury_verdict", {}) or {}
+                for i, pitch in enumerate(tournament_result.get("pitches", []) or []):
+                    persona = pitch.get("persona") or f"pitch_{i}"
+                    claim = (pitch.get("claim") or "")[:180]
+                    emit(
+                        "analyzing", f"v3_debate_pitch_{i}_{ticker}",
+                        f"💬 {ticker} debate — {persona}: {claim}",
+                        status="running",
+                        data={"kind": "debate_pitch", "ticker": ticker,
+                              "persona": persona, "claim": claim, "index": i},
+                    )
+                h2h = tournament_result.get("h2h", {}) or {}
+                if h2h:
+                    ta = h2h.get("thesis_a", {}) or {}
+                    tb = h2h.get("thesis_b", {}) or {}
+                    emit(
+                        "analyzing", f"v3_debate_clash_{ticker}",
+                        f"⚔️ {ticker} head-to-head: "
+                        f"{ta.get('persona', 'A')} vs {tb.get('persona', 'B')}",
+                        status="running",
+                        data={"kind": "debate_clash", "ticker": ticker,
+                              "bull": ta, "bear": tb},
+                    )
+                for juror_name, verdict in (jury.get("jury_results") or {}).items():
+                    if not isinstance(verdict, dict):
+                        continue
+                    winner = verdict.get("winner", "?")
+                    score = verdict.get("score", 0)
+                    veto = bool(verdict.get("veto", False))
+                    emit(
+                        "analyzing", f"v3_debate_vote_{juror_name}_{ticker}",
+                        f"🗳️ {ticker}: {juror_name} → {winner} "
+                        f"({score}/10){' VETO' if veto else ''}",
+                        status="running",
+                        data={"kind": "debate_vote", "ticker": ticker,
+                              "juror": juror_name, "winner": winner,
+                              "score": score, "veto": veto},
+                    )
+                emit(
+                    "analyzing", f"v3_debate_verdict_{ticker}",
+                    f"⚖️ {ticker} verdict: {tournament_result.get('action', 'HOLD')} "
+                    f"@ {tournament_result.get('confidence', 0)}% "
+                    f"(winner: {tournament_result.get('winning_side', 'split')})",
+                    status="ok",
+                    data={"kind": "debate_verdict", "ticker": ticker,
+                          "action": tournament_result.get("action", "HOLD"),
+                          "confidence": tournament_result.get("confidence", 0),
+                          "winning_side": tournament_result.get("winning_side", "split"),
+                          "vetoed": tournament_result.get("vetoed", False),
+                          "votes": jury.get("votes", {})},
+                )
+            except Exception as dbg_emit_err:
+                logger.warning("[V3] %s: debate event emit failed: %s", ticker, dbg_emit_err)
+
             emit(
                 "analyzing", f"v3_tournament_done_{ticker}",
                 f"🏆 {ticker}: Tournament complete → {tournament_result.get('action', 'HOLD')} "
@@ -973,6 +1033,12 @@ async def _run_board_of_directors(
         f"🎯 {desk.ticker}: Board of Directors convening "
         f"(regime: {regime}, persona: {_persona_label(regime)})",
         status="running",
+        data={
+            "kind": "board_convened",
+            "ticker": desk.ticker,
+            "persona": _persona_label(regime),
+            "regime": regime,
+        },
     )
 
     return await _run_agent_with_circuit_breaker(
