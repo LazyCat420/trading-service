@@ -257,6 +257,16 @@ async def run_v3_pipeline(
 
     regime = "CONTRADICTORY"
     fa_skipped = False  # set when the Regime Engine recommends skipping FA
+    # Dispatch-once latches for the decision layer. Peer-requested analyst
+    # re-runs (request_peer_analysis) re-write the research sections, which
+    # would otherwise re-fire the whole debate→board→synth chain every time
+    # (observed live: 1 ticker → tournament×2, board×2, synth×2, ~2x compute).
+    # The debate consumes a SNAPSHOT of research; re-running analysts after it
+    # has started cannot change a verdict already rendered, so we latch each
+    # decision-layer stage to a single dispatch.
+    debate_dispatched = False
+    board_dispatched = False
+    synth_dispatched = False
 
     def _queue_agent(name: str, module: Any, query: str = "", parent: str = ""):
         if run_counts.get(name, 0) >= MAX_RUNS_PER_AGENT:
@@ -276,7 +286,7 @@ async def run_v3_pipeline(
         logger.info("[V3] Queued dynamic task: %s (query='%s', parent='%s')", name, query, parent)
 
     async def whiteboard_subscriber(event):
-        nonlocal regime, fa_skipped
+        nonlocal regime, fa_skipped, debate_dispatched, board_dispatched, synth_dispatched
         # Whiteboard broadcasts to every subscriber; concurrent tickers share
         # the bus. Only react to this ticker's events or agents cross-trigger
         # (duplicate queued tasks, re-runs of completed agents).
@@ -392,18 +402,29 @@ async def run_v3_pipeline(
                 _queue_agent("debate_judge", debate_judge, parent="bull_argument")
                 
         elif sec in ("debate_judge", "tournament_result"):
-            _queue_agent("board_of_directors", None, parent="debate_judge")
-            
+            if not board_dispatched:
+                board_dispatched = True
+                _queue_agent("board_of_directors", None, parent="debate_judge")
+
         elif sec == "final_decision":
-            if _settings.DECISION_AGENT_ENABLED:
+            if _settings.DECISION_AGENT_ENABLED and not synth_dispatched:
+                synth_dispatched = True
                 _queue_agent("decision_synthesizer", decision_agent, parent="board_of_directors")
 
     def _queue_debate_phase():
+        nonlocal debate_dispatched
+        # Latch: the debate runs once on a research snapshot. A peer-requested
+        # analyst re-run that re-writes fundamental_report/quant_report must
+        # NOT re-queue the (expensive, ~8min) tournament.
+        if debate_dispatched:
+            return
+        debate_dispatched = True
+
         if desk.phase == DeskPhase.INIT:
             desk.advance_phase(DeskPhase.RESEARCH_DONE)
             save_desk(desk)
             emit("analyzing", f"v3_research_done_{ticker}", f"📊 {ticker}: Research layer complete", status="ok")
-            
+
         if _cog_settings.TOURNAMENT_MODE:
             _queue_agent("tournament_debate", None, parent="quant_analyst")
         else:
@@ -411,6 +432,12 @@ async def run_v3_pipeline(
             _queue_agent("bear_rebuttal", bear_agent, parent="quant_analyst")
 
     async def _has_pending_peer_requests() -> bool:
+        # Peer requests are a RESEARCH-phase mechanism: an analyst asking a
+        # sibling for a specific data point before the debate. Once the debate
+        # has been dispatched, a late request cannot inform the verdict — and
+        # honoring it re-runs an analyst whose output nothing downstream reads.
+        if debate_dispatched:
+            return False
         try:
             task_section = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section="task_queue")
             if task_section and isinstance(task_section.get("content"), dict):
@@ -421,6 +448,10 @@ async def run_v3_pipeline(
         return False
 
     async def _process_peer_requests():
+        # Do not spawn analyst re-runs once the debate has moved on (see
+        # _has_pending_peer_requests). Pending requests are left as-is.
+        if debate_dispatched:
+            return
         try:
             task_section = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section="task_queue")
             if task_section and isinstance(task_section.get("content"), dict):
