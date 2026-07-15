@@ -76,7 +76,8 @@ async def test_lazy_tool_service_forwarding():
             # Check request details
             mock_client_instance.post.assert_called_once_with(
                 "http://10.0.0.16:7788/execute/test_dummy_tool",
-                json={"arguments": {"val": 42}}
+                json={"arguments": {"val": 42}},
+                headers=None
             )
 
 
