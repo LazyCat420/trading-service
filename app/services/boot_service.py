@@ -298,6 +298,14 @@ class BootService:
         except Exception as e:
             logger.warning("[startup] SP500 task failed: %s", e)
 
+        # Recurring full S&P 500 refresh — the seed above only ever runs once
+        # (when price_history is empty). Without this, only the active
+        # trading cycle's small watchlist gets new price_history rows, so
+        # the market map's newest date silently degrades to a handful of
+        # tickers instead of the full ~500. Runs forever; does not block
+        # the rest of startup.
+        asyncio.create_task(cls._sp500_daily_refresh_loop())
+
         # --- Agent Audit Worker ---
         try:
             from app.monitoring.audit_worker import start_audit_worker
@@ -472,6 +480,66 @@ class BootService:
                 await compute_sector_performance()
             except Exception as e:
                 logger.warning("[startup] SP500 seed failed (non-fatal): %s", e)
+
+    @classmethod
+    async def _sp500_full_refresh(cls, period: str):
+        """One shot: top up price_history for all S&P 500 tickers + recompute sector aggregates."""
+        from app.data.sp500_price_collector import collect_sp500_prices
+        from app.data.sector_aggregator import (
+            compute_sector_performance,
+            backfill_sector_performance,
+        )
+
+        price_result = await collect_sp500_prices(period=period)
+        logger.info(
+            "[sp500-refresh] Prices refreshed: %s rows", (price_result or {}).get("total", 0)
+        )
+        await backfill_sector_performance()
+        await compute_sector_performance()
+
+    @classmethod
+    async def _sp500_daily_refresh_loop(cls):
+        """Recurring background task: keep the full S&P 500 price_history fresh.
+
+        _startup_sp500_seed only ever runs once (when price_history is empty
+        at boot). After that, only the active trading cycle's small watchlist
+        writes new rows, so most of the S&P 500 universe silently goes stale.
+        This loop tops up ALL sp500 tickers once after boot, then again daily
+        after market close.
+        """
+        from app.db.connection import get_db
+        from app.services.market_calendar import MarketCalendar
+
+        await asyncio.sleep(10)  # let boot settle first
+
+        try:
+            with get_db() as db:
+                today_count = db.execute(
+                    "SELECT COUNT(*) FROM price_history WHERE date = CURRENT_DATE"
+                ).fetchone()[0]
+            if today_count < 400:
+                logger.info(
+                    "[sp500-refresh] Only %d price_history rows for today — running immediate top-up",
+                    today_count,
+                )
+                await cls._sp500_full_refresh(period="5d")
+        except Exception as e:
+            logger.warning("[sp500-refresh] Immediate top-up failed (non-fatal): %s", e)
+
+        while True:
+            try:
+                next_run = MarketCalendar.get_next_window("post_close")
+                now = MarketCalendar._to_et()
+                sleep_seconds = max(60.0, (next_run - now).total_seconds())
+                logger.info(
+                    "[sp500-refresh] Next full refresh at %s ET (in %.1f hours)",
+                    next_run.isoformat(), sleep_seconds / 3600,
+                )
+                await asyncio.sleep(sleep_seconds)
+                await cls._sp500_full_refresh(period="5d")
+            except Exception as e:
+                logger.warning("[sp500-refresh] Daily refresh failed (will retry next cycle): %s", e)
+                await asyncio.sleep(3600)  # back off an hour before recomputing the next window
 
     @classmethod
     def _register_mcp_servers(cls):

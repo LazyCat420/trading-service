@@ -20,7 +20,7 @@ async def collect_sp500_prices(period: str = "6mo"):
             logger.error(
                 "No S&P 500 tickers found in ticker_metadata. Run load_sp500_universe first."
             )
-            return
+            return {"total": 0}
 
         tickers = [row[0] for row in rows]
 
@@ -127,5 +127,7 @@ async def collect_sp500_prices(period: str = "6mo"):
                     pass
 
             logger.info(f"Successfully collected and saved {count} price records.")
+            return {"total": count}
         else:
             logger.warning("No price data collected.")
+            return {"total": 0}

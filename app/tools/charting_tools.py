@@ -28,9 +28,10 @@ logger = logging.getLogger(__name__)
 
 # CHART_OUTPUT_DIR env var overrides the default.
 # In the lazy-tool-service container: /app/data/charts (volume-mounted).
-# Locally / trading-service: falls back to the sibling data/charts directory.
+# The default MUST resolve to the same directory as chart_router.CHARTS_DIR
+# (trading-service/data/charts) — the router is the reader for these files.
 _default_charts_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../../../data/charts")
+    os.path.join(os.path.dirname(__file__), "../../data/charts")
 )
 OUTPUT_DIR = os.environ.get("CHART_OUTPUT_DIR", _default_charts_dir)
 
@@ -342,11 +343,10 @@ async def save_trading_chart(
 
     spec = {"overlays": overlays}
 
-    try:
-        filename = await asyncio.to_thread(render_chart, df, spec, symbol)
-    except Exception as e:
-        logger.error("[charting_tools] Failed to render chart for %s: %s", symbol, e)
-        return f"Failed to render chart for {symbol}: {e}"
+    # The frontend (AgenticChart.jsx) only consumes the JSON below — the Plotly
+    # HTML is a standalone artifact. Render it best-effort AFTER the JSON is
+    # safely on disk so a Plotly failure can never block the overlays.
+    filename = ""
 
     # Save the JSON payload for the AgenticChart frontend component
     try:
@@ -378,7 +378,21 @@ async def save_trading_chart(
         logger.info("[charting_tools] Saved chart JSON for %s → %s", symbol, json_path)
     except Exception as e:
         logger.error("[charting_tools] Failed to save JSON for %s: %s", symbol, e)
-        return f"Chart rendered but JSON save failed for {symbol}: {e}"
+        return f"JSON save failed for {symbol}: {e}"
+
+    try:
+        filename = await asyncio.to_thread(render_chart, df, spec, symbol)
+    except Exception as e:
+        # Non-fatal: the overlays the frontend needs are already saved above.
+        logger.warning("[charting_tools] Plotly render failed for %s (JSON already saved): %s", symbol, e)
+
+    if filename:
+        try:
+            json_data["latest_analysis"]["filename"] = filename
+            with open(json_path, "w") as f:
+                json.dump(json_data, f)
+        except Exception:
+            pass
 
     return (
         f"Successfully generated technical analysis chart for {symbol}.\n\n"
