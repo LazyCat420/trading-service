@@ -51,10 +51,19 @@ SAFE_GLOBALS = {
         "isinstance": isinstance, "float": float, "int": int, "str": str,
         "bool": bool, "list": list, "dict": dict, "tuple": tuple, "set": set,
         "True": True, "False": False, "None": None,
+        # Introspection/iteration helpers LLM equations reach for constantly
+        # (live cycles died on NameError: hasattr after the __import__ fix)
+        "hasattr": hasattr, "getattr": getattr, "any": any, "all": all,
+        "divmod": divmod, "pow": pow, "format": format, "repr": repr,
+        "iter": iter, "next": next, "callable": callable, "slice": slice,
+        "frozenset": frozenset, "type": type,
         "print": lambda *a, **kw: None,  # Silently swallow prints
         "ValueError": ValueError, "TypeError": TypeError,
         "KeyError": KeyError, "IndexError": IndexError,
         "Exception": Exception, "ZeroDivisionError": ZeroDivisionError,
+        "AttributeError": AttributeError, "NameError": NameError,
+        "StopIteration": StopIteration, "RuntimeError": RuntimeError,
+        "ArithmeticError": ArithmeticError, "OverflowError": OverflowError,
         "__import__": _safe_import,
     },
     "np": np,

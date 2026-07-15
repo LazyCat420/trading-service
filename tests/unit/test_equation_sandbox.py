@@ -56,3 +56,13 @@ def test_no_import_still_works(price_df):
     out = equation_library.execute_equation(code, "TEST")
     assert out.get("status") == "ok", out
     assert out["result"] == 103.5
+
+
+def test_common_builtins_available(price_df):
+    code = (
+        "vals = [float(x) for x in df['close'] if hasattr(x, 'real')]\n"
+        "result = pow(max(vals), 1) if any(v > 0 for v in vals) and all(v > 0 for v in vals) else 0\n"
+    )
+    out = equation_library.execute_equation(code, "TEST")
+    assert out.get("status") == "ok", out
+    assert out["result"] == 103.5
