@@ -188,6 +188,38 @@ class SharedDesk:
                 result[name] = val
         return result
 
+    def get_handoff_brief(self) -> str:
+        """Compact structured brief of this desk for the NEXT cycle's context.
+
+        The Manila-Envelope injection used to ship the full compressed
+        narrative (up to 8,000 chars) into every downstream agent's prompt.
+        Continuity only needs the decision and the headline findings — keep
+        it to a few hundred chars (plan 4.4).
+        """
+        decision = self.trade_decision or self.final_decision or {}
+        parts: list[str] = []
+
+        action = decision.get("action")
+        if action:
+            parts.append(
+                f"Previous decision: {action} @ {decision.get('confidence', '?')}% confidence"
+            )
+        regime = (self.regime_classification or {}).get("regime") or decision.get("regime")
+        if regime:
+            parts.append(f"Regime then: {regime}")
+
+        key_findings = (self.desk_note or {}).get("key_findings") or []
+        for finding in key_findings[:3]:
+            parts.append(f"- {str(finding)[:160]}")
+
+        reasoning = decision.get("reasoning", "")
+        if reasoning:
+            parts.append(f"Rationale: {reasoning[:200]}")
+
+        if not parts:
+            return ""
+        return "\n".join(parts)[:800]
+
     def get_compressed_context(self, include_debate: bool = False) -> str:
         """Build a compressed narrative for downstream agents.
 

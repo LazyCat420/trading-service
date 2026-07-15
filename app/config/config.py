@@ -121,6 +121,11 @@ class Settings(BaseSettings):
 
     # ── Decision Pipeline ──
     DECISION_AGENT_ENABLED: bool = True  # enable Layer 5 decision synthesis agent
+    # KV-cache prompt split (2026-07-15): keep every V3 agent's system prompt
+    # byte-identical across cycles (vLLM prefix-cache reuse) by moving all
+    # cycle-specific context into the user message. False = legacy layout
+    # (dynamic content appended to the system prompt) — the rollback path.
+    V3_PROMPT_SPLIT: bool = True
     ANALYSIS_CONFIDENCE_THRESHOLD: int = 65  # minimum confidence (0-100) to execute trades
     MAX_POSITION_SIZE_PCT: float = 0.10  # hard cap on a single trade's cash fraction (agent sizing is clamped to this)
 

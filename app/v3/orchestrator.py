@@ -140,7 +140,9 @@ async def run_v3_pipeline(
         from app.v3.desk_persistence import load_latest_desk_for_ticker
         previous_desk = load_latest_desk_for_ticker(ticker)
         if previous_desk:
-            prev_context = previous_desk.get_compressed_context(include_debate=True)
+            # Compact structured brief (~400 chars), not the full 8K narrative —
+            # continuity needs the decision + headline findings only (plan 4.4).
+            prev_context = previous_desk.get_handoff_brief()
             if prev_context and prev_context != "No artifacts on desk yet.":
                 desk.cycle_metadata["previous_desk_context"] = prev_context
                 

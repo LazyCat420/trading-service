@@ -21,11 +21,9 @@ import time
 from typing import Any
 
 from app.v3.shared_desk import SharedDesk, PhaseOutcome
+# NOTE: the live turn budget is get_agent_budget_turns (tool_whitelists), not
+# guardrails.get_budget_for_role — that one only serves the non-V3 prism path.
 from app.v3.guardrails import (
-    V3AgentBudget,
-    get_budget_for_role,
-    compress_artifact_for_downstream,
-
     enter_v3_session,
     exit_v3_session,
 )
@@ -101,6 +99,8 @@ async def run_v3_agent(
 
     session_key = f"{cycle_id}:{desk.ticker}:{agent_name}"
     t_start = time.monotonic()
+    sys_prompt_chars = 0
+    user_prompt_chars = 0
 
     emit(
         "analyzing",
@@ -123,48 +123,85 @@ async def run_v3_agent(
         # Guard: prevent recursive agent spawning
         enter_v3_session(session_key)
 
-        # Build the user prompt from SharedDesk context
+        # ── KV-cache prompt split (plan 4.1/4.2, gated for rollback — 8.4) ──
+        # The system prompt stays byte-identical across cycles/tickers for a
+        # given agent type so the vLLM prefix cache can reuse it. ALL
+        # cycle-specific content goes into the user message. Setting
+        # V3_PROMPT_SPLIT=false restores the legacy append-to-system layout.
+        from app.config import settings as _settings
+        prompt_split = bool(getattr(_settings, "V3_PROMPT_SPLIT", True))
+
         desk_context = desk.get_compressed_context(include_debate=include_debate_context)
-        
-        # Inject current whiteboard summary (if any entries exist) for collaborative blackboard context
+
+        # Locale directive: constant per deployment config → system prompt
+        # (identical across cycles for the same locale, still cacheable).
+        agent_locale = desk.cycle_metadata.get("agent_locale", "default")
+        if agent_locale and agent_locale != "default":
+            try:
+                from app.config.locales import AGENT_LOCALES
+                locale_override = AGENT_LOCALES.get(agent_locale)
+                if locale_override:
+                    system_prompt += locale_override
+                else:
+                    logger.warning(
+                        "[V3Runner] %s: unknown agent_locale '%s' — no directive applied "
+                        "(known: %s)", agent_name, agent_locale, sorted(AGENT_LOCALES),
+                    )
+            except Exception as e:
+                logger.warning("[V3Runner] Failed to apply agent_locale %s: %s", agent_locale, e)
+
+        # ── Cycle-specific (dynamic) sections ──
+        dynamic_sections: list[str] = []
+
+        # Market data briefing first — it's the shared factual base (plan 4.2)
+        data_report = desk.cycle_metadata.get("data_report", "")
+        if data_report:
+            if len(data_report) > 5000:
+                data_report = data_report[:5000] + "\n...[TRUNCATED FOR LENGTH]..."
+            dynamic_sections.append(
+                f"## MARKET DATA BRIEFING FOR THIS CYCLE\n{data_report}"
+            )
+
+        portfolio_ctx = desk.cycle_metadata.get("portfolio_context", "")
+        if portfolio_ctx:
+            dynamic_sections.append(f"## Portfolio Context\n{portfolio_ctx}")
+
+        memory_context = desk.cycle_metadata.get("memory_context", "")
+        if memory_context:
+            dynamic_sections.append(f"## Past Cycle Memory\n{memory_context}")
+
+        previous_desk_context = desk.cycle_metadata.get("previous_desk_context", "")
+        if previous_desk_context:
+            dynamic_sections.append(
+                f"## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}"
+            )
+
+        if desk_context and desk_context != "No artifacts on desk yet.":
+            dynamic_sections.append(f"## SharedDesk Context Summary\n{desk_context}")
+
+        # Current whiteboard summary (changes per agent within a cycle)
         try:
             from app.agents.whiteboard import whiteboard
             wb_summary = await whiteboard.summarize(ticker=desk.ticker, cycle_id=cycle_id)
             if wb_summary:
-                system_prompt += f"\n\n{wb_summary}"
+                dynamic_sections.append(wb_summary)
         except Exception as wb_err:
             logger.warning("[V3Runner] Failed to fetch whiteboard summary: %s", wb_err)
 
+        dynamic_block = "\n\n".join(dynamic_sections)
+
+        # ── Assemble user prompt ──
         user_prompt = (
             f"## Ticker: {desk.ticker}\n"
             f"## Cycle: {cycle_id}\n\n"
         )
 
-        # Add cycle metadata & portfolio context if available (STATIC)
-        if desk.cycle_metadata:
-            portfolio_ctx = desk.cycle_metadata.get("portfolio_context", "")
-            if portfolio_ctx:
-                system_prompt += f"\n\n## Portfolio Context\n{portfolio_ctx}"
-                
-            # Use compressed data_report (summary only) if possible
-            data_report = desk.cycle_metadata.get("data_report", "")
-            if data_report:
-                # Keep it concise to prevent prompt blowup
-                if len(data_report) > 5000:
-                    data_report = data_report[:5000] + "\n...[TRUNCATED FOR LENGTH]..."
-                system_prompt += f"\n\n## Pre-Collected Data Report (Summary)\n{data_report}"
+        if prompt_split and dynamic_block:
+            user_prompt += dynamic_block + "\n\n"
+        elif dynamic_block:
+            # Legacy layout: dynamic content rides in the system prompt
+            system_prompt += "\n\n" + dynamic_block
 
-            # Inject Past Cycle Memory if available (STATIC)
-            memory_context = desk.cycle_metadata.get("memory_context", "")
-            if memory_context:
-                system_prompt += f"\n\n## Past Cycle Memory\n{memory_context}"
-
-            # Inject Previous Cycle's SharedDesk (Manila Envelope)
-            previous_desk_context = desk.cycle_metadata.get("previous_desk_context", "")
-            if previous_desk_context:
-                system_prompt += f"\n\n## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}"
-
-        # Add Tool/Reasoning Instructions (STATIC)
         if tool_whitelist:
             user_prompt += (
                 "You have access to a specific subset of tools for your domain. "
@@ -176,22 +213,14 @@ async def run_v3_agent(
                 "You have NO external tools. Reason from the SharedDesk data.\n\n"
             )
 
-        # Force JSON response format reminder in the conversation history (STATIC)
         user_prompt += (
             "## OUTPUT DIRECTIVE REMINDER\n"
             f"When you generate your final response containing your analysis report (i.e. when you do NOT call any tools), "
             f"you MUST output ONLY a valid JSON object matching the `{artifact_type}` schema.\n"
             f"Do NOT include any conversational intro/outro, preambles, summary comments, or markdown headings.\n"
-            f"Do NOT wrap the JSON in markdown code blocks (do NOT use ```json).\n"
+            f"Do NOT wrap the JSON response in markdown code blocks (do NOT use ```json).\n"
             f"Your entire response MUST start with '{{' and end with '}}'.\n\n"
         )
-
-        # Append concise SharedDesk Context summary
-        if desk_context and desk_context != "No artifacts on desk yet.":
-            system_prompt += (
-                f"\n\n## SharedDesk Context Summary\n"
-                f"{desk_context}"
-            )
 
         # Append custom peer instructions if requested
         if custom_instructions:
@@ -202,27 +231,11 @@ async def run_v3_agent(
                 f"Address this request directly in your findings.\n\n"
             )
 
-        # Append locale directive if set
-        agent_locale = desk.cycle_metadata.get("agent_locale", "default")
-        if agent_locale and agent_locale != "default":
-            try:
-                from app.config.locales import AGENT_LOCALES
-                locale_override = AGENT_LOCALES.get(agent_locale)
-                if locale_override:
-                    system_prompt += locale_override
-                    logger.info(
-                        "[V3Runner] %s: agent_locale '%s' directive appended to system prompt",
-                        agent_name, agent_locale,
-                    )
-                else:
-                    logger.warning(
-                        "[V3Runner] %s: unknown agent_locale '%s' — no directive applied "
-                        "(known: %s)", agent_name, agent_locale, sorted(AGENT_LOCALES),
-                    )
-            except Exception as e:
-                logger.warning("[V3Runner] Failed to apply agent_locale %s: %s", agent_locale, e)
-
         user_prompt += "Begin your analysis now.\n"
+
+        # Context budget report (plan 4.5): prompt sizes ride with telemetry
+        sys_prompt_chars = len(system_prompt)
+        user_prompt_chars = len(user_prompt)
 
         # Call via base_agent.run_agent() which handles:
         # - Dynamic prompt generation
@@ -279,7 +292,8 @@ async def run_v3_agent(
                 f"❌ {desk.ticker}: V3 {agent_name} — no valid artifact produced",
                 status="error",
             )
-            _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR")
+            _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
+                              sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
             return PhaseOutcome.AGENT_ERROR
 
         # Validate the artifact
@@ -357,7 +371,8 @@ async def run_v3_agent(
             },
         )
 
-        _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score)
+        _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
+                          sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
 
         # Classify outcome
         data_gaps = artifact.get("data_gaps", [])
@@ -377,7 +392,8 @@ async def run_v3_agent(
             f"⏰ {desk.ticker}: V3 {agent_name} TIMEOUT after {elapsed_ms}ms",
             status="error",
         )
-        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "TIMED_OUT")
+        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "TIMED_OUT",
+                          sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
         return PhaseOutcome.TIMED_OUT
 
     except asyncio.CancelledError:
@@ -485,6 +501,8 @@ def _record_telemetry(
     token_usage: int,
     outcome: str,
     quality_score: int = -1,
+    sys_prompt_chars: int = 0,
+    user_prompt_chars: int = 0,
 ) -> None:
     """Record telemetry for a V3 agent run."""
     entry = {
@@ -496,5 +514,9 @@ def _record_telemetry(
         "outcome": outcome,
         "phase": desk.phase.value,
         "quality_score": quality_score,
+        # Context budget report: per-agent prompt footprint (chars). The DB
+        # insert ignores extra keys; these surface in logs/v3_metadata.
+        "sys_prompt_chars": sys_prompt_chars,
+        "user_prompt_chars": user_prompt_chars,
     }
     desk.record_agent_telemetry(entry)
