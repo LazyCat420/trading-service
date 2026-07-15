@@ -25,6 +25,23 @@ logger = logging.getLogger(__name__)
 
 # ── Sandbox Safety ───────────────────────────────────────────────────
 # Only these modules are available inside sandboxed equation execution.
+# LLM-authored equations almost always open with `import numpy as np` /
+# `import pandas as pd` even though both are pre-injected; without an
+# __import__ in the builtins every such equation dies with
+# "ImportError: __import__ not found" before its first real line.
+_ALLOWED_IMPORT_ROOTS = {"numpy", "pandas", "math", "statistics"}
+
+
+def _safe_import(name, *args, **kwargs):
+    root = name.partition(".")[0]
+    if root not in _ALLOWED_IMPORT_ROOTS:
+        raise ImportError(
+            f"import of '{name}' is not allowed in the equation sandbox "
+            f"(allowed: {sorted(_ALLOWED_IMPORT_ROOTS)})"
+        )
+    return __import__(name, *args, **kwargs)
+
+
 SAFE_GLOBALS = {
     "__builtins__": {
         # Math/logic
@@ -38,6 +55,7 @@ SAFE_GLOBALS = {
         "ValueError": ValueError, "TypeError": TypeError,
         "KeyError": KeyError, "IndexError": IndexError,
         "Exception": Exception, "ZeroDivisionError": ZeroDivisionError,
+        "__import__": _safe_import,
     },
     "np": np,
     "pd": pd,

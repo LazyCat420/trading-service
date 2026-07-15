@@ -235,13 +235,62 @@ async def run_agent(
                 if result.startswith("Error:") or "Exception" in result:
                     failed = True
                     error_msg = result[:500]
+                else:
+                    # Most tool failures come back as JSON *strings* —
+                    # json.dumps({"error": ...}) from the registry exception
+                    # path and json.dumps({"status": "error", ...}) from
+                    # whiteboard/agent tools. These used to count as success
+                    # (2026-07-15 audit), so telemetry over-reported.
+                    stripped = result.lstrip()
+                    if stripped.startswith("{"):
+                        try:
+                            import json as _json
+                            parsed = _json.loads(stripped)
+                            if isinstance(parsed, dict) and (
+                                parsed.get("error")
+                                or parsed.get("is_error")
+                                or parsed.get("status") == "error"
+                            ):
+                                failed = True
+                                error_msg = str(
+                                    parsed.get("error")
+                                    or parsed.get("message")
+                                    or parsed.get("detail", "")
+                                )[:500]
+                        except (ValueError, TypeError):
+                            pass
             elif isinstance(result, dict):
-                if result.get("error") or result.get("is_error"):
+                if (
+                    result.get("error")
+                    or result.get("is_error")
+                    or result.get("status") == "error"
+                ):
                     failed = True
                     error_msg = str(result.get("error", result.get("message", "")))[:500]
                 elif not result:
                     failed = True
                     error_msg = "Empty result"
+                elif isinstance(result.get("content"), str):
+                    # lazy-tool bridge wraps results as {"content": "<json>"} —
+                    # unwrap and apply the same string-error check.
+                    inner = result["content"].lstrip()
+                    if inner.startswith("{"):
+                        try:
+                            import json as _json
+                            parsed = _json.loads(inner)
+                            if isinstance(parsed, dict) and (
+                                parsed.get("error")
+                                or parsed.get("is_error")
+                                or parsed.get("status") == "error"
+                            ):
+                                failed = True
+                                error_msg = str(
+                                    parsed.get("error")
+                                    or parsed.get("message")
+                                    or parsed.get("detail", "")
+                                )[:500]
+                        except (ValueError, TypeError):
+                            pass
             elif result is None:
                 failed = True
                 error_msg = "None result"

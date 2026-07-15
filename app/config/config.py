@@ -122,6 +122,7 @@ class Settings(BaseSettings):
     # ── Decision Pipeline ──
     DECISION_AGENT_ENABLED: bool = True  # enable Layer 5 decision synthesis agent
     ANALYSIS_CONFIDENCE_THRESHOLD: int = 65  # minimum confidence (0-100) to execute trades
+    MAX_POSITION_SIZE_PCT: float = 0.10  # hard cap on a single trade's cash fraction (agent sizing is clamped to this)
 
     # ── World Simulator ──
     EXECUTION_MODE: str = "production"  # "production" | "staging" | "simulation"

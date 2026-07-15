@@ -113,6 +113,17 @@ def validate_jury_score(response_text: str) -> tuple[bool, dict, str]:
     if not isinstance(score, (int, float)) or score < 1 or score > 10:
         return False, parsed, f"Score must be a number between 1 and 10, got: {score}"
 
+    # Normalize the side vote ("Thesis A", "a", "A)" → "A"); a juror without
+    # a recognizable side simply abstains from the winner vote (not a format
+    # failure — jury scoring must stay soft-fail).
+    raw_winner = str(parsed.get("winner", "")).strip().upper()
+    if "A" in raw_winner and "B" not in raw_winner:
+        parsed["winner"] = "A"
+    elif "B" in raw_winner and "A" not in raw_winner:
+        parsed["winner"] = "B"
+    else:
+        parsed.pop("winner", None)
+
     return True, parsed, ""
 
 
@@ -131,6 +142,7 @@ def build_rejection_prompt(error_message: str, original_format: str = "pitch") -
         ),
         "jury": (
             '{\n'
+            '  "winner": "A",\n'
             '  "score": 7,\n'
             '  "reasoning": "Strong backtest results with positive Sharpe ratio...",\n'
             '  "risk_assessment": "Max drawdown of 12% is within acceptable bounds...",\n'

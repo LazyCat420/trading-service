@@ -75,11 +75,12 @@ def test_user_chat_has_buy_and_calculators():
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
     chat_tools = set(AGENT_TOOL_WHITELISTS.get("user_chat", []))
+    # calculate_portfolio_allocation was removed in the 2026-07-14
+    # dead-tool purge (schema with no implementation).
     required = {
         "calculate_stop_loss",
         "calculate_position_size",
         "calculate_risk_reward",
-        "calculate_portfolio_allocation",
     }
     missing = required - chat_tools
     assert not missing, f"user_chat agent missing required tools: {missing}"
@@ -129,12 +130,14 @@ def test_get_agent_tools_returns_filtered_schemas():
     )
 
 
-def test_get_agent_tools_returns_none_for_unknown():
-    """get_agent_tools() should return None for agents without a whitelist."""
+def test_get_agent_tools_fails_closed_for_unknown():
+    """Unknown agents get ZERO tools (fail-closed since 2026-07-14) —
+    the old None (= full registry) fallback let unregistered agents
+    self-expand into everything."""
     from app.agents.tool_whitelists import get_agent_tools
 
     result = get_agent_tools("nonexistent_agent_xyz")
-    assert result is None, "Unknown agents should get None (= all tools)"
+    assert result == [], "Unknown agents must get an empty tool list"
 
 
 def test_no_duplicate_tools_in_whitelists():
@@ -146,10 +149,12 @@ def test_no_duplicate_tools_in_whitelists():
         assert not dupes, f"Agent '{agent}' has duplicate tools: {set(dupes)}"
 
 
-def test_graph_learn_in_appropriate_whitelists():
-    """Verify that graph_learn is available to user_chat agent."""
+def test_graph_learn_purged_from_whitelists():
+    """graph_learn was removed in the 2026-07-14 dead-tool purge —
+    it must not reappear in any whitelist without an implementation."""
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
-    # Verify user_chat has graph_learn
-    chat_tools = set(AGENT_TOOL_WHITELISTS.get("user_chat", []))
-    assert "graph_learn" in chat_tools, "user_chat agent missing graph_learn tool"
+    for agent, tool_list in AGENT_TOOL_WHITELISTS.items():
+        assert "graph_learn" not in tool_list, (
+            f"graph_learn is back in '{agent}' but has no registered implementation"
+        )

@@ -126,6 +126,32 @@ class PipelineService:
         agent_locale = kwargs.get("agent_locale") or "default"
         prism_overrides = kwargs.get("prism_overrides") or {}
 
+        # Payload knobs must not silently no-op (2026-07-15 audit: typo'd or
+        # unsupported keys vanished without a trace).
+        _known_keys = {
+            "cycle_id", "tickers", "max_tickers", "trade", "analyze", "collect",
+            "start_fresh", "agent_locale", "prism_overrides", "pipeline_version",
+            "benchmark_group", "discovered_tickers",
+        }
+        _unknown = set(kwargs) - _known_keys
+        if _unknown:
+            logger.warning(
+                "[PipelineService] Unknown START_CYCLE payload keys (ignored): %s",
+                sorted(_unknown),
+            )
+        _unknown_ov = set(prism_overrides) - {"prism_auto_approve", "tool_domain_blocklist"}
+        if _unknown_ov:
+            logger.warning(
+                "[PipelineService] Unknown prism_overrides keys (ignored): %s",
+                sorted(_unknown_ov),
+            )
+        if prism_overrides.get("tool_domain_blocklist"):
+            logger.warning(
+                "[PipelineService] tool_domain_blocklist only filters dynamically "
+                "discovered tools — V3 agents use static whitelists, so it has no "
+                "effect on their tool set."
+            )
+
         cls._state.update({
             "status": "starting",
             "cycle_id": cycle_id,
@@ -166,13 +192,15 @@ class PipelineService:
         collect_flag = bool(kwargs.get("collect", True))
         trade_flag = bool(kwargs.get("trade", True))
 
-        def _persist_summary(status: str, tickers_final, results=None, error: str | None = None):
+        def _persist_summary(status: str, tickers_final, results=None, error: str | None = None,
+                             report_generated: bool = False):
             """Write the cycle_run_summaries row. Counts come from the per-ticker
             result dicts returned by _process_ticker (None entries are skipped)."""
             try:
                 from app.log_manager import log_manager
 
                 summary = {
+                    "report_generated": report_generated,
                     "trigger_type": "v3",
                     "started_at": cls._state.get("started_at"),
                     "ended_at": datetime.now(timezone.utc).isoformat(),
@@ -743,14 +771,38 @@ class PipelineService:
                         )
                         confidence = 0
 
-                    if action in ("BUY", "SELL") and confidence < _cfg.ANALYSIS_CONFIDENCE_THRESHOLD:
+                    policy_action = str(result.get("policy_action") or "")
+                    if action in ("BUY", "SELL") and policy_action.startswith("HOLD_POLICY_BLOCKED"):
+                        # The orchestrator's policy gates (jury veto, unmitigated
+                        # risk flags, missing regime, low confidence) are binding.
+                        logger.warning(
+                            "[PipelineService] %s: %s blocked by policy gate → %s",
+                            ticker_name, action, policy_action,
+                        )
+                        result["no_trade_reason"] = policy_action
+                    elif action in ("BUY", "SELL") and confidence < _cfg.ANALYSIS_CONFIDENCE_THRESHOLD:
                         logger.warning(
                             "[PipelineService] %s: %s blocked — confidence %d%% < threshold %d%%",
                             ticker_name, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
                         )
                     elif action == "BUY":
                         result["trade_attempted"] = True
-                        size_pct = max(0.02, min(0.10, confidence / 100.0 * 0.10))
+                        # Situational sizing: honor the board/synthesizer's reasoned
+                        # position_size_pct (percent units, capped); the confidence
+                        # formula is only the fallback when no size was decided.
+                        agent_size_pct = (result.get("estimate") or {}).get("position_size_pct")
+                        if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0:
+                            size_pct = min(agent_size_pct / 100.0, _cfg.MAX_POSITION_SIZE_PCT)
+                            logger.info(
+                                "[PipelineService] %s: sizing from agent decision → %.1f%% of cash",
+                                ticker_name, size_pct * 100,
+                            )
+                        else:
+                            size_pct = max(0.02, min(_cfg.MAX_POSITION_SIZE_PCT, confidence / 100.0 * 0.10))
+                            logger.info(
+                                "[PipelineService] %s: no agent size — confidence formula → %.1f%% of cash",
+                                ticker_name, size_pct * 100,
+                            )
                         trade_res = await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
                         if isinstance(trade_res, dict) and trade_res.get("error"):
                             logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
@@ -810,12 +862,12 @@ class PipelineService:
             active_bot_id = get_active_bot_id()
 
             from app.v3.debate_coordinator import run_battle_royale
-            await run_battle_royale(cycle_id=cycle_id, bot_id=active_bot_id)
+            report_written = bool(await run_battle_royale(cycle_id=cycle_id, bot_id=active_bot_id))
 
             # Persist the cycle summary and enqueue post-cycle autoresearch.
             # cycle_run_summaries feeds the autoresearch audit and the
             # /autoresearch/run endpoint's "latest cycle" lookup.
-            cycle_summary = _persist_summary("done", tickers, results)
+            cycle_summary = _persist_summary("done", tickers, results, report_generated=report_written)
             try:
                 if cycle_summary:
                     import uuid as _uuid
@@ -832,6 +884,14 @@ class PipelineService:
                     )
             except Exception as ar_err:
                 logger.error("[PipelineService] Post-cycle autoresearch enqueue failed: %s", ar_err)
+
+            # Whiteboard retention — boards were never deleted before (the
+            # default_cycle accumulator and superseded versions grew forever).
+            try:
+                from app.agents.whiteboard import whiteboard as _wb
+                _wb.cleanup_old_entries()
+            except Exception as wb_err:
+                logger.warning("[PipelineService] Whiteboard retention failed: %s", wb_err)
 
             # Fire and forget the post-cycle evolution and evaluation
             try:

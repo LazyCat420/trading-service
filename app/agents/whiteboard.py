@@ -5,6 +5,9 @@ from app.db.connection import get_db, safe_jsonb
 
 logger = logging.getLogger(__name__)
 
+# Cap on the summarize() output injected into agent system prompts.
+_MAX_SUMMARY_CHARS = 8000
+
 class Whiteboard:
     """Central hub for inter-agent communication via a shared mutable document.
 
@@ -267,7 +270,47 @@ class Whiteboard:
                         lines.append(f"- [{ann[0]}]: {ann[1]}")
                         
             lines.append("========================\n")
-            return "\n".join(lines)
+            summary = "\n".join(lines)
+            # The summary is injected verbatim into every agent's system
+            # prompt — cap it so a fat board can't snowball every context.
+            if len(summary) > _MAX_SUMMARY_CHARS:
+                summary = (
+                    summary[:_MAX_SUMMARY_CHARS]
+                    + "\n[... whiteboard truncated — read specific sections via whiteboard_read ...]\n"
+                )
+            return summary
+
+    def cleanup_old_entries(
+        self, *, max_age_days: int = 14, default_cycle_age_days: int = 7
+    ) -> int:
+        """Retention: whiteboard boards were previously never deleted.
+
+        Removes superseded versions and whole boards older than max_age_days,
+        and prunes the legacy 'default_cycle' accumulator faster. Returns the
+        number of rows deleted. Safe to call at cycle end (non-fatal).
+        """
+        deleted = 0
+        try:
+            with get_db() as db:
+                for where, params in (
+                    ("superseded_by IS NOT NULL AND created_at < now() - (%s || ' days')::interval",
+                     [str(max_age_days)]),
+                    ("created_at < now() - (%s || ' days')::interval", [str(max_age_days)]),
+                    ("cycle_id = 'default_cycle' AND created_at < now() - (%s || ' days')::interval",
+                     [str(default_cycle_age_days)]),
+                ):
+                    res = db.execute(
+                        f"DELETE FROM whiteboard_entries WHERE {where}", params
+                    )
+                    rc = getattr(res, "rowcount", None)
+                    if rc is None:
+                        rc = getattr(getattr(res, "_cursor", None), "rowcount", 0)
+                    deleted += rc if rc and rc > 0 else 0
+            if deleted:
+                logger.info("[Whiteboard] Retention pass removed %d entries", deleted)
+        except Exception as e:
+            logger.warning("[Whiteboard] Retention pass failed (non-fatal): %s", e)
+        return deleted
 
 # Global singleton
 whiteboard = Whiteboard()

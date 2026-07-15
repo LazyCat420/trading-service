@@ -36,8 +36,8 @@ _AGENT_META = {
     "junior_analyst":       {"label": "Junior Analyst",       "icon": "📋", "layer": 2},
     "fundamental_analyst":  {"label": "Fundamental Analyst",  "icon": "📊", "layer": 2},
     "quant_analyst":        {"label": "Quant Analyst",        "icon": "📈", "layer": 2},
-    "bull_argument":        {"label": "Bull Agent",           "icon": "🐂", "layer": 3},
-    "bear_rebuttal":        {"label": "Bear Agent",           "icon": "🐻", "layer": 3},
+    "bull_agent":           {"label": "Bull Agent",           "icon": "🐂", "layer": 3},
+    "bear_agent":           {"label": "Bear Agent",           "icon": "🐻", "layer": 3},
     "debate_judge":         {"label": "Debate Judge",         "icon": "⚖️",  "layer": 3},
     "board_of_directors":   {"label": "Board of Directors",   "icon": "👔", "layer": 4},
     "decision_synthesizer": {"label": "Decision Synthesizer", "icon": "📝", "layer": 5},
@@ -57,14 +57,14 @@ _PIPELINE_EDGES = [
     ("regime_engine", "quant_analyst", "regime_classification"),
     ("junior_analyst", "fundamental_analyst", "desk_note"),
     ("fundamental_analyst", "quant_analyst", "fundamental_report"),
-    ("junior_analyst", "bull_argument", "desk_note"),
-    ("fundamental_analyst", "bull_argument", "fundamental_report"),
-    ("quant_analyst", "bull_argument", "quant_report"),
-    ("junior_analyst", "bear_rebuttal", "desk_note"),
-    ("fundamental_analyst", "bear_rebuttal", "fundamental_report"),
-    ("quant_analyst", "bear_rebuttal", "quant_report"),
-    ("bull_argument", "debate_judge", "bull_argument"),
-    ("bear_rebuttal", "debate_judge", "bear_rebuttal"),
+    ("junior_analyst", "bull_agent", "desk_note"),
+    ("fundamental_analyst", "bull_agent", "fundamental_report"),
+    ("quant_analyst", "bull_agent", "quant_report"),
+    ("junior_analyst", "bear_agent", "desk_note"),
+    ("fundamental_analyst", "bear_agent", "fundamental_report"),
+    ("quant_analyst", "bear_agent", "quant_report"),
+    ("bull_agent", "debate_judge", "bull_argument"),
+    ("bear_agent", "debate_judge", "bear_rebuttal"),
     ("debate_judge", "board_of_directors", "debate_judge"),
     ("board_of_directors", "decision_synthesizer", "final_decision"),
 ]
@@ -386,6 +386,9 @@ def get_cycle_timeline(cycle_id: str, ticker: str = Query(default="")):
                     )
 
                 # Get tool calls for this agent
+                # agent_tool_telemetry stores prefixed names (v3_junior_analyst)
+                # while agent_name is canonicalized — normalize both sides or
+                # every entry shows 0 tool calls.
                 agent_tools = [
                     {
                         "tool_name": t[1],
@@ -394,7 +397,7 @@ def get_cycle_timeline(cycle_id: str, ticker: str = Query(default="")):
                         "was_blocked": t[4],
                     }
                     for t in (tool_rows or [])
-                    if t[0] == agent_name
+                    if _canonical_agent(t[0]) == agent_name
                 ]
 
                 entries.append({
@@ -669,8 +672,8 @@ def _build_mermaid(nodes: list[dict], edges: list[dict]) -> str:
         "junior_analyst": "JA",
         "fundamental_analyst": "FA",
         "quant_analyst": "QA",
-        "bull_argument": "BULL",
-        "bear_rebuttal": "BEAR",
+        "bull_agent": "BULL",
+        "bear_agent": "BEAR",
         "debate_judge": "JUDGE",
         "board_of_directors": "BOD",
         "decision_synthesizer": "DS",

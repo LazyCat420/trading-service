@@ -84,6 +84,7 @@ If the strategy lacks a defined stop loss or has max drawdown > 25%, you MUST ve
 
 Output JSON:
 {
+    "winner": "A" or "B",
     "score": 1-10,
     "reasoning": "Cite specific drawdown/risk numbers",
     "risk_assessment": "Detailed risk breakdown",
@@ -102,6 +103,7 @@ Score the presented strategy on:
 
 Output JSON:
 {
+    "winner": "A" or "B",
     "score": 1-10,
     "reasoning": "Cite specific fundamental/valuation data",
     "risk_assessment": "Assessment of long-term edge sustainability",
@@ -120,6 +122,7 @@ Score the presented strategy on:
 
 Output JSON:
 {
+    "winner": "A" or "B",
     "score": 1-10,
     "reasoning": "Cite specific momentum/timing indicators",
     "risk_assessment": "Assessment of current market conditions alignment",
@@ -467,7 +470,8 @@ Defense Points: {defense_b}
 
 Score both theses. Your score should reflect which thesis has the stronger
 mathematical foundation and which you would allocate capital to.
-Output your score for the WINNING thesis only."""
+Set "winner" to "A" or "B" — the thesis you would fund — and output your
+score for that winning thesis."""
 
 
 async def _run_jury_scoring(
@@ -539,34 +543,54 @@ async def _run_jury_scoring(
         results.append(await run_juror(name, config))
 
     scores = []
+    votes = {"A": 0, "B": 0}
+    veto_count = 0
+    risk_flags = []
     for parsed, tokens in results:
         total_tokens += tokens
         juror_name = parsed.get("juror", "unknown")
         jury_results[juror_name] = parsed
         scores.append(parsed.get("score", 5))
 
-        if parsed.get("veto", False):
-            vetoed = True
-            logger.warning(
-                "[TOURNAMENT] VETO by %s: %s",
-                juror_name, parsed.get("reasoning", "")[:200],
-            )
+        side = str(parsed.get("winner", "")).strip().upper()
+        if side in votes:
+            votes[side] += 1
 
-        # Deterministic veto: Risk Manager score < 5 = automatic veto
-        # (per plan: "If the Risk Manager scores below a 5/10, the trade is vetoed")
+        # Deterministic veto: Risk Manager score < 5 counts as that juror's
+        # veto (per plan: "If the Risk Manager scores below a 5/10, the trade
+        # is vetoed") — but no single juror decides for the panel anymore.
         if juror_name == "Risk_Manager" and parsed.get("score", 5) < 5:
-            vetoed = True
+            parsed["veto"] = True
             logger.warning(
-                "[TOURNAMENT] AUTO-VETO: Risk Manager score %d/10 < 5 threshold",
+                "[TOURNAMENT] Risk Manager auto-veto vote: score %d/10 < 5 threshold",
                 parsed.get("score", 5),
             )
 
+        if parsed.get("veto", False):
+            veto_count += 1
+            risk_flags.append({
+                "juror": juror_name,
+                "reasoning": parsed.get("reasoning", ""),
+                "risk_assessment": parsed.get("risk_assessment", ""),
+            })
+            logger.warning(
+                "[TOURNAMENT] VETO vote by %s: %s",
+                juror_name, parsed.get("reasoning", "")[:200],
+            )
+
+    # Collective decision: a hard veto requires a jury MAJORITY (2 of 3).
+    # A solo veto becomes a standing risk flag that downstream policy gates
+    # force the board to mitigate (stop-loss + trigger + explicit sizing).
+    vetoed = veto_count >= 2
     avg_score = sum(scores) / len(scores) if scores else 5.0
 
     return {
         "jury_results": jury_results,
         "average_score": round(avg_score, 1),
+        "votes": votes,
+        "veto_count": veto_count,
         "vetoed": vetoed,
+        "risk_flags": risk_flags,
         "total_jury_tokens": total_tokens,
     }
 
@@ -673,30 +697,40 @@ async def run_tournament_debate(
 
     avg_score = jury_verdict.get("average_score", 5.0)
     vetoed = jury_verdict.get("vetoed", False)
+    votes = jury_verdict.get("votes", {"A": 0, "B": 0})
+    risk_flags = jury_verdict.get("risk_flags", [])
 
     logger.info(
-        "[TOURNAMENT] Stage 4 complete: avg_score=%.1f, vetoed=%s",
-        avg_score, vetoed,
+        "[TOURNAMENT] Stage 4 complete: avg_score=%.1f, votes=A:%d/B:%d, veto_votes=%d, vetoed=%s",
+        avg_score, votes.get("A", 0), votes.get("B", 0),
+        jury_verdict.get("veto_count", 0), vetoed,
     )
 
     # ── Determine Winner & Action ────────────────────────────────────
     held = position_context.get("held", False) if position_context else False
 
     if vetoed:
-        # Risk Manager vetoed — force HOLD/SELL
+        # Jury majority vetoed — force HOLD/SELL
         from app.cognition.debate.action_gate import gate_action
         action = gate_action("HOLD", held)
         confidence = 0
         winning_side = "veto"
-        rationale = "Risk Manager VETOED the strategy due to excessive risk."
+        rationale = (
+            f"Jury majority VETO ({jury_verdict.get('veto_count', 0)}/"
+            f"{len(jury_verdict.get('jury_results', {}))} jurors) — "
+            "strategy blocked for excessive risk."
+        )
     else:
-        # Determine winner based on backtest + jury score
-        a_score = debated_a.get("backtest_pnl", 0) * 0.5 + avg_score * 5
-        b_score = debated_b.get("backtest_pnl", 0) * 0.5 + avg_score * 5
+        # Winner = jury majority vote; backtest PnL breaks ties (the old
+        # formula added the same avg_score to both sides, so the jury could
+        # never differentiate them).
+        if votes.get("A", 0) != votes.get("B", 0):
+            a_wins = votes.get("A", 0) > votes.get("B", 0)
+        else:
+            a_wins = debated_a.get("backtest_pnl", 0) >= debated_b.get("backtest_pnl", 0)
 
-        # Map to action based on the winning thesis
-        winner = debated_a if a_score >= b_score else debated_b
-        winning_side = "bull" if a_score >= b_score else "bear"
+        winner = debated_a if a_wins else debated_b
+        winning_side = "bull" if a_wins else "bear"
 
         confidence = min(int(avg_score * 10), 100)
         from app.cognition.debate.action_gate import gate_action
@@ -704,9 +738,16 @@ async def run_tournament_debate(
         rationale = (
             f"Tournament winner: {winner.get('persona', '?')} "
             f"(claim: {winner.get('claim', '')[:100]}). "
-            f"Jury score: {avg_score}/10. "
+            f"Jury votes A:{votes.get('A', 0)}/B:{votes.get('B', 0)}, "
+            f"score: {avg_score}/10. "
             f"Backtest PnL: {winner.get('backtest_pnl', 0):.1f}%."
         )
+        if risk_flags:
+            flaggers = ", ".join(f.get("juror", "?") for f in risk_flags)
+            rationale += (
+                f" RISK FLAG by {flaggers}: trade requires explicit "
+                "mitigation (stop-loss, trigger, sizing) to execute."
+            )
 
     elapsed = (datetime.now(timezone.utc) - tournament_start).total_seconds()
 
@@ -815,6 +856,8 @@ async def run_tournament_debate(
         "action": action,
         "confidence": confidence,
         "winning_side": winning_side,
+        "vetoed": vetoed,
+        "risk_flags": risk_flags,
         "rationale": rationale,
         "pitches": [
             {"persona": p.get("persona"), "claim": p.get("claim"), "equation": p.get("equation")}

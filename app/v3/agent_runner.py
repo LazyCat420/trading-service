@@ -68,6 +68,13 @@ async def run_v3_agent(
     Returns:
         PhaseOutcome indicating success or failure type.
     """
+    # Scope any in-process tool execution (whiteboard, peer requests) to this
+    # agent + cycle; the HTTP bridge path sets the same context from headers.
+    from app.tools.tool_context import set_tool_context
+
+    set_tool_context(
+        agent_name=getattr(agent_module, "AGENT_NAME", None), cycle_id=cycle_id
+    )
     from app.utils.pipeline_utils import noop as _noop
     if emit is None:
         emit = _noop
@@ -194,6 +201,15 @@ async def run_v3_agent(
                 locale_override = AGENT_LOCALES.get(agent_locale)
                 if locale_override:
                     system_prompt += locale_override
+                    logger.info(
+                        "[V3Runner] %s: agent_locale '%s' directive appended to system prompt",
+                        agent_name, agent_locale,
+                    )
+                else:
+                    logger.warning(
+                        "[V3Runner] %s: unknown agent_locale '%s' — no directive applied "
+                        "(known: %s)", agent_name, agent_locale, sorted(AGENT_LOCALES),
+                    )
             except Exception as e:
                 logger.warning("[V3Runner] Failed to apply agent_locale %s: %s", agent_locale, e)
 

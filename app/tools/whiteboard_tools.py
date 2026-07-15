@@ -1,7 +1,7 @@
 import json
 import logging
-import os
 from app.tools.registry import registry, PermissionLevel
+from app.tools.tool_context import current_agent_name, current_cycle_id
 from app.agents.whiteboard import whiteboard
 
 logger = logging.getLogger(__name__)
@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
     permission=PermissionLevel.WRITE,
 )
 async def whiteboard_write(ticker: str, section: str, content: str) -> str:
-    cycle_id = os.getenv("CYCLE_ID", "default_cycle")
-    author_agent = os.getenv("AGENT_NAME", "unknown")
+    cycle_id = current_cycle_id()
+    author_agent = current_agent_name()
     logger.info("[WhiteboardTool] Writing section '%s' for %s (cycle=%s, agent=%s)", section, ticker, cycle_id, author_agent)
     try:
         new_id = await whiteboard.write_section(
@@ -70,7 +70,7 @@ async def whiteboard_write(ticker: str, section: str, content: str) -> str:
     permission=PermissionLevel.READ_ONLY,
 )
 async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
-    cycle_id = os.getenv("CYCLE_ID", "default_cycle")
+    cycle_id = current_cycle_id()
     logger.info("[WhiteboardTool] Reading section '%s' for %s (cycle=%s)", section, ticker, cycle_id)
     try:
         # Models routinely omit section (the schema didn't require it) — that
@@ -109,7 +109,7 @@ async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
     permission=PermissionLevel.WRITE,
 )
 async def whiteboard_annotate(entry_id: int, note: str) -> str:
-    author_agent = os.getenv("AGENT_NAME", "unknown")
+    author_agent = current_agent_name()
     logger.info("[WhiteboardTool] Annotating entry %d (agent=%s)", entry_id, author_agent)
     try:
         success = await whiteboard.annotate(entry_id=entry_id, agent=author_agent, note=note)
@@ -138,7 +138,7 @@ async def whiteboard_annotate(entry_id: int, note: str) -> str:
     permission=PermissionLevel.READ_ONLY,
 )
 async def whiteboard_summarize(ticker: str) -> str:
-    cycle_id = os.getenv("CYCLE_ID", "default_cycle")
+    cycle_id = current_cycle_id()
     logger.info("[WhiteboardTool] Summarizing whiteboard for %s (cycle=%s)", ticker, cycle_id)
     try:
         summary = await whiteboard.summarize(ticker=ticker, cycle_id=cycle_id)

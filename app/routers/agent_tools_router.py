@@ -78,6 +78,13 @@ async def execute_tool(
     LocalToolRouter calls this endpoint for python-bridge tools.
     """
     from app.tools.registry import registry
+    from app.tools.tool_context import set_tool_context
+
+    # Scope context-sensitive tools (whiteboard_*, peer requests) to the real
+    # cycle/agent. lazy-tool forwards x-agent / x-conversation-id — the latter
+    # is often a Prism conversation UUID, which set_tool_context ignores; the
+    # live pipeline singleton then supplies the actual cycle id.
+    set_tool_context(agent_name=payload.agent_name, cycle_id=payload.cycle_id)
 
     tool_call = {
         "id": "call_lazy_tool_bridge",

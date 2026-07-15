@@ -280,6 +280,11 @@ async def run_v3_pipeline(
         event_ticker = (event.get("ticker") or "").upper()
         if event_ticker and event_ticker != ticker.upper():
             return
+        # Same ticker from another cycle (or the legacy default_cycle board)
+        # must not trigger this cycle's agent chain.
+        event_cycle = event.get("cycle_id") or ""
+        if event_cycle and event_cycle != cycle_id:
+            return
         sec = event.get("section")
         auth = event.get("author")
         logger.info("[V3] Whiteboard event trigger: section '%s' updated by '%s'", sec, auth)
@@ -443,6 +448,7 @@ async def run_v3_pipeline(
                 "survivors": tournament_result.get("survivors", []),
                 "jury_verdict": tournament_result.get("jury_verdict", {}),
                 "vetoed": tournament_result.get("jury_verdict", {}).get("vetoed", False),
+                "risk_flags": tournament_result.get("risk_flags", []),
                 "total_tokens": tournament_result.get("total_tokens", 0),
             })
 
@@ -781,7 +787,11 @@ async def run_v3_pipeline(
     return result
 
 def _apply_policy_gates(desk: SharedDesk) -> str:
-    """Apply explicit orchestration policy gates to the final decision."""
+    """Apply explicit orchestration policy gates to the final decision.
+
+    The returned policy action is ENFORCED by pipeline_service before trade
+    execution (a *_POLICY_BLOCKED_* result never trades) — it is not advisory.
+    """
     decision = desk.trade_decision or desk.final_decision or {}
     action = decision.get("action", "HOLD").upper()
     confidence = decision.get("confidence", 0)
@@ -791,9 +801,27 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
 
     if confidence < 60:
         return "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
-        
+
     if not desk.has_artifact("regime_classification"):
         return "HOLD_POLICY_BLOCKED_MISSING_REGIME"
+
+    tournament = getattr(desk, "tournament_result", None) or {}
+
+    # Jury-majority veto is binding: the collective decided, no single agent
+    # (including the board) overrides it.
+    if tournament.get("vetoed"):
+        return "HOLD_POLICY_BLOCKED_JURY_VETO"
+
+    # A solo juror veto is a standing risk flag: the board may trade through
+    # it ONLY with explicit mitigation — a defined stop-loss, a dynamic
+    # trigger, and its own reasoned position size. Anything less holds.
+    if tournament.get("risk_flags"):
+        mitigation = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
+        has_stop = isinstance(mitigation.get("stop_loss"), (int, float))
+        has_trigger = bool(mitigation.get("dynamic_trigger"))
+        has_size = isinstance(mitigation.get("position_size_pct"), (int, float))
+        if not (has_stop and has_trigger and has_size):
+            return "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK"
 
     return f"EXECUTE_{action}"
 
@@ -1036,6 +1064,10 @@ def _build_v1_compatible_result(
     stop_loss = decision.get("stop_loss")
     take_profit = decision.get("take_profit")
     dynamic_trigger = decision.get("dynamic_trigger")
+    # Sizing is situational: the board reasons about position_size_pct; the
+    # synthesizer may override it. Execution honors this over any formula.
+    _merged = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
+    position_size_pct = _merged.get("position_size_pct")
 
     # Token sum from telemetry
     total_tokens = sum(
@@ -1115,7 +1147,8 @@ def _build_v1_compatible_result(
         "estimate": {
             "stop_loss": stop_loss,
             "take_profit": take_profit,
-            "dynamic_trigger": dynamic_trigger
+            "dynamic_trigger": dynamic_trigger,
+            "position_size_pct": position_size_pct,
         },
         "c_result": {
             "action": action,

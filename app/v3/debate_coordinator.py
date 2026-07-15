@@ -8,7 +8,9 @@ from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
-async def run_battle_royale(cycle_id: str, bot_id: str):
+async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
+    # Returns True when the cycle report row was written (feeds
+    # cycle_run_summaries.report_generated, which was never set before).
     """
     Stage 1: Sector-Based Battle Royale
     Stage 2: Cross-Sector Allocation
@@ -25,7 +27,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str):
         
     if not rows:
         logger.warning("[BattleRoyale] No analysis results found for cycle %s", cycle_id)
-        return
+        return False
         
     # Build summary of tickers
     tickers_data = []
@@ -85,5 +87,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str):
                 ]
             )
         logger.info("[BattleRoyale] Report saved with ID %s", report_id)
+        return True
     except Exception as e:
         logger.error("[BattleRoyale] Failed to save report: %s", e)
+        return False

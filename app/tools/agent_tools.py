@@ -1,7 +1,7 @@
 import json
-import os
 import logging
 from app.tools.registry import registry, PermissionLevel
+from app.tools.tool_context import current_agent_name, current_cycle_id
 from app.agents.whiteboard import whiteboard
 
 logger = logging.getLogger(__name__)
@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
     permission=PermissionLevel.WRITE,
 )
 async def request_peer_analysis(ticker: str, target_agent: str, query: str) -> str:
-    cycle_id = os.getenv("CYCLE_ID", "default_cycle")
-    author_agent = os.getenv("AGENT_NAME", "unknown")
+    cycle_id = current_cycle_id()
+    author_agent = current_agent_name()
     logger.info("[AgentTools] request_peer_analysis called for %s to %s (query=%s)", ticker, target_agent, query)
     
     ticker = ticker.upper().strip()
@@ -91,8 +91,8 @@ async def request_peer_analysis(ticker: str, target_agent: str, query: str) -> s
     permission=PermissionLevel.WRITE,
 )
 async def escalate_to_pm(ticker: str, reason: str) -> str:
-    cycle_id = os.getenv("CYCLE_ID", "default_cycle")
-    author_agent = os.getenv("AGENT_NAME", "unknown")
+    cycle_id = current_cycle_id()
+    author_agent = current_agent_name()
     logger.info("[AgentTools] escalate_to_pm called for %s by %s (reason=%s)", ticker, author_agent, reason)
     
     ticker = ticker.upper().strip()
