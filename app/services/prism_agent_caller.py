@@ -38,13 +38,18 @@ def _extract_token_usage(resp: Any, response_text: str) -> int:
         if isinstance(payload, dict):
             usage = payload.get("usage") or {}
             if isinstance(usage, dict) and usage:
-                total = usage.get("total_tokens")
+                # Prism/lazy-agent (TypeScript) emit camelCase — the SDK's
+                # streaming path sums inputTokens+outputTokens+reasoningOutputTokens
+                # (lazycat/agent.py). Match that first; keep snake_case + a
+                # totalTokens field as fallbacks for other providers.
+                total = usage.get("totalTokens") or usage.get("total_tokens")
                 if isinstance(total, (int, float)) and total > 0:
                     return int(total)
-                prompt = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
-                completion = usage.get("completion_tokens") or usage.get("output_tokens") or 0
-                if prompt or completion:
-                    return int(prompt) + int(completion)
+                inp = usage.get("inputTokens") or usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+                out = usage.get("outputTokens") or usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                reasoning = usage.get("reasoningOutputTokens") or usage.get("reasoning_tokens") or 0
+                if inp or out or reasoning:
+                    return int(inp) + int(out) + int(reasoning)
     except Exception:
         pass
     # Fallback: rough estimate from output length (better than nothing).

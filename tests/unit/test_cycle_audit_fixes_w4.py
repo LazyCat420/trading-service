@@ -22,19 +22,25 @@ class _Resp:
         return self._payload
 
 
-def test_token_usage_prefers_total_tokens():
+def test_token_usage_camelcase_prism_shape():
+    # The real prism/lazy-agent shape: camelCase, input+output+reasoning.
+    resp = _Resp({"text": "hi", "usage": {"inputTokens": 12000, "outputTokens": 800, "reasoningOutputTokens": 300}})
+    assert _extract_token_usage(resp, "hi") == 13100
+
+
+def test_token_usage_prefers_totalTokens_camel():
+    resp = _Resp({"text": "hi", "usage": {"totalTokens": 15234, "inputTokens": 1}})
+    assert _extract_token_usage(resp, "hi") == 15234
+
+
+def test_token_usage_prefers_total_tokens_snake():
     resp = _Resp({"text": "hi", "usage": {"total_tokens": 15234}})
     assert _extract_token_usage(resp, "hi") == 15234
 
 
-def test_token_usage_sums_prompt_and_completion():
+def test_token_usage_sums_prompt_and_completion_snake():
     resp = _Resp({"text": "hi", "usage": {"prompt_tokens": 12000, "completion_tokens": 800}})
     assert _extract_token_usage(resp, "hi") == 12800
-
-
-def test_token_usage_accepts_input_output_aliases():
-    resp = _Resp({"usage": {"input_tokens": 500, "output_tokens": 200}})
-    assert _extract_token_usage(resp, "x") == 700
 
 
 def test_token_usage_falls_back_to_estimate_when_no_usage():
