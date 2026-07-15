@@ -23,7 +23,13 @@ class CycleCloser:
         summary: dict,
         results: List[Dict],
     ):
-        """Called by PipelineService when the cycle finishes."""
+        """Intended to be called when a cycle finishes.
+
+        NOTE (2026-07-15 audit): nothing calls this — PipelineService never
+        wired it in, so episodic cycle summaries via this path never happen.
+        The live cycle-end memory write is orchestrator.py's
+        add_episodic_observation. Wire this in or delete it.
+        """
         if not results:
             return
 

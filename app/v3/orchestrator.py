@@ -506,6 +506,10 @@ async def run_v3_pipeline(
                 "winning_side": tournament_result.get("winning_side", "split"),
                 "pitches": tournament_result.get("pitches", []),
                 "survivors": tournament_result.get("survivors", []),
+                # h2h carries each thesis's attack_points — the debate nuance
+                # the board needs for sizing/stop calibration. Without it the
+                # board only ever saw the one-line rationale.
+                "h2h": tournament_result.get("h2h", {}),
                 "jury_verdict": tournament_result.get("jury_verdict", {}),
                 "vetoed": tournament_result.get("jury_verdict", {}).get("vetoed", False),
                 "risk_flags": tournament_result.get("risk_flags", []),

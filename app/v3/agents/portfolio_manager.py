@@ -1,8 +1,14 @@
 """
-INACTIVE — This agent is NOT used in the current V3 pipeline.
-It was part of the V2 scoring/gatekeeper system and is registered
-with Prism but never invoked by the V3 orchestrator.
-Reserved for future Layer 6 (Portfolio Optimization) or removal.
+Watchlist Gatekeeper — ACTIVE, but not run by the V3 orchestrator.
+
+PipelineService imports SYSTEM_PROMPT/AGENT_NAME from here and runs this
+agent (tools disabled, strict JSON) as the watchlist Gatekeeper that selects
+which scored candidate tickers get a full V3 pipeline run. It does NOT read
+or manage portfolio state — live portfolio reads happen via the
+get_portfolio_state tool (quant/board agents) and in paper_trader.
+
+The previous docstring said "INACTIVE — never invoked"; that was wrong and
+nearly got this module deleted during the 2026-07-15 dead-code sweep.
 """
 
 AGENT_NAME = "v3_portfolio_manager"

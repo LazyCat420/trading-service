@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     # cycle-specific context into the user message. False = legacy layout
     # (dynamic content appended to the system prompt) — the rollback path.
     V3_PROMPT_SPLIT: bool = True
+    # Portfolio-level circuit breaker: refuse NEW BUYs once mark-to-market
+    # portfolio value falls this far below its recorded peak (0.25 = 25%).
+    # SELLs are never blocked. 0 disables the breaker.
+    MAX_PORTFOLIO_DRAWDOWN_PCT: float = 0.25
     ANALYSIS_CONFIDENCE_THRESHOLD: int = 65  # minimum confidence (0-100) to execute trades
     MAX_POSITION_SIZE_PCT: float = 0.10  # hard cap on a single trade's cash fraction (agent sizing is clamped to this)
 

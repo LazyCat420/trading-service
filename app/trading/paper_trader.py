@@ -81,6 +81,67 @@ def _compute_stop_loss_pct(ticker: str, entry_price: float) -> float:
 MAX_PRICE_AGE_HOURS = 96
 
 
+def _check_drawdown_breaker(bot_id: str, portfolio_value: float) -> dict | None:
+    """Portfolio-level drawdown circuit breaker for new BUYs.
+
+    Compares current mark-to-market portfolio value against the peak
+    total_value ever recorded in portfolio_snapshots. Returns an error dict
+    (blocking the trade) when the drawdown exceeds
+    settings.MAX_PORTFOLIO_DRAWDOWN_PCT; returns None to allow.
+
+    Fails open: no snapshots yet, breaker disabled (<= 0), or any DB error
+    means no block — this is a safety net, not a trade dependency.
+    """
+    try:
+        max_dd_pct = float(getattr(settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.25) or 0)
+    except (TypeError, ValueError):
+        return None
+    if max_dd_pct <= 0:
+        return None
+
+    try:
+        with get_db() as db:
+            peak_row = db.execute(
+                "SELECT MAX(total_value) FROM portfolio_snapshots WHERE bot_id = %s",
+                [bot_id],
+            ).fetchone()
+        peak_value = float(peak_row[0]) if peak_row and peak_row[0] else 0.0
+        if peak_value <= 0:
+            return None
+        drawdown = (portfolio_value - peak_value) / peak_value
+        if drawdown <= -max_dd_pct:
+            logger.warning(
+                "[paper] DRAWDOWN BREAKER: portfolio $%.2f is %.1f%% below peak "
+                "$%.2f (limit %.0f%%) — refusing new BUYs",
+                portfolio_value, drawdown * 100, peak_value, max_dd_pct * 100,
+            )
+            return {
+                "error": (
+                    f"Portfolio drawdown breaker: value ${portfolio_value:,.2f} is "
+                    f"{abs(drawdown) * 100:.1f}% below peak ${peak_value:,.2f} "
+                    f"(limit {max_dd_pct * 100:.0f}%). New BUYs suspended; SELLs allowed."
+                ),
+                "drawdown_pct": round(drawdown * 100, 2),
+                "peak_value": round(peak_value, 2),
+            }
+    except Exception as dd_err:
+        logger.warning("[paper] Drawdown breaker check skipped: %s", dd_err)
+    return None
+
+
+def _record_portfolio_snapshot(bot_id: str) -> None:
+    """Record a mark-to-market snapshot after an executed trade (non-fatal).
+
+    portfolio_snapshots previously had NO writer, so the drawdown breaker's
+    peak reference would never exist — every executed trade now stamps one.
+    """
+    try:
+        from app.trading.portfolio import take_snapshot
+        take_snapshot(bot_id)
+    except Exception as snap_err:
+        logger.warning("[paper] Post-trade snapshot failed (non-fatal): %s", snap_err)
+
+
 def _ensure_bot(bot_id: str):
     """Create bot row if it doesn't exist."""
     with get_db() as db:
@@ -331,6 +392,15 @@ async def buy(
         if pticker == ticker:
             existing_ticker_value = val
 
+    # ── Portfolio drawdown circuit breaker ──
+    # New BUYs are refused once mark-to-market portfolio value has fallen
+    # MAX_PORTFOLIO_DRAWDOWN_PCT below its recorded peak (portfolio_snapshots,
+    # written after every executed trade). SELLs are never blocked — exiting
+    # a losing book must always be possible. Fails open if no peak exists.
+    dd_error = _check_drawdown_breaker(bot_id, portfolio_value)
+    if dd_error:
+        return dd_error
+
     amount = cash * min(size_pct, 1.0)
 
     # Enforce concentration cap (e.g., max 25% of portfolio per ticker)
@@ -506,6 +576,7 @@ async def buy(
         amount,
         lot_id[:8],
     )
+    _record_portfolio_snapshot(bot_id)
     return result
 
 
@@ -800,6 +871,7 @@ async def sell(
         total_realized_pnl,
         pnl_pct,
     )
+    _record_portfolio_snapshot(bot_id)
     return result
 
 

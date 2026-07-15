@@ -313,11 +313,35 @@ class SharedDesk:
                 conf = tournament.get("confidence", 0)
                 side = tournament.get("winning_side", "split")
                 veto = " [JURY VETO]" if tournament.get("vetoed") else ""
-                sections.append(
+                text = (
                     f"## Tournament Debate Verdict{veto}\n"
                     f"**{action} @ {conf}% confidence (winner: {side})**\n"
                     f"{tournament.get('summary', '')}"
                 )
+                # Debate nuance for the board: each side's attack points are
+                # the tournament's equivalent of the classic judge's
+                # weaknesses_of_winner / strongest_point_of_loser. A confident
+                # verdict whose loser landed real blows deserves tighter stops.
+                h2h = tournament.get("h2h") or {}
+                for side_key, label in (("thesis_a", "Thesis A"), ("thesis_b", "Thesis B")):
+                    thesis = h2h.get(side_key) or {}
+                    attacks = thesis.get("attack_points") or []
+                    if attacks:
+                        persona = thesis.get("persona", label)
+                        text += f"\n**{label} ({persona}) attack points:**\n" + "\n".join(
+                            f"- {str(a)[:200]}" for a in attacks[:3]
+                        )
+                jury_results = (tournament.get("jury_verdict") or {}).get("jury_results") or {}
+                juror_lines = []
+                for juror, verdict in list(jury_results.items())[:3]:
+                    if isinstance(verdict, dict) and verdict.get("reasoning"):
+                        flag = " [VETO]" if verdict.get("veto") else ""
+                        juror_lines.append(
+                            f"- {juror}{flag}: {str(verdict['reasoning'])[:200]}"
+                        )
+                if juror_lines:
+                    text += "\n**Juror reasoning:**\n" + "\n".join(juror_lines)
+                sections.append(text)
 
             # Skip the debate_judge artifact when it is just a copy of the
             # tournament verdict already rendered above.

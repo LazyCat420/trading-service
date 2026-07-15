@@ -595,6 +595,14 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                 if val:
                     artifacts[key] = val
 
+            # Scheduler observability: cycle_metadata carries the per-iteration
+            # pipeline_iteration_log (task, run count, parent, query) written by
+            # the orchestrator loop — previously persisted but unreachable over
+            # HTTP. Surface only the log, not the whole metadata blob (which
+            # includes the full data_report).
+            cycle_meta = desk_data.get("cycle_metadata") or {}
+            iteration_log = cycle_meta.get("pipeline_iteration_log") or []
+
             # Get whiteboard entries & annotations directly
             wb_entries = []
             try:
@@ -661,6 +669,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                 "tool_calls": tools,
                 "trade_result": trade_result,
                 "whiteboard_entries": wb_entries,
+                "pipeline_iteration_log": iteration_log,
                 "total_agent_ms": sum(a["elapsed_ms"] for a in agents),
                 "total_tool_calls": len(tools),
             }
