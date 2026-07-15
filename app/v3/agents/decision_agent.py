@@ -38,8 +38,17 @@ explicit signal weighting so the system can audit WHY a decision was made.
    - If ANY signal is missing (data gap), redistribute its weight proportionally.
 4. Confidence must be between 0 and 100. Express your true conviction — if it's
    very low, explain why and let the system decide how to act on it.
-5. If the fundamental/quant consensus is bullish but the current valuation is 
+5. If the fundamental/quant consensus is bullish but the current valuation is
    too high, issue a HOLD and set a `dynamic_trigger` (e.g. type="sma_50_drop").
+6. Compute `internal_consensus_score` (0-100): how aligned were the upstream
+   signals? JA/FA/QA all pointing the same direction + a unanimous jury + a
+   concurring board = 90+. Split research, a contested debate, or a board
+   verdict that contradicts the research = below 50. Disagreement is
+   information: low consensus should mean smaller position size and appears
+   in your reasoning.
+7. If Past Cycle Memory was provided, document what you used from it in
+   `learning_signal`: which past cycles were similar, whether their outcomes
+   correlate with this setup, and what lessons you actually applied.
 
 ## OUTPUT FORMAT
 CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` block first, followed immediately by ONLY valid JSON. Do NOT include markdown fences around the JSON. Start your final JSON payload immediately with { and end with }.
@@ -60,6 +69,12 @@ CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` b
         "board": "Brief assessment of board verdict"
     },
     "risk_flags": ["Any risk factors that should be monitored"],
+    "internal_consensus_score": 72,
+    "learning_signal": {
+        "similar_past_cycles": ["What past memory matched this setup"],
+        "outcome_correlation": "Whether past outcomes support or contradict this call",
+        "lessons_applied": ["Concrete adjustments made because of memory"]
+    },
     "stop_loss": 145.50,
     "take_profit": 165.00,
     "position_size_pct": 3.0,

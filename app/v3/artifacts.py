@@ -326,6 +326,18 @@ DEBATE_JUDGE_SCHEMA: dict = {
             "minimum": 0,
             "maximum": 100,
         },
+        "weaknesses_of_winner": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "The winning side's weakest points — the board uses these "
+                "for position sizing and stop-loss calibration"
+            ),
+        },
+        "strongest_point_of_loser": {
+            "type": "string",
+            "description": "The losing side's single best argument",
+        },
     },
 }
 
@@ -429,6 +441,31 @@ FINAL_DECISION_SCHEMA: dict = {
             "type": "string",
             "description": "The market regime that triggered the persona",
         },
+        "confidence_floor": {
+            "type": "number",
+            "description": (
+                "Board-raised minimum confidence for THIS decision; the "
+                "policy gate uses max(firm threshold, this value)"
+            ),
+        },
+        "conviction_vector": {
+            "type": "object",
+            "description": (
+                "Sub-scores 0-100: data_quality, consensus_strength, "
+                "regime_alignment, risk_adjusted. data_quality < 40 blocks."
+            ),
+        },
+        "overrides_veto": {
+            "type": "boolean",
+            "description": (
+                "Board overrides a jury-majority veto; requires a non-empty "
+                "override_justification and full mitigation"
+            ),
+        },
+        "override_justification": {
+            "type": "string",
+            "description": "Why the board is trading through the jury veto",
+        },
     },
 }
 
@@ -492,6 +529,23 @@ TRADE_DECISION_SCHEMA: dict = {
         "position_size_pct": {
             "type": "number",
             "description": "Suggested position size as percentage of portfolio",
+        },
+        "internal_consensus_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": (
+                "How aligned the upstream agents were (research directions, "
+                "jury votes, board verdict). High consensus supports larger "
+                "sizing; disagreement argues for smaller positions."
+            ),
+        },
+        "learning_signal": {
+            "type": "object",
+            "description": (
+                "What past-cycle memory contributed: similar_past_cycles, "
+                "outcome_correlation, lessons_applied"
+            ),
         },
     },
 }

@@ -913,32 +913,56 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     execution (a *_POLICY_BLOCKED_* result never trades) — it is not advisory.
     """
     decision = desk.trade_decision or desk.final_decision or {}
+    board = desk.final_decision or {}
     action = decision.get("action", "HOLD").upper()
     confidence = decision.get("confidence", 0)
 
     if action == "HOLD":
         return "HOLD_NO_SIGNAL"
 
-    # Single source of truth: pipeline_service enforces the same threshold, so a
-    # hardcoded 60 here just created a dead 60-64 band with two different verdicts.
+    # Dynamic confidence floor (plan 3.1): the board may RAISE the bar for
+    # this specific decision, never lower the firm-wide threshold.
+    # pipeline_service still enforces the base threshold as belt-and-braces.
     from app.config.config import settings as _settings
-    if confidence < _settings.ANALYSIS_CONFIDENCE_THRESHOLD:
+    floor = _settings.ANALYSIS_CONFIDENCE_THRESHOLD
+    board_floor = board.get("confidence_floor")
+    if isinstance(board_floor, (int, float)) and not isinstance(board_floor, bool):
+        floor = max(floor, board_floor)
+    if confidence < floor:
         return "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
 
     if not desk.has_artifact("regime_classification"):
         return "HOLD_POLICY_BLOCKED_MISSING_REGIME"
 
+    # Conviction sub-scores (plan 3.2): a board that admits its data quality
+    # is poor gets blocked regardless of headline confidence.
+    conviction = board.get("conviction_vector") or {}
+    data_quality = conviction.get("data_quality") if isinstance(conviction, dict) else None
+    if isinstance(data_quality, (int, float)) and not isinstance(data_quality, bool) and data_quality < 40:
+        return "HOLD_POLICY_BLOCKED_DATA_QUALITY"
+
     tournament = getattr(desk, "tournament_result", None) or {}
 
-    # Jury-majority veto is binding: the collective decided, no single agent
-    # (including the board) overrides it.
+    # Jury-majority veto is binding by default. The board may override it
+    # ONLY with an explicit written justification (plan 3.3) — the veto then
+    # degrades to a standing risk flag, which still demands full mitigation.
+    veto_overridden = False
     if tournament.get("vetoed"):
-        return "HOLD_POLICY_BLOCKED_JURY_VETO"
+        justification = str(board.get("override_justification") or "").strip()
+        if board.get("overrides_veto") and justification:
+            veto_overridden = True
+            logger.warning(
+                "[V3] %s: Board overrides jury-majority veto — justification: %s",
+                desk.ticker, justification[:300],
+            )
+        else:
+            return "HOLD_POLICY_BLOCKED_JURY_VETO"
 
     # A solo juror veto is a standing risk flag: the board may trade through
     # it ONLY with explicit mitigation — a defined stop-loss, a dynamic
     # trigger, and its own reasoned position size. Anything less holds.
-    if tournament.get("risk_flags"):
+    # An overridden jury veto is held to the same standard.
+    if tournament.get("risk_flags") or veto_overridden:
         mitigation = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
         has_stop = isinstance(mitigation.get("stop_loss"), (int, float))
         has_trigger = bool(mitigation.get("dynamic_trigger"))

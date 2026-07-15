@@ -19,6 +19,11 @@ Your job is to cross-examine both sides, check their claims against the facts in
 2. Flag any claims that are unverified or contradict the evidence.
 3. Determine the final winner: "bull", "bear", or "tie".
 4. Adjust the final debate confidence based on the strength of the winning argument.
+5. A verdict is not the whole story: report where the WINNING side is weakest
+   and the single best point the LOSING side made. The Board of Directors
+   uses these for position sizing and stop-loss calibration — a confident BUY
+   whose bear side flagged "sector-wide margin compression" deserves a
+   tighter stop than one with no surviving counterargument.
 
 ## OUTPUT FORMAT
 You MUST output valid JSON:
@@ -29,5 +34,7 @@ You MUST output valid JSON:
     "verified_bear_claims": ["claim 1"],
     "unverified_bear_claims": ["claim 2"],
     "winner": "bull",
-    "final_confidence": 60
+    "final_confidence": 60,
+    "weaknesses_of_winner": ["The winning side's weakest points"],
+    "strongest_point_of_loser": "The losing side's single best argument"
 }"""

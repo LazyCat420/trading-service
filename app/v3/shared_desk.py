@@ -322,7 +322,16 @@ class SharedDesk:
                 # debate judge wrote winner/final_confidence — accept both.
                 winner = self.debate_judge.get("winning_side") or self.debate_judge.get("winner", "")
                 conf = self.debate_judge.get("confidence", self.debate_judge.get("final_confidence", 0))
-                sections.append(f"## Debate Judge Verdict (Winner: {winner} @ {conf}% confidence)\n{summary}")
+                text = f"## Debate Judge Verdict (Winner: {winner} @ {conf}% confidence)\n{summary}"
+                weaknesses = self.debate_judge.get("weaknesses_of_winner") or []
+                if weaknesses:
+                    text += "\n**Winner's weak points:**\n" + "\n".join(
+                        f"- {w}" for w in weaknesses[:3]
+                    )
+                loser_best = self.debate_judge.get("strongest_point_of_loser", "")
+                if loser_best:
+                    text += f"\n**Loser's best point:** {loser_best}"
+                sections.append(text)
 
         # Regime
         if self.regime_classification:

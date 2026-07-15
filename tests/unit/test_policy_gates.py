@@ -112,3 +112,57 @@ def test_synthesizer_overrides_board_for_mitigation():
         "position_size_pct": 3.0,
     }
     assert _apply_policy_gates(desk) == "EXECUTE_BUY"
+
+
+# ── Dynamic gates (plan 3.1-3.3, 2026-07-15) ─────────────────────────
+
+def test_board_confidence_floor_raises_the_bar():
+    desk = _desk()
+    desk.final_decision["confidence"] = 80
+    desk.final_decision["confidence_floor"] = 85
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+
+
+def test_board_confidence_floor_cannot_lower_the_bar():
+    desk = _desk()
+    desk.final_decision["confidence"] = 50  # below the firm-wide 65
+    desk.final_decision["confidence_floor"] = 10
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+
+
+def test_low_data_quality_blocks_despite_confidence():
+    desk = _desk()
+    desk.final_decision["conviction_vector"] = {"data_quality": 30, "consensus_strength": 90}
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_DATA_QUALITY"
+
+
+def test_healthy_conviction_vector_passes():
+    desk = _desk()
+    desk.final_decision["conviction_vector"] = {"data_quality": 75, "consensus_strength": 60}
+    assert _apply_policy_gates(desk) == "EXECUTE_BUY"
+
+
+def test_board_may_override_jury_veto_with_justification_and_mitigation():
+    desk = _desk(tournament_result={"vetoed": True, "risk_flags": []})
+    desk.final_decision["overrides_veto"] = True
+    desk.final_decision["override_justification"] = (
+        "Veto was driven by a stale filing; fresh 8-K contradicts it. "
+        "Position halved, hard stop at support."
+    )
+    # _desk() already carries stop_loss + dynamic_trigger + position_size_pct
+    assert _apply_policy_gates(desk) == "EXECUTE_BUY"
+
+
+def test_veto_override_without_justification_still_blocks():
+    desk = _desk(tournament_result={"vetoed": True, "risk_flags": []})
+    desk.final_decision["overrides_veto"] = True
+    desk.final_decision["override_justification"] = "   "
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_JURY_VETO"
+
+
+def test_veto_override_without_mitigation_blocks_as_unmitigated():
+    desk = _desk(tournament_result={"vetoed": True, "risk_flags": []})
+    desk.final_decision["overrides_veto"] = True
+    desk.final_decision["override_justification"] = "Stale filing, fresh 8-K contradicts."
+    desk.final_decision.pop("stop_loss")
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK"
