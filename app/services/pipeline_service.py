@@ -23,6 +23,53 @@ class _ExplicitTickersPinned(Exception):
     discovery/scoring/freshness/gatekeeper funnel is skipped entirely."""
 
 
+def resolve_buy_size_pct(
+    agent_size_pct: Any,
+    confidence: int | float,
+    max_position_size_pct: float,
+) -> float | None:
+    """Resolve the BUY position size (fraction of cash) from the agents' decision.
+
+    Deferred-item 8.1 decision (2026-07-15): an EXPLICIT position_size_pct <= 0
+    from the board/synthesizer means "watch, don't trade" — returns None and no
+    trade is attempted. Only a missing/non-numeric size falls back to the
+    confidence formula.
+    """
+    if isinstance(agent_size_pct, bool):
+        agent_size_pct = None  # bools are ints in Python; never a size
+    if isinstance(agent_size_pct, (int, float)):
+        if agent_size_pct <= 0:
+            return None  # deliberate watch-only directive
+        return min(agent_size_pct / 100.0, max_position_size_pct)
+    # No agent-decided size — confidence-scaled fallback
+    return max(0.02, min(max_position_size_pct, confidence / 100.0 * 0.10))
+
+
+def resolve_trigger_registration(
+    policy_action: str,
+    action: str,
+    trade_executed: bool,
+    position_held: bool,
+    watch_only: bool,
+) -> dict[str, bool]:
+    """Decide which price triggers may be registered for this decision.
+
+    Deferred-item 8.3 decision (2026-07-15): policy-blocked trades register
+    NOTHING — a gate refusal must not leave standing orders behind. For
+    allowed decisions, SELL-side triggers (stop-loss / take-profit) require an
+    actual position (bought this cycle or already held); the dynamic re-analysis
+    trigger is the designed "watch for entry" mechanism and stays available,
+    including for an explicit size-0 watch-only decision (it spawns a fresh
+    analysis cycle, never a blind trade).
+    """
+    if policy_action.startswith("HOLD_POLICY_BLOCKED"):
+        return {"sell_side": False, "dynamic": False}
+    has_position = position_held or (trade_executed and action == "BUY")
+    if action == "SELL" and trade_executed:
+        has_position = False  # position just closed — SELL-side orders are stale
+    return {"sell_side": has_position, "dynamic": True}
+
+
 def summarize_ticker_results(results) -> dict:
     """Aggregate per-ticker result dicts (from _process_ticker) into the
     action/trade counts recorded in cycle_run_summaries. Non-dict entries
@@ -797,28 +844,35 @@ class PipelineService:
                             ticker_name, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
                         )
                     elif action == "BUY":
-                        result["trade_attempted"] = True
                         # Situational sizing: honor the board/synthesizer's reasoned
                         # position_size_pct (percent units, capped); the confidence
                         # formula is only the fallback when no size was decided.
+                        # An EXPLICIT size <= 0 is a board "watch, don't trade"
+                        # directive and skips the trade entirely (deferred item 8.1).
                         agent_size_pct = (result.get("estimate") or {}).get("position_size_pct")
-                        if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0:
-                            size_pct = min(agent_size_pct / 100.0, _cfg.MAX_POSITION_SIZE_PCT)
+                        size_pct = resolve_buy_size_pct(
+                            agent_size_pct, confidence, _cfg.MAX_POSITION_SIZE_PCT
+                        )
+                        if size_pct is None:
+                            result["no_trade_reason"] = "AGENT_SIZE_ZERO_WATCH_ONLY"
                             logger.info(
-                                "[PipelineService] %s: sizing from agent decision → %.1f%% of cash",
-                                ticker_name, size_pct * 100,
+                                "[PipelineService] %s: BUY with explicit position_size_pct=%s — "
+                                "board watch-only directive, no trade attempted",
+                                ticker_name, agent_size_pct,
                             )
                         else:
-                            size_pct = max(0.02, min(_cfg.MAX_POSITION_SIZE_PCT, confidence / 100.0 * 0.10))
+                            result["trade_attempted"] = True
                             logger.info(
-                                "[PipelineService] %s: no agent size — confidence formula → %.1f%% of cash",
-                                ticker_name, size_pct * 100,
+                                "[PipelineService] %s: sizing %s → %.1f%% of cash",
+                                ticker_name,
+                                "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
+                                size_pct * 100,
                             )
-                        trade_res = await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
-                        if isinstance(trade_res, dict) and trade_res.get("error"):
-                            logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
-                        else:
-                            result["trade_executed"] = True
+                            trade_res = await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
+                            if isinstance(trade_res, dict) and trade_res.get("error"):
+                                logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
+                            else:
+                                result["trade_executed"] = True
                     elif action == "SELL":
                         result["trade_attempted"] = True
                         trade_res = await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
@@ -827,18 +881,43 @@ class PipelineService:
                         else:
                             result["trade_executed"] = True
 
-                    # Handle Triggers (limit orders)
+                    # Handle Triggers (limit orders). Policy-blocked decisions
+                    # register NOTHING; SELL-side triggers need a real position
+                    # (deferred item 8.3 — see resolve_trigger_registration).
                     decision = result.get("estimate", {})
                     stop_loss = decision.get("stop_loss")
                     take_profit = decision.get("take_profit")
                     dynamic_trigger = decision.get("dynamic_trigger")
                     if stop_loss or take_profit or dynamic_trigger:
+                        position_held = False
+                        if not result.get("trade_executed"):
+                            try:
+                                from app.tools.portfolio_tools import get_position_context
+                                pos_ctx = get_position_context(ticker_name, active_bot_id)
+                                position_held = bool(pos_ctx and pos_ctx.get("held"))
+                            except Exception as pos_err:
+                                logger.warning(
+                                    "[PipelineService] %s: position check for trigger registration failed: %s",
+                                    ticker_name, pos_err,
+                                )
+                        allowed = resolve_trigger_registration(
+                            policy_action=policy_action,
+                            action=action,
+                            trade_executed=bool(result.get("trade_executed")),
+                            position_held=position_held,
+                            watch_only=result.get("no_trade_reason") == "AGENT_SIZE_ZERO_WATCH_ONLY",
+                        )
+                        if not any(allowed.values()):
+                            logger.info(
+                                "[PipelineService] %s: triggers NOT registered (policy=%s)",
+                                ticker_name, policy_action,
+                            )
                         from app.trading.order_triggers import create_trigger
-                        if stop_loss:
+                        if stop_loss and allowed["sell_side"]:
                             await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
-                        if take_profit:
+                        if take_profit and allowed["sell_side"]:
                             await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
-                        if dynamic_trigger and isinstance(dynamic_trigger, dict):
+                        if dynamic_trigger and isinstance(dynamic_trigger, dict) and allowed["dynamic"]:
                             dt_type = dynamic_trigger.get("type")
                             dt_val = dynamic_trigger.get("value")
                             if dt_type:

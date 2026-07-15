@@ -713,7 +713,12 @@ async def run_v3_pipeline(
                     breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
                     custom_instructions=query, parent_agent=parent
                 )
-                breaker.record_outcome("bull_argument", outcome)
+                # Deferred-item 8.2 decision (2026-07-15): a debate timeout is a
+                # hard ABORT, not a silent degrade to an unmarked HOLD@0.
+                abort = _check_abort(desk, breaker, "bull_argument", outcome)
+                if abort:
+                    whiteboard.unsubscribe(whiteboard_subscriber)
+                    return abort
                 # Write bull_argument to whiteboard so subscriber chains debate_judge
                 if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.bull_argument:
                     await whiteboard.write_section(
@@ -729,7 +734,10 @@ async def run_v3_pipeline(
                     breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
                     custom_instructions=query, parent_agent=parent
                 )
-                breaker.record_outcome("bear_rebuttal", outcome)
+                abort = _check_abort(desk, breaker, "bear_rebuttal", outcome)
+                if abort:
+                    whiteboard.unsubscribe(whiteboard_subscriber)
+                    return abort
                 # Write bear_rebuttal to whiteboard so subscriber chains debate_judge
                 if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.bear_rebuttal:
                     await whiteboard.write_section(
@@ -744,7 +752,10 @@ async def run_v3_pipeline(
                     desk=desk, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
                     parent_agent=_SECTION_TO_AGENT.get(parent, parent),
                 )
-                breaker.record_outcome("debate_judge", outcome)
+                abort = _check_abort(desk, breaker, "debate_judge", outcome)
+                if abort:
+                    whiteboard.unsubscribe(whiteboard_subscriber)
+                    return abort
                 # Write debate_judge to whiteboard so subscriber chains board_of_directors
                 if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.debate_judge:
                     await whiteboard.write_section(
@@ -767,7 +778,13 @@ async def run_v3_pipeline(
                     desk=desk, regime=regime, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
                     parent_agent=_SECTION_TO_AGENT.get(parent, parent),
                 )
-                breaker.record_outcome("board_of_directors", outcome)
+                # A board timeout used to leave final_decision unwritten and fall
+                # through to an unmarked HOLD@0 (indistinguishable from a real
+                # no-signal HOLD). Abort loudly instead (deferred item 8.2).
+                abort = _check_abort(desk, breaker, "board_of_directors", outcome)
+                if abort:
+                    whiteboard.unsubscribe(whiteboard_subscriber)
+                    return abort
                 # Write final_decision to whiteboard so subscriber chains decision_synthesizer
                 if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.final_decision:
                     await whiteboard.write_section(
