@@ -153,6 +153,16 @@ async def run_v3_agent(
         # ── Cycle-specific (dynamic) sections ──
         dynamic_sections: list[str] = []
 
+        # Live macro snapshot — ONLY for the Regime Engine, which classifies
+        # the global market state. Scoped to that agent so it doesn't bloat
+        # every prompt (and the KV-cache user portion) with macro it ignores.
+        if agent_name == "v3_regime_engine":
+            macro_briefing = desk.cycle_metadata.get("macro_briefing", "")
+            if macro_briefing:
+                dynamic_sections.append(
+                    f"## LIVE MACRO SNAPSHOT (use this to classify the regime)\n{macro_briefing}"
+                )
+
         # Market data briefing first — it's the shared factual base (plan 4.2)
         data_report = desk.cycle_metadata.get("data_report", "")
         if data_report:

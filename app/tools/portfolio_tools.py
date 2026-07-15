@@ -48,6 +48,12 @@ def get_position_context(ticker: str, bot_id: str = "") -> dict:
         stop_price = avg_entry * (1 - (stop_loss_pct / 100.0))
         holding_days = 0
         if opened_at:
+            # opened_at comes back tz-naive from the DB; subtracting it from a
+            # tz-aware now() raised "can't subtract offset-naive and
+            # offset-aware datetimes" — caught upstream, but it silently
+            # dropped portfolio_context from EVERY cycle's agent prompts.
+            if opened_at.tzinfo is None:
+                opened_at = opened_at.replace(tzinfo=timezone.utc)
             holding_days = (datetime.now(timezone.utc) - opened_at).days
 
         ctx = {

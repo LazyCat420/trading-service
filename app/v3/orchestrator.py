@@ -117,6 +117,19 @@ async def run_v3_pipeline(
     # Store the pre-collected report
     desk.cycle_metadata["data_report"] = data_report
 
+    # Live macro snapshot for the Regime Engine. It classifies the GLOBAL
+    # market state but the per-ticker data_report gives it nothing macro, so
+    # it was producing a regime from thin air (1 turn, no tools, lowest
+    # quality). Inject real VIX/index/yield/dollar levels so the classification
+    # is grounded. Non-fatal — the engine still has its tools as a fallback.
+    try:
+        from app.collectors.market_regime_collector import get_latest_market_snapshot
+        macro_briefing = _format_macro_briefing(get_latest_market_snapshot())
+        if macro_briefing:
+            desk.cycle_metadata["macro_briefing"] = macro_briefing
+    except Exception as e:
+        logger.warning("[V3] %s: macro snapshot unavailable (non-fatal): %s", ticker, e)
+
     # Retrieve past cycle memory for this ticker (non-fatal)
     try:
         from app.services.memory.retriever import MemoryRetriever
@@ -1256,6 +1269,46 @@ async def _run_board_of_directors(
         include_debate_context=True,
         parent_agent=parent_agent,
     )
+
+
+def _format_macro_briefing(snapshot: dict) -> str:
+    """Format get_latest_market_snapshot() into a compact macro briefing.
+
+    Returns "" for an empty/missing snapshot so nothing is injected.
+    """
+    if not snapshot or not isinstance(snapshot, dict):
+        return ""
+
+    # Friendly labels for the key instruments; sector ETFs are summarized.
+    labels = [
+        ("VIX", "VIX (volatility)"),
+        ("VIX3M", "VIX 3-Month"),
+        ("GSPC", "S&P 500 (SPX)"),
+        ("IXIC", "Nasdaq Composite"),
+        ("RUT", "Russell 2000"),
+        ("DJI", "Dow Jones"),
+        ("TNX", "10-Year Yield"),
+        ("FVX", "5-Year Yield"),
+        ("IRX", "13-Week T-Bill"),
+        ("TYX", "30-Year Yield"),
+        ("DX", "US Dollar (DXY)"),
+    ]
+    lines = []
+    as_of = ""
+    for sym, label in labels:
+        entry = snapshot.get(sym)
+        if isinstance(entry, dict) and entry.get("close") is not None:
+            try:
+                lines.append(f"- {label}: {float(entry['close']):.2f}")
+            except (TypeError, ValueError):
+                continue
+            as_of = as_of or str(entry.get("date", ""))
+
+    if not lines:
+        return ""
+
+    header = f"Latest close values{f' (as of {as_of})' if as_of else ''}:"
+    return header + "\n" + "\n".join(lines)
 
 
 def _regime_recommends_skip_fa(content: dict) -> bool:
