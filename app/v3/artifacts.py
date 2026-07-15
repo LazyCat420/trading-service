@@ -351,6 +351,38 @@ REGIME_CLASSIFICATION_SCHEMA: dict = {
             "type": "string",
             "description": "Why this regime was classified",
         },
+        "factors": {
+            "type": "object",
+            "description": (
+                "Weighted factor vector (each 0.0-1.0): volatility, "
+                "trend_strength, macro_risk, sector_momentum, liquidity. "
+                "The nuanced regime signal — the enum label is only coarse."
+            ),
+        },
+        "market_context_tags": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Free-form macro tags the Regime Engine stamps itself "
+                "(e.g. 'rate-sensitive', 'earnings-week'); persisted on the "
+                "desk so all downstream agents can self-calibrate"
+            ),
+        },
+        "board_directive": {
+            "type": "string",
+            "description": (
+                "The Regime Engine's own 2-4 sentence lens instruction for "
+                "the Board of Directors, replacing a hardcoded persona rule"
+            ),
+        },
+        "suggested_pipeline_modifications": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Pipeline steps the orchestrator should adjust; honored "
+                "values: 'skip_fundamental_analyst'"
+            ),
+        },
         "vix_level": {"type": "number"},
         "yield_trend": {"type": "string"},
         "dxy_trend": {"type": "string"},

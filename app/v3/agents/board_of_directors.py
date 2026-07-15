@@ -53,6 +53,14 @@ You are making the FINAL trading decision for this ticker.
    your confidence level and position sizing — do not ignore the gap.
 5. Size your position relative to the risk you can quantify.
 
+
+## REGIME ENGINE DIRECTIVE
+The desk context includes the Regime Engine's directive to the Board — a lens
+instruction derived from its live factor readings (volatility, trend_strength,
+macro_risk, sector_momentum, liquidity) and market context tags. Follow it:
+where it conflicts with the generic philosophy above, the directive wins,
+because it reflects the CURRENT market rather than an archetype.
+
 ## TOOLS
 You have access to `get_portfolio_state` to check current portfolio exposure.
 Use it when your decision depends on existing position context (e.g., sizing
@@ -100,6 +108,14 @@ You are making the FINAL trading decision for this ticker.
    uncertainty but does not automatically force a specific action.
 5. Think in terms of business ownership, not price speculation.
 
+
+## REGIME ENGINE DIRECTIVE
+The desk context includes the Regime Engine's directive to the Board — a lens
+instruction derived from its live factor readings (volatility, trend_strength,
+macro_risk, sector_momentum, liquidity) and market context tags. Follow it:
+where it conflicts with the generic philosophy above, the directive wins,
+because it reflects the CURRENT market rather than an archetype.
+
 ## TOOLS
 You have access to `get_portfolio_state` to check current portfolio exposure.
 Use it when your decision depends on existing position context (e.g., avoiding
@@ -142,6 +158,14 @@ You are making the FINAL trading decision for this ticker.
    is genuinely uncertain — HOLD with specific catalyst triggers.
 4. If one side clearly won the debate but the market hasn't priced it in,
    that's your trade.
+
+
+## REGIME ENGINE DIRECTIVE
+The desk context includes the Regime Engine's directive to the Board — a lens
+instruction derived from its live factor readings (volatility, trend_strength,
+macro_risk, sector_momentum, liquidity) and market context tags. Follow it:
+where it conflicts with the generic philosophy above, the directive wins,
+because it reflects the CURRENT market rather than an archetype.
 
 ## TOOLS
 You have access to `get_portfolio_state` to check current portfolio exposure.

@@ -329,9 +329,21 @@ class SharedDesk:
             regime = self.regime_classification.get("regime", "?")
             conf = self.regime_classification.get("confidence", 0)
             rationale = self.regime_classification.get("rationale", "")
-            sections.append(
-                f"## Market Regime: {regime} ({conf}% confidence)\n{rationale}"
-            )
+            text = f"## Market Regime: {regime} ({conf}% confidence)\n{rationale}"
+            factors = self.regime_classification.get("factors") or {}
+            if isinstance(factors, dict) and factors:
+                rendered = ", ".join(
+                    f"{k}={v}" for k, v in factors.items() if isinstance(v, (int, float))
+                )
+                if rendered:
+                    text += f"\n**Regime Factors (0-1):** {rendered}"
+            tags = self.regime_classification.get("market_context_tags") or []
+            if tags:
+                text += "\n**Market Context Tags:** " + ", ".join(str(t) for t in tags[:8])
+            directive = self.regime_classification.get("board_directive", "")
+            if directive:
+                text += f"\n**Regime Engine's Directive to the Board:** {directive}"
+            sections.append(text)
 
         # Board of Directors
         if self.final_decision:

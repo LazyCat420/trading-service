@@ -256,6 +256,7 @@ async def run_v3_pipeline(
     }
 
     regime = "CONTRADICTORY"
+    fa_skipped = False  # set when the Regime Engine recommends skipping FA
 
     def _queue_agent(name: str, module: Any, query: str = "", parent: str = ""):
         if run_counts.get(name, 0) >= MAX_RUNS_PER_AGENT:
@@ -275,7 +276,7 @@ async def run_v3_pipeline(
         logger.info("[V3] Queued dynamic task: %s (query='%s', parent='%s')", name, query, parent)
 
     async def whiteboard_subscriber(event):
-        nonlocal regime
+        nonlocal regime, fa_skipped
         # Whiteboard broadcasts to every subscriber; concurrent tickers share
         # the bus. Only react to this ticker's events or agents cross-trigger
         # (duplicate queued tasks, re-runs of completed agents).
@@ -294,11 +295,25 @@ async def run_v3_pipeline(
         if sec == "regime_classification":
             content = event.get("content") or {}
             regime = content.get("regime", "CONTRADICTORY")
-            
-            if regime == "HIGH_VOLATILITY":
-                logger.info("[V3] High Volatility regime detected. Running JA & QA. Bypassing FA.")
+
+            # The Regime Engine owns the skip decision (plan 1.3): honor its
+            # suggested_pipeline_modifications instead of hardcoding on the
+            # regime label. An artifact WITHOUT the field (older prompt or
+            # partial output) keeps the legacy HIGH_VOLATILITY heuristic.
+            mods = content.get("suggested_pipeline_modifications")
+            skip_fa = _regime_recommends_skip_fa(content)
+
+            if skip_fa:
+                fa_skipped = True
+                logger.info(
+                    "[V3] Regime Engine recommends skipping Fundamental Analyst "
+                    "(regime=%s, mods=%s). Running JA & QA only.", regime, mods,
+                )
                 desk.append_artifact("fundamental_report", {
-                    "summary": "Skipped detailed fundamental analysis due to High Volatility regime. Quantitative metrics prioritized.",
+                    "summary": (
+                        "Fundamental analysis skipped on the Regime Engine's "
+                        f"recommendation (regime: {regime}). Quantitative metrics prioritized."
+                    ),
                     "pillars": {
                         "revenue_growth": "Not analyzed", "profitability": "Not analyzed",
                         "moat": "Not analyzed", "management": "Not analyzed", "valuation": "Not analyzed"
@@ -310,20 +325,20 @@ async def run_v3_pipeline(
                     "risks": []
                 })
                 breaker.record_outcome("fundamental_analyst", PhaseOutcome.SUCCESS)
-                
+
                 _queue_agent("junior_analyst", junior_analyst, parent="regime_engine")
                 _queue_agent("quant_analyst", quant_analyst, parent="regime_engine")
             else:
                 _queue_agent("junior_analyst", junior_analyst, parent="regime_engine")
-                
+
         elif sec == "desk_note":  # junior_analyst completed
-            if regime != "HIGH_VOLATILITY":
+            if not fa_skipped:
                 _queue_agent("fundamental_analyst", fundamental_analyst, parent="junior_analyst")
                 _queue_agent("quant_analyst", quant_analyst, parent="junior_analyst")
-                
+
         elif sec in ("fundamental_report", "quant_report"):
             # Check if research tier is fully complete
-            if regime == "HIGH_VOLATILITY":
+            if fa_skipped:
                 if desk.has_artifact("desk_note") and desk.has_artifact("quant_report"):
                     _queue_debate_phase()
             else:
@@ -1117,6 +1132,19 @@ async def _run_board_of_directors(
         include_debate_context=True,
         parent_agent=parent_agent,
     )
+
+
+def _regime_recommends_skip_fa(content: dict) -> bool:
+    """Should the Fundamental Analyst be skipped this cycle?
+
+    The Regime Engine owns this decision via suggested_pipeline_modifications
+    (plan 1.3). Artifacts without the field (older prompt, partial output)
+    fall back to the legacy HIGH_VOLATILITY label heuristic.
+    """
+    mods = content.get("suggested_pipeline_modifications")
+    if isinstance(mods, list):
+        return "skip_fundamental_analyst" in mods or "skip_fa" in mods
+    return content.get("regime") == "HIGH_VOLATILITY"
 
 
 def _persona_label(regime: str) -> str:
