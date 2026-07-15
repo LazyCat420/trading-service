@@ -61,6 +61,14 @@ async def register_v3_agents() -> dict[str, bool]:
     }
     urls = {u for u in urls if u}
 
+    # One client per target: a fresh PrismClient per agent defeated the SDK's
+    # per-instance registration cache and re-opened a connection pool each time.
+    clients: dict[str, object] = {}
+    for target_url in urls:
+        client = PrismClientClass()
+        client.url = target_url
+        clients[target_url] = client
+
     for module_path in _V3_AGENT_MODULES:
         try:
             import importlib
@@ -86,15 +94,15 @@ async def register_v3_agents() -> dict[str, bool]:
             agent_success = True
             for target_url in urls:
                 try:
-                    temp_client = PrismClientClass()
-                    temp_client.url = target_url
-                    success = await temp_client.register_or_update_custom_agent(
+                    # register_or_update_custom_agent returns the agent_id string
+                    # (empty/None only on a non-raising failure), not a bool.
+                    registered_id = await clients[target_url].register_or_update_custom_agent(
                         name=agent_name,
                         identity=system_prompt,
                         guidelines=_V3_COMMON_GUIDELINES,
                         enabled_tools=enabled_tools,
                     )
-                    if not success:
+                    if not registered_id:
                         agent_success = False
                         logger.warning(
                             "[V3Prism] Failed to register agent %s at %s", agent_id, target_url
@@ -141,15 +149,13 @@ async def register_v3_agents() -> dict[str, bool]:
             agent_success = True
             for target_url in urls:
                 try:
-                    temp_client = PrismClientClass()
-                    temp_client.url = target_url
-                    success = await temp_client.register_or_update_custom_agent(
+                    registered_id = await clients[target_url].register_or_update_custom_agent(
                         name=agent_name,
                         identity=f"You are a core custom agent ({agent_name}) handling trading analysis and auxiliary tasks.",
                         guidelines=_V3_COMMON_GUIDELINES,
                         enabled_tools=["mcp__lazy-tool-service__lazy_web_search"],
                     )
-                    if not success:
+                    if not registered_id:
                         agent_success = False
                         logger.warning("[V3Prism] Failed to register core agent %s at %s", agent_id, target_url)
                 except Exception as ex:

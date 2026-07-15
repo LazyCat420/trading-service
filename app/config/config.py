@@ -250,7 +250,10 @@ class Settings(BaseSettings):
     PRISM_USERNAME: str = "lazy-trader"
     PRISM_ENABLED: bool = True
     PRISM_AGENT: str = "CUSTOM_MARKET_ALPHA"  # Routes through the CUSTOM_MARKET_ALPHA persona in Prism — custom agent with tailored trading tools
-    PRISM_AGENT_ROUTING: bool = True  # Override via PRISM_AGENT_ROUTING=false in .env to bypass Prism and call vLLM directly
+    # DEPRECATED: never read by any code path. The real prism bypass is
+    # PRISM_ENABLED=false (lazycat-sdk calls vLLM directly). Kept only so a
+    # stale PRISM_AGENT_ROUTING env var doesn't crash pydantic settings.
+    PRISM_AGENT_ROUTING: bool = True
     PRISM_MONGO_URI: str = _config.get("PRISM_MONGO_URI", f"mongodb://{_default_host}:27017/?directConnection=true")
     PRISM_MONGO_DB: str = "prism"
     PRISM_SKIP_CONVERSATION: bool = False

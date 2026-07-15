@@ -129,7 +129,10 @@ async def run_agent(
     user_prompt: str,
     data_context: str = "",
     temperature: float = 0.3,
-    max_tokens: int = 1024,
+    # 8192 matches the SDK default that was silently in effect for every
+    # caller before these params were actually honored — 1024 would truncate
+    # callers that never passed a value (e.g. the gatekeeper).
+    max_tokens: int = 8192,
     endpoint_override: str | None = None,
     enable_tools: bool = False,
     response_format: dict | None = None,
@@ -381,12 +384,17 @@ async def run_agent(
         prism_agent_id = resolve_agent_id(agent_name)
         
         kwargs = {
-            "name": prism_agent_id, 
+            "name": prism_agent_id,
             "system_prompt": system_prompt,
             "llm_client": prism_client,
             "project": settings.PROJECT_NAME,
             "username": settings.PRISM_USERNAME,
             "auto_approve": overrides.get("prism_auto_approve", True),
+            # Previously dropped: BaseAgent fell back to its own defaults
+            # (temperature 0.0, max_tokens 8192) and the values run_agent's
+            # callers passed were silently ignored.
+            "max_tokens": max_tokens,
+            "temperature": temperature,
         }
         resolved_model = model_override
         resolved_provider = None
@@ -429,7 +437,7 @@ async def run_agent(
 
         return (
             final_text,
-            0,  # Token usage not tracked by base SDK yet
+            int(getattr(harness, "total_tokens", 0) or 0),
             elapsed_ms,
             tool_call_count + 1,
         )

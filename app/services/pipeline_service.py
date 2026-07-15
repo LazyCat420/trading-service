@@ -157,7 +157,13 @@ class PipelineService:
             "cycle_id": cycle_id,
             "agent_locale": agent_locale,
             "prism_overrides": prism_overrides,
-            "progress": f"Screening watchlist for top {max_tickers or 'auto'} setups..."
+            "progress": f"Screening watchlist for top {max_tickers or 'auto'} setups...",
+            # Persist the requested flags so /status reflects this cycle's payload
+            # instead of whatever fossil values the columns held (they had no writer).
+            "collect_flag": bool(kwargs.get("collect", True)),
+            "analyze_flag": bool(kwargs.get("analyze", True)),
+            "trade_flag": bool(kwargs.get("trade", True)),
+            "requested_pipeline_version": str(kwargs.get("pipeline_version", "v3")),
         })
         cls.save_state()
         cls._stop_requested = False
@@ -236,6 +242,11 @@ class PipelineService:
                 prism_client.url = _cfg.PRISM_URL
             else:
                 prism_client.url = f"http://{_cfg.DEFAULT_HOST}:7778"
+            # Cycle boundary: drop all cached sessions/conversations so a new
+            # cycle can never silently continue a previous cycle's conversation
+            # (the no-session_id group_key is content-hashed and collides when
+            # first messages repeat across cycles).
+            prism_client.cleanup_all_sessions()
             logger.info("[PipelineService] Cycle %s: prism_client.url set to %s (PRISM_ENABLED=%s)", cycle_id, prism_client.url, _cfg.PRISM_ENABLED)
 
             def emit(phase: str, step: str, detail: str, **kwargs):

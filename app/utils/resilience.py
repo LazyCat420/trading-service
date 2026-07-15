@@ -143,6 +143,15 @@ def _classify_exception(exc: Exception) -> FailureType:
     if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
         return FailureType.TRANSIENT
 
+    # ── vLLM node blips → TRANSIENT ──
+    # get_live_model_from_vllm raises bare RuntimeError("VLLM endpoint offline…")
+    # during model resolution; without this branch it fell through to FATAL and
+    # killed the agent turn after 2 attempts while a proxy blip got 5 retries.
+    if isinstance(exc, RuntimeError) and (
+        "offline" in exc_msg or "no models found" in exc_msg
+    ):
+        return FailureType.TRANSIENT
+
     # ── DoomLoopException → FATAL ──
     if type(exc).__name__ == "DoomLoopException":
         return FailureType.FATAL

@@ -406,6 +406,7 @@ async def run_v3_pipeline(
             status="running",
             data={"parent": parent} if parent else None
         )
+        t_tournament = time.monotonic()
         try:
             from app.cognition.debate.tournament import run_tournament_debate
             from app.cognition.contracts.evidence import EvidencePacket
@@ -535,9 +536,32 @@ async def run_v3_pipeline(
                 f"(winner: {tournament_result.get('winning_side', 'split')})",
                 status="ok",
             )
+            # The tournament bypasses run_v3_agent, so without this it leaves no
+            # v3_agent_telemetry row — which drops its node from the replay flow
+            # graph and severs the analyst→board edges (the "islands" bug).
+            desk.record_agent_telemetry({
+                "agent_name": "v3_tournament_debate",
+                "ticker": ticker,
+                "elapsed_ms": int((time.monotonic() - t_tournament) * 1000),
+                "loops_used": 1,
+                "token_usage": int(tournament_result.get("total_tokens", 0) or 0),
+                "outcome": "SUCCESS",
+                "phase": desk.phase.value,
+                "quality_score": -1,
+            })
         except Exception as tournament_err:
             logger.error("[V3] %s: Tournament debate failed: %s", ticker, tournament_err, exc_info=True)
             logger.info("[V3] Falling back to classic debate agents (Bull/Bear).")
+            desk.record_agent_telemetry({
+                "agent_name": "v3_tournament_debate",
+                "ticker": ticker,
+                "elapsed_ms": int((time.monotonic() - t_tournament) * 1000),
+                "loops_used": 1,
+                "token_usage": 0,
+                "outcome": "AGENT_ERROR",
+                "phase": desk.phase.value,
+                "quality_score": -1,
+            })
             _queue_agent("bull_argument", bull_agent, parent="tournament_debate")
             _queue_agent("bear_rebuttal", bear_agent, parent="tournament_debate")
 
@@ -717,7 +741,8 @@ async def run_v3_pipeline(
 
             elif name == "debate_judge":
                 outcome = await _run_debate_judge(
-                    desk=desk, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
+                    desk=desk, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
+                    parent_agent=_SECTION_TO_AGENT.get(parent, parent),
                 )
                 breaker.record_outcome("debate_judge", outcome)
                 # Write debate_judge to whiteboard so subscriber chains board_of_directors
@@ -739,7 +764,8 @@ async def run_v3_pipeline(
                     emit("analyzing", f"v3_debate_done_{ticker}", f"⚔️ {ticker}: Debate layer complete", status="ok")
                     
                 outcome = await _run_board_of_directors(
-                    desk=desk, regime=regime, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit
+                    desk=desk, regime=regime, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
+                    parent_agent=_SECTION_TO_AGENT.get(parent, parent),
                 )
                 breaker.record_outcome("board_of_directors", outcome)
                 # Write final_decision to whiteboard so subscriber chains decision_synthesizer
@@ -859,7 +885,10 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     if action == "HOLD":
         return "HOLD_NO_SIGNAL"
 
-    if confidence < 60:
+    # Single source of truth: pipeline_service enforces the same threshold, so a
+    # hardcoded 60 here just created a dead 60-64 band with two different verdicts.
+    from app.config.config import settings as _settings
+    if confidence < _settings.ANALYSIS_CONFIDENCE_THRESHOLD:
         return "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
 
     if not desk.has_artifact("regime_classification"):
@@ -977,12 +1006,27 @@ async def _run_agent_with_circuit_breaker(
     return outcome
 
 
+# Queued parents are whiteboard *section* names; office-graph edges key on
+# *agent* node ids. Normalize before emitting so edges actually connect.
+_SECTION_TO_AGENT = {
+    "regime_classification": "regime_engine",
+    "desk_note": "junior_analyst",
+    "fundamental_report": "fundamental_analyst",
+    "quant_report": "quant_analyst",
+    "bull_argument": "bull_agent",
+    "bear_rebuttal": "bear_agent",
+    "tournament_result": "tournament_debate",
+    "final_decision": "board_of_directors",
+}
+
+
 async def _run_debate_judge(
     desk: SharedDesk,
     breaker: CircuitBreaker,
     cycle_id: str,
     bot_id: str,
     emit: Any,
+    parent_agent: str = "",
 ) -> PhaseOutcome:
     """Run the Debate Judge to synthesize parallel Bull and Bear arguments."""
     from app.v3.agents import debate_judge
@@ -996,6 +1040,7 @@ async def _run_debate_judge(
         bot_id=bot_id,
         emit=emit,
         include_debate_context=True,
+        parent_agent=parent_agent,
     )
 
 
@@ -1006,6 +1051,7 @@ async def _run_board_of_directors(
     cycle_id: str,
     bot_id: str,
     emit: Any,
+    parent_agent: str = "",
 ) -> PhaseOutcome:
     """Run the Board of Directors with a regime-swapped persona.
 
@@ -1050,6 +1096,7 @@ async def _run_board_of_directors(
         bot_id=bot_id,
         emit=emit,
         include_debate_context=True,
+        parent_agent=parent_agent,
     )
 
 

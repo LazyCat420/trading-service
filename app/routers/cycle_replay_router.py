@@ -38,6 +38,7 @@ _AGENT_META = {
     "quant_analyst":        {"label": "Quant Analyst",        "icon": "📈", "layer": 2},
     "bull_agent":           {"label": "Bull Agent",           "icon": "🐂", "layer": 3},
     "bear_agent":           {"label": "Bear Agent",           "icon": "🐻", "layer": 3},
+    "tournament_debate":    {"label": "Tournament Debate",    "icon": "🏆", "layer": 3},
     "debate_judge":         {"label": "Debate Judge",         "icon": "⚖️",  "layer": 3},
     "board_of_directors":   {"label": "Board of Directors",   "icon": "👔", "layer": 4},
     "decision_synthesizer": {"label": "Decision Synthesizer", "icon": "📝", "layer": 5},
@@ -66,6 +67,13 @@ _PIPELINE_EDGES = [
     ("bull_agent", "debate_judge", "bull_argument"),
     ("bear_agent", "debate_judge", "bear_rebuttal"),
     ("debate_judge", "board_of_directors", "debate_judge"),
+    # Tournament mode (the default) runs tournament_debate instead of
+    # bull/bear/judge; without these edges the analyst and board subgraphs
+    # render as disconnected islands.
+    ("junior_analyst", "tournament_debate", "desk_note"),
+    ("fundamental_analyst", "tournament_debate", "fundamental_report"),
+    ("quant_analyst", "tournament_debate", "quant_report"),
+    ("tournament_debate", "board_of_directors", "tournament_result"),
     ("board_of_directors", "decision_synthesizer", "final_decision"),
 ]
 
