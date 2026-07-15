@@ -1,7 +1,7 @@
 import psycopg
 import os
 
-DATABASE_URL = "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 def query_latest_errors():
     try:

@@ -88,10 +88,13 @@ async def get_debate_transcripts(ticker: str = None, cycle_id: str = None):
 
 @router.get("/active")
 async def get_active_agents():
-    """Retrieve currently active agent instances."""
-    from app.agents.inbox import inbox_manager
-    instances = inbox_manager.get_active_instances()
-    return {"instances": instances}
+    """Retrieve currently active agent instances.
+
+    The inbox registry this used to read was never populated (no caller ever
+    registered an instance), so the endpoint always returned an empty list.
+    Kept for client compatibility; the dead inbox module was removed.
+    """
+    return {"instances": []}
 
 
 @router.get("/{persona_id}")

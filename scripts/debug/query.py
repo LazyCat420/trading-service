@@ -2,7 +2,7 @@ import os
 import psycopg
 import json
 
-conn = psycopg.connect("postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot")
+conn = psycopg.connect(os.environ["DATABASE_URL"])
 
 print("--- PIPELINE STATE ---")
 row = conn.execute("SELECT * FROM pipeline_state WHERE singleton_id = 'current'").fetchone()

@@ -10,7 +10,7 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    DATABASE_URL = "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
+    DATABASE_URL = os.environ["DATABASE_URL"]
 
 def trigger_canary():
     job_id = f"canary_{uuid.uuid4().hex[:8]}"

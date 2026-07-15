@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot")
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 def trigger_canary():
     cycle_id = f"canary_v3_{uuid.uuid4().hex[:8]}"

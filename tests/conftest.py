@@ -98,8 +98,7 @@ def patch_real_get_db(real_db):
     @contextmanager
     def fake_get_db():
         yield real_db
-    with patch("app.db.connection.get_db", fake_get_db), \
-         patch("app.agents.task_board.get_db", fake_get_db):
+    with patch("app.db.connection.get_db", fake_get_db):
         yield real_db
 
 
@@ -120,7 +119,6 @@ def mock_db():
 def patch_get_db(mock_db):
     """Patch get_db() globally so no real DB connections are created."""
     with patch("app.db.connection.get_db", return_value=mock_db), \
-         patch("app.agents.task_board.get_db", return_value=mock_db), \
          patch("app.db.connection._ensure_pool"):
         yield mock_db
 

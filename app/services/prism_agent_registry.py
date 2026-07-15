@@ -134,7 +134,6 @@ AGENT_ID_MAP: dict[str, str] = {
     "briefing": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "flash_briefing": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "consolidator": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
-    "context_compressor": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "swarm_quant": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "swarm_macro": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "swarm_cio": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",

@@ -1,9 +1,10 @@
+import os
 import psycopg
 from psycopg.rows import dict_row
 from pathlib import Path
 import json
 
-DATABASE_URL = "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 def run_audit():
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:

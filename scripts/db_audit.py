@@ -1,7 +1,8 @@
+import os
 import psycopg2
 from datetime import datetime
 
-url = "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
+url = os.environ["DATABASE_URL"]
 try:
     conn = psycopg2.connect(url)
     cur = conn.cursor()

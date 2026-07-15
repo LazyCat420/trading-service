@@ -96,54 +96,6 @@ class TestContextBudget:
         assert budget.model_id == "org/big-model-v2"
 
 
-# ── Phase 2: Tool Result Compression ──────────────────────────────────
-
-
-class TestToolResultCompression:
-    """Tests for context_compressor.summarize_tool_result."""
-
-    def test_small_result_unchanged(self):
-        """Tool results within budget should not be modified."""
-        from app.agents.context_compressor import summarize_tool_result
-
-        small = "AAPL price: $187.23, RSI: 67.4"
-        result = summarize_tool_result(small, budget_tokens=1000)
-        assert result == small
-
-    def test_large_result_truncated(self):
-        """Tool results exceeding budget should be truncated with marker."""
-        from app.agents.context_compressor import summarize_tool_result
-
-        large = "x" * 50000  # ~12500 tokens
-        result = summarize_tool_result(large, tool_name="get_price_history", budget_tokens=500)
-        assert len(result) < len(large)
-        assert "truncated" in result.lower()
-        assert "get_price_history" in result
-
-    def test_truncation_preserves_head_and_tail(self):
-        """Truncated results should keep head (70%) and tail (15%) data."""
-        from app.agents.context_compressor import summarize_tool_result
-
-        # Build a result with identifiable head and tail
-        head_marker = "HEAD_START_DATA "
-        tail_marker = " TAIL_END_DATA"
-        middle = "m" * 50000
-        large = head_marker + middle + tail_marker
-
-        result = summarize_tool_result(large, budget_tokens=500)
-        assert result.startswith("HEAD_START_DATA")
-        assert "TAIL_END_DATA" in result
-
-    def test_budget_uses_context_budget_default(self):
-        """When no budget_tokens is specified, should use context budget default."""
-        from app.agents.context_compressor import summarize_tool_result
-
-        # A very large input should be truncated even with default budget
-        huge = "data " * 100000  # 500K chars → ~125K tokens
-        result = summarize_tool_result(huge, tool_name="huge_tool")
-        assert len(result) < len(huge)
-
-
 # ── Phase 4: Debate Prompt Capping ──────────────────────────────────
 
 
