@@ -338,7 +338,15 @@ async def run_v3_agent(
                 "target": parent_agent,
                 # The office speaks this as the agent's TTS line and shows it in
                 # the speech bubble; trimmed so a long report isn't read aloud.
-                "summary": (artifact.get("summary") or "")[:240],
+                # Analysts use `summary`; the board/synthesizer use `reasoning`
+                # and the regime engine `rationale` — fall through so the
+                # decision-makers actually say something instead of a fallback.
+                "summary": (
+                    artifact.get("summary")
+                    or artifact.get("reasoning")
+                    or artifact.get("rationale")
+                    or ""
+                )[:240],
                 "direction": direction,
                 "confidence": confidence,
                 "elapsed_ms": elapsed_ms,
