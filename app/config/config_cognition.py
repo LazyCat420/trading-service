@@ -27,6 +27,16 @@ class CognitionSettings(BaseSettings):
     MAX_DEBATE_HISTORY_AGE_HOURS: int = 4  # Don't use debates older than this for context
     CONFIRMATION_LOOP_THRESHOLD: int = 3  # Force skepticism if N+ consecutive same verdicts
     TOURNAMENT_MODE: bool = True  # 4-stage tournament debate (pitch → backtest → h2h → jury)
+    # Tournament cost controls (T4/T5). Both default OFF so behavior is unchanged
+    # until explicitly enabled.
+    #   FAST_MODE: drop pitch personas 4→2 (Value+Momentum) and jury 3→1 (Risk
+    #   Manager) for non-core tickers — ~half the tournament LLM calls.
+    #   JURY_ON_JETSON: route the 3 jury scoring calls to the lightweight Jetson
+    #   vLLM endpoint (via the "consensus" routing keyword). Leave OFF unless the
+    #   Jetson endpoint is confirmed live — a disabled endpoint makes jurors
+    #   silently fall back to the default score.
+    TOURNAMENT_FAST_MODE: bool = False
+    TOURNAMENT_JURY_ON_JETSON: bool = False
 
     # Layer 4: Reflective Memory (Dev 5)
     ENABLE_REFLECTIVE_MEMORY: bool = True

@@ -68,6 +68,23 @@ PITCH_PERSONAS = {
 }
 
 
+# Maps each tournament pitch persona to a PERSONA_EVIDENCE_FILTER category so
+# filter_packet_for_persona() actually narrows the packet — the tournament
+# names don't match the coordinator's filter keys, so without this map the
+# filter no-ops and every persona gets the full (large) evidence blob.
+PITCH_PERSONA_FILTER = {
+    "Value_Quant": "Fundamental",
+    "Momentum_Quant": "Technical",
+    "Volatility_Quant": "Technical",
+    "Macro_Quant": "Macro_Sentiment",
+}
+
+# Char caps for injected evidence (T3): pitches see only their focus-area facts
+# (further trimmed), H2H/jury see a shared, capped full-evidence header.
+_PITCH_EVIDENCE_CHARS = 1500
+_SHARED_EVIDENCE_CHARS = 2000
+
+
 # ── Jury Personas ───────────────────────────────────────────────────
 JURY_PERSONAS = {
     "Risk_Manager": {
@@ -218,7 +235,16 @@ async def _run_pitch_agent(
         if eq_outputs:
             eq_results_text = "\n## PRE-COMPUTED EQUATION RESULTS\n" + "\n".join(eq_outputs)
 
-    evidence_header = _build_evidence_header(packet)
+    # T3: each pitch persona only needs its own focus-area facts. Filter the
+    # packet down (Value→Fundamental, Momentum/Volatility→Technical, Macro→
+    # Macro_Sentiment) and cap, so we don't ship 4 copies of the full evidence
+    # blob — the single biggest driver of tournament context bloat.
+    filtered_packet = filter_packet_for_persona(
+        packet, PITCH_PERSONA_FILTER.get(persona_name, persona_name),
+    )
+    evidence_header = _cap_debate_text(
+        _build_evidence_header(filtered_packet), _PITCH_EVIDENCE_CHARS, "pitch-evidence",
+    )
 
     system_prompt = PITCH_SYSTEM_PROMPT.format(
         persona_name=persona_name.replace("_", " "),
@@ -245,7 +271,13 @@ async def _run_pitch_agent(
             system=system_prompt,
             user=user_message,
             temperature=0.4,
-            max_tokens=4096,
+            # NB: sub-4096 max_tokens is NOT a hard ceiling on this stack —
+            # prism_agent_caller converts it into a conciseness directive
+            # ("768 -> under 15 sentences") and resets the real budget to 8192
+            # (Prism's ContextExhaustionGuard rejects sub-4096 budgets outright).
+            # So this only trims *generated* (billed) output tokens; there is no
+            # mid-JSON truncation risk. Pitches previously had NO brevity hint.
+            max_tokens=768,
             priority=Priority.NORMAL,
             agent_name=agent_name,
             ticker=ticker,
@@ -264,7 +296,10 @@ async def _run_pitch_agent(
                 system=system_prompt,
                 user=rejection,
                 temperature=0.3,
-                max_tokens=2048,
+                # Conciseness directive only (see pitch note): 512 -> "under 8
+                # sentences", real budget stays 8192 so the format-fix retry can
+                # still emit the full JSON.
+                max_tokens=512,
                 priority=Priority.NORMAL,
                 agent_name=agent_name,
                 ticker=ticker,
@@ -389,7 +424,10 @@ async def _run_head_to_head(
     bot_id: str,
 ) -> tuple[dict, dict]:
     """Run a head-to-head debate between two surviving theses."""
-    evidence_header = _build_evidence_header(packet)
+    # T3: cap the shared evidence header (both sides reuse the same string).
+    evidence_header = _cap_debate_text(
+        _build_evidence_header(packet), _SHARED_EVIDENCE_CHARS, "h2h-evidence",
+    )
 
     # Side A argues
     system_a = HEAD_TO_HEAD_SYSTEM.format(
@@ -422,7 +460,11 @@ async def _run_head_to_head(
                 system=system_prompt,
                 user=f"Present your {side_name} argument for {ticker}. Attack the opponent's mathematical weaknesses.",
                 temperature=0.5,
-                max_tokens=4096,
+                # Conciseness directive only (see pitch note): 768 -> "under 15
+                # sentences", real budget stays 8192. H2H previously had NO
+                # brevity hint; it also soft-fails to the original thesis on any
+                # parse error, so trimming its output is low-risk.
+                max_tokens=768,
                 priority=Priority.NORMAL,
                 agent_name=agent_name,
                 ticker=ticker,
@@ -483,7 +525,10 @@ async def _run_jury_scoring(
     bot_id: str,
 ) -> dict:
     """Run the 3-persona jury to score the final debate."""
-    evidence_header = _build_evidence_header(packet)
+    # T3: cap the shared evidence header (all 3 jurors reuse the same string).
+    evidence_header = _cap_debate_text(
+        _build_evidence_header(packet), _SHARED_EVIDENCE_CHARS, "jury-evidence",
+    )
 
     user_prompt = JURY_USER_TEMPLATE.format(
         ticker=ticker,
@@ -501,7 +546,7 @@ async def _run_jury_scoring(
         pnl_b=thesis_b.get("backtest_pnl", 0),
         attacks_b=json.dumps(thesis_b.get("attack_points", []))[:500],
         defense_b=json.dumps(thesis_b.get("defense_points", []))[:500],
-        evidence_data=evidence_header[:5000],
+        evidence_data=evidence_header,
     )
 
     jury_results = {}
@@ -509,7 +554,15 @@ async def _run_jury_scoring(
     vetoed = False
 
     async def run_juror(juror_name, juror_config):
-        agent_name = f"tournament_jury_{juror_name.lower()}"
+        # T4 (opt-in): the "consensus" keyword routes this scoring call to the
+        # lightweight Jetson endpoint (resolve_default_model_for_agent). Jury
+        # scoring is a consensus task, so the lighter box fits. Default OFF —
+        # if Jetson is disabled this call raises and the juror soft-falls to the
+        # default score, silently degrading the panel.
+        if cognition_settings.TOURNAMENT_JURY_ON_JETSON:
+            agent_name = f"tournament_jury_consensus_{juror_name.lower()}"
+        else:
+            agent_name = f"tournament_jury_{juror_name.lower()}"
         # Unique first line per juror → separate Prism conversations for the
         # concurrent jury calls (identical prompts collide → 409, see pitches).
         juror_prompt = f"[Juror: {juror_name.replace('_', ' ')}]\n{user_prompt}"
@@ -518,7 +571,10 @@ async def _run_jury_scoring(
                 system=juror_config["system_prompt"],
                 user=juror_prompt,
                 temperature=0.3,
-                max_tokens=1024,
+                # Conciseness directive only (see pitch note): 384 -> "under 8
+                # sentences", real budget stays 8192. Was "under 15 sentences"
+                # (1024); jury output is just score + brief reasoning.
+                max_tokens=384,
                 priority=Priority.NORMAL,
                 agent_name=agent_name,
                 ticker=ticker,
@@ -537,9 +593,18 @@ async def _run_jury_scoring(
             logger.error("[TOURNAMENT] Jury %s failed: %s", juror_name, e)
             return {"score": 5, "reasoning": f"Jury failed: {e}", "veto": False, "juror": juror_name}, 0
 
+    # T5: fast mode runs a single juror (Risk_Manager) — the only juror with
+    # veto power (the other two hardcode veto=false), so the risk gate is
+    # preserved. Full mode runs all three.
+    active_jurors = (
+        {"Risk_Manager": JURY_PERSONAS["Risk_Manager"]}
+        if cognition_settings.TOURNAMENT_FAST_MODE
+        else JURY_PERSONAS
+    )
+
     # Sequential — same Prism agent per juror; concurrency 409s (see Stage 1).
     results = []
-    for name, config in JURY_PERSONAS.items():
+    for name, config in active_jurors.items():
         results.append(await run_juror(name, config))
 
     scores = []
@@ -615,14 +680,21 @@ async def run_tournament_debate(
     total_tokens = 0
 
     # ── Stage 1: Pitch Generation ────────────────────────────────────
-    logger.info("[TOURNAMENT] Stage 1: Pitch Generation (%d personas)", len(PITCH_PERSONAS))
+    # T5: fast mode pitches only 2 personas (Value + Momentum) instead of 4,
+    # halving Stage-1 cost for non-core tickers. Full mode uses all 4.
+    active_personas = (
+        {k: PITCH_PERSONAS[k] for k in ("Value_Quant", "Momentum_Quant")}
+        if cognition_settings.TOURNAMENT_FAST_MODE
+        else PITCH_PERSONAS
+    )
+    logger.info("[TOURNAMENT] Stage 1: Pitch Generation (%d personas)", len(active_personas))
 
     # SEQUENTIAL by design: all personas resolve to the same Prism custom
     # agent, and Prism's admission control allows one active turn per
     # agent-conversation — concurrent pitches get 409 GENERATION_IN_PROGRESS
     # (observed live: every tournament degraded to 0-1/4 pitches → fallback).
     pitch_results = []
-    for name, config in PITCH_PERSONAS.items():
+    for name, config in active_personas.items():
         try:
             pitch_results.append(
                 await _run_pitch_agent(name, config, ticker, packet, cycle_id, bot_id)
@@ -631,8 +703,9 @@ async def run_tournament_debate(
             pitch_results.append(pitch_exc)
 
     pitches = []
+    persona_keys = list(active_personas.keys())
     for i, result in enumerate(pitch_results):
-        persona_name = list(PITCH_PERSONAS.keys())[i]
+        persona_name = persona_keys[i]
         if isinstance(result, Exception):
             logger.error("[TOURNAMENT] Pitch %s exception: %s", persona_name, result)
             continue
@@ -649,7 +722,7 @@ async def run_tournament_debate(
 
     logger.info(
         "[TOURNAMENT] Stage 1 complete: %d/%d pitches generated",
-        len(pitches), len(PITCH_PERSONAS),
+        len(pitches), len(active_personas),
     )
 
     if len(pitches) < 2:
@@ -673,6 +746,28 @@ async def run_tournament_debate(
         len(survivors),
     )
 
+    # ── Bracket knockout: seed and cut to the top 2 before Stage 3 ────
+    # The backtest filter can pass all 4 pitches through (it only drops pnl<0),
+    # and it does not order them by strength. Seed deterministically by backtest
+    # PnL (evidence length breaks ties) and knock out the also-rans so the two
+    # strongest theses meet in the final and Stage 3/4 never score losers.
+    if len(survivors) > 2:
+        survivors = sorted(
+            survivors,
+            key=lambda p: (
+                float(p.get("backtest_pnl", 0.0) or 0.0),
+                len(p.get("evidence", "") or ""),
+            ),
+            reverse=True,
+        )
+        eliminated = ", ".join(p.get("persona", "?") for p in survivors[2:])
+        survivors = survivors[:2]
+        logger.info(
+            "[TOURNAMENT] Bracket knockout: advanced %s; eliminated %s",
+            ", ".join(p.get("persona", "?") for p in survivors),
+            eliminated,
+        )
+
     # ── Stage 3: Head-to-Head ────────────────────────────────────────
     logger.info("[TOURNAMENT] Stage 3: Head-to-Head Debate")
 
@@ -688,7 +783,10 @@ async def run_tournament_debate(
     logger.info("[TOURNAMENT] Stage 3 complete: Head-to-head finished")
 
     # ── Stage 4: Jury Scoring ────────────────────────────────────────
-    logger.info("[TOURNAMENT] Stage 4: Jury Scoring (%d jurors)", len(JURY_PERSONAS))
+    logger.info(
+        "[TOURNAMENT] Stage 4: Jury Scoring (%d jurors)",
+        1 if cognition_settings.TOURNAMENT_FAST_MODE else len(JURY_PERSONAS),
+    )
 
     jury_verdict = await _run_jury_scoring(
         debated_a, debated_b, ticker, packet, cycle_id, bot_id,

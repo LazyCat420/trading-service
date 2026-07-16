@@ -21,6 +21,15 @@ TOOL_WHITELIST: list[str] = [
     "whiteboard_annotate",
     "whiteboard_summarize",
     "get_portfolio_state",
+    # Read-only data fallbacks (registry-registered). The board was previously
+    # 100% dependent on what upstream analysts wrote to the desk and could not
+    # verify or fill a single data gap itself — if the desk was thin (e.g. no
+    # numeric fundamentals), the verdict was grounded on nothing. These let the
+    # board confirm a price/indicator/fundamental when the desk is missing it.
+    # It should still PRIMARILY trust the desk, not re-run analysis.
+    "get_market_data",
+    "get_technical_indicators",
+    "get_finviz_fundamentals",
 ]
 
 ARTIFACT_TYPE = "final_decision"

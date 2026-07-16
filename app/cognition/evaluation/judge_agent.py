@@ -149,22 +149,39 @@ async def evaluate_decision(decision_id: str) -> bool:
                 if blob:
                     full_context_blob = blob[0]  # full context for ROUGE grounding
                     # Build a representative truncation: take the first 800 chars
-                    # (usually macro/header), then find the "Technicals" and
-                    # "Fundamentals" sections and include 600 chars of each so
-                    # the DeepEval faithfulness check can see ticker-specific data
-                    # that the bot's reasoning references.
+                    # (usually macro/header), then pull the ticker-specific desk
+                    # sections so the DeepEval faithfulness check can see the data
+                    # the bot's reasoning references.
+                    #
+                    # These markers MUST match the headers the V3 desk narrative
+                    # actually emits (shared_desk.get_compressed_context). The old
+                    # markers ("Technicals"/"Fundamentals"/"Balance Sheet"/"Price
+                    # History") appear NOWHERE in the V3 blob, so faithfulness was
+                    # graded against only the first 800 chars — a header — which
+                    # depressed every V3 quality score.
                     raw = blob[0]
                     parts = [raw[:800]]
+                    matched = 0
                     for section_marker in (
-                        "Technicals",
-                        "Fundamentals",
-                        "Balance Sheet",
-                        "Price History",
+                        "## Fundamental Analysis",
+                        "## Quantitative / Risk Analysis",
+                        "## Market Regime",
+                        "## Tournament Debate Verdict",
+                        "## Debate Judge Verdict",
+                        "## Board of Directors Verdict",
+                        "## Junior Analyst Notes",
                     ):
                         idx = raw.find(section_marker)
                         if idx >= 0:
                             parts.append(raw[idx : idx + 600])
-                    context_blob = "\n...\n".join(parts)[:3000]
+                            matched += 1
+                    # Robustness: if NO known section matched (format drift), fall
+                    # back to a large head slice of the real content rather than
+                    # grounding faithfulness on just the 800-char header.
+                    if matched == 0:
+                        context_blob = raw[:3000]
+                    else:
+                        context_blob = "\n...\n".join(parts)[:3000]
                 else:
                     if failure_reason == FailureReason.NONE:
                         failure_reason = FailureReason.MISSING_CONTEXT
@@ -313,7 +330,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                             f"DeepEval Faithfulness Error: {type(eval_err).__name__}: {eval_err}"
                         )
                         if failure_reason == FailureReason.NONE:
-                            failure_reason = FailureReason.EVAL_ERROR
+                            failure_reason = FailureReason.DEEPEVAL_ERROR
             
             # ── Answer Relevancy check (with retry + semaphore) ──
             relevancy_succeeded = False
