@@ -12,7 +12,7 @@ from app.db.memory_repo import (
     mark_observations_promoted,
     log_consolidation_run,
 )
-from app.services.prism_agent_caller import llm, Priority
+from app.services.prism_agent_caller import Priority
 from app.services.prism_agent_caller import call_prism_agent
 
 import time
@@ -58,15 +58,6 @@ Important notes on output:
 - To CREATE a new canonical memory, leave the `id` blank or generate a descriptive string.
 - To DEPRECATE a memory completely, place its `id` in `deprecated_memory_ids`.
 """
-
-
-async def should_consolidate(ticker: str) -> bool:
-    unpromoted = get_unpromoted_observations(ticker)
-    if len(unpromoted) >= NEW_EPISODIC_THRESHOLD:
-        return True
-
-    # Optional elapsed time threshold logic could go here
-    return False
 
 
 async def maybe_consolidate(ticker: str) -> None:
