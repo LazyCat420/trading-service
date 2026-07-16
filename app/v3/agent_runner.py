@@ -206,11 +206,34 @@ async def run_v3_agent(
             f"## Cycle: {cycle_id}\n\n"
         )
 
-        if prompt_split and dynamic_block:
+        # Prism's server-side agent memory embeds the USER message with
+        # embeddinggemma, which has a hard 2048-token positional limit — a
+        # larger user message fails with a "memory:embed ... maximum context
+        # length is 2048 tokens" error that can starve the desk of this agent's
+        # artifact. Prism does NOT embed the system prompt (see base_agent.py),
+        # so when the KV-cache-friendly user-message layout would overflow the
+        # embedder, ride the dynamic block in the SYSTEM prompt instead. Common
+        # (small) prompts still get prefix-cache reuse; only oversized ones fall
+        # back. ~4 chars/token, with headroom below 2048 to absorb tokenizer
+        # density differences on numeric/ticker-heavy text.
+        _EMBED_TOKEN_LIMIT = 2048
+        _USER_SCAFFOLD_CHARS = 1600  # tool/output directives + reminder appended below
+        _projected_user_chars = len(user_prompt) + len(dynamic_block) + _USER_SCAFFOLD_CHARS
+        _fits_embedder = (_projected_user_chars // 4) < (_EMBED_TOKEN_LIMIT - 400)
+
+        if prompt_split and dynamic_block and _fits_embedder:
             user_prompt += dynamic_block + "\n\n"
         elif dynamic_block:
-            # Legacy layout: dynamic content rides in the system prompt
+            # Legacy layout: dynamic content rides in the system prompt (either
+            # V3_PROMPT_SPLIT is off, or the block is too big to embed safely).
             system_prompt += "\n\n" + dynamic_block
+            if prompt_split and not _fits_embedder:
+                logger.info(
+                    "[V3Runner] %s: dynamic block (~%d tok) would overflow Prism's "
+                    "%d-token memory embedder — routing to system prompt "
+                    "(KV-cache reuse skipped for this call).",
+                    agent_name, _projected_user_chars // 4, _EMBED_TOKEN_LIMIT,
+                )
 
         if tool_whitelist:
             user_prompt += (
