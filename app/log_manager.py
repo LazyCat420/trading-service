@@ -127,13 +127,14 @@ class LogManager(SDKLogManager):
                         trade_attempted, trade_executed, trade_failed,
                         no_trade_reason, primary_failure_reason,
                         report_generated,
+                        trade_skip_categories,
                         summary_json
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s,
                         %s, %s, %s,
-                        %s, %s, %s, %s
+                        %s, %s, %s, %s, %s
                     ) ON CONFLICT (cycle_id) DO UPDATE SET
                         status = EXCLUDED.status,
                         finished_at = EXCLUDED.finished_at,
@@ -148,6 +149,7 @@ class LogManager(SDKLogManager):
                         no_trade_reason = EXCLUDED.no_trade_reason,
                         primary_failure_reason = EXCLUDED.primary_failure_reason,
                         report_generated = EXCLUDED.report_generated,
+                        trade_skip_categories = EXCLUDED.trade_skip_categories,
                         summary_json = EXCLUDED.summary_json
                     """,
                     [
@@ -172,6 +174,7 @@ class LogManager(SDKLogManager):
                         summary.get("no_trade_reason"),
                         summary.get("primary_failure_reason"),
                         summary.get("report_generated", False),
+                        Jsonb(summary.get("trade_skip_categories") or {}),
                         Jsonb(summary)
                     ]
                 )

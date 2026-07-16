@@ -125,6 +125,29 @@ async def run_ticker_consolidation(ticker: str, observations: list | None = None
         updated_mems = parsed_res.get("new_or_updated_memories", [])
         deprecated_ids = parsed_res.get("deprecated_memory_ids", [])
 
+        if not updated_mems and not deprecated_ids:
+            # Nothing extracted — either the LLM output failed to parse or the
+            # response was genuinely empty. Do NOT mark the observations
+            # promoted: promotion consumes them (the janitor deletes promoted
+            # rows after 30 days), so promoting with zero memories created
+            # permanently destroys the knowledge. Leave them for the next run
+            # (the per-ticker cooldown prevents hammering).
+            logger.warning(
+                "Consolidation for %s extracted nothing — leaving %d observations "
+                "unpromoted for retry. Raw response head: %r",
+                ticker, len(observations), (response_text or "")[:500],
+            )
+            log_consolidation_run(
+                {
+                    "id": str(uuid.uuid4()),
+                    "ticker": ticker,
+                    "observations_consumed": 0,
+                    "memories_created": 0,
+                    "memories_deprecated": 0,
+                }
+            )
+            return
+
         # Fill missing IDs and defaults
         for mem in updated_mems:
             if "id" not in mem or not mem["id"]:

@@ -101,6 +101,9 @@ async def register_v3_agents() -> dict[str, bool]:
                         identity=system_prompt,
                         guidelines=_V3_COMMON_GUIDELINES,
                         enabled_tools=enabled_tools,
+                        # Non-interactive pipeline: Qwen's <think> block burns
+                        # tokens/latency on every call with nobody watching.
+                        thinking_default=False,
                     )
                     if not registered_id:
                         agent_success = False
@@ -154,6 +157,7 @@ async def register_v3_agents() -> dict[str, bool]:
                         identity=f"You are a core custom agent ({agent_name}) handling trading analysis and auxiliary tasks.",
                         guidelines=_V3_COMMON_GUIDELINES,
                         enabled_tools=["mcp__lazy-tool-service__lazy_web_search"],
+                        thinking_default=False,
                     )
                     if not registered_id:
                         agent_success = False

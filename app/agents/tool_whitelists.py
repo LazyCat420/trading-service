@@ -306,6 +306,9 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "v3_debate_judge": 3,        # No tools — pure reasoning
     "v3_regime_engine": 5,
     "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk
+    "v3_portfolio_manager": 5,   # Has a TOOL_WHITELIST; without an entry a
+                                 # tool-enabled run inherits the 9999 default
+    "v3_decision_synthesizer": 5,
 }
 
 # Default budget for agents not in the override dict

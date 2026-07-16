@@ -32,6 +32,7 @@ REASON_CONFIDENCE_BLOCKED = "CONFIDENCE_BELOW_THRESHOLD"
 REASON_WATCH_ONLY = "AGENT_SIZE_ZERO_WATCH_ONLY"
 REASON_DRAWDOWN_BREAKER = "DRAWDOWN_BREAKER"
 REASON_TRADE_DISABLED = "TRADE_DISABLED"
+REASON_NO_POSITION = "SELL_NO_POSITION"
 TRADE_ERROR_PREFIX = "TRADE_ERROR:"
 
 
@@ -110,6 +111,7 @@ def summarize_ticker_results(results) -> dict:
         "confidence_blocked": reasons.count(REASON_CONFIDENCE_BLOCKED),
         "watch_only": reasons.count(REASON_WATCH_ONLY),
         "breaker_blocked": reasons.count(REASON_DRAWDOWN_BREAKER),
+        "no_position_blocked": reasons.count(REASON_NO_POSITION),
         "trade_errors": sum(1 for x in reasons if x.startswith(TRADE_ERROR_PREFIX)),
     }
 
@@ -296,6 +298,23 @@ class PipelineService:
                     "primary_failure_reason": error,
                     **summarize_ticker_results(results),
                 }
+                # The dedicated column readers (debug_cycle.py, audits) need the
+                # buckets outside summary_json too.
+                summary["trade_skip_categories"] = {
+                    k: summary.get(k, 0)
+                    for k in ("policy_blocked", "confidence_blocked", "watch_only",
+                              "breaker_blocked", "no_position_blocked", "trade_errors")
+                }
+                # A trade-enabled cycle where every verdict was HOLD and nothing
+                # was attempted is a 'hold_only' cycle — leaving the reason NULL
+                # made it indistinguishable from an unexplained drop.
+                if (
+                    trade_flag
+                    and summary.get("analysis_results_count")
+                    and not summary.get("trade_attempted")
+                    and summary.get("hold_count") == summary.get("analysis_results_count")
+                ):
+                    summary["no_trade_reason"] = "hold_only"
                 log_manager.log_cycle_summary(cycle_id, summary)
                 return summary
             except Exception as sum_err:
@@ -907,13 +926,34 @@ class PipelineService:
                             else:
                                 result["trade_executed"] = True
                     elif action == "SELL":
-                        result["trade_attempted"] = True
-                        trade_res = await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
-                        if isinstance(trade_res, dict) and trade_res.get("error"):
-                            result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
-                            logger.warning("[PipelineService] %s: SELL not executed: %s", ticker_name, trade_res["error"])
+                        # Pre-attempt position check: a SELL on an unheld
+                        # ticker is a guaranteed refusal at the paper trader
+                        # (no shorting) — tag it as its own category instead
+                        # of burning a trade_attempted slot on a dead call.
+                        sell_held = True  # fail open: let the paper trader decide
+                        try:
+                            from app.tools.portfolio_tools import get_position_context
+                            pos_ctx = get_position_context(ticker_name, active_bot_id)
+                            sell_held = bool(pos_ctx and pos_ctx.get("held"))
+                        except Exception as pos_err:
+                            logger.warning(
+                                "[PipelineService] %s: pre-SELL position check failed (%s) — deferring to paper trader",
+                                ticker_name, pos_err,
+                            )
+                        if not sell_held:
+                            result["no_trade_reason"] = REASON_NO_POSITION
+                            logger.warning(
+                                "[PipelineService] %s: SELL skipped — no open position (agents decided "
+                                "EXECUTE_SELL on an unheld ticker)", ticker_name,
+                            )
                         else:
-                            result["trade_executed"] = True
+                            result["trade_attempted"] = True
+                            trade_res = await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
+                            if isinstance(trade_res, dict) and trade_res.get("error"):
+                                result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
+                                logger.warning("[PipelineService] %s: SELL not executed: %s", ticker_name, trade_res["error"])
+                            else:
+                                result["trade_executed"] = True
 
                     # Handle Triggers (limit orders). Policy-blocked decisions
                     # register NOTHING; SELL-side triggers need a real position

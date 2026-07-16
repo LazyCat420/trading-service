@@ -88,8 +88,9 @@ def persist_telemetry(desk: SharedDesk) -> None:
                     """
                     INSERT INTO v3_agent_telemetry
                         (cycle_id, ticker, agent_name, phase, outcome,
-                         elapsed_ms, loops_used, token_usage, quality_score)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         elapsed_ms, loops_used, token_usage, quality_score,
+                         artifact_size_bytes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         desk.cycle_id,
@@ -101,6 +102,7 @@ def persist_telemetry(desk: SharedDesk) -> None:
                         entry.get("loops_used", 0),
                         entry.get("token_usage", 0),
                         entry.get("quality_score", -1),
+                        entry.get("artifact_size_bytes", 0),
                     ],
                 )
         logger.info(

@@ -347,11 +347,32 @@ async def run_v3_agent(
         # Validate the artifact
         errors = validate_artifact(artifact_type, artifact)
         if errors:
+            missing_required = [e for e in errors if e.startswith("Missing required field")]
+            if missing_required and artifact_type in ("final_decision", "trade_decision"):
+                # A decision artifact without action/confidence/reasoning is a
+                # failed run, not a salvageable one: appending it and returning
+                # SUCCESS silently drops the board/synthesizer vote (the
+                # synthesizer then zeroes the board's signal weight), while
+                # AGENT_ERROR engages the circuit breaker's existing retry.
+                logger.error(
+                    "[V3Runner] %s decision artifact for %s is missing required fields %s — "
+                    "treating as AGENT_ERROR so the circuit breaker can retry",
+                    agent_name, desk.ticker, missing_required,
+                )
+                emit(
+                    "analyzing",
+                    f"v3_{agent_name}_fail_{desk.ticker}",
+                    f"❌ {desk.ticker}: V3 {agent_name} — decision artifact missing required fields",
+                    status="error",
+                )
+                _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
+                                  sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
+                return PhaseOutcome.AGENT_ERROR
             logger.warning(
                 "[V3Runner] %s artifact validation warnings for %s: %s",
                 agent_name, desk.ticker, errors,
             )
-            # Non-fatal — we still append, but log the validation issues
+            # Non-fatal for analyst artifacts — we still append, but log the issues
             artifact["_validation_warnings"] = errors
 
         # Append to SharedDesk
@@ -419,8 +440,13 @@ async def run_v3_agent(
             },
         )
 
+        try:
+            artifact_size_bytes = len(json.dumps(artifact, default=str))
+        except Exception:
+            artifact_size_bytes = 0
         _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
-                          sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
+                          sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                          artifact_size_bytes=artifact_size_bytes)
 
         # Classify outcome
         data_gaps = artifact.get("data_gaps", [])
@@ -558,6 +584,7 @@ def _record_telemetry(
     quality_score: int = -1,
     sys_prompt_chars: int = 0,
     user_prompt_chars: int = 0,
+    artifact_size_bytes: int = 0,
 ) -> None:
     """Record telemetry for a V3 agent run."""
     entry = {
@@ -569,6 +596,7 @@ def _record_telemetry(
         "outcome": outcome,
         "phase": desk.phase.value,
         "quality_score": quality_score,
+        "artifact_size_bytes": artifact_size_bytes,
         # Context budget report: per-agent prompt footprint (chars). The DB
         # insert ignores extra keys; these surface in logs/v3_metadata.
         "sys_prompt_chars": sys_prompt_chars,

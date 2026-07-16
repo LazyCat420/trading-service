@@ -69,6 +69,29 @@ def get_autoresearch_status() -> dict:
         "started_at": None,
     }
 
+def _collect_learning_signals(cycle_id: str) -> dict:
+    """Per-ticker learning_signal from the Decision Synthesizer's trade_decision.
+
+    The synthesizer reports what past-cycle memory actually changed
+    (lessons_applied / outcome_correlation / similar_past_cycles); it lives at
+    shared_desk.desk_data->'trade_decision'->'learning_signal'.
+    """
+    signals: dict = {}
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT ticker, desk_data->'trade_decision'->'learning_signal' "
+                "FROM shared_desk WHERE cycle_id = %s",
+                (cycle_id,),
+            ).fetchall()
+            for ticker, sig in rows:
+                if sig:
+                    signals[ticker] = sig
+    except Exception as e:
+        logger.debug("[AUTORESEARCH] learning_signal collection failed: %s", e)
+    return signals
+
+
 async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
     """Main entry point: run full autoresearch after a cycle."""
     report_id = f"ar-{uuid.uuid4().hex[:12]}"
@@ -140,6 +163,10 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             "performance": perf_metrics,
             "recovery": recovery,
             "execution_errors": exec_errors,
+            # The Decision Synthesizer's per-ticker learning_signal (what past
+            # memory actually changed this cycle) — produced and persisted every
+            # cycle, but reflection never saw it until now.
+            "learning_signals": _collect_learning_signals(cycle_id),
         }
 
         # Triage audit (evaluate triage distribution + attention health)

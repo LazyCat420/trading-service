@@ -175,6 +175,7 @@ Generate a mathematically testable trading thesis. You MUST:
 ## OUTPUT FORMAT (MANDATORY — responses without this format are REJECTED)
 {{
     "claim": "A single sentence thesis (e.g., 'The asset is mathematically oversold relative to its sector')",
+    "direction": "BULLISH or BEARISH — the trade direction your thesis implies for this ticker",
     "evidence": "Direct data point with citation [source:value]",
     "equation": "The exact equation name used or created",
     "result": "The numerical output of the equation execution (e.g., 'Z-Score = -3.4')",
@@ -472,9 +473,17 @@ async def _run_head_to_head(
                 bot_id=bot_id,
             )
             parsed = parse_json_response(response)
+            if not parsed.get("claim"):
+                # Unparseable/empty refinement — keep the original thesis
+                # rather than sending an empty claim to the jury.
+                return thesis
             parsed["persona"] = thesis.get("persona", side_name)
             parsed["tokens"] = tokens or 0
             parsed["backtest_results"] = thesis.get("backtest_results", {})
+            # The thesis direction is fixed at pitch time; the H2H refinement
+            # schema doesn't restate it, so carry it through for the verdict.
+            parsed["direction"] = thesis.get("direction", "")
+            parsed["backtest_pnl"] = thesis.get("backtest_pnl", 0)
             return parsed
         except Exception as e:
             logger.error("[TOURNAMENT] H2H %s failed: %s", side_name, e)
@@ -828,7 +837,18 @@ async def run_tournament_debate(
             a_wins = debated_a.get("backtest_pnl", 0) >= debated_b.get("backtest_pnl", 0)
 
         winner = debated_a if a_wins else debated_b
-        winning_side = "bull" if a_wins else "bear"
+        # The trade direction comes from the winning THESIS, not the bracket
+        # seat: seat A is prompted as "BULL" and seat B as "BEAR" purely by
+        # seed order, so two bearish theses meeting in the final would map a
+        # seat-A win to BUY. Personas declare direction at pitch time; the
+        # seat mapping remains only as a legacy fallback.
+        winner_direction = str(winner.get("direction", "")).strip().upper()
+        if winner_direction.startswith("BULL"):
+            winning_side = "bull"
+        elif winner_direction.startswith("BEAR"):
+            winning_side = "bear"
+        else:
+            winning_side = "bull" if a_wins else "bear"
 
         confidence = min(int(avg_score * 10), 100)
         from app.cognition.debate.action_gate import gate_action

@@ -119,10 +119,16 @@ def parse_json_response(text: str) -> dict:
         non_placeholder = [c for c in markdown_candidates if not is_placeholder_json(c)]
         return non_placeholder[-1] if non_placeholder else markdown_candidates[-1]
 
-    # Find balanced JSON objects using brace counting
+    # Find balanced JSON objects using brace counting. Only TOP-LEVEL objects
+    # may become candidates: once a span parses, every opening brace inside it
+    # is skipped. Without this, a valid nested response ends up returning its
+    # last inner sub-dict (the outer object parses first, but the scan keeps
+    # walking into it and [-1] picks the innermost fragment) — which silently
+    # drops the real payload.
     brace_candidates = []
+    skip_until = -1
     for start_idx in range(len(cleaned)):
-        if cleaned[start_idx] != "{":
+        if cleaned[start_idx] != "{" or start_idx < skip_until:
             continue
         depth = 0
         for end_idx in range(start_idx, len(cleaned)):
@@ -136,8 +142,10 @@ def parse_json_response(text: str) -> dict:
                     parsed = json.loads(candidate)
                     if isinstance(parsed, dict):
                         brace_candidates.append(parsed)
+                        skip_until = end_idx + 1
                 except json.JSONDecodeError:
-                    break  # This opening brace didn't work, try next
+                    pass  # This opening brace didn't work, try next
+                break
 
     if brace_candidates:
         non_placeholder = [c for c in brace_candidates if not is_placeholder_json(c)]

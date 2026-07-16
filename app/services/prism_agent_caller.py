@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import Any
@@ -248,9 +249,14 @@ async def call_prism_agent(
                 raise e
         
         try:
-            response_text = resp.json().get("text", "").strip()
-        except Exception:
-            response_text = resp.text.strip()
+            # Prism sets text to null (not missing) on textless turns —
+            # .get("text", "") returns None there, and falling back to
+            # resp.text would hand the caller the raw JSON envelope as if it
+            # were the agent's answer.
+            response_text = (resp.json().get("text") or "").strip()
+        except Exception as parse_err:
+            logger.error("[PrismAgentCaller] %s: response body was not JSON (%s) — returning empty text", agent_id, parse_err)
+            response_text = ""
         elapsed_ms = int((time.monotonic() - start) * 1000)
         tokens = _extract_token_usage(resp, response_text)
         
@@ -492,14 +498,36 @@ class PrismLLMShim:
             )
 
             try:
-                response_text = resp.json().get("text", "").strip()
-                tool_calls = resp.json().get("tool_calls", [])
-            except Exception:
-                response_text = resp.text.strip()
+                payload_json = resp.json()
+                # text is null (not missing) on textless turns — don't let the
+                # raw envelope leak through as the response.
+                response_text = (payload_json.get("text") or "").strip()
+                # Prism emits camelCase toolCalls with {id, name, args} items;
+                # normalize to the OpenAI {function:{name, arguments}} shape
+                # the client-side tool loop (registry.execute_tool_call) expects.
+                raw_tool_calls = payload_json.get("toolCalls") or payload_json.get("tool_calls") or []
+                tool_calls = []
+                for tc in raw_tool_calls:
+                    if not isinstance(tc, dict):
+                        continue
+                    if "function" in tc:
+                        tool_calls.append(tc)
+                    else:
+                        tool_calls.append({
+                            "id": tc.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name", ""),
+                                "arguments": json.dumps(tc.get("args") or {}),
+                            },
+                        })
+            except Exception as parse_err:
+                logger.error("[PrismAgentCaller] chat_with_tools: response body was not JSON (%s) — returning empty text", parse_err)
+                response_text = ""
                 tool_calls = []
 
             elapsed_ms = int((time.monotonic() - start) * 1000)
-            total_tokens = est_tokens + len(response_text) // 4
+            total_tokens = _extract_token_usage(resp, response_text)
 
             return {
                 "text": response_text,

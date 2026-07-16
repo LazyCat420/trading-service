@@ -317,6 +317,12 @@ async def run_v3_pipeline(
         # cycle_id is rejected too — every real publisher stamps one.
         if (event.get("cycle_id") or "") != cycle_id:
             return
+        # Only section WRITES drive the agent chain. Annotations
+        # ("whiteboard_annotation") carry the annotated entry's section but no
+        # content — letting one fall through would reset regime to
+        # CONTRADICTORY, re-queue FA/QA, or re-trigger the debate chain.
+        if event.get("type") != "whiteboard_update":
+            return
         sec = event.get("section")
         auth = event.get("author")
         logger.info("[V3] Whiteboard event trigger: section '%s' updated by '%s'", sec, auth)
@@ -1058,6 +1064,11 @@ async def run_v3_pipeline(
     # Inject the actual policy action so upstream callers (like cycle_main) can respect it
     result["policy_action"] = policy_action
 
+    # Record the tier the Triage Gate actually evaluated — _build_v1_compatible_result
+    # hardcodes "v3_full", which made analysis_results.triage_tier wrong for
+    # every deep/standard ticker (triage analytics grouped on a constant).
+    result["triage_tier"] = triage_tier
+
     return result
 
 def _apply_policy_gates(desk: SharedDesk) -> str:
@@ -1394,7 +1405,10 @@ def _build_cycle_metadata(
     if research_focus:
         metadata["research_focus"] = research_focus
 
-    # Fetch position context (if held)
+    # Fetch position context — pushed for BOTH held and not-held. Without the
+    # explicit not-held line, agents had no pushed signal and could reason
+    # their way into an EXECUTE_SELL on a ticker the bot doesn't hold (a
+    # guaranteed-dead trade attempt at the paper trader).
     try:
         from app.tools.portfolio_tools import get_position_context
         pos_ctx = get_position_context(ticker, bot_id)
@@ -1406,6 +1420,13 @@ def _build_cycle_metadata(
                 f"Held {pos_ctx.get('holding_days', 0)} days."
             )
             metadata["held"] = True
+        else:
+            metadata["portfolio_context"] = (
+                f"NO OPEN POSITION in {ticker}. The bot cannot SELL what it "
+                "does not hold (no shorting) — a SELL decision is only valid "
+                "for held tickers."
+            )
+            metadata["held"] = False
     except Exception as e:
         logger.warning("[V3] %s: Failed to fetch portfolio context: %s", ticker, e)
 

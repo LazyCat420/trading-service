@@ -6,6 +6,17 @@ from app.agents.whiteboard import whiteboard
 
 logger = logging.getLogger(__name__)
 
+# Sections whose whiteboard writes drive the orchestrator's agent chain
+# (triage, debate dispatch, synth latch). Only the orchestrator itself may
+# author these: an agent writing e.g. 'final_decision' via this tool would
+# flip the synth-dispatch latch early and permanently suppress the board's
+# real decision.
+_ORCHESTRATOR_SECTIONS = frozenset({
+    "regime_classification", "desk_note", "fundamental_report", "quant_report",
+    "bull_argument", "bear_rebuttal", "debate_judge", "tournament_result",
+    "final_decision", "trade_decision", "task_queue",
+})
+
 @registry.register(
     name="whiteboard_write",
     description="Write or overwrite a section of the team's shared whiteboard. Use this to post your final analysis or consensus for other agents to read. Writing will bump the version number of the section. Content should be valid JSON string.",
@@ -34,6 +45,19 @@ logger = logging.getLogger(__name__)
 async def whiteboard_write(ticker: str, section: str, content: str) -> str:
     cycle_id = current_cycle_id()
     author_agent = current_agent_name()
+    if section in _ORCHESTRATOR_SECTIONS:
+        logger.warning(
+            "[WhiteboardTool] BLOCKED write to reserved section '%s' by agent '%s' (%s)",
+            section, author_agent, ticker,
+        )
+        return json.dumps({
+            "status": "error",
+            "message": (
+                f"Section '{section}' is reserved for the pipeline orchestrator. "
+                "Write your notes to a collaboration section instead "
+                "(e.g. 'market_context', 'risk_flags', 'signals', 'consensus', 'trade_plan')."
+            ),
+        })
     logger.info("[WhiteboardTool] Writing section '%s' for %s (cycle=%s, agent=%s)", section, ticker, cycle_id, author_agent)
     try:
         new_id = await whiteboard.write_section(

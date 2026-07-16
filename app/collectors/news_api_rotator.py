@@ -335,6 +335,11 @@ class NewsApiRotator:
                 pub_str = item.get("published_at")
                 if pub_str:
                     pub = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                    if pub.tzinfo is None:
+                        # Offset-less timestamps parse naive; the no-timestamp
+                        # default below is aware, and mixing the two makes the
+                        # newest-first sort raise and abort the whole provider.
+                        pub = pub.replace(tzinfo=UTC)
                 else:
                     pub = datetime.now(UTC)
             except Exception:
@@ -412,7 +417,13 @@ class NewsApiRotator:
             raise RuntimeError("All news API keys exhausted")
 
         # Sort newest-first
-        all_articles.sort(key=lambda x: x.published_at, reverse=True)
+        # Defensive: any naive published_at from a provider path that skipped
+        # coercion would make the aware/naive comparison raise and abort the
+        # whole fan-in, so normalize in the sort key too.
+        all_articles.sort(
+            key=lambda x: x.published_at.replace(tzinfo=UTC) if x.published_at.tzinfo is None else x.published_at,
+            reverse=True,
+        )
 
         # Persist to DB
         if persist and all_articles:

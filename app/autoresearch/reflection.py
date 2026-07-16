@@ -68,6 +68,15 @@ async def _reflect(audit_bundle: dict) -> dict:
         f"System Execution Errors: {safe_dumps(exec_errs)}"
     )
 
+    learning_signals = audit_bundle.get("learning_signals") or {}
+    if learning_signals:
+        prompt += (
+            f"\n\n=== SYNTHESIZER LEARNING SIGNALS (what past-cycle memory changed) ===\n"
+            f"{safe_dumps(learning_signals)[:3000]}\n"
+            f"Weigh these when writing recommendations: lessons the desk already "
+            f"applied should not be re-recommended; lessons ignored deserve emphasis."
+        )
+
     try:
         # vllm_client was replaced by the SDK-backed shim in c82526b; the old
         # import made this fail (silently) every cycle → canned fallback text.
