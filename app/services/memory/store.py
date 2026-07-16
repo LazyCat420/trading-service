@@ -32,6 +32,39 @@ class MemoryStore:
         if not created_at:
             created_at = datetime.now(timezone.utc).isoformat()
 
+        # Dedup guard: a retried/re-entered cycle must not double-write the
+        # same observation (there is no unique constraint on the table).
+        # On a dup, REFRESH the row — a re-run can legitimately land on a
+        # different decision, and the latest one is the truth for this cycle.
+        cycle_id = observation.get("cycle_id")
+        ticker = observation.get("ticker")
+        source_type = observation.get("source_type")
+        if cycle_id and ticker and source_type:
+            with get_db() as cursor:
+                dup = cursor.execute(
+                    "SELECT id FROM episodic_observations "
+                    "WHERE cycle_id = %s AND ticker = %s AND source_type = %s LIMIT 1",
+                    [cycle_id, ticker, source_type],
+                ).fetchone()
+                if dup:
+                    cursor.execute(
+                        "UPDATE episodic_observations SET observation_text = %s, "
+                        "confidence_at_creation = %s, outcome_label = %s, "
+                        "outcome_score = %s WHERE id = %s",
+                        [
+                            observation["observation_text"],
+                            observation.get("confidence_at_creation"),
+                            observation.get("outcome_label"),
+                            observation.get("outcome_score"),
+                            dup[0],
+                        ],
+                    )
+                    logger.info(
+                        "[MemoryStore] Duplicate observation refreshed (%s/%s/%s)",
+                        cycle_id, ticker, source_type,
+                    )
+                    return dup[0]
+
         with get_db() as cursor:
             cursor.execute(
                 """
@@ -86,6 +119,23 @@ class MemoryStore:
                 "UPDATE episodic_observations SET promoted_to_memory = TRUE WHERE id = %s",
                 [obs_id],
             )
+
+    def delete_promoted_observations_older_than(self, days: int) -> int:
+        """Retention: drop observations already distilled into canonical
+        memories. Unpromoted rows are the consolidator's pending inbox and
+        are never deleted here. Returns rows deleted."""
+        with get_db() as cursor:
+            result = cursor.execute(
+                "DELETE FROM episodic_observations "
+                "WHERE promoted_to_memory = TRUE "
+                "AND created_at < NOW() - (%s || ' days')::interval",
+                [str(int(days))],
+            )
+            # PooledCursor doesn't proxy rowcount — read the real cursor's.
+            rc = getattr(result, "rowcount", None)
+            if rc is None:
+                rc = getattr(getattr(result, "_cursor", None), "rowcount", 0)
+            return rc if rc and rc > 0 else 0
 
     def add_canonical_memory(self, memory: dict) -> str:
         """

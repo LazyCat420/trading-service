@@ -15,9 +15,17 @@ from app.db.memory_repo import (
 from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 
+import time
+
 logger = logging.getLogger(__name__)
 
 NEW_EPISODIC_THRESHOLD = 5
+
+# Per-ticker attempt cooldown. Without it, a persistently failing LLM pass
+# leaves the observations unpromoted, should-consolidate stays true, and the
+# 8k-token consolidation call re-fires on EVERY subsequent cycle.
+CONSOLIDATION_COOLDOWN_SECONDS = 6 * 3600
+_last_attempt: dict[str, float] = {}
 
 CONSOLIDATION_SYSTEM_PROMPT = """
 You are the Autodream Memory Consolidator, a background system optimizing a trading AI's knowledge base.
@@ -61,9 +69,27 @@ async def should_consolidate(ticker: str) -> bool:
     return False
 
 
-async def run_ticker_consolidation(ticker: str):
+async def maybe_consolidate(ticker: str) -> None:
+    """Threshold + cooldown gate, then consolidate. Never raises — safe to
+    schedule fire-and-forget off the pipeline's critical path."""
+    try:
+        now = time.monotonic()
+        last = _last_attempt.get(ticker)
+        if last is not None and (now - last) < CONSOLIDATION_COOLDOWN_SECONDS:
+            return
+        observations = get_unpromoted_observations(ticker)
+        if len(observations) < NEW_EPISODIC_THRESHOLD:
+            return
+        _last_attempt[ticker] = now
+        await run_ticker_consolidation(ticker, observations=observations)
+    except Exception as e:
+        logger.warning("maybe_consolidate(%s) failed (non-fatal): %s", ticker, e)
+
+
+async def run_ticker_consolidation(ticker: str, observations: list | None = None):
     logger.info(f"Starting consolidation for {ticker}...")
-    observations = get_unpromoted_observations(ticker)
+    if observations is None:
+        observations = get_unpromoted_observations(ticker)
 
     if not observations:
         logger.info(f"No unpromoted observations for {ticker}.")

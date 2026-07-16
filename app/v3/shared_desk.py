@@ -94,6 +94,12 @@ class SharedDesk:
     trade_decision: dict | None = None      # Decision Synthesizer output (Layer 5)
     tournament_result: dict | None = None    # Tournament Debate output (Layer 3 alt)
 
+    # ── Agent data tags — free-form labels harvested from artifacts ──
+    # artifact_type -> ["#catalyst", "#risk", ...]. Lets agents mark data
+    # points for later reference; re-surfaced in compressed context and the
+    # next cycle's handoff brief.
+    artifact_tags: dict[str, list[str]] = field(default_factory=dict)
+
     # ── Phase outcome tracking ──
     phase_outcomes: dict[str, str] = field(default_factory=dict)
 
@@ -122,6 +128,23 @@ class SharedDesk:
         # Stamp metadata
         artifact["_appended_at"] = datetime.now(timezone.utc).isoformat()
         artifact["_artifact_type"] = artifact_type
+
+        # Harvest optional free-form tags the agent put in its JSON (the
+        # output directive advertises this). Normalized to '#lowercase'.
+        raw_tags = artifact.get("tags")
+        if isinstance(raw_tags, list):
+            existing = self.artifact_tags.setdefault(artifact_type, [])
+            for t in raw_tags[:10]:
+                t = str(t).strip().lower().replace(" ", "_")
+                if not t:
+                    continue
+                if not t.startswith("#"):
+                    t = f"#{t}"
+                t = t[:40]
+                if t not in existing:
+                    existing.append(t)
+            if not existing:
+                self.artifact_tags.pop(artifact_type, None)
 
         setattr(self, artifact_type, artifact)
         _size = len(json.dumps(artifact, default=str))
@@ -216,9 +239,22 @@ class SharedDesk:
         if reasoning:
             parts.append(f"Rationale: {reasoning[:200]}")
 
+        all_tags = self.get_all_tags()
+        if all_tags:
+            parts.append("Tags flagged last cycle: " + ", ".join(all_tags[:12]))
+
         if not parts:
             return ""
         return "\n".join(parts)[:800]
+
+    def get_all_tags(self) -> list[str]:
+        """Deduped union of all agent-applied artifact tags, insertion order."""
+        seen: list[str] = []
+        for tags in self.artifact_tags.values():
+            for t in tags:
+                if t not in seen:
+                    seen.append(t)
+        return seen
 
     def get_compressed_context(self, include_debate: bool = False) -> str:
         """Build a compressed narrative for downstream agents.
@@ -383,6 +419,15 @@ class SharedDesk:
                 text += f"\n**Regime Engine's Directive to the Board:** {directive}"
             sections.append(text)
 
+        # Agent-applied data tags (grouped by the artifact that raised them)
+        if self.artifact_tags:
+            tag_lines = [
+                f"- {atype}: {', '.join(tags[:8])}"
+                for atype, tags in self.artifact_tags.items() if tags
+            ]
+            if tag_lines:
+                sections.append("## Desk Tags\n" + "\n".join(tag_lines))
+
         # Board of Directors
         if self.final_decision:
             action = self.final_decision.get("action", "?")
@@ -433,6 +478,7 @@ class SharedDesk:
             "final_decision": self.final_decision,
             "trade_decision": self.trade_decision,
             "tournament_result": self.tournament_result,
+            "artifact_tags": self.artifact_tags,
             "phase_outcomes": self.phase_outcomes,
             "cycle_metadata": self.cycle_metadata,
             "agent_telemetry": self.agent_telemetry,
@@ -458,6 +504,7 @@ class SharedDesk:
         desk.final_decision = data.get("final_decision")
         desk.trade_decision = data.get("trade_decision")
         desk.tournament_result = data.get("tournament_result")
+        desk.artifact_tags = data.get("artifact_tags") or {}
         desk.phase_outcomes = data.get("phase_outcomes", {})
         desk.cycle_metadata = data.get("cycle_metadata", {})
         desk.agent_telemetry = data.get("agent_telemetry", [])

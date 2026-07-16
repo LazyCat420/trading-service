@@ -25,6 +25,10 @@ from app.v3.desk_persistence import save_desk
 
 logger = logging.getLogger(__name__)
 
+# Fire-and-forget background tasks (e.g. memory consolidation) — a bare
+# create_task result gets garbage-collected mid-flight without this anchor.
+_BG_TASKS: set = set()
+
 
 async def run_v3_pipeline(
     ticker: str,
@@ -280,6 +284,7 @@ async def run_v3_pipeline(
     debate_dispatched = False
     board_dispatched = False
     synth_dispatched = False
+    peer_drop_logged = False
 
     def _queue_agent(name: str, module: Any, query: str = "", parent: str = ""):
         if run_counts.get(name, 0) >= MAX_RUNS_PER_AGENT:
@@ -300,16 +305,17 @@ async def run_v3_pipeline(
 
     async def whiteboard_subscriber(event):
         nonlocal regime, fa_skipped, debate_dispatched, board_dispatched, synth_dispatched
-        # Whiteboard broadcasts to every subscriber; concurrent tickers share
-        # the bus. Only react to this ticker's events or agents cross-trigger
-        # (duplicate queued tasks, re-runs of completed agents).
+        # The bus delivers only this ticker's events (subscription is
+        # ticker-scoped), but keep the filter as defense in depth against
+        # unscoped publishers — a cross-ticker event here would cross-trigger
+        # duplicate queued tasks and re-runs of completed agents.
         event_ticker = (event.get("ticker") or "").upper()
         if event_ticker and event_ticker != ticker.upper():
             return
         # Same ticker from another cycle (or the legacy default_cycle board)
-        # must not trigger this cycle's agent chain.
-        event_cycle = event.get("cycle_id") or ""
-        if event_cycle and event_cycle != cycle_id:
+        # must not trigger this cycle's agent chain. Strict: an event with NO
+        # cycle_id is rejected too — every real publisher stamps one.
+        if (event.get("cycle_id") or "") != cycle_id:
             return
         sec = event.get("section")
         auth = event.get("author")
@@ -461,9 +467,33 @@ async def run_v3_pipeline(
         return False
 
     async def _process_peer_requests():
+        nonlocal peer_drop_logged
         # Do not spawn analyst re-runs once the debate has moved on (see
-        # _has_pending_peer_requests). Pending requests are left as-is.
+        # _has_pending_peer_requests). Pending requests are left as-is —
+        # but say so ONCE, or the requesting agent's ask vanishes untraceably.
+        # (One-shot: this runs every scheduler iteration after dispatch, and
+        # each check is a whiteboard DB read.)
         if debate_dispatched:
+            if not peer_drop_logged:
+                peer_drop_logged = True
+                try:
+                    task_section = await whiteboard.get_section(
+                        ticker=ticker, cycle_id=cycle_id, section="task_queue"
+                    )
+                    if task_section and isinstance(task_section.get("content"), dict):
+                        dropped = [
+                            t for t in task_section["content"].get("tasks", [])
+                            if t.get("status") == "pending"
+                        ]
+                        if dropped:
+                            logger.info(
+                                "[V3] %s: %d peer request(s) dropped — debate already "
+                                "dispatched (targets: %s)",
+                                ticker, len(dropped),
+                                ", ".join(str(t.get("target_agent")) for t in dropped),
+                            )
+                except Exception:
+                    pass
             return
         try:
             task_section = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section="task_queue")
@@ -704,7 +734,7 @@ async def run_v3_pipeline(
 
     # Subscribe live whiteboard triggers
     from app.agents.whiteboard import whiteboard
-    whiteboard.subscribe(whiteboard_subscriber)
+    whiteboard.subscribe(whiteboard_subscriber, ticker=ticker)
 
     try:
         # Run Regime Engine first to kick off the whiteboard triggers
@@ -962,6 +992,17 @@ async def run_v3_pipeline(
             "outcome_label": action,
         })
         logger.info("[V3] %s: Episodic observation recorded", ticker)
+
+        # Consolidation: without this, episodic observations pile up forever
+        # and canonical memories are never distilled from cycle experience —
+        # the retriever would read a table nothing populates. Runs as a
+        # BACKGROUND task (its output feeds future cycles, not this trade),
+        # internally gated by a ≥5-unpromoted threshold and a per-ticker
+        # cooldown so a failing LLM pass can't re-fire every cycle.
+        from app.services.memory.consolidator import maybe_consolidate
+        _task = asyncio.create_task(maybe_consolidate(ticker))
+        _BG_TASKS.add(_task)
+        _task.add_done_callback(_BG_TASKS.discard)
     except Exception as e:
         logger.warning("[V3] %s: Memory persistence failed (non-fatal): %s", ticker, e)
 

@@ -272,4 +272,10 @@ def get_persona_prompt(regime: str) -> str:
 
     Falls back to Jane Street (CONTRADICTORY) for unknown regimes.
     """
+    if regime not in PERSONA_MAP:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[Board] Unknown regime label %r — falling back to Jane Street persona",
+            regime,
+        )
     return PERSONA_MAP.get(regime, PERSONA_JANE_STREET)

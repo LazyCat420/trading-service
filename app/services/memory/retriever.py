@@ -109,8 +109,9 @@ class MemoryRetriever:
     ) -> List[Dict[str, Any]]:
         """
         Retrieves, filters, and ranks the relevant canonical memories for a given ticker.
-        Satisfies the RetrieveResult contract format.
-        # TODO: fallback missing - no vector search implemented yet (currently uses SQL keyword/tag match)
+        Satisfies the RetrieveResult contract format. Ranking is heuristic
+        (ticker/sector/tag/recency/confidence) plus a pgvector cosine boost
+        when the embedder is available (degrades gracefully without it).
         """
         raw_memories = fetch_candidate_memories(ticker, sector)
         

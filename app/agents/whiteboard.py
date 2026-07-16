@@ -17,18 +17,45 @@ class Whiteboard:
     def __init__(self):
         self._lock = asyncio.Lock()
         self._broadcast_callback = None
-        self._subscribers = []
+        # (callback, ticker_key) pairs; ticker_key=None receives every event.
+        self._subscribers: list[tuple] = []
 
     def set_broadcast_callback(self, callback):
         self._broadcast_callback = callback
 
-    def subscribe(self, callback):
-        if callback not in self._subscribers:
-            self._subscribers.append(callback)
+    def subscribe(self, callback, ticker: str | None = None):
+        """Register a subscriber, optionally scoped to one ticker.
+
+        With N concurrent tickers each running its own cycle, an unscoped bus
+        fires every subscriber for every event (O(N²) callbacks per cycle).
+        Passing ticker= makes publish O(1) per event for that subscriber.
+        """
+        key = ticker.upper().strip() if ticker else None
+        # Equality, not identity: bound methods compare == across accesses
+        # but are never `is` each other — identity checks would double-fire
+        # and leak such subscribers.
+        if not any(cb == callback for cb, _ in self._subscribers):
+            self._subscribers.append((callback, key))
 
     def unsubscribe(self, callback):
-        if callback in self._subscribers:
-            self._subscribers.remove(callback)
+        self._subscribers = [
+            (cb, key) for cb, key in self._subscribers if cb != callback
+        ]
+
+    async def _notify_subscribers(self, event: dict):
+        """Fan an event out to matching subscribers. Runs OUTSIDE self._lock —
+        a slow/awaiting subscriber must not serialize other tickers' writes."""
+        event_ticker = event.get("ticker")
+        for cb, key in list(self._subscribers):
+            if key is not None and event_ticker and key != event_ticker:
+                continue
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    await cb(event)
+                else:
+                    cb(event)
+            except Exception as ex:
+                logger.warning("[Whiteboard] Dynamic subscriber callback failed: %s", ex)
 
     async def write_section(
         self, ticker: str, cycle_id: str, section: str, content: dict | str, author_agent: str
@@ -99,50 +126,37 @@ class Whiteboard:
                         ).fetchone()
                         new_id = res[0]
 
-            logger.info(
-                "[Whiteboard] %s updated section '%s' for %s (v%s)",
-                author_agent, section, ticker, new_version
-            )
+        # Lock released — the DB write is durable; notification must not hold
+        # the (global) lock, or one slow subscriber stalls every other ticker.
+        logger.info(
+            "[Whiteboard] %s updated section '%s' for %s (v%s)",
+            author_agent, section, ticker, new_version
+        )
 
-            # Broadcast to legacy callback
-            if self._broadcast_callback:
-                try:
-                    await self._broadcast_callback({
-                        "type": "whiteboard_update",
-                        "ticker": ticker,
-                        "section": section,
-                        "version": new_version
-                    })
-                except Exception as e:
-                    logger.debug("[Whiteboard] Broadcast failed: %s", e)
+        # Broadcast to legacy callback
+        if self._broadcast_callback:
+            try:
+                await self._broadcast_callback({
+                    "type": "whiteboard_update",
+                    "ticker": ticker,
+                    "section": section,
+                    "version": new_version
+                })
+            except Exception as e:
+                logger.debug("[Whiteboard] Broadcast failed: %s", e)
 
-            # Notify active subscribers for dynamic coordination
-            for sub in list(self._subscribers):
-                try:
-                    if asyncio.iscoroutinefunction(sub):
-                        await sub({
-                            "type": "whiteboard_update",
-                            "ticker": ticker,
-                            "cycle_id": cycle_id,
-                            "section": section,
-                            "version": new_version,
-                            "author": author_agent,
-                            "content": content_json
-                        })
-                    else:
-                        sub({
-                            "type": "whiteboard_update",
-                            "ticker": ticker,
-                            "cycle_id": cycle_id,
-                            "section": section,
-                            "version": new_version,
-                            "author": author_agent,
-                            "content": content_json
-                        })
-                except Exception as ex:
-                    logger.warning("[Whiteboard] Dynamic subscriber callback failed: %s", ex)
+        # Notify active subscribers for dynamic coordination
+        await self._notify_subscribers({
+            "type": "whiteboard_update",
+            "ticker": ticker,
+            "cycle_id": cycle_id,
+            "section": section,
+            "version": new_version,
+            "author": author_agent,
+            "content": content_json
+        })
 
-            return new_id
+        return new_id
 
     async def get_section(self, ticker: str, cycle_id: str, section: str) -> dict | None:
         ticker = ticker.upper().strip()
@@ -186,46 +200,32 @@ class Whiteboard:
             with db.transaction():
                 # Verify entry exists and get ticker/section/cycle
                 row = db.execute(
-                    "SELECT ticker, section, cycle_id FROM whiteboard_entries WHERE id = %s", 
+                    "SELECT ticker, section, cycle_id FROM whiteboard_entries WHERE id = %s",
                     [entry_id]
                 ).fetchone()
                 if not row:
                     return False
                 ticker, section, cycle_id = row
-                
+
                 db.execute(
                     "INSERT INTO whiteboard_annotations (entry_id, author_agent, note) VALUES (%s, %s, %s)",
                     [entry_id, agent, note]
                 )
-            logger.info("[Whiteboard] %s annotated entry_id %s", agent, entry_id)
+        logger.info("[Whiteboard] %s annotated entry_id %s", agent, entry_id)
 
-            # Notify active subscribers of the annotation
-            for sub in list(self._subscribers):
-                try:
-                    if asyncio.iscoroutinefunction(sub):
-                        await sub({
-                            "type": "whiteboard_annotation",
-                            "ticker": ticker,
-                            "cycle_id": cycle_id,
-                            "section": section,
-                            "entry_id": entry_id,
-                            "author": agent,
-                            "note": note
-                        })
-                    else:
-                        sub({
-                            "type": "whiteboard_annotation",
-                            "ticker": ticker,
-                            "cycle_id": cycle_id,
-                            "section": section,
-                            "entry_id": entry_id,
-                            "author": agent,
-                            "note": note
-                        })
-                except Exception as ex:
-                    logger.warning("[Whiteboard] Dynamic subscriber callback failed: %s", ex)
+        # Notify AFTER releasing the pooled connection — a subscriber that
+        # itself hits the DB while we hold a lease can exhaust the pool.
+        await self._notify_subscribers({
+            "type": "whiteboard_annotation",
+            "ticker": ticker,
+            "cycle_id": cycle_id,
+            "section": section,
+            "entry_id": entry_id,
+            "author": agent,
+            "note": note
+        })
 
-            return True
+        return True
 
     async def summarize(self, ticker: str, cycle_id: str) -> str:
         """Returns the full whiteboard state as a dense string for LLM injection."""

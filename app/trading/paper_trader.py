@@ -121,6 +121,9 @@ def _check_drawdown_breaker(bot_id: str, portfolio_value: float) -> dict | None:
                     f"{abs(drawdown) * 100:.1f}% below peak ${peak_value:,.2f} "
                     f"(limit {max_dd_pct * 100:.0f}%). New BUYs suspended; SELLs allowed."
                 ),
+                # Explicit discriminator — pipeline_service buckets on this;
+                # do not rely on the drawdown_pct key's presence alone.
+                "reason_code": "DRAWDOWN_BREAKER",
                 "drawdown_pct": round(drawdown * 100, 2),
                 "peak_value": round(peak_value, 2),
             }

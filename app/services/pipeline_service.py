@@ -23,6 +23,25 @@ class _ExplicitTickersPinned(Exception):
     discovery/scoring/freshness/gatekeeper funnel is skipped entirely."""
 
 
+# no_trade_reason vocabulary. These strings are simultaneously (a) persisted
+# per-row in result_json, (b) control-flow keys (trigger registration), and
+# (c) counted by summarize_ticker_results — set and match them ONLY through
+# these constants or the buckets silently drop to zero on a rename.
+POLICY_BLOCKED_PREFIX = "HOLD_POLICY_BLOCKED"          # minted by orchestrator policy gates
+REASON_CONFIDENCE_BLOCKED = "CONFIDENCE_BELOW_THRESHOLD"
+REASON_WATCH_ONLY = "AGENT_SIZE_ZERO_WATCH_ONLY"
+REASON_DRAWDOWN_BREAKER = "DRAWDOWN_BREAKER"
+REASON_TRADE_DISABLED = "TRADE_DISABLED"
+TRADE_ERROR_PREFIX = "TRADE_ERROR:"
+
+
+def resolve_no_trade_reason(trade_res: dict) -> str:
+    """Map a paper-trader refusal dict to a no_trade_reason tag."""
+    if trade_res.get("reason_code") == REASON_DRAWDOWN_BREAKER or "drawdown_pct" in trade_res:
+        return REASON_DRAWDOWN_BREAKER
+    return f"{TRADE_ERROR_PREFIX} {str(trade_res.get('error'))[:200]}"
+
+
 def resolve_buy_size_pct(
     agent_size_pct: Any,
     confidence: int | float,
@@ -76,6 +95,7 @@ def summarize_ticker_results(results) -> dict:
     (None from skipped tickers, Exceptions from gather) are ignored."""
     rs = [r for r in (results or []) if isinstance(r, dict)]
     actions = [(r.get("action") or "").upper() for r in rs]
+    reasons = [str(r.get("no_trade_reason") or "") for r in rs]
     return {
         "analysis_results_count": len(actions),
         "buy_count": actions.count("BUY"),
@@ -84,6 +104,13 @@ def summarize_ticker_results(results) -> dict:
         "trade_attempted": sum(1 for r in rs if r.get("trade_attempted")),
         "trade_executed": sum(1 for r in rs if r.get("trade_executed")),
         "trade_failed": sum(1 for r in rs if r.get("trade_failed")),
+        # A BUY/SELL that never traded is not a HOLD — bucket the reasons so
+        # the dashboard/auditor can tell "no signal" from "signal, but blocked".
+        "policy_blocked": sum(1 for x in reasons if x.startswith(POLICY_BLOCKED_PREFIX)),
+        "confidence_blocked": reasons.count(REASON_CONFIDENCE_BLOCKED),
+        "watch_only": reasons.count(REASON_WATCH_ONLY),
+        "breaker_blocked": reasons.count(REASON_DRAWDOWN_BREAKER),
+        "trade_errors": sum(1 for x in reasons if x.startswith(TRADE_ERROR_PREFIX)),
     }
 
 
@@ -794,25 +821,29 @@ class PipelineService:
                 prism_overrides = cls._state.get("prism_overrides", {})
                 result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides)
 
-                # Save verdict to DB
-                from app.services.result_saver import save_analysis_result
-                save_analysis_result(
-                    ticker_name, cycle_id, result,
-                    snapshot=_ticker_snapshot_map.get(ticker_name),
-                )
-
                 # Execute Trade — gated by the cycle's trade flag and confidence threshold
                 action = result.get("action", "HOLD")
                 confidence = result.get("confidence", 0)
                 result["trade_attempted"] = False
                 result["trade_executed"] = False
 
+                if not trade_flag and action in ("BUY", "SELL"):
+                    # Tag before the save so the row explains itself.
+                    result["no_trade_reason"] = REASON_TRADE_DISABLED
+                    logger.info(
+                        "[PipelineService] %s: %s decision NOT executed — cycle started with trade=false",
+                        ticker_name, action,
+                    )
+
+                # Save verdict to DB (re-saved after trade handling below if
+                # the trade outcome mutated the result)
+                from app.services.result_saver import save_analysis_result
+                save_analysis_result(
+                    ticker_name, cycle_id, result,
+                    snapshot=_ticker_snapshot_map.get(ticker_name),
+                )
+
                 if not trade_flag:
-                    if action in ("BUY", "SELL"):
-                        logger.info(
-                            "[PipelineService] %s: %s decision NOT executed — cycle started with trade=false",
-                            ticker_name, action,
-                        )
                     return result
 
                 trade_failed = False
@@ -843,6 +874,7 @@ class PipelineService:
                             "[PipelineService] %s: %s blocked — confidence %d%% < threshold %d%%",
                             ticker_name, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
                         )
+                        result["no_trade_reason"] = REASON_CONFIDENCE_BLOCKED
                     elif action == "BUY":
                         # Situational sizing: honor the board/synthesizer's reasoned
                         # position_size_pct (percent units, capped); the confidence
@@ -854,7 +886,7 @@ class PipelineService:
                             agent_size_pct, confidence, _cfg.MAX_POSITION_SIZE_PCT
                         )
                         if size_pct is None:
-                            result["no_trade_reason"] = "AGENT_SIZE_ZERO_WATCH_ONLY"
+                            result["no_trade_reason"] = REASON_WATCH_ONLY
                             logger.info(
                                 "[PipelineService] %s: BUY with explicit position_size_pct=%s — "
                                 "board watch-only directive, no trade attempted",
@@ -870,6 +902,7 @@ class PipelineService:
                             )
                             trade_res = await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
                             if isinstance(trade_res, dict) and trade_res.get("error"):
+                                result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
                                 logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
                             else:
                                 result["trade_executed"] = True
@@ -877,6 +910,7 @@ class PipelineService:
                         result["trade_attempted"] = True
                         trade_res = await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
                         if isinstance(trade_res, dict) and trade_res.get("error"):
+                            result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
                             logger.warning("[PipelineService] %s: SELL not executed: %s", ticker_name, trade_res["error"])
                         else:
                             result["trade_executed"] = True
@@ -905,7 +939,7 @@ class PipelineService:
                             action=action,
                             trade_executed=bool(result.get("trade_executed")),
                             position_held=position_held,
-                            watch_only=result.get("no_trade_reason") == "AGENT_SIZE_ZERO_WATCH_ONLY",
+                            watch_only=result.get("no_trade_reason") == REASON_WATCH_ONLY,
                         )
                         if not any(allowed.values()):
                             logger.info(
@@ -928,6 +962,18 @@ class PipelineService:
 
                 if trade_failed:
                     result["trade_failed"] = True
+
+                # Re-save when trade handling mutated the result: no_trade_reason
+                # and the trade flags are set AFTER the first save, and
+                # save_analysis_result is a delete+insert upsert — without this,
+                # a policy/breaker-blocked BUY persists as indistinguishable from
+                # an executed one. Plain HOLDs mutate nothing; skip the rewrite.
+                if (
+                    result.get("no_trade_reason")
+                    or result.get("trade_attempted")
+                    or result.get("trade_executed")
+                    or trade_failed
+                ):
                     save_analysis_result(
                         ticker_name, cycle_id, result,
                         snapshot=_ticker_snapshot_map.get(ticker_name),

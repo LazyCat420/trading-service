@@ -206,6 +206,12 @@ async def run_v3_agent(
             f"## Cycle: {cycle_id}\n\n"
         )
 
+        # Peer-request text rides in the USER message and cannot be rerouted
+        # to the system prompt like dynamic_block — cap it, or a long peer
+        # query alone can blow Prism's 2048-token memory-embed limit.
+        if custom_instructions and len(custom_instructions) > 3000:
+            custom_instructions = custom_instructions[:3000] + " …[truncated]"
+
         # Prism's server-side agent memory embeds the USER message with
         # embeddinggemma, which has a hard 2048-token positional limit — a
         # larger user message fails with a "memory:embed ... maximum context
@@ -217,8 +223,14 @@ async def run_v3_agent(
         # back. ~4 chars/token, with headroom below 2048 to absorb tokenizer
         # density differences on numeric/ticker-heavy text.
         _EMBED_TOKEN_LIMIT = 2048
-        _USER_SCAFFOLD_CHARS = 1600  # tool/output directives + reminder appended below
-        _projected_user_chars = len(user_prompt) + len(dynamic_block) + _USER_SCAFFOLD_CHARS
+        _USER_SCAFFOLD_CHARS = 1900  # tool/output directives + reminder appended below
+        # custom_instructions (peer-request text) is appended to the user
+        # prompt AFTER this guard runs — it must be counted here or a long
+        # peer query can push the real message past the embed limit.
+        _projected_user_chars = (
+            len(user_prompt) + len(dynamic_block)
+            + len(custom_instructions or "") + _USER_SCAFFOLD_CHARS
+        )
         _fits_embedder = (_projected_user_chars // 4) < (_EMBED_TOKEN_LIMIT - 400)
 
         if prompt_split and dynamic_block and _fits_embedder:
@@ -252,7 +264,10 @@ async def run_v3_agent(
             f"you MUST output ONLY a valid JSON object matching the `{artifact_type}` schema.\n"
             f"Do NOT include any conversational intro/outro, preambles, summary comments, or markdown headings.\n"
             f"Do NOT wrap the JSON response in markdown code blocks (do NOT use ```json).\n"
-            f"Your entire response MUST start with '{{' and end with '}}'.\n\n"
+            f"Your entire response MUST start with '{{' and end with '}}'.\n"
+            f"You MAY include an optional \"tags\" array of short hashtag labels "
+            f"(e.g. [\"#catalyst\", \"#earnings_risk\", \"#verify_later\"]) to flag "
+            f"data points for other agents and future cycles.\n\n"
         )
 
         # Append custom peer instructions if requested
@@ -477,6 +492,13 @@ def _parse_artifact(
     """
     if not text or not text.strip():
         return None
+
+    # The Board (and any persona prompt using scratchpad XML) emits a
+    # <thought_process> block before its JSON. Strip it first: if the block
+    # itself contains braces, the first-{/last-} extraction below would grab
+    # an invalid span and needlessly degrade to the lossiest parse strategy.
+    if "</thought_process>" in text:
+        text = text.rsplit("</thought_process>", 1)[-1]
 
     # Strategy 1: Direct JSON parse
     try:

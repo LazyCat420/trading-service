@@ -21,6 +21,9 @@ REPORT_FULL_RETENTION_DAYS = 30
 DIRECTIVE_HARD_DELETE_DAYS = 7
 # If a sub-score is 0 for this many consecutive reports, flag as system bug
 DEGENERATE_THRESHOLD = 5
+# Consolidated (promoted) episodic observations older than this are deleted;
+# unpromoted ones are kept indefinitely so consolidation can still see them.
+EPISODIC_PROMOTED_RETENTION_DAYS = 30
 
 
 def run_janitor() -> dict:
@@ -30,6 +33,7 @@ def run_janitor() -> dict:
     results["directives_deleted"] = _delete_old_directives()
     results["stale_cleaned"] = _clean_stale_reports()
     results["degenerate_flags"] = _detect_degenerate_scores()
+    results["observations_pruned"] = _prune_promoted_observations()
 
     total_actions = sum(v for v in results.values() if isinstance(v, int))
     if total_actions > 0:
@@ -102,6 +106,22 @@ def _clean_stale_reports() -> int:
     except Exception as e:
         logger.warning("[JANITOR] Stale report cleanup failed: %s", e)
     return cleaned
+
+
+def _prune_promoted_observations() -> int:
+    """Delete episodic observations already distilled into canonical memories.
+
+    One row is written per ticker per cycle; without this the table grows
+    forever. Delegates to the memory DAL, which owns episodic_observations.
+    """
+    try:
+        from app.services.memory.store import MemoryStore
+        return MemoryStore().delete_promoted_observations_older_than(
+            EPISODIC_PROMOTED_RETENTION_DAYS
+        )
+    except Exception as e:
+        logger.warning("[JANITOR] Episodic observation pruning failed: %s", e)
+        return 0
 
 
 def _detect_degenerate_scores() -> int:
