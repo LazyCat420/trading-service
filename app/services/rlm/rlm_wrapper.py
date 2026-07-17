@@ -172,6 +172,7 @@ def _build_rlm(
     endpoint_override: str | None = None,
     system_prompt_override: str | None = None,
     bot_id: str = "",
+    retrieved_override: str | None = None,
 ) -> RLM:
     """Build an RLM instance with vLLM thinking control.
 
@@ -240,7 +241,8 @@ def _build_rlm(
     os.makedirs(log_dir, exist_ok=True)
 
     full_system_prompt = build_rlm_prompt(
-        ticker, is_escalation, system_prompt_override, bot_id=bot_id
+        ticker, is_escalation, system_prompt_override, bot_id=bot_id,
+        retrieved_override=retrieved_override,
     )
 
     return RLM(
@@ -290,6 +292,22 @@ async def rlm_analyze(
     async with _rlm_semaphore:
         logger.debug("[RLM] %s acquired RLM slot (role=%s)", ticker, target_role)
 
+        # Escalation only: run query-decomposition retrieval (MiroFish Port B).
+        # The extra LLM call is justified on the deep-dive path; skip it on the
+        # baseline path. Non-fatal — falls through to the default retrieval block.
+        retrieved_override = None
+        if is_escalation and ticker:
+            try:
+                from app.services.retrieval_decomposed import build_decomposed_block
+
+                retrieved_override = await build_decomposed_block(
+                    ticker,
+                    f"What are the key risks, catalysts, and conflicting signals for {ticker}?",
+                )
+            except Exception as decomp_e:
+                logger.debug("[RLM] %s decomposed retrieval failed (non-fatal): %s",
+                             ticker, decomp_e)
+
         # Isolate Prompt Construction Failures
         try:
             rlm_instance = _build_rlm(
@@ -303,6 +321,7 @@ async def rlm_analyze(
                 endpoint_override=endpoint_override,
                 system_prompt_override=system_prompt_override,
                 bot_id=bot_id,
+                retrieved_override=retrieved_override,
             )
         except Exception as build_e:
             logger.error("[RLM] %s prompt construction failed: %s", ticker, build_e)

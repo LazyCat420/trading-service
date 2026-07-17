@@ -113,8 +113,14 @@ def build_rlm_prompt(
     is_escalation: bool = False,
     system_prompt_override: str | None = None,
     bot_id: str = "",
+    retrieved_override: str | None = None,
 ) -> str:
-    """Builds the complete RLM system prompt including memory, skills, and portfolio."""
+    """Builds the complete RLM system prompt including memory, skills, and portfolio.
+
+    retrieved_override: a precomputed "Retrieved Context" block (e.g. the
+    decomposed-recall block built in the async escalation path). When provided,
+    it replaces the default single-query hybrid retrieval block.
+    """
     prompt_parts = []
 
     # Memory context = brain-graph activation AND the 5-store working memory,
@@ -147,9 +153,10 @@ def build_rlm_prompt(
         prompt_parts.append("\n\n".join(memory_blocks))
 
     # Semantic recall over the embedded corpus (Phase 3 — needs embedding_ingest
-    # to have populated news/analysis/graph_claims). Capped + non-fatal.
+    # to have populated news/analysis/graph_claims). Capped + non-fatal. When the
+    # caller precomputed a decomposed-recall block (escalation path), use that.
     if ticker:
-        retrieved_block = _build_retrieved_context(ticker)
+        retrieved_block = retrieved_override or _build_retrieved_context(ticker)
         if retrieved_block:
             prompt_parts.append(_cap(retrieved_block))
 
