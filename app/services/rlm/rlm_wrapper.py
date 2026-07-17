@@ -292,15 +292,6 @@ async def rlm_analyze(
 
         # Isolate Prompt Construction Failures
         try:
-            # ── DYNAMIC MEMORY TRIMMING ──
-            # Prevent the rolling window from ballooning and crashing the context budget.
-            # Force memory to summarize itself via LLM if it exceeds the safe allocated budget (1500 tokens)
-            try:
-                from app.cognition.trading_memory import trading_memory
-                await trading_memory.enforce_budget_and_consolidate(available_tokens=1500)
-            except Exception as mem_err:
-                logger.warning("[RLM] Memory consolidation failed before prompt build: %s", mem_err)
-
             rlm_instance = _build_rlm(
                 enable_thinking=enable_thinking,
                 max_iterations=max_iterations,

@@ -97,12 +97,6 @@ def build_rlm_prompt(
         except ImportError:
             pass
 
-    if not memory_block:
-        # Fallback: flat TradingMemory (Phase 1-3 compat)
-        from app.cognition.trading_memory import trading_memory
-
-        memory_block = trading_memory.get_frozen_snapshot() or ""
-
     if memory_block:
         prompt_parts.append(memory_block)
 
