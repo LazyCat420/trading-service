@@ -44,7 +44,10 @@ class TraceRecord(BaseModel):
 
 def evaluate_trace(trace: TraceRecord) -> Dict[str, Any]:
     """Score a single trace row based on the 5-part rubric."""
-    completion_score = 40.0 if trace.stop_reason == "completed" else 0.0
+    # Both vocabularies count as completion: the historical producer wrote
+    # 'success' while this rubric only accepted 'completed' — so completion
+    # scored 0 on 100% of the 649 rows ever graded.
+    completion_score = 40.0 if trace.stop_reason in ("completed", "success") else 0.0
     
     tool_correctness = 25.0
     if trace.tool_result_summary and "error" in str(trace.tool_result_summary).lower():

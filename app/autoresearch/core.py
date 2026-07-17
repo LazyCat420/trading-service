@@ -137,6 +137,23 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as oe:
             logger.warning("[AUTORESEARCH] Outcome resolution failed: %s", oe)
 
+        # LLM-as-a-Judge: grade this cycle's decisions (llm_audit_logs rows are
+        # written per ticker by the V3 orchestrator's _persist_trade_verdict).
+        # Time-boxed so a judge-LLM slowdown can't stall the whole job; the
+        # global fallback inside evaluate_pending_decisions also slowly chews
+        # through historical backlog when a cycle has nothing to judge.
+        _update_ar_state(report_id, phase="judge_eval")
+        try:
+            from app.cognition.evaluation.strategy_auditor import evaluate_pending_decisions
+            with get_db() as db:
+                judged = await evaluate_pending_decisions(
+                    db, cycle_id=cycle_id, limit=10, timeout_sec=240,
+                )
+            if judged:
+                logger.info("[AUTORESEARCH] Judge evaluated %d decisions", judged)
+        except Exception as je:
+            logger.warning("[AUTORESEARCH] Judge evaluation failed (non-fatal): %s", je)
+
         _update_ar_state(report_id, phase="data_quality")
         data_quality = _audit_data_quality(tickers)
 

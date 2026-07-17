@@ -10,6 +10,7 @@ Activated when PIPELINE_VERSION=v3 is set in the environment.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -725,6 +726,30 @@ async def run_v3_pipeline(
                 persona = str(trade_decision.get("persona_used") or "")
                 trade_decision["persona_used"] = persona.strip().lower().replace(" ", "_")
                 save_trade_result(ticker, cycle_id, trade_decision)
+
+                # Feed the judge: llm_audit_logs + context_blobs are the
+                # LLM-as-a-Judge inputs (evaluate_decision). Their producer
+                # (rlm_wrapper → log_rlm_audit_trail) lost its caller in the
+                # SDK migration, so decision_evaluations starved after the V2
+                # era. The compressed desk context is exactly the blob whose
+                # section headers the judge's faithfulness markers match.
+                try:
+                    from app.services.rlm.rlm_audit import log_rlm_audit_trail
+                    _telemetry = desk.agent_telemetry or []
+                    log_rlm_audit_trail(
+                        cycle_id=cycle_id,
+                        bot_id=bot_id,
+                        ticker=ticker,
+                        context=desk.get_compressed_context(include_debate=True),
+                        trading_system_prompt="V3 pure agentic pipeline (desk-compressed context)",
+                        active_model="v3_pipeline",
+                        response_text=json.dumps(trade_decision, default=str),
+                        tokens_used=sum(int(e.get("token_usage") or 0) for e in _telemetry),
+                        execution_time=sum(int(e.get("elapsed_ms") or 0) for e in _telemetry) / 1000.0,
+                        agent_step="v3_decision",
+                    )
+                except Exception as audit_err:
+                    logger.warning("[V3] %s: decision audit log failed (non-fatal): %s", ticker, audit_err)
 
                 try:
                     from app.trading.strategy_tracker import record_strategy

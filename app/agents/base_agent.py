@@ -323,6 +323,23 @@ async def run_agent(
                     elapsed_ms=elapsed_ms,
                     ticker=ticker,
                 )
+
+                # Feed the eval layer: agent_traces is what the autoresearch
+                # rubric (eval_engine.process_pending_traces) grades. Its old
+                # producer (rlm_wrapper) lost its caller in the vllm_client →
+                # SDK migration (fa7cee3), so the table starved and eval_scores
+                # graded nothing since 2026-06-25.
+                from app.autoresearch.trace_writer import write_agent_trace
+                write_agent_trace(
+                    cycle_id=cycle_id,
+                    ticker=ticker,
+                    agent_name=agent_name,
+                    tool_name=final_tool_name,
+                    tool_args=arguments,
+                    tool_result=result,
+                    failed=failed,
+                    latency_ms=elapsed_ms,
+                )
                 
                 if provider:
                     try:
