@@ -305,23 +305,8 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as rb_err:
             logger.warning("[AUTORESEARCH] Rollback monitor failed: %s", rb_err)
 
-        # Meta-Agent Judge (prompt lifecycle management)
-        _META_JUDGE_TIMEOUT = 120
-        try:
-            from app.agents.meta_agent_judge import run_meta_agent_judge
-            _update_ar_state(report_id, phase="meta_judge")
-            meta_result = await asyncio.wait_for(
-                run_meta_agent_judge(cycle_id), timeout=_META_JUDGE_TIMEOUT
-            )
-            if meta_result.get("status") != "disabled":
-                logger.info(
-                    "[AUTORESEARCH] Meta-Agent Judge: benched=%d, promoted=%d, generated=%d",
-                    len(meta_result.get("benched", [])),
-                    len(meta_result.get("promoted", [])),
-                    len(meta_result.get("generated", [])),
-                )
-        except Exception as mj_err:
-            logger.warning("[AUTORESEARCH] Meta-Agent Judge failed: %s", mj_err)
+        # (Meta-Agent Judge removed: app.agents.meta_agent_judge never existed
+        # in the V3 tree — the import failed and logged a warning every cycle.)
 
         # Record this cycle's decisions for future outcome tracking
         _update_ar_state(report_id, phase="outcome_recording")

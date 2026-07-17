@@ -43,7 +43,11 @@ def compute_agent_metrics(db, cycle_id: str | None = None) -> Dict[str, Any]:
     """
     params = []
     if cycle_id:
-        query += " WHERE e.cycle_id = ?"
+        # %s, not '?' — this is psycopg/Postgres. The old SQLite-style
+        # placeholder made every cycle-scoped call raise ("0 placeholders,
+        # 1 parameters"); it was never caught because this function had no
+        # callers until the strategy_eval phase was reconnected.
+        query += " WHERE e.cycle_id = %s"
         params.append(cycle_id)
 
     evals = db.execute(query, params).fetchall()
