@@ -37,6 +37,28 @@ class ProceduralMemoryStore:
             )
             return mem_id
 
+    def write_procedure_if_new(
+        self,
+        ticker: str,
+        trigger_pattern: str,
+        procedure: str,
+        created_by_agent: str = "consolidator",
+    ) -> str:
+        """Insert a procedure only if (ticker, trigger_pattern) doesn't already
+        exist. Prevents the consolidator from re-inserting the same pattern on
+        every run (there is no unique constraint on the table)."""
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            existing = db.execute(
+                "SELECT id FROM procedural_memory WHERE ticker = %s AND trigger_pattern = %s LIMIT 1",
+                [ticker, trigger_pattern],
+            ).fetchone()
+            if existing:
+                return existing[0]
+
+        return self.write_procedure(ticker, trigger_pattern, procedure, created_by_agent)
+
     def record_outcome(self, mem_id: str, success: bool):
         """Update success/failure counts after a pattern was followed and outcome resolved."""
         from app.db.connection import get_db

@@ -2,6 +2,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Per-block cap for memory context (~4 chars/token → ~1.5k tokens each) so the
+# brain-graph + working-memory blocks combined can't balloon the context budget.
+_MEMORY_BLOCK_MAX_CHARS = 6000
+
+
+def _cap(text: str, max_chars: int = _MEMORY_BLOCK_MAX_CHARS) -> str:
+    """Truncate a memory block to a char budget, appending an elision marker."""
+    if text and len(text) > max_chars:
+        return text[:max_chars].rstrip() + "\n… [truncated]"
+    return text
+
 # ---------------------------------------------------------------------------
 # Compact system prompt -- custom tools FIRST, llm_query demoted to fallback
 # ---------------------------------------------------------------------------
@@ -78,27 +89,34 @@ def build_rlm_prompt(
     """Builds the complete RLM system prompt including memory, skills, and portfolio."""
     prompt_parts = []
 
-    memory_block = ""
+    # Memory context = brain-graph activation AND the 5-store working memory,
+    # combined (not either/or). Previously working memory was only a fallback
+    # that almost never ran, so prospective/procedural/semantic/episodic memory
+    # never reached the LLM. Each block is capped so the sum stays bounded.
+    memory_blocks: list[str] = []
     if ticker:
         try:
             from app.cognition.ontology.ontology_builder import BrainGraph
 
             graph_ctx = BrainGraph.get_activated_context(ticker)
-            if graph_ctx:
-                memory_block = graph_ctx
+            if graph_ctx and graph_ctx.strip():
+                memory_blocks.append(_cap(graph_ctx))
         except Exception as graph_err:
             logger.debug("[RLM] Graph context failed (non-fatal): %s", graph_err)
 
-    if not memory_block:
         try:
             from app.services.memory.working_memory import working_memory
 
-            memory_block = working_memory.get_context(ticker)
-        except ImportError:
-            pass
+            wm_ctx = working_memory.get_context(ticker)
+            # get_context always returns header scaffolding; only inject when it
+            # actually carries content (a "### " section = reminders/facts/etc).
+            if wm_ctx and "### " in wm_ctx:
+                memory_blocks.append(_cap(wm_ctx))
+        except Exception as wm_err:
+            logger.debug("[RLM] Working memory failed (non-fatal): %s", wm_err)
 
-    if memory_block:
-        prompt_parts.append(memory_block)
+    if memory_blocks:
+        prompt_parts.append("\n\n".join(memory_blocks))
 
     if ticker:
         from app.services.trading_skills import load_skill_for_ticker

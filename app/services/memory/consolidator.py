@@ -1,8 +1,11 @@
 from app.utils.text_utils import parse_json_response
 import logging
+import json
 import uuid
 import asyncio
 from datetime import datetime, timezone
+
+from app.services.memory.procedural_memory import procedural_memory_store
 
 from app.db.memory_repo import (
     get_unpromoted_observations,
@@ -35,6 +38,7 @@ RULES:
 1. Combine redundant rules/observations.
 2. Contradictions: If new episodic observations heavily contradict an existing canonical memory, you must DEPRECATE the old memory and replace it, or lower its confidence score.
 3. Your output MUST be strictly valid JSON without markdown wrapping or backticks.
+4. PROCEDURAL PATTERNS: If the observations reveal a repeatable setup→action that worked (or should be repeated), emit it under `procedural_patterns` as a trigger→procedure pair. Omit the field entirely if none are evident. Do NOT invent patterns.
 
 OUTPUT FORMAT:
 {
@@ -50,7 +54,13 @@ OUTPUT FORMAT:
        "evidence_count": integer
     }
   ],
-  "deprecated_memory_ids": ["id-1", "id-2"]
+  "deprecated_memory_ids": ["id-1", "id-2"],
+  "procedural_patterns": [
+    {
+       "trigger_pattern": "the recurring condition/setup, e.g. 'RSI < 30 after an earnings gap-down'",
+       "procedure": "the action/playbook that worked, e.g. 'wait for reclaim of prior day high before entering'"
+    }
+  ]
 }
 
 Important notes on output:
@@ -159,6 +169,29 @@ async def run_ticker_consolidation(ticker: str, observations: list | None = None
 
         upsert_canonical_memories(updated_mems)
         deprecate_canonical_memories(deprecated_ids)
+
+        # Procedural patterns (setup→action playbooks) extracted from the same
+        # LLM pass. Deduped by (ticker, trigger_pattern) so re-runs don't pile up.
+        procedural_written = 0
+        for pat in parsed_res.get("procedural_patterns", []) or []:
+            try:
+                trig = (pat.get("trigger_pattern") or "").strip()
+                proc = pat.get("procedure")
+                if isinstance(proc, (dict, list)):
+                    proc = json.dumps(proc)
+                proc = (proc or "").strip() if isinstance(proc, str) else str(proc or "")
+                if trig and proc:
+                    procedural_memory_store.write_procedure_if_new(
+                        ticker, trig, proc, created_by_agent="consolidator"
+                    )
+                    procedural_written += 1
+            except Exception as pe:
+                logger.warning("Procedural write failed for %s: %s", ticker, pe)
+        if procedural_written:
+            logger.info(
+                "Consolidation wrote %d procedural pattern(s) for %s",
+                procedural_written, ticker,
+            )
 
         obs_ids = [o["id"] for o in observations]
         mark_observations_promoted(obs_ids)
