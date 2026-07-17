@@ -245,7 +245,3 @@ async def startup_all(is_shutting_down: Callable[[], bool]):
         await startup_sp500_seed(is_shutting_down)
     except Exception as e:
         logger.error("[startup] SP500 task failed: %s", e, exc_info=True)
-    try:
-        await startup_embedding_backfill(is_shutting_down)
-    except Exception as e:
-        logger.error("[startup] Embedding backfill task failed: %s", e, exc_info=True)

@@ -298,6 +298,15 @@ class BootService:
         except Exception as e:
             logger.warning("[startup] SP500 task failed: %s", e)
 
+        # Index recent news/analysis rows that lack an embedding so the
+        # dense/hybrid retrievers have a corpus to search (idempotent, off-thread).
+        try:
+            from app.services.startup_tasks import startup_embedding_backfill
+
+            await startup_embedding_backfill(lambda: False)
+        except Exception as e:
+            logger.warning("[startup] Embedding backfill task failed: %s", e)
+
         # Recurring full S&P 500 refresh — the seed above only ever runs once
         # (when price_history is empty). Without this, only the active
         # trading cycle's small watchlist gets new price_history rows, so
