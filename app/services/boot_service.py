@@ -262,7 +262,14 @@ class BootService:
 
     @classmethod
     def _start_scheduler(cls):
-        pass
+        # Revive the APScheduler engine. This runs inside the async boot
+        # sequence (BootService.startup is awaited from cycle_main.run_worker),
+        # so the AsyncIOScheduler has a live event loop to attach to. Only the
+        # cycle backend process calls BootService.startup(), so the scheduler
+        # runs in exactly one process — the same one that consumes the
+        # v3_system_commands queue it enqueues into.
+        from app.services.cycle_scheduler import SchedulerService
+        SchedulerService.start()
 
     @classmethod
     def _warmup_models(cls):

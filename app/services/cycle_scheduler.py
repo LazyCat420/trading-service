@@ -13,6 +13,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import HTTPException
 
 from app.services.cycle_control import cycle_control
+from app.services.market_calendar import MarketCalendar
 from app.db.connection import get_db
 from app.services.bot_manager import get_active_bot_id
 from app.trading.paper_trader import check_stop_losses, check_take_profits
@@ -490,54 +491,40 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register morning briefing job: %s", e
                 )
 
-            # ── Enriched Live Feed Reports (7:00 AM, 11:00 AM, 1:00 PM, and 6:00 PM Pacific, Weekdays) ──
+            # ── Morning Trading Cycle (market open: 6:30 AM Pacific = 9:30 AM ET) ──
             try:
-                # 7:00 AM Market Open Report
                 scheduler.add_job(
-                    SchedulerService._run_flash_briefing,
-                    trigger=CronTrigger(hour=7, minute=0, day_of_week="mon-fri", timezone=pt_tz),
-                    args=["market_open"],
-                    id="flash_briefing_7am",
-                    replace_existing=True,
-                    misfire_grace_time=3600,
-                    coalesce=True,
-                )
-                # 11:00 AM Mid-day Report
-                scheduler.add_job(
-                    SchedulerService._run_flash_briefing,
-                    trigger=CronTrigger(hour=11, minute=0, day_of_week="mon-fri", timezone=pt_tz),
-                    args=["mid_day"],
-                    id="flash_briefing_11am",
-                    replace_existing=True,
-                    misfire_grace_time=3600,
-                    coalesce=True,
-                )
-                # 1:00 PM Late-day/Close Report
-                scheduler.add_job(
-                    SchedulerService._run_flash_briefing,
-                    trigger=CronTrigger(hour=13, minute=0, day_of_week="mon-fri", timezone=pt_tz),
-                    args=["market_close_soon"],
-                    id="flash_briefing_1pm",
-                    replace_existing=True,
-                    misfire_grace_time=3600,
-                    coalesce=True,
-                )
-                # 6:00 PM After Hours Report
-                scheduler.add_job(
-                    SchedulerService._run_flash_briefing,
-                    trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri", timezone=pt_tz),
-                    args=["after_hours"],
-                    id="flash_briefing_6pm",
+                    SchedulerService._run_market_open_cycle,
+                    trigger=CronTrigger(hour=6, minute=30, day_of_week="mon-fri", timezone=pt_tz),
+                    id="market_open_cycle",
                     replace_existing=True,
                     misfire_grace_time=3600,
                     coalesce=True,
                 )
                 logger.info(
-                    "[SCHEDULER] Registered enriched daily live feed briefings (7am, 11am, 1pm, 6pm PT)"
+                    "[SCHEDULER] Registered market-open trading cycle (cron: 6:30 AM PT, mon-fri)"
                 )
             except Exception as e:
                 logger.warning(
-                    "[SCHEDULER] Failed to register enriched briefings: %s", e
+                    "[SCHEDULER] Failed to register market-open trading cycle: %s", e
+                )
+
+            # ── Live Feed Reports — every 4 hours; report type auto-selected by time of day ──
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_flash_briefing,
+                    trigger=IntervalTrigger(hours=4, timezone=local_tz),
+                    id="flash_briefing_4h",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info(
+                    "[SCHEDULER] Registered live feed flash briefings (interval: every 4h)"
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register flash briefings: %s", e
                 )
 
 
@@ -591,6 +578,52 @@ class SchedulerService:
         return
 
 
+
+    @staticmethod
+    async def _run_market_open_cycle():
+        """Kick off a full trading cycle at market open (6:30 AM PT / 9:30 ET).
+
+        Enqueues a START_CYCLE command onto v3_system_commands — the same queue
+        cycle_main polls — so this reuses the normal cycle dispatch path. Gated
+        on pause/stop state, market holidays, and an already-running cycle.
+        """
+        if cycle_control.is_paused or cycle_control.is_stopped:
+            logger.info("[SCHEDULER] Skipping market-open cycle: system is PAUSED/STOPPED.")
+            return
+
+        # The cron only fires on weekdays; this additionally skips market holidays.
+        state = MarketCalendar.get_market_state()
+        if state in ("holiday", "closed"):
+            logger.info("[SCHEDULER] Skipping market-open cycle: market state=%s.", state)
+            return
+
+        try:
+            with get_db() as db:
+                state_row = db.execute(
+                    "SELECT status FROM pipeline_state WHERE singleton_id = 'current'"
+                ).fetchone()
+                if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
+                    logger.info(
+                        "[SCHEDULER] Market-open cycle skipped: a cycle is already running (%s).",
+                        state_row[0],
+                    )
+                    return
+
+                payload = {
+                    "tickers": [],
+                    "collect": True,
+                    "analyze": True,
+                    "trade": True,
+                    "dynamic_selection_mode": True,
+                }
+                cmd_id = f"sch-open-{uuid.uuid4().hex[:8]}"
+                db.execute(
+                    "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
+                    [cmd_id, "START_CYCLE", json.dumps(payload)],
+                )
+            logger.info("[SCHEDULER] Market-open trading cycle enqueued (START_CYCLE %s).", cmd_id)
+        except Exception as e:
+            logger.error("[SCHEDULER] Failed to enqueue market-open cycle: %s", e)
 
     @staticmethod
     async def _run_flash_briefing(report_type: str | None = None):
