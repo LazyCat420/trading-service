@@ -210,6 +210,23 @@ async def startup_sp500_seed(is_shutting_down: Callable[[], bool]):
     except Exception as e:
         logger.warning("[startup] SP500 seed failed (non-fatal): %s", e)
 
+async def startup_embedding_backfill(is_shutting_down: Callable[[], bool]):
+    """Background: index recent news/analysis rows lacking an embedding so the
+    dense/hybrid retrievers have a corpus to search. Idempotent; runs off-thread
+    because embedding is blocking HTTP."""
+    if is_shutting_down():
+        return
+    try:
+        from app.services.embedding_ingest import backfill_all
+
+        counts = await asyncio.to_thread(backfill_all, 300, is_shutting_down)
+        logger.info("[startup] Embedding backfill complete: %s", counts)
+    except asyncio.CancelledError:
+        logger.info("[startup] Embedding backfill cancelled.")
+    except Exception as e:
+        logger.warning("[startup] Embedding backfill failed (non-fatal): %s", e)
+
+
 async def startup_all(is_shutting_down: Callable[[], bool]):
     """Run all startup data tasks sequentially.
 
@@ -228,3 +245,7 @@ async def startup_all(is_shutting_down: Callable[[], bool]):
         await startup_sp500_seed(is_shutting_down)
     except Exception as e:
         logger.error("[startup] SP500 task failed: %s", e, exc_info=True)
+    try:
+        await startup_embedding_backfill(is_shutting_down)
+    except Exception as e:
+        logger.error("[startup] Embedding backfill task failed: %s", e, exc_info=True)

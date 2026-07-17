@@ -103,6 +103,18 @@ def sync_desk_to_graph(desk, cycle_id: str) -> None:
                 _emit_event(db, "edge_added", ticker, source_id=ticker, target_id=node_id,
                             relation="HAS_CLAIM", weight=weight)
 
+        # Index the (already natural-language) claim strings into the vector
+        # store so the hybrid retriever can recall this cycle's reasoning later.
+        # Deterministic id per claim node → idempotent across re-syncs. Non-fatal.
+        try:
+            from app.services.embedding_ingest import index_text
+
+            for kind, text, _weight in claims:
+                index_text("graph_claims", _claim_id(ticker, kind, text), ticker, text)
+        except Exception as embed_err:
+            logger.debug("[GraphSync] %s: claim embedding failed (non-fatal): %s",
+                         ticker, embed_err)
+
         logger.info("[GraphSync] %s: %d claims synced to brain graph", ticker, len(claims))
     except Exception as e:
         logger.warning("[GraphSync] %s: graph sync failed (non-fatal): %s", ticker, e)

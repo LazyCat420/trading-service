@@ -13,6 +13,34 @@ def _cap(text: str, max_chars: int = _MEMORY_BLOCK_MAX_CHARS) -> str:
         return text[:max_chars].rstrip() + "\n… [truncated]"
     return text
 
+
+def _build_retrieved_context(ticker: str) -> str:
+    """Semantic recall over the embedded corpus (news / analysis / graph-claims)
+    via the hybrid retriever (dense + BM25 + RRF). Returns an empty string when
+    nothing relevant is found or on any failure — always non-fatal."""
+    try:
+        from app.services.retrieval_hybrid import hybrid_retriever
+
+        chunks = hybrid_retriever.retrieve(
+            ticker, f"{ticker} latest analysis news catalysts outlook", top_k=6
+        )
+    except Exception as e:
+        logger.debug("[RLM] Retrieved context failed (non-fatal): %s", e)
+        return ""
+
+    if not chunks:
+        return ""
+
+    lines = [
+        "========================================",
+        f"## Retrieved Context [{ticker}] (semantic recall)",
+        "========================================",
+    ]
+    for c in chunks:
+        snippet = (c.content or "").strip().replace("\n", " ")[:280]
+        lines.append(f"- [{c.source_table} · {c.score:.2f}] {snippet}")
+    return "\n".join(lines)
+
 # ---------------------------------------------------------------------------
 # Compact system prompt -- custom tools FIRST, llm_query demoted to fallback
 # ---------------------------------------------------------------------------
@@ -117,6 +145,13 @@ def build_rlm_prompt(
 
     if memory_blocks:
         prompt_parts.append("\n\n".join(memory_blocks))
+
+    # Semantic recall over the embedded corpus (Phase 3 — needs embedding_ingest
+    # to have populated news/analysis/graph_claims). Capped + non-fatal.
+    if ticker:
+        retrieved_block = _build_retrieved_context(ticker)
+        if retrieved_block:
+            prompt_parts.append(_cap(retrieved_block))
 
     if ticker:
         from app.services.trading_skills import load_skill_for_ticker
