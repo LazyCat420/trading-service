@@ -476,6 +476,16 @@ async def run_agent(
         _out_preview, "..." if content and len(content) > 1500 else "",
     )
 
+    # The SDK harness returns a plain string; its only structured exhaustion
+    # signal is the sentinel below. Derive stop_reason so agent_runner's
+    # truncation warning (previously dead — this key was never set) fires on
+    # budget exhaustion.
+    stop_reason = (
+        "max_iterations"
+        if content.strip() == "Max iterations reached without a final answer."
+        else "completed"
+    )
+
     return {
         "agent": agent_name,
         "ticker": ticker,
@@ -485,5 +495,6 @@ async def run_agent(
         "tokens_used": tokens,
         "execution_ms": elapsed_ms,
         "loops_used": loops_used,
+        "stop_reason": stop_reason,
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
     }

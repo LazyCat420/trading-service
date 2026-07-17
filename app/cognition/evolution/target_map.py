@@ -56,9 +56,6 @@ PROMPT_MAP: dict[str, str] = {
     # Decision / trading prompts
     "decision_engine": "app/services/pipeline_service.py",
     "trading_phase": "app/services/pipeline_service.py",
-    # RLM
-    "rlm": "app/services/rlm_prompts.py",
-    "rlm_wrapper": "app/services/rlm_wrapper.py",
     # Evolution prompts
     "evolve_designer": "app/agents/prompts/evolve_designer.md",
     "evolve_analyzer": "app/agents/prompts/evolve_analyzer.md",

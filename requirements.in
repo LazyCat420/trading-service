@@ -30,7 +30,6 @@ markdownify>=0.13.0
 
 # RLM (Recursive Language Models — MIT CSAIL)
 # Pinned: monkey-patch in rlm_wrapper.py depends on rlm.core.rlm.get_client
-rlms==0.1.1
 
 # RAG / Embeddings
 rank-bm25==0.2.2

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from app.services.memory.cycle_closer import CycleCloser
-from app.services.rlm.rlm_audit import log_rlm_audit_trail
+from app.services.rlm_audit import log_rlm_audit_trail
 
 def test_cycle_closer_sanitizes_surrogates():
     """Verify that CycleCloser sanitizes surrogates from rationales and texts before DB/memory writes."""
@@ -61,7 +61,7 @@ def test_log_rlm_audit_trail_sanitizes_surrogates():
     
     surrogate_text = "Analysis report with surrogates \ud83d\udcbb"
     
-    with patch("app.services.rlm.rlm_audit.get_db", return_value=mock_db):
+    with patch("app.services.rlm_audit.get_db", return_value=mock_db):
         try:
             log_rlm_audit_trail(
                 cycle_id="test-cycle",

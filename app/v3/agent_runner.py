@@ -180,6 +180,15 @@ async def run_v3_agent(
         if memory_context:
             dynamic_sections.append(f"## Past Cycle Memory\n{memory_context}")
 
+        # Deep decomposed recall — set by the orchestrator just before the
+        # decision_synthesizer dispatch (only on low-confidence verdicts), so
+        # in practice only the synthesizer sees it.
+        deep_retrieval = desk.cycle_metadata.get("deep_retrieval_context", "")
+        if deep_retrieval:
+            dynamic_sections.append(
+                f"## Deep Retrieved Context (conflicting-signal recall)\n{deep_retrieval}"
+            )
+
         previous_desk_context = desk.cycle_metadata.get("previous_desk_context", "")
         if previous_desk_context:
             dynamic_sections.append(
@@ -322,12 +331,15 @@ async def run_v3_agent(
         token_usage = result.get("tokens_used", 0)
         stop_reason = result.get("stop_reason", "completed")
 
-        # Check for token-limit truncation — the LLM may have been cut off mid-JSON
-        if stop_reason in ("max_tokens", "length", "token_limit"):
+        # Budget exhaustion — the harness hit max_iterations without a final
+        # answer, so the "response" is a sentinel, not an artifact. (The old
+        # max_tokens/length check here was dead: run_agent never set those.)
+        if stop_reason == "max_iterations":
             logger.warning(
-                "[V3Runner] %s output was TRUNCATED by %s for %s — "
-                "artifact parsing may fail. Consider increasing max_tokens.",
-                agent_name, stop_reason, desk.ticker,
+                "[V3Runner] %s exhausted its turn budget for %s — "
+                "artifact parsing will fail. Consider raising its "
+                "AGENT_BUDGET_OVERRIDES entry.",
+                agent_name, desk.ticker,
             )
 
         # Parse the artifact from the agent's output

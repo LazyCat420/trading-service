@@ -1037,7 +1037,7 @@ class PipelineService:
             from app.services.bot_manager import get_active_bot_id
             active_bot_id = get_active_bot_id()
 
-            from app.v3.debate_coordinator import run_battle_royale
+            from app.v3.battle_royale import run_battle_royale
             report_written = bool(await run_battle_royale(cycle_id=cycle_id, bot_id=active_bot_id))
 
             # Persist the cycle summary and enqueue post-cycle autoresearch.

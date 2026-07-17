@@ -18,8 +18,6 @@ annotated-doc==0.0.4
     # via typer
 annotated-types==0.7.0
     # via pydantic
-anthropic==0.104.1
-    # via rlms
 anyio==4.13.0
     # via
     #   anthropic
@@ -119,8 +117,6 @@ frozenlist==1.8.0
     #   aiosignal
 google-auth[requests]==2.53.0
     # via google-genai
-google-genai==2.6.0
-    # via rlms
 grpcio==1.80.0
     # via deepeval
 h11==0.16.0
@@ -221,7 +217,6 @@ onnxruntime==1.27.0
 openai==2.38.0
     # via
     #   deepeval
-    #   rlms
 opentelemetry-api==1.42.1
     # via
     #   deepeval
@@ -272,8 +267,6 @@ portalocker==3.2.0
     # via
     #   concurrent-log-handler
     #   deepeval
-portkey-ai==2.3.1
-    # via rlms
 posthog==7.16.1
     # via deepeval
 primp==1.3.1
@@ -342,7 +335,6 @@ pytest==9.0.3
     #   pytest-repeat
     #   pytest-rerunfailures
     #   pytest-xdist
-    #   rlms
 pytest-asyncio==1.4.0
     # via deepeval
 pytest-repeat==0.9.4
@@ -358,7 +350,6 @@ python-dotenv==1.2.2
     #   -r requirements.in
     #   deepeval
     #   pydantic-settings
-    #   rlms
     #   uvicorn
 python-multipart==0.0.20
     # via -r requirements.in
@@ -387,7 +378,6 @@ requests==2.34.2
     #   google-genai
     #   posthog
     #   requests-toolbelt
-    #   rlms
     #   tiktoken
     #   yfinance
 requests-toolbelt==1.0.0
@@ -396,10 +386,7 @@ rich==14.3.4
     # via
     #   deepeval
     #   edgartools
-    #   rlms
     #   typer
-rlms==0.1.1
-    # via -r requirements.in
 rouge-score==0.1.2
     # via -r requirements.in
 scikit-learn==1.8.0

@@ -342,10 +342,6 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except:
             pass
 
-async def run_partial_autoresearch(cycle_id: str, tickers: list[str]) -> dict:
-    logger.info(f"[AUTORESEARCH] Running partial mid-cycle autoresearch for {len(tickers)} tickers.")
-    data_quality = _audit_data_quality(tickers)
-    return {"status": "partial_done", "data_quality": data_quality}
 
 async def _resolve_data_gaps(gaps: list[dict], cycle_id: str) -> dict:
     if not gaps: return {"resolved": 0, "failed": 0, "banned": 0}
