@@ -3317,17 +3317,23 @@ def _fix_eth_cagr_data(conn):
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ticker_watches_active ON ticker_watches (is_active, ticker);"
             )
-            # Rename the legacy `sentinel_events` fire log to `watch_events`
-            # (preserving live rows) before the create-if-missing below handles
-            # fresh installs. Idempotent: only fires when the old table exists and
-            # the new one doesn't.
+            # Migrate the legacy `sentinel_events` fire log to `watch_events`,
+            # preserving live rows. Robust to schema_pg.sql having already created
+            # an (empty) watch_events: rename when the target is absent, else copy
+            # rows across (id-safe) and drop the orphan. Idempotent — a no-op once
+            # sentinel_events is gone.
             cur.execute("""
                 DO $$
                 BEGIN
-                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sentinel_events')
-                       AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'watch_events') THEN
-                        ALTER TABLE sentinel_events RENAME TO watch_events;
-                        ALTER INDEX IF EXISTS idx_sentinel_events_ticker RENAME TO idx_watch_events_ticker;
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sentinel_events') THEN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'watch_events') THEN
+                            ALTER TABLE sentinel_events RENAME TO watch_events;
+                            ALTER INDEX IF EXISTS idx_sentinel_events_ticker RENAME TO idx_watch_events_ticker;
+                        ELSE
+                            INSERT INTO watch_events SELECT * FROM sentinel_events
+                                ON CONFLICT (id) DO NOTHING;
+                            DROP TABLE sentinel_events;
+                        END IF;
                     END IF;
                 END $$;
             """)
