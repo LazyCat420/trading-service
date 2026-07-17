@@ -1138,6 +1138,29 @@ async def run_v3_pipeline(
     finally:
         whiteboard.unsubscribe(whiteboard_subscriber)
 
+    # ═══════════════════════════════════════════════════════════════════
+    # CONTRADICTION SHADOW — observation-only first step of the mesh.
+    # Reuses the previously-dead cognition contradiction detector across the
+    # finished desk and records what a "downgrade-to-HOLD on unresolved
+    # dissent" gate WOULD have done — WITHOUT changing this cycle's decision.
+    # Runs BEFORE save_desk so the report persists on the desk row + cycle log.
+    # ═══════════════════════════════════════════════════════════════════
+    try:
+        from app.v3.contradiction_shadow import compute_contradiction_shadow
+        _shadow = compute_contradiction_shadow(desk)
+        desk.record_agent_telemetry(_shadow)
+        if _shadow.get("contradiction_count"):
+            emit(
+                "analyzing", f"v3_shadow_{ticker}",
+                f"🔀 {ticker}: Contradiction shadow — "
+                f"{_shadow['contradiction_count']} cross-agent conflict(s), "
+                f"would_downgrade={_shadow.get('would_downgrade_to_hold')}",
+                status="ok",
+                data=_shadow,
+            )
+    except Exception as e:
+        logger.warning("[V3] %s: contradiction shadow failed (non-fatal): %s", ticker, e)
+
     try:
         if desk.phase == DeskPhase.INIT and desk.has_artifact("final_decision"):
             # JA triage SKIP: research/debate never ran, so INIT is the
