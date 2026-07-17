@@ -25,6 +25,15 @@ async def run_autoresearch(job_id: str, payload: dict):
     logger.info("Processing pending traces...")
     processed_count = process_pending_traces(limit=50)
     logger.info("Processed %d traces", processed_count)
+
+    # Aggregate trace scores into the tool playbook. This was defined but
+    # never scheduled (its only caller, run_eval_worker, had no scheduler),
+    # so eval_scores was write-only and tool_playbook stayed empty forever.
+    try:
+        from app.autoresearch.eval_engine import update_tool_playbook
+        update_tool_playbook()
+    except Exception as pb_err:
+        logger.warning("update_tool_playbook failed (non-fatal): %s", pb_err)
     
     with get_db() as db:
         db.execute(

@@ -301,11 +301,3 @@ def update_tool_playbook():
             logger.info("[EvalWorker] Updated tool playbook based on latest eval scores.")
         except Exception as e:
             logger.error(f"[EvalWorker] Failed to update tool playbook: {e}")
-
-async def run_eval_worker(limit: int = 50):
-    """Entry point for the scheduled task."""
-    logger.info("[EvalWorker] Starting evaluation sweep...")
-    count = process_pending_traces(limit)
-    if count > 0:
-        update_tool_playbook()
-    logger.info("[EvalWorker] Evaluation sweep complete.")

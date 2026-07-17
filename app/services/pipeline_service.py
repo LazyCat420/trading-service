@@ -831,6 +831,20 @@ class PipelineService:
             cls._state["progress"] = f"Processing {len(tickers)} tickers concurrently"
             cls.save_state()
 
+            # Close the autoresearch directive loop: fetch once per cycle and
+            # hand to every ticker's pipeline (orchestrator filters per ticker).
+            cycle_directives: list[dict] = []
+            try:
+                from app.autoresearch.directives import get_active_directives
+                cycle_directives = get_active_directives()
+                if cycle_directives:
+                    logger.info(
+                        "[PipelineService] Injecting %d active autoresearch directives",
+                        len(cycle_directives),
+                    )
+            except Exception as dir_err:
+                logger.warning("[PipelineService] directive fetch failed (non-fatal): %s", dir_err)
+
             async def _process_ticker(i: int, ticker_name: str):
                 if cls._stop_requested:
                     logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
@@ -838,7 +852,7 @@ class PipelineService:
 
                 agent_locale = cls._state.get("agent_locale", "default")
                 prism_overrides = cls._state.get("prism_overrides", {})
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides)
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives)
 
                 # Execute Trade — gated by the cycle's trade flag and confidence threshold
                 action = result.get("action", "HOLD")

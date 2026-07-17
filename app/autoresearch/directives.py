@@ -11,6 +11,42 @@ from app.db.connection import get_db
 logger = logging.getLogger(__name__)
 
 
+def get_active_directives(limit: int = 10) -> List[dict]:
+    """Fetch active directives for injection into the next cycle's prompts.
+
+    This closes the directive loop: directives were previously written every
+    cycle and only ever touched again by the janitor's DELETE. Severity-first,
+    newest-first.
+    """
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                """SELECT id, directive_type, directive_text, target_ticker, severity
+                   FROM cycle_directives
+                   WHERE status = 'active'
+                   ORDER BY CASE severity
+                            WHEN 'critical' THEN 1
+                            WHEN 'warning' THEN 2
+                            ELSE 3 END,
+                            created_at DESC
+                   LIMIT %s""",
+                [limit],
+            ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "directive_type": r[1],
+                "directive_text": r[2],
+                "target_ticker": r[3],
+                "severity": r[4],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.warning("[DIRECTIVES] fetch failed (non-fatal): %s", e)
+        return []
+
+
 def _generate_directives(reflection: dict, cycle_id: str, triage_audit: dict) -> None:
     directives_created = 0
     recs = reflection.get("recommendations", [])

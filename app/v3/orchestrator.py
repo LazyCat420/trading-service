@@ -135,6 +135,29 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: macro snapshot unavailable (non-fatal): %s", ticker, e)
 
+    # Autoresearch directives — global ones plus any targeting this ticker.
+    # The param existed since V3 launch but was never consumed; directives
+    # were write-only (janitor-deleted). Non-fatal, capped to stay small.
+    if active_directives:
+        try:
+            relevant = [
+                d for d in active_directives
+                if not d.get("target_ticker")
+                or (d.get("target_ticker") or "").upper() == ticker.upper()
+            ][:6]
+            if relevant:
+                lines = [
+                    f"- [{d.get('severity', 'info').upper()}] "
+                    f"({d.get('directive_type', 'note')}) {d.get('directive_text', '')}"
+                    for d in relevant
+                ]
+                desk.cycle_metadata["directives_context"] = "\n".join(lines)[:1500]
+                logger.info("[V3] %s: injected %d autoresearch directives",
+                            ticker, len(relevant))
+        except Exception as dir_err:
+            logger.debug("[V3] %s: directive injection failed (non-fatal): %s",
+                         ticker, dir_err)
+
     # Retrieve past cycle memory for this ticker (non-fatal)
     try:
         from app.services.memory.retriever import MemoryRetriever

@@ -154,6 +154,24 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as je:
             logger.warning("[AUTORESEARCH] Judge evaluation failed (non-fatal): %s", je)
 
+        # Bot-level strategy audit — the consumer of decision_evaluations.
+        # evaluate_strategy/compute_agent_metrics previously had ZERO callers,
+        # so the judge's grades landed nowhere. Persists strategy_evaluations.
+        _update_ar_state(report_id, phase="strategy_eval")
+        try:
+            from app.cognition.evaluation.strategy_auditor import evaluate_strategy
+            strat = await asyncio.wait_for(
+                evaluate_strategy(cycle_id=cycle_id), timeout=120,
+            )
+            if strat:
+                logger.info(
+                    "[AUTORESEARCH] Strategy audit: %d decisions evaluated",
+                    (strat.get("agent_metrics") or {}).get("total_decisions_evaluated", 0)
+                    if isinstance(strat.get("agent_metrics"), dict) else 0,
+                )
+        except Exception as se:
+            logger.warning("[AUTORESEARCH] Strategy audit failed (non-fatal): %s", se)
+
         _update_ar_state(report_id, phase="data_quality")
         data_quality = _audit_data_quality(tickers)
 

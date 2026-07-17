@@ -176,6 +176,13 @@ async def run_v3_agent(
         if portfolio_ctx:
             dynamic_sections.append(f"## Portfolio Context\n{portfolio_ctx}")
 
+        directives_ctx = desk.cycle_metadata.get("directives_context", "")
+        if directives_ctx:
+            dynamic_sections.append(
+                "## Active Directives (from AutoResearch — address if relevant)\n"
+                f"{directives_ctx}"
+            )
+
         memory_context = desk.cycle_metadata.get("memory_context", "")
         if memory_context:
             dynamic_sections.append(f"## Past Cycle Memory\n{memory_context}")
