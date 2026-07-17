@@ -118,6 +118,13 @@ AGENT_ID_MAP: dict[str, str] = {
     "sentiment": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "fundamental": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "v3_worker_fundamental": "CUSTOM_V3_FUNDAMENTAL_ANALYST",
+    # The Delta Analyst is a new local agent with no dedicated Prism persona
+    # (prism-service is read-only). Route it to the registered Junior Analyst
+    # agent — a lightweight generalist; our own SYSTEM_PROMPT + TOOL_WHITELIST
+    # drive the delta behavior. Without this, the fuzzy v3_ path synthesizes
+    # CUSTOM_V3_DELTA_ANALYST which Prism rejects ("Unknown agent"), so every
+    # delta re-look failed → escalated → no energy saved.
+    "v3_delta_analyst": "CUSTOM_V3_JUNIOR_ANALYST",
     "risk": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "fund_flow": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "comparative": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
