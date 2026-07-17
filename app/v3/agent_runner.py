@@ -231,7 +231,11 @@ async def run_v3_agent(
             len(user_prompt) + len(dynamic_block)
             + len(custom_instructions or "") + _USER_SCAFFOLD_CHARS
         )
-        _fits_embedder = (_projected_user_chars // 4) < (_EMBED_TOKEN_LIMIT - 400)
+        # Divisor 3, not 4: embeddinggemma splits digits ~1 char/token, so
+        # quant-heavy text lands at ~2.5-3 chars/token — a 6.5k-char block
+        # that passed the //4 gate could weigh 2,200+ real tokens and blow
+        # the 2048 embed limit anyway.
+        _fits_embedder = (_projected_user_chars // 3) < (_EMBED_TOKEN_LIMIT - 400)
 
         if prompt_split and dynamic_block and _fits_embedder:
             user_prompt += dynamic_block + "\n\n"

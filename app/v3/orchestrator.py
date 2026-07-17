@@ -720,6 +720,10 @@ async def run_v3_pipeline(
                     trade_decision["persona_used"] = board_decision.get(
                         "persona_used", _persona_label(regime)
                     )
+                # Normalize to snake_case: the LLM sometimes emits display case
+                # ("Warren Buffett"), which splits persona telemetry keys.
+                persona = str(trade_decision.get("persona_used") or "")
+                trade_decision["persona_used"] = persona.strip().lower().replace(" ", "_")
                 save_trade_result(ticker, cycle_id, trade_decision)
 
                 try:
@@ -1331,7 +1335,7 @@ def _format_macro_briefing(snapshot: dict) -> str:
     if not snapshot or not isinstance(snapshot, dict):
         return ""
 
-    # Friendly labels for the key instruments; sector ETFs are summarized.
+    # Friendly labels for the key instruments; sector ETFs appended below.
     labels = [
         ("VIX", "VIX (volatility)"),
         ("VIX3M", "VIX 3-Month"),
@@ -1358,6 +1362,25 @@ def _format_macro_briefing(snapshot: dict) -> str:
 
     if not lines:
         return ""
+
+    # Sector ETFs: the snapshot carries XLK/XLF/... but they were silently
+    # dropped, so the regime engine judged sector_momentum/rotation with zero
+    # sector data (and made no tool calls to compensate).
+    try:
+        from app.collectors.market_regime_collector import ETF_TO_SECTOR
+        sector_lines = []
+        for etf, sector in ETF_TO_SECTOR.items():
+            entry = snapshot.get(etf)
+            if isinstance(entry, dict) and entry.get("close") is not None:
+                try:
+                    sector_lines.append(f"- {sector} ({etf}): {float(entry['close']):.2f}")
+                except (TypeError, ValueError):
+                    continue
+        if sector_lines:
+            lines.append("Sector ETFs (close):")
+            lines.extend(sector_lines)
+    except Exception:
+        pass
 
     header = f"Latest close values{f' (as of {as_of})' if as_of else ''}:"
     return header + "\n" + "\n".join(lines)

@@ -337,22 +337,16 @@ async def _run_pitch_agent(
                 eq_name = parts[0].strip()
                 eq_desc = f"Formula: {eq_str}. Claim: {parsed.get('claim', '')}"
 
+            # Honest placeholder: the pitched formula has no executable
+            # implementation yet. The old stub emitted alternating BUY/SELL
+            # signals regardless of the formula, which fabricated identical
+            # "backtest PnL" numbers for every thesis — those anchored the
+            # jury and made the PnL-seeded bracket a coin flip.
             eq_code = f"""
 # Equation: {eq_name}
 # Formula: {eq_str}
-import pandas as pd
-import numpy as np
-
-close = df['close']
-signals = []
-for i in range(10, len(df), 5):
-    action = "BUY" if i % 2 == 0 else "SELL"
-    signals.append({{
-        "date": str(df.index[i].date()) if hasattr(df.index[i], 'date') else str(df.index[i]),
-        "action": action,
-        "price": float(close.iloc[i])
-    }})
-result = {{"signals": signals}}
+# UNBACKTESTABLE: pitched formula not yet compiled to executable signal code.
+result = {{"unbacktestable": True}}
 """
             from app.cognition.debate.equation_library import save_equation, get_equation_by_name
             try:
@@ -504,7 +498,7 @@ JURY_USER_TEMPLATE = """## Ticker: {ticker}
 Claim: {claim_a}
 Equation: {equation_a}
 Result: {result_a}
-Backtest PnL: {pnl_a}%
+Backtest PnL: {pnl_a}
 Attack Points: {attacks_a}
 Defense Points: {defense_a}
 
@@ -512,7 +506,7 @@ Defense Points: {defense_a}
 Claim: {claim_b}
 Equation: {equation_b}
 Result: {result_b}
-Backtest PnL: {pnl_b}%
+Backtest PnL: {pnl_b}
 Attack Points: {attacks_b}
 Defense Points: {defense_b}
 
@@ -539,20 +533,27 @@ async def _run_jury_scoring(
         _build_evidence_header(packet), _SHARED_EVIDENCE_CHARS, "jury-evidence",
     )
 
+    def _fmt_pnl(thesis: dict) -> str:
+        pnl = thesis.get("backtest_pnl")
+        if isinstance(pnl, (int, float)) and not isinstance(pnl, bool):
+            return f"{pnl:.2f}%"
+        # No executable backtest — never show a fabricated number to the jury.
+        return "N/A (thesis not backtested — weigh the equation logic and evidence instead)"
+
     user_prompt = JURY_USER_TEMPLATE.format(
         ticker=ticker,
         persona_a=thesis_a.get("persona", "A"),
         claim_a=thesis_a.get("claim", ""),
         equation_a=thesis_a.get("equation", ""),
         result_a=thesis_a.get("result", ""),
-        pnl_a=thesis_a.get("backtest_pnl", 0),
+        pnl_a=_fmt_pnl(thesis_a),
         attacks_a=json.dumps(thesis_a.get("attack_points", []))[:500],
         defense_a=json.dumps(thesis_a.get("defense_points", []))[:500],
         persona_b=thesis_b.get("persona", "B"),
         claim_b=thesis_b.get("claim", ""),
         equation_b=thesis_b.get("equation", ""),
         result_b=thesis_b.get("result", ""),
-        pnl_b=thesis_b.get("backtest_pnl", 0),
+        pnl_b=_fmt_pnl(thesis_b),
         attacks_b=json.dumps(thesis_b.get("attack_points", []))[:500],
         defense_b=json.dumps(thesis_b.get("defense_points", []))[:500],
         evidence_data=evidence_header,
@@ -858,7 +859,12 @@ async def run_tournament_debate(
             f"(claim: {winner.get('claim', '')[:100]}). "
             f"Jury votes A:{votes.get('A', 0)}/B:{votes.get('B', 0)}, "
             f"score: {avg_score}/10. "
-            f"Backtest PnL: {winner.get('backtest_pnl', 0):.1f}%."
+            + (
+                f"Backtest PnL: {winner['backtest_pnl']:.1f}%."
+                if isinstance(winner.get("backtest_pnl"), (int, float))
+                and not isinstance(winner.get("backtest_pnl"), bool)
+                else "Backtest PnL: N/A (not backtested)."
+            )
         )
         if risk_flags:
             flaggers = ", ".join(f.get("juror", "?") for f in risk_flags)

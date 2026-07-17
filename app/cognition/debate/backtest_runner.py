@@ -54,6 +54,11 @@ def run_backtest_for_equation(
 
     raw_result = exec_result.get("result", {})
 
+    # Equations saved from pitches without executable code declare themselves
+    # unbacktestable — report that honestly instead of fabricating metrics.
+    if isinstance(raw_result, dict) and raw_result.get("unbacktestable"):
+        return {"unbacktestable": True, "equation": equation_name}
+
     # If the equation already returns a full backtest summary, use it
     if isinstance(raw_result, dict) and "total_trades" in raw_result:
         _update_stats(equation_name, raw_result)
@@ -165,6 +170,18 @@ def filter_pitches_by_backtest(
 
         params = pitch.get("parameters", {})
         result = run_backtest_for_equation(eq_name, ticker, params)
+
+        if result.get("unbacktestable"):
+            # No executable code — the thesis can't be PnL-gated, but
+            # eliminating it on missing data would be worse than passing it
+            # through with an honest "no backtest" marker (backtest_pnl=None;
+            # seeding treats None as 0, the jury sees N/A).
+            pitch["backtest_results"] = {"note": "no executable code — not backtested"}
+            pitch["backtest_pnl"] = None
+            pitch["backtest_sharpe"] = None
+            survivors.append(pitch)
+            logger.info("[BACKTEST] '%s' passed through unbacktested (no executable code)", eq_name)
+            continue
 
         if "error" in result:
             logger.info(

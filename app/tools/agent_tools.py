@@ -46,6 +46,21 @@ async def request_peer_analysis(ticker: str, target_agent: str, query: str) -> s
         if section_data and isinstance(section_data.get("content"), dict):
             tasks = section_data["content"].get("tasks", [])
         
+        # Dedup: agents (and the proxy's tool-result cache misses) re-file the
+        # same request within a cycle — an identical pending/running task means
+        # the work is already queued, so acknowledge instead of double-queuing.
+        for t in tasks:
+            if (
+                isinstance(t, dict)
+                and t.get("target_agent") == target_agent
+                and (t.get("query") or "").strip() == query.strip()
+                and t.get("status") in ("pending", "running")
+            ):
+                return json.dumps({
+                    "status": "success",
+                    "message": f"Identical task for {target_agent} is already {t.get('status')} — not re-queued.",
+                })
+
         # Append the new task
         new_task = {
             "target_agent": target_agent,

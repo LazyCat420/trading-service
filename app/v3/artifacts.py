@@ -483,6 +483,29 @@ FINAL_DECISION_SCHEMA: dict = {
             "type": "string",
             "description": "Why the board is trading through the jury veto",
         },
+        # Persona differentiator fields — optional, persona-specific. Declared
+        # here so schema-driven consumers can see them (they were previously
+        # emitted by the persona prompts but invisible to the schema).
+        "signal_basis": {
+            "type": "string",
+            "description": "jim_simons: the statistical signal driving the decision",
+        },
+        "moat_assessment": {
+            "type": "string",
+            "description": "warren_buffett: competitive moat evaluation",
+        },
+        "intrinsic_value_estimate": {
+            "type": "string",
+            "description": "warren_buffett: estimated intrinsic value vs price",
+        },
+        "mispricing_basis": {
+            "type": "string",
+            "description": "jane_street: why the market is mispricing this asset",
+        },
+        "edge_type": {
+            "type": "string",
+            "description": "jane_street: informational / structural / behavioral edge",
+        },
     },
 }
 

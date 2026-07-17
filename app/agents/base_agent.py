@@ -427,6 +427,10 @@ async def run_agent(
                 session=session,
                 max_iterations=max_turns,
                 on_tool_result=_on_tool_result if enable_tools else None,
+                # Non-interactive pipeline: suppress Qwen <think> blocks (real
+                # prism honors an explicit thinkingEnabled=false per request;
+                # registration-level thinkingDefault is ignored there).
+                thinking_enabled=False,
             )
 
             t0 = time.time()

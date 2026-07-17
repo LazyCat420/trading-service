@@ -228,6 +228,7 @@ async def call_prism_agent(
                 project=project or settings.PROJECT_NAME,
                 max_iterations=max_iter,
                 provider=provider,
+                thinking_enabled=False,
             )
         except Exception as e:
             if "404" in str(e) or "not exist" in str(e).lower() or "not found" in str(e).lower():
@@ -244,6 +245,7 @@ async def call_prism_agent(
                     project=project or settings.PROJECT_NAME,
                     max_iterations=max_iter,
                     provider=provider,
+                    thinking_enabled=False,
                 )
             else:
                 raise e
@@ -495,6 +497,7 @@ class PrismLLMShim:
                 project=settings.PROJECT_NAME,
                 max_iterations=max_iter,
                 provider=provider,
+                thinking_enabled=False,
             )
 
             try:
