@@ -225,9 +225,26 @@ def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycl
     and material-news. Best-effort — never raises into the cycle."""
     try:
         ticker = (ticker or "").upper().strip()
-        price = (snapshot or {}).get("price")
-        stop_loss = result.get("stop_loss") or (result.get("mitigation") or {}).get("stop_loss")
-        target = result.get("target_price") or result.get("target")
+        # The V3 verdict nests the sizing/levels under `estimate`
+        # (estimate.stop_loss / estimate.take_profit), NOT at the top level — the
+        # decision synthesizer writes them there and trade_result_saver reads the
+        # same place. Keep the legacy top-level / mitigation fallbacks so a
+        # differently-shaped result still arms. Without the estimate lookup the
+        # price invalidation/target triggers silently never armed (only news +
+        # staleness did), gutting the whole "wake me when it hits the level" point.
+        estimate = result.get("estimate") or {}
+        price = (snapshot or {}).get("price") or estimate.get("entry_price")
+        stop_loss = (
+            result.get("stop_loss")
+            or estimate.get("stop_loss")
+            or (result.get("mitigation") or {}).get("stop_loss")
+        )
+        target = (
+            result.get("target_price")
+            or result.get("target")
+            or result.get("take_profit")
+            or estimate.get("take_profit")
+        )
         action = (result.get("action") or "HOLD").upper()
 
         triggers: list = []
