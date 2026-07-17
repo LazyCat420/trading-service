@@ -11,7 +11,11 @@ services:
       # DATABASE_URL and API_SERVER_KEY come from .env (synced from
       # vault-service by deploy.sh) — never hardcode secrets here.
       - TZ=America/Los_Angeles
-      - SCRAPER_SERVICE_URL=http://10.0.0.16:8001
+      # Absorbed scraper-service (formerly scraper-service:8001) now runs in-process
+      # under app.scraper. These two flags carry over its runtime config; the
+      # finnews/Reddit/Twitter API keys already arrive via the master vault .env.
+      - DISABLE_DDG_SEARCH=true
+      - YOUTUBE_COOKIES_FILE=/app/cookies.txt
       - USE_LAZY_TOOL_SERVICE=true
       - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:5591
       - PIPELINE_VERSION=v3
@@ -24,6 +28,9 @@ services:
       - ./.agents:/.agents
       - ../notes:/app/notes
       - ./data/charts:/app/data/charts
+      # Absorbed scraper: YouTube cookies for yt-dlp (/stream + youtube collector).
+      # deploy.sh touches this remotely so Docker doesn't create a dir if absent.
+      - ./cookies.txt:/app/cookies.txt:ro
     ports:
       - "3031:8080"
     healthcheck:

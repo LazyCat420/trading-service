@@ -37,6 +37,15 @@ RUN mkdir -p /app/logs && chown -R appusr:appgrp /app/logs
 COPY --from=deps /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# ── Playwright / Chromium (absorbed scraper-service engines) ─────────────────
+# The folded-in scraper (app.scraper: playwright/crawl4ai/vision engines) drives
+# headless Chromium. Install the browser's OS dependencies as root, then bake the
+# browser binaries into appusr's cache below (after USER appusr). Chromium binary
+# comes from `playwright install`, NOT pip.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── Copy backend source ──────────────────────────────────────
 COPY app/ ./app/
 COPY scripts/ ./scripts/
@@ -55,6 +64,10 @@ ENV PYTHONPATH="/app"
 ENV SHARED_CODEBASE_PATH="/app"
 
 USER appusr
+
+# Bake Playwright Chromium into appusr's cache (~/.cache/ms-playwright) so the
+# absorbed scraper engines have a browser at runtime as the non-root user.
+RUN playwright install chromium
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=120s --retries=3 \
   CMD wget --no-verbose --tries=1 --output-document=/dev/null http://localhost:8080/health || exit 1

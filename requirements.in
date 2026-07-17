@@ -74,3 +74,17 @@ chardet==5.2.0
 piper-tts>=1.2.0
 onnxruntime>=1.15.0
 cloudscraper>=1.2.71
+
+# ── Absorbed scraper-service (in-process scraping engines/collectors) ──
+# Formerly the standalone scraper-service:8001. Engines: playwright/crawl4ai/
+# vision; collectors: reddit/youtube/news/forums/etc. Chromium is installed in
+# the Dockerfile (playwright install). NOTE: after editing this file, run
+# `pip-compile --output-file=requirements.txt requirements.in` to relock.
+playwright>=1.49
+playwright-stealth>=2.0.0
+crawl4ai>=0.8.5
+trafilatura>=1.6.0
+feedparser==6.0.12
+yt-dlp==2026.3.17
+youtube-transcript-api==1.2.4
+twscrape>=0.12.0

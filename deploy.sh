@@ -41,7 +41,18 @@ EXTRA_SSH_SYNC() {
   ssh "$DEPLOY_SSH_HOST" "mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes' 2>/dev/null || sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes'"
   ssh "$DEPLOY_SSH_HOST" "sudo chown -R 1001:1001 '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes'"
   ssh "$DEPLOY_SSH_HOST" "sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/data/charts' && sudo chmod 777 '${DEPLOY_COMPOSE_DIR}/data/charts'"
-  
+
+  # Absorbed scraper-service: ensure cookies.txt exists as a FILE so the compose
+  # bind mount (./cookies.txt:/app/cookies.txt) doesn't get created as a directory.
+  # If a real (non-empty) local cookies.txt is present, sync it; else leave empty
+  # (yt-dlp works without cookies except for age-restricted videos).
+  info "Ensuring cookies.txt exists on remote host..."
+  ssh "$DEPLOY_SSH_HOST" "touch '${DEPLOY_COMPOSE_DIR}/cookies.txt'"
+  if [ -s "${SCRIPT_DIR}/cookies.txt" ]; then
+    cat "${SCRIPT_DIR}/cookies.txt" | ssh "$DEPLOY_SSH_HOST" "cat > '${DEPLOY_COMPOSE_DIR}/cookies.txt'"
+    ok "cookies.txt synced"
+  fi
+
   info "Syncing lazycat-sdk to remote host..."
   tar --exclude='lazycat-sdk/.venv' --exclude='lazycat-sdk/__pycache__' -czC "${SCRIPT_DIR}/../" lazycat-sdk | ssh "$DEPLOY_SSH_HOST" "sudo mkdir -p '${DEPLOY_COMPOSE_ROOT}/lazycat-sdk' && sudo tar -xzC '${DEPLOY_COMPOSE_ROOT}'"
 
