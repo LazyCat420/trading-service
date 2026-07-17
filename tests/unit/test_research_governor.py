@@ -1,20 +1,16 @@
 """
 Research Governor Tests — anti-doom-loop guardrails for self-scheduled research.
 
-Tests the pure-logic gates (no DB required):
-  1. schedule_research rejects a vague/missing reason
-  2. schedule_research rejects an invalid `when`
-  3. schedule_research rejects a past datetime
-  4. schedule_research rejects a datetime beyond the TTL horizon
-  5. _clean_tickers normalizes and dedupes
-  6. `when` window keywords map to policy schedules (DB mocked)
-  7. governor caps reject when the active-schedule budget is spent (DB mocked)
+schedule_research is now async and only creates `once` schedules sniped to a real
+dated event (earnings auto-resolved, or an explicit ISO datetime). Coarse market
+windows and `monitor` are retired (→ Sentinel set_watch).
 """
 import os
 import sys
 import json
+import asyncio
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -22,40 +18,63 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from app.services import research_governor as gov
 
 
+def _run(coro):
+    return asyncio.run(coro)
+
+
 def test_vague_reason_rejected():
-    res = gov.schedule_research(["AAPL"], "next_open", "check it")
+    res = _run(gov.schedule_research(["AAPL"], when="", reason="check it"))
     assert res["status"] == "rejected"
     assert "reason is required" in res["reason"]
 
 
-def test_invalid_when_rejected():
-    res = gov.schedule_research(["AAPL"], "someday", "earnings follow-up on Q3 guidance")
+def test_coarse_window_rejected():
+    # Coarse market windows are retired → redirect to set_watch.
+    res = _run(gov.schedule_research(["AAPL"], when="next_open", reason="earnings follow-up on Q3 guidance"))
     assert res["status"] == "rejected"
-    assert "must be one of" in res["reason"]
+    assert "retired" in res["reason"].lower()
+
+
+def test_monitor_intent_rejected():
+    res = _run(gov.schedule_research(
+        ["AAPL"], when="", reason="keep monitoring this name", review_intent="monitor"))
+    assert res["status"] == "rejected"
+    assert "set_watch" in res["reason"]
+
+
+def test_invalid_when_rejected():
+    res = _run(gov.schedule_research(["AAPL"], when="someday", reason="earnings follow-up on Q3 guidance"))
+    assert res["status"] == "rejected"
+    assert "ISO-8601" in res["reason"]
 
 
 def test_past_datetime_rejected():
     past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    res = gov.schedule_research(["AAPL"], past, "earnings follow-up on Q3 guidance")
+    res = _run(gov.schedule_research(["AAPL"], when=past, reason="earnings follow-up on Q3 guidance"))
     assert res["status"] == "rejected"
     assert "in the past" in res["reason"]
 
 
 def test_far_future_rejected():
-    future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-    res = gov.schedule_research(["AAPL"], future, "earnings follow-up on Q3 guidance")
+    future = (datetime.now(timezone.utc) + timedelta(days=gov.ONCE_MAX_DAYS + 5)).isoformat()
+    res = _run(gov.schedule_research(["AAPL"], when=future, reason="earnings follow-up on Q3 guidance"))
     assert res["status"] == "rejected"
     assert "days out" in res["reason"]
 
 
+def test_multi_ticker_auto_resolve_rejected():
+    res = _run(gov.schedule_research(["AAPL", "MSFT"], when="", reason="earnings for both names soon"))
+    assert res["status"] == "rejected"
+    assert "single ticker" in res["reason"].lower()
+
+
 def test_clean_tickers():
-    # Dedupes, uppercases, and drops junk (None, "", non-strings)
     out = gov._clean_tickers([" aapl", "AAPL", "msft ", "", None, 42])
     assert out == ["AAPL", "MSFT"]
 
 
 def _mock_db(active_count=0, daily_count=0, queued_rows=None, recent_rows=None):
-    """Build a MagicMock get_db context yielding scripted query results."""
+    """MagicMock get_db context yielding scripted query results."""
     db = MagicMock()
 
     def execute(sql, params=None):
@@ -87,27 +106,38 @@ def _mock_db(active_count=0, daily_count=0, queued_rows=None, recent_rows=None):
     return ctx, db
 
 
-def test_window_creates_policy_schedule():
+def test_earnings_autoresolve_creates_once():
+    # `when` omitted → governor resolves the ticker's earnings into a precise `once`.
+    run_at = datetime.now(timezone.utc) + timedelta(days=6)
     ctx, db = _mock_db()
-    with patch.object(gov, "get_db", return_value=ctx):
-        res = gov.schedule_research(
-            ["NVDA"], "next_pre_market", "Post-earnings drift check after Q2 beat"
-        )
+    with patch.object(gov, "get_db", return_value=ctx), \
+         patch.object(gov, "_resolve_earnings_run_at", new=AsyncMock(return_value=run_at)):
+        res = _run(gov.schedule_research(["NVDA"], when="", reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "scheduled"
-    assert res["type"] == "policy"
-    assert res["fires"] == "next_pre_market"
-    # Row + REFRESH_SCHEDULE command both written
+    assert res["type"] == "once"
     sqls = [" ".join(c.args[0].split()) for c in db.execute.call_args_list]
     assert any("INSERT INTO cycle_schedules" in s for s in sqls)
+    assert any("'once'" in s for s in sqls)
     assert any("INSERT INTO system_commands" in s for s in sqls)
+
+
+def test_no_earnings_found_rejected():
+    ctx, _ = _mock_db()
+    with patch.object(gov, "get_db", return_value=ctx), \
+         patch.object(gov, "_resolve_earnings_run_at", new=AsyncMock(return_value=None)):
+        res = _run(gov.schedule_research(["NVDA"], when="", reason="Post-earnings drift check after Q2 beat"))
+    assert res["status"] == "rejected"
+    assert "No upcoming earnings" in res["reason"]
+
+
+def _future_iso(days=5):
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
 
 
 def test_active_cap_rejects():
     ctx, _ = _mock_db(active_count=gov.MAX_ACTIVE_BOT_SCHEDULES)
     with patch.object(gov, "get_db", return_value=ctx):
-        res = gov.schedule_research(
-            ["NVDA"], "next_open", "Post-earnings drift check after Q2 beat"
-        )
+        res = _run(gov.schedule_research(["NVDA"], when=_future_iso(), reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "rejected"
     assert "already active" in res["reason"]
 
@@ -115,9 +145,7 @@ def test_active_cap_rejects():
 def test_dedupe_rejects_queued_ticker():
     ctx, _ = _mock_db(queued_rows=[(json.dumps(["NVDA"]),)])
     with patch.object(gov, "get_db", return_value=ctx):
-        res = gov.schedule_research(
-            ["NVDA"], "next_open", "Post-earnings drift check after Q2 beat"
-        )
+        res = _run(gov.schedule_research(["NVDA"], when=_future_iso(), reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "rejected"
     assert "already queued" in res["reason"]
 
@@ -125,9 +153,7 @@ def test_dedupe_rejects_queued_ticker():
 def test_cooldown_rejects_recent_ticker():
     ctx, _ = _mock_db(recent_rows=[("NVDA",)])
     with patch.object(gov, "get_db", return_value=ctx):
-        res = gov.schedule_research(
-            ["NVDA"], "next_open", "Post-earnings drift check after Q2 beat"
-        )
+        res = _run(gov.schedule_research(["NVDA"], when=_future_iso(), reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "rejected"
     assert "Cooldown" in res["reason"]
 
@@ -135,8 +161,7 @@ def test_cooldown_rejects_recent_ticker():
 def test_critical_bypasses_cooldown():
     ctx, _ = _mock_db(recent_rows=[("NVDA",)])
     with patch.object(gov, "get_db", return_value=ctx):
-        res = gov.schedule_research(
-            ["NVDA"], "next_open", "CEO resignation just hit the wire — reassess immediately",
-            urgency="critical",
-        )
+        res = _run(gov.schedule_research(
+            ["NVDA"], when=_future_iso(),
+            reason="CEO resignation just hit the wire — reassess immediately", urgency="critical"))
     assert res["status"] == "scheduled"

@@ -269,7 +269,7 @@ class SchedulerService:
                 attempts = (s["run_count"] or 0) + 1
                 if run_status == "ok":
                     db.execute(
-                        "UPDATE cycle_schedules SET is_active = FALSE, updated_at = %s WHERE id = %s",
+                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, updated_at = %s WHERE id = %s",
                         [now.isoformat(), schedule_id],
                     )
                     logger.info(
@@ -278,7 +278,7 @@ class SchedulerService:
                     )
                 elif attempts >= 5:
                     db.execute(
-                        "UPDATE cycle_schedules SET is_active = FALSE, last_status = 'gave_up', updated_at = %s WHERE id = %s",
+                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, last_status = 'gave_up', updated_at = %s WHERE id = %s",
                         [now.isoformat(), schedule_id],
                     )
                     logger.warning(
@@ -355,12 +355,23 @@ class SchedulerService:
                 s = dict(zip(cols, row))
                 if SchedulerService._expire_if_past_ttl(s, db):
                     continue
+                # Retired: coarse-window 'policy' schedules are superseded by
+                # Sentinel (set_watch). Deactivate any lingering rows instead of
+                # arming them.
+                if s["schedule_type"] == "policy":
+                    db.execute(
+                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, "
+                        "last_status = 'retired_policy' WHERE id = %s",
+                        [s["id"]],
+                    )
+                    logger.info("[SCHEDULER] Retired policy schedule %s — deactivated.", s["id"])
+                    continue
                 # A DateTrigger-based schedule that already ran successfully
                 # must not be re-armed at boot (pre-fix rows may still be
                 # active with a spent trigger — see one-shot semantics).
                 if s["schedule_type"] in ("once", "policy") and s["last_status"] == "ok" and s["last_run_at"]:
                     db.execute(
-                        "UPDATE cycle_schedules SET is_active = FALSE WHERE id = %s",
+                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL WHERE id = %s",
                         [s["id"]],
                     )
                     logger.info(
@@ -390,7 +401,7 @@ class SchedulerService:
             expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
         if expiry <= now_naive:
             db.execute(
-                "UPDATE cycle_schedules SET is_active = FALSE, last_status = 'expired' WHERE id = %s",
+                "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, last_status = 'expired' WHERE id = %s",
                 [s["id"]],
             )
             try:

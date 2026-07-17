@@ -354,10 +354,10 @@ CREATE TABLE IF NOT EXISTS cycle_schedules (
     cron_expression TEXT,
     interval_hours  DOUBLE PRECISION,
     run_at          TIMESTAMPTZ,           -- 'once' only: exact fire time (event sniping)
-    schedule_scope  TEXT,                  -- portfolio, positions, watchlist_subset, sector, single_ticker
-    review_intent   TEXT,                  -- monitor, reassess, trade_window, event_followup, weekly_review, monthly_review
+    schedule_scope  TEXT,                  -- single_ticker, watchlist_subset (bot); portfolio/positions/sector legacy
+    review_intent   TEXT,                  -- reassess, trade_window, event_followup (monitoring now = Sentinel set_watch)
     urgency         TEXT,                  -- low, medium, high, critical
-    earliest_window TEXT,                  -- next_pre_market, next_open, midday, pre_close, post_close, next_trading_day, next_week
+    earliest_window TEXT,                  -- LEGACY/retired coarse windows; bot 'once' schedules use run_at + 'exact_time'
     expiry_at       TIMESTAMP,
     reason_codes    TEXT,                  -- JSONB array
     confidence      INTEGER,

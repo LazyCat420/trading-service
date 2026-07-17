@@ -210,6 +210,9 @@ class PipelineService:
             "benchmark_group", "discovered_tickers",
             # Scheduler / research-governor provenance (informational)
             "dynamic_selection_mode", "research_request", "research_reason",
+            # Sentinel wake provenance (informational; wake context flows via
+            # sentinel_events, not the payload) + stop-loss trigger tag.
+            "sentinel_wake", "sentinel_trigger", "trigger_type",
         }
         _unknown = set(kwargs) - _known_keys
         if _unknown:

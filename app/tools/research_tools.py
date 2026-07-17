@@ -68,13 +68,15 @@ async def request_research_now(tickers: list, reason: str, urgency: str = "mediu
 @registry.register(
     name="schedule_research",
     description=(
-        "Schedule a ONE-SHOT research cycle (collect + analyze, NEVER trades) for up to 5 tickers at a "
-        "specific time — snipe research to land right when new information exists, not on a dumb loop. "
-        "`when` is either a market window ('next_pre_market' | 'next_open' | 'midday' | 'pre_close') or an "
-        "ISO-8601 UTC datetime (e.g. '2026-07-21T21:30:00Z' = 30 min after an after-close earnings report; "
-        "use get_upcoming_events to find event dates). The schedule fires ONCE, then auto-deactivates; it "
-        "expires unrun after 7 days. Governor enforces: max 5 active, 10 creations/day, per-ticker dedupe, "
-        "4h research cooldown. Only the best ideas get scheduled — a vague reason is rejected."
+        "Schedule a ONE-SHOT research cycle (collect + analyze, NEVER trades) sniped to a specific DATED "
+        "event. Use this ONLY for a known calendar catalyst (earnings, a Fed decision). For ongoing "
+        "'keep an eye on this ticker' monitoring, DO NOT schedule — use set_watch instead (it watches "
+        "price/news/etc. in cheap background code and wakes a cycle only when a condition trips). "
+        "`when`: OMIT it to auto-snipe the ticker's next earnings (single ticker; the governor resolves "
+        "the real date/time for you), OR pass an exact ISO-8601 UTC datetime (e.g. '2026-07-21T21:30:00Z') "
+        "for a non-earnings event. Fires ONCE then auto-deactivates. Coarse market windows and "
+        "'monitor' are rejected — use set_watch. Governor enforces max 5 active, 10/day, per-ticker "
+        "dedupe, 4h cooldown; a vague reason is rejected."
     ),
     parameters={
         "type": "object",
@@ -82,11 +84,11 @@ async def request_research_now(tickers: list, reason: str, urgency: str = "mediu
             "tickers": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "1-5 ticker symbols this research targets.",
+                "description": "1-5 tickers. Omit `when` only for a SINGLE ticker (earnings auto-snipe).",
             },
             "when": {
                 "type": "string",
-                "description": "'next_pre_market' | 'next_open' | 'midday' | 'pre_close', or ISO-8601 UTC datetime ≤7 days out.",
+                "description": "Omit to auto-snipe next earnings (single ticker), or an ISO-8601 UTC datetime for a dated event.",
             },
             "reason": {
                 "type": "string",
@@ -94,8 +96,8 @@ async def request_research_now(tickers: list, reason: str, urgency: str = "mediu
             },
             "review_intent": {
                 "type": "string",
-                "enum": ["monitor", "reassess", "trade_window", "event_followup"],
-                "description": "Why this research exists. Default event_followup.",
+                "enum": ["reassess", "trade_window", "event_followup"],
+                "description": "Why this research exists. Default event_followup. (For monitoring, use set_watch.)",
             },
             "urgency": {
                 "type": "string",
@@ -107,7 +109,7 @@ async def request_research_now(tickers: list, reason: str, urgency: str = "mediu
                 "description": "Short catalyst codes, e.g. ['earnings_2026-07-21', 'guidance_cut'].",
             },
         },
-        "required": ["tickers", "when", "reason"],
+        "required": ["tickers", "reason"],
     },
     tier=1,
     source="research_scheduling",
@@ -115,8 +117,8 @@ async def request_research_now(tickers: list, reason: str, urgency: str = "mediu
 )
 async def schedule_research(
     tickers: list,
-    when: str,
-    reason: str,
+    when: str | None = None,
+    reason: str = "",
     review_intent: str = "event_followup",
     urgency: str = "medium",
     reason_codes: list | None = None,
@@ -125,7 +127,7 @@ async def schedule_research(
     agent = current_agent_name()
     logger.info("[ResearchTools] schedule_research by %s: %s when=%s (%s)", agent, tickers, when, reason)
     try:
-        result = _go(
+        result = await _go(
             tickers, when, reason,
             review_intent=review_intent, urgency=urgency, reason_codes=reason_codes,
         )

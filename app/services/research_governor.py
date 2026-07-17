@@ -34,7 +34,16 @@ MAX_PENDING_RESEARCH_NOW = 2     # queued immediate research cycles
 TICKER_COOLDOWN_HOURS = 4        # fresh analysis_results row blocks re-research
 DEFAULT_TTL_DAYS = 7             # every bot schedule expires
 
-VALID_WINDOWS = ("next_pre_market", "next_open", "midday", "pre_close")
+# Coarse market-window schedules are RETIRED — Sentinel (set_watch) owns ongoing,
+# condition-driven monitoring now. Any of these as `when` is rejected and the
+# agent is redirected to set_watch.
+RETIRED_WINDOWS = (
+    "next_pre_market", "next_open", "midday", "pre_close",
+    "post_close", "next_trading_day", "next_week",
+)
+# `once` earnings-snipes can legitimately be weeks out; allow a longer horizon
+# than the default 7-day research TTL.
+ONCE_MAX_DAYS = 45
 
 
 def _clean_tickers(tickers: list) -> list[str]:
@@ -162,19 +171,37 @@ def request_research_now(tickers: list, reason: str, urgency: str = "medium") ->
     }
 
 
-def schedule_research(
+async def _resolve_earnings_run_at(ticker: str):
+    """Resolve a ticker's next earnings into a precise UTC snipe time, or None."""
+    try:
+        from app.collectors.finnhub_collector import collect_earnings_calendar
+        from app.services.event_timing import next_earnings_run_at
+        events = await collect_earnings_calendar(ticker)
+        run_at, _event = next_earnings_run_at(events)
+        return run_at
+    except Exception as e:
+        logger.warning("[GOVERNOR] earnings resolve failed for %s: %s", ticker, e)
+        return None
+
+
+async def schedule_research(
     tickers: list,
-    when: str,
-    reason: str,
+    when: str | None = None,
+    reason: str = "",
     review_intent: str = "event_followup",
     urgency: str = "medium",
     reason_codes: list | None = None,
 ) -> dict:
-    """Create a one-shot scheduled research cycle.
+    """Create a one-shot (`once`) scheduled research cycle sniped to a real event.
 
-    `when` is either a market window (next_pre_market | next_open | midday |
-    pre_close) or an ISO-8601 datetime (UTC assumed if naive) for sniping a
-    specific event, e.g. 30 minutes after an earnings release.
+    Coarse market windows and recurring "monitor" schedules are RETIRED — those are
+    now handled by `set_watch` (Sentinel), which monitors a ticker by condition in
+    cheap background code and only wakes the agent on a trip.
+
+    `when`:
+      * omitted → the governor auto-resolves the ticker's next earnings datetime
+        (single ticker only) and snipes analysis to land right after the report.
+      * an ISO-8601 UTC datetime → snipe at that exact instant (e.g. a Fed decision).
     """
     tickers = _clean_tickers(tickers)
     reason = (reason or "").strip()
@@ -184,47 +211,72 @@ def schedule_research(
             "reason": "A specific research reason is required (what event/catalyst, what question to answer).",
         }
 
-    # Parse `when` into either a policy window or an exact run_at.
     when = (when or "").strip()
-    schedule_type, earliest_window, run_at = None, None, None
-    if when in VALID_WINDOWS:
-        schedule_type = "policy"
-        earliest_window = when
-    else:
+    now = datetime.now(timezone.utc)
+
+    # Retired paths → redirect to Sentinel.
+    if when.lower() in RETIRED_WINDOWS:
+        return {
+            "status": "rejected",
+            "reason": f"Coarse market-window schedules ({when!r}) are retired. To keep watching a ticker, "
+                      "use set_watch (price/pct/rsi/volume/news/staleness conditions) — it monitors in "
+                      "cheap background code and wakes a cycle only on a trip. For a known dated event, "
+                      "pass an exact ISO datetime or omit `when` to auto-snipe the next earnings.",
+        }
+    if (review_intent or "").lower() == "monitor":
+        return {
+            "status": "rejected",
+            "reason": "'monitor' intent is now handled by set_watch (Sentinel), not a scheduled cycle. "
+                      "Leave a watch condition instead.",
+        }
+
+    # Resolve the exact run time: explicit ISO wins; else auto-resolve earnings.
+    if when:
         try:
             run_dt = datetime.fromisoformat(when.replace("Z", "+00:00"))
             if run_dt.tzinfo is None:
                 run_dt = run_dt.replace(tzinfo=timezone.utc)
-            run_dt = run_dt.astimezone(timezone.utc)
+            run_at = run_dt.astimezone(timezone.utc)
         except ValueError:
             return {
                 "status": "rejected",
-                "reason": f"`when` must be one of {VALID_WINDOWS} or an ISO datetime, got: {when!r}",
+                "reason": f"`when` must be an ISO-8601 datetime (or omitted to auto-snipe earnings), got: {when!r}",
             }
-        now = datetime.now(timezone.utc)
-        if run_dt <= now:
-            return {"status": "rejected", "reason": "`when` is in the past — use request_research_now instead."}
-        if run_dt > now + timedelta(days=DEFAULT_TTL_DAYS):
+    else:
+        if len(tickers) != 1:
             return {
                 "status": "rejected",
-                "reason": f"`when` is more than {DEFAULT_TTL_DAYS} days out. Schedule closer to the event — "
-                          "long-range intentions belong in memory, not the scheduler.",
+                "reason": "Auto earnings-resolution needs a single ticker. For a basket, schedule each "
+                          "separately, or pass an explicit ISO `when`.",
             }
-        schedule_type = "once"
-        run_at = run_dt
+        run_at = await _resolve_earnings_run_at(tickers[0])
+        if run_at is None:
+            return {
+                "status": "rejected",
+                "reason": f"No upcoming earnings found for {tickers[0]} and no explicit `when` given — can't "
+                          "snipe an unknown event. Use set_watch to monitor by condition, or "
+                          "request_research_now if the catalyst already hit.",
+            }
+
+    if run_at <= now:
+        return {"status": "rejected", "reason": "The resolved time is in the past — use request_research_now instead."}
+    if run_at > now + timedelta(days=ONCE_MAX_DAYS):
+        return {
+            "status": "rejected",
+            "reason": f"The event is more than {ONCE_MAX_DAYS} days out — too far to pin a cycle. Use set_watch "
+                      "so a condition (or the earnings date closer in) wakes it instead.",
+        }
 
     with get_db() as db:
         system_active = db.execute(
             "SELECT COUNT(*) FROM cycle_schedules WHERE is_active = TRUE"
         ).fetchone()[0]
 
-        # The previously-dormant validator: scope/intent/urgency sanity rules
-        # plus the system-wide active cap.
         ok, why = ScheduleValidator.validate_proposal({
             "schedule_scope": "single_ticker" if len(tickers) == 1 else "watchlist_subset",
             "review_intent": review_intent,
             "urgency": urgency,
-            "earliest_window": earliest_window or "exact_time",
+            "earliest_window": "exact_time",
             "reason_codes": reason_codes or [],
         }, active_count=system_active)
         if not ok:
@@ -257,8 +309,9 @@ def schedule_research(
             return {"status": "rejected", "reason": rej}
 
         schedule_id = f"sch-bot-{uuid.uuid4().hex[:8]}"
-        now = datetime.now(timezone.utc)
-        expiry = (now + timedelta(days=DEFAULT_TTL_DAYS)).replace(tzinfo=None)
+        # Expiry must sit AFTER run_at so the TTL guard doesn't kill the schedule
+        # before it fires (earnings can be weeks out).
+        expiry = (run_at + timedelta(days=2)).replace(tzinfo=None)
         name = f"Research: {', '.join(tickers)} ({reason[:60]})"
         db.execute(
             """
@@ -266,37 +319,34 @@ def schedule_research(
                 (id, name, schedule_type, earliest_window, run_at, expiry_at,
                  schedule_scope, review_intent, urgency, reason_codes,
                  collect, "analyze", trade, tickers, market_hours_only, is_active)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, TRUE, FALSE, %s, FALSE, TRUE)
+            VALUES (%s, %s, 'once', NULL, %s, %s, %s, %s, %s, %s, TRUE, TRUE, FALSE, %s, FALSE, TRUE)
             """,
             [
-                schedule_id, name, schedule_type, earliest_window,
-                run_at.isoformat() if run_at else None,
-                expiry.isoformat(),
+                schedule_id, name,
+                run_at.isoformat(), expiry.isoformat(),
                 "single_ticker" if len(tickers) == 1 else "watchlist_subset",
                 review_intent, urgency,
                 json.dumps(reason_codes or [reason[:120]]),
                 json.dumps(tickers),
             ],
         )
-        # Nudge the scheduler engine (lives in the cycle process) to register
-        # the new job without waiting for a reboot.
         db.execute(
             "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
             [f"cmd-{uuid.uuid4().hex[:8]}", "REFRESH_SCHEDULE", json.dumps({"job_id": schedule_id})],
         )
 
     logger.info(
-        "[GOVERNOR] Research scheduled %s type=%s when=%s tickers=%s",
-        schedule_id, schedule_type, when, tickers,
+        "[GOVERNOR] Research scheduled %s type=once run_at=%s tickers=%s",
+        schedule_id, run_at.isoformat(), tickers,
     )
     return {
         "status": "scheduled",
         "schedule_id": schedule_id,
-        "type": schedule_type,
-        "fires": earliest_window or (run_at.isoformat() if run_at else None),
+        "type": "once",
+        "fires": run_at.isoformat(),
         "expires": expiry.isoformat() + "Z",
         "tickers": tickers,
-        "note": "One-shot: deactivates after it runs. trade=False is enforced.",
+        "note": "One-shot sniped to the event: deactivates after it runs. trade=False is enforced.",
     }
 
 
@@ -369,7 +419,7 @@ def cancel_scheduled_research(schedule_id: str, reason: str = "") -> dict:
         if not row:
             return {"status": "rejected", "reason": f"Schedule {schedule_id} not found."}
         db.execute(
-            "UPDATE cycle_schedules SET is_active = FALSE, last_status = %s, updated_at = NOW() WHERE id = %s",
+            "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, last_status = %s, updated_at = NOW() WHERE id = %s",
             [f"cancelled: {reason[:120]}" if reason else "cancelled", schedule_id],
         )
         db.execute(

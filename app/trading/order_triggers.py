@@ -83,6 +83,17 @@ async def create_trigger(
         highest_price = current_price or trigger_price
 
     with get_db() as db:
+        # Dedupe protective triggers: one active stop_loss / take_profit /
+        # trailing_stop per position. Without this, every cycle that sets a stop
+        # stacks another active row, so a single breach fires ~10 redundant SELLs
+        # (observed on C). Discrete buy/sell limits can legitimately ladder, so
+        # they are NOT superseded.
+        if trigger_type in ("stop_loss", "take_profit", "trailing_stop"):
+            db.execute(
+                "UPDATE price_triggers SET active = FALSE "
+                "WHERE bot_id = %s AND ticker = %s AND trigger_type = %s AND active = TRUE",
+                [bot_id, ticker, trigger_type],
+            )
         db.execute(
             """
             INSERT INTO price_triggers (

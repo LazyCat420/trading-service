@@ -36,10 +36,15 @@ async def test_create_trigger_success(mock_get_db, mock_get_current_price, mock_
     mock_get_current_price.return_value = (150.0, None)
     
     res = await create_trigger("bot1", "AAPL", "stop_loss", 100.0)
-    
+
     assert "id" in res
     assert res["ticker"] == "AAPL"
-    mock_db.execute.assert_called_once()
+    # Protective triggers now supersede prior active same-type rows: a dedupe
+    # UPDATE runs before the INSERT (one active stop_loss per position).
+    assert mock_db.execute.call_count == 2
+    sqls = [" ".join(c.args[0].split()) for c in mock_db.execute.call_args_list]
+    assert any("UPDATE price_triggers SET active = FALSE" in s for s in sqls)
+    assert any("INSERT INTO price_triggers" in s for s in sqls)
 
 @pytest.mark.asyncio
 @patch("app.trading.order_triggers._get_current_price")

@@ -41,6 +41,8 @@ MAX_SENTINEL_WAKES_PER_DAY = 6      # hard ceiling on trigger-driven cycles/day
 DEFAULT_COOLDOWN_MINUTES = 240      # per-watch debounce (4h)
 DEFAULT_EXPIRY_DAYS = 30            # hard TTL on a watch
 DEFAULT_STALENESS_DAYS = 10         # re-check backstop if nothing else trips
+_MAX_PRICE_FAILS = 8                # consecutive empty price fetches → deactivate
+_PRICE_FAIL_COUNT: dict[str, int] = {}
 
 VALID_TRIGGER_TYPES = {
     "price_above", "price_below", "pct_change", "rsi", "volume_spike",
@@ -127,13 +129,13 @@ def create_watch(
     expiry = now + timedelta(days=max(1, int(expiry_days)))
     try:
         with get_db() as db:
-            # Supersede any existing active watch for this ticker+bot (re-arm).
-            # Cast the NULL-check param so Postgres can infer its type when
-            # bot_id is None (otherwise: "could not determine data type").
+            # Supersede ANY existing active watch for this ticker (one active watch
+            # per ticker — regardless of bot_id — so an auto-baseline and a user
+            # set_watch can't both be live and double-wake).
             db.execute(
                 "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE ticker = %s AND is_active = TRUE AND (bot_id = %s OR %s::text IS NULL)",
-                [now, ticker, bot_id, bot_id],
+                "WHERE ticker = %s AND is_active = TRUE",
+                [now, ticker],
             )
             db.execute(
                 """
@@ -229,13 +231,14 @@ def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycl
         action = (result.get("action") or "HOLD").upper()
 
         triggers: list = []
-        if isinstance(stop_loss, (int, float)) and stop_loss > 0:
-            # Below the stop = thesis invalidated (for a long); above for a short.
-            triggers.append({"type": "price_below" if action != "SELL" else "price_above",
-                             "level": float(stop_loss)})
-        if isinstance(target, (int, float)) and target > 0:
-            triggers.append({"type": "price_above" if action != "SELL" else "price_below",
-                             "level": float(target)})
+        # Stop/target price levels only make sense for a live position (BUY/HOLD).
+        # After a SELL the position is exited, so those levels are noise — keep a
+        # generic move band (re-entry interest) + news + staleness instead.
+        if action != "SELL":
+            if isinstance(stop_loss, (int, float)) and stop_loss > 0:
+                triggers.append({"type": "price_below", "level": float(stop_loss)})   # invalidation
+            if isinstance(target, (int, float)) and target > 0:
+                triggers.append({"type": "price_above", "level": float(target)})       # target hit
         if isinstance(price, (int, float)) and price > 0:
             # Generic "something material moved" band off the analysis price.
             triggers.append({"type": "pct_change", "ref": float(price), "pct": 0.08, "direction": "any"})
@@ -293,8 +296,32 @@ async def _gather_context(ticker: str, need_history: bool, need_news: bool) -> d
         logger.warning("[Sentinel] price/history fetch failed for %s: %s", ticker, e)
 
     if need_news:
-        ctx["news_titles"] = _recent_news_titles(ticker)
+        await _refresh_ticker_news(ticker)
+        ctx["news"] = _recent_news(ticker)   # list of (title, collected_at)
     return ctx
+
+
+# Per-ticker news-fetch throttle so the 15-min loop doesn't hammer finnhub.
+_NEWS_FETCH_CACHE: dict[str, datetime] = {}
+_NEWS_FETCH_TTL_MIN = 60
+
+
+async def _refresh_ticker_news(ticker: str) -> None:
+    """On-demand: pull fresh per-ticker news into news_articles (which nothing else
+    does on a schedule) so the news trigger has real data. Throttled + timed out;
+    failures are non-fatal (we fall back to whatever's already in the DB)."""
+    import asyncio
+
+    last = _NEWS_FETCH_CACHE.get(ticker)
+    now = datetime.now(timezone.utc)
+    if last and (now - last) < timedelta(minutes=_NEWS_FETCH_TTL_MIN):
+        return
+    try:
+        from app.collectors.news_collector import collect_finnhub_news
+        await asyncio.wait_for(collect_finnhub_news(ticker, days=2, max_articles=15), timeout=20)
+        _NEWS_FETCH_CACHE[ticker] = now
+    except Exception as e:
+        logger.debug("[Sentinel] on-demand news fetch failed for %s: %s", ticker, e)
 
 
 def _rsi(closes: list[float], period: int = 14) -> float | None:
@@ -317,28 +344,37 @@ def _rsi(closes: list[float], period: int = 14) -> float | None:
     return round(100 - (100 / (1 + rs)), 1)
 
 
-def _recent_news_titles(ticker: str, hours: int = 24) -> list[str]:
-    """Recent headlines for the ticker from the DB (populated by background news
-    collectors) — cheap read, no scraping. Returns [] if the table/rows are absent."""
+def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
+    """Recent (title, collected_at) for the ticker from news_articles — cheap read.
+    Returns [] if the table/rows are absent."""
     try:
         with get_db() as db:
             rows = db.execute(
-                "SELECT title FROM news_articles "
+                "SELECT title, collected_at FROM news_articles "
                 "WHERE ticker = %s "
                 f"AND collected_at >= NOW() - INTERVAL '{int(hours)} hours' "
                 "ORDER BY collected_at DESC LIMIT 40",
                 [ticker],
             ).fetchall()
-            return [r[0] for r in rows if r[0]]
+            return [(r[0], r[1]) for r in rows if r[0]]
     except Exception:
         return []
 
 
 # ─── Trigger evaluation ──────────────────────────────────────────────────────
-def _eval_trigger(trig: dict, ctx: dict, watch: dict) -> tuple[bool, str, float | None]:
-    """Return (fired, human_detail, value). Pure code, no LLM."""
+def _eval_trigger(trig: dict, ctx: dict, watch: dict, market_open: bool = True) -> tuple[bool, str, float | None]:
+    """Return (fired, human_detail, value). Pure code, no LLM.
+
+    Price/technical triggers only evaluate during the regular session
+    (`market_open`) — off-hours `fast_info` returns a stale last close, which would
+    fire an already-breached level overnight and wake a cycle that can't trade.
+    News/staleness always evaluate.
+    """
     typ = trig["type"]
     price = ctx.get("price")
+
+    if typ in ("price_above", "price_below", "pct_change", "rsi", "volume_spike") and not market_open:
+        return False, "", None
 
     if typ == "price_above" and price is not None:
         if price >= trig["level"]:
@@ -368,7 +404,21 @@ def _eval_trigger(trig: dict, ctx: dict, watch: dict) -> tuple[bool, str, float 
             return True, f"{ctx['ticker']} volume {ratio:.1f}× its 20d average", ratio
     elif typ == "news":
         kws = [kw for cat in trig["categories"] for kw in NEWS_CATEGORY_KEYWORDS.get(cat, [])]
-        for title in ctx.get("news_titles", []):
+        # Only headlines collected AFTER the last fire count — so the same earnings
+        # story doesn't re-trip every window (dedup keeps its original collected_at).
+        last_fired = watch.get("last_fired_at")
+        if isinstance(last_fired, str):
+            try:
+                last_fired = datetime.fromisoformat(last_fired)
+            except ValueError:
+                last_fired = None
+        if last_fired is not None and last_fired.tzinfo is None:
+            last_fired = last_fired.replace(tzinfo=timezone.utc)
+        for title, collected_at in ctx.get("news", []):
+            if last_fired is not None and collected_at is not None:
+                ca = collected_at if collected_at.tzinfo else collected_at.replace(tzinfo=timezone.utc)
+                if ca <= last_fired:
+                    continue
             low = title.lower()
             for kw in kws:
                 if kw in low:
@@ -392,12 +442,13 @@ def _eval_trigger(trig: dict, ctx: dict, watch: dict) -> tuple[bool, str, float 
 
 # ─── The background loop ─────────────────────────────────────────────────────
 def _wakes_today() -> int:
-    """Count only REAL wakes today (a row with a cycle_id). Deferred/budget-miss
-    events are logged with cycle_id=NULL and must not consume the budget."""
+    """Count REAL wakes so far this US trading day (a row with a cycle_id). The day
+    boundary is Eastern-market midnight, not UTC (which would reset mid-afternoon PT)."""
     with get_db() as db:
         row = db.execute(
-            "SELECT COUNT(*) FROM sentinel_events "
-            "WHERE cycle_id IS NOT NULL AND fired_at >= date_trunc('day', NOW())"
+            "SELECT COUNT(*) FROM sentinel_events WHERE cycle_id IS NOT NULL "
+            "AND (fired_at AT TIME ZONE 'America/New_York') "
+            ">= date_trunc('day', NOW() AT TIME ZONE 'America/New_York')"
         ).fetchone()
         return row[0] if row else 0
 
@@ -437,6 +488,13 @@ async def evaluate_watches() -> dict:
     fired_total = 0
     evaluated = 0
 
+    # Regular-session check drives whether price/technical triggers evaluate.
+    try:
+        from app.services.market_calendar import MarketCalendar
+        market_open = MarketCalendar.get_market_state() == "open"
+    except Exception:
+        market_open = True
+
     # Group by ticker so we fetch cheap data once per ticker.
     by_ticker: dict[str, list] = {}
     for w in watches:
@@ -445,8 +503,25 @@ async def evaluate_watches() -> dict:
     for ticker, tw in by_ticker.items():
         need_history = any(t["type"] in ("rsi", "volume_spike") for w in tw for t in w["triggers"])
         need_news = any(t["type"] == "news" for w in tw for t in w["triggers"])
+        need_price = any(t["type"] in ("price_above", "price_below", "pct_change") for w in tw for t in w["triggers"])
         ctx = await _gather_context(ticker, need_history, need_news)
         evaluated += 1
+
+        # Price-fetch health: if a ticker needs price but yfinance keeps returning
+        # nothing (rate-limited or delisted), deactivate it after K tries so it
+        # doesn't silently sit forever.
+        if need_price and market_open:
+            if ctx.get("price") is None:
+                _PRICE_FAIL_COUNT[ticker] = _PRICE_FAIL_COUNT.get(ticker, 0) + 1
+                logger.warning("[Sentinel] price fetch empty for %s (%d/%d)",
+                               ticker, _PRICE_FAIL_COUNT[ticker], _MAX_PRICE_FAILS)
+                if _PRICE_FAIL_COUNT[ticker] >= _MAX_PRICE_FAILS:
+                    clear_watch(ticker=ticker)
+                    _PRICE_FAIL_COUNT.pop(ticker, None)
+                    logger.warning("[Sentinel] %s deactivated — price unfetchable (likely delisted/blocked).", ticker)
+                    continue
+            else:
+                _PRICE_FAIL_COUNT.pop(ticker, None)
 
         with get_db() as db:
             db.execute(
@@ -470,15 +545,16 @@ async def evaluate_watches() -> dict:
                         continue
 
             for trig in w["triggers"]:
-                fired, detail, value = _eval_trigger(trig, ctx, w)
+                fired, detail, value = _eval_trigger(trig, ctx, w, market_open)
                 if not fired:
                     continue
                 if budget_left <= 0:
+                    # Log to the app log only (no sentinel_events row) so a
+                    # persistent trip doesn't spam the table every 15 min.
                     logger.warning(
                         "[Sentinel] %s tripped (%s) but daily wake budget (%d) is spent — deferring.",
                         ticker, trig["type"], MAX_SENTINEL_WAKES_PER_DAY,
                     )
-                    _log_event(w, trig, detail, value, cycle_id=None)  # record the miss
                     break
                 cycle_id = await _enqueue_wake(w, trig, detail)
                 if cycle_id:
