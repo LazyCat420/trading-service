@@ -128,9 +128,11 @@ def create_watch(
     try:
         with get_db() as db:
             # Supersede any existing active watch for this ticker+bot (re-arm).
+            # Cast the NULL-check param so Postgres can infer its type when
+            # bot_id is None (otherwise: "could not determine data type").
             db.execute(
                 "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE ticker = %s AND is_active = TRUE AND (bot_id = %s OR %s IS NULL)",
+                "WHERE ticker = %s AND is_active = TRUE AND (bot_id = %s OR %s::text IS NULL)",
                 [now, ticker, bot_id, bot_id],
             )
             db.execute(
