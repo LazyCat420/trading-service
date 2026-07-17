@@ -190,10 +190,13 @@ def search_equations(query: str = "", top_k: int = 10) -> list[dict]:
                 "author_agent": row[5],
                 "ticker_origin": row[6],
                 "backtest_results": row[7] if isinstance(row[7], dict) else json.loads(row[7] or "{}"),
-                "usage_count": row[8],
-                "avg_pnl_pct": row[9],
-                "win_rate_pct": row[10],
-                "sharpe_ratio": row[11],
+                "usage_count": row[8] or 0,
+                # The 2026-07-16 fabricated-backtest purge NULLed these stats;
+                # consumers format them (f"{x:.2f}") and crash on None — this
+                # killed EVERY tournament pitch (0/4 → instant fallback).
+                "avg_pnl_pct": row[9] if row[9] is not None else 0.0,
+                "win_rate_pct": row[10] if row[10] is not None else 0.0,
+                "sharpe_ratio": row[11] if row[11] is not None else 0.0,
                 "created_at": str(row[12]),
             })
 
