@@ -26,9 +26,9 @@ TOOL_WHITELIST = [
     "schedule_research",
     "request_research_now",
     "cancel_scheduled_research",
-    # Sentinel: leave cheap "wake me if…" watch conditions so the desk keeps
+    # Watch Desk: leave cheap "wake me if…" watch conditions so the desk keeps
     # monitoring a name in code without burning a cycle until a trigger trips.
-    "set_watch",
+    "watch_ticker",
     "list_watches",
     "clear_watch",
 ]

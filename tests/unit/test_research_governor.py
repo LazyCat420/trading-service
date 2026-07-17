@@ -3,7 +3,7 @@ Research Governor Tests — anti-doom-loop guardrails for self-scheduled researc
 
 schedule_research is now async and only creates `once` schedules sniped to a real
 dated event (earnings auto-resolved, or an explicit ISO datetime). Coarse market
-windows and `monitor` are retired (→ Sentinel set_watch).
+windows and `monitor` are retired (→ Watch Desk watch_ticker).
 """
 import os
 import sys
@@ -29,7 +29,7 @@ def test_vague_reason_rejected():
 
 
 def test_coarse_window_rejected():
-    # Coarse market windows are retired → redirect to set_watch.
+    # Coarse market windows are retired → redirect to watch_ticker.
     res = _run(gov.schedule_research(["AAPL"], when="next_open", reason="earnings follow-up on Q3 guidance"))
     assert res["status"] == "rejected"
     assert "retired" in res["reason"].lower()
@@ -39,7 +39,7 @@ def test_monitor_intent_rejected():
     res = _run(gov.schedule_research(
         ["AAPL"], when="", reason="keep monitoring this name", review_intent="monitor"))
     assert res["status"] == "rejected"
-    assert "set_watch" in res["reason"]
+    assert "watch_ticker" in res["reason"]
 
 
 def test_invalid_when_rejected():

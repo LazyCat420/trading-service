@@ -46,6 +46,42 @@ async def test_create_trigger_success(mock_get_db, mock_get_current_price, mock_
     assert any("UPDATE price_triggers SET active = FALSE" in s for s in sqls)
     assert any("INSERT INTO price_triggers" in s for s in sqls)
 
+
+@pytest.mark.asyncio
+@patch("app.trading.order_triggers._get_current_price")
+@patch("app.trading.order_triggers.get_db")
+async def test_create_dynamic_trigger_supersedes_same_type(mock_get_db, mock_get_current_price, mock_db):
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    mock_get_current_price.return_value = (150.0, None)
+
+    res = await create_trigger(
+        "bot1", "AAPL", "dynamic", 0.0,
+        dynamic_trigger_type="sma_200_reclaim", dynamic_trigger_value=206.75,
+    )
+    assert "id" in res
+    # Same-setup dynamic triggers dedupe: an UPDATE keyed on dynamic_trigger_type
+    # runs before the INSERT so re-arming the same setup doesn't stack rows.
+    assert mock_db.execute.call_count == 2
+    sqls = [" ".join(c.args[0].split()) for c in mock_db.execute.call_args_list]
+    assert any("dynamic_trigger_type = %s AND active = TRUE" in s for s in sqls)
+    assert any("INSERT INTO price_triggers" in s for s in sqls)
+
+
+@pytest.mark.asyncio
+@patch("app.trading.order_triggers._get_current_price")
+@patch("app.trading.order_triggers.get_db")
+async def test_create_buy_limit_does_not_supersede(mock_get_db, mock_get_current_price, mock_db):
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    mock_get_current_price.return_value = (150.0, None)
+
+    res = await create_trigger("bot1", "AAPL", "buy_limit", 140.0)
+    assert "id" in res
+    # Discrete limits can ladder — only the INSERT runs, no supersede UPDATE.
+    assert mock_db.execute.call_count == 1
+    sqls = [" ".join(c.args[0].split()) for c in mock_db.execute.call_args_list]
+    assert any("INSERT INTO price_triggers" in s for s in sqls)
+    assert not any("SET active = FALSE" in s for s in sqls)
+
 @pytest.mark.asyncio
 @patch("app.trading.order_triggers._get_current_price")
 @patch("app.trading.order_triggers.get_db")

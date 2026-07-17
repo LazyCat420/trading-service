@@ -1,11 +1,11 @@
-"""Sentinel — cheap background monitoring that wakes the agent only on a real trip.
+"""Watch Desk — cheap background monitoring that wakes the agent only on a real trip.
 
 The expensive part of the system is the agentic trading cycle (LLM + tool calls).
-The Sentinel keeps it OFF until something thesis-relevant actually happens:
+The Watch Desk keeps it OFF until something thesis-relevant actually happens:
 
   1. When the agent finishes analyzing a ticker it leaves a WATCH — structured,
      code-checkable conditions ("wake me if TSLA hits $300 / a downgrade drops /
-     nothing's happened in 10 days"). Watches come from `set_watch` (agent tool)
+     nothing's happened in 10 days"). Watches come from `watch_ticker` (agent tool)
      and an auto-derived baseline (`derive_baseline_watch`) at cycle completion.
   2. `evaluate_watches()` runs on a background timer using ONLY plain code —
      current price, a little history, recent news from the DB. No LLM.
@@ -14,7 +14,7 @@ The Sentinel keeps it OFF until something thesis-relevant actually happens:
      seeds the prior thesis), then the watch cools down / re-arms.
 
 Energy guardrails: a per-watch cooldown (debounce), a global daily wake budget,
-and market/pause gating. Trips are logged to `sentinel_events` (powers the budget
+and market/pause gating. Trips are logged to `watch_events` (powers the budget
 count and the data_report "why you woke up" section).
 
 Trigger types (JSON, in `ticker_watches.triggers`):
@@ -37,7 +37,7 @@ from app.db.connection import get_db
 logger = logging.getLogger(__name__)
 
 # ── Energy guardrails ───────────────────────────────────────────────────────
-MAX_SENTINEL_WAKES_PER_DAY = 6      # hard ceiling on trigger-driven cycles/day
+MAX_WATCH_WAKES_PER_DAY = 6        # hard ceiling on trigger-driven cycles/day
 DEFAULT_COOLDOWN_MINUTES = 240      # per-watch debounce (4h)
 DEFAULT_EXPIRY_DAYS = 30            # hard TTL on a watch
 DEFAULT_STALENESS_DAYS = 10         # re-check backstop if nothing else trips
@@ -131,7 +131,7 @@ def create_watch(
         with get_db() as db:
             # Supersede ANY existing active watch for this ticker (one active watch
             # per ticker — regardless of bot_id — so an auto-baseline and a user
-            # set_watch can't both be live and double-wake).
+            # watch_ticker can't both be live and double-wake).
             db.execute(
                 "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
                 "WHERE ticker = %s AND is_active = TRUE",
@@ -152,17 +152,17 @@ def create_watch(
                 ],
             )
     except Exception as e:
-        logger.error("[Sentinel] create_watch failed for %s: %s", ticker, e)
+        logger.error("[WatchDesk] create_watch failed for %s: %s", ticker, e)
         return {"status": "error", "message": str(e)}
 
-    logger.info("[Sentinel] Watch armed %s for %s: %d trigger(s)", watch_id, ticker, len(clean))
+    logger.info("[WatchDesk] Watch armed %s for %s: %d trigger(s)", watch_id, ticker, len(clean))
     return {
         "status": "armed",
         "watch_id": watch_id,
         "ticker": ticker,
         "triggers": clean,
         "expires_at": expiry.isoformat(),
-        "note": "Background monitor will wake the agent only when a trigger trips.",
+        "note": "Watch Desk will wake the agent only when a trigger trips.",
     }
 
 
@@ -220,9 +220,9 @@ def clear_watch(ticker: str | None = None, watch_id: str | None = None) -> dict:
 
 def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycle_id: str) -> None:
     """Auto-arm a baseline watch from a finished analysis so every analyzed ticker
-    is monitored even if the agent didn't call set_watch. Triggers derived from the
-    decision: invalidation (stop_loss) / target levels, a generic ±move, staleness,
-    and material-news. Best-effort — never raises into the cycle."""
+    is monitored even if the agent didn't call watch_ticker. Triggers derived from
+    the decision: invalidation (stop_loss) / target levels, a generic ±move,
+    staleness, and material-news. Best-effort — never raises into the cycle."""
     try:
         ticker = (ticker or "").upper().strip()
         # The V3 verdict nests the sizing/levels under `estimate`
@@ -265,13 +265,13 @@ def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycl
         create_watch(
             ticker=ticker,
             triggers=triggers,
-            reason=f"auto-baseline from cycle {cycle_id} ({action})",
+            reason=f"watch-desk baseline from cycle {cycle_id} ({action})",
             thesis_summary=result.get("rationale", "")[:2000],
             bot_id=result.get("bot_id"),
             source_cycle_id=cycle_id,
         )
     except Exception as e:
-        logger.warning("[Sentinel] derive_baseline_watch skipped for %s: %s", ticker, e)
+        logger.warning("[WatchDesk] derive_baseline_watch skipped for %s: %s", ticker, e)
 
 
 # ─── Cheap data gathering (no LLM) ───────────────────────────────────────────
@@ -310,7 +310,7 @@ async def _gather_context(ticker: str, need_history: bool, need_news: bool) -> d
         pdata = await asyncio.to_thread(_price_and_history)
         ctx.update(pdata)
     except Exception as e:
-        logger.warning("[Sentinel] price/history fetch failed for %s: %s", ticker, e)
+        logger.warning("[WatchDesk] price/history fetch failed for %s: %s", ticker, e)
 
     if need_news:
         await _refresh_ticker_news(ticker)
@@ -338,7 +338,7 @@ async def _refresh_ticker_news(ticker: str) -> None:
         await asyncio.wait_for(collect_finnhub_news(ticker, days=2, max_articles=15), timeout=20)
         _NEWS_FETCH_CACHE[ticker] = now
     except Exception as e:
-        logger.debug("[Sentinel] on-demand news fetch failed for %s: %s", ticker, e)
+        logger.debug("[WatchDesk] on-demand news fetch failed for %s: %s", ticker, e)
 
 
 def _rsi(closes: list[float], period: int = 14) -> float | None:
@@ -463,7 +463,7 @@ def _wakes_today() -> int:
     boundary is Eastern-market midnight, not UTC (which would reset mid-afternoon PT)."""
     with get_db() as db:
         row = db.execute(
-            "SELECT COUNT(*) FROM sentinel_events WHERE cycle_id IS NOT NULL "
+            "SELECT COUNT(*) FROM watch_events WHERE cycle_id IS NOT NULL "
             "AND (fired_at AT TIME ZONE 'America/New_York') "
             ">= date_trunc('day', NOW() AT TIME ZONE 'America/New_York')"
         ).fetchone()
@@ -501,7 +501,7 @@ async def evaluate_watches() -> dict:
     if not watches:
         return {"status": "ok", "watches": 0, "fired": 0}
 
-    budget_left = MAX_SENTINEL_WAKES_PER_DAY - _wakes_today()
+    budget_left = MAX_WATCH_WAKES_PER_DAY - _wakes_today()
     fired_total = 0
     evaluated = 0
 
@@ -530,12 +530,12 @@ async def evaluate_watches() -> dict:
         if need_price and market_open:
             if ctx.get("price") is None:
                 _PRICE_FAIL_COUNT[ticker] = _PRICE_FAIL_COUNT.get(ticker, 0) + 1
-                logger.warning("[Sentinel] price fetch empty for %s (%d/%d)",
+                logger.warning("[WatchDesk] price fetch empty for %s (%d/%d)",
                                ticker, _PRICE_FAIL_COUNT[ticker], _MAX_PRICE_FAILS)
                 if _PRICE_FAIL_COUNT[ticker] >= _MAX_PRICE_FAILS:
                     clear_watch(ticker=ticker)
                     _PRICE_FAIL_COUNT.pop(ticker, None)
-                    logger.warning("[Sentinel] %s deactivated — price unfetchable (likely delisted/blocked).", ticker)
+                    logger.warning("[WatchDesk] %s deactivated — price unfetchable (likely delisted/blocked).", ticker)
                     continue
             else:
                 _PRICE_FAIL_COUNT.pop(ticker, None)
@@ -566,11 +566,11 @@ async def evaluate_watches() -> dict:
                 if not fired:
                     continue
                 if budget_left <= 0:
-                    # Log to the app log only (no sentinel_events row) so a
-                    # persistent trip doesn't spam the table every 15 min.
+                    # Log to the app log only (no watch_events row) so a persistent
+                    # trip doesn't spam the table every 15 min.
                     logger.warning(
-                        "[Sentinel] %s tripped (%s) but daily wake budget (%d) is spent — deferring.",
-                        ticker, trig["type"], MAX_SENTINEL_WAKES_PER_DAY,
+                        "[WatchDesk] %s tripped (%s) but daily wake budget (%d) is spent — deferring.",
+                        ticker, trig["type"], MAX_WATCH_WAKES_PER_DAY,
                     )
                     break
                 cycle_id = await _enqueue_wake(w, trig, detail)
@@ -580,7 +580,7 @@ async def evaluate_watches() -> dict:
                     fired_total += 1
                 break  # one fire per watch per pass
 
-    logger.info("[Sentinel] Evaluated %d ticker(s), %d wake(s) fired (budget left %d).",
+    logger.info("[WatchDesk] Evaluated %d ticker(s), %d wake(s) fired (budget left %d).",
                 evaluated, fired_total, max(budget_left, 0))
     return {"status": "ok", "watches": len(watches), "tickers": evaluated,
             "fired": fired_total, "budget_left": max(budget_left, 0)}
@@ -596,29 +596,28 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
                 "SELECT status FROM pipeline_state WHERE singleton_id = 'current'"
             ).fetchone()
             if state and state[0] not in ("idle", "done", "error", "stopped", "interrupted"):
-                logger.info("[Sentinel] %s trip held — a cycle is already running (%s).", ticker, state[0])
+                logger.info("[WatchDesk] %s trip held — a cycle is already running (%s).", ticker, state[0])
                 return None
 
-            cycle_tag = f"sentinel-{uuid.uuid4().hex[:8]}"
             payload = {
                 "tickers": [ticker],
                 "collect": True,
                 "analyze": True,
                 "trade": True,               # a trip is a real decision moment; downstream gates still apply
                 "dynamic_selection_mode": False,
-                "sentinel_wake": True,
-                "sentinel_trigger": {"type": trig["type"], "detail": detail},
+                "watch_wake": True,
+                "watch_trigger": {"type": trig["type"], "detail": detail},
                 "research_reason": detail,
             }
-            cmd_id = f"sen-{uuid.uuid4().hex[:8]}"
+            cmd_id = f"wd-{uuid.uuid4().hex[:8]}"
             db.execute(
                 "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
                 [cmd_id, "START_CYCLE", json.dumps(payload)],
             )
-        logger.info("[Sentinel] WAKE %s for %s — %s", cmd_id, ticker, detail)
+        logger.info("[WatchDesk] WAKE %s for %s — %s", cmd_id, ticker, detail)
         return cmd_id
     except Exception as e:
-        logger.error("[Sentinel] enqueue wake failed for %s: %s", ticker, e)
+        logger.error("[WatchDesk] enqueue wake failed for %s: %s", ticker, e)
         return None
 
 
@@ -632,7 +631,7 @@ def _mark_fired(watch: dict, trig: dict, detail: str, value, cycle_id: str) -> N
                 [now, now, watch["id"]],
             )
     except Exception as e:
-        logger.warning("[Sentinel] mark_fired failed: %s", e)
+        logger.warning("[WatchDesk] mark_fired failed: %s", e)
     _log_event(watch, trig, detail, value, cycle_id)
 
 
@@ -640,13 +639,13 @@ def _log_event(watch: dict, trig: dict, detail: str, value, cycle_id: str | None
     try:
         with get_db() as db:
             db.execute(
-                "INSERT INTO sentinel_events (id, watch_id, ticker, trigger_type, detail, trigger_json, value, cycle_id) "
+                "INSERT INTO watch_events (id, watch_id, ticker, trigger_type, detail, trigger_json, value, cycle_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                [f"sev-{uuid.uuid4().hex[:10]}", watch["id"], watch["ticker"], trig["type"],
+                [f"wev-{uuid.uuid4().hex[:10]}", watch["id"], watch["ticker"], trig["type"],
                  detail[:500], json.dumps(trig), value, cycle_id],
             )
     except Exception as e:
-        logger.warning("[Sentinel] log_event failed: %s", e)
+        logger.warning("[WatchDesk] log_event failed: %s", e)
 
 
 def consume_wake_context(ticker: str, within_minutes: int = 180) -> str | None:
@@ -656,7 +655,7 @@ def consume_wake_context(ticker: str, within_minutes: int = 180) -> str | None:
     try:
         with get_db() as db:
             row = db.execute(
-                "SELECT id, detail FROM sentinel_events "
+                "SELECT id, detail FROM watch_events "
                 "WHERE ticker = %s AND consumed_at IS NULL AND cycle_id IS NOT NULL "
                 f"AND fired_at >= NOW() - INTERVAL '{int(within_minutes)} minutes' "
                 "ORDER BY fired_at DESC LIMIT 1",
@@ -664,7 +663,7 @@ def consume_wake_context(ticker: str, within_minutes: int = 180) -> str | None:
             ).fetchone()
             if not row:
                 return None
-            db.execute("UPDATE sentinel_events SET consumed_at = NOW() WHERE id = %s", [row[0]])
+            db.execute("UPDATE watch_events SET consumed_at = NOW() WHERE id = %s", [row[0]])
             return row[1]
     except Exception:
         return None

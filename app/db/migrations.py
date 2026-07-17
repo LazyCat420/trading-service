@@ -3292,7 +3292,7 @@ def _fix_eth_cagr_data(conn):
         except Exception:
             pass
 
-    # ── Sentinel: agent-defined watch conditions + fire log ──────────────────
+    # ── Watch Desk: agent-defined watch conditions + fire log ────────────────
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -3317,8 +3317,22 @@ def _fix_eth_cagr_data(conn):
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ticker_watches_active ON ticker_watches (is_active, ticker);"
             )
+            # Rename the legacy `sentinel_events` fire log to `watch_events`
+            # (preserving live rows) before the create-if-missing below handles
+            # fresh installs. Idempotent: only fires when the old table exists and
+            # the new one doesn't.
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS sentinel_events (
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sentinel_events')
+                       AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'watch_events') THEN
+                        ALTER TABLE sentinel_events RENAME TO watch_events;
+                        ALTER INDEX IF EXISTS idx_sentinel_events_ticker RENAME TO idx_watch_events_ticker;
+                    END IF;
+                END $$;
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS watch_events (
                     id           TEXT PRIMARY KEY,
                     watch_id     TEXT,
                     ticker       TEXT NOT NULL,
@@ -3332,7 +3346,7 @@ def _fix_eth_cagr_data(conn):
                 );
             """)
             cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_sentinel_events_ticker ON sentinel_events (ticker, fired_at DESC);"
+                "CREATE INDEX IF NOT EXISTS idx_watch_events_ticker ON watch_events (ticker, fired_at DESC);"
             )
             conn.commit()
     except Exception:

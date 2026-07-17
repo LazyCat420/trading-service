@@ -183,16 +183,16 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
     # If the full report exceeds _MAX_DATA_REPORT_CHARS, drop lower-priority sections first.
     _MAX_DATA_REPORT_CHARS = 10000
 
-    # Sentinel wake context: if this cycle was triggered by a watch tripping,
+    # Watch Desk wake context: if this cycle was triggered by a watch tripping,
     # tell the agent exactly WHAT woke it so it focuses on the change, not a
     # from-scratch review.
     wake_context_md = ""
     try:
-        from app.services.sentinel import consume_wake_context
+        from app.services.watch_desk import consume_wake_context
         _trip = consume_wake_context(ticker)
         if _trip:
             wake_context_md = (
-                f"## 0. WHY YOU WOKE UP (SENTINEL TRIGGER)\n"
+                f"## 0. WHY YOU WOKE UP (WATCH DESK TRIGGER)\n"
                 f"*A background watch condition tripped — this is the specific change to focus on. "
                 f"Assess what it means for the prior thesis, then decide:*\n\n"
                 f"**{_trip}**\n\n"

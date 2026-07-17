@@ -257,10 +257,15 @@ async def run_v3_pipeline(
 
         if hours_old >= settings.TRIAGE_DEEP_HOURS or news_count >= settings.TRIAGE_DEEP_NEWS_VOLUME:
             triage_tier = "v3_deep"
-        elif hours_old <= settings.TRIAGE_GLANCE_HOURS and news_count < settings.TRIAGE_DEEP_NEWS_VOLUME:
+        elif hours_old <= settings.TRIAGE_GLANCE_HOURS and news_count == 0:
+            # Recently analysed AND nothing new at all → hard skip (cheapest).
             triage_tier = "v3_glance"
         else:
-            triage_tier = "v3_standard"
+            # Recently-ish analysed with some (sub-deep) news, or a modest-age
+            # re-look → the Delta Analyst does ONE cheap pass instead of the full
+            # panel, escalating only if it finds a material change. (Previously
+            # this band ran the full panel or was glance-skipped even with news.)
+            triage_tier = "v3_delta"
 
         emit("analyzing", f"v3_triage_{ticker}", f"🚦 {ticker}: Triage Gate evaluated → {triage_tier} (News: {news_count}, Age: {int(hours_old)}h)", status="ok")
         
@@ -282,6 +287,81 @@ async def run_v3_pipeline(
             result["triage_tier"] = triage_tier
             result["escalated"] = False
             return result
+
+        # ── Delta tier: ONE cheap agent re-looks the prior thesis vs what
+        # changed, and escalates to the full panel only if the change is
+        # material. This is the energy saver for re-looks / Watch Desk wakes.
+        if triage_tier == "v3_delta":
+            from app.v3.agents import delta_analyst
+            emit(
+                "analyzing", f"v3_delta_start_{ticker}",
+                f"⚡ {ticker}: Delta re-look — one agent checks the prior thesis vs "
+                f"what changed (skips the full panel unless material)",
+                status="ok",
+            )
+            try:
+                delta_outcome = await _run_agent_with_circuit_breaker(
+                    desk, delta_analyst, "delta_analyst", breaker, cycle_id, bot_id, emit,
+                )
+            except Exception as de:
+                logger.warning("[V3] %s: Delta agent errored (%s) — escalating to full panel", ticker, de)
+                delta_outcome = None
+
+            delta = desk.delta_report or {}
+            verdict = str(delta.get("verdict") or "").upper()
+            # Conservative: escalate on ESCALATE, an explicit escalate flag, an empty
+            # / failed delta, or any non-success outcome. Never rubber-stamp.
+            escalate = (
+                not delta
+                or bool(delta.get("escalate"))
+                or verdict == "ESCALATE"
+                or delta_outcome != PhaseOutcome.SUCCESS
+            )
+
+            if not escalate:
+                d_action = str(delta.get("action") or "HOLD").upper()
+                d_conf = int(delta.get("confidence") or 0)
+                desk.append_artifact("final_decision", {
+                    "summary": delta.get("summary", f"Delta re-look: {verdict or 'REAFFIRM'}"),
+                    "action": d_action,
+                    "confidence": d_conf,
+                    "reasoning": delta.get("reasoning", "Prior thesis reaffirmed by the delta re-look."),
+                    "persona_used": "Delta Analyst",
+                    "regime": (desk.regime_classification or {}).get("regime", "delta_relook"),
+                    "stop_loss": delta.get("stop_loss"),
+                    "take_profit": delta.get("take_profit"),
+                    "dynamic_trigger": delta.get("dynamic_trigger"),
+                    "position_size_pct": delta.get("position_size_pct"),
+                })
+                emit(
+                    "analyzing", f"v3_delta_done_{ticker}",
+                    f"⚡ {ticker}: Delta {verdict or 'REAFFIRM'} → {d_action}@{d_conf}% "
+                    f"(full panel skipped — energy saved)",
+                    status="ok",
+                )
+                logger.info(
+                    "[V3] %s: Delta re-look %s → %s@%d%% (full panel skipped)",
+                    ticker, verdict or "REAFFIRM", d_action, d_conf,
+                )
+                save_desk(desk)
+                elapsed_s = time.monotonic() - t_pipeline
+                result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
+                result["triage_tier"] = "v3_delta"
+                result["escalated"] = False
+                return result
+
+            # Material change (or no usable delta) → fall through to the full panel.
+            emit(
+                "analyzing", f"v3_delta_escalate_{ticker}",
+                f"⚡ {ticker}: Delta found a material change → escalating to the full panel",
+                status="ok",
+            )
+            logger.info(
+                "[V3] %s: Delta re-look ESCALATED (%s) → running full panel",
+                ticker, delta.get("material_change", "material change or no prior thesis"),
+            )
+            triage_tier = "v3_delta_escalated"
+            # continue below to the full blackboard panel
 
     # ═══════════════════════════════════════════════════════════════════
     # DYNAMIC BLACKBOARD / P2P COORDINATOR

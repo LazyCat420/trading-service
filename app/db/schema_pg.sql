@@ -2429,7 +2429,7 @@ CREATE INDEX IF NOT EXISTS idx_ticker_watches_active ON ticker_watches (is_activ
 
 -- Fire log: one row per trip. Powers the daily wake budget, the data_report
 -- "why you woke up" section, and auditability.
-CREATE TABLE IF NOT EXISTS sentinel_events (
+CREATE TABLE IF NOT EXISTS watch_events (
     id           TEXT PRIMARY KEY,
     watch_id     TEXT,
     ticker       TEXT NOT NULL,
@@ -2441,4 +2441,4 @@ CREATE TABLE IF NOT EXISTS sentinel_events (
     cycle_id     TEXT,
     consumed_at  TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_sentinel_events_ticker ON sentinel_events (ticker, fired_at DESC);
+CREATE INDEX IF NOT EXISTS idx_watch_events_ticker ON watch_events (ticker, fired_at DESC);

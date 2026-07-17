@@ -13,25 +13,37 @@ MAX_RETURNED_MEMORIES = 10
 MAX_BRIEF_CHARS = 3000
 
 
+def _coerce_dt(val: Any) -> datetime | None:
+    """Coerce a timestamp field to a tz-aware datetime, or None.
+
+    Postgres TIMESTAMPTZ columns come back from psycopg as `datetime` objects,
+    not ISO strings — calling `.endswith("Z")` on those raised AttributeError
+    (uncaught, since we only guarded ValueError) and silently killed memory
+    retrieval every cycle. Accept both shapes.
+    """
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        dt = val
+    elif isinstance(val, str):
+        s = val[:-1] + "+00:00" if val.endswith("Z") else val
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            return None
+    else:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
 def _is_stale(memory: Dict[str, Any]) -> bool:
     """Determine if a memory is considered stale."""
     # Using last_validated_at or updated_at
-    date_str = memory.get("last_validated_at") or memory.get("updated_at")
-    if date_str:
-        try:
-            # handle 'Z' missing issues or whatever ISO formats
-            if date_str.endswith("Z"):
-                date_str = date_str[:-1] + "+00:00"
-            dt = datetime.fromisoformat(date_str)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-
-            now = datetime.now(timezone.utc)
-            days_old = (now - dt).days
-            if days_old > MAX_AGE_DAYS_FOR_DECAY:
-                return True
-        except ValueError:
-            pass
+    dt = _coerce_dt(memory.get("last_validated_at") or memory.get("updated_at"))
+    if dt is not None:
+        days_old = (datetime.now(timezone.utc) - dt).days
+        if days_old > MAX_AGE_DAYS_FOR_DECAY:
+            return True
     return False
 
 
@@ -83,21 +95,13 @@ def score_memory(
         score += 1.0
 
     # 6. Recency penalty (older = lower score)
-    date_str = memory.get("last_validated_at") or memory.get("updated_at")
-    if date_str:
-        try:
-            if date_str.endswith("Z"):
-                date_str = date_str[:-1] + "+00:00"
-            dt = datetime.fromisoformat(date_str)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            days_old = (datetime.now(timezone.utc) - dt).days
-            if days_old > 0:
-                # scale penalty linearly up to 3.0 points across MAX_AGE_DAYS_FOR_DECAY
-                penalty = min(3.0, (days_old / MAX_AGE_DAYS_FOR_DECAY) * 3.0)
-                score -= penalty
-        except ValueError:
-            pass
+    dt = _coerce_dt(memory.get("last_validated_at") or memory.get("updated_at"))
+    if dt is not None:
+        days_old = (datetime.now(timezone.utc) - dt).days
+        if days_old > 0:
+            # scale penalty linearly up to 3.0 points across MAX_AGE_DAYS_FOR_DECAY
+            penalty = min(3.0, (days_old / MAX_AGE_DAYS_FOR_DECAY) * 3.0)
+            score -= penalty
 
     return score
 

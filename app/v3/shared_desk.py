@@ -59,6 +59,7 @@ _VALID_ARTIFACT_TYPES = frozenset({
     "final_decision",
     "trade_decision",
     "tournament_result",
+    "delta_report",
 })
 
 # Max compressed context size to prevent context snowball
@@ -93,6 +94,7 @@ class SharedDesk:
     final_decision: dict | None = None      # Board of Directors output
     trade_decision: dict | None = None      # Decision Synthesizer output (Layer 5)
     tournament_result: dict | None = None    # Tournament Debate output (Layer 3 alt)
+    delta_report: dict | None = None        # Delta Analyst output (fast re-look tier)
 
     # ── Agent data tags — free-form labels harvested from artifacts ──
     # artifact_type -> ["#catalyst", "#risk", ...]. Lets agents mark data
@@ -478,6 +480,7 @@ class SharedDesk:
             "final_decision": self.final_decision,
             "trade_decision": self.trade_decision,
             "tournament_result": self.tournament_result,
+            "delta_report": self.delta_report,
             "artifact_tags": self.artifact_tags,
             "phase_outcomes": self.phase_outcomes,
             "cycle_metadata": self.cycle_metadata,
@@ -504,6 +507,7 @@ class SharedDesk:
         desk.final_decision = data.get("final_decision")
         desk.trade_decision = data.get("trade_decision")
         desk.tournament_result = data.get("tournament_result")
+        desk.delta_report = data.get("delta_report")
         desk.artifact_tags = data.get("artifact_tags") or {}
         desk.phase_outcomes = data.get("phase_outcomes", {})
         desk.cycle_metadata = data.get("cycle_metadata", {})

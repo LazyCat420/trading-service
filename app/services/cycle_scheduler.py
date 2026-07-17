@@ -356,8 +356,8 @@ class SchedulerService:
                 if SchedulerService._expire_if_past_ttl(s, db):
                     continue
                 # Retired: coarse-window 'policy' schedules are superseded by
-                # Sentinel (set_watch). Deactivate any lingering rows instead of
-                # arming them.
+                # the Watch Desk (watch_ticker). Deactivate any lingering rows
+                # instead of arming them.
                 if s["schedule_type"] == "policy":
                     db.execute(
                         "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, "
@@ -695,26 +695,26 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register background ticker validation: %s", e
                 )
 
-            # ── Sentinel: cheap background watch evaluation (no LLM) ──
+            # ── Watch Desk: cheap background watch evaluation (no LLM) ──
             # Evaluates agent-defined watch conditions every 15m and wakes the
             # agent ONLY when a trigger trips. This is the energy-saver: the
             # expensive cycle stays off until a real, thesis-relevant condition
-            # is met. See app/services/sentinel.py.
+            # is met. See app/services/watch_desk.py.
             try:
                 scheduler.add_job(
-                    SchedulerService._run_sentinel_evaluation,
+                    SchedulerService._run_watchdesk_evaluation,
                     trigger=IntervalTrigger(minutes=15, timezone=local_tz),
-                    id="sentinel_evaluation",
+                    id="watchdesk_evaluation",
                     replace_existing=True,
                     misfire_grace_time=300,
                     coalesce=True,
                 )
                 logger.info(
-                    "[SCHEDULER] Registered Sentinel watch evaluation (interval: 15m)"
+                    "[SCHEDULER] Registered Watch Desk evaluation (interval: 15m)"
                 )
             except Exception as e:
                 logger.warning(
-                    "[SCHEDULER] Failed to register Sentinel evaluation: %s", e
+                    "[SCHEDULER] Failed to register Watch Desk evaluation: %s", e
                 )
 
     @staticmethod
@@ -808,16 +808,16 @@ class SchedulerService:
             logger.error(f"[SCHEDULER] Flash briefing ({report_type or 'auto'}) generation failed: {e}")
 
     @staticmethod
-    async def _run_sentinel_evaluation():
+    async def _run_watchdesk_evaluation():
         """Evaluate agent-defined watch conditions (cheap, no LLM) and wake the
         agent only when a trigger trips."""
         if cycle_control.is_paused or cycle_control.is_stopped:
             return
         try:
-            from app.services.sentinel import evaluate_watches
+            from app.services.watch_desk import evaluate_watches
             await evaluate_watches()
         except Exception as e:
-            logger.error("[SCHEDULER] Sentinel evaluation failed: %s", e)
+            logger.error("[SCHEDULER] Watch Desk evaluation failed: %s", e)
 
     @staticmethod
     async def _run_background_validation():

@@ -1,5 +1,5 @@
 """
-Sentinel auto-baseline extraction tests.
+Watch Desk auto-baseline extraction tests.
 
 Regression guard for a silent bug the end-to-end cycle surfaced: the V3 verdict
 nests the exit levels under `estimate` (estimate.stop_loss / estimate.take_profit),
@@ -12,13 +12,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from app.services import sentinel
+from app.services import watch_desk
 
 
 def _capture_triggers(result, snapshot=None):
     """Run derive_baseline_watch with create_watch mocked; return the trigger list."""
-    with patch.object(sentinel, "create_watch") as mock_create:
-        sentinel.derive_baseline_watch("NVDA", result, snapshot, "cycle-test")
+    with patch.object(watch_desk, "create_watch") as mock_create:
+        watch_desk.derive_baseline_watch("NVDA", result, snapshot, "cycle-test")
         assert mock_create.called, "derive_baseline_watch should always arm a watch"
         return mock_create.call_args.kwargs["triggers"]
 

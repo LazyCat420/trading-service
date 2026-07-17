@@ -3,7 +3,7 @@
 Used by the research governor's `once` auto-resolution: an earnings event is a
 calendar `date` + a coarse `bmo`/`amc` day-part (no clock time), so we map it to
 a concrete UTC datetime to land analysis right after the numbers drop. DST-correct
-via US/Eastern. (Kept separate so a future Sentinel `earnings_upcoming` trigger can
+via US/Eastern. (Kept separate so a future Watch Desk `earnings_upcoming` trigger can
 reuse it — see the plan backlog.)
 """
 

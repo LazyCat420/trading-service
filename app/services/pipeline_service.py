@@ -210,9 +210,9 @@ class PipelineService:
             "benchmark_group", "discovered_tickers",
             # Scheduler / research-governor provenance (informational)
             "dynamic_selection_mode", "research_request", "research_reason",
-            # Sentinel wake provenance (informational; wake context flows via
-            # sentinel_events, not the payload) + stop-loss trigger tag.
-            "sentinel_wake", "sentinel_trigger", "trigger_type",
+            # Watch Desk wake provenance (informational; wake context flows via
+            # watch_events, not the payload) + stop-loss trigger tag.
+            "watch_wake", "watch_trigger", "trigger_type",
         }
         _unknown = set(kwargs) - _known_keys
         if _unknown:
@@ -879,14 +879,14 @@ class PipelineService:
                 snapshot = _ticker_snapshot_map.get(ticker_name)
                 save_analysis_result(ticker_name, cycle_id, result, snapshot=snapshot)
 
-                # Auto-arm a Sentinel baseline watch so this ticker keeps being
+                # Auto-arm a Watch Desk baseline watch so this ticker keeps being
                 # monitored cheaply (in code) without waking the agent again until
                 # a real trigger trips. Best-effort — never breaks the cycle.
                 try:
-                    from app.services.sentinel import derive_baseline_watch
+                    from app.services.watch_desk import derive_baseline_watch
                     derive_baseline_watch(ticker_name, result, snapshot, cycle_id)
-                except Exception as _sen_e:
-                    logger.warning("[PipelineService] Sentinel baseline skipped for %s: %s", ticker_name, _sen_e)
+                except Exception as _wd_e:
+                    logger.warning("[PipelineService] Watch Desk baseline skipped for %s: %s", ticker_name, _wd_e)
 
                 if not trade_flag:
                     return result

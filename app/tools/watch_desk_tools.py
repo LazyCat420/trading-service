@@ -1,9 +1,10 @@
-"""Sentinel agent tools — let an agent leave 'wake me if…' notes on a ticker.
+"""Watch Desk agent tools — let an agent leave 'wake me if…' notes on a ticker.
 
 These are how the agent keeps itself OFF until something thesis-relevant happens.
-After analyzing a ticker, the agent calls `set_watch` with the conditions under
-which its view would need revisiting; a cheap background monitor checks them (no
-LLM) and only wakes a targeted cycle when one trips. See app/services/sentinel.py.
+After analyzing a ticker, the agent calls `watch_ticker` with the conditions under
+which its view would need revisiting; the Watch Desk checks them in the background
+(no LLM) and only wakes a targeted cycle when one trips. See
+app/services/watch_desk.py.
 """
 
 import json
@@ -16,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 @registry.register(
-    name="set_watch",
+    name="watch_ticker",
     description=(
         "Leave a 'wake me if…' note on a ticker so the expensive agent stays OFF until a "
-        "real, thesis-relevant condition trips — a cheap background monitor checks it in code "
+        "real, thesis-relevant condition trips — the Watch Desk checks it in code "
         "(no LLM) and only then re-runs a targeted cycle. Call this at the END of analysing a "
         "ticker with the conditions that would change your view. Supersedes any existing watch "
         "for the ticker (re-arm). Trigger types: "
@@ -48,10 +49,10 @@ logger = logging.getLogger(__name__)
         "required": ["ticker", "triggers"],
     },
     tier=1,
-    source="sentinel",
+    source="watch_desk",
     permission=PermissionLevel.WRITE,
 )
-async def set_watch(
+async def watch_ticker(
     ticker: str,
     triggers: list,
     reason: str = "",
@@ -60,9 +61,9 @@ async def set_watch(
     expiry_days: int = 30,
     **_extra,
 ) -> str:
-    from app.services.sentinel import create_watch
+    from app.services.watch_desk import create_watch
     agent = current_agent_name()
-    logger.info("[SentinelTools] set_watch by %s: %s (%d triggers)", agent, ticker, len(triggers or []))
+    logger.info("[WatchDeskTools] watch_ticker by %s: %s (%d triggers)", agent, ticker, len(triggers or []))
     try:
         result = create_watch(
             ticker=ticker, triggers=triggers, reason=reason,
@@ -71,13 +72,13 @@ async def set_watch(
         )
         return json.dumps(result)
     except Exception as e:
-        logger.error("[SentinelTools] set_watch failed: %s", e)
+        logger.error("[WatchDeskTools] watch_ticker failed: %s", e)
         return json.dumps({"status": "error", "message": str(e)})
 
 
 @registry.register(
     name="list_watches",
-    description="List active Sentinel watches (optionally for one ticker) — their triggers, "
+    description="List active Watch Desk watches (optionally for one ticker) — their triggers, "
                 "fire counts, and expiry. Check before setting a new watch.",
     parameters={
         "type": "object",
@@ -86,21 +87,21 @@ async def set_watch(
         },
     },
     tier=1,
-    source="sentinel",
+    source="watch_desk",
     permission=PermissionLevel.READ_ONLY,
 )
 async def list_watches(ticker: str | None = None, **_extra) -> str:
-    from app.services.sentinel import list_watches as _list
+    from app.services.watch_desk import list_watches as _list
     try:
         return json.dumps({"watches": _list(ticker=ticker)}, default=str)
     except Exception as e:
-        logger.error("[SentinelTools] list_watches failed: %s", e)
+        logger.error("[WatchDeskTools] list_watches failed: %s", e)
         return json.dumps({"status": "error", "message": str(e)})
 
 
 @registry.register(
     name="clear_watch",
-    description="Deactivate a Sentinel watch by watch_id, or all active watches for a ticker — "
+    description="Deactivate a Watch Desk watch by watch_id, or all active watches for a ticker — "
                 "use when the thesis changed and the old triggers no longer apply.",
     parameters={
         "type": "object",
@@ -110,13 +111,13 @@ async def list_watches(ticker: str | None = None, **_extra) -> str:
         },
     },
     tier=1,
-    source="sentinel",
+    source="watch_desk",
     permission=PermissionLevel.WRITE,
 )
 async def clear_watch(watch_id: str | None = None, ticker: str | None = None, **_extra) -> str:
-    from app.services.sentinel import clear_watch as _clear
+    from app.services.watch_desk import clear_watch as _clear
     try:
         return json.dumps(_clear(ticker=ticker, watch_id=watch_id))
     except Exception as e:
-        logger.error("[SentinelTools] clear_watch failed: %s", e)
+        logger.error("[WatchDeskTools] clear_watch failed: %s", e)
         return json.dumps({"status": "error", "message": str(e)})

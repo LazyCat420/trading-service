@@ -22,6 +22,25 @@ from app.trading.paper_trader import _get_current_price
 
 logger = logging.getLogger(__name__)
 
+# Abandoned dynamic "buy setup" triggers (e.g. sma_200_reclaim) pile up across
+# cycles as the thesis evolves — different setup types don't supersede each other,
+# so an old-thesis setup can sit active for weeks. Expire ones older than this.
+DYNAMIC_TRIGGER_TTL_DAYS = 14
+
+
+def _expire_stale_dynamic_triggers(db) -> None:
+    """Deactivate dynamic triggers older than the TTL (stale-thesis sweep). Cheap
+    UPDATE; called once per check_triggers pass. Protective/limit triggers are
+    left alone — those are managed by supersede-on-create and firing."""
+    try:
+        db.execute(
+            "UPDATE price_triggers SET active = FALSE "
+            "WHERE trigger_type = 'dynamic' AND active = TRUE "
+            f"AND created_at < NOW() - INTERVAL '{int(DYNAMIC_TRIGGER_TTL_DAYS)} days'"
+        )
+    except Exception as e:
+        logger.warning("[TRIGGER] stale dynamic-trigger sweep failed: %s", e)
+
 
 async def create_trigger(
     bot_id: str,
@@ -94,6 +113,18 @@ async def create_trigger(
                 "WHERE bot_id = %s AND ticker = %s AND trigger_type = %s AND active = TRUE",
                 [bot_id, ticker, trigger_type],
             )
+        # Dynamic triggers (e.g. sma_200_reclaim) are re-armed by the pipeline
+        # every time it re-analyses a ticker. Supersede the prior active row of the
+        # SAME dynamic setup so re-runs don't stack identical rows. Distinct setups
+        # (a different dynamic_trigger_type) may coexist, but a stale-thesis sweep
+        # (see _expire_stale_dynamic_triggers) bounds their accumulation.
+        elif trigger_type == "dynamic" and dynamic_trigger_type:
+            db.execute(
+                "UPDATE price_triggers SET active = FALSE "
+                "WHERE bot_id = %s AND ticker = %s AND trigger_type = 'dynamic' "
+                "AND dynamic_trigger_type = %s AND active = TRUE",
+                [bot_id, ticker, dynamic_trigger_type],
+            )
         db.execute(
             """
             INSERT INTO price_triggers (
@@ -151,6 +182,7 @@ async def check_triggers(bot_id: str) -> list[dict]:
     Returns list of triggered/executed results.
     """
     with get_db() as db:
+        _expire_stale_dynamic_triggers(db)
         triggers = db.execute(
             """
             SELECT id, ticker, trigger_type, trigger_price, action,
