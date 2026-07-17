@@ -198,21 +198,22 @@ def clear_watch(ticker: str | None = None, watch_id: str | None = None) -> dict:
     if not ticker and not watch_id:
         return {"status": "rejected", "reason": "provide watch_id or ticker."}
     now = datetime.now(timezone.utc)
+    # RETURNING + fetchall so the count is accurate — the pooled cursor exposes
+    # no .rowcount.
     with get_db() as db:
         if watch_id:
-            cur = db.execute(
+            rows = db.execute(
                 "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE id = %s AND is_active = TRUE",
+                "WHERE id = %s AND is_active = TRUE RETURNING id",
                 [now, watch_id],
-            )
+            ).fetchall()
         else:
-            cur = db.execute(
+            rows = db.execute(
                 "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE ticker = %s AND is_active = TRUE",
+                "WHERE ticker = %s AND is_active = TRUE RETURNING id",
                 [now, (ticker or "").upper().strip()],
-            )
-    n = getattr(cur, "rowcount", 0) or 0
-    return {"status": "cleared", "deactivated": n}
+            ).fetchall()
+    return {"status": "cleared", "deactivated": len(rows or [])}
 
 
 def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycle_id: str) -> None:
