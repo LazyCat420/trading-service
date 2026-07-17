@@ -477,7 +477,9 @@ async def _run_head_to_head(
             # The thesis direction is fixed at pitch time; the H2H refinement
             # schema doesn't restate it, so carry it through for the verdict.
             parsed["direction"] = thesis.get("direction", "")
-            parsed["backtest_pnl"] = thesis.get("backtest_pnl", 0)
+            # None-safe: un-backtested theses carry backtest_pnl=None, which
+            # crashes downstream comparisons and f"{x:.2f}" formatting.
+            parsed["backtest_pnl"] = thesis.get("backtest_pnl") or 0
             return parsed
         except Exception as e:
             logger.error("[TOURNAMENT] H2H %s failed: %s", side_name, e)
@@ -835,7 +837,7 @@ async def run_tournament_debate(
         if votes.get("A", 0) != votes.get("B", 0):
             a_wins = votes.get("A", 0) > votes.get("B", 0)
         else:
-            a_wins = debated_a.get("backtest_pnl", 0) >= debated_b.get("backtest_pnl", 0)
+            a_wins = (debated_a.get("backtest_pnl") or 0) >= (debated_b.get("backtest_pnl") or 0)
 
         winner = debated_a if a_wins else debated_b
         # The trade direction comes from the winning THESIS, not the bracket
@@ -929,7 +931,7 @@ async def run_tournament_debate(
                 {"persona": p.get("persona"), "claim": p.get("claim")} for p in pitches
             ],
             "survivors": [
-                {"persona": s.get("persona"), "backtest_pnl": s.get("backtest_pnl", 0)}
+                {"persona": s.get("persona"), "backtest_pnl": s.get("backtest_pnl") or 0}
                 for s in survivors
             ],
             "jury": jury_verdict.get("jury_results", {}),
@@ -988,7 +990,7 @@ async def run_tournament_debate(
             for p in pitches
         ],
         "survivors": [
-            {"persona": s.get("persona"), "claim": s.get("claim"), "backtest_pnl": s.get("backtest_pnl", 0)}
+            {"persona": s.get("persona"), "claim": s.get("claim"), "backtest_pnl": s.get("backtest_pnl") or 0}
             for s in survivors
         ],
         "h2h": {

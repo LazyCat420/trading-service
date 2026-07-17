@@ -1523,8 +1523,8 @@ def _build_cycle_metadata(
         if pos_ctx and pos_ctx.get("held"):
             metadata["portfolio_context"] = (
                 f"CURRENTLY HOLDING {ticker}: "
-                f"Entry ${pos_ctx.get('avg_entry', 0):.2f}, "
-                f"P&L {pos_ctx.get('unrealized_pnl_pct', 0):+.1f}%, "
+                f"Entry ${(pos_ctx.get('avg_entry') or 0):.2f}, "
+                f"P&L {(pos_ctx.get('unrealized_pnl_pct') or 0):+.1f}%, "
                 f"Held {pos_ctx.get('holding_days', 0)} days."
             )
             metadata["held"] = True
@@ -1620,7 +1620,7 @@ def _build_v1_compatible_result(
             transcript_parts.append(f"  • {p.get('persona', '?')}: {p.get('claim', '')} (Equation: {p.get('equation', '')})")
         transcript_parts.append("\n🛡️ BACKTEST SURVIVORS:")
         for s in tr.get("survivors", []):
-            transcript_parts.append(f"  • {s.get('persona', '?')}: {s.get('claim', '')} (Backtest PnL: {s.get('backtest_pnl', 0):.2f}%)")
+            transcript_parts.append(f"  • {s.get('persona', '?')}: {s.get('claim', '')} (Backtest PnL: {(s.get('backtest_pnl') or 0):.2f}%)")
         jury = tr.get("jury_verdict", {})
         if jury:
             transcript_parts.append(f"\n⚖️ JURY VERDICT: Average Score: {jury.get('average_score', 5.0)}/10 | Vetoed: {jury.get('vetoed', False)}")
