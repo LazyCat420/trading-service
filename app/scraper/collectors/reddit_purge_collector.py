@@ -10,7 +10,7 @@ from fake_useragent import UserAgent
 
 from app.scraper.core.rate_limiter import rate_limiter
 from app.scraper.core.session_manager import session_manager
-from app.scraper.collectors.reddit_collector import _get_reddit_headers
+from app.scraper.collectors.reddit_collector import _get_reddit_headers, _parse_rss_entry
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +18,21 @@ class TickerValidator:
     def __init__(self):
         self.cache: dict[str, bool] = {}
         self.banned_words = {
-            "NOT", "FEED", "ON", "FOR", "AND", "OR", "IF", "BUT", "SO", "AT", "BY", 
-            "TO", "OF", "IN", "IT", "IS", "BE", "AS", "DO", "WE", "UP", "MY", "GO", 
-            "ME", "US", "THE", "AI", "TLDR", "LOVE", "YOLO", "DD", "ATH", "IMO", 
-            "USA", "GDP", "CEO", "EOD", "RH", "IRS", "SEC", "WSB", "OP", "EDIT", 
-            "OUT", "CALL", "PUT", "STRIKE", "EXP", "BUY", "SELL", "HOLD", "MOON", 
-            "PE", "EPS", "ETF", "NAV", "FD", "IV"
+            "NOT", "FEED", "ON", "FOR", "AND", "OR", "IF", "BUT", "SO", "AT", "BY",
+            "TO", "OF", "IN", "IT", "IS", "BE", "AS", "DO", "WE", "UP", "MY", "GO",
+            "ME", "US", "THE", "AI", "TLDR", "LOVE", "YOLO", "DD", "ATH", "IMO",
+            "USA", "GDP", "CEO", "EOD", "RH", "IRS", "SEC", "WSB", "OP", "EDIT",
+            "OUT", "CALL", "PUT", "STRIKE", "EXP", "BUY", "SELL", "HOLD", "MOON",
+            "PE", "EPS", "ETF", "NAV", "FD", "IV",
+            # Financial-metric / TA acronyms — these are real tickers by coincidence
+            # but on stock subreddits they almost always mean the metric, so they
+            # flood ticker counts from "fundamentals"/"technicals" discussion
+            # threads. Banning them kills the dominant false-positive class.
+            "PEG", "SMA", "EMA", "ROE", "ROA", "ROI", "ROIC", "BETA", "EBITDA",
+            "EBIT", "EBT", "TTM", "YOY", "QOQ", "YTD", "CAGR", "DCF", "FCF",
+            "GAAP", "COGS", "CAPEX", "OPEX", "WACC", "VWAP", "RSI", "MACD", "ATR",
+            "ADX", "BVPS", "DPS", "PEGY", "PB", "PS", "DIV", "YLD", "MKT", "VOL",
+            "GROSS", "NET", "MARGIN", "REV", "IPO", "FOMC", "CPI", "PPI", "ER",
         }
 
     def validate_ticker(self, ticker: str) -> bool:
@@ -52,6 +61,34 @@ class RedditPurgeCollector:
     def __init__(self):
         self.validator = TickerValidator()
 
+    async def _get_subreddit_posts_rss(self, subreddit: str, listing_type: str, limit: int) -> list[dict]:
+        """RSS fallback for when Reddit bot-walls the public .json endpoint (HTTP 403).
+
+        Reddit's .rss feeds stay reachable without OAuth where /*.json now 403s
+        from datacenter/residential IPs. RSS carries title/body/author but not
+        score/comment counts, so `_parse_rss_entry` supplies neutral defaults; the
+        title is what the ticker scorer weights most heavily anyway.
+        """
+        import feedparser
+
+        url = f"https://www.reddit.com/r/{subreddit}/{listing_type}.rss?limit={limit}"
+        domain = "www.reddit.com"
+        try:
+            async with rate_limiter.acquire(domain):
+                r = await session_manager.client.get(url, headers=_get_reddit_headers(), timeout=15.0)
+            if r.status_code != 200:
+                logger.warning(f"[reddit-purge] RSS fallback failed for r/{subreddit}/{listing_type}: HTTP {r.status_code}")
+                return []
+            feed = feedparser.parse(r.text)
+            posts = []
+            for entry in feed.entries[:limit]:
+                posts.append(_parse_rss_entry(entry, subreddit))
+            logger.info(f"[reddit-purge] RSS fallback returned {len(posts)} posts for r/{subreddit}/{listing_type}")
+            return posts
+        except Exception as e:
+            logger.error(f"[reddit-purge] RSS fallback error for r/{subreddit}: {e}")
+            return []
+
     async def get_subreddit_posts(self, subreddit: str, listing_type: str = "hot", limit: int = 5) -> list[dict]:
         url = f"https://www.reddit.com/r/{subreddit}/{listing_type}.json?limit={limit}"
         domain = "www.reddit.com"
@@ -59,8 +96,8 @@ class RedditPurgeCollector:
             async with rate_limiter.acquire(domain):
                 r = await session_manager.client.get(url, headers=_get_reddit_headers(), timeout=15.0)
             if r.status_code != 200:
-                logger.warning(f"[reddit-purge] Failed to fetch r/{subreddit}/{listing_type}: HTTP {r.status_code}")
-                return []
+                logger.warning(f"[reddit-purge] Failed to fetch r/{subreddit}/{listing_type}: HTTP {r.status_code} — trying RSS fallback")
+                return await self._get_subreddit_posts_rss(subreddit, listing_type, limit)
             
             data = r.json()
             posts = []
@@ -251,7 +288,11 @@ Output ONLY a JSON list of indexes: [0, 5, 2]
             real_title, selftext, comments = await self.get_thread_data(post["permalink"])
             if not real_title:
                 real_title = post["title"]
-            
+            # Keep any body we already have (e.g. from the RSS fallback) when the
+            # thread .json fetch is bot-walled and returns empty.
+            if not selftext:
+                selftext = post.get("selftext", "")
+
             # Save fetched texts onto post dict
             post["title"] = real_title
             post["selftext"] = selftext

@@ -26,6 +26,8 @@ TOOL_WHITELIST = [
     "get_institutional_holdings",
     "lazy_web_search",
     "scrape_url",
+    # Named tool chains — e.g. ticker_deep_dive / news_and_fundamentals in one call.
+    "run_tool_chain",
     "whiteboard_read",
     "whiteboard_write",
     "request_peer_analysis",

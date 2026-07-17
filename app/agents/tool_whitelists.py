@@ -60,6 +60,9 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "lazy_web_search",
         "scrape_url",
         "read_user_notes",
+        "get_reddit_trending_stocks",
+        # Named tool chains (bundle several tools into one call)
+        "run_tool_chain",
         # Portfolio & trading
         "get_portfolio_state",
         "get_position_pnl",

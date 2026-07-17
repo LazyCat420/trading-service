@@ -10,5 +10,7 @@ from . import charting_tools
 from . import market_tools
 from . import quant_tools
 from . import portfolio_tools
+from . import reddit_tools
+from . import tool_chains
 
 __all__ = ["registry", "PermissionLevel"]
