@@ -208,6 +208,8 @@ class PipelineService:
             "cycle_id", "tickers", "max_tickers", "trade", "analyze", "collect",
             "start_fresh", "agent_locale", "prism_overrides", "pipeline_version",
             "benchmark_group", "discovered_tickers",
+            # Scheduler / research-governor provenance (informational)
+            "dynamic_selection_mode", "research_request", "research_reason",
         }
         _unknown = set(kwargs) - _known_keys
         if _unknown:

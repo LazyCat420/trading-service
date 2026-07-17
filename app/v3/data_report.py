@@ -33,29 +33,47 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
             _emit(f"precollect_{name}_err", f"Failed {name}: {e}", "error")
             return None
 
-    # 1a. Check for Fast-Path (Analyzed in last 48 hours)
+    # 1a. Prior research: ALWAYS seed from the latest stored thesis so research
+    # builds on past work instead of starting from scratch. Within 48h the
+    # fast-path additionally skips the heavy scrapers; older theses still get
+    # injected (age-labeled) but fresh data is collected in full.
     previous_analysis_md = ""
     is_fast_path = False
-    
+
     with get_db() as db:
         recent = db.execute(
             """
-            SELECT thesis_summary, created_at
+            SELECT thesis_summary, created_at,
+                   created_at >= NOW() - INTERVAL '48 hours' AS is_recent
             FROM analysis_results
-            WHERE ticker = %s AND created_at >= NOW() - INTERVAL '48 hours'
+            WHERE ticker = %s
             ORDER BY created_at DESC LIMIT 1
             """,
             [ticker]
         ).fetchone()
-        
+
         if recent and recent[0]:
-            is_fast_path = True
-            previous_analysis_md = (
-                f"## 0. PREVIOUS ANALYSIS (FAST-PATH)\n"
-                f"*This stock was recently analyzed on {recent[1]}. Build your new thesis ON TOP of this past summary using today's fresh news and price action:*\n\n"
-                f"{recent[0]}\n\n"
-            )
-            _emit("precollect_fastpath", "Fast-Path engaged! Skipping heavy scrapers.", "ok")
+            if recent[2]:
+                is_fast_path = True
+                previous_analysis_md = (
+                    f"## 0. PREVIOUS ANALYSIS (FAST-PATH)\n"
+                    f"*This stock was recently analyzed on {recent[1]}. Build your new thesis ON TOP of this past summary using today's fresh news and price action:*\n\n"
+                    f"{recent[0]}\n\n"
+                )
+                _emit("precollect_fastpath", "Fast-Path engaged! Skipping heavy scrapers.", "ok")
+            else:
+                # Cap the stale thesis so it can't crowd fresh data out of the
+                # 10k-char report budget.
+                prior_text = recent[0]
+                if len(prior_text) > 2500:
+                    prior_text = prior_text[:2500] + "\n[... prior thesis truncated ...]"
+                previous_analysis_md = (
+                    f"## 0. PRIOR RESEARCH ON FILE (dated {recent[1]})\n"
+                    f"*This stock was researched before. The thesis below may be stale — verify its claims "
+                    f"against today's fresh data, note what changed, and build on it rather than starting over:*\n\n"
+                    f"{prior_text}\n\n"
+                )
+                _emit("precollect_prior", "Prior research found — seeding report with last thesis.", "ok")
 
     if is_fast_path:
         # Only run the fast, dynamic scrapers

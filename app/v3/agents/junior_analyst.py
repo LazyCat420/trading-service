@@ -20,6 +20,11 @@ TOOL_WHITELIST = [
     "get_institutional_holdings",
     "whiteboard_write",
     "whiteboard_read",
+    # Research sniping: spot an upcoming catalyst during recon and schedule a
+    # one-shot research cycle to land right after it (governor-capped).
+    "get_upcoming_events",
+    "list_scheduled_research",
+    "schedule_research",
 ]
 
 SYSTEM_PROMPT = """You are the Junior Analyst at a quantitative trading firm.

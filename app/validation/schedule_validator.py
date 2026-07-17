@@ -15,28 +15,32 @@ class ScheduleValidator:
     MAX_SYSTEM_SCHEDULES = 10
     
     @staticmethod
-    def validate_proposal(proposal: dict) -> tuple[bool, str]:
+    def validate_proposal(proposal: dict, active_count: int | None = None) -> tuple[bool, str]:
         """
         Validate an LLM schedule proposal before it hits the database.
         Returns (is_valid, rejection_reason). If valid, reason is empty.
+
+        active_count lets a caller that already holds a DB handle pass the
+        current active-schedule count instead of opening a second connection.
         """
         scope = proposal.get("schedule_scope")
         intent = proposal.get("review_intent")
         urgency = proposal.get("urgency")
         window = proposal.get("earliest_window")
         reason_codes = proposal.get("reason_codes", [])
-        
+
         if not scope or not intent or not urgency or not window:
             return False, "Missing required schema fields (scope, intent, urgency, window)."
-            
+
         # 1. Max schedules limit
-        with get_db() as db:
-            count_row = db.execute("SELECT COUNT(*) FROM cycle_schedules WHERE is_active = TRUE").fetchone()
-            active_count = count_row[0] if count_row else 0
-            if active_count >= ScheduleValidator.MAX_SYSTEM_SCHEDULES:
-                # Unless it's critical, block it
-                if urgency != "critical":
-                    return False, f"System has reached max active schedules ({active_count}). Only critical updates allowed."
+        if active_count is None:
+            with get_db() as db:
+                count_row = db.execute("SELECT COUNT(*) FROM cycle_schedules WHERE is_active = TRUE").fetchone()
+                active_count = count_row[0] if count_row else 0
+        if active_count >= ScheduleValidator.MAX_SYSTEM_SCHEDULES:
+            # Unless it's critical, block it
+            if urgency != "critical":
+                return False, f"System has reached max active schedules ({active_count}). Only critical updates allowed."
                     
         # 2. Anti-Stupidity: Frequent full-cycle scans
         if scope == "portfolio" and intent != "weekly_review":

@@ -101,7 +101,7 @@ class SchedulerService:
                 "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
                 "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
                 "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
-                "created_at, updated_at FROM cycle_schedules WHERE id = %s", [schedule_id]
+                "created_at, updated_at, run_at, expiry_at FROM cycle_schedules WHERE id = %s", [schedule_id]
             ).fetchone()
             if not row:
                 logger.warning(
@@ -136,6 +136,8 @@ class SchedulerService:
                 "last_error",
                 "created_at",
                 "updated_at",
+                "run_at",
+                "expiry_at",
             ]
             s = dict(zip(cols, row))
 
@@ -143,6 +145,11 @@ class SchedulerService:
                 logger.info(
                     "[SCHEDULER] Schedule %s is inactive, skipping.", schedule_id
                 )
+                return
+
+            # TTL guardrail: expired schedules deactivate instead of running —
+            # keeps stale bot-created research from firing forever.
+            if SchedulerService._expire_if_past_ttl(s, db):
                 return
 
             # Pre-run check from validator
@@ -160,6 +167,11 @@ class SchedulerService:
                     "[SCHEDULER] Schedule %s skipped (outside market hours).",
                     schedule_id,
                 )
+                if s["schedule_type"] in ("once", "policy"):
+                    # DateTrigger is spent after firing — without re-arming, the
+                    # schedule silently dies until the next reboot. Re-aim at
+                    # the next market open.
+                    SchedulerService._rearm_date_schedule(s, minutes_from_now=None)
                 # Still sync next_run_at so the timer keeps counting
                 SchedulerService._sync_next_run_to_db(schedule_id)
                 return
@@ -241,12 +253,41 @@ class SchedulerService:
             now = datetime.now(timezone.utc)
             db.execute(
                 """
-                UPDATE cycle_schedules 
+                UPDATE cycle_schedules
                 SET last_run_at = %s, run_count = run_count + 1, last_status = %s, last_error = %s
                 WHERE id = %s
             """,
                 [now.isoformat(), run_status, err_msg, schedule_id],
             )
+
+            # One-shot semantics for DateTrigger-based schedules ('once' and
+            # 'policy'). Without this they stay is_active=TRUE forever and
+            # re-fire at EVERY reboot when load_all_schedules re-registers
+            # them — a research doom loop. Success → deactivate. Failure or
+            # skip → bounded retry (20 min), give up after 5 attempts total.
+            if s["schedule_type"] in ("once", "policy"):
+                attempts = (s["run_count"] or 0) + 1
+                if run_status == "ok":
+                    db.execute(
+                        "UPDATE cycle_schedules SET is_active = FALSE, updated_at = %s WHERE id = %s",
+                        [now.isoformat(), schedule_id],
+                    )
+                    logger.info(
+                        "[SCHEDULER] One-shot schedule %s completed — deactivated.",
+                        schedule_id,
+                    )
+                elif attempts >= 5:
+                    db.execute(
+                        "UPDATE cycle_schedules SET is_active = FALSE, last_status = 'gave_up', updated_at = %s WHERE id = %s",
+                        [now.isoformat(), schedule_id],
+                    )
+                    logger.warning(
+                        "[SCHEDULER] One-shot schedule %s gave up after %d attempts.",
+                        schedule_id,
+                        attempts,
+                    )
+                else:
+                    SchedulerService._rearm_date_schedule(s, minutes_from_now=20)
 
             # Sync next_run_at from APScheduler (it auto-advances the trigger)
             SchedulerService._sync_next_run_to_db(schedule_id)
@@ -280,7 +321,7 @@ class SchedulerService:
                 "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
                 "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
                 "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
-                "created_at, updated_at FROM cycle_schedules WHERE is_active = TRUE"
+                "created_at, updated_at, run_at, expiry_at FROM cycle_schedules WHERE is_active = TRUE"
             ).fetchall()
 
             cols = [
@@ -305,15 +346,88 @@ class SchedulerService:
                 "last_error",
                 "created_at",
                 "updated_at",
+                "run_at",
+                "expiry_at",
             ]
 
             count = 0
             for row in rows:
                 s = dict(zip(cols, row))
+                if SchedulerService._expire_if_past_ttl(s, db):
+                    continue
+                # A DateTrigger-based schedule that already ran successfully
+                # must not be re-armed at boot (pre-fix rows may still be
+                # active with a spent trigger — see one-shot semantics).
+                if s["schedule_type"] in ("once", "policy") and s["last_status"] == "ok" and s["last_run_at"]:
+                    db.execute(
+                        "UPDATE cycle_schedules SET is_active = FALSE WHERE id = %s",
+                        [s["id"]],
+                    )
+                    logger.info(
+                        "[SCHEDULER] One-shot schedule %s already ran (%s) — deactivating instead of re-arming.",
+                        s["id"], s["last_run_at"],
+                    )
+                    continue
                 SchedulerService._add_job_to_scheduler(s)
                 count += 1
 
             logger.info("[SCHEDULER] Loaded %d active schedules.", count)
+
+    @staticmethod
+    def _expire_if_past_ttl(s: dict, db) -> bool:
+        """Deactivate a schedule whose expiry_at has passed. Returns True if expired."""
+        expiry = s.get("expiry_at")
+        if not expiry:
+            return False
+        if isinstance(expiry, str):
+            try:
+                expiry = datetime.fromisoformat(expiry)
+            except ValueError:
+                return False
+        # expiry_at is TIMESTAMP (naive); stored values are UTC.
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        if expiry.tzinfo is not None:
+            expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
+        if expiry <= now_naive:
+            db.execute(
+                "UPDATE cycle_schedules SET is_active = FALSE, last_status = 'expired' WHERE id = %s",
+                [s["id"]],
+            )
+            try:
+                if scheduler.get_job(s["id"]):
+                    scheduler.remove_job(s["id"])
+            except Exception:
+                pass
+            logger.info("[SCHEDULER] Schedule %s expired (TTL %s) — deactivated.", s["id"], expiry)
+            return True
+        return False
+
+    @staticmethod
+    def _rearm_date_schedule(s: dict, minutes_from_now: int | None):
+        """Re-register a spent DateTrigger schedule for a retry.
+
+        minutes_from_now=None re-aims at the next market open; otherwise the
+        job fires that many minutes from now.
+        """
+        from apscheduler.triggers.date import DateTrigger
+
+        try:
+            if minutes_from_now is None:
+                run_time = MarketCalendar.get_next_window("next_open")
+            else:
+                run_time = datetime.now(timezone.utc) + timedelta(minutes=minutes_from_now)
+            scheduler.add_job(
+                SchedulerService.execute_schedule,
+                trigger=DateTrigger(run_date=run_time),
+                args=[s["id"]],
+                id=s["id"],
+                replace_existing=True,
+                misfire_grace_time=3600,
+                coalesce=True,
+            )
+            logger.info("[SCHEDULER] Re-armed schedule %s for %s.", s["id"], run_time)
+        except Exception as e:
+            logger.error("[SCHEDULER] Failed to re-arm schedule %s: %s", s["id"], e)
 
     @staticmethod
     def _add_job_to_scheduler(s: dict):
@@ -345,18 +459,36 @@ class SchedulerService:
             )
         elif s["schedule_type"] == "policy" and s["earliest_window"]:
             try:
-                from app.services.market_calendar import MarketCalendar
                 from apscheduler.triggers.date import DateTrigger
-                
+
                 # Check if it was supposed to run in the past but missed
                 run_time = MarketCalendar.get_next_window(s["earliest_window"])
                 if run_time < datetime.now(local_tz):
                     # It missed its window (e.g. system was down), run immediately
                     run_time = datetime.now(local_tz) + timedelta(seconds=5)
-                    
+
                 trigger = DateTrigger(run_date=run_time, timezone=local_tz)
             except Exception as e:
                 logger.error("[SCHEDULER] Failed to create policy trigger for %s: %s", job_id, e)
+        elif s["schedule_type"] == "once" and s.get("run_at"):
+            # One-shot at an exact datetime — used by agents to snipe research
+            # around known events (earnings drops, Fed announcements, ...).
+            try:
+                from apscheduler.triggers.date import DateTrigger
+
+                run_time = s["run_at"]
+                if isinstance(run_time, str):
+                    run_time = datetime.fromisoformat(run_time)
+                if run_time.tzinfo is None:
+                    # Stored naive — treat as UTC (governor writes UTC).
+                    run_time = run_time.replace(tzinfo=timezone.utc)
+                if run_time < datetime.now(timezone.utc):
+                    # Missed (e.g. reboot) — fire shortly, execute_schedule's
+                    # gates still apply.
+                    run_time = datetime.now(timezone.utc) + timedelta(seconds=30)
+                trigger = DateTrigger(run_date=run_time)
+            except Exception as e:
+                logger.error("[SCHEDULER] Failed to create once trigger for %s: %s", job_id, e)
 
         if trigger:
             scheduler.add_job(
@@ -388,11 +520,13 @@ class SchedulerService:
     def refresh_job(schedule_id: str):
         """Refresh a specific job in APScheduler from the DB."""
         with get_db() as db:
+            # NB: must select earliest_window — _add_job_to_scheduler KeyErrors
+            # on policy-type schedules without it.
             row = db.execute(
-                "SELECT id, name, schedule_type, cron_expression, interval_hours, "
+                "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
                 "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
                 "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
-                "created_at, updated_at FROM cycle_schedules WHERE id = %s", [schedule_id]
+                "created_at, updated_at, run_at, expiry_at FROM cycle_schedules WHERE id = %s", [schedule_id]
             ).fetchone()
             if not row:
                 if scheduler.get_job(schedule_id):
@@ -405,6 +539,7 @@ class SchedulerService:
                 "schedule_type",
                 "cron_expression",
                 "interval_hours",
+                "earliest_window",
                 "collect",
                 "analyze",
                 "trade",
@@ -420,6 +555,8 @@ class SchedulerService:
                 "last_error",
                 "created_at",
                 "updated_at",
+                "run_at",
+                "expiry_at",
             ]
             s = dict(zip(cols, row))
 

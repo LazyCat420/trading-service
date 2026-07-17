@@ -62,6 +62,46 @@ def track_task(coro):
     task.add_done_callback(_background_tasks.discard)
     return task
 
+def drain_schedule_refreshes():
+    """Consume pending REFRESH_SCHEDULE commands from system_commands.
+
+    The schedule CRUD (trading-client) and agent scheduling tools enqueue
+    REFRESH_SCHEDULE after mutating cycle_schedules. The scheduler engine
+    lives in this process, so this is the only place that can re-register
+    jobs — without this drain, schedules created after boot stay dormant
+    until the next restart.
+    """
+    from app.db.connection import get_db
+    from app.services.cycle_scheduler import SchedulerService
+
+    rows = []
+    with get_db() as db:
+        with db.transaction():
+            rows = db.execute(
+                "SELECT id, payload FROM system_commands "
+                "WHERE status = 'pending' AND command_type = 'REFRESH_SCHEDULE' "
+                "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
+            ).fetchall()
+            for cmd_id, _ in rows:
+                db.execute(
+                    "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    [cmd_id],
+                )
+
+    for cmd_id, payload_val in rows:
+        try:
+            payload = json.loads(payload_val) if isinstance(payload_val, str) else (payload_val or {})
+            job_id = payload.get("job_id")
+            if job_id:
+                SchedulerService.refresh_job(job_id)
+                logger.info("[cycle_backend] Refreshed schedule %s (cmd %s)", job_id, cmd_id)
+            else:
+                SchedulerService.load_all_schedules()
+                logger.info("[cycle_backend] Reloaded all schedules (cmd %s)", cmd_id)
+        except Exception as e:
+            logger.error("[cycle_backend] REFRESH_SCHEDULE %s failed: %s", cmd_id, e)
+
+
 async def poll_system_commands(shutdown: asyncio.Event):
     from app.db.connection import get_db
     logger.info("[cycle_backend] Started system commands poller for V3.")
@@ -156,7 +196,12 @@ async def poll_system_commands(shutdown: asyncio.Event):
             if isinstance(e, asyncio.CancelledError):
                 raise
             logger.exception("[cycle_backend] Unexpected error in command poller loop")
-            
+
+        try:
+            drain_schedule_refreshes()
+        except Exception:
+            logger.exception("[cycle_backend] Schedule refresh drain failed")
+
         try:
             await asyncio.wait_for(shutdown.wait(), timeout=1.0)
         except asyncio.TimeoutError:

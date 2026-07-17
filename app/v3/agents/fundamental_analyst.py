@@ -29,6 +29,12 @@ TOOL_WHITELIST = [
     "whiteboard_read",
     "whiteboard_write",
     "request_peer_analysis",
+    # Research sniping: earnings dates are this desk's home turf — schedule a
+    # one-shot research cycle to land on the fresh numbers (governor-capped).
+    "get_upcoming_events",
+    "list_scheduled_research",
+    "schedule_research",
+    "request_research_now",
 ]
 
 

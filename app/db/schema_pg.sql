@@ -350,9 +350,10 @@ CREATE TABLE IF NOT EXISTS user_data (
 CREATE TABLE IF NOT EXISTS cycle_schedules (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
-    schedule_type   TEXT NOT NULL,         -- 'cron' | 'interval' | 'policy'
+    schedule_type   TEXT NOT NULL,         -- 'cron' | 'interval' | 'policy' | 'once'
     cron_expression TEXT,
     interval_hours  DOUBLE PRECISION,
+    run_at          TIMESTAMPTZ,           -- 'once' only: exact fire time (event sniping)
     schedule_scope  TEXT,                  -- portfolio, positions, watchlist_subset, sector, single_ticker
     review_intent   TEXT,                  -- monitor, reassess, trade_window, event_followup, weekly_review, monthly_review
     urgency         TEXT,                  -- low, medium, high, critical

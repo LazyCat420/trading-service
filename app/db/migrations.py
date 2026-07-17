@@ -45,6 +45,9 @@ def run_migrations(conn):
         except Exception:
             pass
 
+    # ── Cycle schedules: one-shot at an exact datetime (schedule_type='once')
+    _safe_add_column(conn, "cycle_schedules", "run_at", "TIMESTAMPTZ")
+
     # ── Youtube
     _safe_add_column(conn, "youtube_transcripts", "thumbnail_url", "TEXT")
     _safe_add_column(conn, "youtube_transcripts", "summary", "TEXT")
