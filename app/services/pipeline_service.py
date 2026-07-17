@@ -873,10 +873,17 @@ class PipelineService:
                 # Save verdict to DB (re-saved after trade handling below if
                 # the trade outcome mutated the result)
                 from app.services.result_saver import save_analysis_result
-                save_analysis_result(
-                    ticker_name, cycle_id, result,
-                    snapshot=_ticker_snapshot_map.get(ticker_name),
-                )
+                snapshot = _ticker_snapshot_map.get(ticker_name)
+                save_analysis_result(ticker_name, cycle_id, result, snapshot=snapshot)
+
+                # Auto-arm a Sentinel baseline watch so this ticker keeps being
+                # monitored cheaply (in code) without waking the agent again until
+                # a real trigger trips. Best-effort — never breaks the cycle.
+                try:
+                    from app.services.sentinel import derive_baseline_watch
+                    derive_baseline_watch(ticker_name, result, snapshot, cycle_id)
+                except Exception as _sen_e:
+                    logger.warning("[PipelineService] Sentinel baseline skipped for %s: %s", ticker_name, _sen_e)
 
                 if not trade_flag:
                     return result

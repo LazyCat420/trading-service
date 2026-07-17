@@ -26,6 +26,11 @@ TOOL_WHITELIST = [
     "schedule_research",
     "request_research_now",
     "cancel_scheduled_research",
+    # Sentinel: leave cheap "wake me if…" watch conditions so the desk keeps
+    # monitoring a name in code without burning a cycle until a trigger trips.
+    "set_watch",
+    "list_watches",
+    "clear_watch",
 ]
 
 SYSTEM_PROMPT = """You are the Portfolio Gatekeeper.

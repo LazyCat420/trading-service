@@ -2403,3 +2403,42 @@ CREATE TABLE IF NOT EXISTS congress_members (
     state VARCHAR,
     collected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ── Sentinel: agent-defined watch conditions (the "notes" left after analysis) ──
+-- The cheap background monitor evaluates these with pure code (no LLM); a trip
+-- enqueues a targeted, reason-tagged research cycle for that ticker. This is how
+-- the expensive agent stays OFF until a real, thesis-relevant condition is met.
+CREATE TABLE IF NOT EXISTS ticker_watches (
+    id                TEXT PRIMARY KEY,
+    ticker            TEXT NOT NULL,
+    bot_id            TEXT,
+    triggers          TEXT NOT NULL,          -- JSON array of typed trigger conditions
+    reason            TEXT,
+    thesis_summary    TEXT,
+    is_active         BOOLEAN DEFAULT TRUE,
+    cooldown_minutes  INTEGER DEFAULT 240,    -- min gap between fires (debounce)
+    fire_count        INTEGER DEFAULT 0,
+    last_fired_at     TIMESTAMPTZ,
+    last_evaluated_at TIMESTAMPTZ,
+    source_cycle_id   TEXT,
+    expiry_at         TIMESTAMPTZ,            -- hard TTL; deactivates when past
+    created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ticker_watches_active ON ticker_watches (is_active, ticker);
+
+-- Fire log: one row per trip. Powers the daily wake budget, the data_report
+-- "why you woke up" section, and auditability.
+CREATE TABLE IF NOT EXISTS sentinel_events (
+    id           TEXT PRIMARY KEY,
+    watch_id     TEXT,
+    ticker       TEXT NOT NULL,
+    trigger_type TEXT,
+    detail       TEXT,                        -- human-readable "why it woke"
+    trigger_json TEXT,
+    value        DOUBLE PRECISION,
+    fired_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    cycle_id     TEXT,
+    consumed_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_sentinel_events_ticker ON sentinel_events (ticker, fired_at DESC);

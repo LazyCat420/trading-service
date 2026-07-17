@@ -684,6 +684,28 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register background ticker validation: %s", e
                 )
 
+            # ── Sentinel: cheap background watch evaluation (no LLM) ──
+            # Evaluates agent-defined watch conditions every 15m and wakes the
+            # agent ONLY when a trigger trips. This is the energy-saver: the
+            # expensive cycle stays off until a real, thesis-relevant condition
+            # is met. See app/services/sentinel.py.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_sentinel_evaluation,
+                    trigger=IntervalTrigger(minutes=15, timezone=local_tz),
+                    id="sentinel_evaluation",
+                    replace_existing=True,
+                    misfire_grace_time=300,
+                    coalesce=True,
+                )
+                logger.info(
+                    "[SCHEDULER] Registered Sentinel watch evaluation (interval: 15m)"
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register Sentinel evaluation: %s", e
+                )
+
     @staticmethod
     async def _run_background_stop_loss():
         """Run stop loss, take profit, and custom trigger checks for the active bot."""
@@ -773,6 +795,18 @@ class SchedulerService:
             await generate_flash_briefing(report_type=report_type)
         except Exception as e:
             logger.error(f"[SCHEDULER] Flash briefing ({report_type or 'auto'}) generation failed: {e}")
+
+    @staticmethod
+    async def _run_sentinel_evaluation():
+        """Evaluate agent-defined watch conditions (cheap, no LLM) and wake the
+        agent only when a trigger trips."""
+        if cycle_control.is_paused or cycle_control.is_stopped:
+            return
+        try:
+            from app.services.sentinel import evaluate_watches
+            await evaluate_watches()
+        except Exception as e:
+            logger.error("[SCHEDULER] Sentinel evaluation failed: %s", e)
 
     @staticmethod
     async def _run_background_validation():

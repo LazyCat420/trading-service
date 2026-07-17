@@ -3291,3 +3291,52 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Sentinel: agent-defined watch conditions + fire log ──────────────────
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticker_watches (
+                    id                TEXT PRIMARY KEY,
+                    ticker            TEXT NOT NULL,
+                    bot_id            TEXT,
+                    triggers          TEXT NOT NULL,
+                    reason            TEXT,
+                    thesis_summary    TEXT,
+                    is_active         BOOLEAN DEFAULT TRUE,
+                    cooldown_minutes  INTEGER DEFAULT 240,
+                    fire_count        INTEGER DEFAULT 0,
+                    last_fired_at     TIMESTAMPTZ,
+                    last_evaluated_at TIMESTAMPTZ,
+                    source_cycle_id   TEXT,
+                    expiry_at         TIMESTAMPTZ,
+                    created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    updated_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ticker_watches_active ON ticker_watches (is_active, ticker);"
+            )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sentinel_events (
+                    id           TEXT PRIMARY KEY,
+                    watch_id     TEXT,
+                    ticker       TEXT NOT NULL,
+                    trigger_type TEXT,
+                    detail       TEXT,
+                    trigger_json TEXT,
+                    value        DOUBLE PRECISION,
+                    fired_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    cycle_id     TEXT,
+                    consumed_at  TIMESTAMPTZ
+                );
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sentinel_events_ticker ON sentinel_events (ticker, fired_at DESC);"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
