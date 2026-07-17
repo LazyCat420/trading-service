@@ -285,6 +285,9 @@ async def evaluate_decision(decision_id: str) -> bool:
             )
 
             red_cards = []
+            # Evaluator crashes are infra problems, not hallucinations — they
+            # must not zero the decision's quality score like a red card does.
+            infra_errors = []
 
             # ── Faithfulness check (with retry + semaphore) ──
             faith_succeeded = False
@@ -326,7 +329,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                             DEEPEVAL_MAX_RETRIES,
                             eval_err,
                         )
-                        red_cards.append(
+                        infra_errors.append(
                             f"DeepEval Faithfulness Error: {type(eval_err).__name__}: {eval_err}"
                         )
                         if failure_reason == FailureReason.NONE:
@@ -372,7 +375,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                             DEEPEVAL_MAX_RETRIES,
                             eval_err,
                         )
-                        red_cards.append(
+                        infra_errors.append(
                             f"DeepEval Relevancy Error: {type(eval_err).__name__}: {eval_err}"
                         )
                         if failure_reason == FailureReason.NONE:
@@ -481,14 +484,18 @@ async def evaluate_decision(decision_id: str) -> bool:
             oracle_score = float(oracle_results["completeness_score"])
 
             base_score = round((llm_score + oracle_score) / 2.0, 2)
-            # Only zero on faithfulness red cards — not on data/parse issues
-            # which are upstream problems, not hallucination.
+            # Only zero on GENUINE red cards (hallucination/relevancy failures).
+            # Evaluator crashes land in infra_errors and preserve the score —
+            # previously they also zeroed it, making DeepEval flakiness
+            # indistinguishable from a hallucinated decision.
             final_quality_score = 0 if red_cards else base_score
 
             # ── Build evidence_gathering with failure metadata ──
             evidence = oracle_results["checklist"].copy()
             if failure_reason != FailureReason.NONE:
                 evidence["failure_reason"] = failure_reason.value
+            if infra_errors:
+                evidence["deepeval_infra_errors"] = infra_errors
 
             evidence["deepeval_scorecard"] = {
                 "faithfulness": {

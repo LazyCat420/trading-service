@@ -13,18 +13,38 @@ class DataCompletenessOracle:
 
     # Define what "Complete Evidence" means functionally.
     # We can expand this per-asset_class later.
+    #
+    # Each check is FRESHNESS-AWARE: the old existence-only probes ("a row has
+    # ever existed for this ticker") scored stale tickers as complete, which
+    # poisoned 50% of every judge score. Windows are sized per data cadence:
+    # daily bars/technicals allow weekends+holidays, fundamentals snapshots
+    # are infrequent, news must be recent to count as this cycle's evidence.
     EXPECTED_TABLES = {
-        "price_history": "SELECT 1 FROM price_history WHERE ticker = %s LIMIT 1",
-        "technicals": "SELECT 1 FROM technicals WHERE ticker = %s AND rsi_14 IS NOT NULL LIMIT 1",
-        "fundamentals": "SELECT 1 FROM fundamentals WHERE ticker = %s AND (pe_ratio IS NOT NULL OR market_cap IS NOT NULL) LIMIT 1",
-        "news": "SELECT 1 FROM news_articles WHERE ticker = %s LIMIT 1",
+        "price_history": (
+            "SELECT 1 FROM price_history WHERE ticker = %s "
+            "AND date >= CURRENT_DATE - INTERVAL '5 days' LIMIT 1"
+        ),
+        "technicals": (
+            "SELECT 1 FROM technicals WHERE ticker = %s AND rsi_14 IS NOT NULL "
+            "AND date >= CURRENT_DATE - INTERVAL '5 days' LIMIT 1"
+        ),
+        "fundamentals": (
+            "SELECT 1 FROM fundamentals WHERE ticker = %s "
+            "AND (pe_ratio IS NOT NULL OR market_cap IS NOT NULL) "
+            "AND snapshot_date >= CURRENT_DATE - INTERVAL '30 days' LIMIT 1"
+        ),
+        "news": (
+            "SELECT 1 FROM news_articles WHERE ticker = %s "
+            "AND collected_at >= NOW() - INTERVAL '7 days' LIMIT 1"
+        ),
     }
 
     @staticmethod
     def verify_ground_truth(ticker: str) -> Dict[str, Any]:
         """
-        Query PostgreSQL to produce a deterministic scorecard of whether evidence
-        was actually gathered by the Data Phase.
+        Query PostgreSQL to produce a deterministic scorecard of whether FRESH
+        evidence was actually gathered for this ticker (see window comments on
+        EXPECTED_TABLES — existence-only probes previously counted stale data).
         """
         with get_db() as db:
             results = {
