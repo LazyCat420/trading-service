@@ -22,6 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from app.db.connection import get_db
+from app.services.parameter_store import get_param
 from app.validation.schedule_validator import ScheduleValidator
 
 logger = logging.getLogger(__name__)
@@ -61,10 +62,11 @@ def _recently_researched(db, tickers: list[str]) -> list[str]:
     """Tickers with an analysis_results row inside the cooldown window."""
     if not tickers:
         return []
+    cooldown_hours = int(get_param("TICKER_COOLDOWN_HOURS"))
     rows = db.execute(
         "SELECT DISTINCT ticker FROM analysis_results "
-        f"WHERE ticker = ANY(%s) AND created_at >= NOW() - INTERVAL '{TICKER_COOLDOWN_HOURS} hours'",
-        [tickers],
+        "WHERE ticker = ANY(%s) AND created_at >= NOW() - make_interval(hours => %s)",
+        [tickers, cooldown_hours],
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -121,7 +123,7 @@ def _guard_common(db, tickers: list[str], urgency: str) -> str | None:
         if recent:
             return (
                 f"Cooldown: {', '.join(recent)} researched within the last "
-                f"{TICKER_COOLDOWN_HOURS}h. Build on the existing thesis instead of re-running, "
+                f"{int(get_param('TICKER_COOLDOWN_HOURS'))}h. Build on the existing thesis instead of re-running, "
                 "or escalate with urgency='critical' if a genuine catalyst hit."
             )
     return None
@@ -286,10 +288,11 @@ async def schedule_research(
             "SELECT COUNT(*) FROM cycle_schedules WHERE id LIKE %s AND is_active = TRUE",
             ["sch-bot-%"],
         ).fetchone()[0]
-        if active >= MAX_ACTIVE_BOT_SCHEDULES:
+        max_active = int(get_param("MAX_ACTIVE_BOT_SCHEDULES"))
+        if active >= max_active:
             return {
                 "status": "rejected",
-                "reason": f"{active} bot research schedules already active (max {MAX_ACTIVE_BOT_SCHEDULES}). "
+                "reason": f"{active} bot research schedules already active (max {max_active}). "
                           "Cancel one first or let them run — be picky.",
             }
         daily = db.execute(
@@ -297,10 +300,11 @@ async def schedule_research(
             "WHERE id LIKE %s AND created_at >= NOW() - INTERVAL '24 hours'",
             ["sch-bot-%"],
         ).fetchone()[0]
-        if daily >= MAX_DAILY_BOT_CREATIONS:
+        max_daily = int(get_param("MAX_DAILY_BOT_CREATIONS"))
+        if daily >= max_daily:
             return {
                 "status": "rejected",
-                "reason": f"Daily budget spent ({daily}/{MAX_DAILY_BOT_CREATIONS} schedules in 24h). "
+                "reason": f"Daily budget spent ({daily}/{max_daily} schedules in 24h). "
                           "Only the best research ideas get scheduled — try again tomorrow.",
             }
 
@@ -399,10 +403,10 @@ def list_scheduled_research() -> dict:
         "queued_research_now": pending,
         "recently_researched_48h": [{"ticker": t, "at": str(ts)} for t, ts in recent_rows],
         "limits": {
-            "max_active_schedules": MAX_ACTIVE_BOT_SCHEDULES,
-            "max_daily_creations": MAX_DAILY_BOT_CREATIONS,
+            "max_active_schedules": int(get_param("MAX_ACTIVE_BOT_SCHEDULES")),
+            "max_daily_creations": int(get_param("MAX_DAILY_BOT_CREATIONS")),
             "max_tickers_per_request": MAX_TICKERS_PER_REQUEST,
-            "ticker_cooldown_hours": TICKER_COOLDOWN_HOURS,
+            "ticker_cooldown_hours": int(get_param("TICKER_COOLDOWN_HOURS")),
         },
     }
 

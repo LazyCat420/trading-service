@@ -32,6 +32,8 @@ TOOL_WHITELIST = [
     "run_equation",
     "run_backtest",
     "save_trading_chart",
+    # Read-only view of live risk limits (changes are PM/board territory)
+    "get_parameters",
 ]
 
 SYSTEM_PROMPT = """You are the Quant/Risk Analyst at a quantitative trading firm.

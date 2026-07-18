@@ -31,6 +31,10 @@ TOOL_WHITELIST = [
     "watch_ticker",
     "list_watches",
     "clear_watch",
+    # Parameter governance: read the live risk limits; propose standard-tier
+    # changes (sizing caps, thresholds, budgets) through the governor.
+    "get_parameters",
+    "propose_parameter_change",
 ]
 
 SYSTEM_PROMPT = """You are the Portfolio Gatekeeper.

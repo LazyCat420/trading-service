@@ -248,9 +248,10 @@ async def run_v3_pipeline(
             except Exception as e:
                 logger.warning("[V3] %s: Triage hours_old calculation failed (defaulting to 9999): %s", ticker, e)
 
-        if hours_old >= settings.TRIAGE_DEEP_HOURS or news_count >= settings.TRIAGE_DEEP_NEWS_VOLUME:
+        from app.services.parameter_store import get_param as _get_param
+        if hours_old >= _get_param("TRIAGE_DEEP_HOURS") or news_count >= _get_param("TRIAGE_DEEP_NEWS_VOLUME"):
             triage_tier = "v3_deep"
-        elif hours_old <= settings.TRIAGE_GLANCE_HOURS and news_count == 0:
+        elif hours_old <= _get_param("TRIAGE_GLANCE_HOURS") and news_count == 0:
             # Recently analysed AND nothing new at all → hard skip (cheapest).
             triage_tier = "v3_glance"
         else:
@@ -1286,8 +1287,8 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     # Dynamic confidence floor (plan 3.1): the board may RAISE the bar for
     # this specific decision, never lower the firm-wide threshold.
     # pipeline_service still enforces the base threshold as belt-and-braces.
-    from app.config.config import settings as _settings
-    floor = _settings.ANALYSIS_CONFIDENCE_THRESHOLD
+    from app.services.parameter_store import get_param as _get_param
+    floor = _get_param("ANALYSIS_CONFIDENCE_THRESHOLD")
     board_floor = board.get("confidence_floor")
     if isinstance(board_floor, (int, float)) and not isinstance(board_floor, bool):
         floor = max(floor, board_floor)
@@ -1301,7 +1302,7 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     # is poor gets blocked regardless of headline confidence.
     conviction = board.get("conviction_vector") or {}
     data_quality = conviction.get("data_quality") if isinstance(conviction, dict) else None
-    if isinstance(data_quality, (int, float)) and not isinstance(data_quality, bool) and data_quality < 40:
+    if isinstance(data_quality, (int, float)) and not isinstance(data_quality, bool) and data_quality < _get_param("DATA_QUALITY_FLOOR"):
         return "HOLD_POLICY_BLOCKED_DATA_QUALITY"
 
     tournament = getattr(desk, "tournament_result", None) or {}
@@ -1680,6 +1681,7 @@ def _build_v1_compatible_result(
     stop_loss = decision.get("stop_loss")
     take_profit = decision.get("take_profit")
     dynamic_trigger = decision.get("dynamic_trigger")
+    exit_style = decision.get("exit_style")
     # Sizing is situational: the board reasons about position_size_pct; the
     # synthesizer may override it. Execution honors this over any formula.
     _merged = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
@@ -1765,6 +1767,7 @@ def _build_v1_compatible_result(
             "take_profit": take_profit,
             "dynamic_trigger": dynamic_trigger,
             "position_size_pct": position_size_pct,
+            "exit_style": exit_style,
         },
         "c_result": {
             "action": action,

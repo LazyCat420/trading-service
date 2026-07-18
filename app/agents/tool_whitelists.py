@@ -67,6 +67,9 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "watch_ticker",
         "list_watches",
         "clear_watch",
+        # Parameter governance (human-driven chat can view + adjust)
+        "get_parameters",
+        "propose_parameter_change",
         # Portfolio & trading
         "get_portfolio_state",
         "get_position_pnl",

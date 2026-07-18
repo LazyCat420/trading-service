@@ -37,6 +37,8 @@ TOOL_WHITELIST = [
     "list_scheduled_research",
     "schedule_research",
     "request_research_now",
+    # Read-only view of live risk limits (changes are PM/board territory)
+    "get_parameters",
 ]
 
 

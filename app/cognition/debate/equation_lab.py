@@ -198,8 +198,9 @@ async def compile_equation(name: str) -> dict:
 
 
 async def run_equation_lab() -> dict:
-    """Nightly entry point: compile up to MAX_EQUATIONS_PER_RUN stubbed equations."""
-    candidates = _pick_candidates(MAX_EQUATIONS_PER_RUN)
+    """Nightly entry point: compile up to EQUATION_LAB_MAX_PER_RUN stubbed equations."""
+    from app.services.parameter_store import get_param
+    candidates = _pick_candidates(int(get_param("EQUATION_LAB_MAX_PER_RUN")))
     if not candidates:
         logger.info("[EQLAB] No unbacktestable equations left — library fully executable.")
         return {"status": "idle", "compiled": 0}

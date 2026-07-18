@@ -33,6 +33,10 @@ TOOL_WHITELIST: list[str] = [
     "get_market_data",
     "get_technical_indicators",
     "get_finviz_fundamentals",
+    # Parameter governance: the board owns the risk envelope — it can read the
+    # live limits and propose governed changes (board-tier params included).
+    "get_parameters",
+    "propose_parameter_change",
 ]
 
 ARTIFACT_TYPE = "final_decision"
@@ -102,6 +106,7 @@ CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` b
     "position_size_pct": 2.5,
     "stop_loss": 145.50,
     "take_profit": 165.00,
+    "exit_style": "hard_stop|reanalyze_on_breach",
     "dynamic_trigger": {
         "type": "sma_100_drop",
         "value": null

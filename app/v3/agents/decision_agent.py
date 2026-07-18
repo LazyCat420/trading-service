@@ -77,6 +77,7 @@ CRITICAL INSTRUCTION: You MUST process your reasoning in a `<thought_process>` b
     },
     "stop_loss": 145.50,
     "take_profit": 165.00,
+    "exit_style": "hard_stop|reanalyze_on_breach",
     "position_size_pct": 3.0,
     "dynamic_trigger": {
         "type": "sma_100_drop",

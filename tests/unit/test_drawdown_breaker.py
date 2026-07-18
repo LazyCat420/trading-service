@@ -57,7 +57,7 @@ class TestDrawdownBreaker:
     def test_fires_at_threshold_boundary(self):
         # peak 100k, value 80k → exactly -20% drawdown; limit 20% → fires (<=).
         with _patch_peak(100_000.0), \
-             patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.20):
+             patch("app.trading.paper_trader.get_param", lambda k: 0.20):
             result = paper_trader._check_drawdown_breaker("bot-1", 80_000.0)
 
         assert result is not None, "breaker must fire at exactly the -20% limit"
@@ -70,7 +70,7 @@ class TestDrawdownBreaker:
     def test_fires_beyond_threshold(self):
         # peak 100k, value 65k → -35% drawdown; limit 20% → fires.
         with _patch_peak(100_000.0), \
-             patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.20):
+             patch("app.trading.paper_trader.get_param", lambda k: 0.20):
             result = paper_trader._check_drawdown_breaker("bot-1", 65_000.0)
 
         assert result is not None
@@ -79,7 +79,7 @@ class TestDrawdownBreaker:
     def test_does_not_fire_at_small_drawdown(self):
         # peak 100k, value 95k → -5% drawdown; limit 20% → allowed.
         with _patch_peak(100_000.0), \
-             patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.20):
+             patch("app.trading.paper_trader.get_param", lambda k: 0.20):
             result = paper_trader._check_drawdown_breaker("bot-1", 95_000.0)
 
         assert result is None, "a -5% drawdown must not trip a 20% breaker"
@@ -87,7 +87,7 @@ class TestDrawdownBreaker:
     def test_does_not_fire_when_above_peak(self):
         # New high-water mark → positive "drawdown" → allowed.
         with _patch_peak(100_000.0), \
-             patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.20):
+             patch("app.trading.paper_trader.get_param", lambda k: 0.20):
             result = paper_trader._check_drawdown_breaker("bot-1", 110_000.0)
 
         assert result is None
@@ -95,7 +95,7 @@ class TestDrawdownBreaker:
     def test_fails_open_when_disabled(self):
         # MAX_PORTFOLIO_DRAWDOWN_PCT <= 0 disables the breaker entirely.
         with _patch_peak(100_000.0), \
-             patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.0):
+             patch("app.trading.paper_trader.get_param", lambda k: 0.0):
             result = paper_trader._check_drawdown_breaker("bot-1", 10_000.0)
 
         assert result is None, "disabled breaker must never block"
@@ -103,7 +103,7 @@ class TestDrawdownBreaker:
     def test_fails_open_with_no_snapshots(self):
         # No peak yet (empty portfolio_snapshots) → returns None, cannot block.
         with _patch_peak(None), \
-             patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.20):
+             patch("app.trading.paper_trader.get_param", lambda k: 0.20):
             result = paper_trader._check_drawdown_breaker("bot-1", 50_000.0)
 
         assert result is None
@@ -115,7 +115,7 @@ class TestDrawdownBreaker:
             raise RuntimeError("db down")
 
         with patch("app.trading.paper_trader.get_db", _boom), \
-             patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.20):
+             patch("app.trading.paper_trader.get_param", lambda k: 0.20):
             result = paper_trader._check_drawdown_breaker("bot-1", 10_000.0)
 
         assert result is None, "breaker must fail open on DB error"

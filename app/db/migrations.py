@@ -45,6 +45,38 @@ def run_migrations(conn):
         except Exception:
             pass
 
+    # ── Runtime parameters (agent-tunable via the Parameter Governor) ──
+    # Append-only history; resolution = latest active non-expired row per key.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS runtime_parameters (
+                    id          BIGSERIAL PRIMARY KEY,
+                    param_key   TEXT NOT NULL,
+                    value       DOUBLE PRECISION NOT NULL,
+                    set_by      TEXT,
+                    reason      TEXT,
+                    status      TEXT DEFAULT 'active',
+                    expires_at  TIMESTAMPTZ,
+                    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_runtime_parameters_key_time
+                ON runtime_parameters (param_key, created_at DESC)
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    # ── Agent-owned exits: provenance + targets on positions ──
+    _safe_add_column(conn, "positions", "take_profit_pct", "DOUBLE PRECISION")
+    _safe_add_column(conn, "positions", "stop_source", "TEXT")
+    _safe_add_column(conn, "positions", "exit_style", "TEXT")
+
     # ── Cycle schedules: one-shot at an exact datetime (schedule_type='once')
     _safe_add_column(conn, "cycle_schedules", "run_at", "TIMESTAMPTZ")
 

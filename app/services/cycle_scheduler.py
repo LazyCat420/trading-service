@@ -675,18 +675,21 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register market-open trading cycle: %s", e
                 )
 
-            # ── Live Feed Reports — every 4 hours; report type auto-selected by time of day ──
+            # ── Live Feed Reports — governed interval (default 4h); report type auto-selected by time of day ──
             try:
+                from app.services.parameter_store import get_param as _get_param
+                _flash_hours = int(_get_param("FLASH_BRIEFING_INTERVAL_HOURS"))
                 scheduler.add_job(
                     SchedulerService._run_flash_briefing,
-                    trigger=IntervalTrigger(hours=4, timezone=local_tz),
+                    trigger=IntervalTrigger(hours=_flash_hours, timezone=local_tz),
                     id="flash_briefing_4h",
                     replace_existing=True,
                     misfire_grace_time=3600,
                     coalesce=True,
                 )
                 logger.info(
-                    "[SCHEDULER] Registered live feed flash briefings (interval: every 4h)"
+                    "[SCHEDULER] Registered live feed flash briefings (interval: every %dh)",
+                    _flash_hours,
                 )
             except Exception as e:
                 logger.warning(
@@ -719,21 +722,79 @@ class SchedulerService:
             # expensive cycle stays off until a real, thesis-relevant condition
             # is met. See app/services/watch_desk.py.
             try:
+                from app.services.parameter_store import get_param as _get_param
+                _wd_minutes = int(_get_param("WATCHDESK_EVAL_INTERVAL_MINUTES"))
                 scheduler.add_job(
                     SchedulerService._run_watchdesk_evaluation,
-                    trigger=IntervalTrigger(minutes=15, timezone=local_tz),
+                    trigger=IntervalTrigger(minutes=_wd_minutes, timezone=local_tz),
                     id="watchdesk_evaluation",
                     replace_existing=True,
                     misfire_grace_time=300,
                     coalesce=True,
                 )
                 logger.info(
-                    "[SCHEDULER] Registered Watch Desk evaluation (interval: 15m)"
+                    "[SCHEDULER] Registered Watch Desk evaluation (interval: %dm)",
+                    _wd_minutes,
                 )
             except Exception as e:
                 logger.warning(
                     "[SCHEDULER] Failed to register Watch Desk evaluation: %s", e
                 )
+
+            # ── Cadence sync: reconcile governed intervals onto live jobs ──
+            # Agents adjust cadence parameters through the Parameter Governor;
+            # this periodic pass (plus a best-effort push from the governor)
+            # retunes the APScheduler jobs to match the store.
+            try:
+                scheduler.add_job(
+                    SchedulerService.sync_cadence_jobs,
+                    trigger=IntervalTrigger(minutes=5, timezone=local_tz),
+                    id="parameter_cadence_sync",
+                    replace_existing=True,
+                    misfire_grace_time=300,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered parameter cadence sync (interval: 5m)")
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register parameter cadence sync: %s", e
+                )
+
+    @staticmethod
+    def sync_cadence_jobs() -> list[str]:
+        """Retune interval jobs whose governed cadence parameter changed.
+
+        Reads every PARAMETER_REGISTRY entry with a scheduler_job binding and
+        reschedules the live APScheduler job when its interval no longer
+        matches the store. Returns the list of job ids that were retuned.
+        """
+        from app.services.parameter_store import PARAMETER_REGISTRY, get_param
+
+        retuned: list[str] = []
+        for key, spec in PARAMETER_REGISTRY.items():
+            if not spec.scheduler_job:
+                continue
+            job_id, unit = spec.scheduler_job
+            try:
+                job = scheduler.get_job(job_id)
+                if job is None or not isinstance(job.trigger, IntervalTrigger):
+                    continue
+                desired = int(get_param(key))
+                desired_sec = desired * (3600 if unit == "hours" else 60)
+                current_sec = int(job.trigger.interval.total_seconds())
+                if current_sec != desired_sec:
+                    scheduler.reschedule_job(
+                        job_id,
+                        trigger=IntervalTrigger(**{unit: desired}, timezone=local_tz),
+                    )
+                    retuned.append(job_id)
+                    logger.warning(
+                        "[SCHEDULER] Cadence retuned: %s %ds -> %ds (%s=%s)",
+                        job_id, current_sec, desired_sec, key, desired,
+                    )
+            except Exception as e:
+                logger.warning("[SCHEDULER] Cadence sync failed for %s: %s", job_id, e)
+        return retuned
 
     @staticmethod
     async def _run_background_stop_loss():

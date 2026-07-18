@@ -504,7 +504,9 @@ async def evaluate_watches() -> dict:
     if not watches:
         return {"status": "ok", "watches": 0, "fired": 0}
 
-    budget_left = MAX_WATCH_WAKES_PER_DAY - _wakes_today()
+    from app.services.parameter_store import get_param as _get_param
+    wake_budget = int(_get_param("MAX_WATCH_WAKES_PER_DAY"))
+    budget_left = wake_budget - _wakes_today()
     fired_total = 0
     evaluated = 0
     deferred: list[str] = []
@@ -576,7 +578,7 @@ async def evaluate_watches() -> dict:
     if deferred:
         logger.warning(
             "[WatchDesk] daily wake budget (%d) spent — deferred %d trip(s): %s",
-            MAX_WATCH_WAKES_PER_DAY, len(deferred), ", ".join(deferred),
+            wake_budget, len(deferred), ", ".join(deferred),
         )
     logger.info("[WatchDesk] pass: %d watch(es) on %d ticker(s) — %d fired, %d deferred, budget left %d.",
                 len(watches), evaluated, fired_total, len(deferred), max(budget_left, 0))

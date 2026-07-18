@@ -20,8 +20,16 @@ from app.db.connection import get_db
 from app.config import settings
 from app.config.config_tickers import classify_asset as _classify_asset
 from app.services.alert_service import record_fund_alert
+from app.services.parameter_store import get_param
 
 logger = logging.getLogger(__name__)
+
+# Exit ownership (agent-owned exits): how a position's stop/target execute.
+#   hard_stop            — breach sells immediately (background monitor)
+#   reanalyze_on_breach  — breach wakes an analysis cycle (price_triggers);
+#                          the background monitor does NOT hard-sell.
+EXIT_STYLES = {"hard_stop", "reanalyze_on_breach"}
+DEFAULT_EXIT_STYLE = "hard_stop"
 
 # Stop-loss bounds by asset class
 _STOP_BOUNDS = {
@@ -57,7 +65,8 @@ def _compute_stop_loss_pct(ticker: str, entry_price: float) -> float:
 
         if row and row[0] and entry_price > 0:
             atr = row[0]
-            raw_pct = (atr * 2.0) / entry_price  # 2x ATR = standard stop
+            atr_mult = float(get_param("ATR_STOP_MULTIPLIER"))
+            raw_pct = (atr * atr_mult) / entry_price  # N x ATR stop (governed)
             stop_pct = max(min_stop, min(max_stop, raw_pct))
             logger.debug(
                 "[stop] %s: ATR=%.2f, raw=%.3f, clamped=%.3f (%s)",
@@ -77,6 +86,60 @@ def _compute_stop_loss_pct(ticker: str, entry_price: float) -> float:
     return default_stop
 
 
+def _resolve_entry_exits(
+    ticker: str,
+    entry_price: float,
+    stop_loss_price: float | None = None,
+    take_profit_price: float | None = None,
+) -> tuple[float, str, float | None]:
+    """Resolve a position's stop/target, honoring the agent's decision.
+
+    The agent's stop-loss PRICE (from the board/synthesizer estimate) is the
+    authoritative stop when supplied — converted to a % and clamped into the
+    asset-class band so a fat-fingered level can't disable risk control. The
+    ATR computation is the FALLBACK, not an overwrite (it used to
+    unconditionally replace the agent's stop).
+
+    Returns (stop_pct, stop_source, take_profit_pct|None).
+    """
+    stop_pct: float | None = None
+    stop_source = "atr_fallback"
+    if (
+        isinstance(stop_loss_price, (int, float))
+        and not isinstance(stop_loss_price, bool)
+        and entry_price > 0
+        and 0 < stop_loss_price < entry_price
+    ):
+        raw_pct = (entry_price - float(stop_loss_price)) / entry_price
+        min_stop, max_stop, _ = _STOP_BOUNDS[_classify_asset(ticker)]
+        stop_pct = max(min_stop, min(max_stop, raw_pct))
+        stop_source = "agent"
+        if abs(stop_pct - raw_pct) > 1e-9:
+            logger.info(
+                "[stop] %s: agent stop %.2f%% clamped to %.2f%% (asset band)",
+                ticker, raw_pct * 100, stop_pct * 100,
+            )
+    if stop_pct is None:
+        stop_pct = _compute_stop_loss_pct(ticker, entry_price)
+
+    take_profit_pct: float | None = None
+    if (
+        isinstance(take_profit_price, (int, float))
+        and not isinstance(take_profit_price, bool)
+        and entry_price > 0
+        and take_profit_price > entry_price
+    ):
+        take_profit_pct = round((float(take_profit_price) - entry_price) / entry_price, 4)
+
+    return round(stop_pct, 4), stop_source, take_profit_pct
+
+
+def normalize_exit_style(exit_style: str | None) -> str:
+    """Clamp an agent-supplied exit style to the known set."""
+    style = str(exit_style or DEFAULT_EXIT_STYLE).strip().lower()
+    return style if style in EXIT_STYLES else DEFAULT_EXIT_STYLE
+
+
 # Fix #3: Maximum age for price data before we refuse to trade
 MAX_PRICE_AGE_HOURS = 96
 
@@ -93,7 +156,7 @@ def _check_drawdown_breaker(bot_id: str, portfolio_value: float) -> dict | None:
     means no block — this is a safety net, not a trade dependency.
     """
     try:
-        max_dd_pct = float(getattr(settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.25) or 0)
+        max_dd_pct = float(get_param("MAX_PORTFOLIO_DRAWDOWN_PCT") or 0)
     except (TypeError, ValueError):
         return None
     if max_dd_pct <= 0:
@@ -293,12 +356,21 @@ async def buy(
     size_pct: float,
     current_price: float | None = None,
     cycle_id: str | None = None,
+    stop_loss_price: float | None = None,
+    take_profit_price: float | None = None,
+    exit_style: str | None = None,
 ) -> dict:
     """
     Execute a paper BUY.
     size_pct: fraction of portfolio equity to target (0.01 = 1%, 0.10 = 10%);
     the spend is capped by available cash.
     Enforces a maximum portfolio concentration cap per ticker.
+
+    stop_loss_price / take_profit_price: the agent's decided exit levels —
+    honored (band-clamped) as the position's stop/target; ATR is only the
+    fallback when no agent stop was supplied. exit_style: 'hard_stop'
+    (default, monitor sells on breach) or 'reanalyze_on_breach' (monitor
+    leaves it to the re-analysis trigger).
     """
     logger.info(
         "[TRACE][BUY] START bot_id=%s ticker=%s size_pct=%s", bot_id, ticker, size_pct
@@ -423,8 +495,8 @@ async def buy(
             ticker, size_pct * 100, portfolio_value, cash,
         )
 
-    # Enforce concentration cap (e.g., max 25% of portfolio per ticker)
-    max_concentration_pct = getattr(settings, "MAX_CONCENTRATION_PCT", 0.25)
+    # Enforce concentration cap (governed; default max 25% of portfolio per ticker)
+    max_concentration_pct = float(get_param("MAX_CONCENTRATION_PCT"))
     max_allowed_value = portfolio_value * max_concentration_pct
 
     logger.info(
@@ -485,30 +557,44 @@ async def buy(
                     [bot_id, ticker],
                 ).fetchone()
 
-                # Compute volatility-adjusted stop-loss
-                stop_pct = _compute_stop_loss_pct(ticker, current_price)
+                # Resolve exits: agent-decided stop/target when supplied,
+                # ATR fallback otherwise (agent-owned exits).
+                style = normalize_exit_style(exit_style)
+                stop_pct, stop_source, tp_pct = _resolve_entry_exits(
+                    ticker, current_price, stop_loss_price, take_profit_price
+                )
 
                 if existing:
                     old_id, old_qty, old_price = existing
                     new_qty = old_qty + qty
                     new_avg = ((old_qty * old_price) + (qty * current_price)) / new_qty
-                    # Recompute stop for new avg price
-                    stop_pct = _compute_stop_loss_pct(ticker, new_avg)
+                    # Re-resolve exits against the new average entry price
+                    stop_pct, stop_source, tp_pct = _resolve_entry_exits(
+                        ticker, new_avg, stop_loss_price, take_profit_price
+                    )
                     db.execute(
                         """
-                        UPDATE positions SET qty = %s, avg_entry_price = %s, stop_loss_pct = %s
+                        UPDATE positions SET qty = %s, avg_entry_price = %s, stop_loss_pct = %s,
+                            take_profit_pct = %s, stop_source = %s, exit_style = %s
                         WHERE id = %s
                     """,
-                        [new_qty, new_avg, stop_pct, old_id],
+                        [new_qty, new_avg, stop_pct, tp_pct, stop_source, style, old_id],
                     )
                 else:
                     db.execute(
                         """
-                        INSERT INTO positions (id, bot_id, ticker, qty, avg_entry_price, stop_loss_pct, opened_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO positions (id, bot_id, ticker, qty, avg_entry_price, stop_loss_pct,
+                            take_profit_pct, stop_source, exit_style, opened_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                        [pos_id, bot_id, ticker, qty, current_price, stop_pct, now],
+                        [pos_id, bot_id, ticker, qty, current_price, stop_pct, tp_pct, stop_source, style, now],
                     )
+                logger.info(
+                    "[TRACE][BUY] %s exits: stop=%.2f%% (%s), tp=%s, style=%s",
+                    ticker, stop_pct * 100, stop_source,
+                    f"{tp_pct * 100:.2f}%%" if tp_pct is not None else "R:R fallback",
+                    style,
+                )
 
                 # Deduct cash and log trade count
                 db.execute(
@@ -914,7 +1000,7 @@ async def check_stop_losses(
     with get_db() as db:
         positions = db.execute(
             """
-            SELECT id, ticker, qty, avg_entry_price, stop_loss_pct FROM positions
+            SELECT id, ticker, qty, avg_entry_price, stop_loss_pct, exit_style FROM positions
             WHERE bot_id = %s
         """,
             [bot_id],
@@ -922,7 +1008,11 @@ async def check_stop_losses(
 
     triggered = []
     for pos in positions:
-        pos_id, ticker, qty, entry_price, stop_pct = pos
+        pos_id, ticker, qty, entry_price, stop_pct, pos_exit_style = pos
+        # Agent chose re-analysis semantics: the price_triggers wake path owns
+        # this position's stop — the monitor must NOT hard-sell it.
+        if normalize_exit_style(pos_exit_style) == "reanalyze_on_breach":
+            continue
         # Use stored stop or fall back to default
         effective_stop = stop_pct if stop_pct is not None else default_stop_pct
 
@@ -988,38 +1078,47 @@ async def check_stop_losses(
 # Fix #13: Take-Profit Harvesting
 async def check_take_profits(
     bot_id: str,
-    reward_risk_ratio: float = 2.0,
+    reward_risk_ratio: float | None = None,
     default_tp_pct: float = 0.20,
     cycle_id: str | None = None,
 ) -> list[dict]:
     """Check all open positions against a take-profit target (harvesting).
 
-    Uses a dynamic target based on the Risk/Reward ratio and the position's
-    stop-loss. If stop-loss is 8%, take-profit is 16% (at 2.0 R:R).
+    The position's stored take_profit_pct (agent-decided at buy) is
+    authoritative when present. Otherwise the target derives from the stored
+    stop and the governed Risk/Reward ratio (stop 8% → target 16% at 2.0 R:R).
     """
     _ensure_bot(bot_id)
+    if reward_risk_ratio is None:
+        reward_risk_ratio = float(get_param("TAKE_PROFIT_RR_RATIO"))
 
     with get_db() as db:
         positions = db.execute(
             """
-            SELECT id, ticker, qty, avg_entry_price, stop_loss_pct FROM positions
-            WHERE bot_id = %s
+            SELECT id, ticker, qty, avg_entry_price, stop_loss_pct, take_profit_pct, exit_style
+            FROM positions WHERE bot_id = %s
         """,
             [bot_id],
         ).fetchall()
 
     triggered = []
     for pos in positions:
-        pos_id, ticker, qty, entry_price, stop_pct = pos
+        pos_id, ticker, qty, entry_price, stop_pct, tp_pct, pos_exit_style = pos
+        # Re-analysis positions are owned by the price_triggers wake path.
+        if normalize_exit_style(pos_exit_style) == "reanalyze_on_breach":
+            continue
         current_price, age_hours = _get_current_price(ticker)
 
         if current_price is None:
             continue
 
-        effective_stop = (
-            stop_pct if stop_pct is not None else (default_tp_pct / reward_risk_ratio)
-        )
-        effective_tp = effective_stop * reward_risk_ratio
+        if tp_pct is not None:
+            effective_tp = tp_pct  # agent-decided target
+        else:
+            effective_stop = (
+                stop_pct if stop_pct is not None else (default_tp_pct / reward_risk_ratio)
+            )
+            effective_tp = effective_stop * reward_risk_ratio
 
         target_price = entry_price * (1 + effective_tp)
         if current_price >= target_price:
@@ -1056,3 +1155,56 @@ async def check_take_profits(
             "[take-profit] Harvested %d positions for bot '%s'", len(triggered), bot_id
         )
     return triggered
+
+
+def update_position_exits(
+    bot_id: str,
+    ticker: str,
+    stop_loss_price: float | None = None,
+    take_profit_price: float | None = None,
+    exit_style: str | None = None,
+) -> dict:
+    """Re-point an ALREADY-HELD position's exits from a fresh agent decision.
+
+    Used when a cycle produces new stop/target levels for a position it did
+    not trade this cycle — previously those levels became parallel
+    price_triggers rows while the position kept its stale entry-time stop
+    (the dual-stop conflict). Now the position's own exits are updated.
+    Returns {updated: bool, ...} — never raises.
+    """
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT id, avg_entry_price FROM positions WHERE bot_id = %s AND ticker = %s",
+                [bot_id, ticker],
+            ).fetchone()
+            if not row:
+                return {"updated": False, "reason": "no_position"}
+            pos_id, entry_price = row
+
+            stop_pct, stop_source, tp_pct = _resolve_entry_exits(
+                ticker, float(entry_price), stop_loss_price, take_profit_price
+            )
+            style = normalize_exit_style(exit_style)
+            sets = ["exit_style = %s"]
+            vals: list = [style]
+            if stop_source == "agent":
+                # Only an explicit agent stop overwrites; no stop supplied
+                # leaves the position's existing stop (and its provenance) alone.
+                sets.extend(["stop_loss_pct = %s", "stop_source = %s"])
+                vals.extend([stop_pct, stop_source])
+            if tp_pct is not None:
+                sets.append("take_profit_pct = %s")
+                vals.append(tp_pct)
+            vals.append(pos_id)
+            db.execute(f"UPDATE positions SET {', '.join(sets)} WHERE id = %s", vals)
+        logger.info(
+            "[paper] %s: position exits updated (stop %s=%.2f%%, tp=%s, style=%s)",
+            ticker, stop_source, stop_pct * 100,
+            f"{tp_pct * 100:.2f}%" if tp_pct is not None else "unchanged", style,
+        )
+        return {"updated": True, "stop_pct": stop_pct, "stop_source": stop_source,
+                "take_profit_pct": tp_pct, "exit_style": style}
+    except Exception as e:  # noqa: BLE001 — advisory update, never break the cycle
+        logger.warning("[paper] %s: update_position_exits failed: %s", ticker, e)
+        return {"updated": False, "reason": str(e)}

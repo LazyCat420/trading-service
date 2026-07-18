@@ -108,6 +108,6 @@ def test_breaker_fails_open_on_db_error():
 
 
 def test_breaker_disabled_at_zero(monkeypatch):
-    from app.config import settings
-    monkeypatch.setattr(settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0, raising=False)
+    # The limit now resolves through the governed parameter store.
+    monkeypatch.setattr("app.trading.paper_trader.get_param", lambda k: 0)
     assert _check_drawdown_breaker("bot1", portfolio_value=1.0) is None

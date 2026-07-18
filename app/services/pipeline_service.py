@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.pipeline_state import PipelineStateDB
+from app.services.parameter_store import get_param
 from app.v3.orchestrator import run_v3_pipeline
 from app.telemetry import send_system_log
 from app.utils.tz import ensure_aware
@@ -911,10 +912,10 @@ class PipelineService:
                             ticker_name, action, policy_action,
                         )
                         result["no_trade_reason"] = policy_action
-                    elif action in ("BUY", "SELL") and confidence < _cfg.ANALYSIS_CONFIDENCE_THRESHOLD:
+                    elif action in ("BUY", "SELL") and confidence < get_param("ANALYSIS_CONFIDENCE_THRESHOLD"):
                         logger.warning(
                             "[PipelineService] %s: %s blocked — confidence %d%% < threshold %d%%",
-                            ticker_name, action, confidence, _cfg.ANALYSIS_CONFIDENCE_THRESHOLD,
+                            ticker_name, action, confidence, get_param("ANALYSIS_CONFIDENCE_THRESHOLD"),
                         )
                         result["no_trade_reason"] = REASON_CONFIDENCE_BLOCKED
                     elif action == "BUY":
@@ -925,7 +926,7 @@ class PipelineService:
                         # directive and skips the trade entirely (deferred item 8.1).
                         agent_size_pct = (result.get("estimate") or {}).get("position_size_pct")
                         size_pct = resolve_buy_size_pct(
-                            agent_size_pct, confidence, _cfg.MAX_POSITION_SIZE_PCT
+                            agent_size_pct, confidence, get_param("MAX_POSITION_SIZE_PCT")
                         )
                         if size_pct is None:
                             result["no_trade_reason"] = REASON_WATCH_ONLY
@@ -942,7 +943,13 @@ class PipelineService:
                                 "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
                                 size_pct * 100,
                             )
-                            trade_res = await buy(bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id)
+                            _est = result.get("estimate") or {}
+                            trade_res = await buy(
+                                bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id,
+                                stop_loss_price=_est.get("stop_loss"),
+                                take_profit_price=_est.get("take_profit"),
+                                exit_style=_est.get("exit_style"),
+                            )
                             if isinstance(trade_res, dict) and trade_res.get("error"):
                                 result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
                                 logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
@@ -1010,10 +1017,28 @@ class PipelineService:
                                 ticker_name, policy_action,
                             )
                         from app.trading.order_triggers import create_trigger
-                        if stop_loss and allowed["sell_side"]:
-                            await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
-                        if take_profit and allowed["sell_side"]:
-                            await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
+                        from app.trading.paper_trader import normalize_exit_style, update_position_exits
+                        exit_style = normalize_exit_style(decision.get("exit_style"))
+                        if allowed["sell_side"] and not result.get("trade_executed"):
+                            # Held position, no trade this cycle: re-point the
+                            # position's OWN exits to the fresh agent levels
+                            # (buy() handles this when a trade executed).
+                            update_position_exits(
+                                active_bot_id, ticker_name,
+                                stop_loss_price=stop_loss,
+                                take_profit_price=take_profit,
+                                exit_style=exit_style,
+                            )
+                        # Exit ownership (dual-stop fix): with 'hard_stop' the
+                        # position's stored stop/target execute directly — no
+                        # parallel re-analysis trigger rows are registered.
+                        # 'reanalyze_on_breach' registers the wake triggers and
+                        # the background monitor leaves the position alone.
+                        if exit_style == "reanalyze_on_breach":
+                            if stop_loss and allowed["sell_side"]:
+                                await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")
+                            if take_profit and allowed["sell_side"]:
+                                await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="take_profit", trigger_price=float(take_profit), action="SELL", qty_pct=1.0, created_by="pipeline")
                         if dynamic_trigger and isinstance(dynamic_trigger, dict) and allowed["dynamic"]:
                             dt_type = dynamic_trigger.get("type")
                             dt_val = dynamic_trigger.get("value")
