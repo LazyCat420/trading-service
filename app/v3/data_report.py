@@ -182,8 +182,9 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         reddit_rows = db.execute(
             """
             SELECT subreddit, title, score, upvote_ratio, comment_count, sentiment_score, summary
-            FROM reddit_posts 
-            WHERE ticker = %s 
+            FROM reddit_posts
+            WHERE ticker = %s
+              AND collected_at > NOW() - INTERVAL '30 days'
             ORDER BY score DESC LIMIT 10
             """,
             [ticker]
@@ -196,11 +197,15 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
             )
             
         # YouTube formatting
+        # Recency-windowed: without the filter, three-week-old transcripts (the
+        # collector was starved by the 45s pre-collect cancel from 06-28 to
+        # 07-17) were presented to agents as "Recent YouTube Analyses".
         yt_rows = db.execute(
             """
             SELECT channel, title, published_at, summary
             FROM youtube_transcripts
             WHERE ticker = %s
+              AND published_at > NOW() - INTERVAL '21 days'
             ORDER BY published_at DESC LIMIT 5
             """,
             [ticker]

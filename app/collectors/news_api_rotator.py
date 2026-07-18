@@ -201,14 +201,25 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                 f"{article.title}{article.published_at.isoformat()}".encode()
             ).hexdigest()
 
+            # Shared-content dedup: the rotator wrote rows with an EMPTY
+            # content_hash, so the DedupEngine used by the finnhub/yfinance/RSS
+            # collectors could never see rotator articles — the same story
+            # arriving from two providers was double-stored (44 dup groups in
+            # one week, all hashless). Compute the same hash and check first.
+            from app.processors.dedup_engine import DedupEngine
+            dedup = DedupEngine(table="news_articles")
+            if dedup.is_duplicate(article.title, summary):
+                continue
+            content_hash = dedup.compute_hash(article.title, summary)
+
             if detected:
                 for ticker in detected:
                     ticker_id = _get_article_id(article.title, ticker)
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                         ON CONFLICT (id) DO NOTHING
                     """,
                         [
@@ -220,6 +231,7 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                             article.published_at,
                             summary[:15000],
                             article.source,
+                            content_hash,
                         ],
                     )
                     count += 1
@@ -229,8 +241,8 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                 db.execute(
                     """
                     INSERT INTO news_articles
-                    (id, ticker, title, publisher, url, published_at, summary, source, collected_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                     ON CONFLICT (id) DO NOTHING
                 """,
                     [
@@ -242,6 +254,7 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                         article.published_at,
                         summary[:15000],
                         article.source,
+                        content_hash,
                     ],
                 )
                 count += 1
