@@ -460,8 +460,16 @@ class TestNewsApiRotator:
             )
         ]
 
+        # The rotator now consults the shared DedupEngine (imported inside the
+        # function from app.processors.dedup_engine) — mock it so the unit test
+        # never touches a real DB and the article always reads as fresh.
+        mock_dedup = MagicMock()
+        mock_dedup.is_duplicate.return_value = False
+        mock_dedup.compute_hash.return_value = "testhash"
+
         async def run_persist():
-            with patch("app.collectors.news_api_rotator.get_db", return_value=mock_db):
+            with patch("app.collectors.news_api_rotator.get_db", return_value=mock_db), \
+                 patch("app.processors.dedup_engine.DedupEngine", return_value=mock_dedup):
                 return await _persist_articles(articles)
 
         count = asyncio.run(run_persist())

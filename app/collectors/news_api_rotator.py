@@ -206,11 +206,16 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
             # collectors could never see rotator articles — the same story
             # arriving from two providers was double-stored (44 dup groups in
             # one week, all hashless). Compute the same hash and check first.
-            from app.processors.dedup_engine import DedupEngine
-            dedup = DedupEngine(table="news_articles")
-            if dedup.is_duplicate(article.title, summary):
-                continue
-            content_hash = dedup.compute_hash(article.title, summary)
+            # Best-effort: a dedup-engine failure must never block persistence.
+            content_hash = ""
+            try:
+                from app.processors.dedup_engine import DedupEngine
+                dedup = DedupEngine(table="news_articles")
+                if dedup.is_duplicate(article.title, summary):
+                    continue
+                content_hash = dedup.compute_hash(article.title, summary)
+            except Exception as dedup_err:
+                logger.debug("[rotator] dedup check failed (storing anyway): %s", dedup_err)
 
             if detected:
                 for ticker in detected:
