@@ -1068,7 +1068,9 @@ async def run_tournament_debate(
         "risk_flags": risk_flags,
         "rationale": rationale,
         "pitches": [
-            {"persona": p.get("persona"), "claim": p.get("claim"), "equation": p.get("equation")}
+            {"persona": p.get("persona"), "claim": p.get("claim"),
+             "equation": p.get("equation"), "direction": p.get("direction"),
+             "risk": p.get("risk")}
             for p in pitches
         ],
         "survivors": [
@@ -1106,7 +1108,9 @@ def _build_fallback_result(
         "winning_side": "fallback",
         "rationale": f"Tournament fallback: {reason}",
         "pitches": [
-            {"persona": p.get("persona"), "claim": p.get("claim"), "equation": p.get("equation")}
+            {"persona": p.get("persona"), "claim": p.get("claim"),
+             "equation": p.get("equation"), "direction": p.get("direction"),
+             "risk": p.get("risk")}
             for p in pitches
         ],
         "survivors": [],

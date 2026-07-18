@@ -280,11 +280,13 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     lessons_md = ""
     try:
         with get_db() as db:
+            # NB: evolution_lessons.timestamp is TEXT (ISO strings) — a
+            # NOW()-interval comparison type-errors. ISO strings sort
+            # lexicographically, so ORDER BY alone gets the freshest.
             lrows = db.execute(
                 "SELECT lesson_text FROM evolution_lessons "
                 "WHERE status = 'audited' AND lesson_text IS NOT NULL "
-                "AND timestamp > NOW() - INTERVAL '14 days' "
-                "ORDER BY timestamp DESC LIMIT 3"
+                "ORDER BY timestamp DESC NULLS LAST LIMIT 3"
             ).fetchall()
         if lrows:
             lessons_md = (
