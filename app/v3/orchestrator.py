@@ -249,8 +249,27 @@ async def run_v3_pipeline(
                 logger.warning("[V3] %s: Triage hours_old calculation failed (defaulting to 9999): %s", ticker, e)
 
         from app.services.parameter_store import get_param as _get_param
+
+        # A standing cross-agent contradiction on the prior desk (fundamental
+        # vs quant/tournament dissent recorded by the contradiction shadow) is
+        # exactly the case one cheap delta agent should NOT re-affirm alone —
+        # force the full panel so the disagreement gets re-argued.
+        prior_contradictions = 0
+        try:
+            for _t in (getattr(previous_desk, "agent_telemetry", None) or []):
+                if isinstance(_t, dict) and _t.get("contradiction_count"):
+                    prior_contradictions = int(_t.get("contradiction_count") or 0)
+        except Exception:
+            prior_contradictions = 0
+
         if hours_old >= _get_param("TRIAGE_DEEP_HOURS") or news_count >= _get_param("TRIAGE_DEEP_NEWS_VOLUME"):
             triage_tier = "v3_deep"
+        elif prior_contradictions > 0 and hours_old > _get_param("TRIAGE_GLANCE_HOURS") / 8:
+            triage_tier = "v3_deep"
+            logger.info(
+                "[V3] %s: Triage escalated to deep — prior desk carried %d unresolved "
+                "cross-agent contradiction(s)", ticker, prior_contradictions,
+            )
         elif hours_old <= _get_param("TRIAGE_GLANCE_HOURS") and news_count == 0:
             # Recently analysed AND nothing new at all → hard skip (cheapest).
             triage_tier = "v3_glance"
@@ -337,6 +356,25 @@ async def run_v3_pipeline(
                     "[V3] %s: Delta re-look %s → %s@%d%% (full panel skipped)",
                     ticker, verdict or "REAFFIRM", d_action, d_conf,
                 )
+                # Delta cycles used to leave NO memory trace — a re-affirmed
+                # thesis never became an episodic observation, so the memory
+                # system was blind to every energy-saved cycle.
+                try:
+                    from app.services.memory.store import MemoryStore
+                    MemoryStore().add_episodic_observation({
+                        "cycle_id": cycle_id,
+                        "ticker": ticker,
+                        "source_type": "v3_delta",
+                        "observation_text": (
+                            f"Delta re-look for {ticker}: {verdict or 'REAFFIRM'} → "
+                            f"{d_action} @ {d_conf}% confidence. "
+                            f"{str(delta.get('reasoning') or '')[:400]}"
+                        ),
+                        "confidence_at_creation": d_conf / 100.0 if d_conf else 0.0,
+                        "outcome_label": d_action,
+                    })
+                except Exception as mem_err:
+                    logger.warning("[V3] %s: Delta memory write failed (non-fatal): %s", ticker, mem_err)
                 save_desk(desk)
                 elapsed_s = time.monotonic() - t_pipeline
                 result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)

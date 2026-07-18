@@ -24,6 +24,67 @@ from app.trading.quant_edge_verifier import (
 
 logger = logging.getLogger(__name__)
 
+# Round-trip friction: 7.5 bps per side (commission + slippage). Cost-free
+# backtests systematically promote high-churn strategies whose paper edge
+# dies on the first real spread.
+COST_PCT_PER_SIDE = 0.075  # percent of price, per side
+
+# Below this many closed trades a backtest is statistical noise, not evidence.
+MIN_TRADES_FOR_GATE = 5
+
+# Fraction of trades (chronological) used as in-sample; the tail is held out.
+IS_FRACTION = 0.7
+
+# The OOS edge must beat this share of sign-randomized (coin-flip) resamples.
+NULL_PERCENTILE_GATE = 0.60
+_NULL_RESAMPLES = 200
+
+
+def _sharpe_from_trades(trades: list[dict]) -> float:
+    """Sharpe from per-trade returns, annualized by ACTUAL holding period.
+
+    The old formula annualized per-trade returns with sqrt(252) — treating a
+    9-day swing trade as if it were a daily return — inflating multi-day
+    strategies' Sharpe by ~3x. Annualize by 252/avg_holding_days instead.
+    """
+    if not trades or len(trades) < 2:
+        return 0.0
+    returns = [t.get("return_pct", 0.0) for t in trades]
+    std_r = np.std(returns, ddof=1)
+    if std_r <= 0:
+        return 0.0
+    hold_days = []
+    for t in trades:
+        try:
+            d = (pd.to_datetime(t["exit_date"]) - pd.to_datetime(t["entry_date"])).days
+            hold_days.append(max(int(d), 1))
+        except Exception:
+            pass
+    avg_hold = float(np.mean(hold_days)) if hold_days else 1.0
+    return float((np.mean(returns) / std_r) * np.sqrt(252.0 / max(avg_hold, 1.0)))
+
+
+def _null_percentile(trades: list[dict]) -> float | None:
+    """Share of sign-randomized resamples the actual edge beats.
+
+    Flips each trade's direction with p=0.5 (a coin-flip trader taking the
+    same entries/exits) and asks how often the real cumulative return beats
+    the coin flipper. ~0.5 = indistinguishable from luck; deterministic seed
+    keeps repeat runs stable.
+    """
+    if not trades or len(trades) < MIN_TRADES_FOR_GATE:
+        return None
+    returns = np.array([t.get("return_pct", 0.0) for t in trades]) / 100.0
+    actual = float(np.prod(1.0 + returns) - 1.0)
+    rng = np.random.default_rng(seed=len(trades) * 1000 + int(abs(actual) * 1e6) % 997)
+    beats = 0
+    for _ in range(_NULL_RESAMPLES):
+        signs = rng.choice([1.0, -1.0], size=len(returns))
+        null_cum = float(np.prod(1.0 + returns * signs) - 1.0)
+        if actual > null_cum:
+            beats += 1
+    return round(beats / _NULL_RESAMPLES, 3)
+
 
 def run_backtest_for_equation(
     equation_name: str,
@@ -64,11 +125,21 @@ def run_backtest_for_equation(
         _update_stats(equation_name, raw_result)
         return raw_result
 
-    # If the equation returns signals, simulate trades
+    # If the equation returns signals, simulate trades (net of costs), then
+    # split chronologically: the OOS tail + a coin-flip null test are what the
+    # Stage-2 gate actually judges — full-sample stats alone reward overfit.
     if isinstance(raw_result, dict) and "signals" in raw_result:
         signals = raw_result["signals"]
         trades = _simulate_from_signals(signals)
         summary = _summarize_trades(trades)
+        split = max(1, int(len(trades) * IS_FRACTION)) if trades else 0
+        is_trades, oos_trades = trades[:split], trades[split:]
+        summary["costs_applied_pct_per_side"] = COST_PCT_PER_SIDE
+        summary["sharpe_ratio"] = _sharpe_from_trades(trades)
+        summary["in_sample"] = _summarize_trades(is_trades) if is_trades else {}
+        summary["out_of_sample"] = _summarize_trades(oos_trades) if oos_trades else {}
+        summary["oos_trades"] = len(oos_trades)
+        summary["null_percentile"] = _null_percentile(oos_trades if len(oos_trades) >= MIN_TRADES_FOR_GATE else trades)
         _update_stats(equation_name, summary)
         return summary
 
@@ -110,7 +181,10 @@ def _simulate_from_signals(signals: list[dict]) -> list[dict]:
         elif position == 1 and action == "SELL":
             position = 0
             if entry_price > 0:
-                pnl = (price - entry_price) / entry_price
+                # Net of friction: pay COST_PCT_PER_SIDE on entry AND exit.
+                eff_entry = entry_price * (1 + COST_PCT_PER_SIDE / 100.0)
+                eff_exit = price * (1 - COST_PCT_PER_SIDE / 100.0)
+                pnl = (eff_exit - eff_entry) / eff_entry
                 trades.append({
                     "entry_date": entry_date,
                     "exit_date": date,
@@ -127,16 +201,9 @@ def _update_stats(equation_name: str, summary: dict) -> None:
     try:
         pnl = summary.get("cumulative_return_pct", 0.0)
         wr = summary.get("win_rate_pct", 0.0)
-
-        # Compute Sharpe ratio from individual trade returns
-        trades = summary.get("trades", [])
-        if trades and len(trades) >= 2:
-            returns = [t.get("return_pct", 0.0) for t in trades]
-            mean_r = np.mean(returns)
-            std_r = np.std(returns, ddof=1)
-            sharpe = (mean_r / std_r) * np.sqrt(252) if std_r > 0 else 0.0
-        else:
-            sharpe = 0.0
+        sharpe = summary.get("sharpe_ratio")
+        if not isinstance(sharpe, (int, float)) or not sharpe:
+            sharpe = _sharpe_from_trades(summary.get("trades", []))
 
         update_backtest_stats(equation_name, pnl, wr, sharpe, summary)
     except Exception as e:
@@ -190,21 +257,38 @@ def filter_pitches_by_backtest(
             continue
 
         pnl = result.get("cumulative_return_pct", 0.0)
-        sharpe = result.get("sharpe_ratio", 0.0)
+        sharpe = result.get("sharpe_ratio", 0.0) or _sharpe_from_trades(result.get("trades", []))
+        n_trades = int(result.get("total_trades") or len(result.get("trades", []) or []))
 
-        # Compute sharpe if not in result
-        if sharpe == 0.0:
-            trades = result.get("trades", [])
-            if trades and len(trades) >= 2:
-                returns = [t.get("return_pct", 0.0) for t in trades]
-                mean_r = np.mean(returns)
-                std_r = np.std(returns, ddof=1)
-                sharpe = (mean_r / std_r) * np.sqrt(252) if std_r > 0 else 0.0
+        # Too few closed trades = no statistical evidence either way — pass
+        # through honestly unbacktested (like stub equations) rather than
+        # pretending a 2-trade "backtest" proved anything.
+        if n_trades < MIN_TRADES_FOR_GATE:
+            pitch["backtest_results"] = {"note": f"only {n_trades} trades — below evidence threshold ({MIN_TRADES_FOR_GATE})"}
+            pitch["backtest_pnl"] = None
+            pitch["backtest_sharpe"] = None
+            survivors.append(pitch)
+            logger.info("[BACKTEST] '%s' passed through unbacktested (%d trades < %d)",
+                        eq_name, n_trades, MIN_TRADES_FOR_GATE)
+            continue
 
-        if pnl < min_pnl:
+        # Judge the OUT-OF-SAMPLE tail when it has enough trades; the
+        # full-sample number is what the strategy was (implicitly) fit on.
+        oos = result.get("out_of_sample") or {}
+        gate_pnl = oos.get("cumulative_return_pct", pnl) if int(result.get("oos_trades") or 0) >= MIN_TRADES_FOR_GATE else pnl
+        null_pct = result.get("null_percentile")
+
+        if gate_pnl < min_pnl:
             logger.info(
-                "[BACKTEST] Eliminated '%s': PnL %.2f%% < %.2f%% threshold",
-                eq_name, pnl, min_pnl,
+                "[BACKTEST] Eliminated '%s': gated PnL %.2f%% < %.2f%% (net of costs, OOS-preferred)",
+                eq_name, gate_pnl, min_pnl,
+            )
+            continue
+
+        if isinstance(null_pct, (int, float)) and null_pct < NULL_PERCENTILE_GATE:
+            logger.info(
+                "[BACKTEST] Eliminated '%s': beats only %.0f%% of coin-flip resamples (< %.0f%%)",
+                eq_name, null_pct * 100, NULL_PERCENTILE_GATE * 100,
             )
             continue
 
@@ -220,8 +304,8 @@ def filter_pitches_by_backtest(
         pitch["backtest_sharpe"] = sharpe
         survivors.append(pitch)
         logger.info(
-            "[BACKTEST] '%s' survived: PnL=%.2f%%, Sharpe=%.2f",
-            eq_name, pnl, sharpe,
+            "[BACKTEST] '%s' survived: PnL=%.2f%% (gated %.2f%%), Sharpe=%.2f, null_pct=%s",
+            eq_name, pnl, gate_pnl, sharpe, null_pct,
         )
 
     logger.info(

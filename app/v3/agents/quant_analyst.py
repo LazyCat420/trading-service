@@ -26,6 +26,7 @@ TOOL_WHITELIST = [
     "get_position_pnl",
     "whiteboard_write",
     "whiteboard_read",
+    "whiteboard_annotate",
     "request_peer_analysis",
     "search_equations",
     "save_equation",
@@ -92,6 +93,12 @@ If get_technical_indicators returns empty:
 - `whiteboard_read`: check what the other analysts already posted before
   re-fetching data. If you experience tool errors, approximate bounds as
   described above.
+- `whiteboard_annotate` (MANDATORY, at least once): read the Fundamental
+  Analyst's "risk_flags" (or the Junior's "desk_note"), then annotate its
+  entry_id with ONE line: AGREE or DISPUTE + the specific level/indicator
+  that supports your position. Pass author="v3_quant_analyst". If your
+  technicals contradict their fundamentals, SAY SO here — the Board only
+  confronts disagreements that are written down.
 - `request_peer_analysis`: if you need a qualitative fact you cannot compute
   (e.g. "What happened during the last 3 earnings surprises?"), queue a
   targeted request to junior_analyst or fundamental_analyst. Use at most one

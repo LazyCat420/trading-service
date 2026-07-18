@@ -49,6 +49,10 @@ Your job: Select which stocks to send to deep analysis. Pick between {min_ticker
 3. EMBRACE VOLATILITY: Prefer explosive setups and momentum shifts over safe baseline stocks.
 4. BALANCE SOURCES: Mix trending discoveries (Reddit, News) with watchlist setups.
 5. NEVER select 0 — if you received this list, there are stocks worth analyzing.
+6. RISK ENVELOPE: `get_parameters` shows the live runtime limits (sizing caps,
+   research/watch budgets, thresholds). If a budget or cap is genuinely
+   constraining good work, `propose_parameter_change` with specific evidence —
+   the governor clamps, cools down, and auto-reverts loosening changes.
 
 ## OUTPUT
 Output ONLY a JSON object. No conversational text, no markdown blocks.

@@ -34,6 +34,10 @@ _ORCHESTRATOR_SECTIONS = frozenset({
             "content": {
                 "type": "string",
                 "description": "The content to write (preferably a JSON string or clear text)."
+            },
+            "author": {
+                "type": "string",
+                "description": "YOUR agent name (e.g. v3_quant_analyst) so teammates know who wrote this. Always provide it."
             }
         },
         "required": ["ticker", "section", "content"]
@@ -42,9 +46,14 @@ _ORCHESTRATOR_SECTIONS = frozenset({
     source="whiteboard",
     permission=PermissionLevel.WRITE,
 )
-async def whiteboard_write(ticker: str, section: str, content: str) -> str:
+async def whiteboard_write(ticker: str, section: str, content: str, author: str = "") -> str:
     cycle_id = current_cycle_id()
     author_agent = current_agent_name()
+    if author_agent == "unknown" and author.strip():
+        # MCP-bridge calls arrive without the tool-context agent name; fall
+        # back to the agent's self-identification so whiteboard entries stay
+        # attributable ("who claimed this?" was unanswerable for bridge writes).
+        author_agent = author.strip()[:64]
     if section in _ORCHESTRATOR_SECTIONS:
         logger.warning(
             "[WhiteboardTool] BLOCKED write to reserved section '%s' by agent '%s' (%s)",
@@ -124,6 +133,10 @@ async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
             "note": {
                 "type": "string",
                 "description": "Your annotation/comment."
+            },
+            "author": {
+                "type": "string",
+                "description": "YOUR agent name (e.g. v3_quant_analyst) so the note is attributable. Always provide it."
             }
         },
         "required": ["entry_id", "note"]
@@ -132,8 +145,10 @@ async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
     source="whiteboard",
     permission=PermissionLevel.WRITE,
 )
-async def whiteboard_annotate(entry_id: int, note: str) -> str:
+async def whiteboard_annotate(entry_id: int, note: str, author: str = "") -> str:
     author_agent = current_agent_name()
+    if author_agent == "unknown" and author.strip():
+        author_agent = author.strip()[:64]
     logger.info("[WhiteboardTool] Annotating entry %d (agent=%s)", entry_id, author_agent)
     try:
         success = await whiteboard.annotate(entry_id=entry_id, agent=author_agent, note=note)

@@ -30,6 +30,7 @@ TOOL_WHITELIST = [
     "run_tool_chain",
     "whiteboard_read",
     "whiteboard_write",
+    "whiteboard_annotate",
     "request_peer_analysis",
     # Research sniping: earnings dates are this desk's home turf — schedule a
     # one-shot research cycle to land on the fresh numbers (governor-capped).
@@ -64,6 +65,11 @@ concrete numbers are considered incomplete.
   trade (e.g. leverage, valuation extremes, guidance changes) with numbers.
   The Quant, Board and debate agents read this board — a run with zero
   whiteboard writes is an incomplete run.
+- `whiteboard_annotate` (MANDATORY, at least once): read a teammate's section
+  (e.g. section="desk_note" or "signals"), then annotate its entry_id with
+  ONE line: AGREE or DISPUTE + the specific number/fact that supports your
+  position. Pass author="v3_fundamental_analyst". Disagreement recorded here
+  is what forces the Board to confront it — silence reads as consensus.
 - `request_peer_analysis`: if a metric you need is absent from the Junior
   Analyst's notes, queue a targeted request — e.g.
   request_peer_analysis(ticker, target_agent="junior_analyst",

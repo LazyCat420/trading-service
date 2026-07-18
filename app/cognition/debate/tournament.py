@@ -222,6 +222,7 @@ async def _run_pitch_agent(
     packet: EvidencePacket,
     cycle_id: str,
     bot_id: str,
+    extra_directive: str = "",
 ) -> dict | None:
     """Run a single pitch persona agent.
 
@@ -295,6 +296,14 @@ async def _run_pitch_agent(
         f"As the {persona_name.replace('_', ' ')} persona, generate your best "
         f"mathematically testable pitch for {ticker}. "
         f"Use the pre-computed equation results and evidence data above. "
+        # Persona-collapse guard: with identical evidence the four desks
+        # routinely converged on ONE thesis (observed live: 3/3 bearish
+        # mean-reversion pitches, two sharing the same equation) — which gives
+        # the jury nothing to compare. Each desk must argue ITS OWN edge.
+        f"Argue the strongest case YOUR style supports even if you suspect the "
+        f"other desks lean the opposite way — a debate needs your independent "
+        f"view, not consensus. "
+        f"{extra_directive}"
         f"Output your response as the required JSON format."
     )
 
@@ -511,6 +520,18 @@ async def _run_head_to_head(
             # None-safe: un-backtested theses carry backtest_pnl=None, which
             # crashes downstream comparisons and f"{x:.2f}" formatting.
             parsed["backtest_pnl"] = thesis.get("backtest_pnl") or 0
+            # Carry the pitch's mandatory RISK BLOCK (stop/size/drawdown) and
+            # equation identity through the refinement. The H2H schema doesn't
+            # restate them, so the jury used to receive "NONE PROVIDED
+            # (veto-worthy)" for risk on every refined thesis — jurors were
+            # penalizing pitches for terms that existed two stages upstream
+            # (observed live: all three jurors complained about missing
+            # stop-losses that every pitch had defined).
+            parsed["risk"] = thesis.get("risk")
+            if not parsed.get("equation"):
+                parsed["equation"] = thesis.get("equation", "")
+            if not parsed.get("result"):
+                parsed["result"] = thesis.get("result", "")
             return parsed
         except Exception as e:
             logger.error("[TOURNAMENT] H2H %s failed: %s", side_name, e)
@@ -639,14 +660,41 @@ async def _run_jury_scoring(
 
             is_valid, parsed, error = validate_jury_score(response)
             if not is_valid:
-                logger.warning("[TOURNAMENT] Jury %s invalid format: %s", juror_name, error)
-                parsed = {"score": 5, "reasoning": response[:500], "veto": False}
+                # ONE strict re-prompt before giving up — jury JSON failures
+                # used to silently become a fake neutral 5/10 with the raw
+                # (often truncated) response stuffed into reasoning, which
+                # polluted the verdict text and hid the failure entirely.
+                logger.warning("[TOURNAMENT] Jury %s invalid format (%s) — re-prompting once", juror_name, error)
+                retry_response, retry_tokens, _ = await llm.chat(
+                    system=juror_config["system_prompt"],
+                    user=(
+                        f"{juror_prompt}\n\n"
+                        f"YOUR PREVIOUS RESPONSE WAS REJECTED: {error}\n"
+                        "Respond with ONLY a single minified JSON object — no markdown fences, "
+                        'no nested JSON, no prose: {"score": <1-10>, "winner": "A"|"B", '
+                        '"reasoning": "<max 3 sentences>", "risk_assessment": "<1 sentence>", "veto": true|false}'
+                    ),
+                    temperature=0.1,
+                    max_tokens=384,
+                    priority=Priority.NORMAL,
+                    agent_name=agent_name,
+                    ticker=ticker,
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                )
+                tokens = (tokens or 0) + (retry_tokens or 0)
+                is_valid, parsed, error = validate_jury_score(retry_response)
+                if not is_valid:
+                    logger.error("[TOURNAMENT] Jury %s failed twice (%s) — juror EXCLUDED from panel", juror_name, error)
+                    return {"juror": juror_name, "outcome": "PARSE_FAIL", "error": error,
+                            "veto": False, "score": None}, tokens
 
             parsed["juror"] = juror_name
             return parsed, tokens or 0
         except Exception as e:
-            logger.error("[TOURNAMENT] Jury %s failed: %s", juror_name, e)
-            return {"score": 5, "reasoning": f"Jury failed: {e}", "veto": False, "juror": juror_name}, 0
+            logger.error("[TOURNAMENT] Jury %s failed: %s — juror EXCLUDED from panel", juror_name, e)
+            return {"juror": juror_name, "outcome": "AGENT_ERROR", "error": str(e)[:300],
+                    "veto": False, "score": None}, 0
 
     # T5: fast mode runs a single juror (Risk_Manager) — the only juror with
     # veto power (the other two hardcode veto=false), so the risk gate is
@@ -670,6 +718,10 @@ async def _run_jury_scoring(
         total_tokens += tokens
         juror_name = parsed.get("juror", "unknown")
         jury_results[juror_name] = parsed
+        # Excluded jurors (PARSE_FAIL / AGENT_ERROR) carry score=None — they
+        # do NOT contribute a fake neutral 5 to the average or a side vote.
+        if parsed.get("score") is None:
+            continue
         scores.append(parsed.get("score", 5))
 
         side = str(parsed.get("winner", "")).strip().upper()
@@ -824,6 +876,43 @@ async def run_tournament_debate(
                 if collapsed else "",
             )
 
+    # ── Direction-collapse guard: if every pitch took the SAME side, re-roll
+    # the weakest pitch as a devil's advocate on the opposite side. A
+    # "tournament" of three same-direction theses is one opinion in three
+    # voices — the jury has nothing to weigh (observed live on AAPL).
+    directions = {str(p.get("direction", "")).upper() for p in pitches if p.get("direction")}
+    if len(pitches) >= 2 and len(directions) == 1:
+        collapsed_dir = next(iter(directions))
+        opposite = "BULLISH" if collapsed_dir == "BEARISH" else "BEARISH"
+        weakest = min(pitches, key=lambda p: len(p.get("evidence", "") or ""))
+        da_name = weakest.get("persona", "Macro_Quant")
+        da_config = PITCH_PERSONAS.get(da_name, {"focus": "contrarian analysis", "equation_hint": "", "temperature": 0.7})
+        logger.warning(
+            "[TOURNAMENT] All %d pitches are %s — re-rolling %s as %s devil's advocate",
+            len(pitches), collapsed_dir, da_name, opposite,
+        )
+        try:
+            da_pitch = await _run_pitch_agent(
+                da_name, da_config, ticker, packet, cycle_id, bot_id,
+                extra_directive=(
+                    f"DEVIL'S ADVOCATE ASSIGNMENT: every other desk pitched {collapsed_dir}. "
+                    f"Your task is the strongest honest {opposite} thesis this evidence supports "
+                    f"(direction MUST be {opposite}). If the {opposite} case is genuinely weak, "
+                    f"say so in the claim but still present the best version of it. "
+                ),
+            )
+            if da_pitch and str(da_pitch.get("direction", "")).upper() == opposite:
+                total_tokens += da_pitch.get("tokens", 0)
+                if da_pitch.get("equation"):
+                    da_pitch["equation_name"] = da_pitch["equation"]
+                da_pitch["devils_advocate"] = True
+                pitches = [p for p in pitches if p is not weakest] + [da_pitch]
+                logger.info("[TOURNAMENT] Devil's advocate accepted: %s now argues %s", da_name, opposite)
+            else:
+                logger.info("[TOURNAMENT] Devil's advocate re-roll unusable — keeping original pitches")
+        except Exception as da_err:
+            logger.warning("[TOURNAMENT] Devil's advocate re-roll failed (non-fatal): %s", da_err)
+
     if len(pitches) < 2:
         logger.warning("[TOURNAMENT] Not enough pitches for tournament (<2). Falling back.")
         return _build_fallback_result(ticker, pitches, total_tokens, "Insufficient pitches for tournament")
@@ -839,6 +928,10 @@ async def run_tournament_debate(
             len(survivors),
         )
         survivors = sorted(pitches, key=lambda p: len(p.get("evidence", "")), reverse=True)[:2]
+        for s in survivors:
+            # Honest provenance: these advanced WITHOUT clearing the backtest
+            # gate (seeded by evidence volume) — the jury/board should know.
+            s["filter_bypassed"] = True
 
     logger.info(
         "[TOURNAMENT] Stage 2 complete: %d survivors",

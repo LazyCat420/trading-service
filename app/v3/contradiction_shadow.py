@@ -190,6 +190,13 @@ def compute_contradiction_shadow(desk) -> dict[str, Any]:
     report: dict[str, Any] = {
         "kind": "contradiction_shadow",
         "agent": "contradiction_shadow",
+        # Telemetry-writer contract keys — persist_telemetry falls back to
+        # "?" for missing agent_name/phase/outcome, which rendered this
+        # entry as an anonymous "? 0.0s ⚠" node in the replay flow graph.
+        "agent_name": "contradiction_shadow",
+        "phase": "post_decision",
+        "outcome": "SUCCESS",
+        "elapsed_ms": 0,
         "ticker": desk.ticker,
         "shadow_only": True,
     }
