@@ -199,6 +199,7 @@ async def check_triggers(bot_id: str) -> list[dict]:
 
     results = []
     now = datetime.now(timezone.utc)
+    fired_tickers: set[str] = set()
 
     for row in triggers:
         (
@@ -214,6 +215,12 @@ async def check_triggers(bot_id: str) -> list[dict]:
             dynamic_trigger_type,
             dynamic_trigger_value,
         ) = row
+
+        # One spawned cycle per ticker per pass — that cycle re-evaluates the
+        # whole position, so sibling triggers on the same ticker are moot (and
+        # each would just error "cycle already running" anyway).
+        if ticker in fired_tickers:
+            continue
 
         current_price, _ = _get_current_price(ticker)
         if current_price is None:
@@ -312,12 +319,23 @@ async def check_triggers(bot_id: str) -> list[dict]:
                     trigger_type=f"edge_case_{trigger_type}",
                 )
                 
-                # If we successfully started a cycle, mark the trigger as fired so it doesn't repeatedly spawn cycles
+                # Mark the trigger fired so it doesn't repeatedly spawn cycles —
+                # and retire its SIBLINGS of the same protective type too. Legacy
+                # pileups (28 identical AAPL stops observed) meant one breach
+                # would otherwise chain-spawn a cycle per stale row, minute
+                # after minute, until every copy had fired.
+                fired_tickers.add(ticker)
                 with get_db() as db:
                     db.execute(
                         "UPDATE price_triggers SET active = FALSE, triggered_at = %s WHERE id = %s",
                         [now, trigger_id],
                     )
+                    if trigger_type in ("stop_loss", "take_profit", "trailing_stop"):
+                        db.execute(
+                            "UPDATE price_triggers SET active = FALSE "
+                            "WHERE bot_id = %s AND ticker = %s AND trigger_type = %s AND active = TRUE",
+                            [bot_id, ticker, trigger_type],
+                        )
                 
                 trade_result = {
                     "status": "cycle_started",

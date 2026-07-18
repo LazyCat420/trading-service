@@ -49,7 +49,8 @@ def resolve_buy_size_pct(
     confidence: int | float,
     max_position_size_pct: float,
 ) -> float | None:
-    """Resolve the BUY position size (fraction of cash) from the agents' decision.
+    """Resolve the BUY position size (fraction of portfolio equity, cash-capped
+    at execution) from the agents' decision.
 
     Deferred-item 8.1 decision (2026-07-15): an EXPLICIT position_size_pct <= 0
     from the board/synthesizer means "watch, don't trade" — returns None and no
@@ -936,7 +937,7 @@ class PipelineService:
                         else:
                             result["trade_attempted"] = True
                             logger.info(
-                                "[PipelineService] %s: sizing %s → %.1f%% of cash",
+                                "[PipelineService] %s: sizing %s → %.1f%% of equity (cash-capped)",
                                 ticker_name,
                                 "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
                                 size_pct * 100,

@@ -723,8 +723,19 @@ class SchedulerService:
         try:
             bot_id = get_active_bot_id()
             if bot_id:
-                await check_stop_losses(bot_id, cycle_id="background")
-                await check_take_profits(bot_id, cycle_id="background")
+                # Per-pass cycle id, NOT the constant "background": sell()'s
+                # duplicate-order guard keys on (cycle_id, ticker, side), so a
+                # constant id meant any ticker that background-stopped ONCE could
+                # never be background-sold again — its protective stop was
+                # silently dead forever after (live-confirmed on GOOGL/AMP,
+                # which hold positions today with a 2026-06/07 'background'
+                # SELL fill already on record). A per-minute id keeps the
+                # double-sell protection WITHIN a pass (stop-loss and
+                # take-profit share it) while future passes start clean.
+                from datetime import datetime, timezone
+                bg_cycle = f"background-{datetime.now(timezone.utc):%Y%m%d%H%M}"
+                await check_stop_losses(bot_id, cycle_id=bg_cycle)
+                await check_take_profits(bot_id, cycle_id=bg_cycle)
                 # Custom order triggers (stop_loss, take_profit, buy_limit, sell_limit, trailing_stop)
                 try:
                     from app.trading.order_triggers import check_triggers

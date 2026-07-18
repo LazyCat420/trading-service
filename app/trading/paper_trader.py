@@ -276,6 +276,17 @@ def get_portfolio_value(bot_id: str) -> float:
     return cash + total_position_value
 
 
+def resolve_buy_amount(portfolio_value: float, cash: float, size_pct: float) -> float:
+    """Dollar amount for a BUY: size_pct of PORTFOLIO EQUITY, capped by cash.
+
+    The agents decide position_size_pct in portfolio terms ("a 2.5% position").
+    This used to compute `cash * size_pct` — with cash at ~8% of the book, an
+    intended 2.5% position silently shrank to ~0.2% ($224 on a $100k book,
+    observed live) and kept shrinking as cash depleted.
+    """
+    return min(portfolio_value * min(size_pct, 1.0), cash)
+
+
 async def buy(
     bot_id: str,
     ticker: str,
@@ -285,7 +296,8 @@ async def buy(
 ) -> dict:
     """
     Execute a paper BUY.
-    size_pct: fraction of cash to use (0.01 = 1%, 0.10 = 10%)
+    size_pct: fraction of portfolio equity to target (0.01 = 1%, 0.10 = 10%);
+    the spend is capped by available cash.
     Enforces a maximum portfolio concentration cap per ticker.
     """
     logger.info(
@@ -404,7 +416,12 @@ async def buy(
     if dd_error:
         return dd_error
 
-    amount = cash * min(size_pct, 1.0)
+    amount = resolve_buy_amount(portfolio_value, cash, size_pct)
+    if amount == cash and cash < portfolio_value * min(size_pct, 1.0):
+        logger.info(
+            "[TRACE][BUY] cash-capping %s: intended %.1f%% of $%.2f equity > cash $%.2f",
+            ticker, size_pct * 100, portfolio_value, cash,
+        )
 
     # Enforce concentration cap (e.g., max 25% of portfolio per ticker)
     max_concentration_pct = getattr(settings, "MAX_CONCENTRATION_PCT", 0.25)
