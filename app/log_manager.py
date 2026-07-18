@@ -128,14 +128,20 @@ class LogManager(SDKLogManager):
                         no_trade_reason, primary_failure_reason,
                         report_generated,
                         trade_skip_categories,
+                        collector_ok, collector_skipped, collector_error, collector_failures,
                         summary_json
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s,
                         %s, %s, %s,
+                        %s, %s, %s, %s,
                         %s, %s, %s, %s, %s
                     ) ON CONFLICT (cycle_id) DO UPDATE SET
+                        collector_ok = EXCLUDED.collector_ok,
+                        collector_skipped = EXCLUDED.collector_skipped,
+                        collector_error = EXCLUDED.collector_error,
+                        collector_failures = EXCLUDED.collector_failures,
                         status = EXCLUDED.status,
                         finished_at = EXCLUDED.finished_at,
                         elapsed_ms = EXCLUDED.elapsed_ms,
@@ -175,6 +181,10 @@ class LogManager(SDKLogManager):
                         summary.get("primary_failure_reason"),
                         summary.get("report_generated", False),
                         Jsonb(summary.get("trade_skip_categories") or {}),
+                        summary.get("collector_ok", 0),
+                        summary.get("collector_skipped", 0),
+                        summary.get("collector_error", 0),
+                        Jsonb(summary.get("collector_failures") or []),
                         Jsonb(summary)
                     ]
                 )

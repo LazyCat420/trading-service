@@ -19,6 +19,20 @@ from app.utils.text_utils import is_truncated_content
 
 logger = logging.getLogger(__name__)
 
+# Truncated/paywalled drops are routine (dozens per collection pass) — the old
+# per-article WARNING was the single loudest line in the container log. Titles
+# now log at DEBUG; this counter surfaces an aggregate INFO line periodically.
+_drop_counts: dict[str, int] = {}
+
+
+def _note_drop(source: str, title: str, provider: str, length: int) -> None:
+    logger.debug("[news][DROP] %s: dropped '%s' from %s — truncated/paywalled (len=%d)",
+                 source, title[:60], provider, length)
+    _drop_counts[source] = _drop_counts.get(source, 0) + 1
+    n = _drop_counts[source]
+    if n % 50 == 0:
+        logger.info("[news] %s: %d truncated/paywalled articles dropped since boot", source, n)
+
 # RSS feeds to monitor
 RSS_FEEDS = {
     # ── Market News (tier 1 — highest volume) ──
@@ -436,10 +450,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     summary = api_summary
 
                 if is_truncated_content(summary):
-                    logger.warning(
-                        "[news][DROP] collect_feed: dropped '%s' from %s — truncated/paywalled (len=%d)",
-                        title[:60], feed_name, len(summary),
-                    )
+                    _note_drop("collect_feed", title, feed_name, len(summary))
                     return []
 
                 from app.processors.dedup_engine import DedupEngine
@@ -670,10 +681,7 @@ async def collect_finnhub_news(
                 summary = headline  # Use headline as minimal fallback
 
             if is_truncated_content(summary):
-                logger.warning(
-                    "[news][DROP] finnhub: dropped '%s' from %s — truncated/paywalled (len=%d)",
-                    headline[:60], source, len(summary),
-                )
+                _note_drop("finnhub", headline, source, len(summary))
                 return []
 
             published_at = (
@@ -827,10 +835,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                 summary = title  # Use title as minimal fallback
 
             if is_truncated_content(summary):
-                logger.warning(
-                    "[news][DROP] yfinance: dropped '%s' from %s — truncated/paywalled (len=%d)",
-                    title[:60], publisher, len(summary),
-                )
+                _note_drop("yfinance", title, publisher, len(summary))
                 return []
 
             if since and published_at and published_at <= since:

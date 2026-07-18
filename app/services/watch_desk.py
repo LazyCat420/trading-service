@@ -114,9 +114,18 @@ def create_watch(
     expiry_days: int = DEFAULT_EXPIRY_DAYS,
     bot_id: str | None = None,
     source_cycle_id: str | None = None,
+    news_seen_until: datetime | None = None,
 ) -> dict:
     """Create/replace the active watch for a ticker. One active watch per ticker
-    per bot — a new one supersedes the old (re-arm)."""
+    per bot — a new one supersedes the old (re-arm).
+
+    news_seen_until seeds the new watch's last_fired_at. The news trigger dedups
+    on "collected_at > last_fired_at", so a superseding watch created with
+    last_fired_at=NULL forgot every headline the old watch already fired on —
+    observed live as the SAME NVDA headline waking 4 full cycles in one hour
+    (each cycle's baseline re-arm reset the dedup, each wake re-tripped) until
+    the daily budget was gone. We also inherit the superseded watch's
+    last_fired_at as a floor for the same reason on agent-created re-arms."""
     ticker = (ticker or "").upper().strip()
     if not ticker:
         return {"status": "rejected", "reason": "ticker required."}
@@ -131,24 +140,29 @@ def create_watch(
         with get_db() as db:
             # Supersede ANY existing active watch for this ticker (one active watch
             # per ticker — regardless of bot_id — so an auto-baseline and a user
-            # watch_ticker can't both be live and double-wake).
-            db.execute(
+            # watch_ticker can't both be live and double-wake). RETURNING so the
+            # new watch can inherit the old one's news-dedup anchor.
+            old_rows = db.execute(
                 "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE ticker = %s AND is_active = TRUE",
+                "WHERE ticker = %s AND is_active = TRUE RETURNING last_fired_at",
                 [now, ticker],
-            )
+            ).fetchall()
+            inherited = [r[0] for r in (old_rows or []) if r and r[0] is not None]
+            anchors = [a if a.tzinfo else a.replace(tzinfo=timezone.utc)
+                       for a in inherited + ([news_seen_until] if news_seen_until else [])]
+            last_fired_seed = max(anchors) if anchors else None
             db.execute(
                 """
                 INSERT INTO ticker_watches
                     (id, ticker, bot_id, triggers, reason, thesis_summary,
                      is_active, cooldown_minutes, source_cycle_id, expiry_at,
-                     created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s)
+                     last_fired_at, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     watch_id, ticker, bot_id, json.dumps(clean), (reason or "")[:500],
                     (thesis_summary or "")[:2000], int(cooldown_minutes),
-                    source_cycle_id, expiry, now, now,
+                    source_cycle_id, expiry, last_fired_seed, now, now,
                 ],
             )
     except Exception as e:
@@ -269,6 +283,9 @@ def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycl
             thesis_summary=result.get("rationale", "")[:2000],
             bot_id=result.get("bot_id"),
             source_cycle_id=cycle_id,
+            # The cycle that just finished consumed all current news — only
+            # headlines collected AFTER this point should be able to wake us.
+            news_seen_until=datetime.now(timezone.utc),
         )
     except Exception as e:
         logger.warning("[WatchDesk] derive_baseline_watch skipped for %s: %s", ticker, e)
@@ -504,6 +521,7 @@ async def evaluate_watches() -> dict:
     budget_left = MAX_WATCH_WAKES_PER_DAY - _wakes_today()
     fired_total = 0
     evaluated = 0
+    deferred: list[str] = []
 
     # Regular-session check drives whether price/technical triggers evaluate.
     try:
@@ -566,12 +584,10 @@ async def evaluate_watches() -> dict:
                 if not fired:
                     continue
                 if budget_left <= 0:
-                    # Log to the app log only (no watch_events row) so a persistent
-                    # trip doesn't spam the table every 15 min.
-                    logger.warning(
-                        "[WatchDesk] %s tripped (%s) but daily wake budget (%d) is spent — deferring.",
-                        ticker, trig["type"], MAX_WATCH_WAKES_PER_DAY,
-                    )
+                    # Collected + logged once per pass below — the per-ticker
+                    # WARNING here used to print ~12 lines every 15 minutes for
+                    # the rest of the day once the budget was spent.
+                    deferred.append(f"{ticker}({trig['type']})")
                     break
                 cycle_id = await _enqueue_wake(w, trig, detail)
                 if cycle_id:
@@ -580,10 +596,16 @@ async def evaluate_watches() -> dict:
                     fired_total += 1
                 break  # one fire per watch per pass
 
-    logger.info("[WatchDesk] Evaluated %d ticker(s), %d wake(s) fired (budget left %d).",
-                evaluated, fired_total, max(budget_left, 0))
+    if deferred:
+        logger.warning(
+            "[WatchDesk] daily wake budget (%d) spent — deferred %d trip(s): %s",
+            MAX_WATCH_WAKES_PER_DAY, len(deferred), ", ".join(deferred),
+        )
+    logger.info("[WatchDesk] pass: %d watch(es) on %d ticker(s) — %d fired, %d deferred, budget left %d.",
+                len(watches), evaluated, fired_total, len(deferred), max(budget_left, 0))
     return {"status": "ok", "watches": len(watches), "tickers": evaluated,
-            "fired": fired_total, "budget_left": max(budget_left, 0)}
+            "fired": fired_total, "deferred": len(deferred),
+            "budget_left": max(budget_left, 0)}
 
 
 async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:

@@ -66,7 +66,8 @@ class AutoEngine(BaseEngine):
             else:
                 logger.info(f"[auto] HTTP engine returned blocked content or status {res.status_code}")
         else:
-            logger.info(f"[auto] HTTP engine failed: {res.error}")
+            _why = res.error or f"status={res.status_code} len={len(res.content or '')}"
+            logger.info(f"[auto] HTTP engine failed for {url}: {_why}")
 
         # Phase 2: Playwright
         logger.info(f"[auto] Escalating to Playwright engine for {url}")

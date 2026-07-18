@@ -69,17 +69,31 @@ async def lazy_web_search(query: str, limit: int = 6, **_extra) -> str:
     ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
           "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
     limit = max(1, min(int(limit or 6), 10))
-    try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            resp = await client.get(
-                "https://lite.duckduckgo.com/lite/",
-                params={"q": query},
-                headers={"User-Agent": ua},
-            )
-            resp.raise_for_status()
-    except Exception as e:
-        logger.warning(f"[WebTools] ddg lite search failed for {query!r}: {e}")
-        return json.dumps({"status": "error", "message": f"Search failed: {e}"})
+    resp = None
+    last_err: Exception | None = None
+    # One quick retry — DDG-lite intermittently stalls to the read timeout, and
+    # a timeout's str() is EMPTY, which produced the useless "Search failed: "
+    # rows in agent_tool_telemetry. Always report the exception type.
+    for attempt, timeout_s in ((1, 20.0), (2, 10.0)):
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as client:
+                resp = await client.get(
+                    "https://lite.duckduckgo.com/lite/",
+                    params={"q": query},
+                    headers={"User-Agent": ua},
+                )
+                resp.raise_for_status()
+            break
+        except Exception as e:
+            last_err = e
+            logger.warning(f"[WebTools] ddg lite search attempt {attempt} failed for "
+                           f"{query!r}: {type(e).__name__}: {e}")
+            resp = None
+    if resp is None:
+        return json.dumps({
+            "status": "error",
+            "message": f"Search failed: {type(last_err).__name__}: {last_err}",
+        })
 
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []

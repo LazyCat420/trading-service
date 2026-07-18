@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -8,7 +9,7 @@ from app.utils.text_utils import format_db_section
 
 logger = logging.getLogger(__name__)
 
-async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
+async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str | None = None) -> str:
     """Collect core stock datasets in parallel and format them into a markdown report."""
     ticker = ticker.upper().strip()
     
@@ -23,13 +24,24 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
     from app.collectors.reddit_collector import collect_for_ticker as collect_reddit
     from app.collectors.youtube_collector import collect_for_ticker as collect_youtube
     
+    # Per-collector outcome tracking — feeds the one-line pre-collect summary
+    # log and the cycle_run_summaries collector_* counters (which read 0
+    # forever because nothing ever recorded them).
+    _outcomes: dict[str, str] = {}   # name -> ok|error (pending names = timed out)
+
     async def run_with_telemetry(name: str, coroutine: Any):
         _emit(f"precollect_{name}_start", f"Scraping {name}...", "running")
         try:
             res = await coroutine
+            _outcomes[name] = "ok"
             _emit(f"precollect_{name}_ok", f"Finished {name}", "ok")
             return res
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            _outcomes[name] = "error"
+            logger.warning("[V3][precollect] %s/%s failed: %s: %s",
+                           ticker, name, type(e).__name__, e)
             _emit(f"precollect_{name}_err", f"Failed {name}: {e}", "error")
             return None
 
@@ -75,30 +87,56 @@ async def build_ticker_data_report(ticker: str, emit: Any = None) -> str:
                 )
                 _emit("precollect_prior", "Prior research found — seeding report with last thesis.", "ok")
 
+    _FULL_COLLECTORS = ("yfinance_price", "yfinance_fund", "finnhub_news",
+                        "multi_api_news", "reddit", "youtube")
+
     if is_fast_path:
         # Only run the fast, dynamic scrapers
-        tasks = [
-            run_with_telemetry("yfinance_price", collect_price_history(ticker, period="6mo")),
-            run_with_telemetry("finnhub_news", collect_finnhub_news(ticker, emit_cb=_emit))
-        ]
+        coros = {
+            "yfinance_price": collect_price_history(ticker, period="6mo"),
+            "finnhub_news": collect_finnhub_news(ticker, emit_cb=_emit),
+        }
     else:
         from app.collectors.news_api_rotator import collect_from_all_apis
 
-        tasks = [
-            run_with_telemetry("yfinance_price", collect_price_history(ticker, period="6mo")),
-            run_with_telemetry("yfinance_fund", collect_fundamentals(ticker)),
-            run_with_telemetry("finnhub_news", collect_finnhub_news(ticker, emit_cb=_emit)),
-            run_with_telemetry("multi_api_news", collect_from_all_apis([ticker])),
-            run_with_telemetry("reddit", collect_reddit(ticker)),
-            run_with_telemetry("youtube", collect_youtube(ticker))
-        ]
-    
-    # Execute all collection tasks in parallel (timeout to prevent hanging)
-    try:
-        await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[V3] Pre-collection for {ticker} timed out after 45s.")
-        _emit("precollect_timeout", "Scraping timed out after 45s", "warning")
+        coros = {
+            "yfinance_price": collect_price_history(ticker, period="6mo"),
+            "yfinance_fund": collect_fundamentals(ticker),
+            "finnhub_news": collect_finnhub_news(ticker, emit_cb=_emit),
+            "multi_api_news": collect_from_all_apis([ticker]),
+            "reddit": collect_reddit(ticker),
+            "youtube": collect_youtube(ticker),
+        }
+
+    # Execute all collection tasks in parallel with a hard deadline. asyncio.wait
+    # (not wait_for+gather) so the collectors that DID finish keep their results
+    # and we can name exactly which ones ran out of clock — the old code logged
+    # a single "timed out after 45s" with zero attribution, which hid that
+    # reddit/youtube were blowing the budget on nearly every non-fast-path ticker.
+    t_collect = time.monotonic()
+    task_map = {asyncio.create_task(run_with_telemetry(n, c)): n for n, c in coros.items()}
+    done, pending = await asyncio.wait(task_map.keys(), timeout=45.0)
+    timed_out = sorted(task_map[t] for t in pending)
+    for t in pending:
+        t.cancel()
+
+    ok = sorted(n for n, s in _outcomes.items() if s == "ok")
+    errored = sorted(n for n, s in _outcomes.items() if s == "error")
+    skipped = sorted(set(_FULL_COLLECTORS) - set(coros)) if is_fast_path else []
+    collect_ms = int((time.monotonic() - t_collect) * 1000)
+    logger.info(
+        "[V3][precollect] %s in %dms: ok=%s%s%s%s",
+        ticker, collect_ms, ",".join(ok) or "-",
+        f" error={','.join(errored)}" if errored else "",
+        f" timeout={','.join(timed_out)}" if timed_out else "",
+        f" skipped(fast-path)={','.join(skipped)}" if skipped else "",
+    )
+    if timed_out:
+        _emit("precollect_timeout", f"Timed out after 45s: {', '.join(timed_out)}", "warning")
+
+    from app.v3 import collector_stats
+    collector_stats.record(cycle_id, ticker, ok=ok, errored=errored,
+                           timed_out=timed_out, skipped=skipped)
         
     # 2. Fetch Formatted Markdown via existing tools
     from app.tools.finance_tools import get_market_data, get_finnhub_news, get_technical_indicators

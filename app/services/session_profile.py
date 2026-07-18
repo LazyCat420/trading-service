@@ -8,12 +8,39 @@ remembering the context of the last cycle.
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-PROFILE_FILE = Path("data") / "session_profile.json"
+# In the container /app/data is a root-owned mount parent (compose mounts
+# ./data/charts) while the app runs as appusr — writes there raise EACCES on
+# every cycle ("Lesson store write failed: Permission denied"). Prefer an env
+# override, fall back to ./data, and degrade to the tmp dir when unwritable.
+PROFILE_FILE = Path(os.environ.get("PROFILE_DATA_DIR", "data")) / "session_profile.json"
+_fallback_warned = False
+
+
+def _writable_profile_path() -> "Path":
+    """Return PROFILE_FILE if its directory is writable, else a tmp-dir fallback."""
+    global _fallback_warned
+    parent = PROFILE_FILE.parent
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        if os.access(parent, os.W_OK):
+            return PROFILE_FILE
+    except OSError:
+        pass
+    fallback = Path(tempfile.gettempdir()) / "session_profile.json"
+    if not _fallback_warned:
+        _fallback_warned = True
+        logger.warning(
+            "[SessionProfile] %s not writable — using %s (profile memory won't survive restarts)",
+            parent, fallback,
+        )
+    return fallback
 
 
 class LocalProfileMemory:
@@ -21,10 +48,8 @@ class LocalProfileMemory:
 
     @staticmethod
     def _ensure_file():
-        if not PROFILE_FILE.parent.exists():
-            PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-        if not PROFILE_FILE.exists():
+        path = _writable_profile_path()
+        if not path.exists():
             default_state = {
                 "user_preferences": {},
                 "last_trade_context": {},
@@ -32,15 +57,16 @@ class LocalProfileMemory:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-            with open(PROFILE_FILE, "w", encoding="utf-8") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(default_state, f, indent=4)
+        return path
 
     @classmethod
     def get_profile(cls) -> dict:
         """Read the entire profile from disk."""
-        cls._ensure_file()
         try:
-            with open(PROFILE_FILE, "r", encoding="utf-8") as f:
+            path = cls._ensure_file()
+            with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.error("Failed to read profile memory: %s", e)
@@ -49,10 +75,10 @@ class LocalProfileMemory:
     @classmethod
     def save_profile(cls, data: dict):
         """Save the entire profile to disk."""
-        cls._ensure_file()
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
         try:
-            with open(PROFILE_FILE, "w", encoding="utf-8") as f:
+            path = cls._ensure_file()
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
         except Exception as e:
             logger.error("Failed to save profile memory: %s", e)

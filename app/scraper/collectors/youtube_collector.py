@@ -16,11 +16,15 @@ import logging
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Throttle repeated identical DDG-fallback failures (rate-limit bursts).
+_DDG_FAIL_LOG_AT: dict[str, float] = {}
 
 # yt-dlp version check at import
 try:
@@ -481,7 +485,17 @@ class YouTubeCollector:
             logger.info(f"[youtube] DuckDuckGo video search retrieved {len(videos)} videos")
             return videos
         except Exception as e:
-            logger.error(f"[youtube] DuckDuckGo fallback search failed: {e}")
+            # "No results found." bursts 30+ identical ERROR lines per cycle when
+            # DDG is rate-limiting — throttle repeats and keep the query visible.
+            now = time.monotonic()
+            key = f"{type(e).__name__}:{e}"
+            last = _DDG_FAIL_LOG_AT.get(key, 0.0)
+            if now - last > 300:
+                _DDG_FAIL_LOG_AT[key] = now
+                logger.warning(f"[youtube] DuckDuckGo fallback failed for '{query}': {e} "
+                               "(repeats suppressed for 5m)")
+            else:
+                logger.debug(f"[youtube] DuckDuckGo fallback failed for '{query}': {e}")
             return []
 
     def _get_transcript(self, video_id: str) -> str | None:

@@ -77,3 +77,34 @@ def test_missing_snapshot_still_arms_estimate_levels():
     assert _level(triggers, "price_below") == 189.0
     assert _level(triggers, "price_above") == 300.0
     assert "pct_change" not in _types(triggers)
+
+
+def test_baseline_watch_seeds_news_dedup_anchor():
+    # Regression: the post-cycle baseline watch used to start with
+    # last_fired_at=NULL, so the news trigger forgot every headline the
+    # superseded watch had already fired on — the same NVDA headline woke 4
+    # full cycles in one hour until the daily budget was gone. The baseline
+    # must pass news_seen_until≈now so only NEWER headlines can wake us.
+    result = {"action": "BUY", "estimate": {"stop_loss": 189.0, "take_profit": 300.0}}
+    with patch.object(watch_desk, "create_watch") as mock_create:
+        watch_desk.derive_baseline_watch("NVDA", result, {"price": 210.0}, "cycle-test")
+        seen = mock_create.call_args.kwargs.get("news_seen_until")
+    from datetime import datetime, timezone, timedelta
+    assert seen is not None, "baseline watch must seed the news-dedup anchor"
+    assert abs((datetime.now(timezone.utc) - seen).total_seconds()) < 60
+
+
+def test_news_trigger_dedups_on_last_fired_at():
+    # A headline collected BEFORE last_fired_at must not re-trip; a newer one must.
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    trig = {"type": "news", "categories": ["earnings"]}
+    old_headline = ("NVDA earnings beat expectations", now - timedelta(hours=2))
+    new_headline = ("NVDA earnings guidance shock", now + timedelta(minutes=5))
+    ctx = {"ticker": "NVDA", "news": [old_headline]}
+    watch = {"last_fired_at": now}
+    fired, _, _ = watch_desk._eval_trigger(trig, ctx, watch, market_open=True)
+    assert not fired, "stale headline re-tripped despite last_fired_at dedup"
+    ctx = {"ticker": "NVDA", "news": [new_headline]}
+    fired, detail, _ = watch_desk._eval_trigger(trig, ctx, watch, market_open=True)
+    assert fired and "guidance shock" in detail

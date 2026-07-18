@@ -97,7 +97,7 @@ async def run_v3_pipeline(
     )
     try:
         from app.v3.data_report import build_ticker_data_report
-        data_report = await build_ticker_data_report(ticker, emit=emit)
+        data_report = await build_ticker_data_report(ticker, emit=emit, cycle_id=cycle_id)
         emit(
             "analyzing", f"v3_precollect_ok_{ticker}",
             f"📥 {ticker}: Market & news pre-collection complete",
@@ -692,15 +692,28 @@ async def run_v3_pipeline(
             from app.cognition.contracts.evidence import EvidencePacket
             from app.cognition.contracts.retrieval import StructuredFact
 
+            # fact_type names are chosen to hit PERSONA_EVIDENCE_FILTER keywords
+            # ("fundamental"/"technical"/"news"/"macro"). The old names
+            # (desk_note/quant_report) matched NO Technical or Macro keyword, so
+            # filter_packet_for_persona fell back to the FULL packet for 3 of 4
+            # pitch personas — every persona anchored on the same quant thesis
+            # and the tournament produced 4 near-identical pitches.
             facts = []
-            for artifact_name in ("desk_note", "fundamental_report", "quant_report"):
+            for artifact_name, fact_type in (
+                ("fundamental_report", "fundamental_report"),
+                ("quant_report", "technical_quant_report"),
+                ("desk_note", "news_sentiment_desk_note"),
+                ("regime_classification", "macro_regime_note"),
+            ):
                 artifact = getattr(desk, artifact_name, None)
                 if artifact and isinstance(artifact, dict):
-                    summary = artifact.get("summary", "")
+                    summary = artifact.get("summary") or artifact.get("rationale") or ""
+                    if artifact_name == "regime_classification" and artifact.get("regime"):
+                        summary = f"Regime: {artifact['regime']}. {summary}"
                     if summary:
                         facts.append(
                             StructuredFact(
-                                fact_type=artifact_name,
+                                fact_type=fact_type,
                                 value=summary[:2000],
                                 timestamp=datetime.now(timezone.utc),
                             )

@@ -285,8 +285,14 @@ class PipelineService:
             result dicts returned by _process_ticker (None entries are skipped)."""
             try:
                 from app.log_manager import log_manager
+                from app.v3 import collector_stats
 
+                cstats = collector_stats.consume(cycle_id)
                 summary = {
+                    "collector_ok": cstats["ok"],
+                    "collector_error": cstats["error"],
+                    "collector_skipped": cstats["skipped"],
+                    "collector_failures": cstats["failures"],
                     "report_generated": report_generated,
                     "trigger_type": "v3",
                     "started_at": cls._state.get("started_at"),

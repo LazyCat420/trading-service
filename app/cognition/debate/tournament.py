@@ -49,21 +49,27 @@ logger = logging.getLogger(__name__)
 # mathematical lens.
 
 PITCH_PERSONAS = {
+    # Per-persona temperatures are deliberately staggered — with identical
+    # sampling params the four pitches converge on the same dominant thesis.
     "Value_Quant": {
         "focus": "Mean reversion, valuation ratios, Z-scores, and fundamental discount/premium analysis",
         "equation_hint": "Look for equations using Z-score, P/E ratio deviations, book value discounts",
+        "temperature": 0.35,
     },
     "Momentum_Quant": {
         "focus": "Trend-following, momentum indicators, RSI/MACD crossovers, and breakout detection",
         "equation_hint": "Look for equations using moving average crossovers, RSI thresholds, MACD signals",
+        "temperature": 0.5,
     },
     "Volatility_Quant": {
         "focus": "Volatility arbitrage, ATR-based sizing, Bollinger Band mean reversion, and VIX correlation",
         "equation_hint": "Look for equations using ATR, Bollinger width, historical vs implied volatility",
+        "temperature": 0.6,
     },
     "Macro_Quant": {
         "focus": "Sector rotation, rate sensitivity, earnings momentum, and macro regime detection",
         "equation_hint": "Look for equations correlating sector flows, earnings surprises, interest rate changes",
+        "temperature": 0.7,
     },
 }
 
@@ -186,6 +192,10 @@ CRITICAL RULES:
 - Every claim MUST be backed by an equation result, not opinion
 - If you create a new equation, save it to the library for future use
 - The counter_argument_disproved section is MANDATORY
+- INDEPENDENCE: Derive your claim through YOUR analytical lens ONLY. The
+  evidence data may contain another desk's thesis sentence — do NOT restate
+  or paraphrase it as your claim. If your lens genuinely agrees with the
+  direction, your claim must still cite YOUR OWN metrics ({focus}), not theirs.
 """
 
 
@@ -271,7 +281,7 @@ async def _run_pitch_agent(
         final_response, total_tokens, elapsed_ms = await llm.chat(
             system=system_prompt,
             user=user_message,
-            temperature=0.4,
+            temperature=persona_config.get("temperature", 0.4),
             # NB: sub-4096 max_tokens is NOT a hard ceiling on this stack —
             # prism_agent_caller converts it into a conciseness directive
             # ("768 -> under 15 sentences") and resets the real budget to 8192
@@ -685,7 +695,7 @@ async def run_tournament_debate(
 
     Returns a tournament result dict compatible with the existing debate system.
     """
-    logger.info("[TOURNAMENT] ═" * 25)
+    logger.info("[TOURNAMENT] %s", "═" * 60)
     logger.info("[TOURNAMENT] Starting Tournament Debate for %s", ticker)
     tournament_start = datetime.now(timezone.utc)
 
@@ -736,6 +746,33 @@ async def run_tournament_debate(
         "[TOURNAMENT] Stage 1 complete: %d/%d pitches generated",
         len(pitches), len(active_personas),
     )
+
+    # Diversity telemetry: near-identical claims mean the personas anchored on
+    # one shared thesis and the whole bracket is theater. Log it loudly so a
+    # collapsed tournament is visible in one grep instead of a desk-data dig.
+    if len(pitches) >= 2:
+        import difflib
+        sims = []
+        for i in range(len(pitches)):
+            for j in range(i + 1, len(pitches)):
+                a = (pitches[i].get("claim") or "").lower()
+                b = (pitches[j].get("claim") or "").lower()
+                if a and b:
+                    sims.append((
+                        difflib.SequenceMatcher(None, a, b).ratio(),
+                        pitches[i].get("persona", "?"), pitches[j].get("persona", "?"),
+                    ))
+        if sims:
+            collapsed = [s for s in sims if s[0] >= 0.85]
+            log_fn = logger.warning if collapsed else logger.info
+            log_fn(
+                "[TOURNAMENT][DIVERSITY] %s claim similarity: max=%.2f avg=%.2f%s",
+                ticker,
+                max(s[0] for s in sims),
+                sum(s[0] for s in sims) / len(sims),
+                " COLLAPSED pairs: " + ", ".join(f"{p1}~{p2}({r:.2f})" for r, p1, p2 in collapsed)
+                if collapsed else "",
+            )
 
     if len(pitches) < 2:
         logger.warning("[TOURNAMENT] Not enough pitches for tournament (<2). Falling back.")
@@ -881,7 +918,7 @@ async def run_tournament_debate(
         "[TOURNAMENT] VERDICT: %s @ %d%% | Winner: %s | Tokens: %d | Time: %.1fs",
         action, confidence, winning_side, total_tokens, elapsed,
     )
-    logger.info("[TOURNAMENT] ═" * 25)
+    logger.info("[TOURNAMENT] %s", "═" * 60)
 
     # ── Write Audit Log ──────────────────────────────────────────────
     try:
