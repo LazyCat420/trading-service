@@ -620,6 +620,24 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register background stop-loss: %s", e
                 )
 
+            # ── Equation Lab: nightly strategy R&D (8 PM Pacific, after close) ──
+            # Compiles the most-used unbacktestable equation stubs from the
+            # tournament into real signal code and backtests them, so the jury
+            # sees actual PnL instead of "N/A" and the library accumulates
+            # honest win_rate/sharpe stats over time.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_equation_lab,
+                    trigger=CronTrigger(hour=20, minute=0, timezone=pytz.timezone("America/Los_Angeles")),
+                    id="equation_lab_nightly",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered Equation Lab (cron: 8:00 PM PT)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register Equation Lab: %s", e)
+
             # ── Morning Briefing Generator (6:30 AM Pacific) ──
             pt_tz = pytz.timezone("America/Los_Angeles")
             try:
@@ -751,6 +769,15 @@ class SchedulerService:
                     logger.error("[SCHEDULER] Order trigger check failed: %s", trig_err)
         except Exception as e:
             logger.error("[SCHEDULER] Background stop-loss check failed: %s", e)
+
+    @staticmethod
+    async def _run_equation_lab():
+        """Nightly equation R&D — compile + backtest stubbed tournament equations."""
+        try:
+            from app.cognition.debate.equation_lab import run_equation_lab
+            await run_equation_lab()
+        except Exception as e:
+            logger.error("[SCHEDULER] Equation Lab run failed: %s", e)
 
     @staticmethod
     async def _run_morning_briefing():

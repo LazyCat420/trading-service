@@ -227,6 +227,11 @@ async def run_agent(
         def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool, elapsed_ms: int = 0) -> None:
             """Post-call hook: record the actual outcome to V3 telemetry."""
             nonlocal tool_call_count
+            # Prism-internal stream events sometimes carry no tool name and a
+            # None result (non-tool events misrouted through the hook). They
+            # produced hundreds of unattributable tool_name='' failure rows.
+            if not tool_name:
+                return
             tool_call_count += 1
             
             failed = False

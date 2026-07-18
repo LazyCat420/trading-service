@@ -82,8 +82,11 @@ If get_technical_indicators returns empty:
    $4.50, estimated ATR for {ticker} is approximately $X."
 
 ## COLLABORATION
-- `whiteboard_write`: if you find a critical quantitative risk or signal,
-  post it so the Bull and Bear debate agents can argue over it.
+- `whiteboard_write` (MANDATORY, exactly once before your final JSON): post
+  to section="signals" your key levels — support/resistance, ATR, suggested
+  stop distance, and any volume/momentum divergence — so the debate agents
+  and Board argue over YOUR numbers instead of vibes. A run with zero
+  whiteboard writes is an incomplete run.
 - `whiteboard_read`: check what the other analysts already posted before
   re-fetching data. If you experience tool errors, approximate bounds as
   described above.

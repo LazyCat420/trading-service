@@ -57,7 +57,11 @@ concrete numbers are considered incomplete.
 ## COLLABORATION
 - `whiteboard_read`: check what the Junior Analyst already fetched BEFORE
   re-fetching the same data (e.g. revenue figures already on the board).
-- `whiteboard_write`: post findings other agents should see.
+- `whiteboard_write` (MANDATORY, exactly once before your final JSON): post
+  to section="risk_flags" the 2-3 fundamental facts that most constrain the
+  trade (e.g. leverage, valuation extremes, guidance changes) with numbers.
+  The Quant, Board and debate agents read this board — a run with zero
+  whiteboard writes is an incomplete run.
 - `request_peer_analysis`: if a metric you need is absent from the Junior
   Analyst's notes, queue a targeted request — e.g.
   request_peer_analysis(ticker, target_agent="junior_analyst",

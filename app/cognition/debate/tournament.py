@@ -57,12 +57,21 @@ PITCH_PERSONAS = {
         "temperature": 0.35,
     },
     "Momentum_Quant": {
-        "focus": "Trend-following, momentum indicators, RSI/MACD crossovers, and breakout detection",
+        "focus": (
+            "Trend-following, momentum indicators, RSI/MACD crossovers, and breakout detection. "
+            "STAY IN YOUR LANE: do NOT pitch volatility-band or ATR mean-reversion theses — "
+            "that is the Volatility desk's territory; your edge is trend/momentum structure."
+        ),
         "equation_hint": "Look for equations using moving average crossovers, RSI thresholds, MACD signals",
         "temperature": 0.5,
     },
     "Volatility_Quant": {
-        "focus": "Volatility arbitrage, ATR-based sizing, Bollinger Band mean reversion, and VIX correlation",
+        "focus": (
+            "Volatility arbitrage, ATR-based sizing, Bollinger Band mean reversion, and VIX correlation. "
+            "STAY IN YOUR LANE: do NOT pitch trend-breakdown or momentum theses — that is the "
+            "Momentum desk's territory; your edge is volatility structure (band width, ATR "
+            "extension, realized-vs-implied dislocations)."
+        ),
         "equation_hint": "Look for equations using ATR, Bollinger width, historical vs implied volatility",
         "temperature": 0.6,
     },
@@ -185,6 +194,11 @@ Generate a mathematically testable trading thesis. You MUST:
     "evidence": "Direct data point with citation [source:value]",
     "equation": "The exact equation name used or created",
     "result": "The numerical output of the equation execution (e.g., 'Z-Score = -3.4')",
+    "risk": {{
+        "stop_loss_pct": "numeric % from entry where the thesis is invalidated (e.g. 4.5)",
+        "position_size_pct": "numeric % of portfolio this conviction warrants (e.g. 2.5)",
+        "max_drawdown_expectation_pct": "worst peak-to-trough % you expect while the thesis plays out"
+    }},
     "counter_argument_disproved": "State the STRONGEST mathematical argument AGAINST your thesis, then prove why your equation supersedes it"
 }}
 
@@ -192,10 +206,12 @@ CRITICAL RULES:
 - Every claim MUST be backed by an equation result, not opinion
 - If you create a new equation, save it to the library for future use
 - The counter_argument_disproved section is MANDATORY
+- The risk block is MANDATORY — the jury's Risk Manager VETOES any strategy
+  without an explicit numeric stop-loss and sizing, no matter how good the edge
 - INDEPENDENCE: Derive your claim through YOUR analytical lens ONLY. The
   evidence data may contain another desk's thesis sentence — do NOT restate
   or paraphrase it as your claim. If your lens genuinely agrees with the
-  direction, your claim must still cite YOUR OWN metrics ({focus}), not theirs.
+  direction, your claim must still cite YOUR OWN metrics, not theirs.
 """
 
 
@@ -511,6 +527,7 @@ Claim: {claim_a}
 Equation: {equation_a}
 Result: {result_a}
 Backtest PnL: {pnl_a}
+Risk Terms: {risk_a}
 Attack Points: {attacks_a}
 Defense Points: {defense_a}
 
@@ -519,6 +536,7 @@ Claim: {claim_b}
 Equation: {equation_b}
 Result: {result_b}
 Backtest PnL: {pnl_b}
+Risk Terms: {risk_b}
 Attack Points: {attacks_b}
 Defense Points: {defense_b}
 
@@ -552,6 +570,14 @@ async def _run_jury_scoring(
         # No executable backtest — never show a fabricated number to the jury.
         return "N/A (thesis not backtested — weigh the equation logic and evidence instead)"
 
+    def _fmt_risk(thesis: dict) -> str:
+        # The pitch format's mandatory risk block — surfaced so the Risk
+        # Manager can veto on ACTUAL terms instead of "no stop-loss defined".
+        risk = thesis.get("risk")
+        if isinstance(risk, dict) and risk:
+            return json.dumps(risk)[:300]
+        return "NONE PROVIDED (Risk Manager: this alone is veto-worthy)"
+
     user_prompt = JURY_USER_TEMPLATE.format(
         ticker=ticker,
         persona_a=thesis_a.get("persona", "A"),
@@ -559,6 +585,7 @@ async def _run_jury_scoring(
         equation_a=thesis_a.get("equation", ""),
         result_a=thesis_a.get("result", ""),
         pnl_a=_fmt_pnl(thesis_a),
+        risk_a=_fmt_risk(thesis_a),
         attacks_a=json.dumps(thesis_a.get("attack_points", []))[:500],
         defense_a=json.dumps(thesis_a.get("defense_points", []))[:500],
         persona_b=thesis_b.get("persona", "B"),
@@ -566,6 +593,7 @@ async def _run_jury_scoring(
         equation_b=thesis_b.get("equation", ""),
         result_b=thesis_b.get("result", ""),
         pnl_b=_fmt_pnl(thesis_b),
+        risk_b=_fmt_risk(thesis_b),
         attacks_b=json.dumps(thesis_b.get("attack_points", []))[:500],
         defense_b=json.dumps(thesis_b.get("defense_points", []))[:500],
         evidence_data=evidence_header,
@@ -747,21 +775,38 @@ async def run_tournament_debate(
         len(pitches), len(active_personas),
     )
 
-    # Diversity telemetry: near-identical claims mean the personas anchored on
-    # one shared thesis and the whole bracket is theater. Log it loudly so a
-    # collapsed tournament is visible in one grep instead of a desk-data dig.
+    # Diversity telemetry + dedup: near-identical claims mean the personas
+    # anchored on one shared thesis and the whole bracket is theater. Log it
+    # loudly, and DROP the later duplicate (>=0.90 similarity) so the bracket
+    # debates two genuinely different ideas instead of a mirror match
+    # (observed live: Momentum_Quant~Volatility_Quant at 1.00 on DIS).
     if len(pitches) >= 2:
         import difflib
+
+        def _sim(a: dict, b: dict) -> float:
+            ca = (a.get("claim") or "").lower()
+            cb = (b.get("claim") or "").lower()
+            return difflib.SequenceMatcher(None, ca, cb).ratio() if ca and cb else 0.0
+
         sims = []
+        keep: list[dict] = []
+        for p in pitches:
+            dup_of = next((k for k in keep if _sim(k, p) >= 0.90), None)
+            if dup_of is not None:
+                logger.warning(
+                    "[TOURNAMENT][DIVERSITY] %s: dropping %s pitch — duplicate of %s (%.2f)",
+                    ticker, p.get("persona", "?"), dup_of.get("persona", "?"), _sim(dup_of, p),
+                )
+                continue
+            keep.append(p)
         for i in range(len(pitches)):
             for j in range(i + 1, len(pitches)):
-                a = (pitches[i].get("claim") or "").lower()
-                b = (pitches[j].get("claim") or "").lower()
-                if a and b:
-                    sims.append((
-                        difflib.SequenceMatcher(None, a, b).ratio(),
-                        pitches[i].get("persona", "?"), pitches[j].get("persona", "?"),
-                    ))
+                sims.append((
+                    _sim(pitches[i], pitches[j]),
+                    pitches[i].get("persona", "?"), pitches[j].get("persona", "?"),
+                ))
+        if len(keep) >= 2:
+            pitches = keep
         if sims:
             collapsed = [s for s in sims if s[0] >= 0.85]
             log_fn = logger.warning if collapsed else logger.info

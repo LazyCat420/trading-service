@@ -117,8 +117,36 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     task_map = {asyncio.create_task(run_with_telemetry(n, c)): n for n, c in coros.items()}
     done, pending = await asyncio.wait(task_map.keys(), timeout=45.0)
     timed_out = sorted(task_map[t] for t in pending)
+    # Don't cancel the stragglers — the report proceeds without them, but they
+    # keep collecting in the background and land in the DB for the NEXT cycle
+    # (reddit/youtube/multi-api news blow the 45s budget on almost every cold
+    # ticker; cancelling threw that half-finished work away every time). A
+    # watchdog still hard-cancels anything running past 5 minutes.
     for t in pending:
-        t.cancel()
+        name = task_map[t]
+
+        def _late_done(task: "asyncio.Task", _name=name) -> None:
+            if task.cancelled():
+                logger.info("[V3][precollect] %s/%s cancelled by watchdog after 5m", ticker, _name)
+                return
+            exc = task.exception()
+            if exc:
+                logger.warning("[V3][precollect] %s/%s late-failed: %s: %s",
+                               ticker, _name, type(exc).__name__, exc)
+            else:
+                logger.info("[V3][precollect] %s/%s finished late (%.0fs) — data warm for next cycle",
+                            ticker, _name, time.monotonic() - t_collect)
+
+        t.add_done_callback(_late_done)
+
+    if pending:
+        async def _watchdog(tasks=list(pending)):
+            await asyncio.sleep(300)
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+        asyncio.create_task(_watchdog())
 
     ok = sorted(n for n, s in _outcomes.items() if s == "ok")
     errored = sorted(n for n, s in _outcomes.items() if s == "error")
@@ -238,11 +266,42 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     except Exception:
         pass
 
+    # Realized-outcome + lesson feedback. The V3 agents saw the prior THESIS
+    # (above) but never the prior P&L: get_ticker_outcome_context only fired
+    # for legacy V2 agent names, and autoresearch lessons were stored +
+    # embedded but had zero retrieval callers. Inject both here — the one
+    # report every V3 agent reads.
+    outcome_md = ""
+    try:
+        from app.agents.base_agent import get_ticker_outcome_context
+        outcome_md = get_ticker_outcome_context(ticker) or ""
+    except Exception:
+        pass
+    lessons_md = ""
+    try:
+        with get_db() as db:
+            lrows = db.execute(
+                "SELECT lesson_text FROM evolution_lessons "
+                "WHERE status = 'audited' AND lesson_text IS NOT NULL "
+                "AND timestamp > NOW() - INTERVAL '14 days' "
+                "ORDER BY timestamp DESC LIMIT 3"
+            ).fetchall()
+        if lrows:
+            lessons_md = (
+                "## 0.b LESSONS FROM RECENT CYCLES (autoresearch audit)\n"
+                + "\n".join(f"- {str(r[0])[:300]}" for r in lrows if r and r[0])
+                + "\n\n"
+            )
+    except Exception:
+        pass
+
     header = (
         f"# Pre-Collected Ticker Data Report: {ticker}\n"
         f"Generated at: {datetime.now(timezone.utc).isoformat()}\n\n"
         f"{wake_context_md}"
         f"{previous_analysis_md}"
+        f"{outcome_md}"
+        f"{lessons_md}"
     )
 
     # Build sections in priority order (highest priority first)
