@@ -72,7 +72,15 @@ async def check_prism(url: str, enabled: bool, routing: bool) -> dict:
 
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{url}/health")
+            # Prism attributes requests by the x-project / x-username HEADERS,
+            # not by JSON body fields.
+            r = await client.get(
+                f"{url}/health",
+                headers={
+                    "x-project": os.getenv("PRISM_PROJECT", "vllm-trading-bot"),
+                    "x-username": os.getenv("PRISM_USERNAME", "lazy-trader"),
+                },
+            )
             result["status"] = "UP" if r.status_code == 200 else f"ERROR_{r.status_code}"
     except Exception as e:
         result["status"] = f"DOWN ({type(e).__name__})"

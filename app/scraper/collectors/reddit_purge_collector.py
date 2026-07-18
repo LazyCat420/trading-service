@@ -14,6 +14,13 @@ from app.scraper.collectors.reddit_collector import _get_reddit_headers, _parse_
 
 logger = logging.getLogger(__name__)
 
+# Prism attributes every request by the x-project / x-username HTTP headers —
+# it ignores the same fields in the JSON body. Without them the call is filed
+# under prism's catch-all "default"/"anonymous" project and is unattributable.
+PRISM_PROJECT = os.getenv("PRISM_PROJECT", "vllm-trading-bot")
+PRISM_USERNAME = os.getenv("PRISM_USERNAME", "lazy-trader")
+
+
 class TickerValidator:
     def __init__(self):
         self.cache: dict[str, bool] = {}
@@ -176,8 +183,12 @@ class RedditPurgeCollector:
                 
         if "?stream=false" not in base_url:
             base_url += "?stream=false"
-        headers = {"Content-Type": "application/json"}
-        
+        headers = {
+            "Content-Type": "application/json",
+            "x-project": PRISM_PROJECT,
+            "x-username": PRISM_USERNAME,
+        }
+
         model = ollama_model or os.getenv("PURGE_MODEL", "vllm/cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit")
         provider = "vllm"
         resolved_model = model

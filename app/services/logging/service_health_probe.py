@@ -35,15 +35,19 @@ async def _get_probe_client() -> httpx.AsyncClient:
     return _probe_client
 
 
-async def _probe_http(name: str, url: str, method: str = "GET") -> dict:
+async def _probe_http(
+    name: str, url: str, method: str = "GET", headers: dict | None = None
+) -> dict:
     """Probe an HTTP endpoint and return status."""
     start = time.monotonic()
     try:
         client = await _get_probe_client()
         if method == "GET":
-            resp = await client.get(url)
+            resp = await client.get(url, headers=headers)
         else:
-            resp = await client.post(url, json={"type": "health_check", "probe": True})
+            resp = await client.post(
+                url, json={"type": "health_check", "probe": True}, headers=headers
+            )
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return {
             "service": name,
@@ -119,7 +123,17 @@ async def run_all_probes() -> list[dict]:
     probes = []
 
     # 1. Prism service
-    probes.append(_probe_http("prism-service", f"{settings.PRISM_URL}/health"))
+    # Prism attributes requests by the x-project / x-username HEADERS (body
+    # fields are ignored); without them the probe is filed under prism's
+    # catch-all "default"/"anonymous" project.
+    probes.append(_probe_http(
+        "prism-service",
+        f"{settings.PRISM_URL}/health",
+        headers={
+            "x-project": settings.PRISM_PROJECT,
+            "x-username": settings.PRISM_USERNAME,
+        },
+    ))
 
     # 2. Trading-client SSE endpoint
     probes.append(_probe_http(

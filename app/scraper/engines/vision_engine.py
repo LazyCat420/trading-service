@@ -20,6 +20,12 @@ from app.scraper.core.rate_limiter import rate_limiter
 
 logger = logging.getLogger(__name__)
 
+# Prism attributes every request by the x-project / x-username HTTP headers —
+# it ignores the same fields in the JSON body. Without them the call is filed
+# under prism's catch-all "default"/"anonymous" project and is unattributable.
+PRISM_PROJECT = os.getenv("PRISM_PROJECT", "vllm-trading-bot")
+PRISM_USERNAME = os.getenv("PRISM_USERNAME", "lazy-trader")
+
 # Overlay selectors to remove before screenshotting (from vision_scraper.py)
 OVERLAY_SELECTORS = [
     '[class*="paywall"]', '[class*="Paywall"]', '[class*="subscribe-wall"]',
@@ -117,8 +123,12 @@ async def _ocr_with_openai(screenshots: list[bytes], prompt: str) -> str | None:
             
     if "?stream=false" not in base_url:
         base_url += "?stream=false"
-    headers = {"Content-Type": "application/json"}
-    
+    headers = {
+        "Content-Type": "application/json",
+        "x-project": PRISM_PROJECT,
+        "x-username": PRISM_USERNAME,
+    }
+
     model = os.getenv("VISION_MODEL", "openai/gpt-4o")
     provider = "openai"
     resolved_model = model

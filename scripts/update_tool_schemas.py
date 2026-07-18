@@ -14,8 +14,18 @@ native_schemas = json.loads(result.stdout)
 
 # 2. Fetch prism-service aggregated tools (which includes tools-service)
 PRISM_URL = "http://10.0.0.16:7777/config/tools"
+# Prism attributes requests by the x-project / x-username HEADERS (it ignores
+# the same fields in a JSON body); without them the call is filed under prism's
+# catch-all "default"/"anonymous" project.
+_prism_request = urllib.request.Request(
+    PRISM_URL,
+    headers={
+        "x-project": os.getenv("PRISM_PROJECT", "vllm-trading-bot"),
+        "x-username": os.getenv("PRISM_USERNAME", "lazy-trader"),
+    },
+)
 try:
-    req = urllib.request.urlopen(PRISM_URL, timeout=10)
+    req = urllib.request.urlopen(_prism_request, timeout=10)
     prism_schemas = json.loads(req.read().decode("utf-8"))
 except Exception as e:
     print(f"Warning: Failed to fetch prism-service schemas: {e}")
