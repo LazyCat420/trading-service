@@ -250,8 +250,13 @@ async def _run_pitch_agent(
         eq_outputs = []
         for eq in relevant_eqs:
             try:
-                result = execute_equation(eq["name"], ticker)
-                if result and result.get("success"):
+                # execute_equation takes the CODE, not the name, and reports
+                # via "status" — this block passed the name and checked a
+                # "success" key that never exists, so it silently never fired.
+                if not eq.get("code") or "unbacktestable" in str(eq.get("code")):
+                    continue  # stub rows have no executable code
+                result = execute_equation(eq["code"], ticker, eq.get("parameters"))
+                if result and result.get("status") == "ok":
                     eq_outputs.append(
                         f"  • {eq['name']}: {result.get('result', 'N/A')} "
                         f"(signal: {result.get('signal', 'N/A')})"

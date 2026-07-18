@@ -42,6 +42,35 @@ def _expire_stale_dynamic_triggers(db) -> None:
         logger.warning("[TRIGGER] stale dynamic-trigger sweep failed: %s", e)
 
 
+def deactivate_sell_side_triggers(bot_id: str, ticker: str) -> int:
+    """Deactivate standing stop_loss/take_profit trigger rows for a ticker.
+
+    Called when a position takes 'hard_stop' exit ownership (agent-owned
+    exits live on the positions row) — leftover trigger rows from earlier
+    cycles would otherwise re-create the dual stop mechanism. Returns the
+    number of rows deactivated; never raises.
+    """
+    try:
+        with get_db() as db:
+            retired = db.execute(
+                "UPDATE price_triggers SET active = FALSE "
+                "WHERE bot_id = %s AND ticker = %s AND active = TRUE "
+                "AND trigger_type IN ('stop_loss', 'take_profit') "
+                "RETURNING id",
+                [bot_id, ticker],
+            ).fetchall()
+        count = len(retired or [])
+        if count:
+            logger.info(
+                "[TRIGGER] %s: hard_stop ownership — %d standing sell-side trigger(s) retired",
+                ticker, count,
+            )
+        return count
+    except Exception as e:
+        logger.warning("[TRIGGER] %s: sell-side trigger retirement failed: %s", ticker, e)
+        return 0
+
+
 async def create_trigger(
     bot_id: str,
     ticker: str,

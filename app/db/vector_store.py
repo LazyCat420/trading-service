@@ -37,11 +37,28 @@ class VectorStore:
     ) -> str:
         """Store a single embedding.
 
-        Returns the embedding ID.
+        Returns the embedding ID, or "" when the vector was rejected.
         """
+        # Reject degenerate vectors: the embedding service returns an
+        # all-zero vector when every backend fails, and a stored zero vector
+        # silently poisons cosine search (rows look present, recall is noise).
+        if not embedding or not any(embedding):
+            logger.warning(
+                "[vector_store] %s/%s: refusing to store zero/empty embedding",
+                source_table, source_id,
+            )
+            return ""
         with get_db() as db:
             eid = embedding_id or str(uuid.uuid4())
             now = datetime.now(UTC).isoformat()
+
+            # One embedding per source row: the conflict key below is a fresh
+            # random UUID, so re-embedding an updated memory used to APPEND a
+            # new row and leave the stale vector in search. Clear priors first.
+            db.execute(
+                "DELETE FROM embeddings WHERE source_table = %s AND source_id = %s",
+                [source_table, source_id],
+            )
 
             # PostgreSQL ON CONFLICT upsert
             db.execute(

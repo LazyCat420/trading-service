@@ -35,7 +35,7 @@ from app.utils.text_utils import extract_json_str
 
 logger = logging.getLogger(__name__)
 
-MAX_EQUATIONS_PER_RUN = 2
+# Per-night compile budget lives in the parameter store (EQUATION_LAB_MAX_PER_RUN).
 VALIDATION_TICKERS = ["AAPL", "MSFT", "NVDA"]
 MIN_SIGNALS_REQUIRED = 4          # across the validation set, else code is degenerate
 

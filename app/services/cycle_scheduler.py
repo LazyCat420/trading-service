@@ -468,19 +468,9 @@ class SchedulerService:
             trigger = IntervalTrigger(
                 hours=float(s["interval_hours"]), timezone=local_tz
             )
-        elif s["schedule_type"] == "policy" and s["earliest_window"]:
-            try:
-                from apscheduler.triggers.date import DateTrigger
-
-                # Check if it was supposed to run in the past but missed
-                run_time = MarketCalendar.get_next_window(s["earliest_window"])
-                if run_time < datetime.now(local_tz):
-                    # It missed its window (e.g. system was down), run immediately
-                    run_time = datetime.now(local_tz) + timedelta(seconds=5)
-
-                trigger = DateTrigger(run_date=run_time, timezone=local_tz)
-            except Exception as e:
-                logger.error("[SCHEDULER] Failed to create policy trigger for %s: %s", job_id, e)
+        # NOTE: 'policy' schedules are retired — load_all_schedules deactivates
+        # every policy row on boot (Watch Desk owns condition-driven wakes), so
+        # the old DateTrigger branch for them was dead code and is gone.
         elif s["schedule_type"] == "once" and s.get("run_at"):
             # One-shot at an exact datetime — used by agents to snipe research
             # around known events (earnings drops, Fed announcements, ...).
@@ -638,26 +628,8 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register Equation Lab: %s", e)
 
-            # ── Morning Briefing Generator (6:30 AM Pacific) ──
-            pt_tz = pytz.timezone("America/Los_Angeles")
-            try:
-                scheduler.add_job(
-                    SchedulerService._run_morning_briefing,
-                    trigger=CronTrigger(hour=6, minute=30, timezone=pt_tz),
-                    id="morning_briefing_job",
-                    replace_existing=True,
-                    misfire_grace_time=3600,
-                    coalesce=True,
-                )
-                logger.info(
-                    "[SCHEDULER] Registered morning briefing generator (cron: 6:30 AM PT)"
-                )
-            except Exception as e:
-                logger.warning(
-                    "[SCHEDULER] Failed to register morning briefing job: %s", e
-                )
-
             # ── Morning Trading Cycle (market open: 6:30 AM Pacific = 9:30 AM ET) ──
+            pt_tz = pytz.timezone("America/Los_Angeles")
             try:
                 scheduler.add_job(
                     SchedulerService._run_market_open_cycle,
@@ -839,14 +811,6 @@ class SchedulerService:
             await run_equation_lab()
         except Exception as e:
             logger.error("[SCHEDULER] Equation Lab run failed: %s", e)
-
-    @staticmethod
-    async def _run_morning_briefing():
-        """Generate the morning briefing."""
-        logger.info("[SCHEDULER] Morning briefing is a legacy V2 feature and is not run in V3.")
-        return
-
-
 
     @staticmethod
     async def _run_market_open_cycle():

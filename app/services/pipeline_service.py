@@ -1031,9 +1031,13 @@ class PipelineService:
                             )
                         # Exit ownership (dual-stop fix): with 'hard_stop' the
                         # position's stored stop/target execute directly — no
-                        # parallel re-analysis trigger rows are registered.
+                        # parallel re-analysis trigger rows are registered, and
+                        # standing sell-side rows from pre-fix cycles retire.
                         # 'reanalyze_on_breach' registers the wake triggers and
                         # the background monitor leaves the position alone.
+                        if exit_style == "hard_stop" and allowed["sell_side"]:
+                            from app.trading.order_triggers import deactivate_sell_side_triggers
+                            deactivate_sell_side_triggers(active_bot_id, ticker_name)
                         if exit_style == "reanalyze_on_breach":
                             if stop_loss and allowed["sell_side"]:
                                 await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="stop_loss", trigger_price=float(stop_loss), action="SELL", qty_pct=1.0, created_by="pipeline")

@@ -210,26 +210,6 @@ def log_consolidation_run(record: Dict[str, Any]):
         )
 
 
-def get_memories_by_ids(memory_ids: List[str]) -> List[Dict[str, Any]]:
-    if not memory_ids:
-        return []
-    _ensure_schema()
-    with get_db() as db:
-        # Build parameterized query for IN clause
-        placeholders = ",".join(["?"] * len(memory_ids))
-        db.execute(
-            f"SELECT * FROM canonical_memories WHERE id IN ({placeholders})", memory_ids
-        )
-        results = _rows_to_dicts(db)
-        for row in results:
-            if row.get("tags") and isinstance(row["tags"], str):
-                try:
-                    row["tags"] = json.loads(row["tags"])
-                except json.JSONDecodeError:
-                    row["tags"] = []
-        return results
-
-
 def update_memory_validation_stats(
     memory_id: str, new_confidence: float, new_evidence_count: int, new_status: str
 ):
