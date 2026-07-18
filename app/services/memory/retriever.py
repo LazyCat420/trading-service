@@ -16,24 +16,13 @@ MAX_BRIEF_CHARS = 3000
 def _coerce_dt(val: Any) -> datetime | None:
     """Coerce a timestamp field to a tz-aware datetime, or None.
 
+    Thin alias for the shared util (kept for the existing in-module callers).
     Postgres TIMESTAMPTZ columns come back from psycopg as `datetime` objects,
-    not ISO strings — calling `.endswith("Z")` on those raised AttributeError
-    (uncaught, since we only guarded ValueError) and silently killed memory
-    retrieval every cycle. Accept both shapes.
+    not ISO strings — accepting both shapes here is what fixed the
+    every-cycle memory-retrieval crash.
     """
-    if val is None:
-        return None
-    if isinstance(val, datetime):
-        dt = val
-    elif isinstance(val, str):
-        s = val[:-1] + "+00:00" if val.endswith("Z") else val
-        try:
-            dt = datetime.fromisoformat(s)
-        except ValueError:
-            return None
-    else:
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    from app.utils.tz import ensure_aware
+    return ensure_aware(val)
 
 
 def _is_stale(memory: Dict[str, Any]) -> bool:

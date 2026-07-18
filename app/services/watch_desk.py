@@ -33,6 +33,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from app.db.connection import get_db
+from app.utils.tz import ensure_aware
 
 logger = logging.getLogger(__name__)
 
@@ -148,8 +149,8 @@ def create_watch(
                 [now, ticker],
             ).fetchall()
             inherited = [r[0] for r in (old_rows or []) if r and r[0] is not None]
-            anchors = [a if a.tzinfo else a.replace(tzinfo=timezone.utc)
-                       for a in inherited + ([news_seen_until] if news_seen_until else [])]
+            anchors = [ensure_aware(a) for a in inherited + [news_seen_until] if a is not None]
+            anchors = [a for a in anchors if a is not None]
             last_fired_seed = max(anchors) if anchors else None
             db.execute(
                 """
@@ -440,34 +441,19 @@ def _eval_trigger(trig: dict, ctx: dict, watch: dict, market_open: bool = True) 
         kws = [kw for cat in trig["categories"] for kw in NEWS_CATEGORY_KEYWORDS.get(cat, [])]
         # Only headlines collected AFTER the last fire count — so the same earnings
         # story doesn't re-trip every window (dedup keeps its original collected_at).
-        last_fired = watch.get("last_fired_at")
-        if isinstance(last_fired, str):
-            try:
-                last_fired = datetime.fromisoformat(last_fired)
-            except ValueError:
-                last_fired = None
-        if last_fired is not None and last_fired.tzinfo is None:
-            last_fired = last_fired.replace(tzinfo=timezone.utc)
+        last_fired = ensure_aware(watch.get("last_fired_at"))
         for title, collected_at in ctx.get("news", []):
-            if last_fired is not None and collected_at is not None:
-                ca = collected_at if collected_at.tzinfo else collected_at.replace(tzinfo=timezone.utc)
-                if ca <= last_fired:
-                    continue
+            ca = ensure_aware(collected_at)
+            if last_fired is not None and ca is not None and ca <= last_fired:
+                continue
             low = title.lower()
             for kw in kws:
                 if kw in low:
                     return True, f"{ctx['ticker']} material news: “{title[:120]}”", None
     elif typ == "staleness":
         # Fires when the watch has gone max_days without any fire (backstop).
-        anchor = watch.get("last_fired_at") or watch.get("created_at")
+        anchor = ensure_aware(watch.get("last_fired_at") or watch.get("created_at"))
         if anchor:
-            if isinstance(anchor, str):
-                try:
-                    anchor = datetime.fromisoformat(anchor)
-                except ValueError:
-                    return False, "", None
-            if anchor.tzinfo is None:
-                anchor = anchor.replace(tzinfo=timezone.utc)
             days = (datetime.now(timezone.utc) - anchor).days
             if days >= trig["max_days"]:
                 return True, f"{ctx['ticker']} thesis stale — {days}d since last review", float(days)
@@ -566,18 +552,9 @@ async def evaluate_watches() -> dict:
 
         for w in tw:
             # Debounce: respect this watch's cooldown.
-            if w["last_fired_at"]:
-                lf = w["last_fired_at"]
-                if isinstance(lf, str):
-                    try:
-                        lf = datetime.fromisoformat(lf)
-                    except ValueError:
-                        lf = None
-                if lf is not None:
-                    if lf.tzinfo is None:
-                        lf = lf.replace(tzinfo=timezone.utc)
-                    if now - lf < timedelta(minutes=w["cooldown_minutes"]):
-                        continue
+            lf = ensure_aware(w["last_fired_at"])
+            if lf is not None and now - lf < timedelta(minutes=w["cooldown_minutes"]):
+                continue
 
             for trig in w["triggers"]:
                 fired, detail, value = _eval_trigger(trig, ctx, w, market_open)

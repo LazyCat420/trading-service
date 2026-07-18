@@ -549,39 +549,9 @@ def _parse_artifact(
     if "</thought_process>" in text:
         text = text.rsplit("</thought_process>", 1)[-1]
 
-    # Strategy 1: Direct JSON parse
-    try:
-        parsed = json.loads(text.strip())
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 2: JSON from markdown code blocks
-    import re
-    code_block_pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
-    matches = re.findall(code_block_pattern, text, re.DOTALL)
-    for match in matches:
-        try:
-            parsed = json.loads(match.strip())
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            continue
-
-    # Strategy 3: Find JSON object anywhere in text
-    try:
-        # Find the first { and last } and try to parse
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        candidate = text[start:end]
-        parsed = json.loads(candidate)
-        if isinstance(parsed, dict):
-            return parsed
-    except (ValueError, json.JSONDecodeError):
-        pass
-
-    # Strategy 4: Use the existing parse_json_response utility
+    # Delegate to the shared util — it already covers what the old 4-strategy
+    # ladder did here (direct parse, fenced blocks, balanced-brace scan) plus
+    # placeholder filtering and the malformed-text fallback.
     try:
         from app.utils.text_utils import parse_json_response
         parsed = parse_json_response(text)

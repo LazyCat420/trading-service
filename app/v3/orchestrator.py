@@ -202,17 +202,11 @@ async def run_v3_pipeline(
                 desk.cycle_metadata["previous_desk_context"] = prev_context
                 
                 # Calculate days old for logging
-                dt_str = previous_desk.created_at
+                from app.utils.tz import ensure_aware
                 days_old = -1
-                if dt_str.endswith("Z"):
-                    dt_str = dt_str[:-1] + "+00:00"
-                try:
-                    dt = datetime.fromisoformat(dt_str)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
+                dt = ensure_aware(previous_desk.created_at)
+                if dt is not None:
                     days_old = (datetime.now(timezone.utc) - dt).days
-                except ValueError:
-                    pass
                 
                 logger.info(
                     "[V3] %s: Injected previous SharedDesk context from %d days ago (%d chars)",
@@ -247,11 +241,10 @@ async def run_v3_pipeline(
         hours_old = 9999
         if desk.cycle_metadata.get("previous_desk_context") and previous_desk:
             try:
-                dt_str = previous_desk.created_at
-                if dt_str.endswith("Z"): dt_str = dt_str[:-1] + "+00:00"
-                dt = datetime.fromisoformat(dt_str)
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                hours_old = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+                from app.utils.tz import ensure_aware
+                dt = ensure_aware(previous_desk.created_at)
+                if dt is not None:
+                    hours_old = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
             except Exception as e:
                 logger.warning("[V3] %s: Triage hours_old calculation failed (defaulting to 9999): %s", ticker, e)
 

@@ -24,6 +24,8 @@ import feedparser
 from app.scraper.core.rate_limiter import rate_limiter
 from app.scraper.core.session_manager import session_manager
 
+from app.utils.text_utils import _extract_seeking_alpha_ssr
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,39 +43,6 @@ class NewsArticle:
 
 import json
 from bs4 import BeautifulSoup
-
-
-def _extract_seeking_alpha_ssr(html: str) -> str | None:
-    """Extract and format Seeking Alpha article contents from embedded JSON state."""
-    match = re.search(r"window\.SSR_DATA\s*=\s*(\{.*?\});?\s*</script>", html, re.DOTALL)
-    if not match:
-        match = re.search(r"window\.SSR_DATA\s*=\s*(\{.*?\}),?\s*\n", html, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data_str = match.group(1)
-        data = json.loads(data_str)
-        article = data.get("article", {}).get("response", {}).get("data", {}).get("attributes", {})
-        content_html = article.get("content")
-        if content_html:
-            soup = BeautifulSoup(content_html, "html.parser")
-            text = soup.get_text(separator=" ", strip=True)
-            
-            # Extract Quick Insights if available
-            insights = article.get("quickInsights", [])
-            if insights:
-                insights_text = []
-                for ins in sorted(insights, key=lambda x: x.get("order", 0)):
-                    q = ins.get("question", "")
-                    a = ins.get("answer", "")
-                    if q and a:
-                        insights_text.append(f"Q: {q}\nA: {a}")
-                if insights_text:
-                    text = text + "\n\nQuick Insights:\n" + "\n".join(insights_text)
-            return text.strip()
-    except Exception as e:
-        logger.warning(f"Failed to parse Seeking Alpha SSR_DATA: {e}")
-    return None
 
 
 def _clean_html_fallback(html: str, max_chars: int = 15000) -> str:

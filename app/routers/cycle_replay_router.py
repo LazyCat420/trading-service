@@ -26,7 +26,8 @@ STALE_RUNNING_SECS = 1800
 
 
 def _as_utc(dt: datetime) -> datetime:
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    from app.utils.tz import ensure_aware
+    return ensure_aware(dt)
 
 
 # ── Agent display metadata ──

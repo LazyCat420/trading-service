@@ -53,6 +53,53 @@ def hash_prompt(prompt: str) -> str:
     return hashlib.sha256(prompt.encode()).hexdigest()[:16]
 
 
+def extract_json_str(text: str) -> str:
+    """Best-effort extraction of the first JSON object/array as a STRING.
+
+    For callers that need the JSON text itself rather than a parsed dict
+    (e.g. DeepEval's wrapper, which json.loads internally and may expect
+    arrays). Strips markdown fences, then returns the earliest balanced
+    {...} or [...] block (string-aware, tries the next opener if one never
+    balances). Returns the input unchanged when nothing better is found.
+    """
+    if not text:
+        return text
+    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if m:
+        text = m.group(1).strip()
+    text = text.strip()
+    if text.startswith("{") or text.startswith("["):
+        return text
+    pairs = {"{": "}", "[": "]"}
+    starts = [i for i, ch in enumerate(text) if ch in pairs][:10]
+    for start in starts:
+        opener = text[start]
+        closer = pairs[opener]
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+    return text
+
+
 def parse_json_response(text: str) -> dict:
     """Extract JSON from LLM response, handling markdown fences and nesting.
 

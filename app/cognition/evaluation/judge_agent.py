@@ -83,6 +83,47 @@ def _deepeval_record_outcome(success: bool) -> None:
             _DEEPEVAL_BREAKER_LIMIT, _DEEPEVAL_BREAKER_COOLDOWN_SEC / 60,
         )
 
+
+async def _run_deepeval_metric(metric, metric_name: str, test_case, decision_id: str) -> tuple[bool, str | None]:
+    """Run one DeepEval metric with breaker + semaphore + timeout + retries.
+
+    The faithfulness and relevancy blocks were two ~50-line copies of this
+    (diverging once already when the breaker was bolted onto both).
+
+    Returns (succeeded, infra_error): succeeded=True means metric.score/reason
+    are populated; infra_error is a message for the infra_errors list when the
+    metric could not be evaluated at all.
+    """
+    if _deepeval_breaker_open():
+        logger.info("[JUDGE] DeepEval breaker open — skipping %s for %s", metric_name, decision_id)
+        return False, "DeepEval skipped: circuit breaker open"
+
+    for attempt in range(DEEPEVAL_MAX_RETRIES):
+        try:
+            async with _deepeval_semaphore:
+                await asyncio.wait_for(metric.a_measure(test_case), timeout=DEEPEVAL_TIMEOUT_SEC)
+            logger.debug(
+                "DeepEval %s for %s: score=%.3f reason=%s",
+                metric_name, decision_id, metric.score or 0, (metric.reason or "")[:200],
+            )
+            _deepeval_record_outcome(True)
+            return True, None
+        except Exception as eval_err:
+            if attempt < DEEPEVAL_MAX_RETRIES - 1:
+                logger.warning(
+                    "DeepEval %s attempt %d failed for %s: %s — retrying",
+                    metric_name, attempt + 1, decision_id, eval_err,
+                )
+                await asyncio.sleep(2)
+            else:
+                logger.error(
+                    "DeepEval %s failed for %s after %d attempts: %s",
+                    metric_name, decision_id, DEEPEVAL_MAX_RETRIES, eval_err,
+                )
+                _deepeval_record_outcome(False)
+                return False, f"DeepEval {metric_name.capitalize()} Error: {type(eval_err).__name__}: {eval_err}"
+    return False, None
+
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an independent, institutional Auditor Agent (LLM-as-a-Judge) for a quantitative trading firm.
@@ -323,113 +364,36 @@ async def evaluate_decision(decision_id: str) -> bool:
             # must not zero the decision's quality score like a red card does.
             infra_errors = []
 
-            # ── Faithfulness check (with retry + semaphore + breaker) ──
-            faith_succeeded = False
-            if _deepeval_breaker_open():
-                logger.info("[JUDGE] DeepEval breaker open — skipping faithfulness for %s", decision_id)
-                infra_errors.append("DeepEval skipped: circuit breaker open")
+            # ── DeepEval metric checks (shared retry/breaker helper) ──
+            faith_succeeded, faith_infra_err = await _run_deepeval_metric(
+                faithfulness, "faithfulness", test_case, decision_id
+            )
+            if faith_succeeded:
+                if not faithfulness.is_successful():
+                    reasoning = faithfulness.reason or str(faithfulness.score)
+                    red_cards.append(f"Faithfulness Failure (DeepEval): {reasoning}")
+                    if failure_reason == FailureReason.NONE:
+                        failure_reason = FailureReason.FAITHFULNESS
+            else:
+                if faith_infra_err:
+                    infra_errors.append(faith_infra_err)
                 if failure_reason == FailureReason.NONE:
                     failure_reason = FailureReason.DEEPEVAL_ERROR
-            else:
-              for attempt in range(DEEPEVAL_MAX_RETRIES):
-                try:
-                    async with _deepeval_semaphore:
-                        await asyncio.wait_for(
-                            faithfulness.a_measure(test_case),
-                            timeout=DEEPEVAL_TIMEOUT_SEC,
-                        )
-                    logger.debug(
-                        "DeepEval faithfulness for %s: score=%.3f reason=%s",
-                        decision_id,
-                        faithfulness.score or 0,
-                        (faithfulness.reason or "")[:200],
-                    )
-                    faith_succeeded = True
-                    _deepeval_record_outcome(True)
-                    if not faithfulness.is_successful():
-                        reasoning = faithfulness.reason or str(faithfulness.score)
-                        red_cards.append(
-                            f"Faithfulness Failure (DeepEval): {reasoning}"
-                        )
-                        if failure_reason == FailureReason.NONE:
-                            failure_reason = FailureReason.FAITHFULNESS
-                    break
-                except Exception as eval_err:
-                    if attempt < DEEPEVAL_MAX_RETRIES - 1:
-                        logger.warning(
-                            "DeepEval faithfulness attempt %d failed for %s: %s — retrying",
-                            attempt + 1,
-                            decision_id,
-                            eval_err,
-                        )
-                        await asyncio.sleep(2)
-                    else:
-                        logger.error(
-                            "DeepEval faithfulness failed for %s after %d attempts: %s",
-                            decision_id,
-                            DEEPEVAL_MAX_RETRIES,
-                            eval_err,
-                        )
-                        infra_errors.append(
-                            f"DeepEval Faithfulness Error: {type(eval_err).__name__}: {eval_err}"
-                        )
-                        if failure_reason == FailureReason.NONE:
-                            failure_reason = FailureReason.DEEPEVAL_ERROR
-                        _deepeval_record_outcome(False)
 
-            # ── Answer Relevancy check (with retry + semaphore + breaker) ──
-            relevancy_succeeded = False
-            if _deepeval_breaker_open():
-                logger.info("[JUDGE] DeepEval breaker open — skipping relevancy for %s", decision_id)
-                infra_errors.append("DeepEval skipped: circuit breaker open")
+            relevancy_succeeded, rel_infra_err = await _run_deepeval_metric(
+                relevancy, "relevancy", test_case, decision_id
+            )
+            if relevancy_succeeded:
+                if not relevancy.is_successful():
+                    reasoning = relevancy.reason or str(relevancy.score)
+                    red_cards.append(f"Answer Relevancy Failure (DeepEval): {reasoning}")
+                    if failure_reason == FailureReason.NONE:
+                        failure_reason = FailureReason.RELEVANCY
+            else:
+                if rel_infra_err:
+                    infra_errors.append(rel_infra_err)
                 if failure_reason == FailureReason.NONE:
                     failure_reason = FailureReason.DEEPEVAL_ERROR
-            else:
-              for attempt in range(DEEPEVAL_MAX_RETRIES):
-                try:
-                    async with _deepeval_semaphore:
-                        await asyncio.wait_for(
-                            relevancy.a_measure(test_case),
-                            timeout=DEEPEVAL_TIMEOUT_SEC,
-                        )
-                    logger.debug(
-                        "DeepEval relevancy for %s: score=%.3f reason=%s",
-                        decision_id,
-                        relevancy.score or 0,
-                        (relevancy.reason or "")[:200],
-                    )
-                    relevancy_succeeded = True
-                    _deepeval_record_outcome(True)
-                    if not relevancy.is_successful():
-                        reasoning = relevancy.reason or str(relevancy.score)
-                        red_cards.append(
-                            f"Answer Relevancy Failure (DeepEval): {reasoning}"
-                        )
-                        if failure_reason == FailureReason.NONE:
-                            failure_reason = FailureReason.RELEVANCY
-                    break
-                except Exception as eval_err:
-                    if attempt < DEEPEVAL_MAX_RETRIES - 1:
-                        logger.warning(
-                            "DeepEval relevancy attempt %d failed for %s: %s — retrying",
-                            attempt + 1,
-                            decision_id,
-                            eval_err,
-                        )
-                        await asyncio.sleep(2)
-                    else:
-                        logger.error(
-                            "DeepEval relevancy failed for %s after %d attempts: %s",
-                            decision_id,
-                            DEEPEVAL_MAX_RETRIES,
-                            eval_err,
-                        )
-                        infra_errors.append(
-                            f"DeepEval Relevancy Error: {type(eval_err).__name__}: {eval_err}"
-                        )
-                        if failure_reason == FailureReason.NONE:
-                            failure_reason = FailureReason.DEEPEVAL_ERROR
-                        _deepeval_record_outcome(False)
 
             # 6. ROUGE-L Grounding Check (Semantic/Text Overlap)
             # Extract meaningful reasoning text and use full context for fair comparison

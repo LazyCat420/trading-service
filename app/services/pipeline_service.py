@@ -8,6 +8,7 @@ from typing import Any
 from app.services.pipeline_state import PipelineStateDB
 from app.v3.orchestrator import run_v3_pipeline
 from app.telemetry import send_system_log
+from app.utils.tz import ensure_aware
 from app.utils.us_ticker_resolver import (
     is_us_tradeable,
     resolve_to_us_ticker,
@@ -152,15 +153,8 @@ class PipelineService:
                 started_at = db_state.get("started_at")
                 is_stale = False
                 if started_at:
-                    if isinstance(started_at, str):
-                        try:
-                            from dateutil.parser import parse as parse_date
-                            started_at = parse_date(started_at)
-                        except Exception:
-                            pass
+                    started_at = ensure_aware(started_at) or started_at
                     if isinstance(started_at, datetime):
-                        if started_at.tzinfo is None:
-                            started_at = started_at.replace(tzinfo=timezone.utc)
                         delta = datetime.now(timezone.utc) - started_at
                         if delta.total_seconds() > 1800: # 30 minutes
                             is_stale = True
@@ -552,10 +546,8 @@ class PipelineService:
                             
                         # 5. Construct dictionary structure
                         for tkr, info in all_pool.items():
-                            last_date = last_analysis_map.get(tkr)
+                            last_date = ensure_aware(last_analysis_map.get(tkr))
                             if last_date:
-                                if last_date.tzinfo is None:
-                                    last_date = last_date.replace(tzinfo=timezone.utc)
                                 days_ago = (datetime.now(timezone.utc) - last_date).days
                                 dsa_str = f"{days_ago} days ago" if days_ago > 0 else "Today"
                             else:
@@ -628,10 +620,8 @@ class PipelineService:
                                 score += 10.0  # Top-performer conviction
                                 
                             # Recency penalty: penalize score if analyzed in the last 3 days
-                            last_date = last_analysis_map.get(t)
+                            last_date = ensure_aware(last_analysis_map.get(t))
                             if last_date:
-                                if last_date.tzinfo is None:
-                                    last_date = last_date.replace(tzinfo=timezone.utc)
                                 days_ago = (datetime.now(timezone.utc) - last_date).days
                                 if days_ago <= 0:
                                     score -= 30.0

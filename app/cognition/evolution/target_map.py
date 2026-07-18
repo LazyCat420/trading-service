@@ -69,18 +69,17 @@ PROMPT_MAP: dict[str, str] = {
     "strategy_auditor": "app/cognition/evaluation/strategy_auditor.py",
 }
 
-STRATEGY_MAP: dict[str, str] = {
-    "strategy_candidate": "scripts/strategy_candidate.py",
-    "strategy": "scripts/strategy_candidate.py",
-}
+# Strategy evolution retired with the RLM purge (2026-07-13) — its target
+# scripts/strategy_candidate.py no longer exists. Kept as an empty map so the
+# "strategy" branch and list_available_targets() stay shape-stable.
+STRATEGY_MAP: dict[str, str] = {}
 
 OPTIMIZER_MAP: dict[str, str] = {
-    # Expanded evolution scope — optimize pipeline subsystems
-    "collection_optimizer": "app/pipeline/data_phase.py",
-    "collection_scheduler": "app/pipeline/collection_scheduler.py",
+    # Evolution scope — optimize pipeline subsystems. Entries whose targets
+    # were deleted in the 2026-07-13 purge (app/pipeline/*, summarization.py)
+    # are removed rather than left pointing at nonexistent files.
     "memory_optimizer": "app/services/memory/working_memory.py",
     "processing_optimizer": "app/services/pipeline_service.py",
-    "summarization_optimizer": "app/services/summarization.py",
     "janitor_optimizer": "app/services/data_flag_service.py",
     "debate_optimizer": "app/cognition/evolution/debate.py",
 }
@@ -108,13 +107,13 @@ def resolve_target(target_type: str, target_name: str) -> dict:
     elif target_type == "prompt":
         rel_path = PROMPT_MAP.get(target_lower)
     elif target_type == "strategy":
-        rel_path = STRATEGY_MAP.get(target_lower, "strategy_candidate.py")
+        # No phantom default — strategy evolution is retired; unknown names
+        # fall through to the "no mapping" warning path below.
+        rel_path = STRATEGY_MAP.get(target_lower)
     elif target_type in (
         "optimizer",
-        "collection_optimizer",
         "memory_optimizer",
         "processing_optimizer",
-        "summarization_optimizer",
         "janitor_optimizer",
         "debate_optimizer",
     ):

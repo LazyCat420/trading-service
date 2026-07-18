@@ -39,6 +39,36 @@ def utc_iso(dt) -> str | None:
     return str(dt)
 
 
+def ensure_aware(val) -> datetime.datetime | None:
+    """Coerce a timestamp (datetime | ISO string | None) to a tz-aware UTC datetime.
+
+    The inbound counterpart to utc_iso(). This exact idiom — fromisoformat +
+    "if tzinfo is None: replace(tzinfo=utc)" — was hand-rolled at ~30 call
+    sites (watch_desk, pipeline_service, retriever, collectors, ...), several
+    of which forgot one of the shapes (psycopg returns TIMESTAMPTZ columns as
+    datetime, JSON payloads carry strings, some strings end in 'Z' which
+    fromisoformat < 3.11 rejects).
+
+    - aware datetime  → returned as-is
+    - naive datetime  → assumed UTC, tz attached
+    - ISO-8601 string → parsed ('Z' suffix normalised), same rules
+    - None / unparseable / other types → None
+    """
+    if val is None:
+        return None
+    if isinstance(val, datetime.datetime):
+        dt = val
+    elif isinstance(val, str):
+        s = val[:-1] + "+00:00" if val.endswith("Z") else val
+        try:
+            dt = datetime.datetime.fromisoformat(s)
+        except ValueError:
+            return None
+    else:
+        return None
+    return dt.replace(tzinfo=datetime.timezone.utc) if dt.tzinfo is None else dt
+
+
 def utc_now() -> datetime.datetime:
     """Return the current time as a timezone-aware UTC datetime."""
     return datetime.datetime.now(datetime.timezone.utc)

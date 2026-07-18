@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from app.db.connection import get_db
 from app.services.prism_agent_caller import llm, Priority
+from app.utils.text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,7 @@ async def run_auditor(chunk: str, cycle_id: str, auditor_id: int) -> dict:
     )
     
     try:
-        clean_text = response_text.replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(clean_text)
+        parsed = parse_json_response(response_text)
         return {
             "score": float(parsed.get("score", 0.5)),
             "lesson": parsed.get("lesson", "")
@@ -128,8 +128,7 @@ async def run_post_cycle_evaluation(cycle_id: str):
         )
         
         try:
-            clean_text = response_text.replace("```json", "").replace("```", "").strip()
-            parsed = json.loads(clean_text)
+            parsed = parse_json_response(response_text)
             final_score = float(parsed.get("score", 0.5))
             final_lesson = parsed.get("lesson", "")
             
