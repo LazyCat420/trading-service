@@ -28,7 +28,7 @@ def _write_audit_log(audit_id: str, data: dict):
 def get_latest_benchmark_cycle_id(db) -> str | None:
     """Return the most recent benchmarked cycle id if one exists."""
     row = db.execute(
-        "SELECT cycle_id FROM cycle_benchmarks ORDER BY started_at DESC LIMIT 1"
+        "SELECT cycle_id FROM cycle_benchmarks ORDER BY started_at DESC NULLS LAST LIMIT 1"
     ).fetchone()
     return row[0] if row and row[0] else None
 
