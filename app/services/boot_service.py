@@ -348,63 +348,25 @@ class BootService:
         except Exception as e:
             logger.warning("[startup] Audit worker failed to start (non-fatal): %s", e)
 
-    @staticmethod
-    def _sync_collect_fred():
-        """Fetch all FRED series (runs in a thread)."""
-        import datetime
-        import time
-        from fredapi import Fred
-        from app.config import settings
-        from app.db.connection import get_db
-
-        key = settings.FRED_API_KEY
-        if not key:
-            logger.warning("[startup] FRED_API_KEY not set — skipping FRED refresh")
-            return 0
-
-        from app.collectors.fred_collector import SERIES
-
-        client = Fred(api_key=key)
-
-        start = datetime.date.today() - datetime.timedelta(days=30 * 365)
-        total = 0
-
-        for name, series_id in SERIES.items():
-            try:
-                data = client.get_series(series_id, observation_start=start)
-                if data is None or data.empty:
-                    continue
-                # Batch collect rows then executemany
-                rows = []
-                for date, value in data.items():
-                    if str(value) == "nan" or value is None:
-                        continue
-                    rows.append((name, date.date(), float(value), "US", "fred"))
-                if rows:
-                    with get_db() as db:
-                        for row in rows:
-                            db.execute(
-                                "INSERT INTO macro_indicators "
-                                "(indicator, date, value, country, source) "
-                                "VALUES (%s, %s, %s, %s, %s) "
-                                "ON CONFLICT (indicator, date, country) DO NOTHING",
-                                list(row),
-                            )
-                        total += len(rows)
-                logger.info("[startup] FRED %s: %d rows", name, len(rows))
-            except Exception as e:
-                logger.warning("[startup] FRED %s failed: %s", name, e)
-            # Yield CPU between series
-            time.sleep(0.1)
-
-        return total
-
     @classmethod
     async def _startup_fred_refresh(cls):
+        # Delegates to the canonical collector (batch executemany + DO UPDATE
+        # for FRED revisions) — this used to carry a row-by-row DO NOTHING copy.
+        # The daily 5 PM PT scheduler job is the primary refresh; boot only
+        # backfills when the data is actually stale.
         await asyncio.sleep(3)  # let server fully boot first
+        from app.services.startup_tasks import _is_data_fresh
+
+        if (_is_data_fresh("macro_indicators", "source = 'fred'", 2)
+                and _is_data_fresh(
+                    "macro_indicators",
+                    "source = 'fred' AND indicator = 'CPI'", 45)):
+            logger.info("[startup] FRED data already fresh, skipping refresh")
+            return
         logger.info("[startup] Refreshing FRED macro indicators (background thread)...")
         try:
-            total = await asyncio.to_thread(cls._sync_collect_fred)
+            from app.collectors.fred_collector import sync_collect_fred
+            total = await asyncio.to_thread(sync_collect_fred, lambda: False)
             logger.info("[startup] FRED refresh complete: %d total rows", total)
         except Exception as e:
             logger.warning("[startup] FRED refresh failed (non-fatal): %s", e)

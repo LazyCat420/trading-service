@@ -88,14 +88,99 @@ def build_brain_graph_block(ticker: str) -> str:
     return ""
 
 
+def build_macro_block(ticker: str) -> str:
+    """Macro backdrop from FRED data (macro_indicators). The desk was
+    macro-blind before this: the table was collected for the dashboard but
+    never reached an agent prompt. '' on empty/any failure — non-fatal."""
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT DISTINCT ON (indicator) indicator, date, value "
+                "FROM macro_indicators WHERE source = 'fred' "
+                "ORDER BY indicator, date DESC"
+            ).fetchall()
+            yoy_rows = db.execute(
+                "SELECT DISTINCT ON (indicator) indicator, value "
+                "FROM macro_indicators WHERE source = 'fred' "
+                "AND indicator IN ('CPI', 'PCE_CORE') "
+                "AND date <= CURRENT_DATE - INTERVAL '12 months' "
+                "ORDER BY indicator, date DESC"
+            ).fetchall()
+    except Exception as e:
+        logger.debug("[retrieval-ctx] macro block failed (non-fatal): %s", e)
+        return ""
+
+    latest = {r[0]: (r[1], r[2]) for r in rows}
+    year_ago = {r[0]: r[1] for r in yoy_rows}
+    if not latest:
+        return ""
+
+    def val(key):
+        return latest[key][1] if key in latest else None
+
+    def yoy(key):
+        now, old = val(key), year_ago.get(key)
+        if now and old:
+            return (now / old - 1.0) * 100.0
+        return None
+
+    lines = ["### Macro Backdrop (FRED, latest)"]
+
+    t10, t2, ff = val("TREASURY_10Y"), val("TREASURY_2Y"), val("FED_FUNDS")
+    if t10 is not None and t2 is not None:
+        spread = t10 - t2
+        curve = f"curve 10Y-2Y {spread:+.2f}pp{' (INVERTED)' if spread < 0 else ''}"
+        rates = [f"Fed funds {ff:.2f}%"] if ff is not None else []
+        rates += [f"10Y {t10:.2f}%", f"2Y {t2:.2f}%", curve]
+        lines.append("- Rates: " + " | ".join(rates))
+
+    infl = []
+    cpi_yoy, pce_yoy = yoy("CPI"), yoy("PCE_CORE")
+    if cpi_yoy is not None:
+        infl.append(f"CPI YoY {cpi_yoy:.1f}%")
+    if pce_yoy is not None:
+        infl.append(f"Core PCE YoY {pce_yoy:.1f}%")
+    if val("INFLATION_EXPECT") is not None:
+        infl.append(f"5Y breakeven {val('INFLATION_EXPECT'):.2f}%")
+    if infl:
+        lines.append("- Inflation: " + " | ".join(infl))
+
+    labor = []
+    if val("UNEMPLOYMENT") is not None:
+        labor.append(f"unemployment {val('UNEMPLOYMENT'):.1f}%")
+    if val("INITIAL_CLAIMS") is not None:
+        labor.append(f"initial claims {val('INITIAL_CLAIMS') / 1000:.0f}k")
+    if labor:
+        lines.append("- Labor: " + " | ".join(labor))
+
+    risk = []
+    if val("VIX") is not None:
+        risk.append(f"VIX {val('VIX'):.1f}")
+    if val("HY_SPREAD") is not None:
+        risk.append(f"HY spread {val('HY_SPREAD'):.2f}pp")
+    if val("DOLLAR_INDEX") is not None:
+        risk.append(f"USD index {val('DOLLAR_INDEX'):.1f}")
+    if risk:
+        lines.append("- Risk: " + " | ".join(risk))
+
+    if len(lines) < 2:
+        return ""
+    newest = max(d for d, _ in latest.values())
+    lines.append(f"(as of {newest})")
+    return _cap("\n".join(lines))
+
+
 def build_memory_addenda(ticker: str) -> str:
-    """Working-memory + retrieved-context + brain-graph blocks, joined.
-    '' when all empty."""
+    """Working-memory + retrieved-context + brain-graph + macro blocks,
+    joined. '' when all empty."""
     blocks = [
         b for b in (
             build_working_memory_block(ticker),
             build_retrieved_context(ticker),
             build_brain_graph_block(ticker),
+            build_macro_block(ticker),
         )
         if b
     ]

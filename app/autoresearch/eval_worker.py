@@ -111,6 +111,34 @@ async def run_activate_brain_graph(job_id: str, payload: dict):
         )
 
 
+async def run_fred_collection(job_id: str, payload: dict):
+    """Refresh FRED macro indicators. Dispatched by trading-client's
+    'Collect FRED' button (RUN_FRED_COLLECTION sat unconsumed before)."""
+    from app.collectors.fred_collector import sync_collect_fred
+
+    total = await asyncio.to_thread(sync_collect_fred, lambda: False)
+    with get_db() as db:
+        db.execute(
+            "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, "
+            "result = %s WHERE id = %s",
+            [json.dumps({"rows_written": total}), job_id],
+        )
+
+
+async def run_market_collection(job_id: str, payload: dict):
+    """Refresh index futures / commodities / ETFs into asset_prices.
+    Dispatched by trading-client's 'Collect Market Data' button."""
+    from app.collectors.market_regime_collector import collect_market_data
+
+    result = await collect_market_data(period=payload.get("period") or "6mo")
+    with get_db() as db:
+        db.execute(
+            "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, "
+            "result = %s WHERE id = %s",
+            [json.dumps({"total": result.get("total", 0)}), job_id],
+        )
+
+
 async def poll_system_commands():
     logger.info("Starting autoresearch system_commands poller...")
     while True:
@@ -119,7 +147,8 @@ async def poll_system_commands():
                 cmd = db.execute(
                     "SELECT id, command_type, payload FROM system_commands "
                     "WHERE status = 'pending' AND command_type IN "
-                    "('AUTORESEARCH', 'DEPLOY_FIX', 'ROLLBACK_FIX', 'ACTIVATE_BRAIN_GRAPH') "
+                    "('AUTORESEARCH', 'DEPLOY_FIX', 'ROLLBACK_FIX', 'ACTIVATE_BRAIN_GRAPH', "
+                    "'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION') "
                     "LIMIT 1 FOR UPDATE SKIP LOCKED"
                 ).fetchone()
 
@@ -142,6 +171,10 @@ async def poll_system_commands():
                             await run_rollback_fix(job_id, payload)
                         elif cmd_type == "ACTIVATE_BRAIN_GRAPH":
                             await run_activate_brain_graph(job_id, payload)
+                        elif cmd_type == "RUN_FRED_COLLECTION":
+                            await run_fred_collection(job_id, payload)
+                        elif cmd_type == "RUN_MARKET_COLLECTION":
+                            await run_market_collection(job_id, payload)
                     except Exception as e:
                         logger.error("%s failed for %s: %s", cmd_type, job_id, e)
                         # error_message is what trading-client renders in its

@@ -628,6 +628,23 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register Equation Lab: %s", e)
 
+            # ── Macro data refresh (5 PM PT weekdays, after FRED's ~4:15 ET
+            # daily updates settle). Collection was startup-only before, so
+            # data freshness was an accident of deploy frequency.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_macro_refresh,
+                    trigger=CronTrigger(hour=17, minute=0, day_of_week="mon-fri",
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="macro_refresh_daily",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered macro refresh (cron: 5:00 PM PT, mon-fri)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register macro refresh: %s", e)
+
             # ── Morning Trading Cycle (market open: 6:30 AM Pacific = 9:30 AM ET) ──
             pt_tz = pytz.timezone("America/Los_Angeles")
             try:
@@ -835,6 +852,23 @@ class SchedulerService:
             await run_equation_lab()
         except Exception as e:
             logger.error("[SCHEDULER] Equation Lab run failed: %s", e)
+
+    @staticmethod
+    async def _run_macro_refresh():
+        """Daily FRED + futures/commodities refresh (weekday post-close)."""
+        import asyncio as _asyncio
+        try:
+            from app.collectors.fred_collector import sync_collect_fred
+            total = await _asyncio.to_thread(sync_collect_fred, lambda: False)
+            logger.info("[SCHEDULER] Macro refresh: %d FRED rows", total)
+        except Exception as e:
+            logger.error("[SCHEDULER] FRED refresh failed: %s", e)
+        try:
+            from app.collectors.market_regime_collector import collect_market_data
+            result = await collect_market_data(period="6mo")
+            logger.info("[SCHEDULER] Macro refresh: %s market rows", result.get("total", 0))
+        except Exception as e:
+            logger.error("[SCHEDULER] Market data refresh failed: %s", e)
 
     @staticmethod
     async def _run_market_open_cycle():

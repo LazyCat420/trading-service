@@ -33,6 +33,12 @@ SERIES = {
     "INFLATION_EXPECT": "T5YIE",  # 5-Year Breakeven Inflation
     "REAL_GDP_GROWTH": "A191RL1Q225SBEA",  # Real GDP Growth Rate
     "INITIAL_CLAIMS": "ICSA",  # Initial Jobless Claims
+    "VIX": "VIXCLS",  # CBOE Volatility Index
+    "DOLLAR_INDEX": "DTWEXBGS",  # Trade-Weighted USD Index (broad)
+    "HY_SPREAD": "BAMLH0A0HYM2",  # ICE BofA High Yield OAS
+    "PAYROLLS": "PAYEMS",  # Total Nonfarm Payrolls (thousands)
+    "CONSUMER_SENT": "UMCSENT",  # U. Michigan Consumer Sentiment
+    "PCE_CORE": "PCEPILFE",  # Core PCE Price Index (Fed's target gauge)
 }
 
 
@@ -84,7 +90,8 @@ async def collect_macro_indicator(
                 INSERT INTO macro_indicators
                 (indicator, date, value, country, source)
                 VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (indicator, date, country) DO NOTHING
+                ON CONFLICT (indicator, date, country)
+                DO UPDATE SET value = EXCLUDED.value
             """,
                 rows_to_insert,
             )
@@ -165,10 +172,13 @@ def sync_collect_fred(is_shutting_down) -> int:
             if rows:
                 with get_db() as db:
                     db.executemany(
+                        # DO UPDATE (not DO NOTHING): FRED routinely revises
+                        # CPI/GDP/claims; DO NOTHING kept stale values forever.
                         "INSERT INTO macro_indicators "
                         "(indicator, date, value, country, source) "
                         "VALUES (%s, %s, %s, %s, %s) "
-                        "ON CONFLICT (indicator, date, country) DO NOTHING",
+                        "ON CONFLICT (indicator, date, country) "
+                        "DO UPDATE SET value = EXCLUDED.value",
                         rows,
                     )
                 total += len(rows)
@@ -177,5 +187,20 @@ def sync_collect_fred(is_shutting_down) -> int:
             logger.warning("[startup] FRED %s failed: %s", name, e)
         # Yield CPU between series so API requests aren't starved
         time.sleep(0.1)
+
+    # Record the collection timestamp — trading-client's macro endpoint reads
+    # this row for its "last collected" freshness marker. The row had been
+    # frozen since 2026-06-20 when the v2 pipeline (its old writer) was removed.
+    try:
+        with get_db() as db:
+            db.execute(
+                "INSERT INTO data_source_status (source, ticker, last_success, rows_fetched) "
+                "VALUES ('fred', '_global_', CURRENT_TIMESTAMP, %s) "
+                "ON CONFLICT (source, ticker) DO UPDATE SET "
+                "last_success = CURRENT_TIMESTAMP, rows_fetched = EXCLUDED.rows_fetched",
+                [total],
+            )
+    except Exception as e:
+        logger.warning("[fred] data_source_status stamp failed: %s", e)
 
     return total

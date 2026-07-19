@@ -113,8 +113,13 @@ async def startup_fred_refresh(is_shutting_down: Callable[[], bool]):
     if is_shutting_down():
         return
     # Skip if we already have fresh FRED data (avoids 2+ minute delay on
-    # every server restart, which is critical when --reload kills cycles)
-    if _is_data_fresh("macro_indicators", "source = 'fred'", 1):
+    # every server restart, which is critical when --reload kills cycles).
+    # Freshness needs BOTH checks: a bare MAX(date) is dominated by the daily
+    # treasury series and says nothing about the monthly CPI/UNRATE lagging.
+    if (_is_data_fresh("macro_indicators", "source = 'fred'", 2)
+            and _is_data_fresh(
+                "macro_indicators",
+                "source = 'fred' AND indicator = 'CPI'", 45)):
         logger.info("[startup] FRED data already fresh, skipping refresh")
         return
 
