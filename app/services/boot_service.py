@@ -7,7 +7,8 @@ Startup Sequence:
 4. Restore Stable Fixes (Optional)
 5. Crash Recovery Scan (Optional)
 6. Scheduler Start / Embedding Warmup (Optional)
-7. MCP / Prism Agent Registration (Optional)
+7. Prism V3 Agent Registration (Optional)
+   (lazy-tool-service's own MCP registration is NOT done here — it self-registers)
 8. Background Tasks (FRED, SP500, Market Regime, Audit Worker)
 
 Shutdown Sequence (Reverse Order):
@@ -51,7 +52,13 @@ class BootService:
         # --- Optional / Degraded Boot Stages ---
         cls._run_stage("Scheduler Start", cls._start_scheduler, required=False)
         cls._run_stage("Embedding Warmup", cls._warmup_models, required=False)
-        cls._run_stage("Auto-Register MCP Servers", cls._register_mcp_servers, required=False)
+        # NOTE: lazy-tool-service's MCP registration used to happen here — this
+        # service wrote Prism's `mcp_servers` collection directly, for three
+        # scopes including html-notes-client. That made unrelated apps' tool
+        # sets depend on the trading bot booting, and nothing re-connected the
+        # SSE link when lazy-tool-service itself redeployed. It now registers
+        # itself over Prism's REST API on its own boot
+        # (lazy-tool-service/src/services/PrismRegistrationService.ts).
         cls._run_stage("Register V3 Prism Agents", cls._register_v3_agents, required=False)
 
         # --- Absorbed scraper: shared httpx session ---
@@ -537,134 +544,3 @@ class BootService:
             except Exception as e:
                 logger.warning("[sp500-refresh] Daily refresh failed (will retry next cycle): %s", e)
                 await asyncio.sleep(3600)  # back off an hour before recomputing the next window
-
-    @classmethod
-    def _register_mcp_servers(cls):
-        """Register lazy-tool-service as an MCP server in Prism's MongoDB and trigger connection."""
-        import os
-        import datetime
-        from urllib.parse import urlparse
-        import pymongo
-        import httpx
-        from app.config import settings
-
-        if not settings.PRISM_ENABLED or not settings.PRISM_MONGO_URI:
-            logger.info("[MCP-Reg] Prism integration is disabled or PRISM_MONGO_URI is empty.")
-            return
-
-        try:
-            # 1. Connect to MongoDB
-            client = pymongo.MongoClient(settings.PRISM_MONGO_URI)
-            db_name = settings.PRISM_MONGO_DB or "prism"
-            db = client[db_name]
-            col = db["mcp_servers"]
-
-            # 2. Determine MCP server URL dynamically
-            prism_host = settings.DEFAULT_HOST
-            if settings.PRISM_URL:
-                try:
-                    prism_parsed = urlparse(settings.PRISM_URL)
-                    prism_host = prism_parsed.hostname or settings.DEFAULT_HOST
-                except Exception:
-                    pass
-
-            # 5591 is lazy-tool-service's external (host-mapped) port.
-            port = os.getenv("LAZY_TOOL_SERVICE_PORT", "5591")
-            mcp_url = f"http://{prism_host}:{port}/mcp/sse"
-            logger.info(f"[MCP-Reg] Calculated MCP URL: {mcp_url}")
-
-            configs = [
-                {
-                    "project": "coding",
-                    "username": "admin",
-                    "name": "lazy-tool-service",
-                    "displayName": "Lazy Tool Service",
-                    "transport": "sse",
-                    "url": mcp_url,
-                    "enabled": True,
-                },
-                {
-                    "project": "vllm-trading-bot",
-                    "username": "lazy-trader",
-                    "name": "lazy-tool-service",
-                    "displayName": "Lazy Tool Service",
-                    "transport": "sse",
-                    "url": mcp_url,
-                    "enabled": True,
-                },
-                {
-                    "project": "html-notes-client",
-                    "username": "lazycat",
-                    "name": "lazy-tool-service",
-                    "displayName": "Lazy Tool Service",
-                    "transport": "sse",
-                    "url": mcp_url,
-                    "enabled": True,
-                }
-            ]
-
-            now = datetime.datetime.now(datetime.timezone.utc)
-
-            for config in configs:
-                col.update_one(
-                    {
-                        "project": config["project"],
-                        "username": config["username"],
-                        "name": config["name"],
-                    },
-                    {
-                        "$set": {
-                            "displayName": config["displayName"],
-                            "transport": config["transport"],
-                            "url": config["url"],
-                            "enabled": config["enabled"],
-                            "updatedAt": now,
-                        },
-                        "$setOnInsert": {
-                            "createdAt": now,
-                        }
-                    },
-                    upsert=True
-                )
-            logger.info("[MCP-Reg] Registered lazy-tool-service in MongoDB.")
-
-            # 3. Trigger immediate connection in Prism via API calls
-            if settings.PRISM_URL:
-                logger.info("[MCP-Reg] Triggering immediate MCP connections in Prism...")
-                for config in configs:
-                    try:
-                        headers = {
-                            "x-project": config["project"],
-                            "x-username": config["username"]
-                        }
-                        # GET existing servers for this project/username to get the server ID
-                        r_list = httpx.get(f"{settings.PRISM_URL}/mcp-servers", headers=headers, timeout=5.0)
-                        if r_list.status_code == 200:
-                            servers = r_list.json()
-                            target_id = None
-                            for s in servers:
-                                if s.get("name") == config["name"]:
-                                    target_id = s.get("id") or s.get("_id")
-                                    break
-                            
-                            if target_id:
-                                # Trigger connect
-                                r_conn = httpx.post(
-                                    f"{settings.PRISM_URL}/mcp-servers/{target_id}/connect",
-                                    headers=headers,
-                                    timeout=10.0
-                                )
-                                if r_conn.status_code == 200:
-                                    logger.info(f"[MCP-Reg] Connected to '{config['name']}' for project '{config['project']}'/username '{config['username']}'")
-                                else:
-                                    logger.warning(f"[MCP-Reg] Failed to connect '{config['name']}' (HTTP {r_conn.status_code}): {r_conn.text}")
-                            else:
-                                logger.warning(f"[MCP-Reg] Could not find registered '{config['name']}' in Prism GET list.")
-                        else:
-                            logger.warning(f"[MCP-Reg] Failed to fetch server list from Prism (HTTP {r_list.status_code})")
-                    except Exception as e:
-                        logger.warning(f"[MCP-Reg] Failed to trigger connect via Prism API for {config['project']}: {e}")
-
-        except Exception as e:
-            logger.warning(f"[MCP-Reg] Auto-registration failed: {e}")
-
