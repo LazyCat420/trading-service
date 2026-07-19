@@ -101,12 +101,18 @@ def build_macro_block(ticker: str) -> str:
                 "FROM macro_indicators WHERE source = 'fred' "
                 "ORDER BY indicator, date DESC"
             ).fetchall()
+            # Exact one-year base per series (FRED monthly dates are always
+            # the 1st, so the join is safe). Anchoring to CURRENT_DATE
+            # instead landed 11 months back and understated YoY.
             yoy_rows = db.execute(
-                "SELECT DISTINCT ON (indicator) indicator, value "
-                "FROM macro_indicators WHERE source = 'fred' "
-                "AND indicator IN ('CPI', 'PCE_CORE') "
-                "AND date <= CURRENT_DATE - INTERVAL '12 months' "
-                "ORDER BY indicator, date DESC"
+                "SELECT a.indicator, b.value FROM ("
+                "  SELECT DISTINCT ON (indicator) indicator, date"
+                "  FROM macro_indicators WHERE source = 'fred'"
+                "  AND indicator IN ('CPI', 'PCE_CORE')"
+                "  ORDER BY indicator, date DESC"
+                ") a JOIN macro_indicators b ON b.indicator = a.indicator "
+                "AND b.source = 'fred' "
+                "AND b.date = (a.date - INTERVAL '1 year')::date"
             ).fetchall()
     except Exception as e:
         logger.debug("[retrieval-ctx] macro block failed (non-fatal): %s", e)
