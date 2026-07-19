@@ -152,7 +152,7 @@ AGENT_ID_MAP: dict[str, str] = {
     "test_prove": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "strategy_auditor": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "judge_agent": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
-    "deepeval_client": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
+    "grounding_judge": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "memory_consolidation": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "trading_memory": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "tool_analyst": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",

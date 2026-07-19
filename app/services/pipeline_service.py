@@ -1179,11 +1179,15 @@ class PipelineService:
             except Exception as wb_err:
                 logger.warning("[PipelineService] Whiteboard retention failed: %s", wb_err)
 
-            # Fire and forget the post-cycle evolution and evaluation
+            # Fire and forget the post-cycle LLM reviewer.
+            # The per-cycle strategy generator (run_evolution_loop) was
+            # removed 2026-07-19: its data CSV never existed in the container
+            # so it backtested on SYNTHETIC series, promoted 1 strategy ever,
+            # and wrote blank lesson rows into the table agents read. The
+            # nightly Equation Lab covers strategy R&D on real data.
             try:
                 from app.cognition.evolution.evaluator import run_post_cycle_evaluation
-                from app.cognition.evolution.evolution_runner import run_evolution_loop
-                
+
                 def make_done_callback(name):
                     def callback(t):
                         try:
@@ -1197,21 +1201,15 @@ class PipelineService:
                 # Run the LLM reviewer
                 t1 = asyncio.create_task(run_post_cycle_evaluation(cycle_id))
                 t1.add_done_callback(make_done_callback("run_post_cycle_evaluation"))
-                
-                # Run the quant strategy generator
-                t2 = asyncio.create_task(run_evolution_loop(data_path="data/latest_market_data.csv"))
-                t2.add_done_callback(make_done_callback("run_evolution_loop"))
-                
+
                 if not hasattr(cls, "_background_tasks"):
                     cls._background_tasks = set()
                 cls._background_tasks.add(t1)
-                cls._background_tasks.add(t2)
                 t1.add_done_callback(cls._background_tasks.discard)
-                t2.add_done_callback(cls._background_tasks.discard)
 
-                logger.info("[PipelineService] Triggered post-cycle evolution tasks.")
+                logger.info("[PipelineService] Triggered post-cycle evaluation task.")
             except Exception as ev_err:
-                logger.error(f"[PipelineService] Failed to trigger evolution: {ev_err}")
+                logger.error(f"[PipelineService] Failed to trigger evaluation: {ev_err}")
 
             cls._state.update({
                 "status": "done",

@@ -43,25 +43,47 @@ class TraceRecord(BaseModel):
         return v if v is not None else 0.0
 
 def evaluate_trace(trace: TraceRecord) -> Dict[str, Any]:
-    """Score a single trace row based on the 5-part rubric."""
+    """Score a single trace row based on the 5-part rubric.
+
+    Only grades signals the V3 trace producer actually populates
+    (stop_reason, tool_result_summary, loop_step). tokens_before/after and
+    latency_ms are hardcoded 0 by trace_writer — the old token-based
+    efficiency term always awarded full marks, which (with a -10 slap for
+    errors) pinned final_score at ~100 on every healthy row and made the
+    whole table a rubber stamp.
+    """
     # Both vocabularies count as completion: the historical producer wrote
     # 'success' while this rubric only accepted 'completed' — so completion
     # scored 0 on 100% of the 649 rows ever graded.
-    completion_score = 40.0 if trace.stop_reason in ("completed", "success") else 0.0
-    
-    tool_correctness = 25.0
-    if trace.tool_result_summary and "error" in str(trace.tool_result_summary).lower():
-        tool_correctness -= 10.0
-        
-    tokens_used = trace.tokens_after - trace.tokens_before
-    efficiency = 20.0
-    if tokens_used > 5000:
-        efficiency -= 10.0
-        
-    recovery = 10.0
-    
+    completed = trace.stop_reason in ("completed", "success")
+    completion_score = 40.0 if completed else 0.0
+
+    had_error = bool(
+        trace.tool_result_summary and "error" in str(trace.tool_result_summary).lower()
+    )
+    # A failed tool call is a failed call — the old -10 still left errors
+    # scoring 75+, indistinguishable from healthy runs on the dashboard.
+    tool_correctness = 0.0 if had_error else 25.0
+
+    # Loop efficiency (column name kept for schema compat): the producer
+    # increments loop_step per tool call within a run — a long tail is the
+    # doom-loop signature the token budget was supposed to catch.
+    step = trace.loop_step or 1
+    if step <= 6:
+        efficiency = 20.0
+    elif step <= 12:
+        efficiency = 10.0
+    else:
+        efficiency = 0.0
+
+    # Recovery: a tool error inside a run that still completed = recovered.
+    if had_error:
+        recovery = 10.0 if completed else 0.0
+    else:
+        recovery = 10.0
+
     stop_quality = 5.0
-    if trace.stop_reason == "budget_exhausted":
+    if trace.stop_reason == "budget_exhausted" or not completed:
         stop_quality = 0.0
 
     final_score = max(0.0, completion_score + tool_correctness + efficiency + recovery + stop_quality)
@@ -92,7 +114,7 @@ def classify_failure(trace: TraceRecord, score: Dict[str, Any]) -> str | None:
     if "error" in tool_summary or "invalid" in tool_summary:
         return "bad_arguments"
         
-    if trace.tokens_after - trace.tokens_before > 8000:
+    if (trace.loop_step or 0) > 12:
         return "loop_drift"
         
     return "wrong_tool_selected"

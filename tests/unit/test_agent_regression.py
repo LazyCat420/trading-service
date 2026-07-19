@@ -20,8 +20,7 @@ PRISM_ONLINE = check_prism_reachable()
 def patch_llm():
     import os
     if os.environ.get("TEST_LIVE_LLM") != "1":
-        from unittest.mock import AsyncMock, patch
-        from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
+        from unittest.mock import patch
 
         async def mock_call_prism_agent(*args, **kwargs):
             agent_id = kwargs.get("agent_id") or (args[0] if args else "")
@@ -31,11 +30,13 @@ def patch_llm():
                 return "TSLA stock TSLA is showing a bullish setup with a Golden Cross and strong EMA/RSI/MACD indicators.", 100, 10
             return "Mock response", 10, 1
 
-        async def mock_a_measure(self, test_case, *args, **kwargs):
-            self.score = 1.0
-            self.reason = "Mocked pass for CI/CD"
-            self.success = True
-            return 1.0
+        async def mock_grounding_judge(context_blob, raw_response, decision_id, ticker):
+            return {
+                "faithfulness_score": 1.0,
+                "relevancy_score": 1.0,
+                "faithfulness_reason": "Mocked pass for CI/CD",
+                "relevancy_reason": "Mocked pass for CI/CD",
+            }, None
 
         # Patch this module's own reference via sys.modules — the string form
         # ("tests.unit.test_agent_regression") breaks when pytest imports the
@@ -43,8 +44,7 @@ def patch_llm():
         import sys
         with patch("app.services.prism_agent_caller.call_prism_agent", mock_call_prism_agent), \
              patch.object(sys.modules[__name__], "call_prism_agent", mock_call_prism_agent), \
-             patch.object(FaithfulnessMetric, "a_measure", mock_a_measure), \
-             patch.object(AnswerRelevancyMetric, "a_measure", mock_a_measure):
+             patch("app.cognition.evaluation.judge_agent._run_grounding_judge", mock_grounding_judge):
             yield
     else:
         yield
@@ -94,14 +94,8 @@ GOLDEN_DATASET = [
 @pytest.mark.skipif(not PRISM_ONLINE, reason="Prism Gateway is offline or unreachable")
 @pytest.mark.asyncio
 async def test_agent_regression_quality_gates():
-    """Golden Dataset regression test verifying agent output quality via DeepEval."""
-    from app.cognition.evaluation.deepeval_client import VLLMDeepEvalWrapper
-    from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
-    from deepeval.test_case import LLMTestCase
-
-    eval_model = VLLMDeepEvalWrapper()
-    faithfulness = FaithfulnessMetric(threshold=0.7, model=eval_model, include_reason=True)
-    relevancy = AnswerRelevancyMetric(threshold=0.7, model=eval_model, include_reason=True)
+    """Golden Dataset regression test verifying agent output quality via the grounding judge."""
+    from app.cognition.evaluation import judge_agent
 
     for case in GOLDEN_DATASET:
         agent_name = case["agent_name"]
@@ -137,23 +131,16 @@ async def test_agent_regression_quality_gates():
             f"Expected: {expected_points}. Found in response: {present_points}."
         )
 
-        # DeepEval validation
-        test_case = LLMTestCase(
-            input=user_msg,
-            actual_output=raw_response,
-            retrieval_context=[context_blob]
+        # Grounding-judge validation (in-house DeepEval replacement)
+        scores, infra_err = await judge_agent._run_grounding_judge(
+            context_blob, raw_response, "regression_test", ticker
         )
-
-        # Run Faithfulness
-        await faithfulness.a_measure(test_case)
-        assert faithfulness.is_successful(), (
-            f"Faithfulness check failed for {agent_name} (Score: {faithfulness.score:.2f}). "
-            f"Reason: {faithfulness.reason}"
+        assert scores is not None, f"Grounding judge infra error for {agent_name}: {infra_err}"
+        assert scores["faithfulness_score"] >= 0.7, (
+            f"Faithfulness check failed for {agent_name} (Score: {scores['faithfulness_score']:.2f}). "
+            f"Reason: {scores['faithfulness_reason']}"
         )
-
-        # Run Relevancy
-        await relevancy.a_measure(test_case)
-        assert relevancy.is_successful(), (
-            f"Answer Relevancy check failed for {agent_name} (Score: {relevancy.score:.2f}). "
-            f"Reason: {relevancy.reason}"
+        assert scores["relevancy_score"] >= 0.7, (
+            f"Answer Relevancy check failed for {agent_name} (Score: {scores['relevancy_score']:.2f}). "
+            f"Reason: {scores['relevancy_reason']}"
         )

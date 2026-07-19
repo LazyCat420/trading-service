@@ -546,6 +546,23 @@ def extract_reasoning_text(raw_response: str) -> str:
 
     text = strip_think_tags(raw_response)
 
+    # 0. V3 decisions are a bare JSON object ({"action":..., "reasoning":...}).
+    # The legacy scaffolding strippers below erase those completely (step 4
+    # deletes any {...} line), which silently zeroed every ROUGE/citation
+    # grounding score from the V3 cutover until 2026-07-19. Pull the prose
+    # fields directly instead.
+    try:
+        obj = json.loads(text.strip())
+        if isinstance(obj, dict):
+            prose = " ".join(
+                str(obj.get(k)) for k in ("reasoning", "rationale", "thesis", "summary", "analysis")
+                if isinstance(obj.get(k), str) and obj.get(k)
+            ).strip()
+            if prose:
+                return prose
+    except (json.JSONDecodeError, ValueError):
+        pass
+
     # 1. Extract rationale from FINAL({...}) if present
     rationale = ""
     final_match = re.search(r"FINAL\s*\(\s*(\{.*?\})\s*\)", text, re.DOTALL)
