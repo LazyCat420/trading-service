@@ -139,6 +139,27 @@ async def run_market_collection(job_id: str, payload: dict):
         )
 
 
+async def run_evaluate_strategy(job_id: str, payload: dict):
+    """Manual strategy audit. Dispatched by trading-client's Strategy Score
+    'Run Audit' button (EVALUATE_STRATEGY sat unconsumed — the poller's
+    whitelist never included it, so the button spun forever)."""
+    from app.cognition.evaluation.strategy_auditor import evaluate_strategy
+
+    result = await asyncio.wait_for(
+        evaluate_strategy(cycle_id=payload.get("cycle_id")), timeout=300,
+    )
+    metrics = result.get("agent_metrics") if isinstance(result, dict) else None
+    with get_db() as db:
+        db.execute(
+            "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, "
+            "result = %s WHERE id = %s",
+            [json.dumps({
+                "total_score": (result or {}).get("total_score"),
+                "decisions_evaluated": (metrics or {}).get("total_decisions_evaluated", 0),
+            }, default=str), job_id],
+        )
+
+
 async def poll_system_commands():
     logger.info("Starting autoresearch system_commands poller...")
     while True:
@@ -148,7 +169,7 @@ async def poll_system_commands():
                     "SELECT id, command_type, payload FROM system_commands "
                     "WHERE status = 'pending' AND command_type IN "
                     "('AUTORESEARCH', 'DEPLOY_FIX', 'ROLLBACK_FIX', 'ACTIVATE_BRAIN_GRAPH', "
-                    "'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION') "
+                    "'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY') "
                     "LIMIT 1 FOR UPDATE SKIP LOCKED"
                 ).fetchone()
 
@@ -175,6 +196,8 @@ async def poll_system_commands():
                             await run_fred_collection(job_id, payload)
                         elif cmd_type == "RUN_MARKET_COLLECTION":
                             await run_market_collection(job_id, payload)
+                        elif cmd_type == "EVALUATE_STRATEGY":
+                            await run_evaluate_strategy(job_id, payload)
                     except Exception as e:
                         logger.error("%s failed for %s: %s", cmd_type, job_id, e)
                         # error_message is what trading-client renders in its

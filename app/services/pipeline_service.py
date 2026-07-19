@@ -323,10 +323,68 @@ class PipelineService:
                 ):
                     summary["no_trade_reason"] = "hold_only"
                 log_manager.log_cycle_summary(cycle_id, summary)
+                _persist_benchmarks(summary, results)
                 return summary
             except Exception as sum_err:
                 logger.error("[PipelineService] Failed to persist cycle summary: %s", sum_err)
                 return None
+
+        def _persist_benchmarks(summary: dict, results) -> None:
+            """Revive cycle_benchmarks/cycle_ticker_benchmarks (the DevOps
+            Performance panel). Their V2 writer died in the V3 purge, freezing
+            the dashboard on 2026-06-24 data. V3 interleaves collect/analyze
+            per ticker, so the per-phase ms columns stay NULL — the panel
+            renders the summary cards (total, cache hit, tickers) without them.
+            """
+            try:
+                from app.db.connection import get_db
+
+                ok = summary.get("collector_ok", 0) or 0
+                err = summary.get("collector_error", 0) or 0
+                skipped = summary.get("collector_skipped", 0) or 0
+                steps_total = ok + err + skipped
+                ticker_count = len(summary.get("tickers_final") or [])
+                total_ms = summary.get("elapsed_ms")
+                with get_db() as db:
+                    tokens_row = db.execute(
+                        "SELECT COALESCE(SUM(tokens_used), 0) FROM llm_audit_logs WHERE cycle_id = %s",
+                        [cycle_id],
+                    ).fetchone()
+                    db.execute(
+                        """INSERT INTO cycle_benchmarks
+                        (cycle_id, started_at, finished_at, total_ms, ticker_count, avg_ticker_ms,
+                         steps_total, steps_skipped, steps_ok, steps_error, total_tokens, cache_hit_pct, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (cycle_id) DO UPDATE SET
+                            finished_at = EXCLUDED.finished_at, total_ms = EXCLUDED.total_ms,
+                            ticker_count = EXCLUDED.ticker_count, avg_ticker_ms = EXCLUDED.avg_ticker_ms,
+                            steps_total = EXCLUDED.steps_total, steps_skipped = EXCLUDED.steps_skipped,
+                            steps_ok = EXCLUDED.steps_ok, steps_error = EXCLUDED.steps_error,
+                            total_tokens = EXCLUDED.total_tokens, cache_hit_pct = EXCLUDED.cache_hit_pct,
+                            status = EXCLUDED.status""",
+                        [
+                            cycle_id, summary.get("started_at"), summary.get("ended_at"),
+                            total_ms, ticker_count,
+                            int(total_ms / ticker_count) if total_ms and ticker_count else None,
+                            steps_total, skipped, ok, err,
+                            int(tokens_row[0]) if tokens_row else 0,
+                            round(skipped / steps_total * 100, 1) if steps_total else 0.0,
+                            summary.get("status"),
+                        ],
+                    )
+                    for r in (results or []):
+                        if not isinstance(r, dict) or not r.get("ticker"):
+                            continue
+                        db.execute(
+                            """INSERT INTO cycle_ticker_benchmarks
+                            (cycle_id, ticker, action, confidence)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (cycle_id, ticker) DO UPDATE SET
+                                action = EXCLUDED.action, confidence = EXCLUDED.confidence""",
+                            [cycle_id, r["ticker"], r.get("action"), r.get("confidence")],
+                        )
+            except Exception as bench_err:
+                logger.warning("[PipelineService] cycle_benchmarks write failed (non-fatal): %s", bench_err)
 
         try:
             # ── Set prism_client.url ONCE for the entire cycle ──
