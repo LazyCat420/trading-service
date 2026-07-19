@@ -52,9 +52,14 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
 
     try:
         with get_db() as db:
+            # Window on resolved_at, not created_at: a created_at window would
+            # oversample fast-resolving stop-outs (losses resolve in days, wins
+            # in weeks) and read structurally pessimistic. The cohort-age gap
+            # this leaves is surfaced via median_decision_age_days instead.
             resolved = db.execute(
                 """
-                SELECT action, confidence, pnl_pct, outcome
+                SELECT action, confidence, pnl_pct, outcome,
+                       EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)) / 86400.0
                 FROM decision_outcomes
                 WHERE resolved_at IS NOT NULL AND outcome != 'CANCELED' AND resolved_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
                 ORDER BY resolved_at DESC LIMIT 100
@@ -65,22 +70,30 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                 wins = [r for r in resolved if r[3] == "WIN"]
                 losses = [r for r in resolved if r[3] == "LOSS"]
                 flats = [r for r in resolved if r[3] == "FLAT"]
+                # FLAT = position closed without a meaningful move — no verdict
+                # on the call, so it belongs in neither numerator nor denominator.
+                decided = wins + losses
 
-                win_rate = len(wins) / len(resolved)
+                win_rate = len(wins) / len(decided) if decided else 0.5
                 avg_win_pnl = sum(r[2] for r in wins) / len(wins) if wins else 0
                 avg_loss_pnl = sum(abs(r[2]) for r in losses) / len(losses) if losses else 0
 
                 win_rate_score = min(1.0, win_rate)
-                high_conf = [r for r in resolved if r[1] >= 70]
-                low_conf = [r for r in resolved if r[1] < 50]
 
-                if high_conf and low_conf:
-                    high_win_rate = len([r for r in high_conf if r[3] == "WIN"]) / len(high_conf)
-                    low_win_rate = len([r for r in low_conf if r[3] == "WIN"]) / len(low_conf)
-                    calibration_gap = high_win_rate - low_win_rate
+                # A confidence bucket below this size is noise: one lucky
+                # low-conf trade must not be able to zero the whole term.
+                MIN_BUCKET = 5
+                high_conf = [r for r in decided if r[1] >= 70]
+                low_conf = [r for r in decided if r[1] < 50]
+
+                def _bucket_win_rate(bucket):
+                    return len([r for r in bucket if r[3] == "WIN"]) / len(bucket)
+
+                if len(high_conf) >= MIN_BUCKET and len(low_conf) >= MIN_BUCKET:
+                    calibration_gap = _bucket_win_rate(high_conf) - _bucket_win_rate(low_conf)
                     calibration_score = min(1.0, max(0.0, 0.5 + calibration_gap))
-                elif high_conf:
-                    calibration_score = len([r for r in high_conf if r[3] == "WIN"]) / len(high_conf)
+                elif len(high_conf) >= MIN_BUCKET:
+                    calibration_score = _bucket_win_rate(high_conf)
                 else:
                     calibration_score = 0.5
 
@@ -94,21 +107,31 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
 
                 score = (win_rate_score * 0.4 + calibration_score * 0.3 + risk_score * 0.3)
 
+                ages = sorted(r[4] for r in resolved if r[4] is not None)
+                median_age_days = ages[len(ages) // 2] if ages else None
+
                 outcome_stats = {
                     "total_resolved": len(resolved),
                     "wins": len(wins),
                     "losses": len(losses),
                     "flats": len(flats),
                     "win_rate": round(win_rate, 3),
+                    "win_rate_basis": "ex_flat",
                     "avg_win_pnl": round(avg_win_pnl, 2),
                     "avg_loss_pnl": round(avg_loss_pnl, 2),
                     "calibration_score": round(calibration_score, 3),
                     "risk_score": round(risk_score, 3),
+                    "median_decision_age_days": round(median_age_days, 1) if median_age_days is not None else None,
                     "scoring_method": "outcome_based",
                 }
 
-                if win_rate < 0.40:
-                    issues.append({"issue": f"Low win rate: {win_rate:.0%} ({len(wins)}/{len(resolved)})", "severity": "critical"})
+                if median_age_days is not None and median_age_days > 14:
+                    issues.append({
+                        "issue": f"Stale cohort: median scored decision is {median_age_days:.0f}d old (resolution lag) — score reflects past-era decisions, not current ones",
+                        "severity": "info",
+                    })
+                if win_rate < 0.40 and decided:
+                    issues.append({"issue": f"Low win rate: {win_rate:.0%} ({len(wins)}/{len(decided)} ex-flat)", "severity": "critical"})
                 if avg_loss_pnl > 0 and avg_win_pnl < avg_loss_pnl:
                     issues.append({"issue": f"Avg loss ({avg_loss_pnl:.1f}%) > avg win ({avg_win_pnl:.1f}%)", "severity": "warning"})
                 if calibration_score < 0.35:

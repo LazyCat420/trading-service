@@ -63,7 +63,7 @@ class TestDecisionScoringFormula:
     def test_cold_start_defaults_to_neutral(self):
         """With < 3 resolved trades, score should default to ~0.5 (not 0.23)."""
         confs = [(60,), (70,), (45,)]
-        outcomes = [("BUY", 70, 2.5, "WIN")]  # Only 1 trade — cold start
+        outcomes = [("BUY", 70, 2.5, "WIN", 5.0)]  # Only 1 trade — cold start
 
         with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
@@ -90,11 +90,11 @@ class TestDecisionScoringFormula:
         confs = [(70,), (65,), (80,), (55,), (75,)]
         # 3 wins, 2 losses → 60% win rate
         outcomes = [
-            ("BUY", 80, 5.0, "WIN"),
-            ("BUY", 70, 3.0, "WIN"),
-            ("BUY", 75, 4.0, "WIN"),
-            ("BUY", 55, -2.0, "LOSS"),
-            ("BUY", 60, -1.5, "LOSS"),
+            ("BUY", 80, 5.0, "WIN", 3.0),
+            ("BUY", 70, 3.0, "WIN", 4.0),
+            ("BUY", 75, 4.0, "WIN", 2.0),
+            ("BUY", 55, -2.0, "LOSS", 5.0),
+            ("BUY", 60, -1.5, "LOSS", 3.0),
         ]
 
         with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
@@ -111,11 +111,11 @@ class TestDecisionScoringFormula:
         confs = [(70,), (65,), (80,), (55,), (75,)]
         # 1 win, 4 losses → 20% win rate
         outcomes = [
-            ("BUY", 80, 2.0, "WIN"),
-            ("BUY", 70, -3.0, "LOSS"),
-            ("BUY", 75, -4.0, "LOSS"),
-            ("BUY", 55, -2.0, "LOSS"),
-            ("BUY", 60, -1.5, "LOSS"),
+            ("BUY", 80, 2.0, "WIN", 3.0),
+            ("BUY", 70, -3.0, "LOSS", 4.0),
+            ("BUY", 75, -4.0, "LOSS", 2.0),
+            ("BUY", 55, -2.0, "LOSS", 5.0),
+            ("BUY", 60, -1.5, "LOSS", 3.0),
         ]
 
         with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
@@ -124,6 +124,75 @@ class TestDecisionScoringFormula:
 
         assert result["score"] < 0.4, f"20% win rate scored {result['score']}, should be < 0.4"
         assert any("win rate" in i["issue"].lower() for i in result["issues"])
+
+    def test_single_low_conf_trade_cannot_zero_calibration(self):
+        """One lucky low-confidence WIN must not zero the calibration term.
+
+        Regression: cycle-v3-1784434883 scored 39.4 because a single conf-25
+        WIN made low-conf win rate 100% vs high-conf 45%, clamping the entire
+        30%-weight calibration term to 0.
+        """
+        confs = [(70,), (75,), (80,)]
+        # 5 high-conf decided (3W/2L) + ONE low-conf win
+        outcomes = [
+            ("BUY", 80, 5.0, "WIN", 3.0),
+            ("BUY", 70, 3.0, "WIN", 4.0),
+            ("BUY", 75, 4.0, "WIN", 2.0),
+            ("BUY", 72, -2.0, "LOSS", 5.0),
+            ("BUY", 78, -1.5, "LOSS", 3.0),
+            ("SELL", 25, 8.9, "WIN", 30.0),  # the n=1 lucky low-conf trade
+        ]
+
+        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+            from app.autoresearch.auditors.decision_audit import _audit_decisions
+            result = _audit_decisions("test_cycle", self._make_summary(5, 1, 0))
+
+        cal = result["outcome_stats"]["calibration_score"]
+        # low-conf bucket n=1 < MIN_BUCKET → falls back to high-conf win rate (0.6)
+        assert cal == pytest.approx(0.6, abs=0.01), f"calibration {cal} — n=1 bucket leaked into the gap formula"
+
+    def test_flats_excluded_from_win_rate(self):
+        """FLAT outcomes are 'no verdict' — they must not count as losses."""
+        confs = [(70,), (75,)]
+        # 3W/2L decided + 5 FLATs: ex-flat wr = 0.6, naive wr would be 0.3
+        outcomes = [
+            ("BUY", 80, 5.0, "WIN", 3.0),
+            ("BUY", 70, 3.0, "WIN", 4.0),
+            ("BUY", 75, 4.0, "WIN", 2.0),
+            ("BUY", 72, -2.0, "LOSS", 5.0),
+            ("BUY", 78, -1.5, "LOSS", 3.0),
+            ("SELL", 71, 0.0, "FLAT", 6.0),
+            ("SELL", 74, 0.0, "FLAT", 6.0),
+            ("SELL", 76, -0.1, "FLAT", 6.0),
+            ("SELL", 73, 0.1, "FLAT", 6.0),
+            ("SELL", 77, 0.0, "FLAT", 6.0),
+        ]
+
+        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+            from app.autoresearch.auditors.decision_audit import _audit_decisions
+            result = _audit_decisions("test_cycle", self._make_summary(5, 5, 0))
+
+        stats = result["outcome_stats"]
+        assert stats["win_rate"] == pytest.approx(0.6, abs=0.01)
+        assert stats["flats"] == 5
+        assert not any("Low win rate" in i["issue"] for i in result["issues"])
+
+    def test_stale_cohort_flagged(self):
+        """Median decision age > 14d should surface an info issue, not distort score."""
+        confs = [(70,)]
+        outcomes = [
+            ("BUY", 80, 5.0, "WIN", 35.0),
+            ("BUY", 70, 3.0, "WIN", 32.0),
+            ("BUY", 75, -2.0, "LOSS", 30.0),
+        ]
+
+        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+            from app.autoresearch.auditors.decision_audit import _audit_decisions
+            result = _audit_decisions("test_cycle", self._make_summary(3, 0, 0))
+
+        stale = [i for i in result["issues"] if "Stale cohort" in i["issue"]]
+        assert stale and stale[0]["severity"] == "info"
+        assert result["outcome_stats"]["median_decision_age_days"] == pytest.approx(32.0, abs=0.1)
 
     def test_outcome_stats_always_present(self):
         """The result dict should always include outcome_stats key."""
@@ -165,7 +234,7 @@ class TestScoringIntegration:
             pytest.skip("NAS database not available")
 
     def test_outcome_count_matches_reality(self, patch_real_get_db):
-        """Verify resolved trade count matches what's in the NAS DB."""
+        """Verify resolved trade count matches what's in the NAS DB (LIMIT 100 window)."""
         actual_count = patch_real_get_db.execute(
             """
             SELECT COUNT(*) FROM decision_outcomes
@@ -181,26 +250,28 @@ class TestScoringIntegration:
         stats = result.get("outcome_stats", {})
         if actual_count >= 3:
             assert stats.get("scoring_method") == "outcome_based"
-            assert stats.get("total_resolved") == actual_count
+            assert stats.get("total_resolved") == min(actual_count, 100)
         else:
             assert stats.get("scoring_method") in ("cold_start", "fallback_error")
 
     def test_win_rate_matches_manual_sql(self, patch_real_get_db):
-        """Verify computed win rate matches direct SQL query."""
+        """Verify computed ex-flat win rate matches direct SQL over the same window."""
         rows = patch_real_get_db.execute(
             """
             SELECT outcome FROM decision_outcomes
             WHERE resolved_at IS NOT NULL
               AND outcome != 'CANCELED'
               AND resolved_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
+            ORDER BY resolved_at DESC LIMIT 100
             """
         ).fetchall()
 
-        if len(rows) < 3:
+        decided = [r for r in rows if r[0] in ("WIN", "LOSS")]
+        if len(rows) < 3 or not decided:
             pytest.skip("Not enough resolved trades for win rate test")
 
-        manual_wins = sum(1 for r in rows if r[0] == "WIN")
-        manual_rate = manual_wins / len(rows)
+        manual_wins = sum(1 for r in decided if r[0] == "WIN")
+        manual_rate = manual_wins / len(decided)
 
         from app.autoresearch.auditors.decision_audit import _audit_decisions
         result = _audit_decisions("integration_test", {"buy_count": 1, "sell_count": 0, "hold_count": 5})

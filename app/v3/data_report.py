@@ -282,6 +282,17 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         outcome_md = get_ticker_outcome_context(ticker) or ""
     except Exception:
         pass
+    # Fleet-wide confidence calibration: stated conviction vs realized win
+    # rate. Per-ticker history alone can't show an agent that its 80% claims
+    # win 67% while its 90% claims win 59%.
+    calibration_md = ""
+    try:
+        from app.agents.base_agent import get_confidence_calibration_context
+        _cal = get_confidence_calibration_context()
+        if _cal:
+            calibration_md = _cal + "\n\n"
+    except Exception:
+        pass
     lessons_md = ""
     try:
         with get_db() as db:
@@ -308,6 +319,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         f"{wake_context_md}"
         f"{previous_analysis_md}"
         f"{outcome_md}"
+        f"{calibration_md}"
         f"{lessons_md}"
     )
 

@@ -26,11 +26,30 @@ def _audit_schedule_health() -> dict:
         active_rows = [r for r in rows if r[5]]
         result["active_count"] = len(active_rows)
 
+        # cycle_schedules only holds agent-created schedules; the system jobs
+        # (market-open cycle, stop-loss monitor, watch desk, ...) live directly
+        # in the APScheduler engine. An empty table with a running engine is
+        # normal operation, not a critical outage.
+        engine_jobs = {}
+        try:
+            from app.services.cycle_scheduler import SchedulerService, scheduler
+            if scheduler.running:
+                engine_jobs = SchedulerService.get_next_runs()
+        except Exception:
+            pass
+        result["engine_job_count"] = len(engine_jobs)
+
         if result["active_count"] == 0:
-            result["issues"].append({
-                "type": "no_active_schedules", "severity": "critical",
-                "detail": "Bot has NO active schedules."
-            })
+            if engine_jobs:
+                result["issues"].append({
+                    "type": "no_agent_schedules", "severity": "info",
+                    "detail": f"No agent-created schedules; {len(engine_jobs)} system jobs live in the scheduler engine."
+                })
+            else:
+                result["issues"].append({
+                    "type": "no_active_schedules", "severity": "critical",
+                    "detail": "Bot has NO active schedules and the scheduler engine has no jobs."
+                })
             return result
 
         intervals = [r[4] for r in active_rows if r[2] == "interval" and r[4] is not None and r[4] > 0]

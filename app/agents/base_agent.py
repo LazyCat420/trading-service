@@ -117,6 +117,63 @@ def get_ticker_outcome_context(ticker: str) -> str:
         return ""
 
 
+# Fleet-level, not per-ticker, so one cached copy serves every agent call.
+_CALIBRATION_CTX_TTL_S = 1800
+_calibration_ctx_cache = {"expires": 0.0, "text": ""}
+
+
+def get_confidence_calibration_context() -> str:
+    """Empirical win rate per stated-confidence bucket (90d, resolved, ex-flat).
+
+    Stated confidence has historically clustered at 70-85 regardless of
+    evidence strength. Showing agents the realized accuracy of each bucket is
+    the feedback loop that makes the number mean something.
+    """
+    import time
+
+    now = time.monotonic()
+    if now < _calibration_ctx_cache["expires"]:
+        return _calibration_ctx_cache["text"]
+
+    text = ""
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            # confidence < 40 buckets are dominated by legacy rows with
+            # missing/zero confidence — not real stated conviction.
+            rows = db.execute(
+                "SELECT (confidence / 10) * 10 AS bucket, COUNT(*) AS n, "
+                "COUNT(*) FILTER (WHERE outcome = 'WIN') AS wins "
+                "FROM decision_outcomes "
+                "WHERE resolved_at IS NOT NULL AND outcome IN ('WIN', 'LOSS') "
+                "AND confidence >= 40 "
+                "AND resolved_at > CURRENT_TIMESTAMP - INTERVAL '90 days' "
+                "GROUP BY 1 HAVING COUNT(*) >= 10 ORDER BY 1",
+            ).fetchall()
+        if rows:
+            lines = [
+                "## CONFIDENCE CALIBRATION (fleet track record, last 90 days)",
+                "Realized win rate of resolved trades at each stated confidence level:",
+            ]
+            for bucket, n, wins in rows:
+                lines.append(
+                    f"- stated {bucket}-{bucket + 9}%: won {wins / n:.0%} of {n} trades"
+                )
+            lines.append(
+                "State the confidence the evidence actually supports. If your number "
+                "lands in a bucket that wins less than it claims, you are overconfident — "
+                "mixed or conflicting evidence belongs at 40-60, not 70-85.\n"
+            )
+            text = "\n".join(lines)
+    except Exception:
+        text = ""
+
+    _calibration_ctx_cache["expires"] = now + _CALIBRATION_CTX_TTL_S
+    _calibration_ctx_cache["text"] = text
+    return text
+
+
 
 
 
