@@ -24,6 +24,22 @@ def _claim_id(ticker: str, kind: str, text: str) -> str:
     return f"claim_{digest}"
 
 
+# Upstream parse failures must not become graph "knowledge" — a Claim node
+# reading "Failed to parse thesis" would be retrieved as context forever.
+_GARBAGE_MARKERS = ("failed to parse", "parse error", "no response from")
+
+
+def _clean_text(text) -> str:
+    """Return the text stripped, or '' if it is empty/garbage."""
+    text = str(text or "").strip()
+    if len(text) < 10:
+        return ""
+    lowered = text.lower()
+    if any(marker in lowered for marker in _GARBAGE_MARKERS):
+        return ""
+    return text
+
+
 def _emit_event(db, event_type: str, ticker: str, **kwargs) -> None:
     if event_type == "node_added":
         db.execute(
@@ -51,6 +67,10 @@ def sync_desk_to_graph(desk, cycle_id: str) -> None:
     """
     ticker = desk.ticker
     try:
+        from app.config.config_cognition import cognition_settings
+        if not cognition_settings.ENABLE_ONTOLOGY_GRAPH:
+            return
+
         claims: list[tuple[str, str, float]] = []  # (kind, text, weight)
 
         regime = getattr(desk, "regime_classification", None) or {}
@@ -61,25 +81,28 @@ def sync_desk_to_graph(desk, cycle_id: str) -> None:
             ("fundamental", getattr(desk, "fundamental_report", None)),
             ("quant", getattr(desk, "quant_report", None)),
         ):
-            if artifact and artifact.get("summary"):
+            summary = _clean_text(artifact.get("summary")) if artifact else ""
+            if summary:
                 direction = artifact.get("thesis_direction", "?")
                 conf = artifact.get("confidence", 0)
-                text = f"[{ticker}] {kind} thesis {direction} ({conf}%): {artifact['summary'][:180]}"
+                text = f"[{ticker}] {kind} thesis {direction} ({conf}%): {summary[:180]}"
                 claims.append((kind, text, min(1.0, (conf or 50) / 100.0)))
 
         tournament = getattr(desk, "tournament_result", None) or {}
-        if tournament.get("summary"):
+        summary = _clean_text(tournament.get("summary"))
+        if summary:
             text = (
                 f"[{ticker}] tournament {tournament.get('action', 'HOLD')} "
-                f"({tournament.get('confidence', 0)}%): {tournament['summary'][:180]}"
+                f"({tournament.get('confidence', 0)}%): {summary[:180]}"
             )
             claims.append(("tournament", text, min(1.0, (tournament.get("confidence") or 50) / 100.0)))
 
         decision = desk.trade_decision or desk.final_decision or {}
         if decision.get("action"):
+            reasoning = _clean_text(decision.get("reasoning"))
             text = (
                 f"[{ticker}] decision {decision['action']} "
-                f"({decision.get('confidence', 0)}%): {str(decision.get('reasoning', ''))[:180]}"
+                f"({decision.get('confidence', 0)}%): {reasoning[:180]}"
             )
             claims.append(("decision", text, min(1.0, (decision.get("confidence") or 50) / 100.0)))
 
@@ -114,6 +137,20 @@ def sync_desk_to_graph(desk, cycle_id: str) -> None:
         except Exception as embed_err:
             logger.debug("[GraphSync] %s: claim embedding failed (non-fatal): %s",
                          ticker, embed_err)
+
+        # Refresh persisted activation so the Brain Graph UI (which orders by
+        # the activation column) surfaces this ticker's neighborhood, and prune
+        # old consumed live-view events. Both non-fatal.
+        try:
+            BrainGraph.activate_and_persist(ticker)
+            with get_db() as db:
+                db.execute(
+                    "DELETE FROM graph_node_events "
+                    "WHERE consumed AND created_at < NOW() - INTERVAL '7 days'"
+                )
+        except Exception as act_err:
+            logger.debug("[GraphSync] %s: activation refresh failed (non-fatal): %s",
+                         ticker, act_err)
 
         logger.info("[GraphSync] %s: %d claims synced to brain graph", ticker, len(claims))
     except Exception as e:

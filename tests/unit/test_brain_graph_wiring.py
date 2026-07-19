@@ -1,0 +1,163 @@
+"""Brain-graph read/write loop wiring — 2026-07-18 audit fixes.
+
+Covers:
+  - graph_sync garbage guard (parse failures must not become Claim nodes)
+  - ENABLE_ONTOLOGY_GRAPH actually gating the sync
+  - build_brain_graph_block feeding build_memory_addenda (the live prompt path)
+  - BrainGraph.activate_and_persist writing the activation column
+  - eval_worker ACTIVATE_BRAIN_GRAPH handler completing with progress updates
+"""
+import asyncio
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.cognition.ontology.graph_sync import _clean_text, sync_desk_to_graph
+
+
+def _mock_db_ctx():
+    """A MagicMock whose get_db() context manager yields a db mock."""
+    db = MagicMock()
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=db)
+    ctx.__exit__ = MagicMock(return_value=False)
+    get_db = MagicMock(return_value=ctx)
+    return get_db, db
+
+
+def _desk(**overrides):
+    desk = MagicMock()
+    desk.ticker = "TEST"
+    desk.regime_classification = {"regime": "bull"}
+    desk.fundamental_report = {"summary": "Strong cash flows and cheap valuation", "thesis_direction": "LONG", "confidence": 70}
+    desk.quant_report = None
+    desk.tournament_result = {}
+    desk.trade_decision = {"action": "BUY", "confidence": 75, "reasoning": "Owner-earnings yield attractive"}
+    desk.final_decision = None
+    for k, v in overrides.items():
+        setattr(desk, k, v)
+    return desk
+
+
+class TestGarbageGuard:
+    def test_clean_text_passes_real_text(self):
+        assert _clean_text("Strong fundamentals with cash flow support") != ""
+
+    @pytest.mark.parametrize("garbage", [
+        "Failed to parse thesis\n\nData timeframe: ...",
+        "  PARSE ERROR in upstream model",
+        "No response from LLM",
+        "",
+        None,
+        "short",
+    ])
+    def test_clean_text_rejects_garbage(self, garbage):
+        assert _clean_text(garbage) == ""
+
+    def test_sync_never_writes_parse_failures(self):
+        desk = _desk(
+            fundamental_report={"summary": "Failed to parse thesis", "confidence": 75},
+            trade_decision={"action": "HOLD", "confidence": 75, "reasoning": "Failed to parse thesis\n\nMemory context: ..."},
+        )
+        get_db, _db = _mock_db_ctx()
+        with patch("app.cognition.ontology.graph_sync.BrainGraph") as bg, \
+             patch("app.cognition.ontology.graph_sync.get_db", get_db):
+            sync_desk_to_graph(desk, "cycle-1")
+            texts = [str(c) for c in bg.upsert_node.call_args_list]
+            assert texts, "sync should still record the clean claims"
+            assert not any("Failed to parse" in t for t in texts)
+            # decision claim survives, minus the garbage reasoning
+            assert any("decision HOLD" in t for t in texts)
+
+
+class TestFlagGate:
+    def test_flag_off_skips_sync_entirely(self):
+        from app.config.config_cognition import cognition_settings
+        get_db, _db = _mock_db_ctx()
+        with patch.object(cognition_settings, "ENABLE_ONTOLOGY_GRAPH", False), \
+             patch("app.cognition.ontology.graph_sync.BrainGraph") as bg, \
+             patch("app.cognition.ontology.graph_sync.get_db", get_db):
+            sync_desk_to_graph(_desk(), "cycle-1")
+            bg.upsert_node.assert_not_called()
+
+    def test_flag_off_skips_prompt_block(self):
+        from app.config.config_cognition import cognition_settings
+        from app.services.retrieval_context import build_brain_graph_block
+        with patch.object(cognition_settings, "ENABLE_ONTOLOGY_GRAPH", False):
+            assert build_brain_graph_block("TEST") == ""
+
+
+class TestPromptWiring:
+    def test_brain_graph_block_caps_and_returns_context(self):
+        from app.services import retrieval_context as rc
+        with patch("app.cognition.ontology.ontology_builder.BrainGraph.get_activated_context",
+                   return_value="## Brain Graph Context for TEST\n- claim (activation=80%)"):
+            block = rc.build_brain_graph_block("TEST")
+        assert "Brain Graph Context" in block
+        assert len(block) <= rc.BLOCK_MAX_CHARS + 20  # _cap adds an elision marker
+
+    def test_memory_addenda_includes_graph_block(self):
+        from app.services import retrieval_context as rc
+        with patch.object(rc, "build_working_memory_block", return_value=""), \
+             patch.object(rc, "build_retrieved_context", return_value=""), \
+             patch.object(rc, "build_brain_graph_block", return_value="## Brain Graph Context for TEST"):
+            assert "Brain Graph Context" in rc.build_memory_addenda("TEST")
+
+    def test_addenda_empty_when_all_blocks_empty(self):
+        from app.services import retrieval_context as rc
+        with patch.object(rc, "build_working_memory_block", return_value=""), \
+             patch.object(rc, "build_retrieved_context", return_value=""), \
+             patch.object(rc, "build_brain_graph_block", return_value=""):
+            assert rc.build_memory_addenda("TEST") == ""
+
+
+class TestActivatePersist:
+    def test_activation_column_written(self):
+        from app.cognition.ontology.ontology_builder import BrainGraph
+        subgraph = {
+            "nodes": [{"id": "TEST", "activation": 1.0}, {"id": "claim_abc", "activation": 0.42}],
+            "edges": [],
+            "stats": {"total_activated": 2, "hops_used": 3, "seed_nodes": ["TEST"]},
+        }
+        get_db, db = _mock_db_ctx()
+        with patch.object(BrainGraph, "spreading_activation", return_value=subgraph), \
+             patch("app.cognition.ontology.ontology_builder.get_db", get_db):
+            stats = BrainGraph.activate_and_persist("TEST")
+        assert stats["persisted"] == 2
+        sql = " ".join(str(c) for c in db.execute.call_args_list)
+        assert "SET activation = activation * 0.8" in sql  # per-ticker decay
+        assert "SET activation = %s" in sql
+
+    def test_no_seeds_is_a_noop(self):
+        from app.cognition.ontology.ontology_builder import BrainGraph
+        get_db, db = _mock_db_ctx()
+        db.execute.return_value.fetchall.return_value = []
+        with patch("app.cognition.ontology.ontology_builder.get_db", get_db):
+            stats = BrainGraph.activate_and_persist(None)
+        assert stats["persisted"] == 0
+
+
+class TestActivateCommandHandler:
+    def test_handler_completes_with_progress(self):
+        from app.autoresearch import eval_worker
+        get_db, db = _mock_db_ctx()
+        with patch("app.cognition.ontology.ontology_builder.BrainGraph.seed_from_ticker_metadata",
+                   return_value=7) as seed, \
+             patch("app.cognition.ontology.ontology_builder.BrainGraph.activate_and_persist",
+                   return_value={"total_activated": 5, "persisted": 5, "seed_nodes": ["TEST"], "hops_used": 3}), \
+             patch.object(eval_worker, "get_db", get_db):
+            asyncio.run(eval_worker.run_activate_brain_graph("job-1", {"ticker": "test", "max_hops": 3}))
+        seed.assert_called_once_with("TEST")  # payload ticker is upcased
+        sql = " ".join(str(c) for c in db.execute.call_args_list)
+        assert "status = 'completed'" in sql
+        assert "progress = 100" in sql
+
+    def test_handler_without_ticker_skips_seeding(self):
+        from app.autoresearch import eval_worker
+        get_db, db = _mock_db_ctx()
+        with patch("app.cognition.ontology.ontology_builder.BrainGraph.seed_from_ticker_metadata") as seed, \
+             patch("app.cognition.ontology.ontology_builder.BrainGraph.activate_and_persist",
+                   return_value={"total_activated": 0, "persisted": 0, "seed_nodes": []}), \
+             patch.object(eval_worker, "get_db", get_db):
+            asyncio.run(eval_worker.run_activate_brain_graph("job-2", {"ticker": None}))
+        seed.assert_not_called()

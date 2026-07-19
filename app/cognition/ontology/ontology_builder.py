@@ -356,6 +356,61 @@ class BrainGraph:
             },
         }
 
+    @staticmethod
+    def activate_and_persist(
+        ticker: Optional[str] = None,
+        max_hops: int = MAX_ACTIVATION_HOPS,
+    ) -> dict:
+        """Run spreading activation and persist per-node activation levels.
+
+        The activation column is what trading-client's Brain Graph UI orders
+        by — without persistence every viewer saw an arbitrary node subset.
+        Seeds from the given ticker node, or from every Ticker node when no
+        ticker is given (full-graph refresh). Returns the activation stats.
+        """
+        if ticker:
+            seeds = [ticker]
+        else:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT id FROM ontology_nodes WHERE node_type = 'Ticker'"
+                ).fetchall()
+            seeds = [r[0] for r in rows]
+        if not seeds:
+            return {"total_activated": 0, "persisted": 0, "seed_nodes": []}
+
+        result = BrainGraph.spreading_activation(seed_node_ids=seeds, max_hops=max_hops)
+        activated = [(n["id"], n["activation"]) for n in result["nodes"]]
+
+        now = datetime.now(timezone.utc)
+        with get_db() as db:
+            if ticker:
+                # Per-ticker refresh: decay the whole graph a little, then set
+                # the freshly activated set — repeated cycles keep hot tickers
+                # on top without zeroing other tickers' context.
+                db.execute(
+                    "UPDATE ontology_nodes SET activation = activation * 0.8 "
+                    "WHERE activation > 0.001"
+                )
+            else:
+                db.execute(
+                    "UPDATE ontology_nodes SET activation = 0 WHERE activation <> 0"
+                )
+            for nid, act in activated:
+                db.execute(
+                    "UPDATE ontology_nodes SET activation = %s, updated_at = %s "
+                    "WHERE id = %s",
+                    [act, now, nid],
+                )
+
+        stats = dict(result["stats"])
+        stats["persisted"] = len(activated)
+        logger.info(
+            "[BrainGraph] Persisted activation for %d nodes (seeds=%s)",
+            len(activated), seeds[:5],
+        )
+        return stats
+
     # ── Context Builder Integration ───────────────────────────────────
 
     @staticmethod
@@ -442,7 +497,9 @@ class BrainGraph:
             except Exception:
                 row = None
 
-        BrainGraph.upsert_node(ticker, "Asset", label=ticker)
+        # "Ticker" (not "Asset") — the live graph_sync path types cycle
+        # tickers as Ticker; a different type here would flip-flop on upsert.
+        BrainGraph.upsert_node(ticker, "Ticker", label=ticker)
         count += 1
 
         if row:
@@ -469,7 +526,7 @@ class BrainGraph:
                 "market_cap_tier": cap_tier if cap_tier is not None else "unknown",
                 "asset_class": asset_class if asset_class is not None else "unknown",
             }
-            BrainGraph.upsert_node(ticker, "Asset", label=name or ticker, metadata=meta)
+            BrainGraph.upsert_node(ticker, "Ticker", label=name or ticker, metadata=meta)
 
             if sector:
                 BrainGraph.upsert_node(sector, "Sector", label=sector)

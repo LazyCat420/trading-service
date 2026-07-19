@@ -69,10 +69,34 @@ def build_retrieved_context(ticker: str, top_k: int = 4) -> str:
     return _cap("\n".join(lines))
 
 
+def build_brain_graph_block(ticker: str) -> str:
+    """Activated brain-graph subgraph for this ticker (spreading activation
+    over ontology_nodes/ontology_edges). The graph is written every cycle by
+    graph_sync; this is the read half of that loop. '' when the graph has no
+    neighborhood for the ticker, the feature flag is off, or on any failure."""
+    try:
+        from app.config.config_cognition import cognition_settings
+        if not cognition_settings.ENABLE_ONTOLOGY_GRAPH:
+            return ""
+        from app.cognition.ontology.ontology_builder import BrainGraph
+
+        ctx = BrainGraph.get_activated_context(ticker, max_chars=BLOCK_MAX_CHARS)
+        if ctx:
+            return _cap(ctx)
+    except Exception as e:
+        logger.debug("[retrieval-ctx] brain graph context failed (non-fatal): %s", e)
+    return ""
+
+
 def build_memory_addenda(ticker: str) -> str:
-    """Working-memory + retrieved-context blocks, joined. '' when both empty."""
+    """Working-memory + retrieved-context + brain-graph blocks, joined.
+    '' when all empty."""
     blocks = [
-        b for b in (build_working_memory_block(ticker), build_retrieved_context(ticker))
+        b for b in (
+            build_working_memory_block(ticker),
+            build_retrieved_context(ticker),
+            build_brain_graph_block(ticker),
+        )
         if b
     ]
     return "\n\n".join(blocks)

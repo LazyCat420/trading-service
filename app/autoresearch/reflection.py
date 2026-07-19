@@ -77,6 +77,17 @@ async def _reflect(audit_bundle: dict) -> dict:
             f"applied should not be re-recommended; lessons ignored deserve emphasis."
         )
 
+    # Recall past stored lessons so reflection stops re-discovering the same
+    # problems. This closes the lesson loop: _store_lessons has written these
+    # every cycle since birth, but nothing ever read them back.
+    past = _recall_past_lessons(audit_bundle)
+    if past:
+        prompt += (
+            f"\n\n=== PAST LESSONS (already recorded — do NOT repeat verbatim) ===\n"
+            f"{past}\n"
+            f"Only re-issue one of these if it is still unresolved, and say so."
+        )
+
     try:
         # vllm_client was replaced by the SDK-backed shim in c82526b; the old
         # import made this fail (silently) every cycle → canned fallback text.
@@ -100,6 +111,34 @@ async def _reflect(audit_bundle: dict) -> dict:
     except Exception as e:
         logger.warning("[AUTORESEARCH] LLM reflection failed: %s", e)
         return _rule_based_reflection(audit_bundle)
+
+def _recall_past_lessons(audit_bundle: dict) -> str:
+    """Vector-recall previously stored lessons relevant to this cycle's issues.
+
+    Non-fatal: '' on any failure or when nothing is stored yet.
+    """
+    try:
+        from app.cognition.lesson_store import retrieve_lessons
+        from app.constants import EVOLVE_COGNITION_K
+
+        gaps = audit_bundle.get("data_quality", {}).get("gaps", [])
+        issues = audit_bundle.get("decision_quality", {}).get("issues", [])
+        query_parts = ["trading cycle recommendations"]
+        query_parts += [g.get("ticker", "") for g in gaps[:3]]
+        query_parts += [str(i.get("suggestion") or i.get("issue") or "") for i in issues[:3]]
+        query = " ".join(p for p in query_parts if p)[:500]
+
+        lessons = retrieve_lessons(query, k=EVOLVE_COGNITION_K)
+        lines = []
+        for l in lessons:
+            text = (l.get("lesson_text") or l.get("preview") or "").strip()
+            if text:
+                lines.append(f"- {text[:160]}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.debug("[AUTORESEARCH] past-lesson recall failed (non-fatal): %s", e)
+        return ""
+
 
 def _rule_based_reflection(audit_bundle: dict) -> dict:
     data_q = audit_bundle.get("data_quality", {})

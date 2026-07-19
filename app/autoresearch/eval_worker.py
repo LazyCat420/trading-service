@@ -75,6 +75,42 @@ async def run_rollback_fix(job_id: str, payload: dict):
             [json.dumps(res), job_id]
         )
 
+async def run_activate_brain_graph(job_id: str, payload: dict):
+    """Re-seed + spread-activate the brain graph, persisting activation.
+
+    Dispatched by trading-client's Brain Graph "activate" button, which polls
+    this row's progress/progress_message columns for its progress bar. The
+    original handler was lost in the legacy-pipeline removal (last completion
+    2026-06-14); this restores it on the surviving BrainGraph engine.
+    """
+    from app.cognition.ontology.ontology_builder import BrainGraph
+
+    ticker = (payload.get("ticker") or "").strip().upper() or None
+    max_hops = int(payload.get("max_hops") or 3)
+
+    def _progress(pct: int, msg: str):
+        with get_db() as db:
+            db.execute(
+                "UPDATE system_commands SET progress = %s, progress_message = %s WHERE id = %s",
+                [pct, msg, job_id],
+            )
+
+    seeded = 0
+    if ticker:
+        _progress(30, f"Seeding {ticker} from metadata, correlations and news")
+        seeded = BrainGraph.seed_from_ticker_metadata(ticker)
+    _progress(70, "Running spreading activation")
+    stats = BrainGraph.activate_and_persist(ticker, max_hops=max_hops)
+
+    with get_db() as db:
+        db.execute(
+            "UPDATE system_commands SET status = 'completed', progress = 100, "
+            "progress_message = 'Graph build complete', completed_at = CURRENT_TIMESTAMP, "
+            "result = %s WHERE id = %s",
+            [json.dumps({"ticker": ticker, "nodes_seeded": seeded, **stats}), job_id],
+        )
+
+
 async def poll_system_commands():
     logger.info("Starting autoresearch system_commands poller...")
     while True:
@@ -82,17 +118,21 @@ async def poll_system_commands():
             with get_db() as db:
                 cmd = db.execute(
                     "SELECT id, command_type, payload FROM system_commands "
-                    "WHERE status = 'pending' AND command_type IN ('AUTORESEARCH', 'DEPLOY_FIX', 'ROLLBACK_FIX') "
+                    "WHERE status = 'pending' AND command_type IN "
+                    "('AUTORESEARCH', 'DEPLOY_FIX', 'ROLLBACK_FIX', 'ACTIVATE_BRAIN_GRAPH') "
                     "LIMIT 1 FOR UPDATE SKIP LOCKED"
                 ).fetchone()
 
                 if cmd:
                     job_id, cmd_type, payload_str = cmd
                     logger.info("Found pending %s command: %s", cmd_type, job_id)
-                    db.execute("UPDATE system_commands SET status = 'running' WHERE id = %s", [job_id])
-                    
+                    db.execute(
+                        "UPDATE system_commands SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = %s",
+                        [job_id],
+                    )
+
                     payload = json.loads(payload_str) if payload_str else {}
-                    
+
                     try:
                         if cmd_type == "AUTORESEARCH":
                             await run_autoresearch(job_id, payload)
@@ -100,11 +140,16 @@ async def poll_system_commands():
                             await run_deploy_fix(job_id, payload)
                         elif cmd_type == "ROLLBACK_FIX":
                             await run_rollback_fix(job_id, payload)
+                        elif cmd_type == "ACTIVATE_BRAIN_GRAPH":
+                            await run_activate_brain_graph(job_id, payload)
                     except Exception as e:
                         logger.error("%s failed for %s: %s", cmd_type, job_id, e)
+                        # error_message is what trading-client renders in its
+                        # task list; keep payload's error copy for older readers.
                         db.execute(
-                            "UPDATE system_commands SET status = 'error', payload = %s WHERE id = %s",
-                            [json.dumps({"error": str(e)}), job_id]
+                            "UPDATE system_commands SET status = 'error', error_message = %s, "
+                            "payload = %s WHERE id = %s",
+                            [str(e)[:500], json.dumps({"error": str(e)}), job_id]
                         )
         except Exception as e:
             logger.error("Error polling system_commands: %s", e)
