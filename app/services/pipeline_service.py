@@ -933,6 +933,24 @@ class PipelineService:
                 # the trade outcome mutated the result)
                 from app.services.result_saver import save_analysis_result
                 snapshot = _ticker_snapshot_map.get(ticker_name)
+                if snapshot is None:
+                    # Explicit-ticker cycles bypass the screener, so the snapshot
+                    # map is empty — without a fallback every such cycle persists
+                    # analysis_price=NULL and the next Freshness Gate / Watch Desk
+                    # baseline has nothing to diff against.
+                    try:
+                        from app.data.market_data import build_snapshot
+                        ms = await build_snapshot(ticker_name)
+                        if ms.price:
+                            snapshot = {"price": ms.price, "rsi": ms.rsi_14, "fund_count": 0}
+                            try:
+                                from app.collectors.fund_scanner import get_institutional_signal
+                                snapshot["fund_count"] = get_institutional_signal(ticker_name).get("fund_count", 0)
+                            except Exception:
+                                pass
+                            _ticker_snapshot_map[ticker_name] = snapshot
+                    except Exception as _snap_e:
+                        logger.warning("[PipelineService] %s: snapshot fallback failed (non-fatal): %s", ticker_name, _snap_e)
                 save_analysis_result(ticker_name, cycle_id, result, snapshot=snapshot)
 
                 # Auto-arm a Watch Desk baseline watch so this ticker keeps being

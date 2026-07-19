@@ -40,13 +40,17 @@ def _audit_llm_traces(cycle_id: str) -> dict:
                 if row and row[1] and row[1] >= 3:
                     judge_avg = max(0.0, min(1.0, float(row[0]) / 5.0))
 
+                # "Dead" must mean dead NOW — judge over the newest rows only.
+                # A 7-day window kept flagging for a week after the grounding
+                # judge was fixed, because the pre-fix error rows dominated.
                 de = db.execute(
                     "SELECT COUNT(*) FILTER (WHERE evidence_gathering::text LIKE %s), COUNT(*) "
-                    "FROM decision_evaluations "
-                    "WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days'",
+                    "FROM (SELECT evidence_gathering FROM decision_evaluations "
+                    "      WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days' "
+                    "      ORDER BY timestamp DESC LIMIT 10) recent",
                     ["%deepeval_error%"],
                 ).fetchone()
-                if de and de[1] and de[0] > de[1] * 0.5:
+                if de and de[1] and de[1] >= 3 and de[0] > de[1] * 0.5:
                     deepeval_dead = True
 
                 ev = db.execute(

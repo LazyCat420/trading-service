@@ -591,6 +591,65 @@ TRADE_DECISION_SCHEMA: dict = {
 }
 
 
+DELTA_REPORT_SCHEMA: dict = {
+    "type": "object",
+    "required": ["summary", "escalate", "verdict"],
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": "One line: what the delta re-look concluded",
+        },
+        "escalate": {
+            "type": "boolean",
+            "description": "True when a material change reopens the full panel",
+        },
+        "verdict": {
+            "type": "string",
+            "enum": ["REAFFIRM", "ADJUST", "ESCALATE"],
+        },
+        "material_change": {
+            "type": "string",
+            "description": "What changed vs the prior thesis (or 'none')",
+        },
+        # action/confidence/levels may be null when escalate=true — the full
+        # panel decides. Enum/required checks tolerate None accordingly.
+        "action": {
+            "type": "string",
+            "enum": ["BUY", "SELL", "HOLD"],
+        },
+        "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+        },
+        "reasoning": {
+            "type": "string",
+            "description": "Why the prior decision holds / was adjusted",
+        },
+        "stop_loss": {
+            "type": "number",
+            "description": "Suggested stop-loss price",
+        },
+        "take_profit": {
+            "type": "number",
+            "description": "Suggested take-profit price",
+        },
+        "exit_style": {
+            "type": "string",
+            "enum": ["hard_stop", "reanalyze_on_breach"],
+        },
+        "position_size_pct": {
+            "type": "number",
+            "description": "Suggested position size as percentage of portfolio",
+        },
+        "tags": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+}
+
+
 # ── Schema lookup ────────────────────────────────────────────────────────
 ARTIFACT_SCHEMAS: dict[str, dict] = {
     "desk_note": DESK_NOTE_SCHEMA,
@@ -604,6 +663,7 @@ ARTIFACT_SCHEMAS: dict[str, dict] = {
     "final_decision": FINAL_DECISION_SCHEMA,
     "trade_decision": TRADE_DECISION_SCHEMA,
     "portfolio_screener": PORTFOLIO_SCREENER_SCHEMA,
+    "delta_report": DELTA_REPORT_SCHEMA,
 }
 
 
@@ -630,6 +690,11 @@ def validate_artifact(artifact_type: str, artifact: dict) -> list[str]:
     props = schema.get("properties", {})
     for field_name, field_spec in props.items():
         if field_name in artifact and "enum" in field_spec:
+            # None on an optional enum field is "not provided" (e.g. the delta
+            # analyst's action/exit_style when escalating), not an enum violation
+            # — required-field None is already reported above.
+            if artifact[field_name] is None and field_name not in required:
+                continue
             if artifact[field_name] not in field_spec["enum"]:
                 errors.append(
                     f"Invalid value for {field_name}: {artifact[field_name]}. "
