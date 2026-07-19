@@ -137,6 +137,37 @@ class TestActivatePersist:
         assert stats["persisted"] == 0
 
 
+class TestSparseGNN:
+    def test_activation_spreads_to_neighbors_only(self):
+        from app.cognition.ontology.gnn_engine import GNNEngine
+        gnn = GNNEngine(["a", "b", "isolated"], [("a", "b", 0.8)])
+        acts = gnn.message_passing({"a": 1.0}, layers=3)
+        assert acts["a"] == 1.0  # seed re-injected each layer
+        assert acts["b"] > 0.0
+        assert acts["isolated"] == 0.0
+
+    def test_unknown_seed_and_edge_nodes_ignored(self):
+        from app.cognition.ontology.gnn_engine import GNNEngine
+        gnn = GNNEngine(["a"], [("a", "ghost", 0.5)])
+        acts = gnn.message_passing({"a": 1.0, "phantom": 1.0}, layers=2)
+        assert set(acts) == {"a"}
+
+    def test_large_graph_is_fast_and_lean(self):
+        # 12k nodes / 15k edges — the prod scale that made the dense
+        # implementation burn minutes of CPU. Sparse must run in well under a
+        # second; this guards against a dense N×N matrix creeping back in.
+        import time
+        from app.cognition.ontology.gnn_engine import GNNEngine
+        n = 12_000
+        nodes = [f"n{i}" for i in range(n)]
+        edges = [(f"n{i}", f"n{(i * 7 + 1) % n}", 0.5) for i in range(15_000)]
+        start = time.monotonic()
+        gnn = GNNEngine(nodes, edges)
+        acts = gnn.message_passing({"n0": 1.0}, layers=3)
+        assert time.monotonic() - start < 5.0
+        assert acts["n0"] == 1.0
+
+
 class TestActivateCommandHandler:
     def test_handler_completes_with_progress(self):
         from app.autoresearch import eval_worker
