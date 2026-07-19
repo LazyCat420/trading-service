@@ -18,6 +18,7 @@ The bounds/tier/cooldown values live in the code-owned PARAMETER_REGISTRY
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 from app.db.connection import get_db
@@ -110,6 +111,8 @@ class ParameterValidator:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False, f"'{key}' needs a numeric value, got {value!r}.", None
         value = float(value)
+        if not math.isfinite(value):
+            return False, f"'{key}' needs a FINITE numeric value, got {value!r}.", None
 
         if not (spec.min_value <= value <= spec.max_value):
             return False, (
@@ -132,8 +135,15 @@ class ParameterValidator:
             ), None
 
         if ttl_hours is not None:
-            if isinstance(ttl_hours, bool) or not isinstance(ttl_hours, (int, float)) or ttl_hours <= 0:
-                return False, "ttl_hours must be a positive number of hours.", None
+            if (
+                isinstance(ttl_hours, bool)
+                or not isinstance(ttl_hours, (int, float))
+                or not math.isfinite(float(ttl_hours))
+                or ttl_hours <= 0
+            ):
+                # NaN evades plain <=0 / >max comparisons (both are False for
+                # NaN) — an adversarial NaN TTL reached the DB write intact.
+                return False, "ttl_hours must be a positive FINITE number of hours.", None
             if ttl_hours > spec.max_ttl_hours:
                 return False, (
                     f"ttl_hours={ttl_hours} exceeds the max for {key} "

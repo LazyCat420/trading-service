@@ -39,23 +39,26 @@ async def test_legacy_checkpoint_commands_are_noops(mock_db):
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
 
-    # Verify that the DB was updated with status='completed' and the expected result
-    # We look through all the calls to mock_db.execute and check the UPDATEs.
-    update_calls = [call for call in mock_db.execute.mock_calls if "UPDATE v3_system_commands SET status = 'completed'" in str(call)]
-    
+    # Verify the DB was updated to status='completed' with the expected result.
+    # The status is parameterized now (status-truth fix: bounced START_CYCLEs
+    # get 'skipped'); checkpoint no-ops return {"status": "ok"} → 'completed'.
+    update_calls = [
+        call for call in mock_db.execute.mock_calls
+        if "UPDATE v3_system_commands SET status = %s" in str(call)
+        and call.args[1][0] == "completed"
+    ]
+
     # We expect 2 completions
     assert len(update_calls) >= 2
-    
-    # Find the call for job 1
-    call1 = next(c for c in update_calls if c.args[1][1] == job_id_1)
-    res1_json = call1.args[1][0]
-    res1 = json.loads(res1_json)
+
+    # Find the call for job 1 — params are [status, result_json, note, job_id]
+    call1 = next(c for c in update_calls if c.args[1][3] == job_id_1)
+    res1 = json.loads(call1.args[1][1])
     assert res1.get("status") == "ok"
     assert "No checkpoint system active" in res1.get("message", "")
-    
+
     # Find the call for job 2
-    call2 = next(c for c in update_calls if c.args[1][1] == job_id_2)
-    res2_json = call2.args[1][0]
-    res2 = json.loads(res2_json)
+    call2 = next(c for c in update_calls if c.args[1][3] == job_id_2)
+    res2 = json.loads(call2.args[1][1])
     assert res2.get("status") == "ok"
     assert "No checkpoint system active" in res2.get("message", "")

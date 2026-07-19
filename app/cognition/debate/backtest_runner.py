@@ -120,10 +120,17 @@ def run_backtest_for_equation(
     if isinstance(raw_result, dict) and raw_result.get("unbacktestable"):
         return {"unbacktestable": True, "equation": equation_name}
 
-    # If the equation already returns a full backtest summary, use it
-    if isinstance(raw_result, dict) and "total_trades" in raw_result:
-        _update_stats(equation_name, raw_result)
-        return raw_result
+    # An equation that RETURNS a ready-made summary is self-reporting — the
+    # code could fabricate any numbers it likes (adversarial test proved a
+    # 99%-PnL liar equation sailed through the gate and into library stats).
+    # Only summaries derived from OUR trade simulation are trusted; label
+    # self-reports and never write their stats.
+    if isinstance(raw_result, dict) and "total_trades" in raw_result and "signals" not in raw_result:
+        out = dict(raw_result)
+        out["self_reported"] = True
+        out["note"] = "equation returned its own summary — not simulation-verified; treated as unbacktested"
+        logger.warning("[BACKTEST] '%s' returned a SELF-REPORTED summary — not trusted for gating", equation_name)
+        return out
 
     # If the equation returns signals, simulate trades (net of costs), then
     # split chronologically: the OOS tail + a coin-flip null test are what the
@@ -237,6 +244,14 @@ def filter_pitches_by_backtest(
 
         params = pitch.get("parameters", {})
         result = run_backtest_for_equation(eq_name, ticker, params)
+
+        if result.get("self_reported"):
+            pitch["backtest_results"] = {"note": result.get("note", "self-reported summary — not simulation-verified")}
+            pitch["backtest_pnl"] = None
+            pitch["backtest_sharpe"] = None
+            survivors.append(pitch)
+            logger.info("[BACKTEST] '%s' passed through UNVERIFIED (self-reported summary)", eq_name)
+            continue
 
         if result.get("unbacktestable"):
             # No executable code — the thesis can't be PnL-gated, but

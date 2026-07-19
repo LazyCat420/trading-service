@@ -84,9 +84,14 @@ class WorkingMemoryManager:
             for e in episodes:
                 date_str = e["timestamp"][:10] if e["timestamp"] else "Unknown"
                 summary = e["summary"][:150]
-                lines.append(
-                    f"- [{date_str}] Outcome Score: {e['outcome_score']} — {summary}"
-                )
+                if str(e.get("outcome", "")).lower() == "pending":
+                    # Freshly-written episodes have no resolved outcome yet —
+                    # showing "Outcome Score: 0.0" would read as a failure.
+                    lines.append(f"- [{date_str}] (outcome pending) — {summary}")
+                else:
+                    lines.append(
+                        f"- [{date_str}] Outcome Score: {e['outcome_score']} — {summary}"
+                    )
 
         if procedures:
             lines.append("\n### Proven Patterns")

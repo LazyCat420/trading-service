@@ -57,12 +57,14 @@ class EpisodicMemoryStore:
         with get_db() as db:
             # Pull best-outcome episodes first to show the bot what worked
             # (Could also pull worst-outcome to show what didn't work)
+            # Recency first: with unresolved ("pending") outcomes all scoring
+            # ties at 0, and best-outcome-first would bury the newest thesis.
             rows = db.execute(
                 """
-                SELECT id, cycle_id, timestamp, summary, outcome_score, key_decisions
+                SELECT id, cycle_id, timestamp, summary, outcome_score, key_decisions, outcome
                 FROM episodic_memory
                 WHERE ticker = %s
-                ORDER BY outcome_score DESC, timestamp DESC
+                ORDER BY timestamp DESC
                 LIMIT %s
             """,
                 [ticker, limit],
@@ -78,6 +80,7 @@ class EpisodicMemoryStore:
                         "summary": r[3],
                         "outcome_score": r[4],
                         "key_decisions": r[5],
+                        "outcome": r[6],
                     }
                 )
             return results

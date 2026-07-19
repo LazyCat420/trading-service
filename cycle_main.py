@@ -171,10 +171,24 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         logger.error("[cycle_backend] Ignored legacy command type '%s'", cmd_type)
                         result = {"status": "ignored", "message": "Legacy command ignored in V3"}
 
+                    # Status-truth: 'completed' must mean the command DID its
+                    # work. A START_CYCLE bounced off an already-running cycle
+                    # (or stuck state) used to be silently marked completed —
+                    # the requested cycle never ran and nothing recorded that.
+                    cmd_status = "completed"
+                    cmd_note = None
+                    if isinstance(result, dict) and result.get("status") in ("deduplicated", "error", "ignored"):
+                        cmd_status = "skipped"
+                        cmd_note = str(result.get("message") or result.get("status"))[:300]
+                        logger.warning(
+                            "[cycle_backend] Command %s SKIPPED (not executed): %s",
+                            job_id, cmd_note,
+                        )
                     with get_db() as db:
                         db.execute(
-                            "UPDATE v3_system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = %s WHERE id = %s", 
-                            [json.dumps(result), job_id]
+                            "UPDATE v3_system_commands SET status = %s, completed_at = CURRENT_TIMESTAMP, "
+                            "result = %s, error_message = %s WHERE id = %s",
+                            [cmd_status, json.dumps(result), cmd_note, job_id]
                         )
                 except asyncio.CancelledError as e:
                     if shutdown.is_set():

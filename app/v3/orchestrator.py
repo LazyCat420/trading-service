@@ -1237,6 +1237,22 @@ async def run_v3_pipeline(
         })
         logger.info("[V3] %s: Episodic observation recorded", ticker)
 
+        # Working-memory episodic store: read into EVERY agent prompt
+        # ("Relevant Past Cycles") but its only writer was a class that was
+        # never instantiated — agents saw a permanently empty section.
+        try:
+            from app.services.memory.episodic_memory import episodic_memory_store
+            episodic_memory_store.write_episode(
+                cycle_id=cycle_id,
+                ticker=ticker,
+                summary=f"{action} @ {confidence}% ({regime}): {reasoning[:200]}",
+                key_decisions=json.dumps([action]),
+                outcome="pending",
+                outcome_score=0.0,
+            )
+        except Exception as epi_err:
+            logger.warning("[V3] %s: working-memory episode write failed (non-fatal): %s", ticker, epi_err)
+
         # Consolidation: without this, episodic observations pile up forever
         # and canonical memories are never distilled from cycle experience —
         # the retriever would read a table nothing populates. Runs as a
