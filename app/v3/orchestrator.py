@@ -900,6 +900,34 @@ async def run_v3_pipeline(
             try:
                 from app.services.trade_result_saver import save_trade_result
                 trade_decision = desk.trade_decision or {}
+
+                # Contradiction gate — the shadow's first promotion. Unresolved
+                # cross-desk directional dissent (e.g. board BUY over a BEARISH
+                # quant/tournament verdict) is by definition mixed evidence, so
+                # stated confidence is capped at 60. Deliberately NOT the full
+                # downgrade-to-HOLD: only 1 of 7 flagged trades has resolved so
+                # far, so the shadow keeps collecting the evidence for that.
+                try:
+                    from app.v3.contradiction_shadow import compute_contradiction_shadow
+                    _gate = compute_contradiction_shadow(desk)
+                    _conf = trade_decision.get("confidence")
+                    if (
+                        _gate.get("would_downgrade_to_hold")
+                        and isinstance(_conf, (int, float))
+                        and _conf > 60
+                    ):
+                        trade_decision["confidence_uncapped"] = _conf
+                        trade_decision["confidence"] = 60
+                        trade_decision["confidence_cap_reason"] = (
+                            "contradiction_gate: unresolved cross-desk directional dissent "
+                            f"({_gate.get('sentiment_by_source')})"
+                        )
+                        logger.warning(
+                            "[V3] %s: contradiction gate capped confidence %s -> 60 (%s)",
+                            ticker, _conf, _gate.get("sentiment_by_source"),
+                        )
+                except Exception as gate_err:
+                    logger.warning("[V3] %s: contradiction gate failed (non-fatal): %s", ticker, gate_err)
                 if not trade_decision.get("regime"):
                     trade_decision["regime"] = regime
                 if not trade_decision.get("persona_used"):

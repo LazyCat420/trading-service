@@ -148,8 +148,62 @@ class TestDecisionScoringFormula:
             result = _audit_decisions("test_cycle", self._make_summary(5, 1, 0))
 
         cal = result["outcome_stats"]["calibration_score"]
-        # low-conf bucket n=1 < MIN_BUCKET → falls back to high-conf win rate (0.6)
-        assert cal == pytest.approx(0.6, abs=0.01), f"calibration {cal} — n=1 bucket leaked into the gap formula"
+        # No decile bucket reaches MIN_BUCKET and the low-conf side is n=1, so
+        # both honesty and discrimination stay neutral (0.5) — the lucky trade
+        # must not drag the term toward 0.
+        assert cal == pytest.approx(0.5, abs=0.01), f"calibration {cal} — n=1 bucket leaked into the formula"
+
+    def test_honest_confidence_scores_high_ece(self):
+        """Stated confidence matching realized win rate → high honesty term.
+
+        10 trades all stated conf 70, 7 wins → ECE = 0 → honesty 1.0. With no
+        low-conf bucket, discrimination stays neutral: cal = 0.7*1 + 0.3*0.5.
+        Uniform confidence must cap at 0.85 — full credit requires
+        differentiating AND being right.
+        """
+        confs = [(70,)]
+        outcomes = (
+            [("BUY", 70, 5.0, "WIN", 3.0)] * 7 + [("BUY", 70, -2.0, "LOSS", 3.0)] * 3
+        )
+
+        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+            from app.autoresearch.auditors.decision_audit import _audit_decisions
+            result = _audit_decisions("test_cycle", self._make_summary(10, 0, 0))
+
+        stats = result["outcome_stats"]
+        assert stats["calibration_ece"] == pytest.approx(0.0, abs=0.01)
+        assert stats["calibration_score"] == pytest.approx(0.85, abs=0.01)
+
+    def test_overconfident_bucket_penalized_ece(self):
+        """Stating 90 while winning 40% → large ECE → low honesty term."""
+        confs = [(90,)]
+        outcomes = (
+            [("BUY", 90, 5.0, "WIN", 3.0)] * 4 + [("BUY", 90, -3.0, "LOSS", 3.0)] * 6
+        )
+
+        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+            from app.autoresearch.auditors.decision_audit import _audit_decisions
+            result = _audit_decisions("test_cycle", self._make_summary(10, 0, 0))
+
+        stats = result["outcome_stats"]
+        assert stats["calibration_ece"] == pytest.approx(0.5, abs=0.01)
+        assert stats["calibration_honesty"] == pytest.approx(0.0, abs=0.01)
+        assert any("miscalibrated" in i["issue"].lower() for i in result["issues"])
+
+    def test_win_rate_benchmarked_at_60pct(self):
+        """60% ex-flat win rate = full win-rate credit (raw scale needed 100%)."""
+        confs = [(70,)]
+        outcomes = (
+            [("BUY", 70, 5.0, "WIN", 3.0)] * 6 + [("BUY", 70, -2.5, "LOSS", 3.0)] * 4
+        )
+
+        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+            from app.autoresearch.auditors.decision_audit import _audit_decisions
+            result = _audit_decisions("test_cycle", self._make_summary(10, 0, 0))
+
+        # wr 0.6/0.6 → 0.4 full; cal: ece=|0.7-0.6|=0.1 → honesty 0.8, disc 0.5
+        # → 0.71*0.3 = 0.213; risk: pf 5/2.5 = 2 → 0.3. Total ≈ 0.913.
+        assert result["score"] >= 0.9, f"benchmark-excellent desk scored {result['score']}"
 
     def test_flats_excluded_from_win_rate(self):
         """FLAT outcomes are 'no verdict' — they must not count as losses."""
