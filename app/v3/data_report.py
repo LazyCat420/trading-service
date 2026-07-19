@@ -302,12 +302,28 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
             lrows = db.execute(
                 "SELECT lesson_text FROM evolution_lessons "
                 "WHERE status = 'audited' AND lesson_text IS NOT NULL "
-                "ORDER BY timestamp DESC NULLS LAST LIMIT 3"
+                "AND length(trim(lesson_text)) > 20 "
+                "ORDER BY timestamp DESC NULLS LAST LIMIT 12"
             ).fetchall()
-        if lrows:
+        # The audit writes near-identical rephrasings of the same lesson on
+        # consecutive cycles ("downstream engines must wait for
+        # pre-collection" x3) — greedy Jaccard filter keeps 3 DISTINCT ones.
+        picked: list[str] = []
+        for r in lrows:
+            text = str(r[0]).strip()
+            words = set(text.lower().split())
+            if any(
+                len(words & set(p.lower().split())) / max(1, len(words | set(p.lower().split()))) > 0.6
+                for p in picked
+            ):
+                continue
+            picked.append(text)
+            if len(picked) >= 3:
+                break
+        if picked:
             lessons_md = (
                 "## 0.b LESSONS FROM RECENT CYCLES (autoresearch audit)\n"
-                + "\n".join(f"- {str(r[0])[:300]}" for r in lrows if r and r[0])
+                + "\n".join(f"- {p[:300]}" for p in picked)
                 + "\n\n"
             )
     except Exception:

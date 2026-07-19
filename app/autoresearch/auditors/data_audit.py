@@ -13,6 +13,36 @@ logger = logging.getLogger(__name__)
 
 from app.autoresearch.utils import _grade, _safe_iso
 
+
+def _age_days(max_date) -> int | None:
+    """Days since the newest row, tolerant of date/datetime/ISO-string columns."""
+    if max_date is None:
+        return None
+    try:
+        if isinstance(max_date, str):
+            max_date = datetime.fromisoformat(max_date[:19])
+        if isinstance(max_date, datetime):
+            max_date = max_date.date()
+        return (datetime.now(timezone.utc).date() - max_date).days
+    except Exception:
+        return None
+
+
+def _freshness_multiplier(age: int | None, fresh_days: int, floor_days: int) -> float:
+    """1.0 while data is <= fresh_days old, linear decay to 0.3 at floor_days.
+
+    Completeness alone let a table full of week-old rows score ~99 — the audit
+    said "great data" while agents analyzed stale prices.
+    """
+    if age is None:
+        return 0.3
+    if age <= fresh_days:
+        return 1.0
+    if age >= floor_days:
+        return 0.3
+    return 1.0 - 0.7 * (age - fresh_days) / (floor_days - fresh_days)
+
+
 def _audit_price_history(db, ticker: str) -> dict:
     try:
         stats = db.execute(
@@ -51,11 +81,14 @@ def _audit_price_history(db, ticker: str) -> dict:
 
         null_pct = (null_close + zero_vol + null_ohlc) / (rows * 3) if rows else 1
         gap_penalty = min(gaps * 0.05, 0.3)
-        score = max(0, 1.0 - null_pct - gap_penalty)
+        age = _age_days(max_d)
+        # 3 days tolerates weekends + one missed collection; 10 = unusable.
+        score = max(0, 1.0 - null_pct - gap_penalty) * _freshness_multiplier(age, 3, 10)
 
         return {
             "rows": rows,
             "date_range": [_safe_iso(min_d), _safe_iso(max_d)],
+            "age_days": age,
             "quality": _grade(score),
             "quality_score": round(score, 3),
             "null_close": null_close,
@@ -127,11 +160,13 @@ def _audit_technicals(db, ticker: str) -> dict:
                 indicator_health[col] = {"status": "error", "latest": None, "nulls": rows}
 
         total_cells = rows * len(INDICATORS) or 1
-        score = max(0, 1.0 - (total_nulls / total_cells))
+        age = _age_days(max_d)
+        score = max(0, 1.0 - (total_nulls / total_cells)) * _freshness_multiplier(age, 3, 10)
 
         return {
             "rows": rows,
             "date_range": [_safe_iso(min_d), _safe_iso(max_d)],
+            "age_days": age,
             "quality": _grade(score),
             "quality_score": round(score, 3),
             "indicators_computed": indicators_ok,
@@ -164,7 +199,9 @@ def _audit_fundamentals(db, ticker: str) -> dict:
         data = dict(zip(cols, latest)) if latest else {}
 
         non_null_key = sum(1 for f in key_fields if data.get(f) is not None)
-        score = non_null_key / len(key_fields) if key_fields else 0
+        age = _age_days(max_d)
+        # Fundamentals turn over quarterly: 60d fresh, 180d = two missed quarters.
+        score = (non_null_key / len(key_fields) if key_fields else 0) * _freshness_multiplier(age, 60, 180)
 
         key_values = {}
         for f in key_fields:
@@ -174,6 +211,7 @@ def _audit_fundamentals(db, ticker: str) -> dict:
         return {
             "rows": rows,
             "date_range": [_safe_iso(min_d), _safe_iso(max_d)],
+            "age_days": age,
             "quality": _grade(score),
             "quality_score": round(score, 3),
             "key_fields": key_values,
@@ -186,10 +224,14 @@ def _audit_fundamentals(db, ticker: str) -> dict:
 def _audit_news(db, ticker: str) -> dict:
     try:
         stats = db.execute(
-            "SELECT COUNT(*), MIN(published_at), MAX(published_at), COUNT(DISTINCT source) FROM news_articles WHERE ticker = %s",
+            """
+            SELECT COUNT(*), MIN(published_at), MAX(published_at), COUNT(DISTINCT source),
+                   COUNT(*) FILTER (WHERE published_at > CURRENT_TIMESTAMP - INTERVAL '7 days')
+            FROM news_articles WHERE ticker = %s
+            """,
             [ticker]
         ).fetchone()
-        rows, min_d, max_d, sources = stats
+        rows, min_d, max_d, sources, recent = stats
 
         source_list = []
         if rows > 0:
@@ -199,10 +241,14 @@ def _audit_news(db, ticker: str) -> dict:
             ).fetchall()
             source_list = [{"source": r[0], "count": r[1]} for r in src]
 
-        score = min(1.0, rows / 5) if rows else 0
+        # Score on articles from the last 7 days — the lifetime count let a
+        # ticker with 50 stale articles and zero current coverage score 1.0.
+        score = min(1.0, recent / 5) if recent else 0
         return {
             "rows": rows,
+            "recent_7d": recent,
             "date_range": [_safe_iso(min_d), _safe_iso(max_d)],
+            "age_days": _age_days(max_d),
             "quality": _grade(score),
             "quality_score": round(score, 3),
             "source_count": sources,
@@ -226,11 +272,14 @@ def _audit_data_quality(tickers: list[str]) -> dict:
                     _audit_fundamentals(db, ticker),
                     _audit_news(db, ticker),
                 ]
+                # Missing categories count as 0 — the old average silently
+                # dropped them, so a ticker with no fundamentals and no news
+                # could still score ~1.0 off prices+technicals alone.
                 cat_scores = [
-                    c.get("quality_score", 0) for c in cats
-                    if isinstance(c.get("quality_score"), (int, float)) and c.get("rows", 0) > 0
+                    c.get("quality_score", 0) if isinstance(c.get("quality_score"), (int, float)) else 0
+                    for c in cats
                 ]
-                avg = sum(cat_scores) / len(cat_scores) if cat_scores else 0
+                avg = sum(cat_scores) / len(cats) if cats else 0
                 scores.append(avg)
                 per_ticker[ticker] = {"score": round(avg, 3)}
                 missing = []
