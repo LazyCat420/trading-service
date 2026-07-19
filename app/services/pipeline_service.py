@@ -1208,6 +1208,19 @@ class PipelineService:
 
     @classmethod
     async def stop_cycle(cls, _stop_t1=None):
+        # Nothing running (already done/error/idle)? Leave the terminal state
+        # alone. The deploy-shutdown path calls this unconditionally and used
+        # to relabel a COMPLETED cycle as "Cycle stopped by user" at boot,
+        # corrupting the cycle's postmortem status in the UI.
+        if not (cls._cycle_task and not cls._cycle_task.done()):
+            current = cls._state.get("status")
+            if current in ("done", "error", "stopped", "idle", None):
+                logger.info(
+                    "[PipelineService] stop_cycle: no active cycle (status=%s) — state left untouched",
+                    current,
+                )
+                return {"status": current or "idle"}
+
         cls.request_stop()
         if cls._cycle_task and not cls._cycle_task.done():
             try:

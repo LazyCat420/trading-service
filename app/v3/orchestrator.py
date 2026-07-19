@@ -343,6 +343,7 @@ async def run_v3_pipeline(
                     "regime": (desk.regime_classification or {}).get("regime", "delta_relook"),
                     "stop_loss": delta.get("stop_loss"),
                     "take_profit": delta.get("take_profit"),
+                    "exit_style": delta.get("exit_style"),
                     "dynamic_trigger": delta.get("dynamic_trigger"),
                     "position_size_pct": delta.get("position_size_pct"),
                 })

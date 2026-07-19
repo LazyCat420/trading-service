@@ -91,10 +91,18 @@ class WorkingMemoryManager:
         if procedures:
             lines.append("\n### Proven Patterns")
             for p in procedures:
-                rate = round(p["success_rate"] * 100)
-                lines.append(
-                    f"- When {p['trigger_pattern']} → {p['procedure']} | Success: {rate}% ({p['total_uses']} uses)"
-                )
+                uses = int(p.get("total_uses") or 0)
+                if uses >= 2:
+                    rate = round(p["success_rate"] * 100)
+                    lines.append(
+                        f"- When {p['trigger_pattern']} → {p['procedure']} | Success: {rate}% ({uses} uses)"
+                    )
+                else:
+                    # Outcome counters start static — a fabricated "Success: N%"
+                    # on an unscored pattern misleads every agent that reads it.
+                    lines.append(
+                        f"- When {p['trigger_pattern']} → {p['procedure']} | (untested pattern — no outcome data yet)"
+                    )
 
         with self._lock:
             scratchpad = self._scratchpads.get(ticker, [])
@@ -114,6 +122,12 @@ class WorkingMemoryManager:
                     lines.append(
                         f"[{i + 1}] Source: {slot['source']}\n{slot['content']}\n---"
                     )
+
+        # Nothing but the banner? Return empty so callers skip injection —
+        # a decorative empty "Working Memory Context" block costs prompt
+        # tokens in every agent call and signals nothing.
+        if len(lines) <= 3:
+            return ""
 
         lines.append("========================================\n")
         return "\n".join(lines)

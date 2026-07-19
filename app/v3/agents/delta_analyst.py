@@ -77,6 +77,7 @@ data report (fresh price, recent news) versus the prior thesis.
     "reasoning": "why the prior decision still holds / was adjusted (2-4 sentences)",
     "stop_loss": 145.50,
     "take_profit": 210.00,
+    "exit_style": "hard_stop|reanalyze_on_breach",
     "position_size_pct": 3.0,
     "tags": ["#reaffirm"]
 }

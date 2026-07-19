@@ -770,36 +770,60 @@ class SchedulerService:
 
     @staticmethod
     async def _run_background_stop_loss():
-        """Run stop loss, take profit, and custom trigger checks for the active bot."""
-        try:
-            bot_id = get_active_bot_id()
-            if bot_id:
-                # Per-pass cycle id, NOT the constant "background": sell()'s
-                # duplicate-order guard keys on (cycle_id, ticker, side), so a
-                # constant id meant any ticker that background-stopped ONCE could
-                # never be background-sold again — its protective stop was
-                # silently dead forever after (live-confirmed on GOOGL/AMP,
-                # which hold positions today with a 2026-06/07 'background'
-                # SELL fill already on record). A per-minute id keeps the
-                # double-sell protection WITHIN a pass (stop-loss and
-                # take-profit share it) while future passes start clean.
-                from datetime import datetime, timezone
-                bg_cycle = f"background-{datetime.now(timezone.utc):%Y%m%d%H%M}"
-                await check_stop_losses(bot_id, cycle_id=bg_cycle)
-                await check_take_profits(bot_id, cycle_id=bg_cycle)
-                # Custom order triggers (stop_loss, take_profit, buy_limit, sell_limit, trailing_stop)
-                try:
-                    from app.trading.order_triggers import check_triggers
+        """Run stop loss, take profit, and custom trigger checks for EVERY bot
+        holding positions.
 
-                    fired = await check_triggers(bot_id)
-                    if fired:
-                        logger.info(
-                            "[SCHEDULER] %d order trigger(s) fired for bot '%s'",
-                            len(fired),
-                            bot_id,
+        Sweeping only the active bot silently orphaned every other profile's
+        positions — audited live at ~$69k of entry value (cycle-backend + test
+        bots) carrying no stop-loss, take-profit, or trigger monitoring at
+        all. Risk protection must not depend on which bot the UI has selected.
+        """
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT DISTINCT bot_id FROM positions WHERE qty > 0"
+                ).fetchall()
+            bot_ids = [r[0] for r in rows if r and r[0]]
+            active = get_active_bot_id()
+            if active and active not in bot_ids:
+                bot_ids.append(active)
+
+            # Per-pass cycle id, NOT the constant "background": sell()'s
+            # duplicate-order guard keys on (cycle_id, ticker, side), so a
+            # constant id meant any ticker that background-stopped ONCE could
+            # never be background-sold again — its protective stop was
+            # silently dead forever after (live-confirmed on GOOGL/AMP).
+            # A per-minute id keeps the double-sell protection WITHIN a pass
+            # (stop-loss and take-profit share it) while future passes start clean.
+            from datetime import datetime, timezone
+            bg_cycle = f"background-{datetime.now(timezone.utc):%Y%m%d%H%M}"
+
+            for bot_id in bot_ids:
+                try:
+                    await check_stop_losses(bot_id, cycle_id=bg_cycle)
+                    await check_take_profits(bot_id, cycle_id=bg_cycle)
+                    # Custom order triggers (stop_loss, take_profit, buy_limit,
+                    # sell_limit, trailing_stop)
+                    try:
+                        from app.trading.order_triggers import check_triggers
+
+                        fired = await check_triggers(bot_id)
+                        if fired:
+                            logger.info(
+                                "[SCHEDULER] %d order trigger(s) fired for bot '%s'",
+                                len(fired),
+                                bot_id,
+                            )
+                    except Exception as trig_err:
+                        logger.error(
+                            "[SCHEDULER] Order trigger check failed for bot '%s': %s",
+                            bot_id, trig_err,
                         )
-                except Exception as trig_err:
-                    logger.error("[SCHEDULER] Order trigger check failed: %s", trig_err)
+                except Exception as bot_err:
+                    logger.error(
+                        "[SCHEDULER] Background risk sweep failed for bot '%s': %s",
+                        bot_id, bot_err,
+                    )
         except Exception as e:
             logger.error("[SCHEDULER] Background stop-loss check failed: %s", e)
 
