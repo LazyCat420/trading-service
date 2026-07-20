@@ -18,6 +18,11 @@ services:
       - YOUTUBE_COOKIES_FILE=/app/cookies.txt
       - USE_LAZY_TOOL_SERVICE=true
       - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:5591
+      # System logs (and the office client's /api/v1/system/stream feed) POST
+      # here. Unset, it probes "trading-client:8888" first — a host that does
+      # not resolve from this container — and only works via a hardcoded IP
+      # fallback. Pin it so the first attempt is the one that works.
+      - TRADING_CLIENT_URL=http://10.0.0.16:8888
       - PIPELINE_VERSION=v3
       - PYTHONPATH=/app/lazycat-sdk
       - CHART_OUTPUT_DIR=/app/data/charts

@@ -713,6 +713,31 @@ def _log_event(watch: dict, trig: dict, detail: str, value, cycle_id: str | None
     except Exception as e:
         logger.warning("[WatchDesk] log_event failed: %s", e)
 
+    # Mirror the trip onto the pipeline event stream. watch_events is a private
+    # table nothing else reads, so a trip was invisible to every live consumer
+    # (the office client included). Only in-cycle trips are mirrored — that's
+    # the window where a cycle_id exists to attach them to.
+    if not cycle_id:
+        return
+    try:
+        from app.services.pipeline_state import PipelineStateDB
+
+        PipelineStateDB.append_events(cycle_id, [{
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "phase": "watch",
+            "step": f"watch_desk_trip_{watch['ticker']}",
+            "detail": f"{watch['ticker']}: watch trip ({trig['type']}) — {detail}"[:500],
+            "status": "done",
+            "data": {
+                "kind": "watch_trip",
+                "ticker": watch["ticker"],
+                "trigger_type": trig["type"],
+                "value": value,
+            },
+        }])
+    except Exception as e:
+        logger.warning("[WatchDesk] pipeline event mirror failed: %s", e)
+
 
 def consume_wake_context(ticker: str, within_minutes: int = 180) -> str | None:
     """For data_report: the most recent unconsumed trip for this ticker, marked
