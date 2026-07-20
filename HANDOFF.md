@@ -1,3 +1,65 @@
+# HANDOFF — generic utils sourced from lazycat-sdk (2026-07-20)
+
+**Date:** 2026-07-20
+**Deployed:** trading-service `fa70560` → synology
+**Tests:** 892 unit + 157 integration/regression + 11 multi-repo-audit, all passing
+**Companion commits:** lazycat-sdk `cceda1c`/`9f0a65e`/`c790b1a` (v0.3.0), HTML-Notes `11dbb40`, lazy-agent-service `b60d842`
+
+## What changed
+
+Five modules that held *generic* infrastructure now source it from
+lazycat-sdk v0.3.0 and remain here as thin import shims. **No call sites
+changed** — `text_utils` alone has ~30 importers.
+
+| File | Now delegates to | Kept locally |
+|---|---|---|
+| `app/utils/text_utils.py` | `lazycat.llm_json` | `parse_trading_decision`, `fmt_usd`, `parse_malformed_text_response`, scrape-artifact + sanitize helpers |
+| `app/utils/resilience.py` | `lazycat.resilience` | DoomLoopException registration |
+| `app/cache.py` | `lazycat.cache` | — |
+| `app/scraper/core/rate_limiter.py` | `lazycat.ratelimit.KeyedRateLimiter` | `DOMAIN_LIMITS` table |
+| `app/services/api_rate_limiter.py` | `lazycat.ratelimit.KeyedSemaphore` | `SERVICE_LIMITS` from settings |
+
+`parse_json_response` stays a wrapper that supplies this app's two hooks:
+placeholder-ticker rejection (`_is_placeholder_json`) and the markdown-report
+fallback (`_malformed_fallback`, still gated on an `action` key).
+
+**Verified behaviour-identical** to the previous implementation across 84
+input/function combinations — 0 differences.
+
+## Found, NOT fixed: retry telemetry is dead code
+
+`resilience.py` emitted failure events via `PipelineService.emit(...)`.
+**That method does not exist.** The only `emit` in `pipeline_service.py` is a
+local function nested inside the cycle runner (line ~417), so every call
+raised `AttributeError` straight into a bare `except Exception: pass`. No
+retry event has ever been emitted.
+
+`app/recovery/engine.py:208` calls the same non-existent method.
+
+The SDK now exposes `lazycat.resilience.set_failure_emitter(fn)`. Wiring real
+telemetry means giving `PipelineService` an actual class-level `emit` and
+registering it at startup. Deliberately left alone — it is a behaviour change,
+not a refactor.
+
+## Gotchas for the next session
+
+- **`app/cache.py` has zero importers.** (Do not confuse `timed_cache`/
+  `invalidate_cache` with `app.services.parameter_store.invalidate_cache`,
+  which is unrelated and widely used.) Shimmed rather than deleted.
+- `DOMAIN_LIMITS` is passed to `KeyedRateLimiter` **by reference**, so runtime
+  edits to the table still take effect. Don't "fix" that into a copy.
+- Long-standing retry quirks are now pinned by SDK tests rather than fixed: a
+  FATAL classification on the *first* attempt is still retried once, and a
+  failing sync `on_failure` is swallowed before the original error raises.
+- `tests/test_multi_repo_audit.py` asserts on the *source text* of
+  `resilience.py` (it must contain the string "DoomLoopException"). The shim
+  satisfies this, but keep it in mind if you rewrite that file.
+- Deploying this repo **also ships lazycat-sdk to the NAS** (`deploy.sh`
+  PRE_BUILD tars the sibling checkout). HTML-Notes mounts the same directory —
+  deploy both together after an SDK change.
+
+---
+
 # HANDOFF — SkillOpt: per-agent skill docs learned from cycle outcomes
 
 **Date:** 2026-07-20 (follows the grounded-extraction wave below)
