@@ -82,7 +82,21 @@ def run_migrations(conn):
 
     # ── Failure taxonomy: separate harness defects from bad market calls so the
     #    self-healing watchdog never tries to "repair" a losing trade.
+    #    The index must be created HERE, after the column exists — putting it in
+    #    schema_pg.sql aborts schema init on any pre-existing database.
     _safe_add_column(conn, "failure_buckets", "error_class", "TEXT")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_failure_buckets_error_class "
+                "ON failure_buckets(error_class)"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     # ── Youtube
     _safe_add_column(conn, "youtube_transcripts", "thumbnail_url", "TEXT")

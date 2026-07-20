@@ -2309,7 +2309,9 @@ CREATE TABLE IF NOT EXISTS failure_buckets (
     created_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_failure_buckets_run ON failure_buckets(run_id);
-CREATE INDEX IF NOT EXISTS idx_failure_buckets_error_class ON failure_buckets(error_class);
+-- NOTE: the index on error_class lives in migrations.py, NOT here. On an
+-- existing database the CREATE TABLE above is a no-op, so the column does not
+-- exist yet at schema-init time and indexing it aborts the whole init.
 
 CREATE TABLE IF NOT EXISTS tool_playbook (
     id                  TEXT PRIMARY KEY,
