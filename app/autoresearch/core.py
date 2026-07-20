@@ -192,11 +192,16 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         # changes must be attributable), cohort n/age (rolling-term drift is
         # cohort drift, not system change), and the per-cycle judge subscore
         # (the only component that can move on a single cycle).
+        def _jsonsafe(v):
+            # DB-sourced numerics can be Decimal, which strict json.dumps
+            # rejects — this block is persisted verbatim into the report row.
+            return float(v) if isinstance(v, (int, float)) or hasattr(v, "__float__") else v
+
         perf_metrics["decision_cohort"] = {
             "score_version": decision_quality.get("score_version"),
-            "per_cycle_judge_score": decision_quality.get("per_cycle_judge_score"),
+            "per_cycle_judge_score": _jsonsafe(decision_quality.get("per_cycle_judge_score")),
             **{
-                k: decision_quality.get("outcome_stats", {}).get(k)
+                k: _jsonsafe(decision_quality.get("outcome_stats", {}).get(k))
                 for k in ("cohort_n", "cohort_window_days", "median_decision_age_days",
                           "hold_accuracy", "win_rate", "calibration_ece")
             },

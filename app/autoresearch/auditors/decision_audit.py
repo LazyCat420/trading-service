@@ -173,7 +173,9 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
 
                 score = (win_rate_score * 0.4 + calibration_score * 0.3 + risk_score * 0.3)
 
-                ages = sorted(r[4] for r in resolved if r[4] is not None)
+                # float() matters: EXTRACT(EPOCH ...) comes back as Decimal,
+                # which survives round() and later kills strict json.dumps.
+                ages = sorted(float(r[4]) for r in resolved if r[4] is not None)
                 median_age_days = ages[len(ages) // 2] if ages else None
 
                 hold_accuracy = (
