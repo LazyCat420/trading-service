@@ -2,6 +2,21 @@
 
 **Commit:** `f5f7bb7` · deployed to synology `2026-07-20T22:43:56Z` · verified live.
 
+---
+## Follow-up (same session): ticker-concurrency cap — commit `344dadc`
+A full-watchlist (35-ticker) `trade=true` cycle DEADLOCKED: `_run_all_v3` fanned out
+every ticker via `asyncio.gather` with no bound; each ticker pipeline borrows several DB
+connections, so 35 at once exhausted the pool (max_size=50) — the STOP_CYCLE poller
+couldn't even get a connection, and cycle_main's loop hung (:3031 → 000). Recovered with
+`deploy.sh --restart-only`. Fix: `MAX_CONCURRENT_TICKERS` (default 6, env-overridable) +
+an `asyncio.Semaphore` gating `_process_ticker`; large watchlists now run in waves. The
+5-ticker `trade=true` cycle before this fix DID complete (charts on all 5, TSM+NVDA BUYs)
+— 5 was under the implicit safe limit. See memory `cycle-ticker-concurrency-deadlock`.
+Liveness note: debate/board agents emit ~no tool telemetry — judge progress by
+`shared_desk.phase`/`updated_at`, and read executed trades from `trade_results`.
+
+---
+
 ## Symptom
 Ticker-detail "AI Analysis Overlays" chart showed no agent-drawn support/resistance
 lines. TSM (and most tickers) 404'd on `/charts/{ticker}.json`.
