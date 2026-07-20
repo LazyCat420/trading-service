@@ -288,6 +288,13 @@ class PipelineService:
                     "collector_ok": cstats["ok"],
                     "collector_error": cstats["error"],
                     "collector_skipped": cstats["skipped"],
+                    # Slow-but-still-collecting is its own bucket: these blew
+                    # the 45s report deadline but keep running and land in the
+                    # DB for the next cycle. They used to be counted in
+                    # collector_error/collector_failures, which made healthy
+                    # cycles read as mass collector failure.
+                    "collector_late": cstats.get("late", 0),
+                    "collector_late_names": cstats.get("late_names", []),
                     "collector_failures": cstats["failures"],
                     "report_generated": report_generated,
                     "trigger_type": "v3",

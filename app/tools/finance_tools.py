@@ -1,7 +1,11 @@
+import logging
+
 from pydantic import BaseModel, Field
 from app.tools.registry import registry
 from app.db.connection import get_db
 from app.utils.text_utils import format_db_section, fmt_usd
+
+logger = logging.getLogger(__name__)
 
 
 class TickerInput(BaseModel):
@@ -143,7 +147,7 @@ async def get_finnhub_news(ticker: str) -> str:
     with get_db() as db:
         rows = db.execute(
             """
-            SELECT title, publisher, published_at, COALESCE(llm_summary, summary)
+            SELECT id, title, publisher, published_at, COALESCE(llm_summary, summary)
             FROM news_articles WHERE ticker = %s ORDER BY published_at DESC LIMIT 15
         """,
             [ticker],
@@ -152,8 +156,36 @@ async def get_finnhub_news(ticker: str) -> str:
     if not rows:
         return "No recent news found."
 
+    # Grounded facts instead of raw scrape text where available. Measured on
+    # the live DB, llm_summary was empty for 100% of recent articles, so the
+    # COALESCE served raw `summary` — ~2.3k chars of scrape (often leading
+    # with nav chrome) per article, 15 articles per call. Facts compress that
+    # ~5-8x and every quote is offset-verified against the source. Fail-open:
+    # articles without facts fall back to (truncated) raw text.
+    facts_by_id: dict = {}
+    render_facts_line = None
+    try:
+        from app.services.news_extraction import ensure_facts, render_facts_line
+
+        facts_by_id = await ensure_facts(
+            [(r[0], ticker, r[1], r[4]) for r in rows]
+        )
+    except Exception as e:
+        logger.warning("[news] grounded extraction unavailable: %s", e)
+
+    display_rows = []
+    for r in rows:
+        article_id, title, publisher, published_at, body = r
+        if article_id in facts_by_id and render_facts_line is not None:
+            body = render_facts_line(facts_by_id[article_id])
+        elif body and len(body) > 400:
+            # Raw fallback: cap the dump — the old path pasted up to the full
+            # scrape into one table cell.
+            body = body[:400] + "…"
+        display_rows.append((title, publisher, published_at, body))
+
     return format_db_section(
-        "Recent News", rows, ["Title", "Publisher", "Date", "Summary"]
+        "Recent News", display_rows, ["Title", "Publisher", "Date", "Key Facts"]
     )
 
 
