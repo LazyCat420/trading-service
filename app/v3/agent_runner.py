@@ -37,6 +37,52 @@ _PLAYBOOK_CACHE: dict[str, tuple[str, float]] = {}
 _PLAYBOOK_TTL_SEC = 3600.0
 
 
+_REQUESTED_MAX_TOKENS = 8192
+
+
+def _safe_max_tokens(
+    *,
+    agent_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    tool_whitelist: list[str] | None,
+) -> int:
+    """Output budget computed from the assembled payload, not a flat constant.
+
+    The V3 path previously passed ``max_tokens=8192`` unconditionally while
+    ``context_gate`` — a complete, tested tiktoken budgeter — had no production
+    callers at all. A tool-enabled agent carries its schemas as the single
+    largest fixed input cost, and none of it was measured.
+
+    Never raises: a budgeting failure must not take down an agent, so any error
+    falls back to the historical constant.
+    """
+    try:
+        from app.services.context_gate import compute_safe_max_tokens
+        from app.config.context_budget import get_context_budget
+
+        tools = None
+        if tool_whitelist:
+            from app.agents.tool_whitelists import get_agent_tools
+            tools = get_agent_tools(agent_name)
+
+        return compute_safe_max_tokens(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            tools=tools,
+            model_context=get_context_budget().raw_context_tokens,
+            requested_max=_REQUESTED_MAX_TOKENS,
+        )
+    except Exception as e:  # noqa: BLE001 — budgeting must never block a cycle
+        logger.warning(
+            "[V3Runner] %s: context_gate budgeting failed (%s) — falling back to %d",
+            agent_name, e, _REQUESTED_MAX_TOKENS,
+        )
+        return _REQUESTED_MAX_TOKENS
+
+
 def _get_tool_playbook_tips(agent_name: str, limit: int = 3) -> str:
     """Compact per-agent tool guidance from the eval layer's tool_playbook."""
     cached = _PLAYBOOK_CACHE.get(agent_name)
@@ -176,7 +222,13 @@ async def run_v3_agent(
                 logger.warning("[V3Runner] Failed to apply agent_locale %s: %s", agent_locale, e)
 
         # ── Cycle-specific (dynamic) sections ──
-        dynamic_sections: list[str] = []
+        # (shed_order, text). shed_order 0 never sheds; higher numbers are
+        # dropped first when the block would overflow Prism's memory embedder.
+        # Previously an oversized block was moved wholesale into the system
+        # prompt, which relocated the tokens instead of removing them (the model
+        # still received every one) AND silently defeated KV-cache reuse.
+        _KEEP = 0
+        dynamic_sections: list[tuple[int, str]] = []
 
         # Live macro snapshot — ONLY for the Regime Engine, which classifies
         # the global market state. Scoped to that agent so it doesn't bloat
@@ -184,58 +236,63 @@ async def run_v3_agent(
         if agent_name == "v3_regime_engine":
             macro_briefing = desk.cycle_metadata.get("macro_briefing", "")
             if macro_briefing:
-                dynamic_sections.append(
-                    f"## LIVE MACRO SNAPSHOT (use this to classify the regime)\n{macro_briefing}"
-                )
+                dynamic_sections.append((
+                    _KEEP,
+                    f"## LIVE MACRO SNAPSHOT (use this to classify the regime)\n{macro_briefing}",
+                ))
 
         # Market data briefing first — it's the shared factual base (plan 4.2)
         data_report = desk.cycle_metadata.get("data_report", "")
         if data_report:
             if len(data_report) > 5000:
                 data_report = data_report[:5000] + "\n...[TRUNCATED FOR LENGTH]..."
-            dynamic_sections.append(
-                f"## MARKET DATA BRIEFING FOR THIS CYCLE\n{data_report}"
-            )
+            dynamic_sections.append((
+                _KEEP,
+                f"## MARKET DATA BRIEFING FOR THIS CYCLE\n{data_report}",
+            ))
 
         portfolio_ctx = desk.cycle_metadata.get("portfolio_context", "")
         if portfolio_ctx:
-            dynamic_sections.append(f"## Portfolio Context\n{portfolio_ctx}")
+            dynamic_sections.append((2, f"## Portfolio Context\n{portfolio_ctx}"))
 
         directives_ctx = desk.cycle_metadata.get("directives_context", "")
         if directives_ctx:
-            dynamic_sections.append(
+            dynamic_sections.append((
+                1,
                 "## Active Directives (from AutoResearch — address if relevant)\n"
-                f"{directives_ctx}"
-            )
+                f"{directives_ctx}",
+            ))
 
         memory_context = desk.cycle_metadata.get("memory_context", "")
         if memory_context:
-            dynamic_sections.append(f"## Past Cycle Memory\n{memory_context}")
+            dynamic_sections.append((5, f"## Past Cycle Memory\n{memory_context}"))
 
         # Deep decomposed recall — set by the orchestrator just before the
         # decision_synthesizer dispatch (only on low-confidence verdicts), so
         # in practice only the synthesizer sees it.
         deep_retrieval = desk.cycle_metadata.get("deep_retrieval_context", "")
         if deep_retrieval:
-            dynamic_sections.append(
-                f"## Deep Retrieved Context (conflicting-signal recall)\n{deep_retrieval}"
-            )
+            dynamic_sections.append((
+                3,
+                f"## Deep Retrieved Context (conflicting-signal recall)\n{deep_retrieval}",
+            ))
 
         previous_desk_context = desk.cycle_metadata.get("previous_desk_context", "")
         if previous_desk_context:
-            dynamic_sections.append(
-                f"## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}"
-            )
+            dynamic_sections.append((
+                4,
+                f"## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}",
+            ))
 
         if desk_context and desk_context != "No artifacts on desk yet.":
-            dynamic_sections.append(f"## SharedDesk Context Summary\n{desk_context}")
+            dynamic_sections.append((_KEEP, f"## SharedDesk Context Summary\n{desk_context}"))
 
         # Current whiteboard summary (changes per agent within a cycle)
         try:
             from app.agents.whiteboard import whiteboard
             wb_summary = await whiteboard.summarize(ticker=desk.ticker, cycle_id=cycle_id)
             if wb_summary:
-                dynamic_sections.append(wb_summary)
+                dynamic_sections.append((6, wb_summary))
         except Exception as wb_err:
             logger.warning("[V3Runner] Failed to fetch whiteboard summary: %s", wb_err)
 
@@ -245,13 +302,14 @@ async def run_v3_agent(
         try:
             playbook_tips = _get_tool_playbook_tips(agent_name)
             if playbook_tips:
-                dynamic_sections.append(
-                    "## Tool Playbook (your historically highest-scoring tools)\n" + playbook_tips
-                )
+                dynamic_sections.append((
+                    7,
+                    "## Tool Playbook (your historically highest-scoring tools)\n" + playbook_tips,
+                ))
         except Exception as pb_err:
             logger.debug("[V3Runner] Tool playbook lookup skipped: %s", pb_err)
 
-        dynamic_block = "\n\n".join(dynamic_sections)
+        dynamic_block = "\n\n".join(text for _, text in dynamic_sections)
 
         # ── Assemble user prompt ──
         user_prompt = (
@@ -278,30 +336,59 @@ async def run_v3_agent(
         _EMBED_TOKEN_LIMIT = 2048
         _USER_SCAFFOLD_CHARS = 1900  # tool/output directives + reminder appended below
         # custom_instructions (peer-request text) is appended to the user
-        # prompt AFTER this guard runs — it must be counted here or a long
-        # peer query can push the real message past the embed limit.
-        _projected_user_chars = (
-            len(user_prompt) + len(dynamic_block)
-            + len(custom_instructions or "") + _USER_SCAFFOLD_CHARS
-        )
+        # prompt AFTER this guard runs — it must be counted in _fixed_chars or a
+        # long peer query can push the real message past the embed limit.
         # Divisor 3, not 4: embeddinggemma splits digits ~1 char/token, so
         # quant-heavy text lands at ~2.5-3 chars/token — a 6.5k-char block
         # that passed the //4 gate could weigh 2,200+ real tokens and blow
         # the 2048 embed limit anyway.
-        _fits_embedder = (_projected_user_chars // 3) < (_EMBED_TOKEN_LIMIT - 400)
+        _EMBED_CHAR_BUDGET = (_EMBED_TOKEN_LIMIT - 400) * 3
+        _fixed_chars = (
+            len(user_prompt) + len(custom_instructions or "") + _USER_SCAFFOLD_CHARS
+        )
+
+        def _fits(block: str) -> bool:
+            return (_fixed_chars + len(block)) < _EMBED_CHAR_BUDGET
+
+        # Shed lowest-priority sections until the block fits the embedder rather
+        # than relocating it to the system prompt. Relocation kept every token in
+        # the payload (the model saw all of it) and broke prefix-cache reuse; the
+        # only thing it avoided was Prism's embed error.
+        shed: list[str] = []
+        if prompt_split and dynamic_block and not _fits(dynamic_block):
+            kept = list(dynamic_sections)
+            while kept and not _fits("\n\n".join(t for _, t in kept)):
+                sheddable = [s for s in kept if s[0] != _KEEP]
+                if not sheddable:
+                    break
+                victim = max(sheddable, key=lambda s: s[0])
+                kept.remove(victim)
+                shed.append(victim[1].split("\n", 1)[0].lstrip("# ").strip() or "unnamed")
+            dynamic_block = "\n\n".join(t for _, t in kept)
+
+        _fits_embedder = _fits(dynamic_block)
+
+        if shed:
+            logger.info(
+                "[V3Runner] %s: shed %d dynamic section(s) to fit Prism's %d-token "
+                "memory embedder: %s",
+                agent_name, len(shed), _EMBED_TOKEN_LIMIT, ", ".join(shed),
+            )
 
         if prompt_split and dynamic_block and _fits_embedder:
             user_prompt += dynamic_block + "\n\n"
         elif dynamic_block:
-            # Legacy layout: dynamic content rides in the system prompt (either
-            # V3_PROMPT_SPLIT is off, or the block is too big to embed safely).
+            # Either V3_PROMPT_SPLIT is off (legacy layout), or the non-sheddable
+            # core alone still overflows the embedder. The system prompt is the
+            # only place left that Prism does not embed.
             system_prompt += "\n\n" + dynamic_block
             if prompt_split and not _fits_embedder:
-                logger.info(
-                    "[V3Runner] %s: dynamic block (~%d tok) would overflow Prism's "
-                    "%d-token memory embedder — routing to system prompt "
-                    "(KV-cache reuse skipped for this call).",
-                    agent_name, _projected_user_chars // 4, _EMBED_TOKEN_LIMIT,
+                logger.warning(
+                    "[V3Runner] %s: non-sheddable context (~%d tok) still exceeds "
+                    "Prism's %d-token memory embedder after shedding %d section(s) "
+                    "— routing to system prompt (KV-cache reuse skipped).",
+                    agent_name, (_fixed_chars + len(dynamic_block)) // 3,
+                    _EMBED_TOKEN_LIMIT, len(shed),
                 )
 
         if tool_whitelist:
@@ -353,6 +440,17 @@ async def run_v3_agent(
 
         prism_overrides = desk.cycle_metadata.get("prism_overrides", {})
 
+        # Reserve output space from what the assembled payload actually leaves,
+        # instead of asking for a flat 8192 regardless of input size. The tool
+        # schemas are counted too — they are the largest fixed cost on a
+        # tool-enabled agent and were invisible to the old constant.
+        safe_max_tokens = _safe_max_tokens(
+            agent_name=agent_name,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tool_whitelist=tool_whitelist,
+        )
+
         result = await asyncio.wait_for(
             run_agent(
                 agent_name=agent_name,
@@ -361,7 +459,7 @@ async def run_v3_agent(
                 bot_id=bot_id,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                max_tokens=8192,
+                max_tokens=safe_max_tokens,
                 enable_tools=bool(tool_whitelist),
                 model_override=model_override,
                 prism_overrides=prism_overrides,
@@ -405,6 +503,20 @@ async def run_v3_agent(
                 agent_name, desk.ticker, len(final_text),
             )
             try:
+                repair_prompt = (
+                    f"{user_prompt}\n\n"
+                    f"## PREVIOUS ATTEMPT (UNPARSEABLE)\n"
+                    f"Your previous reply could not be parsed as the "
+                    f"required artifact:\n\n{final_text[:2000]}\n\n"
+                    f"Do NOT call any tools — you have none available "
+                    f"now. Using the analysis you already performed, "
+                    f"reply with ONLY the '{artifact_type}' JSON "
+                    f"object. Start with '{{' and end with '}}'. "
+                    f"No markdown fences, no commentary.\n"
+                )
+                # Measured separately: this prompt carries the failed attempt
+                # back in (so it is larger), but runs tool-less (so the schemas
+                # are gone). Reusing the first call's budget would be wrong twice.
                 repair_result = await asyncio.wait_for(
                     run_agent(
                         agent_name=agent_name,
@@ -412,18 +524,13 @@ async def run_v3_agent(
                         cycle_id=cycle_id,
                         bot_id=bot_id,
                         system_prompt=system_prompt,
-                        user_prompt=(
-                            f"{user_prompt}\n\n"
-                            f"## PREVIOUS ATTEMPT (UNPARSEABLE)\n"
-                            f"Your previous reply could not be parsed as the "
-                            f"required artifact:\n\n{final_text[:2000]}\n\n"
-                            f"Do NOT call any tools — you have none available "
-                            f"now. Using the analysis you already performed, "
-                            f"reply with ONLY the '{artifact_type}' JSON "
-                            f"object. Start with '{{' and end with '}}'. "
-                            f"No markdown fences, no commentary.\n"
+                        user_prompt=repair_prompt,
+                        max_tokens=_safe_max_tokens(
+                            agent_name=agent_name,
+                            system_prompt=system_prompt,
+                            user_prompt=repair_prompt,
+                            tool_whitelist=None,
                         ),
-                        max_tokens=8192,
                         enable_tools=False,
                         model_override=model_override,
                         prism_overrides=prism_overrides,

@@ -2303,9 +2303,13 @@ CREATE TABLE IF NOT EXISTS failure_buckets (
     run_id              TEXT,
     bucket_type         TEXT, -- skipped_needed_tool, wrong_tool_selected, etc.
     description         TEXT,
+    -- 'engineering' (a defect worth repairing) | 'market' (a bad trade call)
+    -- | 'unclassified'. The self-healing watchdog acts on 'engineering' ONLY.
+    error_class         TEXT,
     created_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_failure_buckets_run ON failure_buckets(run_id);
+CREATE INDEX IF NOT EXISTS idx_failure_buckets_error_class ON failure_buckets(error_class);
 
 CREATE TABLE IF NOT EXISTS tool_playbook (
     id                  TEXT PRIMARY KEY,

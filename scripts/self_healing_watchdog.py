@@ -2,8 +2,26 @@
 """
 Self-Healing Watchdog Engine
 ============================
-Integrates the Evolution Debate Council and container deployments
-into the trading cycle schedule loop to autonomously heal pipeline errors.
+Diagnoses trading-cycle failures with the Evolution Debate Council and, when
+explicitly authorised, applies the resulting patch.
+
+Two hard limits govern what this can do:
+
+1. MODE (``SELF_HEAL_MODE``, default ``diagnose``). In ``diagnose`` the council
+   runs and its proposed fix is persisted for review, but nothing is written to
+   disk. ``apply`` additionally writes the patch to disk, under probation.
+
+   Neither mode commits, pushes, or redeploys. That used to happen on every run:
+   LLM-authored code could reach production behind nothing but a ``py_compile``
+   check, and ``git add -A`` swept in any unrelated uncommitted work.
+
+2. SCOPE (``repair_scope.is_patchable``). Patches may only touch trading-cycle
+   source. The repair machinery, DB schema, config, deploy scripts, and tests
+   are off-limits regardless of mode.
+
+Recovery does not depend on redeploying: accepted fixes are re-applied on boot
+from ``stable_harnesses``, and ``check_probation_fixes`` rolls back any that
+degrade.
 """
 
 import sys
@@ -23,12 +41,33 @@ from app.cognition.evolution.debate import EvolutionDebateCouncil
 from app.cognition.evolution.deployer import deploy_fix_to_disk
 from app.cognition.evolution.rollback_monitor import check_probation_fixes
 from app.cognition.evolution.target_map import list_available_targets, resolve_target
+from app.cognition.evolution.repair_scope import is_patchable
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("self_healing_watchdog")
+
+# ── Autonomy level ────────────────────────────────────────────────────────────
+# There is deliberately NO mode that redeploys the container. Patches land on
+# disk and are re-applied on boot from `stable_harnesses`; probation checks roll
+# them back if they degrade. Rebuilding and shipping the service stays human.
+MODE_DIAGNOSE = "diagnose"   # propose only — nothing written to disk
+MODE_APPLY = "apply"         # write the patch to disk, under probation + rollback
+_VALID_MODES = (MODE_DIAGNOSE, MODE_APPLY)
+
+
+def get_heal_mode() -> str:
+    """Resolve the autonomy level. Anything unrecognised degrades to diagnose."""
+    raw = (os.getenv("SELF_HEAL_MODE") or MODE_DIAGNOSE).strip().lower()
+    if raw not in _VALID_MODES:
+        logger.warning(
+            "SELF_HEAL_MODE=%r is not one of %s — defaulting to %s.",
+            raw, _VALID_MODES, MODE_DIAGNOSE,
+        )
+        return MODE_DIAGNOSE
+    return raw
 
 NAS_HOST = "10.0.0.16"
 NAS_PORT = "5188"
@@ -218,42 +257,18 @@ def run_syntax_check(file_path: str) -> bool:
         logger.error(f"Syntax compile check failed for {file_path}:\n{e.stderr.decode('utf-8')}")
         return False
 
-def push_git_changes() -> bool:
-    """Push code changes to GitHub."""
-    try:
-        logger.info("Committing and pushing self-healing changes to GitHub...")
-        subprocess.run(["git", "add", "-A"], check=True)
-        # Check if there are changes staged
-        status_res = subprocess.run(["git", "diff", "--cached", "--quiet"])
-        if status_res.returncode == 0:
-            logger.info("No changes to commit/push.")
-            return True
-            
-        subprocess.run(["git", "commit", "-m", "chore: auto-applied self-healing code patch"], check=True)
-        # Dynamically detect active branch
-        branch_res = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, check=True)
-        active_branch = branch_res.stdout.strip() or "master"
-        logger.info(f"Pushing to origin {active_branch}...")
-        subprocess.run(["git", "push", "origin", active_branch], check=True)
-        return True
-    except Exception as e:
-        logger.error(f"Git push failed: {e}")
-        return False
+# NOTE: push_git_changes() and deploy_container_nas() were removed deliberately.
+#
+# The watchdog used to `git add -A` (sweeping in any unrelated uncommitted work),
+# commit, push, and then run `npm run deploy` to rebuild the NAS container — all
+# unattended, gated only by a `py_compile` check. An LLM-authored patch could
+# reach production with no test coverage and no human in the loop.
+#
+# Automated repair now stops at the disk write. Accepted fixes are re-applied on
+# boot from `stable_harnesses` and rolled back by `check_probation_fixes` if they
+# degrade, so recovery never required a redeploy in the first place. Building and
+# shipping an image is a human action — do not reintroduce it here.
 
-def deploy_container_nas() -> bool:
-    """Rebuild and redeploy the NAS container."""
-    try:
-        logger.info("Redeploying NAS container using npm run deploy...")
-        res = subprocess.run(["npm", "run", "deploy"], capture_output=True, text=True)
-        if res.returncode == 0:
-            logger.info("NAS container successfully redeployed.")
-            return True
-        else:
-            logger.error(f"Container deployment failed:\n{res.stderr or res.stdout}")
-            return False
-    except Exception as e:
-        logger.error(f"Failed to execute NAS container deploy: {e}")
-        return False
 
 def run_smoke_test(ticker: str = "AAPL") -> bool:
     """Execute the cycle smoke test script to verify pipeline sanity."""
@@ -316,170 +331,221 @@ def write_healing_report(cycle_id: str, target_name: str, patch_id: str, success
 from app.services.boot_service import BootService
 from app.services.startup_tasks import startup_vllm_discovery
 
+async def heal_once():
+    """One diagnosis pass. Assumes the service context is ALREADY booted.
+
+    Split out from run_healing_cycle so the in-process scheduler can call it:
+    the standalone entrypoint tears the service down in a `finally`, which would
+    kill the live DB pool and scheduler if invoked from inside the running app.
+    """
+    mode = get_heal_mode()
+    logger.info("Self-healing mode: %s", mode)
+    logger.info("=" * 60)
+    logger.info("INSPECTING PROBATIONARY FIXES")
+    logger.info("=" * 60)
+    probation_summary = check_probation_fixes(current_cycle_id="current")
+    logger.info(f"Probation summary: {probation_summary}")
+
+    cycle_id, status, error, phase = get_active_cycle()
+    logger.info(f"Active Cycle ID: {cycle_id} | Status: {status} | Phase: {phase}")
+        
+    if status != "error":
+        # Check if there are any worker crashes logged in the pipeline_events
+        logger.info("Cycle status is not 'error'. Checking recent pipeline events for crashes...")
+        error_events = get_latest_error_events(cycle_id)
+        if not error_events:
+            logger.info("No active pipeline event crashes found. System healthy.")
+            return
+        # Use the latest error event
+        crash_event = error_events[0]
+        error_msg = crash_event["detail"]
+        logger.warning(f"Detected crash event in {crash_event['phase']}/{crash_event['step']}: {error_msg}")
+    else:
+        error_msg = error
+        logger.warning(f"Cycle in ERROR state: {error_msg}")
+
+    if not cycle_id:
+        logger.info("No active cycle found. Skipping self-healing.")
+        return
+
+    # Fetch logs from the NAS to get structured stack trace
+    logs_jsonl = fetch_nas_cycle_logs(cycle_id)
+        
+    # ── 1. Diagnose: Find traceback in JSONL lines ──
+    traceback_text = ""
+    target_info = None
+        
+    if logs_jsonl:
+        for line in reversed(logs_jsonl.splitlines()):
+            if not line.strip():
+                continue
+            try:
+                log_data = json.loads(line)
+                payload = log_data.get("payload", {})
+                if isinstance(payload, dict) and "stack_trace" in payload:
+                    traceback_text = payload["stack_trace"]
+                    logger.info("Found stack trace in cycle JSONL logs!")
+                    target_info = parse_traceback_to_target(traceback_text)
+                    if target_info:
+                        break
+            except Exception:
+                pass
+
+    # Fallback to direct text scanning if stack trace is not found in JSONL
+    if not target_info:
+        logger.info("Traceback mapping failed or not found. Falling back to keyword search on error message...")
+        fallback = detect_target_from_error(error_msg)
+        if fallback:
+            target_type, target_name = fallback
+            res = resolve_target(target_type, target_name)
+            if res.get("exists"):
+                target_info = {
+                    "target_type": target_type,
+                    "target_name": target_name,
+                    "file_path": res["file_path"],
+                    "relative_path": res["relative_path"]
+                }
+
+    if not target_info:
+        logger.error(f"Could not map error to any evolutionary code target. Error message: {error_msg}")
+        return
+
+    target_type = target_info["target_type"]
+    target_name = target_info["target_name"]
+    logger.warning(f"Target mapped successfully: {target_type}/{target_name} ({target_info['relative_path']})")
+
+    # ── 2. Loop termination safeguard: consecutive failures check ──
+    if has_consecutive_failures(target_type, target_name):
+        logger.critical(
+            f"⛔ HALTING SELF-HEALING: Target {target_type}/{target_name} has failed 2 consecutive fixes. Escalating to human."
+        )
+        write_healing_report(
+            cycle_id, target_name, "N/A", False,
+            "Self-healing halted due to 2 consecutive failed attempts. Intervention required."
+        )
+        return
+
+    # ── 3. Generate Patch via Debate Council ──
+    logger.info("Triggering Evolution Debate Council...")
+        
+    # Pull historical fixes context for this target name
+    history_context = get_historical_fixes_context(target_name)
+    issue_desc = f"EXCEPTION / ERROR DETAIL:\n{error_msg}\n\nTRACEBACK:\n{traceback_text or 'Not available'}"
+    if history_context:
+        issue_desc += f"\n\n{history_context}"
+        logger.info("Injected historical regression memory context into the debate coordinator prompt.")
+
+    council = EvolutionDebateCouncil()
+    debate_res = await council.run_debate(
+        cycle_id=cycle_id,
+        target_type=target_type,
+        target_name=target_name,
+        issue_description=issue_desc
+    )
+
+    if not debate_res or debate_res.get("status") != "pending":
+        logger.error(f"Debate Council rejected proposed patches or failed. Status: {debate_res.get('status') if debate_res else 'None'}")
+        return
+
+    fix_id = debate_res["fix_id"]
+
+    # ── 3b. Scope gate: trading-cycle source only ──
+    # Checked after the council proposes and before anything touches disk,
+    # so an out-of-scope proposal is recorded and refused rather than applied.
+    target_rel = target_info.get("relative_path", "")
+    allowed, scope_reason = is_patchable(target_rel)
+    if not allowed:
+        logger.critical(
+            "⛔ REFUSING PATCH: %s is outside the self-healing scope (%s). "
+            "Fix %s left pending for human review.",
+            target_rel, scope_reason, fix_id,
+        )
+        with get_db() as db:
+            db.execute(
+                "UPDATE pending_evolution_fixes SET status = 'rejected', "
+                "failure_reason = %s WHERE id = %s",
+                [f"Out of self-healing scope: {scope_reason}", fix_id],
+            )
+        write_healing_report(
+            cycle_id, target_name, fix_id, False,
+            f"Patch refused — {target_rel} is outside the trading-cycle "
+            f"repair scope ({scope_reason}). Needs a human.",
+        )
+        return
+
+    # ── 4. Apply Patch to Disk (mode-gated) ──
+    if mode == MODE_DIAGNOSE:
+        logger.info(
+            "🔍 SELF_HEAL_MODE=diagnose — fix %s proposed for %s and left "
+            "pending. Nothing written to disk. Set SELF_HEAL_MODE=apply to "
+            "let the watchdog apply it.",
+            fix_id, target_rel,
+        )
+        write_healing_report(
+            cycle_id, target_name, fix_id, True,
+            "Diagnosed and proposed a patch (diagnose mode — not applied).",
+        )
+        return
+
+    logger.info(f"Approved fix ID: {fix_id}. Applying patch locally...")
+    deploy_res = deploy_fix_to_disk(fix_id)
+    if "error" in deploy_res:
+        logger.error(f"Deployment to local disk failed: {deploy_res['error']}")
+        return
+    logger.info(f"Patch deployed locally. Backup saved at {deploy_res.get('backup_path')}")
+
+    # ── 4b. Syntax Compile Check ──
+    file_path = deploy_res.get("file_path")
+    if file_path and file_path.endswith(".py"):
+        if not run_syntax_check(file_path):
+            logger.error("🔴 Syntax compile check FAILED for the proposed patch. Rolling back to backup immediately.")
+            from app.cognition.evolution.deployer import rollback_fix
+            rollback_fix(fix_id)
+            with get_db() as db:
+                db.execute(
+                    "UPDATE pending_evolution_fixes SET status = 'rejected', failure_reason = %s WHERE id = %s",
+                    ["SyntaxError: Proposed patch failed syntax compile check", fix_id]
+                )
+            return
+        logger.info("🟢 Syntax compile check passed for the proposed patch.")
+
+    # ── 5. Verification & Resume ──
+    # No git push and no container rebuild: the patch is live on disk for
+    # this process, will be re-applied on boot from `stable_harnesses` if it
+    # proves out, and `check_probation_fixes` rolls it back if it degrades.
+    # Shipping a new container image remains a human decision.
+    smoke_pass = run_smoke_test(ticker="AAPL")
+    if smoke_pass:
+        logger.info("🟢 Smoke test passed! Resuming cycle...")
+        trigger_cycle_resume()
+        write_healing_report(
+            cycle_id, target_name, fix_id, True,
+            "Debate-approved patch applied to trading-cycle source and verified "
+            "via smoke test. On probation; not committed or deployed."
+        )
+    else:
+        logger.error("🔴 Smoke test FAILED after applying the fix. The fix will remain in probation or rollback on next check.")
+        write_healing_report(
+            cycle_id, target_name, fix_id, False,
+            "Patch applied but post-deploy smoke test failed. Fix remains in probation."
+        )
+
+
 async def run_healing_cycle():
+    """Standalone entrypoint: boots its own service context, then tears it down.
+
+    Only for running this file directly. In-process callers (the scheduler) must
+    use `heal_once()` — the shutdown in the `finally` below would otherwise kill
+    the live DB pool and scheduler of the running service.
+    """
     logger.info("Initializing BootService and vLLM discovery...")
     await BootService.startup()
     try:
         await startup_vllm_discovery()
-
-        logger.info("=" * 60)
-        logger.info("INSPECTING PROBATIONARY FIXES")
-        logger.info("=" * 60)
-        probation_summary = check_probation_fixes(current_cycle_id="current")
-        logger.info(f"Probation summary: {probation_summary}")
-
-        cycle_id, status, error, phase = get_active_cycle()
-        logger.info(f"Active Cycle ID: {cycle_id} | Status: {status} | Phase: {phase}")
-        
-        if status != "error":
-            # Check if there are any worker crashes logged in the pipeline_events
-            logger.info("Cycle status is not 'error'. Checking recent pipeline events for crashes...")
-            error_events = get_latest_error_events(cycle_id)
-            if not error_events:
-                logger.info("No active pipeline event crashes found. System healthy.")
-                return
-            # Use the latest error event
-            crash_event = error_events[0]
-            error_msg = crash_event["detail"]
-            logger.warning(f"Detected crash event in {crash_event['phase']}/{crash_event['step']}: {error_msg}")
-        else:
-            error_msg = error
-            logger.warning(f"Cycle in ERROR state: {error_msg}")
-
-        if not cycle_id:
-            logger.info("No active cycle found. Skipping self-healing.")
-            return
-
-        # Fetch logs from the NAS to get structured stack trace
-        logs_jsonl = fetch_nas_cycle_logs(cycle_id)
-        
-        # ── 1. Diagnose: Find traceback in JSONL lines ──
-        traceback_text = ""
-        target_info = None
-        
-        if logs_jsonl:
-            for line in reversed(logs_jsonl.splitlines()):
-                if not line.strip():
-                    continue
-                try:
-                    log_data = json.loads(line)
-                    payload = log_data.get("payload", {})
-                    if isinstance(payload, dict) and "stack_trace" in payload:
-                        traceback_text = payload["stack_trace"]
-                        logger.info("Found stack trace in cycle JSONL logs!")
-                        target_info = parse_traceback_to_target(traceback_text)
-                        if target_info:
-                            break
-                except Exception:
-                    pass
-
-        # Fallback to direct text scanning if stack trace is not found in JSONL
-        if not target_info:
-            logger.info("Traceback mapping failed or not found. Falling back to keyword search on error message...")
-            fallback = detect_target_from_error(error_msg)
-            if fallback:
-                target_type, target_name = fallback
-                res = resolve_target(target_type, target_name)
-                if res.get("exists"):
-                    target_info = {
-                        "target_type": target_type,
-                        "target_name": target_name,
-                        "file_path": res["file_path"],
-                        "relative_path": res["relative_path"]
-                    }
-
-        if not target_info:
-            logger.error(f"Could not map error to any evolutionary code target. Error message: {error_msg}")
-            return
-
-        target_type = target_info["target_type"]
-        target_name = target_info["target_name"]
-        logger.warning(f"Target mapped successfully: {target_type}/{target_name} ({target_info['relative_path']})")
-
-        # ── 2. Loop termination safeguard: consecutive failures check ──
-        if has_consecutive_failures(target_type, target_name):
-            logger.critical(
-                f"⛔ HALTING SELF-HEALING: Target {target_type}/{target_name} has failed 2 consecutive fixes. Escalating to human."
-            )
-            write_healing_report(
-                cycle_id, target_name, "N/A", False,
-                "Self-healing halted due to 2 consecutive failed attempts. Intervention required."
-            )
-            return
-
-        # ── 3. Generate Patch via Debate Council ──
-        logger.info("Triggering Evolution Debate Council...")
-        
-        # Pull historical fixes context for this target name
-        history_context = get_historical_fixes_context(target_name)
-        issue_desc = f"EXCEPTION / ERROR DETAIL:\n{error_msg}\n\nTRACEBACK:\n{traceback_text or 'Not available'}"
-        if history_context:
-            issue_desc += f"\n\n{history_context}"
-            logger.info("Injected historical regression memory context into the debate coordinator prompt.")
-
-        council = EvolutionDebateCouncil()
-        debate_res = await council.run_debate(
-            cycle_id=cycle_id,
-            target_type=target_type,
-            target_name=target_name,
-            issue_description=issue_desc
-        )
-
-        if not debate_res or debate_res.get("status") != "pending":
-            logger.error(f"Debate Council rejected proposed patches or failed. Status: {debate_res.get('status') if debate_res else 'None'}")
-            return
-
-        fix_id = debate_res["fix_id"]
-        logger.info(f"Approved fix ID: {fix_id}. Applying patch locally...")
-
-        # ── 4. Apply Patch to Disk ──
-        deploy_res = deploy_fix_to_disk(fix_id)
-        if "error" in deploy_res:
-            logger.error(f"Deployment to local disk failed: {deploy_res['error']}")
-            return
-        logger.info(f"Patch deployed locally. Backup saved at {deploy_res.get('backup_path')}")
-
-        # ── 4b. Syntax Compile Check ──
-        file_path = deploy_res.get("file_path")
-        if file_path and file_path.endswith(".py"):
-            if not run_syntax_check(file_path):
-                logger.error("🔴 Syntax compile check FAILED for the proposed patch. Rolling back to backup immediately.")
-                from app.cognition.evolution.deployer import rollback_fix
-                rollback_fix(fix_id)
-                with get_db() as db:
-                    db.execute(
-                        "UPDATE pending_evolution_fixes SET status = 'rejected', failure_reason = %s WHERE id = %s",
-                        ["SyntaxError: Proposed patch failed syntax compile check", fix_id]
-                    )
-                return
-            logger.info("🟢 Syntax compile check passed for the proposed patch.")
-
-        # ── 5. Git Push and NAS Re-deploy ──
-        if not push_git_changes():
-            logger.error("Git push of evolutionary fix failed!")
-            return
-
-        if not deploy_container_nas():
-            logger.error("NAS container redeployment failed!")
-            return
-
-        # ── 6. Verification & Resume ──
-        smoke_pass = run_smoke_test(ticker="AAPL")
-        if smoke_pass:
-            logger.info("🟢 Smoke test passed post-deploy! Resuming cycle...")
-            trigger_cycle_resume()
-            write_healing_report(
-                cycle_id, target_name, fix_id, True,
-                "Debate approved patch successfully deployed, git pushed, container rebuilt on NAS, and verified via smoke test."
-            )
-        else:
-            logger.error("🔴 Smoke test FAILED after applying the fix. The fix will remain in probation or rollback on next check.")
-            write_healing_report(
-                cycle_id, target_name, fix_id, False,
-                "Debate approved patch was deployed, but post-deploy smoke test failed. Fix remains in probation."
-            )
+        return await heal_once()
     finally:
         await BootService.shutdown()
+
 
 if __name__ == "__main__":
     asyncio.run(run_healing_cycle())

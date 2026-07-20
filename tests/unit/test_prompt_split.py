@@ -106,6 +106,89 @@ async def test_legacy_layout_when_split_disabled(monkeypatch):
     assert "MARKET DATA BRIEFING" not in captured[0]["user_prompt"]
 
 
+def _desk_with_oversized_context(cycle_id: str) -> SharedDesk:
+    """A desk whose dynamic block cannot fit Prism's 2048-token memory embedder."""
+    desk = SharedDesk(ticker="TEST", cycle_id=cycle_id)
+    desk.cycle_metadata = {
+        "ticker": "TEST",
+        "agent_locale": "default",
+        # Non-sheddable core, deliberately small so shedding CAN succeed.
+        "data_report": "Price data: TEST at $101.",
+        # Sheddable, and each is large enough to force the overflow.
+        "memory_context": "M" * 2000,
+        "previous_desk_context": "P" * 2000,
+        "portfolio_context": "F" * 2000,
+        "directives_context": "D" * 2000,
+    }
+    return desk
+
+
+@pytest.mark.asyncio
+async def test_oversized_context_sheds_instead_of_relocating():
+    """Overflow must DROP low-priority sections, not move them to the system prompt.
+
+    The old behaviour appended the whole oversized block to the system prompt,
+    which kept every token in the payload (the model still received all of it)
+    and silently defeated prefix caching. Only the embed error was avoided.
+    """
+    captured = []
+
+    async def _capture_run_agent(**kwargs):
+        captured.append(kwargs)
+        return _fake_run_agent_result()
+
+    with patch("app.agents.base_agent.run_agent", new=AsyncMock(side_effect=_capture_run_agent)):
+        desk = _desk_with_oversized_context("cycle-big")
+        await run_v3_agent(
+            desk=desk, agent_module=_FakeAgentModule, cycle_id="cycle-big", bot_id="b1",
+        )
+
+    sys_prompt = captured[0]["system_prompt"]
+    user_prompt = captured[0]["user_prompt"]
+
+    # The system prompt stays pristine — no relocation, so prefix caching survives.
+    assert sys_prompt == _FakeAgentModule.SYSTEM_PROMPT
+
+    # The non-sheddable core survived...
+    assert "MARKET DATA BRIEFING FOR THIS CYCLE" in user_prompt
+    # ...and the lowest-priority sections were actually dropped, not moved.
+    assert "Past Cycle Memory" not in user_prompt
+    assert "Past Cycle Memory" not in sys_prompt
+
+    # The payload genuinely shrank below the embedder budget (2048 - 400) * 3.
+    assert len(user_prompt) < (2048 - 400) * 3
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_is_measured_not_constant():
+    """max_tokens must come from context_gate, not the old hardcoded 8192."""
+    captured = []
+
+    async def _capture_run_agent(**kwargs):
+        captured.append(kwargs)
+        return _fake_run_agent_result()
+
+    with patch("app.agents.base_agent.run_agent", new=AsyncMock(side_effect=_capture_run_agent)):
+        desk = _desk_with_dynamic_context("cycle-budget")
+        await run_v3_agent(
+            desk=desk, agent_module=_FakeAgentModule, cycle_id="cycle-budget", bot_id="b1",
+        )
+
+    max_tokens = captured[0]["max_tokens"]
+    # Small prompt + no tools → the gate should allow the full requested ceiling.
+    assert max_tokens == 8192
+
+    # And a payload large enough to eat the window must reduce it.
+    from app.v3.agent_runner import _safe_max_tokens
+    squeezed = _safe_max_tokens(
+        agent_name="v3_junior_analyst",
+        system_prompt="x" * 400_000,   # ~100k tokens against a 128k default window
+        user_prompt="y" * 40_000,
+        tool_whitelist=None,
+    )
+    assert squeezed < 8192
+
+
 def test_handoff_brief_is_compact():
     desk = SharedDesk(ticker="TEST", cycle_id="c1")
     desk.desk_note = {

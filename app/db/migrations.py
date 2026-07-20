@@ -80,6 +80,10 @@ def run_migrations(conn):
     # ── Cycle schedules: one-shot at an exact datetime (schedule_type='once')
     _safe_add_column(conn, "cycle_schedules", "run_at", "TIMESTAMPTZ")
 
+    # ── Failure taxonomy: separate harness defects from bad market calls so the
+    #    self-healing watchdog never tries to "repair" a losing trade.
+    _safe_add_column(conn, "failure_buckets", "error_class", "TEXT")
+
     # ── Youtube
     _safe_add_column(conn, "youtube_transcripts", "thumbnail_url", "TEXT")
     _safe_add_column(conn, "youtube_transcripts", "summary", "TEXT")

@@ -3,6 +3,7 @@ Scheduler Service — Manages APScheduler for automated cycle runs.
 """
 
 import asyncio
+import os
 import uuid
 import json
 import logging
@@ -611,6 +612,29 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register background stop-loss: %s", e
                 )
 
+            # ── Self-healing watchdog (hourly, diagnose-only by default) ──
+            # Previously this existed as a script nothing ever called: no
+            # scheduler wiring, no importer. Engineering failures sat in
+            # pipeline_state.error until a human noticed.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_self_healing,
+                    trigger=IntervalTrigger(hours=1, timezone=local_tz),
+                    id="self_healing_watchdog",
+                    replace_existing=True,
+                    misfire_grace_time=1800,
+                    coalesce=True,
+                    max_instances=1,   # a repair pass must never overlap itself
+                )
+                logger.info(
+                    "[SCHEDULER] Registered self-healing watchdog (interval: 1h, mode=%s)",
+                    os.getenv("SELF_HEAL_MODE", "diagnose"),
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register self-healing watchdog: %s", e
+                )
+
             # ── Equation Lab: nightly strategy R&D (8 PM Pacific, after close) ──
             # Compiles the most-used unbacktestable equation stubs from the
             # tournament into real signal code and backtests them, so the jury
@@ -882,6 +906,35 @@ class SchedulerService:
                     )
         except Exception as e:
             logger.error("[SCHEDULER] Background stop-loss check failed: %s", e)
+
+    @staticmethod
+    async def _run_self_healing():
+        """Hourly engineering-failure diagnosis.
+
+        Defaults to diagnose-only (SELF_HEAL_MODE): the debate council proposes a
+        patch and it is persisted for review, but nothing is written to disk and
+        nothing is ever committed, pushed, or redeployed.
+
+        Calls heal_once(), NOT run_healing_cycle() — the latter is the standalone
+        entrypoint and shuts the service down when it finishes.
+        """
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        try:
+            # scripts/ is not a package; put it on the path to import the watchdog.
+            _scripts = str(_Path(__file__).resolve().parents[2] / "scripts")
+            if _scripts not in _sys.path:
+                _sys.path.insert(0, _scripts)
+            from self_healing_watchdog import heal_once
+
+            logger.info(
+                "[SCHEDULER] Self-healing sweep starting (mode=%s)",
+                os.getenv("SELF_HEAL_MODE", "diagnose"),
+            )
+            await heal_once()
+        except Exception as e:
+            logger.error("[SCHEDULER] Self-healing sweep failed: %s", e)
 
     @staticmethod
     async def _run_equation_lab():

@@ -97,26 +97,59 @@ def evaluate_trace(trace: TraceRecord) -> Dict[str, Any]:
         "final_score": final_score
     }
 
+# Which failure buckets describe a DEFECT IN THE SYSTEM versus a bad market call.
+#
+# Both kinds used to land in failure_buckets with no discriminator, so anything
+# reading that table could not tell "the harness broke" from "the trade lost
+# money". The self-healing watchdog must only ever act on the former — patching
+# source code in response to a losing trade is not a repair.
+#
+# `wrong_tool_selected` is deliberately in NEITHER set: it is the catch-all
+# returned when the score is low and nothing else matched, so it is too noisy to
+# justify an automated code change.
+ENGINEERING_BUCKETS = frozenset({"over_research", "bad_arguments", "loop_drift"})
+MARKET_BUCKETS = frozenset({"hold_bias"})
+
+ERROR_CLASS_ENGINEERING = "engineering"
+ERROR_CLASS_MARKET = "market"
+ERROR_CLASS_UNCLASSIFIED = "unclassified"
+
+
+def classify_error_class(bucket: str | None) -> str | None:
+    """Map a failure bucket to the class of problem it represents.
+
+    Returns None for a passing run. Callers that trigger repair work MUST gate
+    on ``ERROR_CLASS_ENGINEERING``.
+    """
+    if bucket is None:
+        return None
+    if bucket in ENGINEERING_BUCKETS:
+        return ERROR_CLASS_ENGINEERING
+    if bucket in MARKET_BUCKETS:
+        return ERROR_CLASS_MARKET
+    return ERROR_CLASS_UNCLASSIFIED
+
+
 def classify_failure(trace: TraceRecord, score: Dict[str, Any]) -> str | None:
     """Classifies runs with < 70 score into failure buckets."""
     if score["final_score"] >= 70.0:
         return None
-        
+
     if score["completion_score"] == 0 and "budget_exhausted" in (trace.stop_reason or ""):
         return "over_research"
-        
+
     action = str(trace.decision_action or "").upper()
-    
+
     if action == "HOLD" and trace.decision_confidence >= 60 and abs(trace.pnl_pct) > 2.0:
         return "hold_bias"
-        
+
     tool_summary = str(trace.tool_result_summary or "").lower()
     if "error" in tool_summary or "invalid" in tool_summary:
         return "bad_arguments"
-        
+
     if (trace.loop_step or 0) > 12:
         return "loop_drift"
-        
+
     return "wrong_tool_selected"
 
 def process_and_store_trace(trace: TraceRecord):
@@ -139,9 +172,13 @@ def process_and_store_trace(trace: TraceRecord):
             
             if bucket:
                 db.execute(
-                    """INSERT INTO failure_buckets (id, run_id, bucket_type, description)
-                       VALUES (%s, %s, %s, %s)""",
-                    [str(uuid.uuid4()), trace.run_id, bucket, f"Auto-classified based on score {score['final_score']}"]
+                    """INSERT INTO failure_buckets (id, run_id, bucket_type, description, error_class)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    [
+                        str(uuid.uuid4()), trace.run_id, bucket,
+                        f"Auto-classified based on score {score['final_score']}",
+                        classify_error_class(bucket),
+                    ]
                 )
     except Exception as e:
         logger.error("Failed to store eval results: %s", e)

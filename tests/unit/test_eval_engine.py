@@ -116,3 +116,50 @@ def test_classify_failure_wrong_tool():
     score = evaluate_trace(trace)
     bucket = classify_failure(trace, score)
     assert bucket == "wrong_tool_selected"
+
+
+# ── error_class discriminator ──────────────────────────────────────────────
+# Harness defects and bad market calls both land in failure_buckets. Only the
+# former may trigger an automated code repair.
+
+def test_error_class_separates_engineering_from_market():
+    from app.autoresearch.eval_engine import (
+        classify_error_class,
+        ERROR_CLASS_ENGINEERING,
+        ERROR_CLASS_MARKET,
+        ERROR_CLASS_UNCLASSIFIED,
+    )
+
+    assert classify_error_class("over_research") == ERROR_CLASS_ENGINEERING
+    assert classify_error_class("bad_arguments") == ERROR_CLASS_ENGINEERING
+    assert classify_error_class("loop_drift") == ERROR_CLASS_ENGINEERING
+
+    # A losing HOLD is a market outcome — patching source code cannot fix it.
+    assert classify_error_class("hold_bias") == ERROR_CLASS_MARKET
+
+    # The catch-all bucket is too noisy to justify an automated code change.
+    assert classify_error_class("wrong_tool_selected") == ERROR_CLASS_UNCLASSIFIED
+
+    # A passing run has no class at all.
+    assert classify_error_class(None) is None
+
+
+def test_hold_bias_never_triggers_repair():
+    """Regression guard for the conflation this discriminator exists to fix."""
+    from app.autoresearch.eval_engine import classify_error_class, ERROR_CLASS_ENGINEERING
+
+    trace = TraceRecord(
+        id="test-hold",
+        run_id="run-hold",
+        stop_reason="blocked",   # scores < 70 so a bucket is actually assigned
+        tool_result_summary="Some data",
+        decision_action="HOLD",
+        decision_confidence=80,
+        pnl_pct=-9.5,            # a real loss, but not a code defect
+        tokens_before=0,
+        tokens_after=1000,
+    )
+    score = evaluate_trace(trace)
+    bucket = classify_failure(trace, score)
+    assert bucket == "hold_bias"
+    assert classify_error_class(bucket) != ERROR_CLASS_ENGINEERING
