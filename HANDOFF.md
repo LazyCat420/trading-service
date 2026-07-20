@@ -1,3 +1,51 @@
+# HANDOFF — SkillOpt: per-agent skill docs learned from cycle outcomes
+
+**Date:** 2026-07-20 (follows the grounded-extraction wave below)
+**Deployed:** trading-service `7b4bd86` (+ test commit after) → synology, verified live
+**Tests:** 1025 unit passing (1005 prior + 20 new in `tests/unit/test_skill_optimizer.py`)
+
+## What shipped
+
+SkillOpt (modeled on microsoft/SkillOpt's propose→validate→commit loop): each of the
+7 target V3 agents (`v3_junior_analyst`, `v3_fundamental_analyst`, `v3_quant_analyst`,
+`v3_bull_agent`, `v3_bear_agent`, `v3_regime_engine`, `v3_board_of_directors`) gets a
+persistent markdown "skill doc" prepended to its system prompt, mutated once per
+autoresearch run from the cycle reflection.
+
+- **`app/autoresearch/skill_optimizer.py`** — post-cycle mutation. Baseline =
+  confidence-weighted WIN(1)/FLAT(0.5)/LOSS(0) over the last 10 resolved directional
+  `decision_outcomes` (cold-start guard: ≥5 rows; live baseline at deploy was 0.094).
+  One `llm.chat` proposal per agent at `Priority.LOW` (ADD/DELETE/REPLACE/SKIP JSON).
+  Gates: `is_poisoned_response`, meta-instruction-injection regex, 4k-char cap,
+  difflib near-noop check, heuristic score gate (+0.5% over baseline). Rejects are
+  audited to `rejected_skill_edits`. Skips entirely on rule-based/anomalous
+  reflections. Time-boxed: 120s per agent, 420s total. Kill switch:
+  `SKILLOPT_ENABLED=false` (settings/env, defaults on).
+- **`app/autoresearch/skill_loader.py`** — inference-time half. In-process cache with
+  15-min TTL (autoresearch runs in cycle_main; the API server is a separate process
+  that explicit invalidation can't reach). Fail-silent `""` on any error; misses are
+  cached too.
+- **`app/v3/agent_runner.py`** — prepends the prefix right after `SYSTEM_PROMPT` is
+  read. Byte-identical between mutations so vLLM prefix-cache reuse survives.
+- **DB** — `agent_skills` (versioned, one `active` row per agent) +
+  `rejected_skill_edits`; in BOTH `schema_pg.sql` and `migrations.py`, self-contained
+  (schema runs before migrations — nothing references migration-added columns).
+- **`core.py`** — new non-fatal `skill_mutation` phase after the lesson store
+  (`autoresearch_reports.phase` is plain TEXT, no enum to extend).
+
+## Gotchas for the next session
+
+- The validation score is a HEURISTIC (content checks + baseline), not a replay.
+  If skills start encoding noise, tighten `MIN_SCORE_DELTA` or the heuristic in
+  `_simulate_score_with_skill` before touching the LLM prompt.
+- Agent keys must stay the `v3_`-prefixed `AGENT_NAME` strings or loads silently miss.
+- Verified live post-deploy: both tables exist, loader returns `""` cleanly, baseline
+  computes. No cycle has run through skill_mutation yet — check
+  `SELECT * FROM agent_skills` / `rejected_skill_edits` after the next cycle, and
+  `[AUTORESEARCH] SkillOpt:` in the logs for the summary line.
+
+---
+
 # HANDOFF — Grounded news extraction, CriticGate, honest collector stats
 
 **Date:** 2026-07-20 (follows the self-healing wave below)
