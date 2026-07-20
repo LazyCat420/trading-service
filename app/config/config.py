@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     POST_CYCLE_HOUSEKEEPING_TIMEOUT_SECONDS: int = 300
     BOT_ID: str = "lazy-trader-v4"
     COLLECTION_MAX_CONCURRENT: int = 5  # parallel per-ticker scrapers
+    # Cap concurrent per-ticker ANALYSIS pipelines. Each ticker pipeline spawns
+    # several agents that each borrow DB connections (whiteboard, telemetry,
+    # desk/artifact saves); with the pool at max_size=50, running the whole
+    # watchlist at once (35+) exhausts the pool so hard the STOP_CYCLE poller
+    # can't get a connection and the loop deadlocks (2026-07-20). 6 keeps the
+    # concurrent connection demand well under the pool while still parallelizing.
+    MAX_CONCURRENT_TICKERS: int = int(_config.get("MAX_CONCURRENT_TICKERS", "6") or "6")
 
     # Pipeline modes:
     #   "scout"      — wait for all data, run macro scout in parallel, then analyze (recommended)

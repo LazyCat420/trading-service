@@ -1256,11 +1256,33 @@ class PipelineService:
 
                 return result
 
-            # Build tasks and execute concurrently
-            # We use standard asyncio.gather here because the underlying LLM calls
-            # (inside _run_agent_with_circuit_breaker) are globally throttled by the AdaptiveConcurrencyController.
-            # return_exceptions=True ensures one crashed ticker doesn't kill the whole batch.
-            tasks = [_process_ticker(i, t) for i, t in enumerate(tickers)]
+            # Build tasks and execute concurrently, but cap how many per-ticker
+            # pipelines run at once. The LLM calls are globally throttled by the
+            # AdaptiveConcurrencyController, but each ticker pipeline also borrows
+            # several DB connections (whiteboard, telemetry, desk/artifact saves);
+            # fanning out the whole watchlist (35+) at once exhausted the pool so
+            # hard the STOP_CYCLE poller couldn't get a connection and the loop
+            # deadlocked (2026-07-20). A semaphore makes a large watchlist degrade
+            # to waves instead of hanging. return_exceptions=True ensures one
+            # crashed ticker doesn't kill the whole batch.
+            from app.config.config import settings as _cfg
+            _ticker_limit = max(1, getattr(_cfg, "MAX_CONCURRENT_TICKERS", 6) or 6)
+            _ticker_sem = asyncio.Semaphore(_ticker_limit)
+            logger.info(
+                "[PipelineService] Processing %d tickers with concurrency cap %d",
+                len(tickers), _ticker_limit,
+            )
+
+            async def _process_ticker_guarded(i: int, ticker_name: str):
+                # Don't start a queued ticker after a stop was requested.
+                if cls._stop_requested:
+                    return None
+                async with _ticker_sem:
+                    if cls._stop_requested:
+                        return None
+                    return await _process_ticker(i, ticker_name)
+
+            tasks = [_process_ticker_guarded(i, t) for i, t in enumerate(tickers)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for t, r in zip(tickers, results):
                 if isinstance(r, Exception):
