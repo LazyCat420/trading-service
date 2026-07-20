@@ -1,8 +1,18 @@
-import asyncio
-import time
-from collections import defaultdict
-from contextlib import asynccontextmanager
+"""
+Per-domain scraper rate limiting.
 
+The limiter mechanism moved to the SDK (lazycat.ratelimit.KeyedRateLimiter);
+the domain budget table stays here because it is this app's operational
+knowledge, not something to bake into a shared library.
+
+Usage is unchanged:
+    from app.scraper.core.rate_limiter import rate_limiter
+
+    async with rate_limiter.acquire("reddit.com"):
+        response = await client.get(url)
+"""
+
+from lazycat.ratelimit import KeyedRateLimiter
 
 # Requests per second per domain — tune these as you learn each site's limits
 DOMAIN_LIMITS: dict[str, float] = {
@@ -35,35 +45,8 @@ DOMAIN_LIMITS: dict[str, float] = {
 }
 DEFAULT_RATE = 1.0  # 1 req/s for unknown domains
 
+# Singleton instance. DOMAIN_LIMITS is held by reference, so edits to the table
+# above take effect on the next acquire() without rebuilding the limiter.
+rate_limiter = KeyedRateLimiter(rates=DOMAIN_LIMITS, default_rate=DEFAULT_RATE)
 
-class RateLimiter:
-    """Per-domain async rate limiter.
-
-    Usage:
-        async with rate_limiter.acquire("reddit.com"):
-            response = await client.get(url)
-
-    Each domain gets its own lock so requests to different domains
-    don't block each other. The minimum interval between requests
-    to the same domain is 1/rate seconds.
-    """
-
-    def __init__(self):
-        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._last: dict[str, float] = {}
-
-    @asynccontextmanager
-    async def acquire(self, domain: str):
-        rate = DOMAIN_LIMITS.get(domain, DEFAULT_RATE)
-        min_interval = 1.0 / rate
-
-        async with self._locks[domain]:
-            elapsed = time.monotonic() - self._last.get(domain, 0)
-            if elapsed < min_interval:
-                await asyncio.sleep(min_interval - elapsed)
-            self._last[domain] = time.monotonic()
-            yield
-
-
-# Singleton instance
-rate_limiter = RateLimiter()
+__all__ = ["rate_limiter", "DOMAIN_LIMITS", "DEFAULT_RATE"]

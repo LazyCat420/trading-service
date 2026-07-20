@@ -20,32 +20,25 @@ import json
 import re
 import logging
 
+from lazycat import llm_json as _llm_json
+
 logger = logging.getLogger(__name__)
 
 
-def strip_think_tags(text: str, return_think_content: bool = False):
-    """Remove <think>...</think> blocks from LLM responses.
+# ── Generic LLM-JSON helpers now live in the SDK ────────────────────────
+# strip_think_tags / extract_json_str / parse_json_response /
+# parse_json_list_response were extracted to lazycat.llm_json so the other
+# services in this ecosystem stop reimplementing them. They are re-exported
+# here so the ~30 call sites in this app keep working unchanged.
+#
+# Everything trading-specific (placeholder-ticker rejection, the malformed
+# markdown-report parser, parse_trading_decision, fmt_usd, the scrape-artifact
+# helpers) deliberately stays in this module — the SDK takes hooks, not domain
+# knowledge.
 
-    Qwen3 inserts <think> blocks for chain-of-thought reasoning.
-    These must be stripped before parsing the actual response content.
-    If return_think_content is True, returns (cleaned_text, think_block_content)
-    """
-    think_content = ""
-    # Extract think content if requested
-    if return_think_content:
-        match = re.search(r"<think>(.*?)(?:</think>|$)", text, flags=re.DOTALL)
-        if match:
-            think_content = match.group(1).strip()
-
-    if "</think>" in text:
-        cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
-    else:
-        # If unclosed, just remove the <think> tag itself so we don't delete the JSON!
-        cleaned = text.replace("<think>", "").strip()
-
-    if return_think_content:
-        return cleaned, think_content
-    return cleaned
+strip_think_tags = _llm_json.strip_think_tags
+extract_json_str = _llm_json.extract_json_str
+parse_json_list_response = _llm_json.parse_json_list_response
 
 
 def hash_prompt(prompt: str) -> str:
@@ -53,231 +46,43 @@ def hash_prompt(prompt: str) -> str:
     return hashlib.sha256(prompt.encode()).hexdigest()[:16]
 
 
-def extract_json_str(text: str) -> str:
-    """Best-effort extraction of the first JSON object/array as a STRING.
+def _is_placeholder_json(d: dict) -> bool:
+    """True when the model echoed the prompt template instead of answering."""
+    for val in d.values():
+        if isinstance(val, str) and any(
+            p in val for p in ("TICKER1", "TICKER2", "TICKER_NAME", "<TICKER>")
+        ):
+            return True
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, str) and any(
+                    p in item for p in ("TICKER1", "TICKER2", "TICKER_NAME", "<TICKER>")
+                ):
+                    return True
+    return False
 
-    For callers that need the JSON text itself rather than a parsed dict
-    (e.g. DeepEval's wrapper, which json.loads internally and may expect
-    arrays). Strips markdown fences, then returns the earliest balanced
-    {...} or [...] block (string-aware, tries the next opener if one never
-    balances). Returns the input unchanged when nothing better is found.
+
+def _malformed_fallback(cleaned: str) -> dict | None:
+    """Last-resort parser for markdown analysis reports.
+
+    Only accepted when it recovered a decision, matching the previous
+    `fallback_data and "action" in fallback_data` gate.
     """
-    if not text:
-        return text
-    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if m:
-        text = m.group(1).strip()
-    text = text.strip()
-    if text.startswith("{") or text.startswith("["):
-        return text
-    pairs = {"{": "}", "[": "]"}
-    starts = [i for i, ch in enumerate(text) if ch in pairs][:10]
-    for start in starts:
-        opener = text[start]
-        closer = pairs[opener]
-        depth = 0
-        in_str = False
-        esc = False
-        for i in range(start, len(text)):
-            ch = text[i]
-            if esc:
-                esc = False
-                continue
-            if ch == "\\":
-                esc = True
-                continue
-            if ch == '"':
-                in_str = not in_str
-                continue
-            if in_str:
-                continue
-            if ch == opener:
-                depth += 1
-            elif ch == closer:
-                depth -= 1
-                if depth == 0:
-                    return text[start:i + 1]
-    return text
+    fallback_data = parse_malformed_text_response(cleaned)
+    if fallback_data and "action" in fallback_data:
+        return fallback_data
+    return None
 
 
 def parse_json_response(text: str) -> dict:
-    """Extract JSON from LLM response, handling markdown fences and nesting.
+    """Extract JSON from an LLM response.
 
-    Tries (in order):
-        1. Markdown JSON code block (```json ... ```)
-        2. Balanced brace-counting for nested JSON
-        3. Raw text as JSON
-
-    Previously duplicated in:
-        - base_agent.py
-        - debate_engine.py
-
-    Args:
-        text: Raw LLM response text (may contain <think> blocks, markdown, etc.)
-
-    Returns:
-        Parsed dict, or {} if no valid JSON found.
+    Thin wrapper over lazycat.llm_json.parse_json_response supplying this
+    app's placeholder-ticker rejection and markdown-report fallback.
     """
-    cleaned = strip_think_tags(text)
-
-    # Strip __THINK__ streaming markers that may have leaked into pipeline responses.
-    # These come from vllm_client.py's streaming mode and should never appear in
-    # non-streaming chat() responses, but if they do, they kill the JSON parser.
-    if "__THINK__" in cleaned:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "[TEXT_UTILS] __THINK__ marker found in response — stripping before JSON parse. "
-            "This indicates a streaming marker leaked into the pipeline. "
-            "Preview: %s",
-            cleaned[:200],
-        )
-        # Remove lines starting with __THINK__ (they're status markers, not JSON)
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(l for l in lines if not l.strip().startswith("__THINK__"))
-        cleaned = cleaned.strip()
-
-    if not cleaned:
-        raise ValueError(
-            "LLM response is empty after stripping <think> tags (model failed to output JSON)."
-        )
-
-    # Try markdown JSON block first (find all code blocks, non-greedy to avoid capturing across multiple blocks)
-    markdown_candidates = []
-    for match in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL):
-        try:
-            parsed = json.loads(match.group(1))
-            if isinstance(parsed, dict):
-                markdown_candidates.append(parsed)
-        except json.JSONDecodeError:
-            pass
-    
-    def is_placeholder_json(d: dict) -> bool:
-        for val in d.values():
-            if isinstance(val, str) and any(p in val for p in ("TICKER1", "TICKER2", "TICKER_NAME", "<TICKER>")):
-                return True
-            if isinstance(val, list):
-                for item in val:
-                    if isinstance(item, str) and any(p in item for p in ("TICKER1", "TICKER2", "TICKER_NAME", "<TICKER>")):
-                        return True
-        return False
-
-    if markdown_candidates:
-        non_placeholder = [c for c in markdown_candidates if not is_placeholder_json(c)]
-        return non_placeholder[-1] if non_placeholder else markdown_candidates[-1]
-
-    # Find balanced JSON objects using brace counting. Only TOP-LEVEL objects
-    # may become candidates: once a span parses, every opening brace inside it
-    # is skipped. Without this, a valid nested response ends up returning its
-    # last inner sub-dict (the outer object parses first, but the scan keeps
-    # walking into it and [-1] picks the innermost fragment) — which silently
-    # drops the real payload.
-    brace_candidates = []
-    skip_until = -1
-    for start_idx in range(len(cleaned)):
-        if cleaned[start_idx] != "{" or start_idx < skip_until:
-            continue
-        depth = 0
-        for end_idx in range(start_idx, len(cleaned)):
-            if cleaned[end_idx] == "{":
-                depth += 1
-            elif cleaned[end_idx] == "}":
-                depth -= 1
-            if depth == 0:
-                candidate = cleaned[start_idx : end_idx + 1]
-                try:
-                    parsed = json.loads(candidate)
-                    if isinstance(parsed, dict):
-                        brace_candidates.append(parsed)
-                        skip_until = end_idx + 1
-                except json.JSONDecodeError:
-                    pass  # This opening brace didn't work, try next
-                break
-
-    if brace_candidates:
-        non_placeholder = [c for c in brace_candidates if not is_placeholder_json(c)]
-        return non_placeholder[-1] if non_placeholder else brace_candidates[-1]
-
-    # Last resort: try the entire cleaned text
-    try:
-        return json.loads(cleaned)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # Extract malformed text response
-    try:
-        fallback_data = parse_malformed_text_response(cleaned)
-        if fallback_data and "action" in fallback_data:
-            logger.info("[TEXT_UTILS] Successfully extracted malformed text response fields: %s", list(fallback_data.keys()))
-            return fallback_data
-    except Exception as e:
-        logger.debug("[TEXT_UTILS] Fallback text parser failed: %s", e)
-
-    return {}
-
-
-def parse_json_list_response(text: str) -> list:
-    """Extract JSON list from LLM response, handling markdown fences and nesting.
-
-    Tries (in order):
-        1. Markdown JSON code block (```json ... ```) with brackets [ ... ]
-        2. Balanced bracket-counting for nested JSON lists
-        3. Raw text as JSON
-    
-    Args:
-        text: Raw LLM response text (may contain <think> blocks, markdown, etc.)
-
-    Returns:
-        Parsed list, or [] if no valid JSON list found.
-    """
-    cleaned = strip_think_tags(text)
-
-    # Strip __THINK__ streaming markers that may have leaked
-    if "__THINK__" in cleaned:
-        lines = cleaned.split("\n")
-        cleaned = "\n".join(l for l in lines if not l.strip().startswith("__THINK__"))
-        cleaned = cleaned.strip()
-
-    if not cleaned:
-        return []
-
-    # Try markdown JSON block first (find all code blocks, non-greedy)
-    for match in re.finditer(r"```(?:json)?\s*(\[.*?\])\s*```", cleaned, re.DOTALL):
-        try:
-            parsed = json.loads(match.group(1))
-            if isinstance(parsed, list):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
-    # Find balanced JSON lists using bracket counting
-    for start_idx in range(len(cleaned)):
-        if cleaned[start_idx] != "[":
-            continue
-        depth = 0
-        for end_idx in range(start_idx, len(cleaned)):
-            if cleaned[end_idx] == "[":
-                depth += 1
-            elif cleaned[end_idx] == "]":
-                depth -= 1
-            if depth == 0:
-                candidate = cleaned[start_idx : end_idx + 1]
-                try:
-                    parsed = json.loads(candidate)
-                    if isinstance(parsed, list):
-                        return parsed
-                except json.JSONDecodeError:
-                    break  # This opening bracket didn't work, try next
-
-    # Last resort: try the entire cleaned text
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, list):
-            return parsed
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    return []
+    return _llm_json.parse_json_response(
+        text, reject=_is_placeholder_json, fallback=_malformed_fallback
+    )
 
 
 def parse_malformed_text_response(text: str) -> dict:
