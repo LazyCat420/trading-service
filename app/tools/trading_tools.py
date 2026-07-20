@@ -250,11 +250,63 @@ async def get_insider_trades_tool(ticker: str) -> str:
     source="congress",
 )
 async def get_congress_trades_tool(ticker: str) -> str:
+    """Refresh congressional disclosures for a ticker, then return the trades.
+
+    This previously returned only {"trades_collected": N} — an agent asking what
+    Congress bought got a count and no data, which is unusable as research.
+    """
     from app.collectors.congress_collector import collect_trades_for_ticker
+    from app.db.connection import get_db
+
+    ticker = (ticker or "").upper().strip()
+    if not ticker:
+        return json.dumps({"error": "no ticker provided"})
+
+    collected = 0
+    try:
+        # Best-effort refresh; a scrape failure should not block reading what we
+        # already have on record.
+        collected = await collect_trades_for_ticker(ticker)
+    except Exception as e:
+        logger.info("[congress] refresh failed for %s, serving stored rows: %s", ticker, e)
 
     try:
-        res = await collect_trades_for_ticker(ticker)
-        return json.dumps({"status": "success", "trades_collected": res})
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT politician, party, chamber, state, transaction_type,
+                       amount_range, trade_date, disclosure_date, days_to_disclose
+                FROM congress_trades
+                WHERE ticker = %s
+                ORDER BY disclosure_date DESC NULLS LAST
+                LIMIT 40
+                """,
+                (ticker,),
+            ).fetchall()
+
+        return json.dumps(
+            {
+                "status": "success",
+                "ticker": ticker,
+                "trades_collected": collected,
+                "trade_count": len(rows),
+                "trades": [
+                    {
+                        "politician": r[0],
+                        "party": r[1],
+                        "chamber": r[2],
+                        "state": r[3],
+                        "transaction_type": r[4],
+                        "amount_range": r[5],
+                        "trade_date": str(r[6]) if r[6] else None,
+                        "disclosure_date": str(r[7]) if r[7] else None,
+                        "days_to_disclose": r[8],
+                    }
+                    for r in rows
+                ],
+            },
+            default=str,
+        )
     except Exception as e:
         return json.dumps({"error": str(e)})
 

@@ -2,6 +2,7 @@
 Scheduler Service — Manages APScheduler for automated cycle runs.
 """
 
+import asyncio
 import uuid
 import json
 import logging
@@ -645,6 +646,44 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register macro refresh: %s", e)
 
+            # ── Smart money: 13F collection + return recomputation ──
+            # 13F filings are due 45 days after quarter end, so funds land in a
+            # burst through mid-Feb/May/Aug/Nov. We sweep daily during those
+            # months rather than once per quarter — a single quarterly fire that
+            # misses (container restart, EDGAR timeout) would cost a whole
+            # quarter of history. collect_all_funds() had NO caller at all
+            # before this, which is why only 15 of 540 filers had any history.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_13f_collection,
+                    trigger=CronTrigger(month="2,5,8,11", day="14-28", hour=3, minute=0,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="sec_13f_collection",
+                    replace_existing=True,
+                    misfire_grace_time=7200,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered 13F collection (cron: 3:00 AM PT, filing months)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register 13F collection: %s", e)
+
+            # Returns are recomputed nightly: new prices arrive daily, so a
+            # trade scored today with a partial window becomes fully scoreable
+            # later. Idempotent — safe to re-run.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_smart_money_returns,
+                    trigger=CronTrigger(hour=2, minute=0,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="smart_money_returns",
+                    replace_existing=True,
+                    misfire_grace_time=7200,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered smart-money returns recompute (cron: 2:00 AM PT)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register smart-money returns: %s", e)
+
             # ── Morning Trading Cycle (market open: 6:30 AM Pacific = 9:30 AM ET) ──
             pt_tz = pytz.timezone("America/Los_Angeles")
             try:
@@ -869,6 +908,109 @@ class SchedulerService:
             logger.info("[SCHEDULER] Macro refresh: %s market rows", result.get("total", 0))
         except Exception as e:
             logger.error("[SCHEDULER] Market data refresh failed: %s", e)
+
+    @staticmethod
+    async def _run_13f_collection():
+        """Pull 13F holdings for every tracked fund, then seed leads.
+
+        Also injects consensus buys into discovered_tickers so institutional
+        conviction can surface a ticker the watchlist never contained.
+        """
+        try:
+            from app.collectors.sec_collector import collect_all_funds
+
+            result = await collect_all_funds()
+            total = sum(result.values()) if isinstance(result, dict) else 0
+            logger.info("[SCHEDULER] 13F collection: %s holdings rows", total)
+        except Exception as e:
+            logger.error("[SCHEDULER] 13F collection failed: %s", e)
+
+        try:
+            await SchedulerService._inject_smart_money_leads()
+        except Exception as e:
+            logger.error("[SCHEDULER] Smart-money lead injection failed: %s", e)
+
+    @staticmethod
+    async def _run_smart_money_returns():
+        """Recompute real alpha for congress + fund disclosures."""
+        try:
+            from app.analytics.returns_engine import compute_all
+
+            stats = await asyncio.to_thread(compute_all)
+            logger.info("[SCHEDULER] Smart-money returns recomputed: %s", stats)
+        except Exception as e:
+            logger.error("[SCHEDULER] Smart-money returns recompute failed: %s", e)
+
+        try:
+            await SchedulerService._inject_smart_money_leads()
+        except Exception as e:
+            logger.error("[SCHEDULER] Smart-money lead injection failed: %s", e)
+
+    @staticmethod
+    async def _inject_smart_money_leads(days: int = 120, min_buyers: int = 3, limit: int = 25):
+        """Feed consensus smart-money buys into the discovered_tickers inbox.
+
+        13F conviction already reached ticker selection via pipeline_service's
+        Phase 4C, but CONGRESS did not — despite being by far the deeper dataset
+        (30k disclosures vs 8k holdings rows). Both cohorts now land here, each
+        under its own source label so downstream scoring can weight them apart.
+        """
+        from app.db.connection import get_db as _get_db
+
+        def _work() -> int:
+            with _get_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT s.ticker,
+                           s.actor_type,
+                           COUNT(DISTINCT s.actor_id) AS buyers,
+                           COUNT(DISTINCT s.actor_id) FILTER (
+                               WHERE p.rankable AND p.avg_alpha > 0
+                           ) AS proven_buyers,
+                           MAX(s.event_date) AS latest
+                    FROM smart_money_trade_scores s
+                    LEFT JOIN smart_money_performance p
+                      ON p.actor_type = s.actor_type
+                     AND p.actor_id   = s.actor_id
+                     AND p.horizon    = '1y'
+                    WHERE s.direction = 'buy'
+                      AND s.event_date >= CURRENT_DATE - MAKE_INTERVAL(days => %s)
+                    GROUP BY s.ticker, s.actor_type
+                    HAVING COUNT(DISTINCT s.actor_id) >= %s
+                    ORDER BY proven_buyers DESC, buyers DESC
+                    LIMIT %s
+                    """,
+                    (days, min_buyers, limit),
+                ).fetchall()
+
+                written = 0
+                for ticker, actor_type, buyers, proven, latest in rows:
+                    source = "congress" if actor_type == "congress" else "institutional"
+                    # Score leans on buyers WITH a proven track record — consensus
+                    # among actors who actually beat SPY is a stronger lead than
+                    # consensus among actors we cannot score at all.
+                    score = float(buyers) + (float(proven or 0) * 2.0)
+                    context = (
+                        f"{buyers} distinct {actor_type} buyers "
+                        f"({proven or 0} with positive proven 1y alpha); "
+                        f"latest disclosure {latest}"
+                    )
+                    db.execute(
+                        """
+                        INSERT INTO discovered_tickers (ticker, source, score, context, discovered_at)
+                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (ticker, source) DO UPDATE SET
+                            score = EXCLUDED.score,
+                            context = EXCLUDED.context,
+                            discovered_at = CURRENT_TIMESTAMP
+                        """,
+                        (ticker, source, score, context),
+                    )
+                    written += 1
+                return written
+
+        count = await asyncio.to_thread(_work)
+        logger.info("[SCHEDULER] Smart-money leads injected: %s tickers", count)
 
     @staticmethod
     async def _run_market_open_cycle():

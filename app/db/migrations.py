@@ -143,6 +143,11 @@ def run_migrations(conn):
     _safe_add_column(conn, "sec_13f_holdings", "is_exit", "BOOLEAN")
     _safe_add_column(conn, "sec_13f_holdings", "filing_date", "DATE")
     _safe_add_column(conn, "sec_13f_holdings", "collected_at", "TIMESTAMPTZ")
+    # Provenance: 'edgar' (real 13F filings) vs 'yfinance' (pseudo-CIK holder rows).
+    # Fund aggregates must filter on this — the two sources are not comparable.
+    _safe_add_column(
+        conn, "sec_13f_holdings", "source", "TEXT DEFAULT 'edgar'"
+    )
 
     # ── Scheduler: policy-driven constraints and max_tickers
     _safe_add_column(conn, "cycle_schedules", "max_tickers", "INTEGER")
@@ -3303,6 +3308,56 @@ def _fix_eth_cagr_data(conn):
                     return_3y_ann  DOUBLE PRECISION,
                     win_rate       DOUBLE PRECISION,
                     last_calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            # Smart-money real-alpha tables. The returns engine also ensures
+            # these at run time, but declaring them here means a fresh DB has
+            # them before anything queries them.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS smart_money_trade_scores (
+                    trade_key       TEXT PRIMARY KEY,
+                    actor_type      TEXT NOT NULL,
+                    actor_id        TEXT NOT NULL,
+                    actor_name      TEXT,
+                    ticker          TEXT NOT NULL,
+                    direction       TEXT NOT NULL,
+                    event_date      DATE NOT NULL,
+                    size_est_usd    DOUBLE PRECISION,
+                    size_confidence TEXT,
+                    entry_price     DOUBLE PRECISION,
+                    ret_1m DOUBLE PRECISION, ret_3m DOUBLE PRECISION,
+                    ret_6m DOUBLE PRECISION, ret_1y DOUBLE PRECISION,
+                    alpha_1m DOUBLE PRECISION, alpha_3m DOUBLE PRECISION,
+                    alpha_6m DOUBLE PRECISION, alpha_1y DOUBLE PRECISION,
+                    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS smart_money_performance (
+                    actor_type      TEXT NOT NULL,
+                    actor_id        TEXT NOT NULL,
+                    actor_name      TEXT,
+                    horizon         TEXT NOT NULL,
+                    trade_count     INTEGER,
+                    scored_count    INTEGER,
+                    coverage_pct    DOUBLE PRECISION,
+                    avg_return      DOUBLE PRECISION,
+                    avg_alpha       DOUBLE PRECISION,
+                    median_alpha    DOUBLE PRECISION,
+                    win_rate        DOUBLE PRECISION,
+                    total_size_est  DOUBLE PRECISION,
+                    rankable        BOOLEAN DEFAULT FALSE,
+                    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (actor_type, actor_id, horizon)
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS price_backfill_progress (
+                    ticker       TEXT PRIMARY KEY,
+                    status       TEXT NOT NULL,
+                    rows_written INTEGER DEFAULT 0,
+                    error        TEXT,
+                    attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             cur.execute("""

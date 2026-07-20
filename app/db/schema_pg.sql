@@ -282,6 +282,7 @@ CREATE TABLE IF NOT EXISTS sec_13f_holdings (
     is_exit        BOOLEAN,
     filing_quarter TEXT NOT NULL,
     filing_date    DATE,
+    source         TEXT DEFAULT 'edgar',
     collected_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (cik, ticker, filing_quarter)
 );
@@ -1583,6 +1584,55 @@ CREATE TABLE IF NOT EXISTS sec_13f_performance (
     return_3y_ann  DOUBLE PRECISION,
     win_rate       DOUBLE PRECISION,
     last_calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ── Smart money: real alpha for congressional + 13F disclosures ──
+-- Materialized by app/analytics/returns_engine.py. The dashboard and the agent
+-- tools both read these tables, so a UI figure and an agent's figure can never
+-- disagree. Entry is the date a trade became PUBLIC; alpha is excess vs SPY.
+CREATE TABLE IF NOT EXISTS smart_money_trade_scores (
+    trade_key       TEXT PRIMARY KEY,
+    actor_type      TEXT NOT NULL,          -- 'congress' | 'fund'
+    actor_id        TEXT NOT NULL,          -- bioguide_id/politician, or CIK
+    actor_name      TEXT,
+    ticker          TEXT NOT NULL,
+    direction       TEXT NOT NULL,          -- 'buy' | 'sell'
+    event_date      DATE NOT NULL,          -- date the trade became public
+    size_est_usd    DOUBLE PRECISION,
+    size_confidence TEXT,                   -- 'range' | 'bound' | 'reported' | 'none'
+    entry_price     DOUBLE PRECISION,
+    ret_1m DOUBLE PRECISION, ret_3m DOUBLE PRECISION,
+    ret_6m DOUBLE PRECISION, ret_1y DOUBLE PRECISION,
+    alpha_1m DOUBLE PRECISION, alpha_3m DOUBLE PRECISION,
+    alpha_6m DOUBLE PRECISION, alpha_1y DOUBLE PRECISION,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS smart_money_performance (
+    actor_type      TEXT NOT NULL,
+    actor_id        TEXT NOT NULL,
+    actor_name      TEXT,
+    horizon         TEXT NOT NULL,          -- '1m' | '3m' | '6m' | '1y'
+    trade_count     INTEGER,
+    scored_count    INTEGER,
+    coverage_pct    DOUBLE PRECISION,
+    avg_return      DOUBLE PRECISION,
+    avg_alpha       DOUBLE PRECISION,
+    median_alpha    DOUBLE PRECISION,
+    win_rate        DOUBLE PRECISION,       -- real: share of positions beating SPY
+    total_size_est  DOUBLE PRECISION,
+    rankable        BOOLEAN DEFAULT FALSE,  -- cleared the minimum sample size
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (actor_type, actor_id, horizon)
+);
+
+-- Journal for the one-time deep price backfill (scripts/backfill_price_history.py)
+CREATE TABLE IF NOT EXISTS price_backfill_progress (
+    ticker       TEXT PRIMARY KEY,
+    status       TEXT NOT NULL,             -- 'done' | 'empty' | 'failed'
+    rows_written INTEGER DEFAULT 0,
+    error        TEXT,
+    attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ══════════════════════════════════════════

@@ -117,6 +117,9 @@ def find_crossfund_consensus(min_funds: int = 3) -> list[dict]:
             JOIN latest_quarters lq ON h.cik = lq.cik AND h.filing_quarter = lq.q
             JOIN sec_13f_filers f ON h.cik = f.cik
             WHERE h.ticker != 'nan' AND h.ticker != '' AND LENGTH(h.ticker) <= 5
+              -- yfinance rows carry a synthesized pseudo-CIK; counting them
+              -- here would inflate fund counts by mixing incompatible sources.
+              AND h.cik NOT LIKE 'yf_%%'
             GROUP BY h.ticker
             HAVING COUNT(DISTINCT h.cik) >= %s
             ORDER BY COUNT(DISTINCT h.cik) DESC, total_value DESC
@@ -145,68 +148,85 @@ def detect_quarterly_changes() -> dict:
     Compares the latest filing quarter against the previous one.
     """
     with get_db() as db:
-        # Get the two most recent quarters across all funds
-        quarters = db.execute("""
-            SELECT DISTINCT filing_quarter FROM sec_13f_holdings
-            ORDER BY filing_quarter DESC LIMIT 2
-        """).fetchall()
+        # Each fund is compared against ITS OWN two most recent quarters.
+        #
+        # Picking the two latest quarters globally is wrong and was actively
+        # harmful: funds file on staggered schedules, so at any given moment most
+        # have not yet filed the newest quarter. Every one of those funds then had
+        # its entire portfolio read as a mass liquidation. Measured on live data,
+        # 1,249 of 2,799 reported exits were funds that simply had not filed yet —
+        # 45% of the signal was noise.
+        per_fund_quarters = """
+            SELECT cik,
+                   MAX(filing_quarter)                          AS latest_q,
+                   MAX(filing_quarter) FILTER (
+                       WHERE filing_quarter < (
+                           SELECT MAX(inner_h.filing_quarter)
+                           FROM sec_13f_holdings inner_h
+                           WHERE inner_h.cik = outer_h.cik
+                       )
+                   )                                            AS prev_q
+            FROM sec_13f_holdings outer_h
+            WHERE cik NOT LIKE 'yf_%%'
+            GROUP BY cik
+            HAVING COUNT(DISTINCT filing_quarter) >= 2
+        """
 
-        if len(quarters) < 2:
+        new_positions = db.execute(
+            f"""
+            WITH fq AS ({per_fund_quarters})
+            SELECT f.filer_name, h.ticker, h.shares, h.value_usd, h.filing_quarter
+            FROM sec_13f_holdings h
+            JOIN fq ON fq.cik = h.cik AND h.filing_quarter = fq.latest_q
+            JOIN sec_13f_filers f ON h.cik = f.cik
+            WHERE NOT EXISTS (
+                SELECT 1 FROM sec_13f_holdings prev
+                WHERE prev.cik = h.cik
+                  AND prev.ticker = h.ticker
+                  AND prev.filing_quarter = fq.prev_q
+            )
+              AND h.ticker != 'nan' AND h.ticker != ''
+            ORDER BY h.value_usd DESC
+            LIMIT 50
+            """
+        ).fetchall()
+
+        exits = db.execute(
+            f"""
+            WITH fq AS ({per_fund_quarters})
+            SELECT f.filer_name, h.ticker, h.shares, h.value_usd, h.filing_quarter
+            FROM sec_13f_holdings h
+            JOIN fq ON fq.cik = h.cik AND h.filing_quarter = fq.prev_q
+            JOIN sec_13f_filers f ON h.cik = f.cik
+            WHERE NOT EXISTS (
+                SELECT 1 FROM sec_13f_holdings latest
+                WHERE latest.cik = h.cik
+                  AND latest.ticker = h.ticker
+                  AND latest.filing_quarter = fq.latest_q
+            )
+              AND h.ticker != 'nan' AND h.ticker != ''
+            ORDER BY h.value_usd DESC
+            LIMIT 50
+            """
+        ).fetchall()
+
+        if not new_positions and not exits:
             return {
                 "new_positions": [],
                 "exits": [],
                 "size_changes": [],
-                "note": "Need at least 2 quarters of data",
+                "note": "No fund has two or more quarters of filings yet",
             }
 
-        latest_q = quarters[0][0]
-        prev_q = quarters[1][0]
-
-        # New positions — in latest but not previous
-        new_positions = db.execute(
-            """
-            SELECT f.filer_name, h.ticker, h.shares, h.value_usd
-            FROM sec_13f_holdings h
-            JOIN sec_13f_filers f ON h.cik = f.cik
-            WHERE h.filing_quarter = %s
-              AND h.ticker NOT IN (
-                  SELECT ticker FROM sec_13f_holdings
-                  WHERE cik = h.cik AND filing_quarter = %s
-              )
-              AND h.ticker != 'nan' AND h.ticker != ''
-            ORDER BY h.value_usd DESC
-            LIMIT 50
-        """,
-            [latest_q, prev_q],
-        ).fetchall()
-
-        # Exits — in previous but not latest
-        exits = db.execute(
-            """
-            SELECT f.filer_name, h.ticker, h.shares, h.value_usd
-            FROM sec_13f_holdings h
-            JOIN sec_13f_filers f ON h.cik = f.cik
-            WHERE h.filing_quarter = %s
-              AND h.ticker NOT IN (
-                  SELECT ticker FROM sec_13f_holdings
-                  WHERE cik = h.cik AND filing_quarter = %s
-              )
-              AND h.ticker != 'nan' AND h.ticker != ''
-            ORDER BY h.value_usd DESC
-            LIMIT 50
-        """,
-            [prev_q, latest_q],
-        ).fetchall()
-
         return {
-            "latest_quarter": latest_q,
-            "previous_quarter": prev_q,
             "new_positions": [
-                {"fund": r[0], "ticker": r[1], "shares": r[2], "value": r[3]}
+                {"fund": r[0], "ticker": r[1], "shares": r[2], "value": r[3],
+                 "quarter": r[4]}
                 for r in new_positions
             ],
             "exits": [
-                {"fund": r[0], "ticker": r[1], "shares": r[2], "value": r[3]}
+                {"fund": r[0], "ticker": r[1], "shares": r[2], "value": r[3],
+                 "quarter": r[4]}
                 for r in exits
             ],
             "new_position_count": len(new_positions),
@@ -233,6 +253,9 @@ def compare_with_watchlist(watchlist_tickers: list[str]) -> dict:
             FROM sec_13f_holdings h
             JOIN latest_quarters lq ON h.cik = lq.cik AND h.filing_quarter = lq.q
             WHERE h.ticker != 'nan' AND h.ticker != '' AND LENGTH(h.ticker) <= 5
+              -- yfinance rows carry a synthesized pseudo-CIK; counting them
+              -- here would inflate fund counts by mixing incompatible sources.
+              AND h.cik NOT LIKE 'yf_%'
         """).fetchall()
         fund_set = {r[0] for r in fund_tickers}
 
@@ -525,6 +548,9 @@ def get_top_conviction_tickers(min_funds: int = 2, max_results: int = 30) -> lis
             JOIN latest_quarters lq ON h.cik = lq.cik AND h.filing_quarter = lq.q
             JOIN sec_13f_filers f ON h.cik = f.cik
             WHERE h.ticker != 'nan' AND h.ticker != '' AND LENGTH(h.ticker) <= 5
+              -- yfinance rows carry a synthesized pseudo-CIK; counting them
+              -- here would inflate fund counts by mixing incompatible sources.
+              AND h.cik NOT LIKE 'yf_%%'
             GROUP BY h.ticker
             HAVING COUNT(DISTINCT h.cik) >= %s
             ORDER BY COUNT(DISTINCT h.cik) DESC, SUM(h.value_usd) DESC

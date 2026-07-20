@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 import asyncio
 import datetime
+import math
 import pandas as pd
 from edgar import Company, set_identity
 from app.db.connection import get_db
@@ -67,33 +68,67 @@ TRACKED_FUNDS = [
 EDGAR_TIMEOUT = 60
 
 
-def _fetch_holdings_sync(filer_name: str, cik: str) -> tuple[list[dict], str]:
+def _clean(value) -> str | None:
+    """Normalize a DataFrame cell to a stripped string, or None if empty/NaN."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        # pd.isna raises on array-likes — fall through to str()
+        pass
+    text = str(value).strip()
+    if not text or text.lower() in ("nan", "none", "nat"):
+        return None
+    return text
+
+
+def _num(value) -> float:
+    """Coerce a DataFrame cell to a finite float, defaulting to 0.0.
+
+    NOTE: `value or 0` is NOT safe here — NaN is truthy in Python, so a missing
+    numeric cell would propagate NaN straight into a DOUBLE PRECISION column.
     """
-    Synchronous function that does the slow edgartools work.
-    Returns (holdings_list, filing_quarter).
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if math.isnan(result) or math.isinf(result):
+        return 0.0
+    return result
+
+
+def _first_col(row, *names) -> str | None:
+    """Return the first non-empty value among several candidate column names.
+
+    edgartools' infotable column naming varies by version and by whether the
+    filing was parsed from the legacy or XML info table, so probe defensively.
     """
-    company = Company(cik)
-    # Get only recent filings (limit=5 prevents downloading full history)
-    filings = company.get_filings(form="13F-HR").latest(5)
+    for name in names:
+        value = _clean(row.get(name))
+        if value is not None:
+            return value
+    return None
 
-    if not filings or len(filings) == 0:
-        logger.info(f"[sec] No 13F filings found for {filer_name} (CIK: {cik})")
-        return [], ""
 
-    # Get the latest filing
-    latest = filings[0]
+def _covered_quarter(filed_date) -> tuple[str, datetime.date | None]:
+    """Derive the quarter a 13F COVERS from its filing date.
 
-    # Determine the COVERED quarter (not the filing date quarter).
-    # 13F filings are due 45 days after quarter end:
-    #   Filed Jan-Mar → covers Q4 of previous year
-    #   Filed Apr-Jun → covers Q1 of same year
-    #   Filed Jul-Sep → covers Q2 of same year
-    #   Filed Oct-Dec → covers Q3 of same year
-    filed_date = latest.filing_date
+    13F filings are due 45 days after quarter end:
+      Filed Jan-Mar → covers Q4 of previous year
+      Filed Apr-Jun → covers Q1 of same year
+      Filed Jul-Sep → covers Q2 of same year
+      Filed Oct-Dec → covers Q3 of same year
+    Returns (filing_quarter_label, filing_date).
+    """
     if hasattr(filed_date, "date"):
         filed_date = filed_date.date()
     elif isinstance(filed_date, str):
         filed_date = datetime.date.fromisoformat(filed_date)
+    if not isinstance(filed_date, datetime.date):
+        return "", None
+
     filing_q = (filed_date.month - 1) // 3 + 1
     # The covered quarter is one quarter BEFORE the filing quarter
     if filing_q == 1:
@@ -102,12 +137,19 @@ def _fetch_holdings_sync(filer_name: str, cik: str) -> tuple[list[dict], str]:
     else:
         covered_year = filed_date.year
         covered_q = filing_q - 1
-    filing_quarter = f"{covered_year}Q{covered_q}"
+    return f"{covered_year}Q{covered_q}", filed_date
 
-    # Parse the 13F filing to get holdings
-    filing_obj = latest.obj()
+
+def _parse_filing(filer_name: str, cik: str, filing) -> tuple[list[dict], str]:
+    """Parse ONE 13F filing into holdings dicts. Returns (holdings, quarter)."""
+    filing_quarter, filed_date = _covered_quarter(filing.filing_date)
+    if not filing_quarter:
+        logger.info(f"[sec] {filer_name}: unparseable filing date, skipping filing")
+        return [], ""
+
+    filing_obj = filing.obj()
     if not hasattr(filing_obj, "infotable") or filing_obj.infotable is None:
-        logger.info(f"[sec] {filer_name}: no holdings table in latest 13F")
+        logger.info(f"[sec] {filer_name}: no holdings table in 13F ({filing_quarter})")
         return [], filing_quarter
 
     df = filing_obj.infotable
@@ -122,25 +164,90 @@ def _fetch_holdings_sync(filer_name: str, cik: str) -> tuple[list[dict], str]:
 
     holdings = []
     for _, row in df.iterrows():
-        ticker = str(row.get("Ticker", ""))
-        if not ticker or ticker == "nan":
-            ticker = str(row.get("Issuer", "UNKNOWN"))[:20]
+        ticker = _first_col(row, "Ticker", "ticker", "Symbol")
+        name_of_issuer = _first_col(
+            row, "Issuer", "NameOfIssuer", "nameOfIssuer", "name_of_issuer"
+        )
+        cusip = _first_col(row, "Cusip", "CUSIP", "cusip")
+        share_type = _first_col(
+            row, "SharesPrnType", "shrsOrPrnAmt_sshPrnamtType", "share_type", "Type"
+        )
 
-        shares = int(row.get("SharesPrnAmount", 0) or 0)
+        shares = int(_num(row.get("SharesPrnAmount")))
         # SEC EDGAR reports 13F values in THOUSANDS of dollars
-        value = float(row.get("Value", 0) or 0) * 1000
+        value = _num(row.get("Value")) * 1000
+
+        # `ticker` is part of the PRIMARY KEY (cik, ticker, filing_quarter) and is
+        # declared NOT NULL, so it cannot be left NULL. When no real ticker
+        # resolves we fall back to the CUSIP (a stable security identifier that
+        # will never be mistaken for a ticker by charts that GROUP BY ticker),
+        # and only then to the literal 'UNKNOWN'. The issuer NAME now goes to
+        # name_of_issuer where it belongs — never into the ticker slot.
+        ticker_slot = ticker or cusip or "UNKNOWN"
 
         holdings.append(
             {
                 "cik": cik,
-                "ticker": ticker,
+                "ticker": ticker_slot,
+                "name_of_issuer": name_of_issuer,
+                "cusip": cusip,
+                "share_type": share_type,
                 "filing_quarter": filing_quarter,
+                "filing_date": filed_date,
                 "shares": shares,
                 "value": value,
             }
         )
 
     return holdings, filing_quarter
+
+
+def _fetch_holdings_sync(
+    filer_name: str, cik: str, limit: int = 5
+) -> list[tuple[list[dict], str]]:
+    """
+    Synchronous function that does the slow edgartools work.
+    Parses ALL recent 13F filings (not just the newest) so one run yields
+    multi-quarter history.
+    Returns a list of (holdings_list, filing_quarter) — one entry per filing.
+    """
+    company = Company(cik)
+    # Get only recent filings (limit prevents downloading full history).
+    # 13F-HR/A are AMENDMENTS — they must be ingested so they can correct
+    # previously written rows via the ON CONFLICT DO UPDATE below.
+    filings = company.get_filings(form=["13F-HR", "13F-HR/A"]).latest(limit)
+
+    if filings is None:
+        logger.info(f"[sec] No 13F filings found for {filer_name} (CIK: {cik})")
+        return []
+
+    # .latest(n) returns a single filing when n == 1, a sequence otherwise
+    if not isinstance(filings, (list, tuple)) and not hasattr(filings, "__len__"):
+        filings = [filings]
+    if len(filings) == 0:
+        logger.info(f"[sec] No 13F filings found for {filer_name} (CIK: {cik})")
+        return []
+
+    # Apply OLDEST first so that a later-filed 13F-HR/A amendment overwrites the
+    # original it corrects, rather than the other way round (.latest() is
+    # newest-first, which would apply the corrections then clobber them).
+    try:
+        ordered = sorted(filings, key=lambda f: _covered_quarter(f.filing_date)[1] or datetime.date.min)
+    except Exception:
+        ordered = list(reversed(list(filings)))
+
+    results: list[tuple[list[dict], str]] = []
+    for filing in ordered:
+        # Isolate per-filing failures — one bad quarter must not lose the rest
+        try:
+            holdings, filing_quarter = _parse_filing(filer_name, cik, filing)
+        except Exception as e:
+            logger.info(f"[sec] {filer_name}: filing parse error: {e}")
+            continue
+        if holdings:
+            results.append((holdings, filing_quarter))
+
+    return results
 
 
 async def collect_fund_holdings(
@@ -154,57 +261,79 @@ async def collect_fund_holdings(
     """
     try:
         # Run with timeout — edgartools can hang on large filings
-        holdings, filing_quarter = await asyncio.wait_for(
+        filings = await asyncio.wait_for(
             asyncio.to_thread(_fetch_holdings_sync, filer_name, cik),
             timeout=EDGAR_TIMEOUT,
         )
 
-        if not holdings:
+        if not filings:
             return 0
 
+        total = 0
+        quarters = []
         with get_db() as db:
-            # Upsert filer to ensure it exists
-            db.execute(
-                """
-                INSERT INTO sec_13f_filers (cik, filer_name, latest_quarter)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (cik) DO UPDATE SET 
-                    filer_name = EXCLUDED.filer_name,
-                    latest_quarter = GREATEST(sec_13f_filers.latest_quarter, EXCLUDED.latest_quarter)
-                """,
-                [cik, filer_name, filing_quarter],
-            )
-
-            for h in holdings:
+            for holdings, filing_quarter in filings:
+                if not holdings:
+                    continue
+                # Upsert filer to ensure it exists
                 db.execute(
                     """
-                    INSERT INTO sec_13f_holdings
-                    (cik, ticker, filing_quarter, shares, value_usd,
-                     pct_change, is_new_position, is_exit)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (cik, ticker, filing_quarter) DO NOTHING
-                """,
-                    [
-                        h["cik"],
-                        h["ticker"],
-                        h["filing_quarter"],
-                        h["shares"],
-                        h["value"],
-                        None,
-                        False,
-                        False,
-                    ],
+                    INSERT INTO sec_13f_filers (cik, filer_name, latest_quarter)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (cik) DO UPDATE SET
+                        filer_name = EXCLUDED.filer_name,
+                        latest_quarter = GREATEST(sec_13f_filers.latest_quarter, EXCLUDED.latest_quarter)
+                    """,
+                    [cik, filer_name, filing_quarter],
                 )
+
+                for h in holdings:
+                    db.execute(
+                        """
+                        INSERT INTO sec_13f_holdings
+                        (cik, ticker, name_of_issuer, cusip, filing_quarter,
+                         filing_date, shares, share_type, value_usd,
+                         pct_change, is_new_position, is_exit, source)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (cik, ticker, filing_quarter) DO UPDATE SET
+                        name_of_issuer = EXCLUDED.name_of_issuer,
+                        cusip          = EXCLUDED.cusip,
+                        filing_date    = EXCLUDED.filing_date,
+                        shares         = EXCLUDED.shares,
+                        share_type     = EXCLUDED.share_type,
+                        value_usd      = EXCLUDED.value_usd,
+                        source         = EXCLUDED.source,
+                        collected_at   = CURRENT_TIMESTAMP
+                    """,
+                        [
+                            h["cik"],
+                            h["ticker"],
+                            h["name_of_issuer"],
+                            h["cusip"],
+                            h["filing_quarter"],
+                            h["filing_date"],
+                            h["shares"],
+                            h["share_type"],
+                            h["value"],
+                            None,
+                            False,
+                            False,
+                            "edgar",
+                        ],
+                    )
+                total += len(holdings)
+                quarters.append(filing_quarter)
 
             from app.telemetry import send_system_log
             send_system_log(
                 subsystem="DB",
-                message=f"[SEC] {filer_name}: Upserted {len(holdings)} holdings rows to sec_13f_holdings"
+                message=f"[SEC] {filer_name}: Upserted {total} holdings rows to sec_13f_holdings"
             )
             logger.info(
-                f"[sec] {filer_name}: {len(holdings)} holdings written (Q: {filing_quarter})"
+                f"[sec] {filer_name}: {total} holdings written across "
+                f"{len(quarters)} quarters ({', '.join(quarters)})"
             )
-            return len(holdings)
+            return total
 
     except asyncio.TimeoutError:
         logger.info(f"[sec] {filer_name}: TIMEOUT after {EDGAR_TIMEOUT}s (CIK: {cik})")
@@ -267,9 +396,9 @@ async def collect_ticker_institutional(ticker: str) -> int:
             count = 0
 
             for _, row in ih.iterrows():
-                holder = str(row.get("Holder", "Unknown"))
-                shares = int(row.get("Shares", 0) or 0)
-                value = float(row.get("Value", 0) or 0)
+                holder = _clean(row.get("Holder")) or "Unknown"
+                shares = int(_num(row.get("Shares")))
+                value = _num(row.get("Value"))
 
                 import hashlib
 
@@ -288,24 +417,34 @@ async def collect_ticker_institutional(ticker: str) -> int:
                     [pseudo_cik, holder, quarter],
                 )
 
-                # Insert holdings
+                # Insert holdings.
+                # source='yfinance' — these rows use a SYNTHESIZED pseudo-CIK and
+                # are NOT real EDGAR 13F filings. Any query counting "funds
+                # holding X" must filter source='edgar' or it double-counts.
                 db.execute(
                     """
                     INSERT INTO sec_13f_holdings
-                    (cik, ticker, filing_quarter, shares, value_usd,
-                     pct_change, is_new_position, is_exit)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (cik, ticker, filing_quarter) DO NOTHING
+                    (cik, ticker, name_of_issuer, filing_quarter, shares,
+                     value_usd, pct_change, is_new_position, is_exit, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (cik, ticker, filing_quarter) DO UPDATE SET
+                    name_of_issuer = EXCLUDED.name_of_issuer,
+                    shares         = EXCLUDED.shares,
+                    value_usd      = EXCLUDED.value_usd,
+                    source         = EXCLUDED.source,
+                    collected_at   = CURRENT_TIMESTAMP
                 """,
                     [
                         pseudo_cik,
                         ticker,
+                        holder,
                         quarter,
                         shares,
                         value,
                         None,
                         False,
                         False,
+                        "yfinance",
                     ],
                 )
                 count += 1
