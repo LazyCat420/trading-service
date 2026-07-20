@@ -608,11 +608,25 @@ class EvolutionDebateCouncil:
         except SyntaxError:
             return content[:4000] + "\n... [TRUNCATED DUE TO SYNTAX ERROR]"
 
+        # ast.walk, not tree.body: scanning only module-level defs made every
+        # METHOD invisible to this matcher, so a failure inside a class fell
+        # through to the blind content[:4000] slice below.
         relevant_nodes = []
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                if any(kw in node.name.lower() for kw in keywords):
-                    relevant_nodes.append(node)
+        seen_spans: set[tuple[int, int]] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if not any(kw in node.name.lower() for kw in keywords):
+                continue
+            span = (node.lineno, getattr(node, "end_lineno", node.lineno))
+            # A matching method inside a matching class would otherwise be
+            # emitted twice — once on its own, once inside the class body.
+            if any(s <= span[0] and span[1] <= e for s, e in seen_spans):
+                continue
+            seen_spans.add(span)
+            relevant_nodes.append(node)
+
+        relevant_nodes.sort(key=lambda n: n.lineno)
 
         if relevant_nodes:
             lines = content.splitlines()

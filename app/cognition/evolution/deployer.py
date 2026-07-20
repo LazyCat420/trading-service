@@ -20,6 +20,65 @@ _BACKUP_DIR = Path(__file__).resolve().parents[3] / "backups" / "evolution"
 # Probation period: number of hours after deploy to monitor
 _PROBATION_HOURS = 6
 
+# A rewrite may legitimately shrink a file, but not collapse it. Below this
+# fraction of the original size the "complete rewrite" is almost certainly a
+# rewrite of a TRUNCATED VIEW of the file — see _check_size_regression.
+_MIN_REWRITE_SIZE_RATIO = 0.6
+
+# Markers target_map/debate inject when they cut a file short. If one of these
+# survives into the proposed fix, the model was rewriting a truncated view and
+# copied the marker back out.
+_TRUNCATION_MARKERS = (
+    "[TRUNCATED",
+    "... [truncated",
+    "# ... rest of",
+    "# ... unchanged",
+    "# (rest of file",
+)
+
+
+def _check_size_regression(file_path: Path, proposed_fix: str) -> str | None:
+    """Return a refusal reason if writing ``proposed_fix`` would destroy the file.
+
+    The repair loop asks the model for a COMPLETE rewrite, but the content it is
+    shown is capped (target_map cut files at 8000 chars, and the debate narrowed
+    again at 4000). For any target larger than that cap the model never saw the
+    whole file, so its "complete" rewrite is complete only with respect to the
+    prefix it was given — and this function's caller writes that straight over
+    the real source.
+
+    Measured on this repo: 17 of 30 mapped repair targets exceeded the cap, the
+    largest being pipeline_service.py at 76k chars, where an accepted fix would
+    have discarded ~89% of the trading-cycle orchestrator.
+
+    A backup is taken before every write, so this is recoverable — but silently
+    recoverable damage to the live cycle is still damage.
+    """
+    try:
+        original = file_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"cannot read the current file to size-check the rewrite: {e}"
+
+    if not original.strip():
+        return None  # nothing to lose
+
+    for marker in _TRUNCATION_MARKERS:
+        if marker in proposed_fix:
+            return (
+                f"proposed fix contains a truncation marker ({marker!r}) — the "
+                f"model was rewriting a shortened view of the file, not the file"
+            )
+
+    ratio = len(proposed_fix) / len(original)
+    if ratio < _MIN_REWRITE_SIZE_RATIO:
+        return (
+            f"proposed fix is {len(proposed_fix):,} chars against an original of "
+            f"{len(original):,} ({ratio:.0%}) — below the "
+            f"{_MIN_REWRITE_SIZE_RATIO:.0%} floor, which indicates a rewrite of a "
+            f"truncated view rather than an intentional deletion"
+        )
+    return None
+
 
 def deploy_fix_to_disk(fix_id: str) -> dict:
     """
@@ -55,6 +114,22 @@ def deploy_fix_to_disk(fix_id: str) -> dict:
                 }
 
             file_path_obj = Path(file_path)
+
+            # ── Refuse rewrites that would truncate the file ──
+            # Checked BEFORE the backup so a destructive proposal never reaches
+            # the write at all.
+            regression = _check_size_regression(file_path_obj, proposed_fix)
+            if regression:
+                logger.critical(
+                    "[EVO-DEPLOY] ⛔ REFUSING fix %s for %s: %s",
+                    fix_id, file_path, regression,
+                )
+                db.execute(
+                    "UPDATE pending_evolution_fixes SET status = 'rejected', "
+                    "failure_reason = %s WHERE id = %s",
+                    [f"Destructive rewrite refused: {regression}", fix_id],
+                )
+                return {"error": f"Destructive rewrite refused: {regression}"}
 
             # ── Create backup before overwriting ──
             backup_path = _create_backup(file_path_obj, fix_id)

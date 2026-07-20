@@ -406,6 +406,32 @@ async def heal_once():
                     "relative_path": res["relative_path"]
                 }
 
+    # Last resort: resolve the traceback to a symbol directly.
+    # Both mappers above consult target_map's hand-written dicts, so anything
+    # nobody had registered simply dead-ended here — and STRATEGY_MAP is empty,
+    # so no strategy failure was ever resolvable.
+    if not target_info and traceback_text:
+        from app.cognition.evolution.code_evidence import (
+            PROJECT_ROOT,
+            build_evidence_for_traceback,
+        )
+
+        evidence = build_evidence_for_traceback(traceback_text)
+        if evidence:
+            logger.info(
+                "[SELF-HEAL] Resolved %s -> %s:%d-%d via symbol index "
+                "(no target_map entry needed)",
+                evidence.name, evidence.relative_path,
+                evidence.lineno, evidence.end_lineno,
+            )
+            target_info = {
+                "target_type": "symbol",
+                "target_name": evidence.name,
+                "file_path": str(PROJECT_ROOT / evidence.relative_path),
+                "relative_path": evidence.relative_path,
+                "evidence": evidence,
+            }
+
     if not target_info:
         logger.error(f"Could not map error to any evolutionary code target. Error message: {error_msg}")
         return
