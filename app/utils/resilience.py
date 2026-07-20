@@ -15,6 +15,8 @@ Usage is unchanged:
         ...
 """
 
+import os
+
 from lazycat.resilience import (  # noqa: F401  (re-exported for call sites)
     NON_RETRYABLE_EXCEPTION_NAMES,
     AttemptRecord,
@@ -23,6 +25,7 @@ from lazycat.resilience import (  # noqa: F401  (re-exported for call sites)
     aresilient_call,
     classify_exception,
     resilient_call,
+    set_failure_emitter,
 )
 
 # Backwards-compatible alias — this was a private module function before the
@@ -36,15 +39,66 @@ _classify_exception = classify_exception
 # abort immediately rather than burn the retry budget.
 NON_RETRYABLE_EXCEPTION_NAMES.add("DoomLoopException")
 
-# NOTE on failure telemetry: this module used to try to emit structured retry
-# events via `PipelineService.emit(...)`. That method does not exist — the only
-# `emit` in pipeline_service.py is a local function nested inside the cycle
-# runner — so every call raised AttributeError into a bare `except Exception:
-# pass` and no retry event was ever emitted. Rather than port dead code, the
-# SDK now exposes `set_failure_emitter(fn)` and nothing is registered here.
-# Wiring real telemetry means giving PipelineService an actual class-level
-# emit (app/recovery/engine.py:208 calls the same non-existent method) and then
-# calling lazycat.resilience.set_failure_emitter() at startup.
+# ── Failure telemetry ───────────────────────────────────────────────────
+
+# Emit one event per *give-up* rather than per failed attempt. A single
+# exhausted call at retries=5 (base_agent.py) would otherwise write five rows
+# into pipeline_events, multiplied by agents x tickers x cycles — the interim
+# attempts are already in the logs, and the actionable event is the one where
+# the call stopped trying. Set RESILIENCE_EMIT_EVERY_ATTEMPT=true to get all of
+# them back while debugging a flapping upstream.
+_EMIT_EVERY_ATTEMPT = os.getenv("RESILIENCE_EMIT_EVERY_ATTEMPT", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _pipeline_emit(
+    func_name: str,
+    attempt: int,
+    max_attempts: int,
+    failure_type: FailureType,
+    exc: Exception,
+    elapsed_ms: int,
+) -> None:
+    """Put a retry failure on the current cycle's event stream.
+
+    Registered with the SDK below. Import is deliberately lazy —
+    pipeline_service imports the v3 orchestrator, which reaches back into this
+    module, so a module-level import here is circular.
+    """
+    if not _EMIT_EVERY_ATTEMPT and attempt < max_attempts:
+        return
+
+    from app.services.pipeline_service import PipelineService
+
+    PipelineService.emit(
+        "recovery",
+        f"retry_{func_name}",
+        f"Attempt {attempt}/{max_attempts} failed: {type(exc).__name__}: "
+        f"{str(exc)[:100]} [{failure_type.value}]",
+        status="warning" if attempt < max_attempts else "error",
+        data={
+            "func": func_name,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "failure_type": failure_type.value,
+            "error_type": type(exc).__name__,
+            "error_msg": str(exc)[:200],
+            "elapsed_ms": elapsed_ms,
+        },
+        elapsed_ms=elapsed_ms,
+    )
+
+
+set_failure_emitter(_pipeline_emit)
+
+# KNOWN GAP: the SDK only invokes the emitter on failures it intends to retry.
+# A call that stops early — FATAL classification on a later attempt, or a
+# registered non-retryable like DoomLoopException — is logged by the SDK but
+# produces no event. Closing that means emitting from the stop branch in
+# lazycat.resilience too.
 
 __all__ = [
     "FailureType",
@@ -54,4 +108,5 @@ __all__ = [
     "resilient_call",
     "classify_exception",
     "NON_RETRYABLE_EXCEPTION_NAMES",
+    "set_failure_emitter",
 ]

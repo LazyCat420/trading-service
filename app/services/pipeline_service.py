@@ -137,6 +137,66 @@ class PipelineService:
         return PipelineStateDB.get_state(summary_only)
 
     @classmethod
+    def emit(cls, phase: str, step: str, detail: str, **kwargs):
+        """Put an ambient event on the current cycle's stream from anywhere.
+
+        The cycle runner builds its own `emit` closure (see _run_all_v3) because
+        it has `cycle_id` in scope. Code deeper in the stack — the resilience
+        decorator, the recovery engine — does not, and previously called this
+        method believing it existed. It did not: every such call raised
+        AttributeError into a bare `except Exception: pass`, so no retry or
+        recovery event was ever recorded.
+
+        The cycle_id is resolved from _state instead, and append_events already
+        no-ops on a falsy one, so calling this outside a cycle just logs.
+
+        Unlike the cycle runner's closure this deliberately does NOT touch
+        _state["progress"]: a retry is ambient telemetry, not cycle progress,
+        and writing it there would make the dashboard report a background retry
+        as the step the cycle is currently on.
+        """
+        cycle_id = cls._state.get("cycle_id")
+        logger.info("[%s][%s][%s] %s", cycle_id or "-", phase, step, detail)
+        if not cycle_id:
+            return
+
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "phase": phase,
+            "step": step,
+            "detail": detail,
+            "status": kwargs.pop("status", "running"),
+            "data": kwargs.pop("data", {}),
+            "elapsed_ms": kwargs.pop("elapsed_ms", 0),
+        }
+        event.update(kwargs)
+
+        # append_events uses the SYNC connection pool. Callers here are usually
+        # inside async retry paths, so writing inline would block the event
+        # loop on every failed attempt. Hand it to a worker thread when a loop
+        # is running; write directly when called from sync code.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None:
+            cls._append_events_safe(cycle_id, [event])
+        else:
+            loop.run_in_executor(None, cls._append_events_safe, cycle_id, [event])
+
+    @staticmethod
+    def _append_events_safe(cycle_id: str, events: list[dict]):
+        """append_events that never raises — telemetry must not break callers.
+
+        Also keeps exceptions from vanishing into an un-awaited executor future.
+        """
+        try:
+            PipelineStateDB.append_events(cycle_id, events)
+        except Exception as e:
+            logger.warning("[PipelineService] Failed to append event: %s", e)
+
+    @classmethod
     async def start_cycle(cls, tickers: list[str], **kwargs):
         # Read from DB for dedup — in-memory _state can be stale after
         # force-reset or container restart.
