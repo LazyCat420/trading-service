@@ -20,21 +20,37 @@ import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # This script lives in <sun>/trading-service/scripts (and is deploy-mirrored to
-# lazy-tool-service/python/scripts, one level deeper), so walk up until the
+# lazy-agent-service/python/scripts, one level deeper), so walk up until the
 # sibling repos are visible.
+#
+# The tool-server repo was renamed lazy-tool-service -> lazy-agent-service to
+# match its GitHub name. Both are accepted so a checkout that predates the
+# rename still builds; the new name wins when both somehow exist.
+_TOOL_SERVER_DIRS = ("lazy-agent-service", "lazy-tool-service")
+
+
+def _tool_server_dir(root: str) -> str | None:
+    for name in _TOOL_SERVER_DIRS:
+        if os.path.isdir(os.path.join(root, name)):
+            return name
+    return None
+
+
 def _find_sun_root() -> str:
     d = _SCRIPT_DIR
     for _ in range(6):
         d = os.path.dirname(d)
-        if os.path.isdir(os.path.join(d, "lazy-tool-service")):
+        if _tool_server_dir(d):
             return d
-    sys.exit("FATAL: cannot locate the sun repo root (no lazy-tool-service sibling found).")
+    sys.exit("FATAL: cannot locate the sun repo root "
+             f"(no {' or '.join(_TOOL_SERVER_DIRS)} sibling found).")
 
 
 SUN_ROOT = _find_sun_root()
-SOURCE_DIR = os.path.join(SUN_ROOT, "lazy-tool-service", "tool_schemas")
+TOOL_SERVER_DIR = _tool_server_dir(SUN_ROOT) or "lazy-agent-service"
+SOURCE_DIR = os.path.join(SUN_ROOT, TOOL_SERVER_DIR, "tool_schemas")
 FLAT_TARGETS = [
-    os.path.join(SUN_ROOT, "lazy-tool-service", "tool_schemas.json"),
+    os.path.join(SUN_ROOT, TOOL_SERVER_DIR, "tool_schemas.json"),
     os.path.join(SUN_ROOT, "trading-service", "tool_schemas.json"),
     os.path.join(SUN_ROOT, "trading-client", "tool_schemas.json"),
 ]

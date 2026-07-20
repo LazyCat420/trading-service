@@ -154,12 +154,17 @@ class TestP2ToolSchemaSync(unittest.TestCase):
     """Verify tool_schemas.json is synchronized across repos."""
 
     def test_tool_schemas_match(self):
-        """tool_schemas.json must be identical in lazy-tool-service and trading-service."""
-        lazy_path = os.path.join(
-            TRADING_SERVICE_ROOT,
-            "..",
-            "lazy-tool-service",
-            "tool_schemas.json",
+        """tool_schemas.json must be identical in lazy-agent-service and trading-service."""
+        # The tool-server repo was renamed lazy-tool-service -> lazy-agent-service
+        # to match GitHub. Accept either so a checkout predating the rename still
+        # runs; the new name wins.
+        lazy_path = next(
+            (p for p in (
+                os.path.join(TRADING_SERVICE_ROOT, "..", d, "tool_schemas.json")
+                for d in ("lazy-agent-service", "lazy-tool-service")
+            ) if os.path.exists(p)),
+            os.path.join(TRADING_SERVICE_ROOT, "..", "lazy-agent-service",
+                         "tool_schemas.json"),
         )
         trading_path = os.path.join(
             TRADING_SERVICE_ROOT, "tool_schemas.json"
