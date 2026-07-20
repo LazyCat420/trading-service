@@ -1,3 +1,17 @@
+# HANDOFF — full 5-ticker cycle verified end to end (2026-07-20)
+
+**Cycle:** `cycle-v3-1784578079`, 20:07:59→20:22:02 UTC (14 min), status `done`, no error, 202 events, 0 error events. Triggered via `scripts/trigger_cycle.py --max-tickers 5` in-container; **no deploys during the window** (the prior session's two attempts died to mid-run deploys).
+
+**Results:** 5/5 tickers analyzed with decisions — ASML HOLD/72, AXP BUY/75, BLSH SELL/60, C BUY/60, TSLA HOLD/65; 4 `trade_results` rows.
+
+**cycle→autoresearch handoff: CONFIRMED.** Report `ar-93202fdc5909` (status `done`) created the same second the cycle finished. The cycle-triggered SkillOpt path also ran: `v3_bear_agent`, `v3_fundamental_analyst`, `v3_junior_analyst` advanced to skill-doc **version 2** at ~13:23, one minute after cycle end (the v1 rows at 12:54–12:55 were the prior session's direct autoresearch invocation).
+
+**Retry telemetry:** zero `recovery` events this cycle — a clean run has no exhausted retries, and the emitter is give-up-only by design (verified live in-container separately). Provenance of the 1881 pre-existing `phase='recovery'` rows resolved: all June 14–23, from the deleted RLM-harness era (`retry_run_adversarial_debate.<locals>…` steps) — telemetry worked then, broke in a later refactor, nothing written July 1–19.
+
+**Timezone quirk noticed, not fixed:** `pipeline_state` timestamps are UTC-naive (20:22) while `autoresearch_reports`/`agent_skills` store local time labeled `Etc/UTC` (13:22). Same instant, two conventions — don't be fooled when joining across them.
+
+---
+
 # HANDOFF — SkillOpt VERIFIED LIVE: 7 agents now carry learned skill docs (2026-07-20)
 
 **Deployed:** SkillOpt shipped in `7b4bd86`/`d05a1f9`, sanitizer in `4fc826c`; all live
