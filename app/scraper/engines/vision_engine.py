@@ -120,6 +120,10 @@ _VISION_ENDPOINTS: tuple[tuple[str, str], ...] = (
 # split("/") would read the vendor as the provider and send prism garbage.
 _KNOWN_PROVIDERS = frozenset({"vllm", "vllm-2", "openai", "anthropic", "ollama"})
 
+# Substring of prism's "response was cut short" notice, which it returns in
+# place of content when max_tokens is exhausted.
+_PRISM_TRUNCATION_MARKER = "response was cut short"
+
 
 async def _resolve_vision_model() -> tuple[str, str]:
     """Return (provider, model) for OCR, discovered from the live vLLM hosts.
@@ -216,7 +220,20 @@ async def _ocr_with_openai(screenshots: list[bytes], prompt: str) -> str | None:
             if msgs and msgs[-1].get("role") == "assistant":
                 raw = msgs[-1].get("content")
         text = str(raw) if raw else ""
-            
+
+        # When the model runs out of output budget, prism replaces the content
+        # with an operator-facing warning string. It is ~160 chars, so it sails
+        # past the length check below and would be stored as the article body.
+        # Reasoning models make this likely: they spend the budget thinking
+        # before emitting any OCR text.
+        if _PRISM_TRUNCATION_MARKER in text:
+            logger.warning(
+                "[vision] %s/%s hit the output limit before returning OCR text "
+                "— discarding the truncation notice",
+                provider, resolved_model,
+            )
+            return None
+
         return text if len(text) > 100 else None
 
 
