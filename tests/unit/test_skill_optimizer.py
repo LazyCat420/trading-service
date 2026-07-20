@@ -106,6 +106,24 @@ def test_genuine_replacement_passes_gate():
     assert sim - 0.55 > so.MIN_SCORE_DELTA
 
 
+# ── Delimiter sanitization ──
+
+def test_sanitize_strips_prompt_delimiters():
+    """Models mirror the prompt's `---` rules back into updated_skill."""
+    raw = f"---\n{GOOD_SKILL}\n---"
+    assert so._sanitize_skill(raw) == GOOD_SKILL
+
+
+def test_sanitize_strips_code_fences():
+    raw = f"```markdown\n{GOOD_SKILL}\n```"
+    assert so._sanitize_skill(raw) == GOOD_SKILL
+
+
+def test_sanitize_preserves_interior_content():
+    assert so._sanitize_skill(GOOD_SKILL) == GOOD_SKILL
+    assert so._sanitize_skill("") == ""
+
+
 # ── Injection / forbidden patterns ──
 
 @pytest.mark.parametrize("bad", [

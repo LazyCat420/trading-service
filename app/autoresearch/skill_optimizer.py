@@ -75,6 +75,22 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def _sanitize_skill(text: str) -> str:
+    """Strip delimiter/fence artifacts the model copies out of the prompt.
+
+    The optimizer prompt shows the current doc wrapped in `---` rules, and
+    models reliably mirror those markers back into `updated_skill`. Left in,
+    they get prepended verbatim to a live system prompt (and a leading `---`
+    reads as YAML front-matter to some renderers).
+    """
+    lines = [ln.rstrip() for ln in (text or "").strip().splitlines()]
+    while lines and (lines[0].strip() in ("---", "***", "___") or lines[0].strip().startswith("```")):
+        lines.pop(0)
+    while lines and (lines[-1].strip() in ("---", "***", "___") or lines[-1].strip().startswith("```")):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def propose_and_validate_skill_edits(
@@ -231,7 +247,7 @@ async def _optimize_one_agent(
 
     action = str(proposal.get("action", "SKIP")).upper()
     rationale = str(proposal.get("rationale", ""))[:500]
-    candidate = str(proposal.get("updated_skill") or "").strip()
+    candidate = _sanitize_skill(str(proposal.get("updated_skill") or ""))
 
     if action == "SKIP" or not candidate:
         return "skipped"
