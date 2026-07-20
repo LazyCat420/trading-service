@@ -78,22 +78,45 @@ async def test_raises_when_no_endpoint_is_available(monkeypatch):
             await ve._resolve_vision_model()
 
 
+def _patched_llm():
+    return patch("app.services.prism_agent_caller.llm", type("L", (), {"_endpoints": _endpoints(
+        dgx_spark=_Endpoint("http://10.0.0.141:8000"),
+        jetson=_Endpoint("http://10.0.0.30:8000"),
+    )}))
+
+
 @pytest.mark.asyncio
 async def test_override_with_provider_prefix_is_split_once(monkeypatch):
     """Model ids contain slashes, so only a known provider prefix may be split."""
     monkeypatch.setenv("VISION_MODEL", "vllm-2/google/gemma-4-26B-A4B-it")
-    provider, model = await ve._resolve_vision_model()
+    with _patched_llm():
+        provider, model = await ve._resolve_vision_model()
     assert provider == "vllm-2"
     assert model == "google/gemma-4-26B-A4B-it"
 
 
 @pytest.mark.asyncio
 async def test_override_without_known_provider_is_treated_as_a_model_id(monkeypatch):
-    """A bare split would read "google" as the provider and send prism garbage."""
+    """A bare split would read "google" as the provider and send a bogus model."""
     monkeypatch.setenv("VISION_MODEL", "google/gemma-4-26B-A4B-it")
-    provider, model = await ve._resolve_vision_model()
+    with _patched_llm():
+        provider, model = await ve._resolve_vision_model()
     assert provider == "vllm-2"
     assert model == "google/gemma-4-26B-A4B-it"
+
+
+@pytest.mark.asyncio
+async def test_targets_expose_the_endpoint_url_for_direct_calls(monkeypatch):
+    """OCR posts to vLLM directly, so the base URL must ride with the target."""
+    monkeypatch.delenv("VISION_MODEL", raising=False)
+    with _patched_llm(), \
+         patch("app.services.prism_agent_caller.get_live_model_from_vllm",
+               new=AsyncMock(return_value="google/gemma-4-26B-A4B-it")):
+        targets = await ve._vision_targets()
+
+    assert [t[0] for t in targets] == ["vllm-2", "vllm"], "Gold Spark must lead"
+    assert targets[0][2] == "http://10.0.0.141:8000"
+    assert targets[1][2] == "http://10.0.0.30:8000"
 
 
 def test_truncation_notice_is_recognised():

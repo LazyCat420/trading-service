@@ -124,117 +124,138 @@ _KNOWN_PROVIDERS = frozenset({"vllm", "vllm-2", "openai", "anthropic", "ollama"}
 # place of content when max_tokens is exhausted.
 _PRISM_TRUNCATION_MARKER = "response was cut short"
 
+# Output budget for a page of OCR. Overridable so a smaller-context model can
+# be dropped in without editing code.
+_VISION_MAX_TOKENS = int(os.getenv("VISION_MAX_TOKENS", "16384"))
 
-async def _resolve_vision_model() -> tuple[str, str]:
-    """Return (provider, model) for OCR, discovered from the live vLLM hosts.
+# Generous: a measured full-page OCR runs 31-42s on Gold Spark, and the
+# per-domain rate limiter already bounds how often this is reached.
+_VISION_TIMEOUT_S = float(os.getenv("VISION_TIMEOUT_S", "300"))
 
-    This used to default to ``openai/gpt-4o``, which meant every OCR call went
-    to prism as provider "openai" and came back
-    ``500 {"message":"OPENAI_API_KEY is not set"}`` — vision scraping had never
-    worked here. Resolving against the local hosts keeps it on hardware we
-    actually run, and picking the model up from /v1/models (rather than pinning
-    an id) means swapping the served model doesn't silently break OCR.
+
+async def _vision_targets() -> list[tuple[str, str, str]]:
+    """Usable OCR targets as (provider, model, base_url), preferred first.
+
+    Discovering the model from /v1/models rather than pinning an id means
+    swapping the served model doesn't silently break OCR.
     """
+    from app.services.prism_agent_caller import llm, get_live_model_from_vllm
+
     override = os.getenv("VISION_MODEL", "").strip()
+    override_provider = override_model = None
     if override:
         prefix, _, rest = override.partition("/")
         if rest and prefix in _KNOWN_PROVIDERS:
-            return prefix, rest
-        # No recognisable provider prefix — treat the whole value as a model id
-        # and pair it with the preferred local host.
-        return _VISION_ENDPOINTS[0][1], override
+            override_provider, override_model = prefix, rest
+        else:
+            # Model ids contain slashes ("google/gemma-4-26B-A4B-it"), so only a
+            # recognised provider prefix may be split off — otherwise the vendor
+            # would be read as the provider.
+            override_provider, override_model = _VISION_ENDPOINTS[0][1], override
 
-    from app.services.prism_agent_caller import llm, get_live_model_from_vllm
-
-    errors = []
+    targets, errors = [], []
     for endpoint_key, provider in _VISION_ENDPOINTS:
         ep = llm._endpoints.get(endpoint_key)
         if not ep or not ep.enabled or not ep.url:
             errors.append(f"{endpoint_key}: not configured/enabled")
             continue
+        if override_provider:
+            if provider == override_provider:
+                targets.append((provider, override_model, ep.url))
+            continue
         try:
-            model = await get_live_model_from_vllm(ep.url)
-            return provider, model
+            targets.append((provider, await get_live_model_from_vllm(ep.url), ep.url))
         except Exception as e:  # noqa: BLE001 — try the next host
             errors.append(f"{endpoint_key}: {e}")
 
-    raise RuntimeError(f"No vision-capable vLLM endpoint available ({'; '.join(errors)})")
+    if not targets:
+        raise RuntimeError(f"No vision-capable vLLM endpoint available ({'; '.join(errors)})")
+    return targets
+
+
+async def _resolve_vision_model() -> tuple[str, str]:
+    """Return (provider, model) for OCR — the preferred target's identity."""
+    provider, model, _ = (await _vision_targets())[0]
+    return provider, model
 
 
 async def _ocr_with_openai(screenshots: list[bytes], prompt: str) -> str | None:
-    """Send screenshots to Prism VLM for OCR."""
+    """OCR screenshots on a local vision LLM, failing over between hosts.
+
+    Talks to vLLM's OpenAI-compatible endpoint directly rather than through
+    prism. OCR is mechanical, not agentic — it needs no tools, memory or
+    conversation — and routing it through prism made it *unreliable*: a
+    30-40s vision call intermittently came back
+    ``500 {"error": "This operation was aborted"}`` (1 of 3 succeeded in
+    testing), because the models spend thousands of reasoning tokens before
+    emitting any text. The same request straight to vLLM completes in 31-42s
+    every time. Prism is Rod's service, so the fix belongs on this side.
+
+    The function name is kept for its callers; the "openai" in it now refers
+    to the OpenAI-compatible wire format, not to OpenAI the provider.
+    """
     import httpx
 
-    # VISION_PRISM_URL lets operators point the VLM OCR at a chat/agent endpoint
-    # independently of the host's PRISM_URL. In trading-service PRISM_URL is a
-    # prism-proxy URL with different semantics than the scraper-service default
-    # (…/agent), so relying on it alone would break vision OCR. Falls back to
-    # PRISM_URL, then the historical lazy-tool agent default.
-    prism_url = os.getenv("VISION_PRISM_URL") or os.getenv("PRISM_URL", "http://lazy-tool-service:7778/agent")
-    base_url = prism_url
-    if base_url.endswith("/agent"):
-        base_url = base_url[:-6] + "/chat"
-    elif "/chat" not in base_url and "/v1" not in base_url:
-        if base_url.endswith("/"):
-            base_url += "chat"
-        else:
-            base_url += "/chat"
-            
-    if "?stream=false" not in base_url:
-        base_url += "?stream=false"
-    headers = {
-        "Content-Type": "application/json",
-        "x-project": PRISM_PROJECT,
-        "x-username": PRISM_USERNAME,
-    }
-
-    provider, resolved_model = await _resolve_vision_model()
-
-    images = []
-    for img_bytes in screenshots:
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
-        images.append(f"data:image/png;base64,{b64}")
+    targets = await _vision_targets()
 
     prompt_text = prompt or (
         "These are screenshots of a web page. Read ALL text visible in the images "
         "and return the complete text content. Return ONLY the text, no commentary."
     )
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
+    for img_bytes in screenshots:
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        })
 
-    payload = {
-        "provider": provider,
-        "model": resolved_model,
-        "messages": [{"role": "user", "content": prompt_text, "images": images}],
-        "temperature": 0.1,
-        "maxTokens": 4096,
-        "skipConversation": True,
-    }
+    errors = []
+    for provider, model, base_url in targets:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": 0.1,
+            # A full-page OCR dump does not fit in 4096, and both models emit
+            # reasoning tokens out of this same budget before any text appears.
+            # At 4096 a dense page returned nothing but a truncation notice.
+            # Both hosts have room: 262k context on Gold Spark, 100k on Jetson.
+            "max_tokens": _VISION_MAX_TOKENS,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=_VISION_TIMEOUT_S) as client:
+                r = await client.post(f"{base_url}/v1/chat/completions", json=payload)
+                r.raise_for_status()
+                data = r.json()
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        r = await client.post(base_url, json=payload, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        
-        raw = data.get("response") or data.get("content") or data.get("text")
-        if not raw and data.get("messages"):
-            msgs = data.get("messages", [])
-            if msgs and msgs[-1].get("role") == "assistant":
-                raw = msgs[-1].get("content")
-        text = str(raw) if raw else ""
+            message = (data.get("choices") or [{}])[0].get("message") or {}
+            text = str(message.get("content") or "")
 
-        # When the model runs out of output budget, prism replaces the content
-        # with an operator-facing warning string. It is ~160 chars, so it sails
-        # past the length check below and would be stored as the article body.
-        # Reasoning models make this likely: they spend the budget thinking
-        # before emitting any OCR text.
-        if _PRISM_TRUNCATION_MARKER in text:
-            logger.warning(
-                "[vision] %s/%s hit the output limit before returning OCR text "
-                "— discarding the truncation notice",
-                provider, resolved_model,
-            )
-            return None
+            # A model that spends its whole budget reasoning returns empty
+            # content with finish_reason="length" — that is a failed OCR, not a
+            # blank page, so fall through to the next host.
+            if not text.strip():
+                errors.append(f"{provider}/{model}: empty content")
+                continue
 
-        return text if len(text) > 100 else None
+            # Some gateways substitute an operator-facing notice for the content
+            # when the budget runs out. It is ~160 chars, so it would clear the
+            # length check below and be stored as the article body.
+            if _PRISM_TRUNCATION_MARKER in text:
+                errors.append(f"{provider}/{model}: truncation notice")
+                continue
+
+            if len(text) <= 100:
+                errors.append(f"{provider}/{model}: only {len(text)} chars")
+                continue
+
+            logger.info("[vision] OCR via %s/%s — %d chars", provider, model, len(text))
+            return text
+        except Exception as e:  # noqa: BLE001 — try the next host
+            errors.append(f"{provider}/{model}: {type(e).__name__}: {e}")
+
+    logger.warning("[vision] OCR failed on all targets — %s", "; ".join(errors))
+    return None
 
 
 class VisionEngine(BaseEngine):
