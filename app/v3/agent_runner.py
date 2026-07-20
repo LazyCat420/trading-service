@@ -104,6 +104,63 @@ def _get_tool_playbook_tips(agent_name: str, limit: int = 3) -> str:
     return tips
 
 
+def _fallback_overlays_from_metrics(artifact: dict) -> list:
+    """Best-effort overlays when the agent's JSON omitted them.
+
+    Uses the fields the quant report always carries — a stop-loss level and
+    thesis direction — so the chart still shows at least one meaningful line
+    rather than falling back to a bare candlestick with no analysis.
+    """
+    overlays: list = []
+    stop = artifact.get("stop_loss_suggestion")
+    try:
+        stop = float(stop)
+    except (TypeError, ValueError):
+        stop = None
+    if stop:
+        direction = str(artifact.get("thesis_direction", "")).upper()
+        # A stop below entry (long thesis) is support; above (short) is resistance.
+        ov_type = "resistance" if direction == "BEARISH" else "support"
+        overlays.append({
+            "type": ov_type,
+            "y0": stop,
+            "y1": stop,
+            "reasoning": "Suggested stop-loss level",
+        })
+    return overlays
+
+
+async def _persist_quant_chart(ticker: str, artifact: dict) -> None:
+    """Write the quant analyst's overlays to the AI Analysis Overlays chart.
+
+    Called after the artifact is parsed so chart generation no longer depends
+    on the model remembering to tool-call save_trading_chart mid-loop.
+    """
+    overlays = artifact.get("overlays")
+    if not isinstance(overlays, list) or not overlays:
+        overlays = _fallback_overlays_from_metrics(artifact)
+    if not overlays:
+        logger.info("[V3Runner] %s: no overlays to chart (skipping)", ticker)
+        return
+
+    from app.tools.charting_tools import save_trading_chart
+
+    confidence = artifact.get("confidence")
+    result = await asyncio.wait_for(
+        save_trading_chart(
+            ticker=ticker,
+            overlays=overlays,
+            period="1y",
+            analysis=str(artifact.get("summary", "")),
+            strategy_name="Quant/Risk Technical Analysis",
+            confidence=str(confidence) if confidence is not None else "",
+            reasoning=str(artifact.get("position_sizing_note", "")),
+        ),
+        timeout=45,
+    )
+    logger.info("[V3Runner] %s: persisted %d chart overlays (%s)", ticker, len(overlays), result[:60] if isinstance(result, str) else result)
+
+
 async def run_v3_agent(
     desk: SharedDesk,
     agent_module: Any,
@@ -612,6 +669,22 @@ async def run_v3_agent(
 
         # Append to SharedDesk
         desk.append_artifact(artifact_type, artifact)
+
+        # Persist the quant analyst's technical overlays to the AI Analysis
+        # Overlays chart deterministically. The agent USED to tool-call
+        # save_trading_chart mid-loop (step 5), but after the 2026-07-18 prompt
+        # compression it began emitting its final JSON and skipping that call —
+        # so no cycle produced chart overlays. Overlays now travel in the
+        # artifact's `overlays` field (which the model reliably fills) and we
+        # write the chart here, independent of whether the tool was called.
+        if agent_name == "v3_quant_analyst":
+            try:
+                await _persist_quant_chart(desk.ticker, artifact)
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] chart overlay persist failed for %s: %s: %s",
+                    desk.ticker, type(e).__name__, e,
+                )
 
         # Quality scoring — detect dead ends / weak artifacts
         quality_result = score_artifact(artifact_type, artifact)

@@ -177,6 +177,31 @@ QUANT_REPORT_SCHEMA: dict = {
                 "Must mark as 'Estimate: [details]' if data was approximated"
             ),
         },
+        "overlays": {
+            "type": "array",
+            "description": (
+                "Technical chart overlays the desk renders on the ticker chart: "
+                "support/resistance zones and trendlines. The pipeline persists "
+                "these to the AI Analysis Overlays chart automatically — no tool "
+                "call needed during a cycle."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "description": (
+                            "support | resistance | trendline | zone | volume_void"
+                        ),
+                    },
+                    "y0": {"type": "number", "description": "Lower price level"},
+                    "y1": {"type": "number", "description": "Upper price level"},
+                    "x0": {"type": "string", "description": "Start date (ISO) — trendlines only"},
+                    "x1": {"type": "string", "description": "End date (ISO) — trendlines only"},
+                    "reasoning": {"type": "string", "description": "Short label shown on the chart"},
+                },
+            },
+        },
     },
 }
 
