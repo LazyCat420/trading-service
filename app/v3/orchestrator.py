@@ -869,6 +869,22 @@ async def run_v3_pipeline(
             # The tournament bypasses run_v3_agent, so without this it leaves no
             # v3_agent_telemetry row — which drops its node from the replay flow
             # graph and severs the analyst→board edges (the "islands" bug).
+            #
+            # Bypassing run_v3_agent also meant bypassing score_artifact, so this
+            # was hardcoded to -1: the single most expensive stage in the pipeline
+            # (~264s/ticker, ~1.2M tokens per 5-ticker cycle, a third of all agent
+            # time) was the only one with no quality signal at all. Score it here
+            # instead, so "is the debate worth its cost?" is an answerable question.
+            try:
+                from app.v3.quality_scorer import score_artifact
+
+                tournament_quality = score_artifact(
+                    "tournament_debate", tournament_result
+                ).get("quality_score", -1)
+            except Exception as score_err:  # noqa: BLE001 — never block the cycle
+                logger.warning("[V3] %s: tournament scoring failed: %s", ticker, score_err)
+                tournament_quality = -1
+
             desk.record_agent_telemetry({
                 "agent_name": "v3_tournament_debate",
                 "ticker": ticker,
@@ -877,7 +893,7 @@ async def run_v3_pipeline(
                 "token_usage": int(tournament_result.get("total_tokens", 0) or 0),
                 "outcome": "SUCCESS",
                 "phase": desk.phase.value,
-                "quality_score": -1,
+                "quality_score": tournament_quality,
             })
         except Exception as tournament_err:
             logger.error("[V3] %s: Tournament debate failed: %s", ticker, tournament_err, exc_info=True)

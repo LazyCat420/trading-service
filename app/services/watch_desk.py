@@ -45,6 +45,56 @@ DEFAULT_STALENESS_DAYS = 10         # re-check backstop if nothing else trips
 _MAX_PRICE_FAILS = 8                # consecutive empty price fetches → deactivate
 _PRICE_FAIL_COUNT: dict[str, int] = {}
 
+# Trigger severity for budget ranking. A hard price/technical level being
+# breached is a stronger reason to re-decide than a headline: the price
+# triggers are levels the desk itself chose, whereas news fires on any
+# material article. On a saturated day (measured: 6 fired / 8 deferred) this
+# decides which trips survive.
+_TRIGGER_SEVERITY = {
+    "price_below": 5,     # stop-loss territory — most urgent
+    "price_above": 4,     # take-profit territory
+    "pct_change": 4,
+    "volume_spike": 3,
+    "rsi": 3,
+    "news": 2,
+}
+
+
+def _held_tickers() -> set[str]:
+    """Tickers the active bot currently holds. Never raises — ranking is an
+    optimisation, and a DB hiccup must not stop the desk from firing."""
+    try:
+        from app.services.bot_manager import get_active_bot_id
+
+        bot_id = get_active_bot_id()
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT ticker FROM positions WHERE bot_id = %s AND qty > 0",
+                [bot_id],
+            ).fetchall()
+        return {r[0] for r in rows if r and r[0]}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[WatchDesk] held-ticker lookup failed, ranking without it: %s", e)
+        return set()
+
+
+def _trip_priority(candidate: dict, held: set[str]) -> tuple:
+    """Rank a trip. Higher sorts first.
+
+    Order of concerns:
+      1. Open position — real money is exposed, so a trip on a held ticker
+         outranks one on a name we are merely watching.
+      2. Trigger severity — a breached price level beats a headline.
+      3. Staleness — a watch that has never fired outranks one that fires
+         constantly, so a single noisy ticker cannot monopolise the budget.
+    """
+    watch = candidate["watch"]
+    return (
+        1 if candidate["ticker"] in held else 0,
+        _TRIGGER_SEVERITY.get(candidate["trig"].get("type"), 1),
+        -int(watch.get("fire_count") or 0),
+    )
+
 VALID_TRIGGER_TYPES = {
     "price_above", "price_below", "pct_change", "rsi", "volume_spike",
     "news", "staleness",
@@ -510,6 +560,7 @@ async def evaluate_watches() -> dict:
     fired_total = 0
     evaluated = 0
     deferred: list[str] = []
+    candidates: list[dict] = []
 
     # Regular-session check drives whether price/technical triggers evaluate.
     try:
@@ -562,18 +613,32 @@ async def evaluate_watches() -> dict:
                 fired, detail, value = _eval_trigger(trig, ctx, w, market_open)
                 if not fired:
                     continue
-                if budget_left <= 0:
-                    # Collected + logged once per pass below — the per-ticker
-                    # WARNING here used to print ~12 lines every 15 minutes for
-                    # the rest of the day once the budget was spent.
-                    deferred.append(f"{ticker}({trig['type']})")
-                    break
-                cycle_id = await _enqueue_wake(w, trig, detail)
-                if cycle_id:
-                    _mark_fired(w, trig, detail, value, cycle_id)
-                    budget_left -= 1
-                    fired_total += 1
-                break  # one fire per watch per pass
+                # Collect, don't fire. Firing inline handed the whole budget to
+                # whichever tickers `by_ticker` happened to iterate first —
+                # plain dict order — so on a saturated day the megacaps were
+                # dropped for no reason other than position in a loop. Measured:
+                # 6 fired / 8 deferred, with AAPL, NVDA, MSFT, AMZN and TSLA all
+                # in the deferred set. Ranking happens after every trip is known.
+                candidates.append({
+                    "watch": w, "trig": trig, "ticker": ticker,
+                    "detail": detail, "value": value,
+                })
+                break  # one candidate per watch per pass
+
+    # ── Rank, then spend the budget on the most consequential trips ────────
+    if candidates:
+        held = _held_tickers()
+        candidates.sort(key=lambda c: _trip_priority(c, held), reverse=True)
+        for cand in candidates:
+            if budget_left <= 0:
+                deferred.append(f"{cand['ticker']}({cand['trig']['type']})")
+                continue
+            cycle_id = await _enqueue_wake(cand["watch"], cand["trig"], cand["detail"])
+            if cycle_id:
+                _mark_fired(cand["watch"], cand["trig"], cand["detail"],
+                            cand["value"], cycle_id)
+                budget_left -= 1
+                fired_total += 1
 
     if deferred:
         logger.warning(

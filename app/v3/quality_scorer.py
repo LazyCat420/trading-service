@@ -137,6 +137,27 @@ def _score_content_density(artifact: dict) -> int:
         if isinstance(val, str) and val.strip():
             text_fields.append(val.strip())
 
+    # The tournament's substance is in the theses it argued, not in a summary
+    # field — scoring only `rationale` would judge a 4-stage debate by its
+    # one-line verdict.
+    for list_field in ("pitches", "survivors"):
+        for item in artifact.get(list_field) or []:
+            if isinstance(item, dict):
+                claim = item.get("claim")
+                if isinstance(claim, str) and claim.strip():
+                    text_fields.append(claim.strip())
+    h2h = artifact.get("h2h")
+    if isinstance(h2h, dict):
+        for side in ("thesis_a", "thesis_b"):
+            thesis = h2h.get(side)
+            if isinstance(thesis, dict):
+                claim = thesis.get("claim")
+                if isinstance(claim, str) and claim.strip():
+                    text_fields.append(claim.strip())
+                for point in thesis.get("attack_points") or []:
+                    if isinstance(point, str) and point.strip():
+                        text_fields.append(point.strip())
+
     if not text_fields:
         return 0
 
@@ -204,6 +225,7 @@ _OPTIONAL_FIELDS: dict[str, list[str]] = {
     "regime_classification": ["rationale", "vix_level", "yield_trend", "dxy_trend"],
     "final_decision": ["position_size_pct", "stop_loss", "take_profit", "persona_used", "regime"],
     "trade_decision": ["signal_weights", "signal_assessments", "risk_flags", "stop_loss", "take_profit"],
+    "tournament_debate": ["pitches", "survivors", "h2h", "jury_verdict", "risk_flags"],
 }
 
 
@@ -294,6 +316,44 @@ def _score_consistency(artifact_type: str, artifact: dict) -> int:
         checks += 1
         if not data_gaps:
             issues += 1  # Low confidence but claims no data gaps
+
+    # Check 6: tournament stage integrity. The tournament is the most
+    # expensive stage in the pipeline (~264s/ticker, ~1.2M tokens per 5-ticker
+    # cycle) and its failure mode is NOT weak prose — it is stages silently
+    # collapsing: every pitch dropped before the H2H, an empty jury, or the
+    # fallback path returning HOLD@0. Text-shaped checks cannot see any of
+    # that, which is why this artifact went unscored (-1) while burning a
+    # third of the cycle's agent time.
+    if artifact_type == "tournament_debate":
+        pitches = artifact.get("pitches") or []
+        survivors = artifact.get("survivors") or []
+        h2h = artifact.get("h2h") or {}
+        jury = artifact.get("jury_verdict") or {}
+
+        # Stage 1 → 2: pitches must exist and some must survive.
+        checks += 1
+        if not pitches:
+            issues += 1
+        checks += 1
+        if pitches and not survivors:
+            issues += 1  # every thesis eliminated — no debate happened
+
+        # Stage 3: head-to-head needs two named theses to be a real debate.
+        checks += 1
+        if not (h2h.get("thesis_a", {}).get("claim")
+                and h2h.get("thesis_b", {}).get("claim")):
+            issues += 1
+
+        # Stage 4: a verdict with no jury is an unearned answer.
+        checks += 1
+        if not jury:
+            issues += 1
+
+        # The fallback path returns winning_side="fallback" with HOLD@0 —
+        # a structurally valid dict that did no work.
+        checks += 1
+        if artifact.get("winning_side") == "fallback":
+            issues += 1
 
     if checks == 0:
         return 70  # No checkable fields, neutral score
