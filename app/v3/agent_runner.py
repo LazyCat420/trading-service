@@ -389,6 +389,62 @@ async def run_v3_agent(
         # Parse the artifact from the agent's output
         artifact = _parse_artifact(final_text, artifact_type, agent_name)
 
+        # Salvage pass. A tool-enabled agent that reaches its iteration ceiling
+        # is told by the harness to "summarize", and models frequently answer
+        # with one more *pseudo* tool call in plain text (e.g.
+        # `call:mcp__lazy-tool-service__get_sec_filings{ticker:WFC}`) instead of
+        # the JSON artifact. Nothing executes it, so the literal string becomes
+        # the final answer and parsing fails — burning the whole run's research.
+        # One tool-less retry that shows the model its own output and asks only
+        # for the JSON recovers it, so re-running every agent from scratch (or
+        # tripping the breaker) is not the first resort.
+        if artifact is None and final_text and bool(tool_whitelist):
+            logger.warning(
+                "[V3Runner] %s: unparseable output for %s (%d chars) — "
+                "attempting tool-less artifact repair",
+                agent_name, desk.ticker, len(final_text),
+            )
+            try:
+                repair_result = await asyncio.wait_for(
+                    run_agent(
+                        agent_name=agent_name,
+                        ticker=desk.ticker,
+                        cycle_id=cycle_id,
+                        bot_id=bot_id,
+                        system_prompt=system_prompt,
+                        user_prompt=(
+                            f"{user_prompt}\n\n"
+                            f"## PREVIOUS ATTEMPT (UNPARSEABLE)\n"
+                            f"Your previous reply could not be parsed as the "
+                            f"required artifact:\n\n{final_text[:2000]}\n\n"
+                            f"Do NOT call any tools — you have none available "
+                            f"now. Using the analysis you already performed, "
+                            f"reply with ONLY the '{artifact_type}' JSON "
+                            f"object. Start with '{{' and end with '}}'. "
+                            f"No markdown fences, no commentary.\n"
+                        ),
+                        max_tokens=8192,
+                        enable_tools=False,
+                        model_override=model_override,
+                        prism_overrides=prism_overrides,
+                    ),
+                    timeout=timeout_seconds,
+                )
+                repair_text = repair_result.get("response", "")
+                artifact = _parse_artifact(repair_text, artifact_type, agent_name)
+                if artifact is not None:
+                    logger.info(
+                        "[V3Runner] %s: artifact repair succeeded for %s",
+                        agent_name, desk.ticker,
+                    )
+                    elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                    token_usage += repair_result.get("tokens_used", 0)
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] %s: artifact repair failed for %s: %s: %s",
+                    agent_name, desk.ticker, type(e).__name__, e,
+                )
+
         if artifact is None:
             logger.error(
                 "[V3Runner] %s produced no parseable artifact for %s",

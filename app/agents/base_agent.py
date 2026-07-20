@@ -8,6 +8,7 @@ LLM only analyzes — never calculates.
 
 import datetime
 import logging
+import re
 
 from app.config import settings
 
@@ -17,6 +18,19 @@ from app.utils.resilience import aresilient_call
 logger = logging.getLogger(__name__)
 
 _active_agents = set()
+
+# A final answer that is really an unexecuted tool call the model wrote as
+# prose, e.g. `call:mcp__lazy-tool-service__get_sec_filings{ticker:WFC}` or
+# `get_finviz_fundamentals({"ticker": "FCF"})`. Models emit these when they
+# hit an iteration ceiling, so treat it as budget exhaustion, not an answer.
+# Deliberately narrow: the identifier must carry a tool-ish separator (an
+# underscore or a dotted/mcp-prefixed path) and butt directly against its
+# argument bracket. Prose such as "BULLISH (high conviction)" must not match.
+_PSEUDO_TOOL_CALL_RE = re.compile(
+    r"^(?:call:|tool:|<tool_call>)?\s*"
+    r"(?:mcp__[\w.-]+|[a-z][\w.-]*_[\w.-]*[\w])"
+    r"[({\[]",
+)
 
 # ─── Meta-prompt: generates a context-aware system prompt ───────────
 AGENT_META_SYSTEM = """You are an expert at creating specialized analyst system prompts for stock market analysis.
@@ -538,13 +552,26 @@ async def run_agent(
         _out_preview, "..." if content and len(content) > 1500 else "",
     )
 
-    # The SDK harness returns a plain string; its only structured exhaustion
-    # signal is the sentinel below. Derive stop_reason so agent_runner's
-    # truncation warning (previously dead — this key was never set) fires on
-    # budget exhaustion.
+    # Derive stop_reason so agent_runner's budget warning actually fires.
+    #
+    # The SDK harness has a sentinel string, but Prism does NOT: when an agent
+    # hits Prism's iteration ceiling it injects an <iteration-limit> system
+    # message and returns whatever the model says next. In practice the model
+    # often replies with a *pseudo* tool call in plain text — a short line like
+    #   call:mcp__lazy-tool-service__get_sec_filings{ticker:WFC}
+    # Matching only the SDK sentinel meant this warning never fired once
+    # against Prism, so budget exhaustion presented as an artifact parse bug.
+    _stripped = content.strip()
+    _looks_like_pseudo_tool_call = (
+        len(_stripped) < 400
+        and _PSEUDO_TOOL_CALL_RE.match(_stripped) is not None
+    )
     stop_reason = (
         "max_iterations"
-        if content.strip() == "Max iterations reached without a final answer."
+        if (
+            _stripped == "Max iterations reached without a final answer."
+            or _looks_like_pseudo_tool_call
+        )
         else "completed"
     )
 

@@ -308,8 +308,13 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "user_chat": 15,
     # ── V3 Pure Agentic Pipeline Agents (real limits, not V2's 9999) ──
     "v3_junior_analyst": 5,
-    "v3_fundamental_analyst": 7,
-    "v3_quant_analyst": 7,
+    # Raised from 7 on 2026-07-19: every *successful* run was landing on
+    # exactly 7 loops, i.e. the ceiling was the normal path rather than an
+    # edge case, and runs that hit it often emit a pseudo tool call instead
+    # of the artifact (see the salvage pass in v3/agent_runner.py). These two
+    # both do multi-source lookups before they can write their report.
+    "v3_fundamental_analyst": 12,
+    "v3_quant_analyst": 12,
     "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bull_defense": 3,        # No tools — pure reasoning
