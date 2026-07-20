@@ -4,6 +4,16 @@ Outcome Tracker — Records pipeline decisions and resolves them against actual 
 This closes the feedback loop for Decision Quality scoring:
 1. record_cycle_decisions()  — called after each cycle, captures BUY/SELL/HOLD + entry price
 2. resolve_pending_outcomes() — called before scoring, checks unresolved decisions against current prices
+
+HOLD decisions ARE tracked (since 2026-07-19). They were skipped before, which
+threw away ~75% of the fleet's verdicts (249 of 332 in a typical week) and
+starved every outcome-based metric of samples. A HOLD is a checkable claim —
+"no meaningful move over the horizon" — and it resolves against the same ±1%
+band the directional calls use. HOLDs get their own outcome labels
+(HOLD_CORRECT / HOLD_MISS) so the directional win-rate cohort (WIN/LOSS) is
+untouched: folding "price stayed flat" into win rate would let low volatility
+masquerade as directional skill. HOLD outcomes feed calibration and a separate
+hold-accuracy metric in decision_audit instead.
 """
 
 import logging
@@ -21,11 +31,27 @@ WIN_THRESHOLD_PCT = 1.0
 LOSS_THRESHOLD_PCT = -1.0
 
 
+def _classify(action: str, pnl_pct: float) -> str:
+    """Map a signed pnl move to an outcome label for the given action.
+
+    Directional calls keep the historical WIN/LOSS/FLAT taxonomy. HOLD claims
+    get distinct labels on purpose: every existing consumer filters on
+    WIN/LOSS, so HOLD rows are invisible to them unless they opt in.
+    """
+    if action == "HOLD":
+        return "HOLD_CORRECT" if abs(pnl_pct) < WIN_THRESHOLD_PCT else "HOLD_MISS"
+    if pnl_pct >= WIN_THRESHOLD_PCT:
+        return "WIN"
+    if pnl_pct <= LOSS_THRESHOLD_PCT:
+        return "LOSS"
+    return "FLAT"
+
+
 def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
     """
-    After a cycle completes, read analysis_results for that cycle
-    and insert unresolved decision_outcomes for every BUY/SELL decision.
-    HOLD decisions are skipped since they have no price action to evaluate.
+    After a cycle completes, read analysis_results for that cycle and insert
+    unresolved decision_outcomes for every BUY/SELL/HOLD decision. HOLDs are
+    tracked as "no meaningful move" claims (see module docstring).
     """
     recorded = 0
     try:
@@ -54,8 +80,6 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                     result = {}
 
                 action = result.get("action", "HOLD")
-                if action == "HOLD":
-                    continue  # Nothing to track for HOLD
 
                 if entry_price is None:
                     logger.debug("[OUTCOME] Skipping %s — no price_history available", ticker)
@@ -90,13 +114,14 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
 def resolve_pending_outcomes() -> dict:
     """
     Find unresolved decision_outcomes older than RESOLVE_AFTER_DAYS,
-    look up current price, compute PnL, and classify as WIN/LOSS/FLAT.
+    look up current price, compute PnL, and classify: WIN/LOSS/FLAT for
+    directional calls, HOLD_CORRECT/HOLD_MISS for hold claims.
 
     Returns summary stats.
     """
     resolved = 0
     errors = 0
-    stats = {"wins": 0, "losses": 0, "flats": 0}
+    stats = {"wins": 0, "losses": 0, "flats": 0, "holds_correct": 0, "holds_miss": 0}
 
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
@@ -130,24 +155,20 @@ def resolve_pending_outcomes() -> dict:
                         logger.debug("[OUTCOME] Cannot resolve %s — invalid entry_price", outcome_id)
                         continue
 
-                    # Compute PnL based on action direction
-                    if action == "BUY":
-                        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-                    elif action == "SELL":
+                    # Compute PnL based on action direction. A HOLD claim is
+                    # evaluated on the raw signed move — direction is
+                    # irrelevant to "nothing meaningful happened".
+                    if action == "SELL":
                         pnl_pct = ((entry_price - exit_price) / entry_price) * 100
-                    else:
-                        continue  # Shouldn't happen — HOLDs aren't recorded
+                    else:  # BUY and HOLD both measure the long-side move
+                        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
 
-                    # Classify outcome
-                    if pnl_pct >= WIN_THRESHOLD_PCT:
-                        outcome = "WIN"
-                        stats["wins"] += 1
-                    elif pnl_pct <= LOSS_THRESHOLD_PCT:
-                        outcome = "LOSS"
-                        stats["losses"] += 1
-                    else:
-                        outcome = "FLAT"
-                        stats["flats"] += 1
+                    outcome = _classify(action, pnl_pct)
+                    key = {
+                        "WIN": "wins", "LOSS": "losses", "FLAT": "flats",
+                        "HOLD_CORRECT": "holds_correct", "HOLD_MISS": "holds_miss",
+                    }[outcome]
+                    stats[key] += 1
 
                     db.execute(
                         """UPDATE decision_outcomes
@@ -164,8 +185,9 @@ def resolve_pending_outcomes() -> dict:
 
         if resolved > 0:
             logger.info(
-                "[OUTCOME] Resolved %d outcomes: %dW / %dL / %dF (errors: %d)",
-                resolved, stats["wins"], stats["losses"], stats["flats"], errors,
+                "[OUTCOME] Resolved %d outcomes: %dW / %dL / %dF / %dHC / %dHM (errors: %d)",
+                resolved, stats["wins"], stats["losses"], stats["flats"],
+                stats["holds_correct"], stats["holds_miss"], errors,
             )
     except Exception as e:
         logger.error("[OUTCOME] Batch resolution failed: %s", e)
@@ -196,13 +218,11 @@ def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float
                 elif action == "SELL":
                     pnl_pct = ((entry_price - exit_price) / entry_price) * 100
                 else:
+                    # HOLD claims resolve on their 7-day timer, never on a
+                    # position exit — the claim is about the horizon, and an
+                    # exit at day 2 says nothing about it.
                     continue
-                if pnl_pct >= WIN_THRESHOLD_PCT:
-                    outcome = "WIN"
-                elif pnl_pct <= LOSS_THRESHOLD_PCT:
-                    outcome = "LOSS"
-                else:
-                    outcome = "FLAT"
+                outcome = _classify(action, pnl_pct)
                 db.execute(
                     """UPDATE decision_outcomes
                     SET exit_price = %s, pnl_pct = %s, outcome = %s, resolved_at = %s

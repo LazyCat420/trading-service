@@ -132,6 +132,11 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         _update_ar_state(report_id, phase="outcome_resolution")
         try:
             outcome_result = resolve_pending_outcomes()
+            try:
+                from app.v3.challenger import resolve_challenger_outcomes
+                resolve_challenger_outcomes()
+            except Exception as ch_err:
+                logger.debug("Challenger resolution skipped: %s", ch_err)
             if outcome_result.get("resolved", 0) > 0:
                 logger.info("[AUTORESEARCH] Resolved %d pending outcomes", outcome_result["resolved"])
         except Exception as oe:
@@ -183,6 +188,19 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
 
         _update_ar_state(report_id, phase="performance")
         perf_metrics = _audit_performance(cycle_id, cycle_summary)
+        # Persist score provenance next to the number: version (formula
+        # changes must be attributable), cohort n/age (rolling-term drift is
+        # cohort drift, not system change), and the per-cycle judge subscore
+        # (the only component that can move on a single cycle).
+        perf_metrics["decision_cohort"] = {
+            "score_version": decision_quality.get("score_version"),
+            "per_cycle_judge_score": decision_quality.get("per_cycle_judge_score"),
+            **{
+                k: decision_quality.get("outcome_stats", {}).get(k)
+                for k in ("cohort_n", "cohort_window_days", "median_decision_age_days",
+                          "hold_accuracy", "win_rate", "calibration_ece")
+            },
+        }
 
         _update_ar_state(report_id, phase="recovery")
         recovery = _audit_recovery()

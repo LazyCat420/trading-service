@@ -310,6 +310,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         from app.routers.chart_router import router as chart_router
         from app.routers.market_router import router as market_router
         from app.routers.cycle_replay_router import router as cycle_replay_router
+        from app.routers.challenger_router import router as challenger_router
         # Absorbed scraper-service routes (formerly the standalone scraper-service:8001).
         # /scrape, /scrape/batch, /collect, /stream/{video_id}. The scraper's own
         # /health router is intentionally NOT included — trading-service already
@@ -329,6 +330,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         app.include_router(chart_router)
         app.include_router(market_router)
         app.include_router(cycle_replay_router)
+        app.include_router(challenger_router)
         app.include_router(scrape_router)
         app.include_router(collect_router)
         app.include_router(stream_router)

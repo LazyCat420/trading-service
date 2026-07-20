@@ -965,6 +965,16 @@ async def run_v3_pipeline(
                 except Exception as audit_err:
                     logger.warning("[V3] %s: decision audit log failed (non-fatal): %s", ticker, audit_err)
 
+                # Paired challenger (observational): re-decide from the same
+                # desk evidence under the experimental spec, log the pair.
+                # Only runs when CHALLENGER_SPEC is set — see app/v3/challenger.
+                try:
+                    from app.v3.challenger import get_challenger_spec, run_challenger
+                    if get_challenger_spec():
+                        await run_challenger(desk, cycle_id, ticker, trade_decision)
+                except Exception as ch_err:
+                    logger.warning("[V3] %s: challenger failed (non-fatal): %s", ticker, ch_err)
+
                 try:
                     from app.trading.strategy_tracker import record_strategy
                     action = trade_decision.get("action", "HOLD")
