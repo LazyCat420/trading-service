@@ -1,3 +1,17 @@
+# HANDOFF — early-stop retry telemetry gap closed (2026-07-20)
+
+**Deployed:** trading-service `d4d014b` + lazycat-sdk `c54f817` (v0.3.1) → synology, healthy. Bundled copy synced to lazy-agent-service `6f2f6ea` (python mirror; not executed in the Node container).
+
+Closes the one open item from the telemetry fix below. The SDK emitter only fired for failures it meant to RETRY, so a give-up that stopped early — DoomLoopException, or a FATAL on a later attempt — was logged but emitted no dashboard event. Those are the failures most worth seeing.
+
+**Fix:** the SDK emitter contract gained a keyword `final: bool` (True on any give-up, budget-exhaustion OR early-stop). The SDK emits from its stop branch with `final=True`; the shim's `_pipeline_emit` gates give-up-only emission on `final` instead of `attempt < max_attempts` (which silently dropped early stops — an early give-up has attempt < max_attempts yet is terminal). Event `status` and payload now carry `final` too.
+
+**Contract note:** any `set_failure_emitter` callback must now accept `final` (or `**kwargs`). Only one consumer exists (this shim); updated in lockstep.
+
+**Verified live in-container:** DoomLoop on attempt 1 of 5 → one event, status=error, final=True (was zero before). Budget-exhaustion and recovering-call paths unchanged. 906 unit + 109 SDK tests pass.
+
+---
+
 # HANDOFF — full 5-ticker cycle verified end to end (2026-07-20)
 
 **Cycle:** `cycle-v3-1784578079`, 20:07:59→20:22:02 UTC (14 min), status `done`, no error, 202 events, 0 error events. Triggered via `scripts/trigger_cycle.py --max-tickers 5` in-container; **no deploys during the window** (the prior session's two attempts died to mid-run deploys).
