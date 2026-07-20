@@ -168,6 +168,18 @@ async def run_v3_agent(
     system_prompt = agent_module.SYSTEM_PROMPT
     tool_whitelist = agent_module.TOOL_WHITELIST
 
+    # SkillOpt: prepend this agent's learned skill doc ("" when none; served
+    # from an in-process cache, so no per-run DB hit). The prefix only changes
+    # when autoresearch accepts an edit, so the system prompt stays
+    # byte-identical between mutations and vLLM prefix-cache reuse survives.
+    try:
+        from app.autoresearch.skill_loader import load_skill_prefix
+        _skill_prefix = load_skill_prefix(agent_name)
+        if _skill_prefix:
+            system_prompt = _skill_prefix + system_prompt
+    except Exception as skill_err:  # noqa: BLE001 — advisory, never blocks an agent
+        logger.debug("[V3Runner] skill prefix load failed for %s: %s", agent_name, skill_err)
+
     session_key = f"{cycle_id}:{desk.ticker}:{agent_name}"
     t_start = time.monotonic()
     sys_prompt_chars = 0

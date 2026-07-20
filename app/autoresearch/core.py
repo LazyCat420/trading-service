@@ -293,6 +293,17 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as ls_err:
             logger.warning("[AUTORESEARCH] Lesson store write failed: %s", ls_err)
 
+        # SkillOpt: propose + validate per-agent skill-doc edits from this
+        # cycle's reflection. Time-boxed internally and never fatal — a skill
+        # mutation failure must not block the rest of the pipeline.
+        _update_ar_state(report_id, phase="skill_mutation")
+        try:
+            from app.autoresearch.skill_optimizer import propose_and_validate_skill_edits
+            skill_summary = await propose_and_validate_skill_edits(reflection, cycle_id, tickers)
+            logger.info("[AUTORESEARCH] SkillOpt: %s", skill_summary)
+        except Exception as sk_err:
+            logger.warning("[AUTORESEARCH] Skill mutation skipped (non-fatal): %s", sk_err)
+
         # Auto-resolve detected data gaps
         _update_ar_state(report_id, phase="gap_resolution")
         try:

@@ -3469,3 +3469,46 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── SkillOpt: per-agent learned skill docs (agent_skills) + audit log of
+    # edits that failed the validation gate (rejected_skill_edits). Written by
+    # app/autoresearch/skill_optimizer.py, read by skill_loader.py.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_skills (
+                    id          BIGSERIAL PRIMARY KEY,
+                    agent_name  TEXT NOT NULL,
+                    version     INTEGER NOT NULL DEFAULT 1,
+                    skill_text  TEXT NOT NULL,
+                    skill_hash  TEXT,
+                    cycle_id    TEXT,
+                    score       DOUBLE PRECISION,
+                    action      TEXT,
+                    rationale   TEXT,
+                    status      TEXT NOT NULL DEFAULT 'active',
+                    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_agent_skills_active
+                ON agent_skills (agent_name, status, version DESC);
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS rejected_skill_edits (
+                    id          BIGSERIAL PRIMARY KEY,
+                    agent_name  TEXT NOT NULL,
+                    skill_hash  TEXT,
+                    cycle_id    TEXT,
+                    reason      TEXT,
+                    score_delta DOUBLE PRECISION,
+                    rationale   TEXT,
+                    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

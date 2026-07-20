@@ -693,6 +693,36 @@ CREATE TABLE IF NOT EXISTS autoresearch_reports (
 );
 CREATE INDEX IF NOT EXISTS idx_autoresearch_reports_cycle ON autoresearch_reports(cycle_id);
 
+-- SkillOpt: per-agent learned skill docs, prepended to V3 system prompts by
+-- app/autoresearch/skill_loader.py; mutated post-cycle by skill_optimizer.py.
+-- Self-contained on purpose: schema_pg.sql runs BEFORE migrations.py, so
+-- nothing here may reference migration-added columns.
+CREATE TABLE IF NOT EXISTS agent_skills (
+    id          BIGSERIAL PRIMARY KEY,
+    agent_name  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    skill_text  TEXT NOT NULL,
+    skill_hash  TEXT,
+    cycle_id    TEXT,
+    score       DOUBLE PRECISION,
+    action      TEXT,
+    rationale   TEXT,
+    status      TEXT NOT NULL DEFAULT 'active',
+    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_skills_active ON agent_skills (agent_name, status, version DESC);
+
+CREATE TABLE IF NOT EXISTS rejected_skill_edits (
+    id          BIGSERIAL PRIMARY KEY,
+    agent_name  TEXT NOT NULL,
+    skill_hash  TEXT,
+    cycle_id    TEXT,
+    reason      TEXT,
+    score_delta DOUBLE PRECISION,
+    rationale   TEXT,
+    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS autoresearch_cycle_summaries (
     id              TEXT PRIMARY KEY,
     cycle_id        TEXT UNIQUE,
