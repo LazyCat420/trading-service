@@ -49,6 +49,9 @@ RUN apt-get update \
 # ── Copy backend source ──────────────────────────────────────
 COPY app/ ./app/
 COPY scripts/ ./scripts/
+# Active challenger experiment spec (versioned — survives the .env rebuild
+# that deploys perform; see app/v3/challenger.get_challenger_spec).
+COPY experiments/ ./experiments/
 COPY tool_schemas.json ./tool_schemas.json
 
 # ── Copy the cycle backend entrypoint ────────────────────────

@@ -1,0 +1,5 @@
+{
+  "label": "exp-2026-07-confidence-spread",
+  "custom_instructions": "CONFIDENCE DISCIPLINE: Your stated confidence must reflect genuine conviction, using the full 0-100 scale. Reserve 70+ for decisions where the desk evidence is strongly aligned (multiple independent bullish/bearish signals, no unresolved dissent). Use 40-55 when evidence is mixed or thin. A confidence that would be the same for every ticker is a wasted signal - differentiate.",
+  "enabled": true
+}

@@ -51,24 +51,34 @@ async def run_variance(cycle_id: str | None, ticker: str, runs: int) -> dict:
         )
 
     base = desk.to_dict()
+    # Artifacts are top-level desk fields, not a nested dict.
+    present = [
+        k for k in ("desk_note", "fundamental_report", "quant_report", "bull_argument",
+                    "bear_rebuttal", "bull_defense", "debate_judge", "regime_classification",
+                    "tournament_result", "final_decision", "trade_decision")
+        if base.get(k)
+    ]
     print(
         f"Desk: cycle={desk.cycle_id} ticker={desk.ticker} phase={desk.phase} "
-        f"artifacts={sorted((base.get('artifacts') or {}).keys())}",
+        f"artifacts={present}",
         file=sys.stderr,
     )
 
     results = []
     for i in range(runs):
-        # Fresh copy per run — run_v3_agent appends the artifact to the desk,
-        # and a shared desk would let run N see run N-1's decision.
-        replica = SharedDesk.from_dict(copy.deepcopy(base))
-        outcome = await run_v3_agent(
+        # Fresh copy per run — the runner appends the decision to the desk
+        # itself (run_v3_agent returns only a PhaseOutcome enum), and a shared
+        # desk would let run N see run N-1's decision.
+        run_base = copy.deepcopy(base)
+        run_base["trade_decision"] = None  # the field the synthesizer writes
+        replica = SharedDesk.from_dict(run_base)
+        await run_v3_agent(
             replica,
             decision_agent,
             cycle_id=f"variance-{desk.cycle_id}",
             timeout_seconds=300.0,
         )
-        artifact = (outcome.artifact or {}) if outcome else {}
+        artifact = replica.trade_decision or {}
         action = artifact.get("action")
         confidence = artifact.get("confidence")
         results.append({"run": i + 1, "action": action, "confidence": confidence})

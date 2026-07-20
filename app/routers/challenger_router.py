@@ -32,6 +32,10 @@ def _champion_correct(action: str | None, outcome: str | None) -> bool | None:
 async def challenger_stats(label: str = Query(default=None)):
     """Experiment scoreboard, per spec label (or all labels)."""
     try:
+        # The table is created lazily by the first challenger run; the stats
+        # endpoint must not 500 before that happens.
+        from app.v3.challenger import _ensure_table
+        _ensure_table()
         with get_db() as db:
             where = "WHERE spec_label = %s" if label else ""
             params = [label] if label else []

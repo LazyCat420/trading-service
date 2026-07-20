@@ -37,23 +37,50 @@ from app.db.connection import get_db
 logger = logging.getLogger(__name__)
 
 # Champion artifacts the challenger must not see: its whole point is to reach
-# an independent decision from the same evidence.
+# an independent decision from the same evidence. These are TOP-LEVEL fields on
+# the serialized desk (SharedDesk.to_dict has no nested "artifacts" key).
 _DECISION_ARTIFACTS = ("trade_decision", "final_decision")
+
+_SPEC_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "experiments", "active_spec.json",
+)
 
 _TABLE_READY = False
 
 
 def get_challenger_spec() -> dict | None:
+    """Active experiment spec: CHALLENGER_SPEC env wins, else the versioned
+    experiments/active_spec.json shipped with the image.
+
+    The file is the durable path — trading-service's deploy rebuilds the NAS
+    .env from the vault master on every deploy, so a hand-appended env var
+    silently vanishes at the next deploy. A repo file survives, is reviewed,
+    and pins the spec to the code it ran against.
+    """
     raw = os.getenv("CHALLENGER_SPEC", "").strip()
+    source = "env"
+    if not raw:
+        try:
+            with open(_SPEC_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            source = _SPEC_FILE
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            logger.warning("[Challenger] cannot read %s: %s — disabled", _SPEC_FILE, e)
+            return None
     if not raw:
         return None
     try:
         spec = json.loads(raw)
     except json.JSONDecodeError as e:
-        logger.warning("[Challenger] CHALLENGER_SPEC is not valid JSON (%s) — disabled", e)
+        logger.warning("[Challenger] spec from %s is not valid JSON (%s) — disabled", source, e)
         return None
     if not isinstance(spec, dict) or not spec.get("label"):
-        logger.warning("[Challenger] CHALLENGER_SPEC needs a 'label' — disabled")
+        logger.warning("[Challenger] spec from %s needs a 'label' — disabled", source)
+        return None
+    if spec.get("enabled") is False:
         return None
     return spec
 
@@ -107,19 +134,20 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
         from app.v3.agents import decision_agent
 
         base = copy.deepcopy(desk.to_dict())
-        artifacts = base.get("artifacts") or {}
         for name in _DECISION_ARTIFACTS:
-            artifacts.pop(name, None)
+            base[name] = None
 
         replica = SharedDesk.from_dict(base)
-        outcome = await run_v3_agent(
+        # run_v3_agent returns a PhaseOutcome enum; the decision itself lands
+        # on the desk replica as the trade_decision field.
+        await run_v3_agent(
             replica,
             decision_agent,
             cycle_id=f"challenger-{cycle_id}",
             timeout_seconds=240.0,
             custom_instructions=str(spec.get("custom_instructions", "")),
         )
-        artifact = (outcome.artifact or {}) if outcome else {}
+        artifact = replica.trade_decision or {}
         ch_action = artifact.get("action")
         ch_conf = artifact.get("confidence")
         if not ch_action:
