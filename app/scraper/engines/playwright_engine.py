@@ -107,17 +107,24 @@ class PlaywrightEngine(BaseEngine):
                         headless=True,
                         args=["--disable-blink-features=AutomationControlled"],
                     )
+                    from app.scraper.core.session_manager import (
+                        DEFAULT_UA, browser_headers,
+                    )
+
                     context = await browser.new_context(
-                        user_agent=(
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/131.0.0.0 Safari/537.36"
-                        ),
+                        user_agent=DEFAULT_UA,
                         viewport={
                             "width": 1280 + random.randint(0, 100),
                             "height": 900 + random.randint(0, 50),
                         },
                         locale="en-US",
+                        timezone_id="America/Los_Angeles",
+                        # Chromium sets Sec-Fetch-* itself, but not
+                        # Accept-Language/Sec-Ch-Ua consistently in headless.
+                        extra_http_headers={
+                            k: v for k, v in browser_headers().items()
+                            if k.lower() not in ("user-agent", "accept-encoding")
+                        },
                     )
                     page = await context.new_page()
 

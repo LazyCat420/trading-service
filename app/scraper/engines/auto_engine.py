@@ -30,7 +30,22 @@ BLOCK_SIGNATURES = [
     "press & hold to confirm",
     "ddg-captcha",
     "cloudflare",
-    "enable cookies and javascript"
+    "enable cookies and javascript",
+    # Interstitials seen in production that this list did not cover, so
+    # is_blocked_content() returned False and the block page was returned as a
+    # successful scrape. Bloomberg's "let us know you're not a robot" page is
+    # 464 chars — past the len>150 gate below — and was being stored as the
+    # article body, quietly poisoning the corpus instead of failing loudly.
+    "access is temporarily restricted",
+    "we detected unusual activity",
+    "unusual activity from your device",
+    "not a robot",
+    "let us know you're not a robot",
+    "checking your browser",
+    "request blocked",
+    "access denied",
+    "temporarily blocked",
+    "rate limit exceeded",
 ]
 
 

@@ -74,9 +74,19 @@ async def _capture_screenshots(url: str, max_screenshots: int = 5) -> list[bytes
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
         )
+        # Was a hand-written Chrome/122 string missing the "(KHTML, like Gecko)"
+        # segment — malformed enough to read as a bot on its own. Shares the one
+        # UA constant now.
+        from app.scraper.core.session_manager import DEFAULT_UA, browser_headers
+
         context = await browser.new_context(
             viewport={"width": 1280, "height": viewport_height},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+            user_agent=DEFAULT_UA,
+            locale="en-US",
+            extra_http_headers={
+                k: v for k, v in browser_headers().items()
+                if k.lower() not in ("user-agent", "accept-encoding")
+            },
         )
         page = await context.new_page()
 
