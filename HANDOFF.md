@@ -1,3 +1,47 @@
+# HANDOFF — Grounded news extraction, CriticGate, honest collector stats
+
+**Date:** 2026-07-20 (follows the self-healing wave below)
+**Deployed:** trading-service `6e6c5f9` + lazy-agent-service `5d738e0`
+**Tests:** 857 unit passing (trading-service), 491 (lazy-agent-service)
+**Verified by full live cycle** `cycle-v3-1784528463`: 5 tickers, 2 BUYs executed,
+0 collector errors, 0 CriticGate errors, salvage pass recovered ticker V.
+
+## What shipped
+
+1. **Grounded news extraction** (`app/services/news_extraction.py`) — google/langextract's
+   METHOD (few-shot + char-offset quote grounding, drop-unaligned facts), not the library.
+   Agents were getting raw scrape (avg 2,324 chars × 15 articles ≈ 9k tokens/ticker; 0 of
+   4,923 recent articles had llm_summary). Facts cached in `news_articles.grounded_facts`;
+   `[] = no substance (cached)` vs `None = retry later`. Kill switch:
+   `NEWS_GROUNDED_EXTRACTION=false`. Wired into `get_finnhub_news` (finance_tools.py).
+   WATCH ITEM: with 5 tickers extracting concurrently the 22s batch budget stretched to
+   40s (GPU queue + loop contention); deferral handled it and cycle time was unchanged
+   (1,225s vs 1,224s prior), but consider `NEWS_EXTRACT_BATCH_BUDGET_S=15` if precollect
+   tightens.
+
+2. **CriticGate fix** (lazy-agent-service `VllmModelSyncService`) — prism's CriticGate
+   ignores `criticProvider` and runs the critic on the CONVERSATION's provider, so any
+   pinned model 404s on the other vLLM host (869 errors/24h, 8-12s wasted per DANGER
+   tool call, then blind approve). Only correct pin is EMPTY (gate falls back to the
+   conversation's own model); the sync daemon now enforces that and no longer manages
+   the critic role. Verified: 0 errors during the audit cycle.
+
+3. **Collector honesty** (`app/v3/collector_stats.py`) — "timed out at 45s but still
+   collecting" now rides in `collector_late`/`collector_late_names`, NOT
+   `collector_error`/`collector_failures`. The audit cycle read
+   `ok=15 error=0 late=15` instead of the old "15/15 failed".
+
+## Cycle audit notes (cycle-v3-1784528463)
+
+- META HOLD_NO_SIGNAL · JPM BUY $3,087 ✓ · AXP BUY $3,087 ✓ · V BUY policy-blocked
+  (low confidence — gate working) · RH SELL skipped (no open position; agents sold an
+  unheld ticker — counted as trade_failed:1 + no_position_blocked:1, correctly guarded).
+- Salvage pass (from `7a1bf1b`) fired in production for V's junior_analyst (475-char
+  unparseable output) and REPAIRED it — first live save.
+- Discovery now pulls MarketWatch (was 401-blocked before the header fix in `0677ae9`).
+
+---
+
 # HANDOFF — Self-healing repair loop: bounds, budget, and code evidence
 
 **Date:** 2026-07-19
