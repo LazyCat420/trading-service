@@ -61,14 +61,20 @@ def _pipeline_emit(
     failure_type: FailureType,
     exc: Exception,
     elapsed_ms: int,
+    final: bool = False,
 ) -> None:
     """Put a retry failure on the current cycle's event stream.
 
     Registered with the SDK below. Import is deliberately lazy —
     pipeline_service imports the v3 orchestrator, which reaches back into this
     module, so a module-level import here is circular.
+
+    `final` (from the SDK) is True on any give-up — budget exhausted OR an
+    early stop like DoomLoopException. Gate on it rather than `attempt <
+    max_attempts`, which silently dropped early stops (an early give-up has
+    attempt < max_attempts yet is still terminal).
     """
-    if not _EMIT_EVERY_ATTEMPT and attempt < max_attempts:
+    if not _EMIT_EVERY_ATTEMPT and not final:
         return
 
     from app.services.pipeline_service import PipelineService
@@ -78,12 +84,15 @@ def _pipeline_emit(
         f"retry_{func_name}",
         f"Attempt {attempt}/{max_attempts} failed: {type(exc).__name__}: "
         f"{str(exc)[:100]} [{failure_type.value}]",
-        status="warning" if attempt < max_attempts else "error",
+        # A give-up (final) is an error; an interim attempt — only reachable
+        # under RESILIENCE_EMIT_EVERY_ATTEMPT — is a warning.
+        status="error" if final else "warning",
         data={
             "func": func_name,
             "attempt": attempt,
             "max_attempts": max_attempts,
             "failure_type": failure_type.value,
+            "final": final,
             "error_type": type(exc).__name__,
             "error_msg": str(exc)[:200],
             "elapsed_ms": elapsed_ms,
@@ -94,11 +103,9 @@ def _pipeline_emit(
 
 set_failure_emitter(_pipeline_emit)
 
-# KNOWN GAP: the SDK only invokes the emitter on failures it intends to retry.
-# A call that stops early — FATAL classification on a later attempt, or a
-# registered non-retryable like DoomLoopException — is logged by the SDK but
-# produces no event. Closing that means emitting from the stop branch in
-# lazycat.resilience too.
+# (The former "early stop produces no event" gap is closed as of
+# lazycat-sdk 0.3.1 — the SDK now emits from its stop branch with final=True,
+# and this emitter gates on `final` instead of the attempt count.)
 
 __all__ = [
     "FailureType",

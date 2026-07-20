@@ -100,6 +100,35 @@ async def test_exhausted_retries_emit_exactly_one_event(captured):
 
 
 @pytest.mark.asyncio
+async def test_early_stop_give_up_emits_one_final_event(captured):
+    # A give-up that stops BEFORE the retry budget is spent — DoomLoopException
+    # is registered non-retryable by the shim at import (by class name, so this
+    # local definition counts) — used to emit nothing because the shim gated on
+    # `attempt < max_attempts`. It must now emit once, as an error, flagged
+    # final. (Deliberately does NOT mutate NON_RETRYABLE_EXCEPTION_NAMES: it is
+    # process-global and the shim's registration is permanent.)
+    PipelineService._state["cycle_id"] = "cyc_doom"
+
+    class DoomLoopException(Exception):
+        pass
+
+    @aresilient_call(retries=5, base_delay=0.001)
+    async def doomed():
+        raise DoomLoopException("stuck")
+
+    with pytest.raises(Exception):
+        await doomed()
+    await asyncio.sleep(0.2)
+
+    assert len(captured) == 1
+    event = captured[0][1][0]
+    assert event["status"] == "error"
+    assert event["data"]["final"] is True
+    assert event["data"]["attempt"] == 1
+    assert event["data"]["max_attempts"] == 5  # stopped well short of budget
+
+
+@pytest.mark.asyncio
 async def test_successful_call_emits_nothing(captured):
     PipelineService._state["cycle_id"] = "cyc_ok"
 
