@@ -24,9 +24,13 @@ import argparse
 import asyncio
 import copy
 import json
+import os
 import statistics
 import sys
 from collections import Counter
+
+# Ensure project root is in path (script is run as scripts/decision_variance.py)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 async def run_variance(cycle_id: str | None, ticker: str, runs: int) -> dict:

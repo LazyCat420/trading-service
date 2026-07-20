@@ -40,11 +40,11 @@ async def challenger_stats(label: str = Query(default=None)):
                 SELECT cd.spec_label, cd.ticker, cd.agree,
                        cd.champion_action, cd.challenger_action,
                        cd.challenger_outcome,
-                       do.outcome AS champion_outcome,
+                       dco.outcome AS champion_outcome,
                        COALESCE(tm.sector, 'Unknown') AS sector
                 FROM challenger_decisions cd
-                LEFT JOIN decision_outcomes do
-                       ON do.cycle_id = cd.cycle_id AND do.ticker = cd.ticker
+                LEFT JOIN decision_outcomes dco
+                       ON dco.cycle_id = cd.cycle_id AND dco.ticker = cd.ticker
                 LEFT JOIN ticker_metadata tm ON tm.ticker = cd.ticker
                 {where}
                 ORDER BY cd.created_at DESC
