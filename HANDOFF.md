@@ -1,3 +1,72 @@
+# HANDOFF — retry/recovery telemetry actually emits now (2026-07-20)
+
+**Deployed:** trading-service `811cb69` → synology, healthy
+**Tests:** 905 unit (10 new) + 157 integration/regression
+
+Follow-up to the lazycat-sdk extraction wave below, which is where this bug
+was found.
+
+## The bug
+
+`PipelineService.emit()` **did not exist**. The only `emit` was a local
+function nested inside the cycle runner — it closes over `cycle_id`, which is
+why it was never a method. Both callers:
+
+- `app/utils/resilience.py` (retry failures)
+- `app/recovery/engine.py:208` (recovery decisions)
+
+raised `AttributeError` on every call, straight into a bare
+`except Exception: pass`. **No retry or recovery event has ever reached
+`pipeline_events` or the dashboard.**
+
+## The fix
+
+- Real class-level `PipelineService.emit()` resolving `cycle_id` from
+  `_state` (`append_events` already no-ops on a falsy one, so calling it
+  outside a cycle just logs). `recovery/engine.py` needed no change — its call
+  site started working the moment the method existed.
+- `app/utils/resilience.py` registers `_pipeline_emit` via the SDK's
+  `set_failure_emitter()` hook (lazycat-sdk v0.3.0).
+
+### Two deliberate choices
+
+1. **Does not touch `_state["progress"]`** the way the cycle runner's closure
+   does — a background retry is ambient telemetry, not cycle progress, and
+   writing it there would make the dashboard report a retry as the step the
+   pipeline is currently on.
+2. **One event per give-up, not per attempt.** `base_agent.py` runs
+   `retries=5`; per-attempt would write 5 rows per exhausted call across
+   agents x tickers x cycles. Interim attempts are already logged.
+   `RESILIENCE_EMIT_EVERY_ATTEMPT=true` restores per-attempt for debugging a
+   flapping upstream.
+
+`append_events` uses the **sync** connection pool and these callers sit in
+async retry paths, so the write is handed to a worker thread when a loop is
+running rather than blocking it on every failure.
+
+## Known gap (open)
+
+The SDK only invokes the emitter for failures it intends to **retry**. A call
+that stops early — FATAL on a later attempt, or a registered non-retryable
+like `DoomLoopException` — is logged but produces **no event**. Closing it
+means emitting from the stop branch in `lazycat/resilience.py` too.
+
+## Watch after the next few cycles
+
+Event volume in `pipeline_events` for `phase='recovery'`. It was structurally
+zero forever; it is now non-zero for the first time. If it is noisy, the knob
+is the give-up-only default above, not turning it back off.
+
+## Do NOT half-sync this to lazy-agent-service
+
+The fix spans two files. `pipeline_service.py` is one of the four that
+genuinely differ between the twins **and** is dirty there from a parallel
+session, so that repo's `PipelineService` still has no `emit`. Copying
+`resilience.py` alone would register an emitter calling a missing method and
+silently recreate this exact bug. Take both files or neither.
+
+---
+
 # HANDOFF — generic utils sourced from lazycat-sdk (2026-07-20)
 
 **Date:** 2026-07-20
