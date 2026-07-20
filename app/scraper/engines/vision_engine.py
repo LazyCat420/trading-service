@@ -132,6 +132,39 @@ _VISION_MAX_TOKENS = int(os.getenv("VISION_MAX_TOKENS", "16384"))
 # per-domain rate limiter already bounds how often this is reached.
 _VISION_TIMEOUT_S = float(os.getenv("VISION_TIMEOUT_S", "300"))
 
+# Sentinel the model returns for a page carrying no real content. Asking for a
+# fixed token — rather than letting it explain itself in prose — is what makes
+# the refusal detectable: free-form commentary like "The provided image is a
+# stock summary page rather than an article" is ~180 chars, clears the length
+# check below, and gets stored as the article body.
+_NO_CONTENT_SENTINEL = "BLOCKED_OR_EMPTY"
+
+# Measured against real pages (CNBC article, Yahoo article, Yahoo quote page,
+# a Reuters bot-wall). Asking for the PRIMARY content instead of "all visible
+# text" both improves quality and cuts cost — a generic transcription leads
+# with nav bars, ticker ribbons and sign-in prompts on every single page:
+#
+#   page           generic              targeted
+#   CNBC article   4362 ch / 18.8s      2811 ch / 10.1s
+#   Yahoo article  3131 ch / 19.5s       995 ch /  4.6s
+#   Yahoo quote    4895 ch / 34.7s       521 ch /  5.7s
+#   Reuters block   344 ch (stored!)    BLOCKED_OR_EMPTY
+#
+# Quote/data pages are deliberately still transcribed — they are useful to the
+# agents — so this asks for "primary content", not strictly article prose.
+_DEFAULT_OCR_PROMPT = (
+    "Transcribe the PRIMARY content of this web page from the screenshots.\n"
+    "Include: the headline, author/date if shown, and the full body text. If the "
+    "page is a data or quote page rather than an article, transcribe the main "
+    "data content instead.\n"
+    "EXCLUDE: site navigation, search boxes, sign-in/subscribe prompts, ticker "
+    "ribbons, advertisements, cookie banners, newsletter signups, "
+    "related-article lists, comments and footers.\n"
+    "If the page shows ONLY a bot-detection, CAPTCHA, paywall or error notice "
+    f"with no real content, reply with exactly: {_NO_CONTENT_SENTINEL}\n"
+    "Otherwise return the extracted text only, with no preamble or commentary."
+)
+
 
 async def _vision_targets() -> list[tuple[str, str, str]]:
     """Usable OCR targets as (provider, model, base_url), preferred first.
@@ -198,10 +231,7 @@ async def _ocr_with_openai(screenshots: list[bytes], prompt: str) -> str | None:
 
     targets = await _vision_targets()
 
-    prompt_text = prompt or (
-        "These are screenshots of a web page. Read ALL text visible in the images "
-        "and return the complete text content. Return ONLY the text, no commentary."
-    )
+    prompt_text = prompt or _DEFAULT_OCR_PROMPT
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
     for img_bytes in screenshots:
         b64 = base64.b64encode(img_bytes).decode("utf-8")
@@ -237,6 +267,18 @@ async def _ocr_with_openai(screenshots: list[bytes], prompt: str) -> str | None:
             if not text.strip():
                 errors.append(f"{provider}/{model}: empty content")
                 continue
+
+            # The page carried no real content (bot-wall, CAPTCHA, paywall).
+            # Retrying on the other host would only re-read the same block
+            # page, so report the miss rather than failing over. Checked as a
+            # prefix because models occasionally append a trailing newline or
+            # a short justification after the sentinel.
+            if text.strip().upper().startswith(_NO_CONTENT_SENTINEL):
+                logger.info(
+                    "[vision] no usable content on the page (bot-wall/paywall) "
+                    "per %s/%s", provider, model,
+                )
+                return None
 
             # Some gateways substitute an operator-facing notice for the content
             # when the budget runs out. It is ~160 chars, so it would clear the
