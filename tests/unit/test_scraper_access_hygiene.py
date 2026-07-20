@@ -71,3 +71,18 @@ def test_real_article_text_is_not_flagged(page):
 def test_empty_content_counts_as_blocked():
     assert AutoEngine().is_blocked_content("") is True
     assert AutoEngine().is_blocked_content(None) is True
+
+
+def test_bloomberg_boilerplate_is_treated_as_a_block():
+    """Bloomberg returns this same blurb for every URL when it refuses us.
+
+    279 chars — past the length gate, and it trips no other signature, so it
+    was being stored as the article body.
+    """
+    blurb = (
+        "Connecting decision makers to a dynamic network of information, people "
+        "and ideas, Bloomberg quickly and accurately delivers business and "
+        "financial information, news and insight around the world"
+    )
+    assert len(blurb) > 150
+    assert AutoEngine().is_blocked_content(blurb) is True

@@ -46,6 +46,12 @@ BLOCK_SIGNATURES = [
     "access denied",
     "temporarily blocked",
     "rate limit exceeded",
+    # Bloomberg serves its corporate boilerplate footer — the same 279 chars for
+    # every URL — in place of the article when it refuses us. It trips no other
+    # signature and clears the length gate, so without this it is stored as the
+    # article body. Site-specific, but so are "pardon our interruption" (Distil)
+    # and "ddg-captcha" already in this list.
+    "connecting decision makers to a dynamic network of information",
 ]
 
 
