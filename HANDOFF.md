@@ -1,3 +1,58 @@
+# HANDOFF — SkillOpt VERIFIED LIVE: 7 agents now carry learned skill docs (2026-07-20)
+
+**Deployed:** SkillOpt shipped in `7b4bd86`/`d05a1f9`, sanitizer in `4fc826c`; all live
+(a parallel session's `10c7b81` deploy carried them).
+**Tests:** 23 unit in `tests/unit/test_skill_optimizer.py`, full unit suite green.
+
+## ⚠️ State change: all 7 V3 agents now have an active skill doc
+
+This is live and **will affect the next real trading cycle**. Autoresearch run
+`skillopt-ar2-7ce8cbe6` (against real cycle `cycle-v3-1784554200`: 7 tickers,
+2 BUY / 2 SELL / 3 HOLD) produced:
+
+```
+[AUTORESEARCH] SkillOpt: {'baseline': 0.0938, 'updated': [all 7 agents],
+                          'rejected': 0, 'skipped': 0}
+```
+
+Every agent got `version=1, action=ADD, status=active`, 631–881 chars. Content is
+sensible and grounded in that cycle's reflection (temporal-relevance filters,
+conviction calibration against the ~57% realized win rate, data-integrity checks).
+Inspect with `SELECT agent_name, version, LEFT(skill_text, 120) FROM agent_skills`.
+
+**To roll back entirely:** `UPDATE agent_skills SET status='archived';` then bounce the
+container (or wait ≤15 min for the loader TTL). Kill switch: `SKILLOPT_ENABLED=false`.
+
+## What was verified end-to-end (not just unit-tested)
+
+1. **Safety rail fires.** A first run against a *stopped* cycle (0 tickers, 0 results)
+   correctly returned `{'skipped': 'anomalous_cycle'}` and wrote nothing — the guard
+   against mutating long-lived skills from a broken measurement works.
+2. **Happy path writes.** The second run against a real cycle updated all 7.
+3. **Loader serves it.** `load_skill_prefix('v3_bull_agent')` returns a 908-char prefix
+   starting with `## Agent Skill Guidance (SkillOpt)`; an unknown agent returns `''`.
+4. **Sanitizer works.** Stored docs start at `###`, with no `---` fence artifacts.
+
+## Open items — read before trusting the gate
+
+- **The score gate is not discriminating yet.** All 7 candidates scored the *identical*
+  `+0.0150` — the maximum the heuristic can award — and **0 were rejected**. In practice
+  every LLM proposal currently passes. `_simulate_score_with_skill` is a content-quality
+  proxy (has digits / has imperatives / overlaps the reflection / length band), NOT a
+  replay, so it cannot tell a good edit from a plausible one. Treat the current bar as
+  "well-formed", not "proven better". Tighten `MIN_SCORE_DELTA` or add discriminating
+  signals before letting versions climb.
+- **Nothing has exercised v2+.** Only first-write (`""` → v1) has run in production; the
+  archive-then-insert path and the difflib near-noop rejection are unit-tested only.
+- **No outcome attribution.** There is no measurement tying a skill version to subsequent
+  win rate, so a bad skill will persist silently. That is the natural next piece.
+- **A full 5-ticker cycle was NOT completed end-to-end this session** — a parallel session
+  restarted trading-service three times (12:34, 12:37, 12:48), killing two cycles mid-run.
+  SkillOpt was therefore verified by invoking autoresearch directly, which is the exact
+  code path a cycle triggers, but the cycle→autoresearch handoff itself was not observed.
+
+---
+
 # HANDOFF — retry/recovery telemetry actually emits now (2026-07-20)
 
 **Deployed:** trading-service `811cb69` → synology, healthy
