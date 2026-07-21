@@ -126,6 +126,18 @@ def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any]) -> Non
     get_doc_db()[collection].update_one(key, {"$set": doc}, upsert=True)
 
 
+def bulk_upsert(collection: str, docs: list[dict[str, Any]], key_field: str = "id") -> int:
+    """Upsert many docs in ONE round-trip, keyed on `key_field`. Orders of
+    magnitude faster than per-doc upsert — use for backfills / big tables.
+    Returns the number of docs submitted."""
+    if not docs:
+        return 0
+    ensure_indexes()
+    ops = [pymongo.UpdateOne({key_field: d[key_field]}, {"$set": d}, upsert=True) for d in docs]
+    get_doc_db()[collection].bulk_write(ops, ordered=False)
+    return len(docs)
+
+
 def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = None,
               projection: Optional[dict] = None, limit: int = 0) -> list[dict[str, Any]]:
     cur = get_doc_db()[collection].find(query, projection)
@@ -138,6 +150,18 @@ def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = Non
 
 def count_docs(collection: str, query: Optional[dict] = None) -> int:
     return get_doc_db()[collection].count_documents(query or {})
+
+
+def mirror_pipeline_event(record: dict[str, Any]) -> None:
+    """Best-effort dual-write of ONE pipeline_events record (the rare error-path
+    inserts in result_saver / battle_royale). No-op unless pipeline_events is
+    dual/mongo. Never raises — a Mongo failure must not break the PG error path."""
+    if not writes_mongo("pipeline_events"):
+        return
+    try:
+        insert_docs("pipeline_events", [dict(record)])
+    except Exception as e:
+        logger.error("[mongo_store] mirror_pipeline_event failed (non-fatal): %s", e)
 
 
 # ── pipeline_events convenience (matches the PG read shape exactly) ─────────

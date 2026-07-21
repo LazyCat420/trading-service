@@ -81,8 +81,8 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False) -> int:
             if not rows:
                 break
             docs = [mapper(r, cols) for r in rows]
-            for doc in docs:
-                mongo_store.upsert_doc(table, {"id": doc["id"]}, doc)
+            # One bulk round-trip per batch (not one upsert per doc).
+            mongo_store.bulk_upsert(table, docs, key_field=key_field)
             moved += len(docs)
             last_key = dict(zip(cols, rows[-1]))[key_field]
             print(f"[{table}] upserted {moved}/{pg_count}", end="\r", flush=True)

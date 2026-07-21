@@ -70,24 +70,29 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
         # but make the failure observable in the cycle's event stream.
         logger.error("[result_saver] Failed to save result for %s: %s", ticker, e)
         try:
+            # pipeline_events.id is TEXT PRIMARY KEY with no default — supply it
+            # explicitly (same as append_events). Build once so the PG row and
+            # the Mongo mirror share an id.
+            _evt = {
+                "id": str(uuid.uuid4()),
+                "cycle_id": cycle_id,
+                "timestamp": datetime.now(timezone.utc),
+                "phase": "reporting",
+                "step": f"analysis_save_failed_{ticker}",
+                "detail": f"Analysis result for {ticker} failed to persist: {str(e)[:300]}",
+                "status": "error",
+            }
             with get_db() as db:
-                # pipeline_events.id is TEXT PRIMARY KEY with no default — it
-                # must be supplied explicitly (same as append_events does).
                 db.execute(
                     """
                     INSERT INTO pipeline_events (id, cycle_id, timestamp, phase, step, detail, status)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    [
-                        str(uuid.uuid4()),
-                        cycle_id,
-                        datetime.now(timezone.utc),
-                        "reporting",
-                        f"analysis_save_failed_{ticker}",
-                        f"Analysis result for {ticker} failed to persist: {str(e)[:300]}",
-                        "error",
-                    ],
+                    [_evt["id"], _evt["cycle_id"], _evt["timestamp"], _evt["phase"],
+                     _evt["step"], _evt["detail"], _evt["status"]],
                 )
+            from app.db import mongo_store
+            mongo_store.mirror_pipeline_event(_evt)
         except Exception as ev_err:
             logger.error("[result_saver] Could not record save-failure event for %s: %s", ticker, ev_err)
 

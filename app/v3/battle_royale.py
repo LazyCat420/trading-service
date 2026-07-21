@@ -155,23 +155,27 @@ def _record_report_failure(cycle_id: str, detail: str) -> None:
     the failure must never itself break the cycle.
     """
     try:
+        # pipeline_events.id is TEXT PRIMARY KEY with no default — supply it
+        # explicitly. Build once so the PG row and the Mongo mirror share an id.
+        _evt = {
+            "id": str(uuid.uuid4()),
+            "cycle_id": cycle_id,
+            "timestamp": datetime.now(timezone.utc),
+            "phase": "reporting",
+            "step": "battle_royale_save_failed",
+            "detail": f"Cycle summary report failed to persist: {detail[:300]}",
+            "status": "error",
+        }
         with get_db() as db:
-            # pipeline_events.id is TEXT PRIMARY KEY with no default — it must
-            # be supplied explicitly (same as PipelineStateDB.append_events).
             db.execute(
                 """
                 INSERT INTO pipeline_events (id, cycle_id, timestamp, phase, step, detail, status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                [
-                    str(uuid.uuid4()),
-                    cycle_id,
-                    datetime.now(timezone.utc),
-                    "reporting",
-                    "battle_royale_save_failed",
-                    f"Cycle summary report failed to persist: {detail[:300]}",
-                    "error",
-                ],
+                [_evt["id"], _evt["cycle_id"], _evt["timestamp"], _evt["phase"],
+                 _evt["step"], _evt["detail"], _evt["status"]],
             )
+        from app.db import mongo_store
+        mongo_store.mirror_pipeline_event(_evt)
     except Exception as ev_err:  # pragma: no cover - diagnostics only
         logger.error("[BattleRoyale] Could not record report-failure event for %s: %s", cycle_id, ev_err)
