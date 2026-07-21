@@ -65,6 +65,27 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
                      ticker, cycle_id,
                      analysis_price or 0, analysis_rsi or 0, analysis_fund_count or 0)
     except Exception as e:
+        # A silently-swallowed analysis write means the ticker vanishes from the
+        # reports UI with no trace. Keep it non-fatal (do not abort the cycle),
+        # but make the failure observable in the cycle's event stream.
         logger.error("[result_saver] Failed to save result for %s: %s", ticker, e)
+        try:
+            with get_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO pipeline_events (cycle_id, timestamp, phase, step, detail, status)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        cycle_id,
+                        datetime.now(timezone.utc),
+                        "reporting",
+                        f"analysis_save_failed_{ticker}",
+                        f"Analysis result for {ticker} failed to persist: {str(e)[:300]}",
+                        "error",
+                    ],
+                )
+        except Exception as ev_err:
+            logger.error("[result_saver] Could not record save-failure event for %s: %s", ticker, ev_err)
 
 
