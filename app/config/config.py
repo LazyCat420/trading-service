@@ -272,6 +272,10 @@ class Settings(BaseSettings):
     PRISM_AGENT_ROUTING: bool = True
     PRISM_MONGO_URI: str = _config.get("PRISM_MONGO_URI", f"mongodb://{_default_host}:27017/?directConnection=true")
     PRISM_MONGO_DB: str = "prism"
+    # Postgres → Mongo consolidation: trading document collections live in their
+    # OWN Mongo DB (not prism's), on the same client/URI as PRISM_MONGO_URI.
+    # See app/db/mongo_store.py and .agents/PLAN-mongodb-consolidation.md.
+    TRADING_MONGO_DB: str = _config.get("TRADING_MONGO_DB", "trading_bot")
     PRISM_SKIP_CONVERSATION: bool = False
     PRISM_AUTO_APPROVE: bool = True
     PRISM_WORKSPACE_ENABLED: bool = False
