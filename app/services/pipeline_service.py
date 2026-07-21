@@ -458,15 +458,17 @@ class PipelineService:
             # This prevents a race condition where concurrent agent calls
             # stomp on the global singleton URL. All agents in a V3 cycle
             # use the same harness_provider, so we resolve it here.
-            # Mirror the boot_service.py logic exactly:
+            # Mirror trading-client's lifespan logic exactly:
             #   PRISM_ENABLED=True  → PRISM_URL (which may include /prism-proxy)
-            #   PRISM_ENABLED=False → bare http://{host}:7778
+            #   PRISM_ENABLED=False → bare lazy-tool gateway on :5591
+            # (:7778 was the retired prism fork; its role now lives in
+            # lazy-tool-service, published on :5591.)
             from lazycat.llm import prism_client
             from app.config.config import settings as _cfg
             if _cfg.PRISM_ENABLED:
                 prism_client.url = _cfg.PRISM_URL
             else:
-                prism_client.url = f"http://{_cfg.DEFAULT_HOST}:7778"
+                prism_client.url = f"http://{_cfg.DEFAULT_HOST}:5591"
             # Cycle boundary: drop all cached sessions/conversations so a new
             # cycle can never silently continue a previous cycle's conversation
             # (the no-session_id group_key is content-hashed and collides when

@@ -78,7 +78,7 @@ async def _collect_reddit_purge(req: CollectRequest) -> CollectResponse:
     from app.scraper.collectors.reddit_purge_collector import RedditPurgeCollector
 
     collector = RedditPurgeCollector()
-    ollama_host = req.ollama_host or os.getenv("PRISM_URL", "http://lazy-tool-service:7778/agent")
+    ollama_host = req.ollama_host or os.getenv("PRISM_URL", "http://10.0.0.16:7777/agent")
     ollama_model = req.ollama_model or os.getenv("PURGE_MODEL", "vllm/cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit")
     
     ticker_results = await collector.collect(
