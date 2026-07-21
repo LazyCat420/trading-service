@@ -1085,7 +1085,19 @@ class PipelineService:
                         confidence = 0
 
                     policy_action = str(result.get("policy_action") or "")
-                    if action in ("BUY", "SELL") and policy_action.startswith("HOLD_POLICY_BLOCKED"):
+                    if action == "SELL" and policy_action == "HOLD_NO_POSITION":
+                        # The gate resolved this SELL as unexecutable — the bot
+                        # holds nothing to sell. Handle it uniformly with the
+                        # other holds (no execution attempt) and emit the reason
+                        # so the dashboard shows *why* there's no order, instead
+                        # of the historical silent "EXECUTE_SELL, 0 orders".
+                        logger.info(
+                            "[PipelineService] %s: SELL held → HOLD_NO_POSITION (nothing to sell)",
+                            ticker_name,
+                        )
+                        result["no_trade_reason"] = REASON_NO_POSITION
+                        emit_trade(ticker_name, "SELL", {"error": "no open position"}, False, REASON_NO_POSITION)
+                    elif action in ("BUY", "SELL") and policy_action.startswith("HOLD_POLICY_BLOCKED"):
                         # The orchestrator's policy gates (jury veto, unmitigated
                         # risk flags, missing regime, low confidence) are binding.
                         logger.warning(
@@ -1159,6 +1171,11 @@ class PipelineService:
                                 "[PipelineService] %s: SELL skipped — no open position (agents decided "
                                 "EXECUTE_SELL on an unheld ticker)", ticker_name,
                             )
+                            # Emit the refusal like every other non-fill path, so the
+                            # dashboard shows *why* there was no order instead of a
+                            # silent "EXECUTE_SELL, 0 orders". This was the one refusal
+                            # branch f939f0e's event-stream fix missed.
+                            emit_trade(ticker_name, "SELL", {"error": "no open position"}, False, REASON_NO_POSITION)
                         else:
                             result["trade_attempted"] = True
                             trade_res = await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)

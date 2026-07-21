@@ -61,6 +61,44 @@ def test_gate_holds_without_signal():
     assert _apply_policy_gates(desk) == "HOLD_NO_SIGNAL"
 
 
+# ── SELL-on-unheld: the bug that survived 5+ downstream fixes ────────
+# The gate must express "can't sell, not held" ITSELF — every prior fix
+# patched a downstream layer (agent prompt, executor block, event emit)
+# while the gate kept emitting EXECUTE_SELL with no holdings check.
+
+def _sell_desk(held, confidence=80):
+    desk = _desk()
+    desk.final_decision = {
+        "action": "SELL", "confidence": confidence,
+        "stop_loss": 100.0,
+        "dynamic_trigger": {"type": "trailing_drop", "value": 0.1},
+        "position_size_pct": 4.0,
+    }
+    if held is not None:
+        desk.cycle_metadata["held"] = held
+    return desk
+
+
+def test_gate_blocks_sell_when_not_held():
+    # High confidence must NOT rescue a sell of a position we don't hold.
+    assert _apply_policy_gates(_sell_desk(held=False)) == "HOLD_NO_POSITION"
+
+
+def test_gate_executes_sell_when_held():
+    assert _apply_policy_gates(_sell_desk(held=True)) == "EXECUTE_SELL"
+
+
+def test_gate_falls_through_when_holdings_unknown():
+    # held missing (context fetch raised at desk build) → don't hard-block on a
+    # guess; let the executor's own position check + paper_trader be the backstop.
+    assert _apply_policy_gates(_sell_desk(held=None)) == "EXECUTE_SELL"
+
+
+def test_not_held_beats_low_confidence_label():
+    # not-held is the dominant, most-informative reason.
+    assert _apply_policy_gates(_sell_desk(held=False, confidence=50)) == "HOLD_NO_POSITION"
+
+
 def test_gate_blocks_low_confidence():
     desk = _desk()
     desk.final_decision["confidence"] = 50

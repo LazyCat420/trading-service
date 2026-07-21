@@ -1393,6 +1393,19 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     if action == "HOLD":
         return "HOLD_NO_SIGNAL"
 
+    # A SELL is only executable for a position the bot actually holds — there is
+    # no shorting. The holdings flag is resolved once at desk-build time
+    # (_build_cycle_metadata → cycle_metadata["held"]). This gate is the label
+    # the dashboard shows and pipeline_service enforces, so it MUST express
+    # "can't sell, not held" itself — historically it fell through to
+    # EXECUTE_SELL and the executor dropped the order silently, showing
+    # "EXECUTE_SELL, 0 orders, no reason". Block only on an AFFIRMATIVE not-held
+    # (held is False); if holdings are unknown (None — e.g. the context fetch
+    # raised at build time) fall through and let the executor's own position
+    # check + paper_trader guard remain the backstop.
+    if action == "SELL" and desk.cycle_metadata.get("held") is False:
+        return "HOLD_NO_POSITION"
+
     # Dynamic confidence floor (plan 3.1): the board may RAISE the bar for
     # this specific decision, never lower the firm-wide threshold.
     # pipeline_service still enforces the base threshold as belt-and-braces.
