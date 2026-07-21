@@ -53,6 +53,25 @@ class DbLoggingHandler(logging.Handler):
             from app.db.connection import get_db
             
             error_id = f"err_{uuid.uuid4().hex[:12]}"
+            now = datetime.now(timezone.utc)
+            audit_id = f"aud_{uuid.uuid4().hex[:12]}"
+            severity = "warning" if levelname == "WARNING" else "critical"
+            # Build both records once so the PG rows and the Mongo mirrors share ids.
+            err_rec = {
+                "id": error_id, "cycle_id": cycle_id, "phase": phase, "ticker": ticker,
+                "error_type": error_type, "error_message": error_message[:1000],
+                "stack_trace": stack_trace[:4000], "created_at": now,
+            }
+            audit_data = {
+                "error_id": error_id, "error_type": error_type,
+                "stack_trace_snippet": stack_trace[:500] if stack_trace else "",
+            }
+            audit_rec = {
+                "id": audit_id, "cycle_id": cycle_id, "timestamp": now,
+                "audit_type": "log_event", "event_type": levelname.lower(),
+                "phase": phase, "ticker": ticker, "severity": severity,
+                "message": f"[{levelname}] {error_message[:500]}", "data": audit_data,
+            }
             with get_db() as db:
                 # 1. Insert into execution_errors
                 db.execute(
@@ -60,34 +79,28 @@ class DbLoggingHandler(logging.Handler):
                     INSERT INTO execution_errors (id, cycle_id, phase, ticker, error_type, error_message, stack_trace, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (error_id, cycle_id, phase, ticker, error_type, error_message[:1000], stack_trace[:4000], datetime.now(timezone.utc))
+                    (err_rec["id"], err_rec["cycle_id"], err_rec["phase"], err_rec["ticker"],
+                     err_rec["error_type"], err_rec["error_message"], err_rec["stack_trace"], err_rec["created_at"])
                 )
-
                 # 2. Duplicate to cycle_audit_log
-                audit_id = f"aud_{uuid.uuid4().hex[:12]}"
-                severity = "warning" if levelname == "WARNING" else "critical"
                 db.execute(
                     """
                     INSERT INTO cycle_audit_log (id, cycle_id, timestamp, audit_type, event_type, phase, ticker, severity, message, data)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                     """,
-                    (
-                        audit_id,
-                        cycle_id,
-                        datetime.now(timezone.utc),
-                        "log_event",
-                        levelname.lower(),
-                        phase,
-                        ticker,
-                        severity,
-                        f"[{levelname}] {error_message[:500]}",
-                        json.dumps({
-                            "error_id": error_id,
-                            "error_type": error_type,
-                            "stack_trace_snippet": stack_trace[:500] if stack_trace else ""
-                        })
-                    )
+                    (audit_rec["id"], audit_rec["cycle_id"], audit_rec["timestamp"], audit_rec["audit_type"],
+                     audit_rec["event_type"], audit_rec["phase"], audit_rec["ticker"], audit_rec["severity"],
+                     audit_rec["message"], json.dumps(audit_rec["data"]))
                 )
+            # Best-effort Mongo dual-write (per-table flag; never breaks PG above).
+            try:
+                from app.db import mongo_store
+                if mongo_store.writes_mongo("execution_errors"):
+                    mongo_store.insert_docs("execution_errors", [err_rec])
+                if mongo_store.writes_mongo("cycle_audit_log"):
+                    mongo_store.insert_docs("cycle_audit_log", [audit_rec])
+            except Exception:
+                pass
         except Exception:
             pass
 

@@ -44,6 +44,23 @@ def _pipeline_events_doc(row, cols):
     }
 
 
+def _passthrough_doc(row, cols):
+    """id + scalar columns straight through as a document (no JSON re-parse)."""
+    return dict(zip(cols, row))
+
+
+def _cycle_audit_doc(row, cols):
+    d = dict(zip(cols, row))
+    data = d.get("data")
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            data = {}
+    d["data"] = data or {}
+    return d
+
+
 # table -> (select_sql, key_field, row_mapper)
 TABLES = {
     "pipeline_events": (
@@ -51,6 +68,18 @@ TABLES = {
         "FROM pipeline_events",
         "id",
         _pipeline_events_doc,
+    ),
+    "execution_errors": (
+        "SELECT id, cycle_id, phase, ticker, error_type, error_message, stack_trace, created_at "
+        "FROM execution_errors",
+        "id",
+        _passthrough_doc,
+    ),
+    "cycle_audit_log": (
+        "SELECT id, cycle_id, timestamp, audit_type, event_type, phase, ticker, severity, message, data "
+        "FROM cycle_audit_log",
+        "id",
+        _cycle_audit_doc,
     ),
 }
 

@@ -30,23 +30,25 @@ class CycleAuditor:
             from app.db.connection import get_db
 
             row_id = f"aud_{uuid.uuid4().hex[:12]}"
+            rec = {
+                "id": row_id, "cycle_id": cycle_id, "timestamp": datetime.now(timezone.utc),
+                "audit_type": audit_type, "event_type": None, "phase": phase, "ticker": ticker,
+                "severity": severity, "message": message[:2000], "data": data or {},
+            }
             with get_db() as db:
                 db.execute(
                     "INSERT INTO cycle_audit_log "
                     "(id, cycle_id, timestamp, audit_type, phase, ticker, severity, message, data) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
-                    (
-                        row_id,
-                        cycle_id,
-                        datetime.now(timezone.utc),
-                        audit_type,
-                        phase,
-                        ticker,
-                        severity,
-                        message[:2000],
-                        json.dumps(data or {}),
-                    ),
+                    (rec["id"], rec["cycle_id"], rec["timestamp"], rec["audit_type"],
+                     rec["phase"], rec["ticker"], rec["severity"], rec["message"], json.dumps(rec["data"])),
                 )
+            try:
+                from app.db import mongo_store
+                if mongo_store.writes_mongo("cycle_audit_log"):
+                    mongo_store.insert_docs("cycle_audit_log", [rec])
+            except Exception:
+                pass
         except Exception as e:
             # Auditor must NEVER crash the pipeline
             logger.debug("[AUDITOR] Write failed (non-fatal): %s", e)
