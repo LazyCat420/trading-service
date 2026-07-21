@@ -156,12 +156,15 @@ def _record_report_failure(cycle_id: str, detail: str) -> None:
     """
     try:
         with get_db() as db:
+            # pipeline_events.id is TEXT PRIMARY KEY with no default — it must
+            # be supplied explicitly (same as PipelineStateDB.append_events).
             db.execute(
                 """
-                INSERT INTO pipeline_events (cycle_id, timestamp, phase, step, detail, status)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO pipeline_events (id, cycle_id, timestamp, phase, step, detail, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
+                    str(uuid.uuid4()),
                     cycle_id,
                     datetime.now(timezone.utc),
                     "reporting",

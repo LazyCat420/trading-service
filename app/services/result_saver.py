@@ -71,12 +71,15 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
         logger.error("[result_saver] Failed to save result for %s: %s", ticker, e)
         try:
             with get_db() as db:
+                # pipeline_events.id is TEXT PRIMARY KEY with no default — it
+                # must be supplied explicitly (same as append_events does).
                 db.execute(
                     """
-                    INSERT INTO pipeline_events (cycle_id, timestamp, phase, step, detail, status)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO pipeline_events (id, cycle_id, timestamp, phase, step, detail, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
+                        str(uuid.uuid4()),
                         cycle_id,
                         datetime.now(timezone.utc),
                         "reporting",
