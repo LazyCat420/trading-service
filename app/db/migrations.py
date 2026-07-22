@@ -3221,6 +3221,17 @@ def _fix_eth_cagr_data(conn):
                 CREATE INDEX IF NOT EXISTS idx_trade_results_cycle
                 ON trade_results(cycle_id);
             """)
+            # 2026-07-21 audit: both fields existed only inside the artifact
+            # JSON, making consensus-scaled sizing and trigger audits
+            # unverifiable by SQL.
+            cur.execute("""
+                ALTER TABLE trade_results
+                ADD COLUMN IF NOT EXISTS internal_consensus_score INTEGER;
+            """)
+            cur.execute("""
+                ALTER TABLE trade_results
+                ADD COLUMN IF NOT EXISTS dynamic_trigger JSONB;
+            """)
             conn.commit()
     except Exception:
         try:

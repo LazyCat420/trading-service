@@ -34,6 +34,14 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
         position_size_pct = verdict.get("position_size_pct")
         persona_used = verdict.get("persona_used", "")
         regime = verdict.get("regime", "")
+        consensus = verdict.get("internal_consensus_score")
+        if not isinstance(consensus, (int, float)) or isinstance(consensus, bool):
+            consensus = None
+        else:
+            consensus = int(consensus)
+        dynamic_trigger = verdict.get("dynamic_trigger")
+        if not isinstance(dynamic_trigger, dict):
+            dynamic_trigger = None
 
         result_id = str(uuid.uuid4())
 
@@ -52,12 +60,14 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                         reasoning, signal_weights, signal_assessments,
                         risk_flags, stop_loss, take_profit,
                         position_size_pct, persona_used, regime,
+                        internal_consensus_score, dynamic_trigger,
                         created_at
                     ) VALUES (
                         %s, %s, %s, %s, %s,
                         %s, %s, %s,
                         %s, %s, %s,
                         %s, %s, %s,
+                        %s, %s,
                         %s
                     )
                     """,
@@ -76,6 +86,8 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                         position_size_pct,
                         persona_used,
                         regime,
+                        consensus,
+                        json.dumps(dynamic_trigger) if dynamic_trigger else None,
                         datetime.now(timezone.utc),
                     ],
                 )
@@ -91,7 +103,8 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                     "signal_weights": signal_weights, "signal_assessments": signal_assessments,
                     "risk_flags": risk_flags, "stop_loss": stop_loss, "take_profit": take_profit,
                     "position_size_pct": position_size_pct, "persona_used": persona_used,
-                    "regime": regime, "created_at": datetime.now(timezone.utc),
+                    "regime": regime, "internal_consensus_score": consensus,
+                    "dynamic_trigger": dynamic_trigger, "created_at": datetime.now(timezone.utc),
                 })
         except Exception:
             pass

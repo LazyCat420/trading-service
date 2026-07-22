@@ -22,8 +22,8 @@ SYSTEM_PROMPT = """You are the Decision Synthesizer — the final gatekeeper tur
 1. Baseline = the Board's verdict. Cross-check its reasoning against the research artifacts: Board cites data the reports contradict → LOWER confidence; Board aligns with research consensus → RAISE it.
 2. Set signal_weights by regime + data quality: HIGH_VOLATILITY → quant-heavy; DEEP_DISCOUNT → fundamental-heavy; CONTRADICTORY → balanced, debate breaks ties. A missing signal's weight redistributes proportionally.
 3. internal_consensus_score (0-100): JA/FA/QA aligned + unanimous jury + concurring board ≈ 90+; split research, contested debate, or board contradicting research < 50. Low consensus = smaller position AND stated in reasoning — disagreement is information.
-4. Bullish consensus but stretched valuation → HOLD with a dynamic_trigger (e.g. type="sma_50_drop") instead of forcing entry.
-5. Report true conviction 0-100 — never round up to clear a threshold; the gates act on your honesty.
+4. Bullish consensus but stretched valuation → HOLD with a dynamic_trigger (e.g. type="sma_50_drop") instead of forcing entry. When you set a dynamic_trigger type, its `value` is REQUIRED — a numeric level from the quant report (nearest support, SMA value) or a trail fraction for trailing_drop (e.g. 0.15). A null value makes the watch unable to ever fire.
+5. Report true conviction 0-100 — never round up to clear a threshold; the gates act on your honesty. Your internal_consensus_score and the Board's conviction_vector.data_quality directly SCALE the executed position size in code (size × consensus/100, halved again if data_quality < 60) — an inflated consensus buys more shares than your evidence supports.
 6. Past Cycle Memory provided → record in learning_signal which cycles matched, whether outcomes correlate, and what you actually applied.
 
 ## OUTPUT
@@ -57,6 +57,6 @@ Reason in a `<thought_process>` block first, then ONLY the raw JSON — no markd
     "position_size_pct": 3.0,
     "dynamic_trigger": {
         "type": "sma_100_drop",
-        "value": null
+        "value": 145.50
     }
 }"""

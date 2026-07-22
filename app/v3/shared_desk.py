@@ -369,6 +369,15 @@ class SharedDesk:
                         text += f"\n**{label} ({persona}) attack points:**\n" + "\n".join(
                             f"- {str(a)[:200]}" for a in attacks[:3]
                         )
+                    # The board/synthesizer turn these into stop placement and
+                    # dynamic re-analysis triggers — an explicit break condition
+                    # beats a generic ATR stop.
+                    invalidation = thesis.get("invalidation_condition")
+                    if invalidation:
+                        text += f"\n**{label} invalidation:** {str(invalidation)[:200]}"
+                    window = thesis.get("catalyst_window")
+                    if window:
+                        text += f"\n**{label} catalyst window:** {str(window)[:150]}"
                 jury_results = (tournament.get("jury_verdict") or {}).get("jury_results") or {}
                 juror_lines = []
                 for juror, verdict in list(jury_results.items())[:3]:

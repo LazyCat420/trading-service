@@ -508,6 +508,28 @@ async def run_agent(
         if enable_tools and agent_tools:
             for t in agent_tools:
                 agent.add_tool(t)
+            # Prism resolves these tools under their MCP-registered names
+            # (mcp__lazy-tool-service__<name>) while our schemas carry plain
+            # names. enabledTools sent with plain names only → prism sees the
+            # persona's availableTools (MCP names) as NOT enabled → "discovery
+            # headroom" → it attaches discover/search/enable meta-tools, which
+            # is how v3 agents reached execute_command/write_file (2026-07-21
+            # audit F2). Advertise both name forms so headroom collapses to
+            # zero. Name-only entries are safe on the prism path (enabledTools
+            # is a name list; execution is server-side); guarded off the
+            # direct-vLLM path where tools are sent as real schemas.
+            try:
+                from lazycat.llm import config as _lc_config
+                if getattr(_lc_config, "PRISM_ENABLED", False):
+                    _plain = [
+                        t.get("function", {}).get("name") or t.get("name")
+                        for t in agent_tools
+                    ]
+                    for name in _plain:
+                        if name and not name.startswith("mcp__"):
+                            agent.add_tool({"name": f"mcp__lazy-tool-service__{name}"})
+            except Exception as alias_err:
+                logger.debug("[BaseAgent] MCP alias advertisement skipped: %s", alias_err)
 
         import uuid
         session = ConversationSession(session_id=parent_agent_session_id or f"sess_{int(time.time())}_{uuid.uuid4().hex[:6]}")

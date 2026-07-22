@@ -88,6 +88,42 @@ def build_brain_graph_block(ticker: str) -> str:
     return ""
 
 
+def fred_curve_credit_lines() -> list[str]:
+    """Yield-curve + credit-stress lines from FRED macro_indicators, for the
+    Regime Engine's macro briefing. The curve (10Y−2Y, INVERTED flag) and the
+    HY option-adjusted spread are REAL recession/credit signals already in the
+    DB — strictly better than fetching ^TNX/^IRX or an HYG/LQD price-ratio
+    proxy at agent time. [] on empty/any failure — non-fatal."""
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT DISTINCT ON (indicator) indicator, value "
+                "FROM macro_indicators WHERE source = 'fred' "
+                "AND indicator IN ('TREASURY_10Y', 'TREASURY_2Y', 'HY_SPREAD') "
+                "ORDER BY indicator, date DESC"
+            ).fetchall()
+    except Exception as e:
+        logger.debug("[retrieval-ctx] fred curve/credit lines failed (non-fatal): %s", e)
+        return []
+
+    vals = {r[0]: float(r[1]) for r in rows if r[1] is not None}
+    lines: list[str] = []
+    t10, t2 = vals.get("TREASURY_10Y"), vals.get("TREASURY_2Y")
+    if t10 is not None and t2 is not None:
+        spread = t10 - t2
+        lines.append(
+            f"- Yield curve (FRED): 10Y {t10:.2f}% − 2Y {t2:.2f}% = "
+            f"{spread:+.2f}pp{' (INVERTED — classic recession signal)' if spread < 0 else ''}"
+        )
+    hy = vals.get("HY_SPREAD")
+    if hy is not None:
+        stress = "elevated stress" if hy >= 5.0 else "watch" if hy >= 4.0 else "calm"
+        lines.append(f"- High-yield credit spread (FRED OAS): {hy:.2f}pp ({stress})")
+    return lines
+
+
 def build_macro_block(ticker: str) -> str:
     """Macro backdrop from FRED data (macro_indicators). The desk was
     macro-blind before this: the table was collected for the dashboard but

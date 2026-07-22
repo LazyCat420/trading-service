@@ -310,6 +310,15 @@ async def run_v3_agent(
                     f"## LIVE MACRO SNAPSHOT (use this to classify the regime)\n{macro_briefing}",
                 ))
 
+        # Precomputed quant math — scoped to the two agents that size trades.
+        # Injected because telemetry shows they rarely make the tool calls the
+        # prompt asks for (quant avg 1.6 loops, board 1.0) — the math must
+        # already be on their desk, not behind a tool call.
+        if agent_name in ("v3_quant_analyst", "v3_board_of_directors"):
+            quant_math = desk.cycle_metadata.get("quant_math_context", "")
+            if quant_math:
+                dynamic_sections.append((_KEEP, quant_math))
+
         # Market data briefing first — it's the shared factual base (plan 4.2)
         data_report = desk.cycle_metadata.get("data_report", "")
         if data_report:
@@ -679,6 +688,13 @@ async def run_v3_agent(
             )
             # Non-fatal for analyst artifacts — we still append, but log the issues
             artifact["_validation_warnings"] = errors
+
+        # Type-specific coercion (2026-07-21 audit): regime enum literals,
+        # out-of-range factors, and null dynamic_trigger values all reached
+        # the DB unvalidated — a null trigger value means the watch can NEVER
+        # fire (order_triggers gates on `value is not None`).
+        from app.v3.artifact_validators import validate_artifact as _coerce_artifact
+        artifact = _coerce_artifact(artifact_type, artifact)
 
         # Append to SharedDesk
         desk.append_artifact(artifact_type, artifact)

@@ -135,6 +135,24 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: macro snapshot unavailable (non-fatal): %s", ticker, e)
 
+    # Precomputed quant math (2026-07-21 research audit): the quant analyst
+    # averages 1.6 loops and the board 1.0 — prompts telling them to CALL the
+    # GARCH/HRP tools mostly never fire. Compute the math in code here and
+    # inject the results into their prompts (agent_runner scopes the block to
+    # quant + board). Off-loop via to_thread: GARCH is ~1s of CPU + DB reads.
+    try:
+        from app.quant.context_block import build_quant_math_block
+        quant_math = await asyncio.wait_for(
+            asyncio.to_thread(build_quant_math_block, ticker, bot_id),
+            timeout=25,
+        )
+        if quant_math:
+            desk.cycle_metadata["quant_math_context"] = quant_math
+            logger.info("[V3] %s: precomputed quant math injected (%d chars)",
+                        ticker, len(quant_math))
+    except Exception as e:
+        logger.warning("[V3] %s: quant math precompute failed (non-fatal): %s", ticker, e)
+
     # Autoresearch directives — global ones plus any targeting this ticker.
     # The param existed since V3 launch but was never consumed; directives
     # were write-only (janitor-deleted). Non-fatal, capped to stay small.
@@ -611,7 +629,7 @@ async def run_v3_pipeline(
                 _queue_agent("decision_synthesizer", decision_agent, parent="board_of_directors")
 
     def _queue_debate_phase():
-        nonlocal debate_dispatched
+        nonlocal debate_dispatched, board_dispatched
         # Latch: the debate runs once on a research snapshot. A peer-requested
         # analyst re-run that re-writes fundamental_report/quant_report must
         # NOT re-queue the (expensive, ~8min) tournament.
@@ -623,6 +641,61 @@ async def run_v3_pipeline(
             desk.advance_phase(DeskPhase.RESEARCH_DONE)
             save_desk(desk)
             emit("analyzing", f"v3_research_done_{ticker}", f"📊 {ticker}: Research layer complete", status="ok")
+
+        # skip_debate (2026-07-21, audit item 8): honored ONLY in true panic —
+        # the regime engine suggested it AND its own volatility score is ≥0.9.
+        # Skipping removes the jury veto, so the skip is recorded as a standing
+        # risk flag: _apply_policy_gates then demands full mitigation
+        # (stop_loss + dynamic_trigger + position_size_pct) for any trade,
+        # exactly like a solo-juror veto. The ~9min tournament is the cycle's
+        # largest time cost; in a dislocating tape speed can beat deliberation.
+        regime_art = desk.regime_classification or {}
+        mods = regime_art.get("suggested_pipeline_modifications") or []
+        vol_factor = (regime_art.get("factors") or {}).get("volatility")
+        if (
+            "skip_debate" in mods
+            and isinstance(vol_factor, (int, float))
+            and vol_factor >= 0.9
+        ):
+            logger.warning(
+                "[V3] %s: DEBATE SKIPPED by Regime Engine (volatility %.2f) — "
+                "risk flag recorded, board must fully mitigate any trade",
+                ticker, vol_factor,
+            )
+            skip_summary = (
+                f"Debate SKIPPED by the Regime Engine (volatility {vol_factor:.2f} "
+                "≥ 0.90 panic threshold — speed over deliberation). There is NO "
+                "jury protection this cycle: any trade must carry full mitigation "
+                "(stop_loss, dynamic_trigger, position_size_pct) or the policy "
+                "gate holds it."
+            )
+            desk.append_artifact("tournament_result", {
+                "summary": skip_summary,
+                "action": "HOLD",
+                "confidence": 0,
+                "winning_side": "skipped",
+                "pitches": [], "survivors": [], "h2h": {}, "jury_verdict": {},
+                "vetoed": False,
+                "skipped": True,
+                "risk_flags": ["debate_skipped_by_regime"],
+                "total_tokens": 0,
+            })
+            desk.append_artifact("debate_judge", {
+                "summary": skip_summary,
+                "action": "HOLD",
+                "confidence": 0,
+                "winning_side": "skipped",
+                "source": "tournament_debate",
+            })
+            emit(
+                "analyzing", f"v3_debate_skipped_{ticker}",
+                f"⚡ {ticker}: Debate skipped by Regime Engine (volatility {vol_factor:.2f}) — unmitigated-risk gate armed",
+                status="ok",
+            )
+            if not board_dispatched:
+                board_dispatched = True
+                _queue_agent("board_of_directors", None, parent="regime_engine")
+            return
 
         if _cog_settings.TOURNAMENT_MODE:
             _queue_agent("tournament_debate", None, parent="quant_analyst")
@@ -1717,6 +1790,15 @@ def _format_macro_briefing(snapshot: dict) -> str:
     except Exception:
         pass
 
+    # FRED yield-curve + credit-stress lines (2026-07-21 audit): the regime
+    # engine averages 1.1 loops, so factor inputs must arrive IN the briefing —
+    # it demonstrably won't fetch them. Data already lives in macro_indicators.
+    try:
+        from app.services.retrieval_context import fred_curve_credit_lines
+        lines.extend(fred_curve_credit_lines())
+    except Exception:
+        pass
+
     header = f"Latest close values{f' (as of {as_of})' if as_of else ''}:"
     return header + "\n" + "\n".join(lines)
 
@@ -1827,6 +1909,13 @@ def _build_v1_compatible_result(
     _merged = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
     position_size_pct = _merged.get("position_size_pct")
 
+    # Consensus + data-quality feed the code-side sizing haircut in
+    # pipeline_service.resolve_buy_size_pct (2026-07-21: formulas moved out of
+    # the synthesizer prompt into code, where arithmetic is reliable).
+    internal_consensus = _merged.get("internal_consensus_score")
+    _conviction = (desk.final_decision or {}).get("conviction_vector") or {}
+    data_quality = _conviction.get("data_quality") if isinstance(_conviction, dict) else None
+
     # Token sum from telemetry
     total_tokens = sum(
         entry.get("token_usage", 0) for entry in desk.agent_telemetry
@@ -1908,6 +1997,8 @@ def _build_v1_compatible_result(
             "dynamic_trigger": dynamic_trigger,
             "position_size_pct": position_size_pct,
             "exit_style": exit_style,
+            "internal_consensus_score": internal_consensus,
+            "data_quality": data_quality,
         },
         "c_result": {
             "action": action,

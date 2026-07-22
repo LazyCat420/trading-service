@@ -199,6 +199,8 @@ Generate a mathematically testable trading thesis. You MUST:
         "position_size_pct": "numeric % of portfolio this conviction warrants (e.g. 2.5)",
         "max_drawdown_expectation_pct": "worst peak-to-trough % you expect while the thesis plays out"
     }},
+    "invalidation_condition": "The EXACT observable that breaks your thesis — a price level, an indicator threshold, or a dated event (e.g. 'close below $142 support' or 'Q3 gross margin under 40%'). Not a vague hedge.",
+    "catalyst_window": "When the thesis should play out: near-term (0-30d) / medium (30-90d) + the specific expected event if dated",
     "counter_argument_disproved": "State the STRONGEST mathematical argument AGAINST your thesis, then prove why your equation supersedes it"
 }}
 
@@ -1168,7 +1170,9 @@ async def run_tournament_debate(
         "pitches": [
             {"persona": p.get("persona"), "claim": p.get("claim"),
              "equation": p.get("equation"), "direction": p.get("direction"),
-             "risk": p.get("risk")}
+             "risk": p.get("risk"),
+             "invalidation_condition": p.get("invalidation_condition"),
+             "catalyst_window": p.get("catalyst_window")}
             for p in pitches
         ],
         "survivors": [
@@ -1180,11 +1184,15 @@ async def run_tournament_debate(
                 "persona": debated_a.get("persona"),
                 "claim": debated_a.get("claim"),
                 "attack_points": debated_a.get("attack_points", []),
+                "invalidation_condition": debated_a.get("invalidation_condition"),
+                "catalyst_window": debated_a.get("catalyst_window"),
             },
             "thesis_b": {
                 "persona": debated_b.get("persona"),
                 "claim": debated_b.get("claim"),
                 "attack_points": debated_b.get("attack_points", []),
+                "invalidation_condition": debated_b.get("invalidation_condition"),
+                "catalyst_window": debated_b.get("catalyst_window"),
             },
         },
         "jury_verdict": jury_verdict,
@@ -1208,7 +1216,9 @@ def _build_fallback_result(
         "pitches": [
             {"persona": p.get("persona"), "claim": p.get("claim"),
              "equation": p.get("equation"), "direction": p.get("direction"),
-             "risk": p.get("risk")}
+             "risk": p.get("risk"),
+             "invalidation_condition": p.get("invalidation_condition"),
+             "catalyst_window": p.get("catalyst_window")}
             for p in pitches
         ],
         "survivors": [],

@@ -49,6 +49,8 @@ def resolve_buy_size_pct(
     agent_size_pct: Any,
     confidence: int | float,
     max_position_size_pct: float,
+    consensus_score: Any = None,
+    data_quality: Any = None,
 ) -> float | None:
     """Resolve the BUY position size (fraction of portfolio equity, cash-capped
     at execution) from the agents' decision.
@@ -57,13 +59,26 @@ def resolve_buy_size_pct(
     from the board/synthesizer means "watch, don't trade" — returns None and no
     trade is attempted. Only a missing/non-numeric size falls back to the
     confidence formula.
+
+    2026-07-21 (audit item 6): the consensus/data-quality haircut lives HERE,
+    in code — not as prompt arithmetic the synthesizer computes unreliably.
+    An explicit agent size is scaled by internal_consensus_score/100 (floored
+    at 0.5 so a low-consensus trade the gates still allowed isn't zeroed) and
+    halved when the board's conviction_vector.data_quality < 60. Disagreement
+    is information; it now costs size mechanically.
     """
     if isinstance(agent_size_pct, bool):
         agent_size_pct = None  # bools are ints in Python; never a size
     if isinstance(agent_size_pct, (int, float)):
         if agent_size_pct <= 0:
             return None  # deliberate watch-only directive
-        return min(agent_size_pct / 100.0, max_position_size_pct)
+        size = min(agent_size_pct / 100.0, max_position_size_pct)
+        if isinstance(consensus_score, (int, float)) and not isinstance(consensus_score, bool):
+            consensus = min(100.0, max(0.0, float(consensus_score)))
+            size *= max(0.5, consensus / 100.0)
+        if isinstance(data_quality, (int, float)) and not isinstance(data_quality, bool) and data_quality < 60:
+            size *= 0.5
+        return size
     # No agent-decided size — confidence-scaled fallback
     return max(0.02, min(max_position_size_pct, confidence / 100.0 * 0.10))
 
@@ -1127,9 +1142,12 @@ class PipelineService:
                         # formula is only the fallback when no size was decided.
                         # An EXPLICIT size <= 0 is a board "watch, don't trade"
                         # directive and skips the trade entirely (deferred item 8.1).
-                        agent_size_pct = (result.get("estimate") or {}).get("position_size_pct")
+                        _estimate = result.get("estimate") or {}
+                        agent_size_pct = _estimate.get("position_size_pct")
                         size_pct = resolve_buy_size_pct(
-                            agent_size_pct, confidence, get_param("MAX_POSITION_SIZE_PCT")
+                            agent_size_pct, confidence, get_param("MAX_POSITION_SIZE_PCT"),
+                            consensus_score=_estimate.get("internal_consensus_score"),
+                            data_quality=_estimate.get("data_quality"),
                         )
                         if size_pct is None:
                             result["no_trade_reason"] = REASON_WATCH_ONLY

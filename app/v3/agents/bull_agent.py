@@ -59,6 +59,11 @@ You MUST output valid JSON matching this schema:
         }
     ],
     "target_upside": "15-20% upside to $185 based on...",
+    "catalyst_timeline": {
+        "near_term": "0-30 days: specific dated event driving the thesis",
+        "medium_term": "30-90 days: expected development",
+        "invalidation": "the EXACT condition that breaks the bull thesis — a price level or a dated event, not a vague hedge"
+    },
     "confidence": 75
 }"""
 
