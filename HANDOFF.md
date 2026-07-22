@@ -1,9 +1,36 @@
 # HANDOFF — Agent research-quality wave (audit-driven replacement for the Wave-1 checklist)
 
-**Commits:** `bad7904` + `89586f6` (trading-service), `a0533a6` + `98420d5`
-(lazy-agent-service) · both deployed to synology `2026-07-22T20:47-20:48Z` ·
-prism personas synced live · verification cycle `cmd-verify-e56fcafa` (NVDA,
-analyze-only) — check its results if you're picking this up.
+**Commits:** `bad7904` + `89586f6` + `db75b5f` + `fbfe0be` (trading-service),
+`a0533a6` + `98420d5` (lazy-agent-service) · deployed to synology (final
+deploy `fbfe0be` 2026-07-22 ~14:25 PT) · prism personas synced live (11
+personas incl. new CUSTOM_V3_DELTA_ANALYST).
+
+## ✅ VERIFIED by live cycle `cmd-verify-e56fcafa` (NVDA, analyze-only, ~25 min)
+
+- **Quant analyst ran 15 loops (7-day average was 1.6), quality 81** — the
+  precomputed block + prompt rewrite genuinely woke it up. Its report carries
+  the full new schema: vol_signal=EXPANSION, predicted_vol_annualized_pct,
+  vol_prediction_premium; summary cites GARCH. (diversification_ratio /
+  hrp_weight_suggestion were null — correct: the active bot held only NVDA,
+  no book to diversify against; the HRP line appears from 2+ positions.)
+- **Regime scored the new factors from the FRED lines exactly per guidance**:
+  yield_curve 0.35 (+0.39pp flat-ish curve), credit_stress 0.2 (2.69pp calm).
+- **trade_results row**: HOLD @ 45, internal_consensus_score=55 persisted,
+  dynamic_trigger={"type":"breakout_reclaim","value":213.99} — numeric value
+  on a HOLD, no more null-value dead watches.
+- **Zero dangerous meta-tools** (no execute_command/write_file/execute_python
+  anywhere). One discover_and_enable_tools from the junior — its run started
+  BEFORE the delta-persona fix below; expect zero next cycle.
+- **Found + fixed during verification**: the junior/delta persona UNION left
+  3 tools of permanent discovery headroom (junior's requests never enable
+  delta's tools) → delta now has its own CUSTOM_V3_DELTA_ANALYST persona
+  (POST /custom-agents) and `prism_agent_registry` maps to it (`fbfe0be`).
+- Watchpoint: the synthesizer invented trigger type "breakout_reclaim" —
+  order_triggers only evaluates sma_*/rsi_*/trailing_drop dynamic types, so
+  unknown types register but never fire (pre-existing gap, now at least
+  visible in the persisted column). Tournament artifact quality scored 9 this
+  run — the pitch invalidation fields came back empty; watch whether pitches
+  fill them over the next cycles.
 
 ## Context
 
