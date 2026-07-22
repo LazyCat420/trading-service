@@ -206,6 +206,13 @@ def _persist_audit_event(event: dict):
                     event["created_at"],
                 ],
             )
+        # Best-effort Mongo dual-write (natural key: request_id).
+        try:
+            from app.db import mongo_store
+            if mongo_store.writes_mongo("agent_audit_log"):
+                mongo_store.insert_docs("agent_audit_log", [dict(event)])
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("[AgentAudit] DB persist failed (non-fatal): %s", e)
 

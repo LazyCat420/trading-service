@@ -49,16 +49,23 @@ def _passthrough_doc(row, cols):
     return dict(zip(cols, row))
 
 
-def _cycle_audit_doc(row, cols):
-    d = dict(zip(cols, row))
-    data = d.get("data")
-    if isinstance(data, str):
-        try:
-            data = json.loads(data)
-        except Exception:
-            data = {}
-    d["data"] = data or {}
-    return d
+def _json_doc(*json_cols):
+    """Mapper factory: passthrough, but parse the named text/json columns into
+    native dicts so they round-trip as Mongo documents (not strings)."""
+    def _mapper(row, cols):
+        d = dict(zip(cols, row))
+        for c in json_cols:
+            v = d.get(c)
+            if isinstance(v, str):
+                try:
+                    d[c] = json.loads(v)
+                except Exception:
+                    d[c] = {}
+        return d
+    return _mapper
+
+
+_cycle_audit_doc = _json_doc("data")
 
 
 # table -> (select_sql, key_field, row_mapper)
@@ -80,6 +87,53 @@ TABLES = {
         "FROM cycle_audit_log",
         "id",
         _cycle_audit_doc,
+    ),
+    "agent_audit_log": (
+        "SELECT id, request_id, endpoint, agent_name, model_used, system_prompt_hash, context_build_ms, "
+        "inference_ms, tokens_input, tokens_output, tokens_total, is_truncated, fallback_triggered, "
+        "circuit_breaker_open, ticker, cycle_id, status, detail, created_at FROM agent_audit_log",
+        "id", _passthrough_doc,
+    ),
+    "agent_tool_telemetry": (
+        "SELECT id, cycle_id, agent_name, tool_name, args_hash, success, elapsed_ms, error_message, "
+        "was_blocked, created_at, ticker FROM agent_tool_telemetry",
+        "id", _passthrough_doc,
+    ),
+    "agent_traces": (
+        "SELECT id, run_id, agent_name, task_type, goal, planned_next_action, tool_name, tool_args, "
+        "tool_result_summary, why_tool_was_called, tokens_before, tokens_after, latency_ms, "
+        "did_tool_change_decision, loop_step, stop_reason, created_at, endpoint_name, model_name, "
+        "service_source FROM agent_traces",
+        "id", _passthrough_doc,
+    ),
+    "v3_agent_telemetry": (
+        "SELECT id, cycle_id, ticker, agent_name, phase, outcome, elapsed_ms, loops_used, token_usage, "
+        "artifact_size_bytes, quality_score, created_at FROM v3_agent_telemetry",
+        "id", _passthrough_doc,
+    ),
+    "llm_audit_logs": (
+        "SELECT id, cycle_id, bot_id, ticker, agent_step, model, system_prompt_hash, context_hash, "
+        "raw_response, tokens_used, execution_ms, created_at, endpoint_name, prompt_tokens, "
+        "completion_tokens, queue_wait_ms, tokens_per_second, agent_task_id FROM llm_audit_logs",
+        "id", _passthrough_doc,
+    ),
+    "trade_results": (
+        "SELECT id, ticker, cycle_id, action, confidence, reasoning, signal_weights, signal_assessments, "
+        "risk_flags, stop_loss, take_profit, position_size_pct, persona_used, regime, created_at "
+        "FROM trade_results",
+        "id", _json_doc("signal_weights", "signal_assessments", "risk_flags"),
+    ),
+    "ticker_reports": (
+        "SELECT id, cycle_id, ticker, action, confidence, report_markdown, result_summary, is_summary, "
+        "created_at FROM ticker_reports",
+        "id", _json_doc("result_summary"),
+    ),
+    "analysis_results": (
+        "SELECT id, cycle_id, bot_id, ticker, agent_name, result_json, confidence, created_at, triage_tier, "
+        "thesis_verdict, thesis_confidence, thesis_summary, thesis_updated_at, thesis_unchanged, "
+        "price_at_analysis, agent_task_id, analysis_price, analysis_rsi, analysis_fund_count "
+        "FROM analysis_results",
+        "id", _json_doc("result_json"),
     ),
 }
 

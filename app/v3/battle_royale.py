@@ -136,6 +136,18 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
                     datetime.now(timezone.utc)
                 ]
             )
+        # Best-effort Mongo mirror — replace the cycle's summary row to match the
+        # PG delete-first upsert (keyed on cycle_id + is_summary).
+        try:
+            from app.db import mongo_store
+            if mongo_store.writes_mongo("ticker_reports"):
+                mongo_store.upsert_doc("ticker_reports", {"cycle_id": cycle_id, "is_summary": True}, {
+                    "id": report_id, "cycle_id": cycle_id, "ticker": "GLOBAL", "action": "HOLD",
+                    "confidence": 0, "report_markdown": report_content, "result_summary": result_summary,
+                    "is_summary": True, "created_at": datetime.now(timezone.utc),
+                })
+        except Exception:
+            pass
         logger.info("[BattleRoyale] Report saved with ID %s", report_id)
         return True
     except Exception as e:

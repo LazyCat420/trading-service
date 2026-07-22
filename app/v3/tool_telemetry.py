@@ -56,6 +56,12 @@ def record_tool_call(
     try:
         from app.db.connection import get_db
 
+        _rec = {
+            "id": str(uuid.uuid4()), "cycle_id": cycle_id, "agent_name": agent_name,
+            "tool_name": tool_name, "args_hash": args_hash or "", "success": success,
+            "elapsed_ms": elapsed_ms, "error_message": error_message or "",
+            "was_blocked": was_blocked, "ticker": ticker or "",
+        }
         with get_db() as db:
             db.execute(
                 """
@@ -64,19 +70,15 @@ def record_tool_call(
                      success, elapsed_ms, error_message, was_blocked, ticker)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                [
-                    str(uuid.uuid4()),
-                    cycle_id,
-                    agent_name,
-                    tool_name,
-                    args_hash or "",
-                    success,
-                    elapsed_ms,
-                    error_message or "",
-                    was_blocked,
-                    ticker or "",
-                ],
+                [_rec["id"], _rec["cycle_id"], _rec["agent_name"], _rec["tool_name"], _rec["args_hash"],
+                 _rec["success"], _rec["elapsed_ms"], _rec["error_message"], _rec["was_blocked"], _rec["ticker"]],
             )
+        try:
+            from app.db import mongo_store
+            if mongo_store.writes_mongo("agent_tool_telemetry"):
+                mongo_store.insert_docs("agent_tool_telemetry", [_rec])
+        except Exception:
+            pass
     except Exception as e:
         logger.warning(
             "[ToolTelemetry] Failed to record %s/%s (non-fatal): %s",

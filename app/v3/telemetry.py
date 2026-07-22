@@ -82,8 +82,19 @@ def persist_telemetry(desk: SharedDesk) -> None:
     from app.db.connection import get_db
 
     try:
+        _recs = [
+            {
+                "cycle_id": desk.cycle_id, "ticker": desk.ticker,
+                "agent_name": entry.get("agent_name", "?"), "phase": entry.get("phase", "?"),
+                "outcome": entry.get("outcome", "?"), "elapsed_ms": entry.get("elapsed_ms", 0),
+                "loops_used": entry.get("loops_used", 0), "token_usage": entry.get("token_usage", 0),
+                "quality_score": entry.get("quality_score", -1),
+                "artifact_size_bytes": entry.get("artifact_size_bytes", 0),
+            }
+            for entry in desk.agent_telemetry
+        ]
         with get_db() as db:
-            for entry in desk.agent_telemetry:
+            for r in _recs:
                 db.execute(
                     """
                     INSERT INTO v3_agent_telemetry
@@ -92,19 +103,16 @@ def persist_telemetry(desk: SharedDesk) -> None:
                          artifact_size_bytes)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    [
-                        desk.cycle_id,
-                        desk.ticker,
-                        entry.get("agent_name", "?"),
-                        entry.get("phase", "?"),
-                        entry.get("outcome", "?"),
-                        entry.get("elapsed_ms", 0),
-                        entry.get("loops_used", 0),
-                        entry.get("token_usage", 0),
-                        entry.get("quality_score", -1),
-                        entry.get("artifact_size_bytes", 0),
-                    ],
+                    [r["cycle_id"], r["ticker"], r["agent_name"], r["phase"], r["outcome"],
+                     r["elapsed_ms"], r["loops_used"], r["token_usage"], r["quality_score"],
+                     r["artifact_size_bytes"]],
                 )
+        try:
+            from app.db import mongo_store
+            if _recs and mongo_store.writes_mongo("v3_agent_telemetry"):
+                mongo_store.insert_docs("v3_agent_telemetry", _recs)
+        except Exception:
+            pass
         logger.info(
             "[V3Telemetry] Persisted %d telemetry entries for %s/%s",
             len(desk.agent_telemetry),

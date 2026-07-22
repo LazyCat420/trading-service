@@ -80,6 +80,22 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                     ],
                 )
 
+        # Best-effort Mongo mirror — replace by (cycle_id, ticker) to match the
+        # PG delete-first upsert (JSONB fields stored as native dicts).
+        try:
+            from app.db import mongo_store
+            if mongo_store.writes_mongo("trade_results"):
+                mongo_store.upsert_doc("trade_results", {"cycle_id": cycle_id, "ticker": ticker}, {
+                    "id": result_id, "ticker": ticker, "cycle_id": cycle_id, "action": action,
+                    "confidence": confidence, "reasoning": reasoning[:2000] if reasoning else "",
+                    "signal_weights": signal_weights, "signal_assessments": signal_assessments,
+                    "risk_flags": risk_flags, "stop_loss": stop_loss, "take_profit": take_profit,
+                    "position_size_pct": position_size_pct, "persona_used": persona_used,
+                    "regime": regime, "created_at": datetime.now(timezone.utc),
+                })
+        except Exception:
+            pass
+
         logger.info(
             "[trade_result_saver] Saved trade result for %s: %s @ %d%% (cycle: %s)",
             ticker,

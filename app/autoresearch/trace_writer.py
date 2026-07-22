@@ -55,6 +55,15 @@ def write_agent_trace(
             args_str = str(tool_args)[:2000]
         result_summary = ("ERROR: " if failed else "") + str(tool_result)[:500]
 
+        _rec = {
+            "id": str(uuid.uuid4()), "run_id": run_id, "agent_name": agent_name,
+            "task_type": "analysis", "goal": f"{ticker or '?'}: execute_task",
+            "tool_name": tool_name, "tool_args": args_str, "tool_result_summary": result_summary,
+            "why_tool_was_called": "agent tool call (V3 pipeline)", "tokens_before": 0, "tokens_after": 0,
+            "latency_ms": int(latency_ms or 0), "loop_step": _loop_steps[step_key],
+            "stop_reason": "error" if failed else "completed",
+            "created_at": datetime.now(timezone.utc), "service_source": "trading-service",
+        }
         with get_db() as db:
             db.execute(
                 """
@@ -66,25 +75,17 @@ def write_agent_trace(
                     service_source
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                [
-                    str(uuid.uuid4()),
-                    run_id,
-                    agent_name,
-                    "analysis",
-                    f"{ticker or '?'}: execute_task",
-                    tool_name,
-                    args_str,
-                    result_summary,
-                    "agent tool call (V3 pipeline)",
-                    0,
-                    0,
-                    int(latency_ms or 0),
-                    _loop_steps[step_key],
-                    "error" if failed else "completed",
-                    datetime.now(timezone.utc),
-                    "trading-service",
-                ],
+                [_rec["id"], _rec["run_id"], _rec["agent_name"], _rec["task_type"], _rec["goal"],
+                 _rec["tool_name"], _rec["tool_args"], _rec["tool_result_summary"], _rec["why_tool_was_called"],
+                 _rec["tokens_before"], _rec["tokens_after"], _rec["latency_ms"], _rec["loop_step"],
+                 _rec["stop_reason"], _rec["created_at"], _rec["service_source"]],
             )
             db.commit()
+        try:
+            from app.db import mongo_store
+            if mongo_store.writes_mongo("agent_traces"):
+                mongo_store.insert_docs("agent_traces", [_rec])
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("[TraceWriter] Failed to write agent trace (non-fatal): %s", e)

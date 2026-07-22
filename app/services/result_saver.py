@@ -61,6 +61,22 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
                         analysis_fund_count,
                     ]
                 )
+        # Best-effort Mongo mirror — one analysis_results doc per (cycle_id, ticker);
+        # result_json stored as a native dict.
+        try:
+            from app.db import mongo_store
+            if mongo_store.writes_mongo("analysis_results"):
+                mongo_store.upsert_doc("analysis_results", {"cycle_id": cycle_id, "ticker": ticker}, {
+                    "id": result_id, "ticker": ticker, "cycle_id": cycle_id,
+                    "bot_id": result.get("bot_id", "cycle-backend"), "result_json": result,
+                    "confidence": result.get("confidence", 0), "thesis_verdict": result.get("action", "HOLD"),
+                    "thesis_confidence": result.get("confidence", 0), "thesis_summary": result.get("rationale", ""),
+                    "created_at": datetime.now(timezone.utc), "triage_tier": result.get("triage_tier", "standard"),
+                    "analysis_price": analysis_price, "analysis_rsi": analysis_rsi,
+                    "analysis_fund_count": analysis_fund_count,
+                })
+        except Exception:
+            pass
         logger.info("[result_saver] Saved analysis result for %s in cycle %s (price=%.2f, rsi=%.1f, funds=%d)",
                      ticker, cycle_id,
                      analysis_price or 0, analysis_rsi or 0, analysis_fund_count or 0)
