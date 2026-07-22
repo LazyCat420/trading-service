@@ -61,10 +61,14 @@ def test_quant_analyst_has_calculator_tools():
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
     quant_tools = set(AGENT_TOOL_WHITELISTS.get("v3_quant_analyst", []))
+    # 2026-07-21 portfolio-math wave: calculate_position_size (flat
+    # cash-percent) was replaced by covariance-aware calculate_hrp_allocation.
     required = {
         "calculate_stop_loss",
-        "calculate_position_size",
         "calculate_risk_reward",
+        "calculate_hrp_allocation",
+        "get_portfolio_covariance",
+        "forecast_volatility_garch",
     }
     missing = required - quant_tools
     assert not missing, f"Quant Analyst agent missing calculator tools: {missing}"

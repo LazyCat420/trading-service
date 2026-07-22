@@ -36,7 +36,8 @@ class SaveEquationInput(BaseModel):
     code: str = Field(
         description=(
             "Python code for the equation. Must use 'df' (price DataFrame with columns: "
-            "open, high, low, close, volume, rsi_14, macd, macd_signal, macd_hist, atr_14, z_score) "
+            "open, high, low, close, volume, rsi_14, macd, macd_signal, macd_hist, atr_14, z_score, "
+            "gk_vol, mom_21d, mom_63d, mom_126d, mom_252d) "
             "and 'params' (dict of parameters). Must assign the output to 'result'. "
             "Example: 'result = {\"signal\": \"BUY\" if df[\"z_score\"].iloc[-1] < -2.0 else \"HOLD\", "
             "\"z_score\": float(df[\"z_score\"].iloc[-1])}'"
@@ -337,6 +338,50 @@ async def run_backtest_tool(
             )
 
     return "\n".join(lines)
+
+
+# ── Volatility forecasting ─────────────────────────────────────────
+# GARCH lives here as a TOOL, not a library equation: the equation sandbox
+# only allows numpy/pandas imports (no arch, no scipy), so a saved
+# "garch_vol_forecast" equation would die on its import line every run.
+
+@registry.register(
+    name="forecast_volatility_garch",
+    description=(
+        "Fit GARCH(1,1) on the ticker's daily returns and forecast NEXT-DAY "
+        "volatility — a forward-looking volatility estimate, unlike ATR which "
+        "only describes the past. Returns predicted vs realized (20d) "
+        "annualized vol, the prediction premium, and vol_signal: EXPANSION "
+        "(model expects vol to rise — widen stops, shrink size), CONTRACTION, "
+        "or NEUTRAL. Use this to ground volatility_regime in a forecast "
+        "rather than trailing ATR alone."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "Stock ticker (e.g. AAPL)."},
+            "lookback_days": {
+                "type": "integer",
+                "description": "Trading days of history to fit on (default 500).",
+            },
+        },
+        "required": ["ticker"],
+    },
+    tier=0,
+    source="portfolio_math",
+)
+async def forecast_volatility_garch_tool(
+    ticker: str, lookback_days: int = 500, **_extra
+) -> str:
+    from app.quant.garch import garch_forecast
+    from app.quant.returns import load_close_returns
+
+    returns = load_close_returns(ticker, int(lookback_days))
+    if returns.size == 0:
+        return json.dumps({"error": f"No price history for {ticker}."})
+    result = garch_forecast(returns)
+    result["ticker"] = ticker.upper()
+    return json.dumps(result)
 
 
 # ── Risk calculators ───────────────────────────────────────────────

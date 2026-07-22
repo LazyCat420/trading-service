@@ -76,6 +76,11 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "calculate_position_size",
         "calculate_risk_reward",
         "calculate_stop_loss",
+        # Portfolio-level math (2026-07-21)
+        "get_portfolio_covariance",
+        "calculate_hrp_allocation",
+        "forecast_volatility_garch",
+        "get_strategy_health",
     ],
     # ── V3 Family Office Worker Agents ──
     # publish_event was whitelisted on every worker but never implemented as a
@@ -314,7 +319,9 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     # of the artifact (see the salvage pass in v3/agent_runner.py). These two
     # both do multi-source lookups before they can write their report.
     "v3_fundamental_analyst": 12,
-    "v3_quant_analyst": 12,
+    # 14 (from 12) on 2026-07-21: the portfolio-math wave added GARCH +
+    # HRP/covariance calls to the quant's documented loop.
+    "v3_quant_analyst": 14,
     "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bull_defense": 3,        # No tools — pure reasoning

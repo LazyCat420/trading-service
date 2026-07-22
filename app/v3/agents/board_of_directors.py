@@ -37,6 +37,12 @@ TOOL_WHITELIST: list[str] = [
     # live limits and propose governed changes (board-tier params included).
     "get_parameters",
     "propose_parameter_change",
+    # Portfolio-level sizing context (2026-07-21): HRP baseline for the final
+    # position_size_pct, and the model-degradation monitor the policy gate
+    # enforces (a CUT status blocks the board's own BUYs — it should be able
+    # to see that coming).
+    "calculate_hrp_allocation",
+    "get_strategy_health",
 ]
 
 ARTIFACT_TYPE = "final_decision"

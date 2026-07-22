@@ -1420,6 +1420,24 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     if not desk.has_artifact("regime_classification"):
         return "HOLD_POLICY_BLOCKED_MISSING_REGIME"
 
+    # Strategy health (Ruuj ch.5): "has the model degraded" is checked
+    # separately from "is it losing money". A decision-critical agent whose
+    # telemetry quality collapses must not keep OPENING positions — SELLs
+    # stay allowed (a degraded model should still be able to de-risk).
+    # Fails open inside get_pipeline_health; belt-and-braces here too.
+    if action == "BUY":
+        try:
+            from app.quant.strategy_health import get_pipeline_health
+            health = get_pipeline_health()
+            if health.get("status") == "CUT":
+                logger.warning(
+                    "[V3] %s: BUY blocked — strategy health CUT (driver=%s: %s)",
+                    desk.ticker, health.get("driver"), health.get("reason"),
+                )
+                return "HOLD_POLICY_BLOCKED_DEGRADED_MODEL"
+        except Exception as health_err:
+            logger.warning("[V3] %s: strategy health check failed (fail-open): %s", desk.ticker, health_err)
+
     # Conviction sub-scores (plan 3.2): a board that admits its data quality
     # is poor gets blocked regardless of headline confidence.
     conviction = board.get("conviction_vector") or {}

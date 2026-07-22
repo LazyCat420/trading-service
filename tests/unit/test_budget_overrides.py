@@ -15,7 +15,7 @@ import pytest
     ("user_chat", True, 15),
     ("v3_junior_analyst", True, 5),
     ("v3_fundamental_analyst", True, 12),
-    ("v3_quant_analyst", True, 12),
+    ("v3_quant_analyst", True, 14),
     ("v3_bull_agent", True, 3),
     ("v3_debate_judge", True, 3),
     ("v3_regime_engine", True, 5),

@@ -44,23 +44,52 @@ def load_historical_data(ticker: str) -> pd.DataFrame:
         )
         
         if tech_df.empty:
-            # If no technicals table rows, compute rolling Z-score only
+            # If no technicals table rows, compute derived features only
             prices_df["date"] = pd.to_datetime(prices_df["date"])
-            return prices_df.set_index("date")
-            
+            return _add_derived_features(prices_df.set_index("date"))
+
         prices_df["date"] = pd.to_datetime(prices_df["date"])
         tech_df["date"] = pd.to_datetime(tech_df["date"])
-        
+
         merged = pd.merge(prices_df, tech_df, on="date", how="left")
         merged = merged.sort_values("date").set_index("date")
-        
-        # Backfill rolling window variables if missing
-        if "close" in merged:
-            rolling_mean = merged["close"].rolling(window=60).mean()
-            rolling_std = merged["close"].rolling(window=60).std()
-            merged["z_score"] = (merged["close"] - rolling_mean) / rolling_std
-            
-        return merged
+
+        return _add_derived_features(merged)
+
+
+def _add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Derived per-ticker features available to every library equation:
+    z_score, Garman-Klass volatility, and multi-horizon momentum."""
+    if "close" not in df or df.empty:
+        return df
+
+    close = df["close"].astype(float)
+    rolling_mean = close.rolling(window=60).mean()
+    rolling_std = close.rolling(window=60).std()
+    df["z_score"] = (close - rolling_mean) / rolling_std
+
+    # Garman-Klass intraday volatility estimate — uses the full OHLC bar, a
+    # tighter daily vol read than close-to-close or ATR.
+    if all(c in df for c in ("open", "high", "low")):
+        o = df["open"].astype(float).replace(0, np.nan)
+        h = df["high"].astype(float).replace(0, np.nan)
+        low = df["low"].astype(float).replace(0, np.nan)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            df["gk_vol"] = np.sqrt(
+                (0.5 * np.log(h / low) ** 2
+                 - (2 * np.log(2) - 1) * np.log(close.replace(0, np.nan) / o) ** 2
+                 ).clip(lower=0)
+            )
+
+    # Multi-horizon momentum (~1/3/6/12 months of trading days), clipped at
+    # the 99.5th percentile so a single outlier stock move can't dominate a
+    # cross-sectional ranking equation.
+    for lag in (21, 63, 126, 252):
+        mom = close.pct_change(lag)
+        cap = mom.quantile(0.995)
+        df[f"mom_{lag}d"] = mom.clip(upper=cap) if pd.notna(cap) else mom
+
+    return df
 
 def _cursor_to_df(cursor) -> pd.DataFrame:
     rows = cursor.fetchall()

@@ -68,6 +68,16 @@ def resolve_buy_size_pct(
     return max(0.02, min(max_position_size_pct, confidence / 100.0 * 0.10))
 
 
+def apply_health_sizing(size_pct: float | None, health_status: str) -> float | None:
+    """Strategy-health REDUCE halves BUY sizes (CUT is blocked earlier by the
+    policy gate; anything else passes through). Pure so it's unit-testable."""
+    if size_pct is None:
+        return None
+    if health_status == "REDUCE":
+        return size_pct * 0.5
+    return size_pct
+
+
 def resolve_trigger_registration(
     policy_action: str,
     action: str,
@@ -1129,6 +1139,26 @@ class PipelineService:
                                 ticker_name, agent_size_pct,
                             )
                         else:
+                            # Strategy-health REDUCE: degraded (but not CUT)
+                            # model quality halves every new BUY. Fail-open —
+                            # a broken health check never changes sizing.
+                            try:
+                                from app.quant.strategy_health import get_pipeline_health
+                                _health = get_pipeline_health()
+                                if _health.get("status") == "REDUCE":
+                                    size_pct = apply_health_sizing(size_pct, "REDUCE")
+                                    result["strategy_health"] = "REDUCE"
+                                    logger.warning(
+                                        "[PipelineService] %s: BUY size halved to %.1f%% — "
+                                        "strategy health REDUCE (driver=%s: %s)",
+                                        ticker_name, size_pct * 100,
+                                        _health.get("driver"), _health.get("reason"),
+                                    )
+                            except Exception as health_err:
+                                logger.warning(
+                                    "[PipelineService] %s: health sizing check failed (ignored): %s",
+                                    ticker_name, health_err,
+                                )
                             result["trade_attempted"] = True
                             logger.info(
                                 "[PipelineService] %s: sizing %s → %.1f%% of equity (cash-capped)",
