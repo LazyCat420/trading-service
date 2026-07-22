@@ -113,8 +113,15 @@ def main() -> int:
             print(f"           + adding   {added}")
 
         if not args.dry_run:
+            # PUT /custom-agents/:id expects the Mongo _id, not the agentId.
+            mongo_id = doc.get("_id")
+            if isinstance(mongo_id, dict):  # extended JSON {"$oid": "..."}
+                mongo_id = mongo_id.get("$oid")
+            if not mongo_id:
+                print(f"           ! no _id on {persona_id}, cannot update")
+                continue
             _request(
-                f"{args.prism}/custom-agents/{persona_id}",
+                f"{args.prism}/custom-agents/{mongo_id}",
                 method="PUT",
                 body={"availableTools": target, "enabledByDefaultTools": target},
             )
