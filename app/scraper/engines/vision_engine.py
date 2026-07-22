@@ -182,7 +182,20 @@ async def _vision_targets() -> list[tuple[str, str, str]]:
     Discovering the model from /v1/models rather than pinning an id means
     swapping the served model doesn't silently break OCR.
     """
-    from app.services.prism_agent_caller import llm, get_live_model_from_vllm
+    try:
+        from app.services.prism_agent_caller import llm, get_live_model_from_vllm
+    except ImportError as e:
+        # Standalone scraper-service ships app.scraper WITHOUT the trading app's
+        # LLM-config layer (app.services.prism_agent_caller), which owns the
+        # vLLM endpoint registry vision OCR needs. Degrade with a clear message
+        # instead of an opaque ImportError — core http/playwright/crawl4ai and
+        # the collectors are unaffected and keep working.
+        raise RuntimeError(
+            "Vision OCR unavailable: the vLLM endpoint config "
+            "(app.services.prism_agent_caller) is not installed in this "
+            "deployment. Use a non-vision engine (http/playwright/crawl4ai) or "
+            "deploy with the trading LLM-config modules present."
+        ) from e
 
     override = os.getenv("VISION_MODEL", "").strip()
     override_provider = override_model = None

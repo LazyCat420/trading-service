@@ -2,26 +2,37 @@ import logging
 import asyncio
 from typing import Any
 
+import httpx
+
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 
 class ScraperServiceClient:
-    """In-process client for the absorbed scraper (formerly the scraper-service HTTP API).
+    """HTTP client for the standalone scraper-service (:8001).
 
-    The scraper's engines and collectors now live under ``app.scraper`` and run in
-    this process, so ``.scrape()`` / ``.collect()`` call the in-process seam
-    (``app.scraper.service``) instead of POSTing to ``scraper-service:8001``. The
-    method signatures and return contracts are unchanged, so every existing caller
-    (``app/collectors/*`` wrappers, ``app/tools/web_tools.py``, ...) keeps working.
+    The scraper was extracted back out of this process into its own
+    domain-agnostic service (``scraper-service``), so ``.scrape()`` / ``.collect()``
+    POST to its HTTP API instead of running Chromium in the trading worker. The
+    method signatures and return contracts are unchanged, so every existing
+    caller (``app/collectors/*`` wrappers, ``app/tools/web_tools.py``, the
+    registry web-scrape tools bridged from lazy-tool, ...) keeps working.
 
-    A per-source ``asyncio.Semaphore`` still bounds concurrency — this matters more
-    now that scraping runs inside the trading worker process alongside Chromium.
+    The scraper source of truth still lives in ``app.scraper`` here — scraper-service
+    build-copies it — but this process no longer imports or runs it. Base URL comes
+    from ``settings.SCRAPER_SERVICE_URL`` (default ``http://scraper-service:8001``).
+
+    A per-source ``asyncio.Semaphore`` bounds how many concurrent requests we fan
+    out to the scraper so a burst of collectors can't stampede it.
     """
 
+    # Generous: a vision-OCR scrape can run 30-40s per page, and /scrape/batch or
+    # a multi-feed /collect fans several of those out server-side.
+    _TIMEOUT_S = 300.0
+
     def __init__(self, base_url: str | None = None):
-        # base_url is retained only for backwards-compatible construction; it is
-        # unused now that calls are in-process.
-        self.base_url = base_url
+        self.base_url = (base_url or settings.SCRAPER_SERVICE_URL).rstrip("/")
         self._semaphores: dict[str, asyncio.Semaphore] = {}
 
     def _get_semaphore(self, source: str) -> asyncio.Semaphore:
@@ -31,17 +42,19 @@ class ScraperServiceClient:
         return self._semaphores[source]
 
     async def scrape(self, url: str, engine: str = "http", options: dict | None = None) -> dict | None:
-        """Scrape a single URL in-process.
+        """Scrape a single URL via scraper-service ``POST /scrape``.
 
         Returns the parsed result dict (with ``success``/``content`` keys) or None
-        on failure — same contract as the old ``POST /scrape``.
+        on failure — same contract as the in-process version it replaced.
         """
-        from app.scraper.service import scrape as _scrape
-
         sem = self._get_semaphore("news")
+        payload = {"url": url, "engine": engine, "options": options or {}}
         try:
             async with sem:
-                data = await _scrape(url, engine=engine, options=options or {})
+                async with httpx.AsyncClient(timeout=self._TIMEOUT_S) as client:
+                    resp = await client.post(f"{self.base_url}/scrape", json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
 
             if data.get("success"):
                 return data
@@ -52,17 +65,19 @@ class ScraperServiceClient:
             return None
 
     async def collect(self, source: str, req_data: dict) -> list[dict[str, Any]]:
-        """Collect from a source in-process.
+        """Collect from a source via scraper-service ``POST /collect``.
 
-        Returns the list of collected items — same contract as the old
-        ``POST /collect`` (``data["items"]``).
+        Returns the list of collected items — same contract as the in-process
+        version (``data["items"]``).
         """
-        from app.scraper.service import collect as _collect
-
         sem = self._get_semaphore(source)
+        payload = {"source": source, **(req_data or {})}
         try:
             async with sem:
-                data = await _collect(source, req_data)
+                async with httpx.AsyncClient(timeout=self._TIMEOUT_S) as client:
+                    resp = await client.post(f"{self.base_url}/collect", json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
 
             if data.get("error"):
                 logger.warning(f"[scraper_client] Collect failed for {source}: {data['error']}")
