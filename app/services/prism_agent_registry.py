@@ -118,13 +118,14 @@ AGENT_ID_MAP: dict[str, str] = {
     "sentiment": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "fundamental": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "v3_worker_fundamental": "CUSTOM_V3_FUNDAMENTAL_ANALYST",
-    # The Delta Analyst is a new local agent with no dedicated Prism persona
-    # (prism-service is read-only). Route it to the registered Junior Analyst
-    # agent — a lightweight generalist; our own SYSTEM_PROMPT + TOOL_WHITELIST
-    # drive the delta behavior. Without this, the fuzzy v3_ path synthesizes
-    # CUSTOM_V3_DELTA_ANALYST which Prism rejects ("Unknown agent"), so every
-    # delta re-look failed → escalated → no energy saved.
-    "v3_delta_analyst": "CUSTOM_V3_JUNIOR_ANALYST",
+    # The Delta Analyst now has its OWN prism persona (registered via
+    # POST /custom-agents on 2026-07-22 — a data operation; prism CODE stays
+    # read-only). It previously shared CUSTOM_V3_JUNIOR_ANALYST, which forced
+    # that persona's availableTools to the junior∪delta UNION — junior's
+    # requests then never covered the 3 delta-only tools, leaving permanent
+    # "discovery headroom" that re-attached prism's meta-tools (the exact
+    # leak the 2026-07-22 persona lockdown closes).
+    "v3_delta_analyst": "CUSTOM_V3_DELTA_ANALYST",
     "risk": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "fund_flow": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "comparative": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
