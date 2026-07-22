@@ -1,69 +1,93 @@
-# HANDOFF — AI Analysis Overlays fixed (cycles stopped charting)
+# HANDOFF — Portfolio-math wave: HRP sizing, LW shrinkage, GARCH vol, strategy-health gate
 
-**Commit:** `f5f7bb7` · deployed to synology `2026-07-20T22:43:56Z` · verified live.
-
----
-## Follow-up (same session): ticker-concurrency cap — commit `344dadc`
-A full-watchlist (35-ticker) `trade=true` cycle DEADLOCKED: `_run_all_v3` fanned out
-every ticker via `asyncio.gather` with no bound; each ticker pipeline borrows several DB
-connections, so 35 at once exhausted the pool (max_size=50) — the STOP_CYCLE poller
-couldn't even get a connection, and cycle_main's loop hung (:3031 → 000). Recovered with
-`deploy.sh --restart-only`. Fix: `MAX_CONCURRENT_TICKERS` (default 6, env-overridable) +
-an `asyncio.Semaphore` gating `_process_ticker`; large watchlists now run in waves. The
-5-ticker `trade=true` cycle before this fix DID complete (charts on all 5, TSM+NVDA BUYs)
-— 5 was under the implicit safe limit. See memory `cycle-ticker-concurrency-deadlock`.
-Liveness note: debate/board agents emit ~no tool telemetry — judge progress by
-`shared_desk.phase`/`updated_at`, and read executed trades from `trade_results`.
+**Commit:** `52b22ba` · deployed to synology `2026-07-22T04:50:08Z` · verified live
+(health OK, all 4 new tools registered in-container, `get_pipeline_health()` → NORMAL
+against production telemetry).
 
 ---
 
-## Symptom
-Ticker-detail "AI Analysis Overlays" chart showed no agent-drawn support/resistance
-lines. TSM (and most tickers) 404'd on `/charts/{ticker}.json`.
+## What shipped
 
-## Root cause
-The chart depended on the quant analyst tool-calling `save_trading_chart` mid-loop
-(step 5 of its execution loop). Commit **af940bc** (2026-07-18 17:06, "execution-loop
-prompt rewrite -33% tokens") compressed that loop into a terse numbered list. After it
-deployed, the model began emitting its final JSON after ~6 tool turns and **skipping
-steps 5-7** (`save_trading_chart`, `whiteboard_write`, `whiteboard_annotate`) — even
-though the quant turn budget is 12.
+The quant agent had solid single-ticker risk tools but **zero portfolio-level math** —
+every sizing decision was made blind to how correlated the new position is to the book,
+volatility_regime was backward-looking (ATR vs its 30d average), and nothing checked
+whether the models themselves were degrading. This wave adds all three layers.
 
-Evidence (agent_tool_telemetry):
-- Last cycle-generated chart: **2026-07-18 21:52** (AAPL). Zero `save_trading_chart`
-  calls on 07-19/07-20.
-- 07-20 quant runs stop at 6 tools: `discover_and_enable_tools, whiteboard_read×2,
-  get_technical_indicators, get_market_data, run_equation` → final JSON. Never reaches
-  the chart or whiteboard.
+### New package: `app/quant/`
+- **`portfolio_math.py`** — Ledoit-Wolf (2004) shrinkage to scaled identity +
+  condition number; HRP weights (Lopez de Prado: corr→distance→single-linkage→
+  quasi-diag→recursive bisection — never inverts Σ); diversification ratio;
+  `apply_view_tilt` (simplified BL-style confidence tilt, multiplier clipped
+  [0.25, 2.0], renormalized); `rebalance_drift`. Pure functions, no I/O.
+- **`garch.py`** — GARCH(1,1) fit by scipy Nelder-Mead MLE, next-day vol forecast,
+  prediction premium vs 20d realized, `vol_signal` EXPANSION/CONTRACTION/NEUTRAL
+  (±10% band). Hand-rolled: container has no `arch`/`sklearn`/`riskfolio`, and the
+  equation sandbox only allows numpy/pandas imports anyway.
+- **`returns.py`** — aligned log-returns matrices straight from Postgres
+  `price_history` (2,740 tickers, decades deep) — no per-ticker Polygon fan-out.
+  Drops columns under 60% window coverage (a thin column poisons every pairwise
+  estimate), reports them.
+- **`strategy_health.py`** — "has the model degraded" separate from "is it losing
+  money". Reads `quality_score` history (0-100, well-populated: healthy agents run
+  ~75-85) from `v3_agent_telemetry` for the decision-critical agents (quant, board,
+  synthesizer). avg < 45 → **CUT**; avg < 60 or slope < −0.25/run → **REDUCE**;
+  <10 samples → NORMAL. 10-min cache, computed on read — **no new table**. Fails
+  OPEN everywhere: a broken health check can never block (or unblock) trading.
 
-The migration (schemas → lazy-tool-service, MCP bridge) was NOT the cause — other MCP
-tools work, and charts write to the shared `/app/data/charts` volume that
-`chart_router` (:3031) serves. The old charts landed there fine.
+### New tools (registered + whitelisted)
+| Tool | Where |
+|---|---|
+| `get_portfolio_covariance` | quant, user_chat |
+| `calculate_hrp_allocation` (candidate_ticker + JSON views) | quant, board, user_chat |
+| `forecast_volatility_garch` | quant, user_chat |
+| `get_strategy_health` | board, user_chat |
 
-## Fix — decouple chart persistence from the mid-loop tool call
-- `quant_report` artifact gains an `overlays` field (`artifacts.py`). Models reliably
-  fill an output field even when they skip a tool call.
-- `quant_analyst.py` prompt routes S/R zones + trendlines into `overlays` and drops the
-  per-cycle `save_trading_chart` mandate; re-flags `whiteboard_write/annotate` MANDATORY.
-- `run_v3_agent` (`agent_runner.py`) persists the chart itself after parsing the
-  artifact via `_persist_quant_chart()` → `save_trading_chart(...)`. Writes to the
-  shared charts volume regardless of whether the tool was called.
-- `_fallback_overlays_from_metrics()` synthesizes a stop-loss line if `overlays` is
-  empty, so the chart is never blank.
-- `save_trading_chart` stays whitelisted; the on-demand "Run AI Analysis" button
-  (chart_router `_run_quant_analysis`, its own MANDATORY-tool user prompt) is unchanged.
+Quant whitelist stays under the 20-tool cap by dropping `calculate_position_size`
+(the flat cash-percent sizing HRP replaces; still on user_chat) and
+`save_trading_chart` (prompt already said not to call it — overlays auto-render).
+Quant turn budget 12 → 14. `v3_decision_synthesizer` deliberately untouched — it has
+no tools by design; portfolio math reaches it through the quant report artifact.
+
+### Enforcement
+- **Policy gate** (`_apply_policy_gates`): BUY + pipeline health CUT →
+  `HOLD_POLICY_BLOCKED_DEGRADED_MODEL`. SELLs always pass — a degraded model must
+  still be able to de-risk.
+- **Sizing** (`pipeline_service`): health REDUCE halves every BUY size
+  (`apply_health_sizing`, pure + tested), tags `result["strategy_health"]`.
+- **Quant prompt**: GARCH-informed volatility_regime (EXPANSION escalates the regime
+  one notch); portfolio step for BULLISH theses (`calculate_hrp_allocation` with
+  candidate); new schema fields `diversification_ratio`, `vol_signal`,
+  `vol_prediction_premium`, `predicted_vol_annualized_pct`, `hrp_weight_suggestion`.
+- **Equation-library df**: new columns `gk_vol` (Garman-Klass) and
+  `mom_21d/63d/126d/252d` (clipped at 99.5th pct) for library equations.
 
 ## Verification
-Triggered a no-trade cycle for TSM (START_CYCLE row in `v3_system_commands`).
-`/charts/TSM.json`: 404 → 200 with **4 quant-authored overlays** (SMA-200 support,
-immediate support, SMA-50/20 resistance, 52-wk-high supply) — and the quant analyst
-made **zero** `save_trading_chart` tool calls that run. The deterministic hook did it.
+- 938 unit tests pass (16 new in `test_portfolio_math_wave.py`: LW conditioning
+  improvement at T≈N, HRP underweights high-vol, DR=√n for iid, GARCH recovers
+  clustering on synthetic data, health trend detection, gate block/fail-open).
+- Live-DB smoke: 8-ticker holdings → shrinkage 0.04, cond 56.7, HRP gives NVDA 1.1%
+  (highest vol — covariance talking), DR 2.04; NVDA GARCH: 48.8% predicted vs 37.9%
+  realized → EXPANSION; health NORMAL (avgs 81-84).
 
-## Open / follow-up
-- The same 07-18 compression regressed `whiteboard_write/annotate` adherence — the
-  Board debates over the quant's posted numbers. Re-emphasized in the prompt this wave,
-  but confirm whiteboard writes recover on the next few cycles (query
-  `agent_tool_telemetry` for `whiteboard_write` by v3_quant_analyst).
-- `lazy-agent-service/python/app/...` holds a stale COPY of these files (charting_tools,
-  agent_runner, quant_analyst, artifacts). The live cycle runs in trading-service, so it
-  was NOT edited. If anything ever runs agents from that mirror, hand-sync this fix.
+## Deliberately NOT done (from the Ruuj/freeCodeCamp plans)
+- **Full Black-Litterman** — needs Σ⁻¹, the exact instability HRP avoids; the view
+  tilt covers the use case. The claim "confidence 55 triggers the same BUY as 90"
+  was false anyway (confidence floor gate + confidence-scaled fallback sizing).
+- **`strategy_health` table** — computed on read from telemetry; no dual-write burden.
+- **GARCH/DR as library equations** — sandbox is single-ticker df + numpy/pandas-only
+  imports; they'd die on the import line. They're tools instead.
+- **K-Means discovery clustering, Fama-French betas** — separate data-pipeline
+  projects (FF factor source needed; Gatekeeper runs with tools disabled).
+- **Engagement-ratio social signal** — no likes/shares/reach data exists anywhere
+  in the DB.
+- **Frontend drift alerts** (`ActiveProfileHeader`) — agents get drift from
+  `calculate_hrp_allocation` (`drift_breaches_over_5pct`); a client surface needs an
+  API endpoint + trading-client work. Backlog.
+
+## Watchpoints for the next cycle run
+- Quant runs should now show `forecast_volatility_garch` + `calculate_hrp_allocation`
+  calls in telemetry; check the report JSON carries `diversification_ratio`/`vol_signal`.
+- GARCH tool is ~0.5-1.5s of CPU per call (Python-loop MLE) — fine per ticker, watch
+  if anything starts calling it in a loop.
+- If health ever reads REDUCE/CUT, the driver + reason are in the gate/pipeline logs
+  (`[StrategyHealth]`, `HOLD_POLICY_BLOCKED_DEGRADED_MODEL`).
