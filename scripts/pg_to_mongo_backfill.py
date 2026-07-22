@@ -151,14 +151,19 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False) -> int:
 
     if not verify_only:
         moved = 0
-        # Server-side pagination by key to avoid loading the whole table.
-        last_key = ""
+        # Keyset pagination — type-agnostic: the first page has NO where clause
+        # (so we never compare an int id against a sentinel string), and later
+        # pages use the actual last-row key value, which carries its own type.
+        last_key = None
         while True:
             with connection.get_db() as db:
-                cur = db.execute(
-                    f"{select_sql} WHERE {key_field} > %s ORDER BY {key_field} ASC LIMIT %s",
-                    [last_key, batch],
-                )
+                if last_key is None:
+                    cur = db.execute(f"{select_sql} ORDER BY {key_field} ASC LIMIT %s", [batch])
+                else:
+                    cur = db.execute(
+                        f"{select_sql} WHERE {key_field} > %s ORDER BY {key_field} ASC LIMIT %s",
+                        [last_key, batch],
+                    )
                 rows = cur.fetchall()
                 cols = [c[0] for c in cur.description]
             if not rows:
