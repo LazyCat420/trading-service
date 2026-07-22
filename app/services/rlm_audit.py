@@ -38,10 +38,15 @@ def log_rlm_audit_trail(
             ).hexdigest()
 
             # Insert blobs only if they don't already exist (dedup)
+            _blob_recs = []
             for blob_hash, blob_content in [
                 (ctx_hash, context),
                 (prompt_hash, trading_system_prompt),
             ]:
+                _blob_recs.append({
+                    "context_hash": blob_hash, "content": blob_content,
+                    "byte_size": len(blob_content.encode("utf-8")),
+                })
                 db.execute(
                     """
                     INSERT INTO context_blobs (context_hash, content, byte_size)
@@ -50,6 +55,15 @@ def log_rlm_audit_trail(
                 """,
                     [blob_hash, blob_content, len(blob_content.encode("utf-8"))],
                 )
+            # Best-effort Mongo mirror — upsert by content_hash (dedup, like the
+            # ON CONFLICT DO NOTHING above).
+            try:
+                from app.db import mongo_store
+                if mongo_store.writes_mongo("context_blobs"):
+                    for _r in _blob_recs:
+                        mongo_store.upsert_doc("context_blobs", {"context_hash": _r["context_hash"]}, _r)
+            except Exception:
+                pass
 
             # Compute tokens per second
             exec_ms = int(execution_time * 1000)

@@ -135,6 +135,10 @@ TABLES = {
         "FROM analysis_results",
         "id", _json_doc("result_json"),
     ),
+    "context_blobs": (
+        "SELECT context_hash, content, byte_size, created_at FROM context_blobs",
+        "context_hash", _passthrough_doc,
+    ),
 }
 
 
