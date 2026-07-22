@@ -125,6 +125,21 @@ _VISION_ENDPOINTS: tuple[tuple[str, str], ...] = (
     ("jetson", "vllm"),
 )
 
+# Vision OCR is pinned to Gold Spark (gemma-4) only. Measured 2026-07-22: the
+# Jetson/Qwen host took 190s on a real quote page and TIMED OUT (>400s) on a
+# 4-screenshot article, and it *editorialises* instead of transcribing — it
+# emitted commentary ("Apple's innovative financing strategy…") that was not on
+# the page, which would poison a fact-extraction corpus. So it is not a usable
+# OCR failover: when Gold Spark is down, vision now fails cleanly (returns None)
+# rather than falling through to a slow, unfaithful host. Override via
+# VISION_OCR_ENDPOINTS (comma-separated endpoint keys, preferred first) — e.g.
+# "dgx_spark,jetson" restores the old failover. NB: this pin applies ONLY to
+# image OCR; the shared _vision_targets() (used by news fact-extraction for a
+# TEXT call, where Qwen is a fine fast failover) still sees both hosts.
+_VISION_OCR_ENDPOINTS: tuple[str, ...] = tuple(
+    k.strip() for k in os.getenv("VISION_OCR_ENDPOINTS", "dgx_spark").split(",") if k.strip()
+)
+
 # Providers a VISION_MODEL override may name. Needed because model ids
 # themselves contain slashes ("google/gemma-4-26B-A4B-it"), so a bare
 # split("/") would read the vendor as the provider and send prism garbage.
@@ -176,11 +191,15 @@ _DEFAULT_OCR_PROMPT = (
 )
 
 
-async def _vision_targets() -> list[tuple[str, str, str]]:
+async def _vision_targets(only: tuple[str, ...] | None = None) -> list[tuple[str, str, str]]:
     """Usable OCR targets as (provider, model, base_url), preferred first.
 
     Discovering the model from /v1/models rather than pinning an id means
     swapping the served model doesn't silently break OCR.
+
+    ``only`` restricts to a set of endpoint keys (e.g. ("dgx_spark",)); None
+    considers all configured endpoints. Vision OCR passes _VISION_OCR_ENDPOINTS;
+    the text fact-extraction caller passes nothing (keeps every host).
     """
     try:
         from app.services.prism_agent_caller import llm, get_live_model_from_vllm
@@ -211,6 +230,8 @@ async def _vision_targets() -> list[tuple[str, str, str]]:
 
     targets, errors = [], []
     for endpoint_key, provider in _VISION_ENDPOINTS:
+        if only and endpoint_key not in only:
+            continue
         ep = llm._endpoints.get(endpoint_key)
         if not ep or not ep.enabled or not ep.url:
             errors.append(f"{endpoint_key}: not configured/enabled")
@@ -231,7 +252,7 @@ async def _vision_targets() -> list[tuple[str, str, str]]:
 
 async def _resolve_vision_model() -> tuple[str, str]:
     """Return (provider, model) for OCR — the preferred target's identity."""
-    provider, model, _ = (await _vision_targets())[0]
+    provider, model, _ = (await _vision_targets(only=_VISION_OCR_ENDPOINTS))[0]
     return provider, model
 
 
@@ -252,7 +273,7 @@ async def _ocr_with_openai(screenshots: list[bytes], prompt: str) -> str | None:
     """
     import httpx
 
-    targets = await _vision_targets()
+    targets = await _vision_targets(only=_VISION_OCR_ENDPOINTS)
 
     prompt_text = prompt or _DEFAULT_OCR_PROMPT
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
