@@ -15,7 +15,26 @@ import asyncio
 import time
 from app.db.connection import get_db
 from app.processors.ticker_extractor import get_ticker_symbols
-from app.utils.text_utils import is_truncated_content
+from app.utils.text_utils import is_truncated_content, is_scrape_artifact
+
+
+def quality_at_write(title: str, summary: str) -> tuple[str, str]:
+    """Write-time quality gate for news_articles.
+
+    Historically NO insert path set quality_status (95% of rows were NULL, and
+    bot-wall/captcha pages were stored as articles — the detector only ran at
+    evidence-READ time). Every insert now stamps a verdict:
+      discarded — scrape artifact (captcha/block page/near-empty)
+      thin      — no summary beyond the title (kept, but flagged)
+      ok        — passed the write gate
+    Vocabulary matches pending_review.py ('ok'/'rejected') + the historical
+    'discarded' used by the purge flow, so readers can filter on one set.
+    """
+    if is_scrape_artifact(summary or "") or is_scrape_artifact(title or ""):
+        return "discarded", "scrape_artifact_at_write"
+    if not (summary or "").strip():
+        return "thin", "empty_summary_at_write"
+    return "ok", "write_gate"
 
 logger = logging.getLogger(__name__)
 
@@ -512,11 +531,12 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                 if not item_list:
                     continue
                 for item in item_list:
+                    _qs, _qr = quality_at_write(item["title"], item["summary"])
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -528,6 +548,8 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                             item["published_at"],
                             item["summary"],
                             item["content_hash"],
+                            _qs,
+                            _qr,
                         ],
                     )
                     count += 1
@@ -733,11 +755,12 @@ async def collect_finnhub_news(
             count = 0
             for item_list in results_lists:
                 for item in item_list:
+                    _qs, _qr = quality_at_write(item["title"], item["summary"])
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'finnhub', %s, CURRENT_TIMESTAMP)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'finnhub', %s, CURRENT_TIMESTAMP, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -749,6 +772,8 @@ async def collect_finnhub_news(
                             item["published_at"],
                             item["summary"],
                             item.get("content_hash"),
+                            _qs,
+                            _qr,
                         ],
                     )
                     count += 1
@@ -877,11 +902,12 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
             count = 0
             for item_list in results_lists:
                 for item in item_list:
+                    _qs, _qr = quality_at_write(item["title"], item["summary"])
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance', %s, CURRENT_TIMESTAMP)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance', %s, CURRENT_TIMESTAMP, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -893,6 +919,8 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                             item["published_at"],
                             item["summary"],
                             item.get("content_hash"),
+                            _qs,
+                            _qr,
                         ],
                     )
                     count += 1
@@ -1021,6 +1049,16 @@ async def deep_read_top_articles(
 
             full_text = await deep_read_article(url, max_chars)
             if full_text:
+                # Never store a bot-wall/captcha page as the article body — this
+                # UPDATE was the main path that wrote block pages into summaries.
+                if is_scrape_artifact(full_text):
+                    db.execute(
+                        "UPDATE news_articles SET quality_status = 'discarded', "
+                        "quality_reason = 'scrape_artifact_deep_read' WHERE id = %s",
+                        [article_id],
+                    )
+                    logger.info(f"[news] Deep-read {ticker}: scrape artifact for {url} — flagged, not stored")
+                    continue
                 db.execute(
                     "UPDATE news_articles SET summary = %s WHERE id = %s",
                     [full_text, article_id],

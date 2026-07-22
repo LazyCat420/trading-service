@@ -217,14 +217,16 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
             except Exception as dedup_err:
                 logger.debug("[rotator] dedup check failed (storing anyway): %s", dedup_err)
 
+            from app.collectors.news_collector import quality_at_write
+            _qs, _qr = quality_at_write(article.title, summary)
             if detected:
                 for ticker in detected:
                     ticker_id = _get_article_id(article.title, ticker)
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                     """,
                         [
@@ -237,6 +239,8 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                             summary[:15000],
                             article.source,
                             content_hash,
+                            _qs,
+                            _qr,
                         ],
                     )
                     count += 1
@@ -246,8 +250,8 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                 db.execute(
                     """
                     INSERT INTO news_articles
-                    (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                    (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 """,
                     [
@@ -260,6 +264,8 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
                         summary[:15000],
                         article.source,
                         content_hash,
+                        _qs,
+                        _qr,
                     ],
                 )
                 count += 1

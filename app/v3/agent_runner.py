@@ -636,8 +636,21 @@ async def run_v3_agent(
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
             return PhaseOutcome.AGENT_ERROR
 
+        # Decision artifacts: empty VALUES are as fatal as missing keys. The
+        # schema check is presence-only, so an LLM emitting reasoning="" or
+        # omitting signal_weights passed validation and produced hollow
+        # trade_results rows ('{}' weights / blank reasoning — 45/525 measured
+        # in the 2026-07-21 data audit). Strip empty reasoning so the
+        # missing-required branch below catches it, and require a non-empty
+        # signal_weights on the synthesizer's trade_decision.
+        if artifact_type in ("final_decision", "trade_decision") and isinstance(artifact, dict):
+            if not str(artifact.get("reasoning") or "").strip():
+                artifact.pop("reasoning", None)
+
         # Validate the artifact
         errors = validate_artifact(artifact_type, artifact)
+        if artifact_type == "trade_decision" and isinstance(artifact, dict) and not artifact.get("signal_weights"):
+            errors = list(errors) + ["Missing required field: signal_weights (empty)"]
         if errors:
             missing_required = [e for e in errors if e.startswith("Missing required field")]
             if missing_required and artifact_type in ("final_decision", "trade_decision"):
