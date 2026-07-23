@@ -318,6 +318,16 @@ async def run_v3_agent(
             quant_math = desk.cycle_metadata.get("quant_math_context", "")
             if quant_math:
                 dynamic_sections.append((_KEEP, quant_math))
+            book_brief = desk.cycle_metadata.get("book_brief_context", "")
+            if book_brief:
+                dynamic_sections.append((_KEEP, book_brief))
+
+        # Alternative data (insider clusters / social chatter) — scoped to the
+        # research analysts who weigh positioning evidence.
+        if agent_name in ("v3_junior_analyst", "v3_fundamental_analyst"):
+            alt_data = desk.cycle_metadata.get("alt_data_context", "")
+            if alt_data:
+                dynamic_sections.append((_KEEP, alt_data))
 
         # Market data briefing first — it's the shared factual base (plan 4.2)
         data_report = desk.cycle_metadata.get("data_report", "")

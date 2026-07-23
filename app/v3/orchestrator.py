@@ -153,6 +153,36 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: quant math precompute failed (non-fatal): %s", ticker, e)
 
+    # Alternative data (2026-07-23 collector wave): insider cluster buys +
+    # social chatter, precomputed for the research analysts — same rationale
+    # as the quant block, the data must be ON the desk, not behind a tool.
+    try:
+        from app.v3.alt_data_block import build_alt_data_block
+        alt_block = await asyncio.wait_for(
+            asyncio.to_thread(build_alt_data_block, ticker),
+            timeout=10,
+        )
+        if alt_block:
+            desk.cycle_metadata["alt_data_context"] = alt_block
+            logger.info("[V3] %s: alt-data block injected (%d chars)", ticker, len(alt_block))
+    except Exception as e:
+        logger.warning("[V3] %s: alt-data precompute failed (non-fatal): %s", ticker, e)
+
+    # Book-level brief (2026-07-23): every decision was single-ticker — no
+    # agent saw net exposure, concentration, sector tilt, or the candidate's
+    # correlation to held positions. Injected for quant + board.
+    try:
+        from app.v3.book_brief import build_book_brief
+        book_brief = await asyncio.wait_for(
+            asyncio.to_thread(build_book_brief, ticker, bot_id),
+            timeout=20,
+        )
+        if book_brief:
+            desk.cycle_metadata["book_brief_context"] = book_brief
+            logger.info("[V3] %s: book brief injected (%d chars)", ticker, len(book_brief))
+    except Exception as e:
+        logger.warning("[V3] %s: book brief failed (non-fatal): %s", ticker, e)
+
     # Autoresearch directives — global ones plus any targeting this ticker.
     # The param existed since V3 launch but was never consumed; directives
     # were write-only (janitor-deleted). Non-fatal, capped to stay small.
@@ -1796,6 +1826,14 @@ def _format_macro_briefing(snapshot: dict) -> str:
     try:
         from app.services.retrieval_context import fred_curve_credit_lines
         lines.extend(fred_curve_credit_lines())
+    except Exception:
+        pass
+
+    # SPY put/call + upcoming high-impact US events (2026-07-23 collector
+    # wave) — same rationale: positioning/eventrisk must arrive in-briefing.
+    try:
+        from app.v3.alt_data_block import alt_macro_lines
+        lines.extend(alt_macro_lines())
     except Exception:
         pass
 

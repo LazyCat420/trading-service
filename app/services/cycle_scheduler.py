@@ -691,6 +691,39 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register 13F collection: %s", e)
 
+            # 13F weekly sweep, year-round: the filing-month cron above misses
+            # early filers and amendments (nothing ran May 28 → Aug 14, leaving
+            # holdings a full quarter stale). collect_all_funds is idempotent.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_13f_collection,
+                    trigger=CronTrigger(day_of_week="sun", hour=3, minute=30,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="sec_13f_weekly",
+                    replace_existing=True,
+                    misfire_grace_time=7200,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered weekly 13F sweep (Sun 3:30 AM PT)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register weekly 13F sweep: %s", e)
+
+            # Nightly stale-first fundamentals refresh (2026-07-23 audit:
+            # 653/727 tickers >14d stale because nothing refreshed off-cycle).
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_fundamentals_refresh,
+                    trigger=CronTrigger(hour=2, minute=30,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="fundamentals_refresh",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered nightly fundamentals refresh (2:30 AM PT, 40 stalest)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register fundamentals refresh: %s", e)
+
             # ── Formerly-orphaned collectors (2026-07-23): these five modules
             # existed with zero callers, so put_call_ratio / insider_trades /
             # economic_calendar / social_posts sat at 0 rows while agents
@@ -1028,6 +1061,42 @@ class SchedulerService:
             await SchedulerService._inject_smart_money_leads()
         except Exception as e:
             logger.error("[SCHEDULER] Smart-money lead injection failed: %s", e)
+
+    @staticmethod
+    async def _run_fundamentals_refresh(batch: int = 40):
+        """Refresh the stalest active-watchlist fundamentals (provider-rotated).
+
+        Fundamentals previously refreshed ONLY when a ticker was analyzed in a
+        cycle (5-8/cycle), so 653/727 tickers sat >14 days stale. 40/night
+        covers the whole active watchlist in under a week.
+        """
+        try:
+            from app.collectors.data_rotator import fetch_fundamentals
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT w.ticker, MAX(f.snapshot_date) AS last_snap
+                    FROM watchlist w
+                    LEFT JOIN fundamentals f ON f.ticker = w.ticker
+                    WHERE w.status = 'active'
+                    GROUP BY w.ticker
+                    ORDER BY last_snap ASC NULLS FIRST
+                    LIMIT %s
+                    """,
+                    [batch],
+                ).fetchall()
+            done = 0
+            for (ticker, _last) in rows:
+                try:
+                    if await fetch_fundamentals(ticker):
+                        done += 1
+                except Exception as te:
+                    logger.warning("[SCHEDULER] fundamentals refresh %s failed: %s", ticker, te)
+            logger.info("[SCHEDULER] Fundamentals refresh: %d/%d tickers updated", done, len(rows))
+        except Exception as e:
+            logger.error("[SCHEDULER] Fundamentals refresh failed: %s", e)
 
     @staticmethod
     async def _run_pcr_collection():
