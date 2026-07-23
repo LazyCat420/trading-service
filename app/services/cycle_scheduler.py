@@ -1080,7 +1080,7 @@ class SchedulerService:
 
             with get_db() as db:
                 rows = db.execute(
-                    "SELECT ticker FROM watchlist WHERE is_active = TRUE LIMIT 15"
+                    "SELECT ticker FROM watchlist WHERE status = 'active' LIMIT 15"
                 ).fetchall()
             total = 0
             for (ticker,) in rows:

@@ -170,7 +170,7 @@ async def collect_all() -> int:
     tickers = []
     try:
         with get_db() as db:
-            db.execute("SELECT ticker FROM watchlist WHERE is_active = TRUE")
+            db.execute("SELECT ticker FROM watchlist WHERE status = 'active'")
             tickers = [r[0] for r in db.fetchall()]
     except Exception as e:
         logger.error(f"Failed to fetch watchlist tickers: {e}")
