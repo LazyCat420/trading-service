@@ -211,6 +211,7 @@ class Settings(BaseSettings):
     JANITOR_MAX_TOKENS: int = 4096
     AUDIT_LOG_TTL_DAYS: int = 14  # Delete llm_audit_logs older than this
     NEWS_DUPLICATE_TTL_DAYS: int = 30  # Delete duplicate news older than this
+    NEWS_URL_FANOUT_CAP: int = 5  # Max per-ticker copies of one article URL (0 = unlimited)
     LESSON_CONSOLIDATION_THRESHOLD: int = 50  # Consolidate when lessons exceed this
 
     # ── Database ──

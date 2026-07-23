@@ -401,6 +401,31 @@ def _get_article_id(title: str, ticker: str | None) -> str:
     return hashlib.sha256(f"{norm}_{ticker or 'NONE'}".encode()).hexdigest()
 
 
+def url_fanout_exceeded(db, url: str | None, cap: int | None = None) -> bool:
+    """True when `url` already has >= cap news_articles rows.
+
+    Per-ticker fan-out of one article is deliberate (all retrieval is
+    ticker-keyed), but unbounded it stored one market-wide CNBC story 110×
+    (58.6% of the table was duplicate-URL rows, audit 2026-07-23). Copies past
+    the cap add storage/embedding cost and quality-assessor load with no new
+    information. Fails open — a count error must never block collection.
+    """
+    if not url:
+        return False
+    if cap is None:
+        from app.config import settings
+        cap = getattr(settings, "NEWS_URL_FANOUT_CAP", 5)
+    if cap <= 0:
+        return False
+    try:
+        row = db.execute(
+            "SELECT COUNT(*) FROM news_articles WHERE url = %s", [url]
+        ).fetchone()
+        return bool(row and row[0] >= cap)
+    except Exception:
+        return False
+
+
 def safe_emit(emit_cb, step: str, detail: str, status: str = "ok"):
     if not emit_cb:
         return
@@ -531,6 +556,8 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                 if not item_list:
                     continue
                 for item in item_list:
+                    if url_fanout_exceeded(db, item.get("url")):
+                        continue
                     _qs, _qr = quality_at_write(item["title"], item["summary"])
                     db.execute(
                         """
@@ -755,6 +782,8 @@ async def collect_finnhub_news(
             count = 0
             for item_list in results_lists:
                 for item in item_list:
+                    if url_fanout_exceeded(db, item.get("url")):
+                        continue
                     _qs, _qr = quality_at_write(item["title"], item["summary"])
                     db.execute(
                         """
@@ -902,6 +931,8 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
             count = 0
             for item_list in results_lists:
                 for item in item_list:
+                    if url_fanout_exceeded(db, item.get("url")):
+                        continue
                     _qs, _qr = quality_at_write(item["title"], item["summary"])
                     db.execute(
                         """

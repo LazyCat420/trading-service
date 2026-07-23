@@ -212,10 +212,12 @@ async def get_upcoming_events(ticker: str) -> str:
     ticker = (ticker or "").upper().strip()
     try:
         events = await collect_earnings_calendar(ticker)
+        macro = _upcoming_macro_events()
         if not events:
             return json.dumps({
                 "ticker": ticker,
                 "events": [],
+                "macro_events": macro,
                 "note": "No scheduled earnings in the next 90 days.",
             })
         slim = [
@@ -232,9 +234,40 @@ async def get_upcoming_events(ticker: str) -> str:
         return json.dumps({
             "ticker": ticker,
             "events": slim,
+            "macro_events": macro,
             "hint": "bmo=before market open (snipe at ~14:00 UTC same day); "
                     "amc=after market close (snipe at ~21:30 UTC same day or next_pre_market).",
         })
     except Exception as e:
         logger.error("[ResearchTools] get_upcoming_events failed for %s: %s", ticker, e)
         return json.dumps({"status": "error", "message": str(e)})
+
+
+def _upcoming_macro_events(limit: int = 8) -> list[dict]:
+    """High/medium-importance market-wide events from the economic_calendar
+    table (populated by the tradingeconomics collector every 12h). Empty list
+    when the table has no future rows — never blocks the earnings answer."""
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT event_date, event_name, country, importance, forecast, previous "
+                "FROM economic_calendar "
+                "WHERE event_date >= CURRENT_DATE AND importance IN ('high', 'medium') "
+                "ORDER BY event_date ASC LIMIT %s",
+                [limit],
+            ).fetchall()
+        return [
+            {
+                "date": str(r[0]),
+                "event": r[1],
+                "country": r[2],
+                "importance": r[3],
+                "forecast": r[4],
+                "previous": r[5],
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []

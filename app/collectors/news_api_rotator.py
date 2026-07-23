@@ -217,10 +217,12 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
             except Exception as dedup_err:
                 logger.debug("[rotator] dedup check failed (storing anyway): %s", dedup_err)
 
-            from app.collectors.news_collector import quality_at_write
+            from app.collectors.news_collector import quality_at_write, url_fanout_exceeded
             _qs, _qr = quality_at_write(article.title, summary)
             if detected:
                 for ticker in detected:
+                    if url_fanout_exceeded(db, article.url):
+                        break
                     ticker_id = _get_article_id(article.title, ticker)
                     db.execute(
                         """

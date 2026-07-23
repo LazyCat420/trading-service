@@ -1283,6 +1283,8 @@ def _fix_eth_cagr_data(conn):
     try:
         with conn.cursor() as cur:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_news_content_hash ON news_articles(content_hash)")
+            # url_fanout_exceeded() counts rows per URL on every news insert.
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_news_articles_url ON news_articles(url)")
             conn.commit()
     except Exception:
         try:

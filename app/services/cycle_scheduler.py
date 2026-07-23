@@ -691,6 +691,52 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register 13F collection: %s", e)
 
+            # ── Formerly-orphaned collectors (2026-07-23): these five modules
+            # existed with zero callers, so put_call_ratio / insider_trades /
+            # economic_calendar / social_posts sat at 0 rows while agents
+            # queried them. All wrappers are fail-soft (log and move on). ──
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_pcr_collection,
+                    trigger=CronTrigger(hour=13, minute=15,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="pcr_collection",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                scheduler.add_job(
+                    SchedulerService._run_insider_collection,
+                    trigger=CronTrigger(hour=4, minute=30,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="insider_collection",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                scheduler.add_job(
+                    SchedulerService._run_economic_calendar_collection,
+                    trigger=IntervalTrigger(hours=12),
+                    id="economic_calendar_collection",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                scheduler.add_job(
+                    SchedulerService._run_social_collection,
+                    trigger=IntervalTrigger(hours=6),
+                    id="social_collection",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info(
+                    "[SCHEDULER] Registered collectors: PCR (1:15 PM PT), insider "
+                    "(4:30 AM PT), economic calendar (12h), social (6h)"
+                )
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register wave collectors: %s", e)
+
             # Returns are recomputed nightly: new prices arrive daily, so a
             # trade scored today with a partial window becomes fully scoreable
             # later. Idempotent — safe to re-run.
@@ -982,6 +1028,68 @@ class SchedulerService:
             await SchedulerService._inject_smart_money_leads()
         except Exception as e:
             logger.error("[SCHEDULER] Smart-money lead injection failed: %s", e)
+
+    @staticmethod
+    async def _run_pcr_collection():
+        """Daily SPY put/call ratio snapshot (yfinance, no key needed)."""
+        try:
+            from app.collectors.pcr_collector import collect_all
+
+            ok = await collect_all()
+            logger.info("[SCHEDULER] PCR collection: %s", "stored" if ok else "no data")
+        except Exception as e:
+            logger.error("[SCHEDULER] PCR collection failed: %s", e)
+
+    @staticmethod
+    async def _run_insider_collection():
+        """Openinsider cluster-buy sweep → insider_trades."""
+        try:
+            from app.collectors.openinsider_collector import collect_all
+
+            result = await collect_all()
+            logger.info("[SCHEDULER] Insider cluster-buy collection: %s", result)
+        except Exception as e:
+            logger.error("[SCHEDULER] Insider collection failed: %s", e)
+
+    @staticmethod
+    async def _run_economic_calendar_collection():
+        """TradingEconomics calendar scrape → economic_calendar (read by
+        the get_upcoming_events tool's macro section)."""
+        try:
+            from app.collectors.tradingeconomics_collector import collect_all
+
+            result = await collect_all()
+            logger.info("[SCHEDULER] Economic calendar collection: %s", result)
+        except Exception as e:
+            logger.error("[SCHEDULER] Economic calendar collection failed: %s", e)
+
+    @staticmethod
+    async def _run_social_collection():
+        """Social sentiment sweep → social_posts (twitter/fintwit via
+        scraper-service, plus StockTwits for active watchlist tickers)."""
+        try:
+            from app.collectors.twitter_collector import collect_all as collect_twitter
+
+            n = await collect_twitter()
+            logger.info("[SCHEDULER] Twitter/fintwit sweep: %s posts", n)
+        except Exception as e:
+            logger.error("[SCHEDULER] Twitter sweep failed: %s", e)
+        try:
+            from app.collectors.stocktwits_collector import collect_for_ticker
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT ticker FROM watchlist WHERE is_active = TRUE LIMIT 15"
+                ).fetchall()
+            total = 0
+            for (ticker,) in rows:
+                total += await collect_for_ticker(ticker, limit=20) or 0
+            logger.info(
+                "[SCHEDULER] StockTwits sweep: %s posts over %d tickers", total, len(rows)
+            )
+        except Exception as e:
+            logger.error("[SCHEDULER] StockTwits sweep failed: %s", e)
 
     @staticmethod
     async def _run_smart_money_returns():
