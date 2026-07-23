@@ -87,23 +87,45 @@ def backfill_source(
     id_col, ticker_col, text_expr, recency_col = cfg
 
     from app.db.connection import get_db
+    from app.db.mongo_store import reads_mongo
 
     try:
         with get_db() as db:
-            rows = db.execute(
-                f"""
-                SELECT src.{id_col}, src.{ticker_col}, {text_expr} AS content
-                FROM {source_table} src
-                WHERE {text_expr} IS NOT NULL
-                  AND NOT EXISTS (
-                        SELECT 1 FROM embeddings e
-                        WHERE e.source_table = %s AND e.source_id = src.{id_col}
-                  )
-                ORDER BY src.{recency_col} DESC NULLS LAST
-                LIMIT %s
-                """,
-                [source_table, limit],
-            ).fetchall()
+            if reads_mongo("embeddings"):
+                # Embeddings live in Mongo — the SQL anti-join can't see them.
+                # Pull recent candidates from the (still-PG) source table, then
+                # filter out already-embedded ids with one Mongo round-trip.
+                from app.db.vector_store import vector_store
+
+                candidates = db.execute(
+                    f"""
+                    SELECT src.{id_col}, src.{ticker_col}, {text_expr} AS content
+                    FROM {source_table} src
+                    WHERE {text_expr} IS NOT NULL
+                    ORDER BY src.{recency_col} DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    [limit * 4],
+                ).fetchall()
+                done = vector_store.existing_source_ids(
+                    source_table, [str(r[0]) for r in candidates]
+                )
+                rows = [r for r in candidates if str(r[0]) not in done][:limit]
+            else:
+                rows = db.execute(
+                    f"""
+                    SELECT src.{id_col}, src.{ticker_col}, {text_expr} AS content
+                    FROM {source_table} src
+                    WHERE {text_expr} IS NOT NULL
+                      AND NOT EXISTS (
+                            SELECT 1 FROM embeddings e
+                            WHERE e.source_table = %s AND e.source_id = src.{id_col}
+                      )
+                    ORDER BY src.{recency_col} DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    [source_table, limit],
+                ).fetchall()
     except Exception as e:
         logger.warning("[embed-ingest] backfill query failed for %s: %s", source_table, e)
         return 0

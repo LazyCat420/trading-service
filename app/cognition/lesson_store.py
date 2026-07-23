@@ -73,12 +73,16 @@ def add_lesson(text: str, metadata: dict) -> str:
         status = metadata.get("status", "")
         preview = f"[Evolve {session_id} R{rnd} {status} S:{score}] {text[:200]}"
 
-        # Insert into embeddings table (same schema as existing RAG)
-        db.execute(
-            "INSERT INTO embeddings (id, source_table, source_id, ticker, content_preview, embedding, created_at) "
-            "VALUES (%s, 'evolution_lessons', %s, %s, %s, %s::vector, CURRENT_TIMESTAMP) "
-            "ON CONFLICT (id) DO NOTHING",
-            [lesson_id, lesson_id, f"evo_{session_id}", preview, str(vec)],
+        # Store the vector via the backend-agnostic vector store (pg/dual/mongo)
+        from app.db.vector_store import vector_store
+
+        vector_store.store_embedding(
+            source_table="evolution_lessons",
+            source_id=lesson_id,
+            ticker=f"evo_{session_id}",
+            content_preview=preview,
+            embedding=list(vec),
+            embedding_id=lesson_id,
         )
 
         # Store the full lesson in the dedicated table (created at schema init)
@@ -126,16 +130,14 @@ def retrieve_lessons(query: str, k: int = 5) -> list[dict]:
 
             q_vec = embedder.embed_text(query)
 
-        # Search via cosine similarity in embeddings table
+        # Search via the backend-agnostic vector store (pg/dual/mongo)
         try:
-            rows = db.execute(
-                "SELECT e.source_id, e.content_preview, "
-                "1 - (e.embedding <=> %s::vector) as sim "
-                "FROM embeddings e "
-                "WHERE e.source_table = 'evolution_lessons' "
-                "ORDER BY e.embedding <=> %s::vector LIMIT %s",
-                [str(q_vec), str(q_vec), k],
-            ).fetchall()
+            from app.db.vector_store import vector_store
+
+            hits = vector_store.search_cosine(
+                list(q_vec), top_k=k, source_filter="evolution_lessons"
+            )
+            rows = [(h["source_id"], h["content_preview"], h["score"]) for h in hits]
         except Exception:
             return []
 

@@ -85,21 +85,59 @@ def get_doc_db() -> "pymongo.database.Database":
 _indexes_ready = False
 
 
+# Natural unique key per migrated collection. `id` keys are partial-unique
+# ($type-guarded) because older mirror docs may lack the field or carry null.
+_ID_UNIQUE_COLLECTIONS = (
+    "execution_errors",
+    "cycle_audit_log",
+    "llm_audit_logs",
+    "agent_traces",
+    "agent_tool_telemetry",
+    "v3_agent_telemetry",
+    "trade_results",
+    "ticker_reports",
+    "analysis_results",
+)
+_ID_TYPES = ["string", "int", "long", "double"]
+
+
 def ensure_indexes() -> None:
     """Idempotently create indexes for migrated collections. Safe to call often;
-    guarded so it only touches Mongo once per process."""
+    guarded so it only touches Mongo once per process. Per-collection failures
+    (e.g. pre-existing duplicates blocking a unique build) are logged and do not
+    stop the rest."""
     global _indexes_ready
     if _indexes_ready:
         return
     try:
         db = get_doc_db()
-        # pipeline_events: read by cycle_id ordered by timestamp; id is the natural PK.
-        pe = db["pipeline_events"]
-        pe.create_index("id", unique=True)
-        pe.create_index([("cycle_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
-        _indexes_ready = True
     except Exception as e:
         logger.error("[mongo_store] ensure_indexes failed (non-fatal): %s", e)
+        return
+
+    def _try(coll: str, *args, **kwargs) -> None:
+        try:
+            db[coll].create_index(*args, **kwargs)
+        except Exception as e:
+            logger.warning("[mongo_store] index on %s failed (non-fatal): %s", coll, e)
+
+    # pipeline_events: read by cycle_id ordered by timestamp; id is the natural PK.
+    _try("pipeline_events", "id", unique=True)
+    _try("pipeline_events", [("cycle_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
+
+    for coll in _ID_UNIQUE_COLLECTIONS:
+        _try(coll, "id", unique=True,
+             partialFilterExpression={"id": {"$type": _ID_TYPES}})
+    _try("agent_audit_log", "request_id", unique=True,
+         partialFilterExpression={"request_id": {"$type": "string"}})
+    _try("context_blobs", "context_hash", unique=True,
+         partialFilterExpression={"context_hash": {"$type": "string"}})
+    # Read-path keys used by the report/replay UIs after cutover.
+    _try("ticker_reports", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
+    _try("analysis_results", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
+    _try("agent_tool_telemetry", [("agent_name", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    _try("v3_agent_telemetry", [("agent_name", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    _indexes_ready = True
 
 
 # ── Generic document ops (used by callers behind the backend flags) ────────

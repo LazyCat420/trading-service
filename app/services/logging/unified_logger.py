@@ -99,8 +99,10 @@ class DbLoggingHandler(logging.Handler):
                     mongo_store.insert_docs("execution_errors", [err_rec])
                 if mongo_store.writes_mongo("cycle_audit_log"):
                     mongo_store.insert_docs("cycle_audit_log", [audit_rec])
-            except Exception:
-                pass
+            except Exception as me:
+                logging.getLogger(__name__).warning(
+                    "[UnifiedLogger] Mongo mirror failed (non-fatal): %s", me
+                )
         except Exception:
             pass
 

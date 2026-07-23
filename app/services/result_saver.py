@@ -75,8 +75,8 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
                     "analysis_price": analysis_price, "analysis_rsi": analysis_rsi,
                     "analysis_fund_count": analysis_fund_count,
                 })
-        except Exception:
-            pass
+        except Exception as me:
+            logger.warning("[result_saver] Mongo mirror failed (non-fatal): %s", me)
         logger.info("[result_saver] Saved analysis result for %s in cycle %s (price=%.2f, rsi=%.1f, funds=%d)",
                      ticker, cycle_id,
                      analysis_price or 0, analysis_rsi or 0, analysis_fund_count or 0)

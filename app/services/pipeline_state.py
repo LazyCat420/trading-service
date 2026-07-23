@@ -110,9 +110,23 @@ class PipelineStateDB:
         # (MONGO_STORE_BACKEND=pipeline_events:dual|mongo). Best-effort — a Mongo
         # failure must NEVER break the Postgres append above.
         try:
+            from datetime import datetime
             from app.db import mongo_store
             if mongo_store.writes_mongo("pipeline_events"):
-                mongo_store.insert_docs("pipeline_events", [dict(r) for r in records])
+                docs = []
+                for r in records:
+                    d = dict(r)
+                    # PG stores ISO strings; Mongo must get real dates — string
+                    # timestamps sort before BSON dates and break the
+                    # read_pipeline_events sort for cycles straddling both.
+                    ts = d.get("timestamp")
+                    if isinstance(ts, str):
+                        try:
+                            d["timestamp"] = datetime.fromisoformat(ts)
+                        except ValueError:
+                            pass
+                    docs.append(d)
+                mongo_store.insert_docs("pipeline_events", docs)
         except Exception as me:
             logger.error("[PipelineStateDB] Mongo dual-write failed (non-fatal): %s", me)
 

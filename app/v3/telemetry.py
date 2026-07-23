@@ -108,11 +108,20 @@ def persist_telemetry(desk: SharedDesk) -> None:
                      r["artifact_size_bytes"]],
                 )
         try:
+            import uuid as _uuid
+            from datetime import datetime, timezone
             from app.db import mongo_store
             if _recs and mongo_store.writes_mongo("v3_agent_telemetry"):
-                mongo_store.insert_docs("v3_agent_telemetry", _recs)
-        except Exception:
-            pass
+                # PG assigns a serial id + default created_at the mirror can't
+                # see; give Mongo docs their own id and a real timestamp so the
+                # collection has a usable key. (Post-cutover this id IS the id.)
+                _now = datetime.now(timezone.utc)
+                mongo_store.insert_docs(
+                    "v3_agent_telemetry",
+                    [{**r, "id": str(_uuid.uuid4()), "created_at": _now} for r in _recs],
+                )
+        except Exception as me:
+            logger.warning("[V3Telemetry] Mongo mirror failed (non-fatal): %s", me)
         logger.info(
             "[V3Telemetry] Persisted %d telemetry entries for %s/%s",
             len(desk.agent_telemetry),

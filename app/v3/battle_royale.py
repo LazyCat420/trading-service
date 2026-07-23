@@ -193,13 +193,20 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
         try:
             from app.db import mongo_store
             if mongo_store.writes_mongo("ticker_reports"):
+                # PG stores result_summary as a JSON string; Mongo wants the object.
+                _summary = result_summary
+                if isinstance(_summary, str):
+                    try:
+                        _summary = json.loads(_summary)
+                    except (ValueError, TypeError):
+                        pass
                 mongo_store.upsert_doc("ticker_reports", {"cycle_id": cycle_id, "is_summary": True}, {
                     "id": report_id, "cycle_id": cycle_id, "ticker": "GLOBAL", "action": "HOLD",
-                    "confidence": 0, "report_markdown": report_content, "result_summary": result_summary,
+                    "confidence": 0, "report_markdown": report_content, "result_summary": _summary,
                     "is_summary": True, "created_at": datetime.now(timezone.utc),
                 })
-        except Exception:
-            pass
+        except Exception as me:
+            logger.warning("[BattleRoyale] Mongo mirror failed (non-fatal): %s", me)
         logger.info("[BattleRoyale] Report saved with ID %s", report_id)
         return True
     except Exception as e:

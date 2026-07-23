@@ -74,11 +74,16 @@ def record_tool_call(
                  _rec["success"], _rec["elapsed_ms"], _rec["error_message"], _rec["was_blocked"], _rec["ticker"]],
             )
         try:
+            from datetime import datetime, timezone
             from app.db import mongo_store
             if mongo_store.writes_mongo("agent_tool_telemetry"):
-                mongo_store.insert_docs("agent_tool_telemetry", [_rec])
-        except Exception:
-            pass
+                # PG fills created_at via column default; the mirror must set it.
+                mongo_store.insert_docs(
+                    "agent_tool_telemetry",
+                    [{**_rec, "created_at": datetime.now(timezone.utc)}],
+                )
+        except Exception as me:
+            logger.warning("[ToolTelemetry] Mongo mirror failed (non-fatal): %s", me)
     except Exception as e:
         logger.warning(
             "[ToolTelemetry] Failed to record %s/%s (non-fatal): %s",

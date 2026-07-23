@@ -206,13 +206,24 @@ def _persist_audit_event(event: dict):
                     event["created_at"],
                 ],
             )
-        # Best-effort Mongo dual-write (natural key: request_id).
+        # Best-effort Mongo dual-write (natural key: request_id — the PG serial
+        # id doesn't exist yet at mirror time, so never send a null id).
         try:
+            from datetime import datetime as _dt
             from app.db import mongo_store
             if mongo_store.writes_mongo("agent_audit_log"):
-                mongo_store.insert_docs("agent_audit_log", [dict(event)])
-        except Exception:
-            pass
+                doc = {k: v for k, v in event.items() if k != "id"}
+                ca = doc.get("created_at")
+                if isinstance(ca, str):
+                    try:
+                        doc["created_at"] = _dt.fromisoformat(ca)
+                    except ValueError:
+                        pass
+                mongo_store.upsert_doc(
+                    "agent_audit_log", {"request_id": event["request_id"]}, doc
+                )
+        except Exception as me:
+            logger.warning("[AgentAudit] Mongo mirror failed (non-fatal): %s", me)
     except Exception as e:
         logger.debug("[AgentAudit] DB persist failed (non-fatal): %s", e)
 
