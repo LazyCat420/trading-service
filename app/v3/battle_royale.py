@@ -95,6 +95,56 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
     if not tickers_data:
         report_content += "No analysis results were recorded for this cycle.\n"
 
+    # Regime + portfolio-math context. All of this already exists on the
+    # cycle's whiteboard (regime_classification / quant_report sections) but
+    # was never surfaced into the summary row, so the report couldn't answer
+    # "what regime was this cycle traded in, and what did the math say?".
+    regime_summary: dict[str, Any] = {}
+    quant_risk: dict[str, Any] = {}
+    try:
+        with get_db() as db:
+            wb_rows = db.execute(
+                "SELECT ticker, section, content FROM whiteboard_entries "
+                "WHERE cycle_id = %s AND superseded_by IS NULL "
+                "AND section IN ('regime_classification', 'quant_report')",
+                [cycle_id],
+            ).fetchall()
+        for wb_ticker, wb_section, wb_content in wb_rows:
+            try:
+                content = wb_content if isinstance(wb_content, dict) else json.loads(wb_content)
+            except Exception:
+                continue
+            if wb_section == "regime_classification":
+                regime_summary[wb_ticker] = {
+                    "regime": content.get("regime"),
+                    "factors": content.get("factors"),
+                }
+            else:
+                risk = content.get("risk_metrics") or {}
+                quant_risk[wb_ticker] = {
+                    "volatility_regime": risk.get("volatility_regime"),
+                    "diversification_ratio": risk.get("diversification_ratio"),
+                    "hrp_weight_suggestion": content.get("hrp_weight_suggestion"),
+                }
+        if regime_summary:
+            regimes = {v.get("regime") for v in regime_summary.values() if v.get("regime")}
+            report_content += (
+                "\n#### Macro Regime & Portfolio Math\n"
+                + f"Regime(s): {', '.join(sorted(regimes)) or 'n/a'}\n"
+            )
+            for tk in sorted(quant_risk):
+                qr = quant_risk[tk]
+                bits = [
+                    f"vol={qr['volatility_regime']}" if qr.get("volatility_regime") else None,
+                    f"div_ratio={qr['diversification_ratio']}" if qr.get("diversification_ratio") is not None else None,
+                    f"hrp_suggest={qr['hrp_weight_suggestion']}" if qr.get("hrp_weight_suggestion") is not None else None,
+                ]
+                bits = [b for b in bits if b]
+                if bits:
+                    report_content += f"- **{tk}**: {', '.join(bits)}\n"
+    except Exception as enrich_err:
+        logger.warning("[BattleRoyale] Summary regime/quant enrichment skipped: %s", enrich_err)
+
     # Structured counterpart of the markdown (was hardcoded '{}'). Consumers may
     # ignore it today, but recording it stops the field being permanently dead.
     result_summary = json.dumps({
@@ -105,6 +155,8 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
         "unresolved": len(other),
         "top_buys": [{"ticker": b["ticker"], "confidence": b["confidence"]} for b in buys[:3]],
         "top_sells": [{"ticker": s["ticker"], "confidence": s["confidence"]} for s in sells[:3]],
+        "regime": regime_summary,
+        "quant_risk": quant_risk,
     })
 
     # Save to ticker_reports

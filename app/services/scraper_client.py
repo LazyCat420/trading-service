@@ -34,6 +34,16 @@ class ScraperServiceClient:
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or settings.SCRAPER_SERVICE_URL).rstrip("/")
         self._semaphores: dict[str, asyncio.Semaphore] = {}
+        # Failure ledger so callers can distinguish "scraper returned nothing"
+        # from "scraper was unreachable". The except→return []/None contract
+        # below laundered a TOTAL outage (unresolvable host on
+        # cycle-v3-1784769797) into a ✅ "collected 0 articles" sweep.
+        self.failures = 0
+        self.last_error: str | None = None
+
+    def reset_failures(self) -> None:
+        self.failures = 0
+        self.last_error = None
 
     def _get_semaphore(self, source: str) -> asyncio.Semaphore:
         """Lazily initialize semaphores so they bind to the active event loop."""
@@ -61,6 +71,8 @@ class ScraperServiceClient:
             logger.warning(f"[scraper_client] Scrape failed for {url}: {data.get('error')}")
             return None
         except Exception as e:
+            self.failures += 1
+            self.last_error = str(e)
             logger.error(f"[scraper_client] Unexpected error scraping {url}: {e}")
             return None
 
@@ -84,6 +96,8 @@ class ScraperServiceClient:
 
             return data.get("items", [])
         except Exception as e:
+            self.failures += 1
+            self.last_error = str(e)
             logger.error(f"[scraper_client] Unexpected error collecting from {source}: {e}")
             return []
 

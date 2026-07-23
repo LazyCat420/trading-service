@@ -12,7 +12,13 @@ Has NO tools — pure reasoning from SharedDesk data.
 
 AGENT_NAME = "v3_decision_synthesizer"
 
-TOOL_WHITELIST: list[str] = []  # No tools — pure reasoning from SharedDesk
+# whiteboard_read (read-only) serves two purposes: the whiteboard summary
+# injected into prompts truncates fat sections with a "whiteboard_read for
+# full content" pointer the synthesizer must be able to follow, and prism
+# strips unknown names (the __no_tools__ sentinel) from availableTools —
+# an EMPTY availableTools list means UNSCOPED, i.e. full-catalog discovery
+# headroom (observed live on CUSTOM_V3_DECISION_SYNTHESIZER 2026-07-22).
+TOOL_WHITELIST: list[str] = ["whiteboard_read"]
 
 ARTIFACT_TYPE = "trade_decision"
 

@@ -44,7 +44,9 @@ async def test_prefers_gold_spark_and_discovers_the_served_model(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_falls_back_to_jetson_when_gold_spark_is_down(monkeypatch):
+async def test_no_jetson_fallback_when_gold_spark_is_down(monkeypatch):
+    """Jetson was dropped as a vision failover (207a5fe): Qwen OCR times out
+    and fabricates, so a down DGX must FAIL CLEANLY, not fall through."""
     monkeypatch.delenv("VISION_MODEL", raising=False)
     fake_llm = type("L", (), {"_endpoints": _endpoints(
         dgx_spark=_Endpoint("http://10.0.0.141:8000"),
@@ -58,10 +60,8 @@ async def test_falls_back_to_jetson_when_gold_spark_is_down(monkeypatch):
 
     with patch("app.services.prism_agent_caller.llm", fake_llm), \
          patch("app.services.prism_agent_caller.get_live_model_from_vllm", new=_live):
-        provider, model = await ve._resolve_vision_model()
-
-    assert provider == "vllm"
-    assert model == "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
+        with pytest.raises(RuntimeError, match="No vision-capable vLLM endpoint"):
+            await ve._resolve_vision_model()
 
 
 @pytest.mark.asyncio

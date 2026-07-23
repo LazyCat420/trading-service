@@ -298,10 +298,25 @@ async def check_triggers(bot_id: str) -> list[dict]:
                             ).fetchone()
                             
                         if tech_row and tech_row[0] is not None:
-                            metric_val = tech_row[0]
-                            if "drop" in dynamic_trigger_type or "below" in dynamic_trigger_type or "oversold" in dynamic_trigger_type:
+                            metric_val = float(tech_row[0])
+                            if parts[0] == "rsi":
+                                # RSI is an oscillator (0-100): the trigger is the
+                                # RSI itself crossing a threshold. The old code
+                                # compared current_PRICE to the RSI value, which
+                                # for any normally-priced ticker could never fire
+                                # (oversold) or always fired (overbought).
+                                threshold = float(dynamic_trigger_value or 0.0)
+                                if "oversold" in dynamic_trigger_type:
+                                    if not threshold:
+                                        threshold = 30.0  # validator placeholder 0.0 → sane default
+                                    triggered = metric_val <= threshold
+                                elif "overbought" in dynamic_trigger_type:
+                                    if not threshold:
+                                        threshold = 70.0
+                                    triggered = metric_val >= threshold
+                            elif "drop" in dynamic_trigger_type or "below" in dynamic_trigger_type:
                                 triggered = current_price < metric_val
-                            elif "rise" in dynamic_trigger_type or "above" in dynamic_trigger_type or "overbought" in dynamic_trigger_type:
+                            elif "rise" in dynamic_trigger_type or "above" in dynamic_trigger_type:
                                 triggered = current_price > metric_val
 
                 elif dynamic_trigger_type == "trailing_drop":

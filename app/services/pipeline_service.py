@@ -281,6 +281,20 @@ class PipelineService:
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
         max_tickers = kwargs.get("max_tickers")  # None → auto (gatekeeper default)
         agent_locale = kwargs.get("agent_locale") or "default"
+        # Novelty locales (e.g. "caveman") are a style gag for analyze-only runs.
+        # The trading-client UI persists the selector in localStorage, so a locale
+        # picked once for fun silently rides every later REAL trading cycle —
+        # cycle-v3-1784769797 traded with all decision agents instructed to grunt
+        # ("Oog see math"), and the style contaminated board reasoning, synth
+        # output, and the office TTS. Never let a non-default locale style a
+        # cycle that can place trades.
+        if agent_locale != "default" and bool(kwargs.get("trade", True)):
+            logger.warning(
+                "[PipelineService] agent_locale=%r requested on a trade-enabled "
+                "cycle — forcing 'default' (locales only apply to trade=false runs)",
+                agent_locale,
+            )
+            agent_locale = "default"
         prism_overrides = kwargs.get("prism_overrides") or {}
 
         # Payload knobs must not silently no-op (2026-07-15 audit: typo'd or
@@ -618,8 +632,27 @@ class PipelineService:
                     async def run_scraper_sync():
                         try:
                             from app.collectors.news_collector import collect_all
+                            from app.services.scraper_client import scraper_client
+                            scraper_client.reset_failures()
                             total_scraped = await collect_all(limit_feeds=10, emit_cb=discovery_emit)
-                            discovery_emit("scraper_done", f"✅ News scraper sweep complete: collected {total_scraped} articles", "ok")
+                            # A sweep where every scraper-service call errored is an
+                            # outage, not an empty result — don't stamp it ✅ ok.
+                            if scraper_client.failures and not total_scraped:
+                                discovery_emit(
+                                    "scraper_err",
+                                    f"❌ Scraper sweep FAILED: {scraper_client.failures} scraper-service "
+                                    f"calls errored, 0 articles (last: {scraper_client.last_error})",
+                                    "error",
+                                )
+                            elif scraper_client.failures:
+                                discovery_emit(
+                                    "scraper_done",
+                                    f"⚠️ News scraper sweep degraded: collected {total_scraped} articles, "
+                                    f"{scraper_client.failures} calls errored (last: {scraper_client.last_error})",
+                                    "ok",
+                                )
+                            else:
+                                discovery_emit("scraper_done", f"✅ News scraper sweep complete: collected {total_scraped} articles", "ok")
                         except Exception as e:
                             logger.error(f"[PipelineService] Discovery scraping failed: {e}")
                             discovery_emit("scraper_err", f"❌ Scraper sweep failed: {e}", "error")

@@ -11,9 +11,12 @@ services:
       # DATABASE_URL and API_SERVER_KEY come from .env (synced from
       # vault-service by deploy.sh) — never hardcode secrets here.
       - TZ=America/Los_Angeles
-      # Absorbed scraper-service (formerly scraper-service:8001) now runs in-process
-      # under app.scraper. These two flags carry over its runtime config; the
-      # finnews/Reddit/Twitter API keys already arrive via the master vault .env.
+      # Scraping is delegated to the standalone scraper-service again
+      # (re-extracted 2026-07-22). The code default is the compose DNS name
+      # "scraper-service:8001", which does NOT resolve from this container
+      # (separate docker networks) — every sweep failed silently on
+      # cycle-v3-1784769797. Pin the host IP.
+      - SCRAPER_SERVICE_URL=http://10.0.0.16:8001
       - DISABLE_DDG_SEARCH=true
       - YOUTUBE_COOKIES_FILE=/app/cookies.txt
       - USE_LAZY_TOOL_SERVICE=true

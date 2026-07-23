@@ -99,7 +99,13 @@ def validate_trade_decision_artifact(artifact: dict) -> dict:
         if t_type == "trailing_drop":
             trigger["value"] = _TRAILING_DEFAULT
             _note(artifact, f"dynamic_trigger.value missing — defaulted trailing_drop to {_TRAILING_DEFAULT}")
-        elif t_type.startswith("sma_") or t_type.startswith("rsi_"):
+        elif t_type.startswith("rsi_"):
+            # RSI triggers ARE threshold crossings of the oscillator itself —
+            # default to the conventional levels instead of a 0.0 placeholder
+            # (order_triggers also guards, but the stored row should be honest).
+            trigger["value"] = 30.0 if "oversold" in t_type else 70.0
+            _note(artifact, f"dynamic_trigger.value missing — defaulted {t_type} to {trigger['value']}")
+        elif t_type.startswith("sma_"):
             # Evaluation compares price vs the live metric; value only needs
             # to be non-null for the branch to run at all.
             trigger["value"] = 0.0

@@ -7,6 +7,31 @@ logger = logging.getLogger(__name__)
 
 # Cap on the summarize() output injected into agent system prompts.
 _MAX_SUMMARY_CHARS = 8000
+# Per-section cap inside the summary. Without it, one fat section (the raw
+# tournament_result JSON runs 7-8KB) eats the whole global budget and the
+# global truncation silently drops every section after it.
+_MAX_SECTION_CHARS = 1800
+# Injection order: decision-relevant sections first so the global cap can only
+# ever cost the tail. The old ORDER BY section ASC (alphabetical) meant
+# risk_flags and tournament_result — the sections the board most needs — were
+# always the first casualties of truncation.
+_SECTION_PRIORITY = [
+    "final_decision",
+    "regime_classification",
+    "risk_flags",
+    "quant_report",
+    "fundamental_report",
+    "desk_note",
+    "tournament_result",
+    "market_context",
+]
+
+
+def _section_sort_key(section: str):
+    try:
+        return (0, _SECTION_PRIORITY.index(section), "")
+    except ValueError:
+        return (1, 0, section)  # unknown sections: after known ones, alphabetical
 
 class Whiteboard:
     """Central hub for inter-agent communication via a shared mutable document.
@@ -235,29 +260,36 @@ class Whiteboard:
         with get_db() as db:
             rows = db.execute(
                 "SELECT id, section, author_agent, content, version, edited_by FROM whiteboard_entries "
-                "WHERE cycle_id = %s AND ticker = %s AND superseded_by IS NULL "
-                "ORDER BY section ASC",
+                "WHERE cycle_id = %s AND ticker = %s AND superseded_by IS NULL",
                 [cycle_id, ticker]
             ).fetchall()
 
             if not rows:
                 return "" # Return empty so it doesn't take up tokens if there's no whiteboard
 
+            rows = sorted(rows, key=lambda r: _section_sort_key(r[1]))
+
             lines = ["\n=== SHARED WHITEBOARD ==="]
-            
+
             for r in rows:
                 entry_id, section, author_agent, content_raw, version, edited_by = r
                 content = safe_jsonb(content_raw) or {}
-                
+
                 lines.append(f"\n## {section.upper()} (v{version})")
                 lines.append(f"Authors: {', '.join(edited_by)}")
-                
+
                 # Try to compress the output slightly to save tokens
                 if isinstance(content, dict) and "text" in content and len(content) == 1:
-                    lines.append(content["text"])
+                    body = content["text"]
                 else:
-                    lines.append(json.dumps(content, indent=2))
-                
+                    body = json.dumps(content, indent=2)
+                if len(body) > _MAX_SECTION_CHARS:
+                    body = (
+                        body[:_MAX_SECTION_CHARS]
+                        + f"\n[... '{section}' truncated — whiteboard_read('{section}') for full content ...]"
+                    )
+                lines.append(body)
+
                 ann_rows = db.execute(
                     "SELECT author_agent, note FROM whiteboard_annotations "
                     "WHERE entry_id = %s ORDER BY created_at ASC",
