@@ -37,8 +37,8 @@ async def test_collect_cluster_buys_success(mock_fetch, mock_db):
                 <td>2026-05-14</td>
                 <td>AAPL</td>
                 <td>Apple Inc</td>
-                <td>Cook Timothy D</td>
-                <td>CEO</td>
+                <td>Consumer Electronics</td>
+                <td>3</td>
                 <td>P - Purchase</td>
                 <td>$180.00</td>
                 <td>+10,000</td>

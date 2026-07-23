@@ -52,9 +52,14 @@ def clean_int(val: str) -> int | None:
         return None
 
 async def collect_cluster_buys(days: int = 30) -> int:
-    """Scrape OpenInsider screener for cluster buys."""
-    url = f"http://openinsider.com/screener?s=&o=&pl=&ph=&ll=&lh=&fd={days}&fdr=&td=&tdr=&feession=&cession=&sicl=&sich=&grp=1&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=1&cnt=100&page=1"
-    
+    """Scrape OpenInsider's latest cluster buys (multiple insiders buying the
+    same stock — the strongest insider signal).
+
+    Uses the canned /latest-cluster-buys page: the hand-rolled screener URL
+    this collector originally used returned only blank placeholder rows.
+    """
+    url = "http://openinsider.com/latest-cluster-buys"
+
     html = await _fetch_html(url)
     if not html:
         logger.error("[openinsider] Failed to fetch OpenInsider HTML content")
@@ -72,18 +77,18 @@ async def collect_cluster_buys(days: int = 30) -> int:
     rows = []
     for tr in tr_elements:
         tds = tr.find_all("td")
-        # Live layout (2026-07): X, Filing Date, Trade Date, Ticker,
-        # Company Name, Insider Name, Title, Trade Type, Price, Qty, Owned,
-        # ΔOwn, Value, 1d, 1w, 1m, 6m — the old offsets skipped Company Name
-        # and shifted every field one left, storing blank rows.
+        # /latest-cluster-buys layout (2026-07): X, Filing Date, Trade Date,
+        # Ticker, Company Name, Industry, Ins(=insider count), Trade Type,
+        # Price, Qty, Owned, ΔOwn, Value, 1d, 1w, 1m, 6m. Cluster rows carry
+        # an insider COUNT, not a name.
         if len(tds) < 13:
             continue
 
         filing_date_str = tds[1].text.strip()
         trade_date_str = tds[2].text.strip()
         ticker = tds[3].text.strip().upper()
-        insider_name = tds[5].text.strip()
-        insider_title = tds[6].text.strip()
+        industry = tds[5].text.strip()
+        ins_count = tds[6].text.strip()
         trade_type_full = tds[7].text.strip()
         price_str = tds[8].text.strip()
         qty_str = tds[9].text.strip()
@@ -91,8 +96,10 @@ async def collect_cluster_buys(days: int = 30) -> int:
         delta_str = tds[11].text.strip()
         value_str = tds[12].text.strip()
 
-        if not ticker or not insider_name:
+        if not ticker:
             continue
+        insider_name = f"{ins_count or '?'} insiders (cluster)"
+        insider_title = industry
 
         price = clean_float(price_str)
         qty = clean_int(qty_str)
