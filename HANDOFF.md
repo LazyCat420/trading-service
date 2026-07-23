@@ -1,3 +1,47 @@
+# HANDOFF — Wave 3 (2026-07-23): Mongo read-flips + alt-data/book-brief injection + 13F/fundamentals cadence
+
+Commits: trading-service through `wave-3 HEAD` (read-flips + alt-data/book-brief/scheduler), lazy-agent mirror synced. All deployed; **cycle-verified** on `cycle-v3-1784788522` (NVDA analyze-only, 8 agents, clean).
+
+## 1. Mongo consolidation — first read-flips LIVE
+New backend mode **`mongo_read`** (write BOTH, read Mongo): PG stays fresh for
+trading-client (which still reads PG directly), so partial flips are safe and
+rollback = flag change. Flipped: **pipeline_events, trade_results,
+ticker_reports, analysis_results, llm_audit_logs** (flag in deploy.sh default
+AND deploy-kit/.env.deploy — keep in sync). Every flipped call site logs
+"PG fallback" on Mongo error and falls back to the original SQL.
+- Pre-flip repair: 1,257 string timestamps → BSON dates (pipeline_events),
+  6 stringified result_summary → objects (ticker_reports). llm_audit_logs got
+  a 14d TTL index matching AUDIT_LOG_TTL_DAYS.
+- Readers still on PG (JOIN-blocked, fine under mongo_read): verdict/debate
+  services (ticker_user_notes), strategy_auditor (decision_evaluations),
+  outcome_tracker (price_history), plus telemetry tables (need soak).
+- VERIFIED: full cycle + /api/v1/cycles + state polling with **zero fallback
+  warnings**; post-cycle parity PG==Mongo on all 4 checked tables (42/1/1/8).
+- Next cutover steps: soak a few days → flip telemetry tables to mongo_read →
+  migrate trading-client reads → then `mongo` (stop PG writes) per table.
+
+## 2. Alt-data + book-brief injection (cycle-verified)
+- `app/v3/alt_data_block.py` → junior+fundamental prompts: insider cluster
+  buys (30d) + social chatter (7d); regime briefing gains SPY put/call +
+  upcoming high-impact US events (ForexFactory-fed economic_calendar).
+- `app/v3/book_brief.py` → quant+board prompts: equity/cash split,
+  concentration, position weights+P&L, sector tilt (company_registry), and
+  candidate-vs-book 250d correlation. First book-level signal in the panel;
+  note the "Portfolio Manager" module is actually the watchlist GATEKEEPER
+  (already runs in pipeline_service — do not "wire it in" again).
+- Verified in-cycle: "alt-data block injected (153 chars)" + "book brief
+  injected (180 chars)" + quant math, same NVDA cycle.
+
+## 3. Data cadence fixes
+- 13F: weekly year-round sweep (Sun 3:30 AM PT) added — the filing-month-only
+  cron went silent May 28→Aug 14 (holdings were a quarter stale). Note: Q2
+  13Fs are mostly due Aug 14; big catch-up lands then.
+- Fundamentals: nightly stale-first refresh (2:30 AM PT, 40 stalest active
+  watchlist tickers via data_rotator.fetch_fundamentals) — previously ONLY
+  cycle-analyzed tickers ever refreshed (653/727 were >14d stale).
+
+---
+
 # HANDOFF — Data-collection wave 2 (2026-07-23, later session): bridge timeout + collectors + news cap
 
 Commits: trading-service `5365b36`..`cb8ef86`+1, lazy-agent-service `00d5c88`+3 mirror syncs. All deployed and live-verified.
