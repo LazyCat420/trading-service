@@ -99,6 +99,13 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
         default=2.0, min_value=1.0, max_value=4.0, direction=RISK_NEUTRAL,
         description="Reward:risk ratio for the fallback take-profit target.",
     ),
+    # Candidate selection / diversity
+    "PIPELINE_REANALYSIS_EXCLUDE_HOURS": ParamSpec(
+        default=12, min_value=0, max_value=72, direction=RISK_NEUTRAL, kind="int",
+        description="Hard-exclude tickers analyzed within this window from the "
+                    "discovery pool (held positions exempt; 0 disables). Added "
+                    "2026-07-23: 66.7% of analyses were <24h re-runs.",
+    ),
     # Triage
     "TRIAGE_DEEP_HOURS": ParamSpec(
         default=72, min_value=24, max_value=168, direction=RISK_NEUTRAL, kind="int",

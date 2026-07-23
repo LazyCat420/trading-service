@@ -3234,6 +3234,12 @@ def _fix_eth_cagr_data(conn):
                 ALTER TABLE trade_results
                 ADD COLUMN IF NOT EXISTS dynamic_trigger JSONB;
             """)
+            # 2026-07-23 audit: the ENFORCED policy label was never persisted,
+            # so blocked SELL/BUYs were indistinguishable from executed ones.
+            cur.execute("""
+                ALTER TABLE trade_results
+                ADD COLUMN IF NOT EXISTS policy_action TEXT;
+            """)
             conn.commit()
     except Exception:
         try:

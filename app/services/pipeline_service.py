@@ -679,20 +679,23 @@ class PipelineService:
                     from app.processors.ticker_extractor import FALSE_TICKERS
                     with get_db() as db:
                         # 1. Pull Trending from each source independently
+                        # Diversity wave 2026-07-23: limits were 10/10/5, which
+                        # let the same mega-caps own every discovery slot (14d
+                        # data: top-5 tickers absorbed 23% of ALL analyses).
                         news_trends = db.execute("""
-                            SELECT ticker, COUNT(*) as mentions FROM news_articles 
+                            SELECT ticker, COUNT(*) as mentions FROM news_articles
                             WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 10
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 40
                         """).fetchall()
                         reddit_trends = db.execute("""
-                            SELECT ticker, COUNT(*) as mentions FROM reddit_posts 
+                            SELECT ticker, COUNT(*) as mentions FROM reddit_posts
                             WHERE ticker IS NOT NULL AND created_utc > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 10
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 30
                         """).fetchall()
                         youtube_trends = db.execute("""
-                            SELECT ticker, COUNT(*) as mentions FROM youtube_transcripts 
+                            SELECT ticker, COUNT(*) as mentions FROM youtube_transcripts
                             WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 5
+                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 15
                         """).fetchall()
                         
                         # 2. Phase 4A: Cross-reference — track source count per ticker
@@ -717,7 +720,11 @@ class PipelineService:
                                 if tkr not in source_tracker:
                                     source_tracker[tkr] = {"sources": set(), "mentions": 0}
                                 source_tracker[tkr]["sources"].add(source_label)
-                                source_tracker[tkr]["mentions"] += row[1] if len(row) > 1 else 1
+                                # Cap one ticker's contribution so a mega-cap
+                                # with 80 mentions can't drown ten mid-caps.
+                                source_tracker[tkr]["mentions"] += min(
+                                    row[1] if len(row) > 1 else 1, 10
+                                )
                         
                         # 3. Phase 4A: Build trending_discovered with source counts
                         trending_discovered = {}
@@ -764,6 +771,39 @@ class PipelineService:
                         except Exception as e:
                             logger.warning("[PipelineService] Institutional discovery failed (non-fatal): %s", e)
 
+                        # Discovery-table merge (diversity wave 2026-07-23):
+                        # 25 of 46 tickers discovered in the prior week —
+                        # including the top-scored ones — never entered a
+                        # cycle, because the pool only saw raw 24h trending
+                        # mentions, never the discovered_tickers table.
+                        try:
+                            disc_rows = db.execute("""
+                                SELECT ticker, source, MAX(score) AS score
+                                FROM discovered_tickers
+                                WHERE validation_status = 'valid'
+                                  AND discovered_at > NOW() - INTERVAL '7 days'
+                                GROUP BY ticker, source
+                                ORDER BY MAX(score) DESC LIMIT 30
+                            """).fetchall()
+                            added = 0
+                            for tkr, disc_src, disc_score in disc_rows:
+                                tkr = (tkr or "").upper().strip()
+                                if (not tkr or tkr in base_tickers
+                                        or tkr in trending_discovered
+                                        or tkr in FALSE_TICKERS
+                                        or not is_us_tradeable(tkr)):
+                                    continue
+                                trending_discovered[tkr] = {
+                                    "label": f"Discovery ({disc_src})",
+                                    "source_count": 1,
+                                    "total_mentions": min(int(disc_score or 1), 10),
+                                }
+                                added += 1
+                            if added:
+                                logger.info("[PipelineService] Discovery-table merge: +%d tickers into pool", added)
+                        except Exception as e:
+                            logger.warning("[PipelineService] Discovery-table merge failed (non-fatal): %s", e)
+
                         all_pool = {t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers}
                         all_pool.update(trending_discovered)
                         
@@ -797,15 +837,47 @@ class PipelineService:
                         else:
                             last_analysis_map = {}
                             
+                        # Hard re-analysis exclusion (diversity wave 2026-07-23):
+                        # penalties alone let the same tickers re-run every few
+                        # hours (66.7% of 14d analyses were <24h re-runs; one
+                        # cycle re-ran 5/6 tickers from 5.5h earlier). Held
+                        # positions are exempt — exits need re-analysis.
+                        try:
+                            # Aliased import: a bare `get_param` here would
+                            # shadow the module-level name for the WHOLE
+                            # function and break the trade-execution path
+                            # (UnboundLocalError on the explicit-tickers route).
+                            from app.services.parameter_store import get_param as _excl_get_param
+                            exclude_hours = float(_excl_get_param("PIPELINE_REANALYSIS_EXCLUDE_HOURS"))
+                        except Exception:
+                            exclude_hours = 12.0
+                        held_tickers: set[str] = set()
+                        try:
+                            from app.trading.paper_trader import get_portfolio
+                            from app.services.bot_manager import get_active_bot_id
+                            held_tickers = {
+                                (p.get("ticker") or "").upper()
+                                for p in (get_portfolio(get_active_bot_id()).get("positions") or [])
+                            }
+                        except Exception as e:
+                            logger.warning("[PipelineService] held-ticker fetch failed (exclusion still on): %s", e)
+
                         # 5. Construct dictionary structure
+                        excluded_recent: list[str] = []
                         for tkr, info in all_pool.items():
                             last_date = ensure_aware(last_analysis_map.get(tkr))
                             if last_date:
+                                if exclude_hours > 0 and tkr not in held_tickers:
+                                    hours_since = (datetime.now(timezone.utc) - last_date).total_seconds() / 3600
+                                    if hours_since < exclude_hours:
+                                        excluded_recent.append(tkr)
+                                        continue
                                 days_ago = (datetime.now(timezone.utc) - last_date).days
                                 dsa_str = f"{days_ago} days ago" if days_ago > 0 else "Today"
                             else:
                                 dsa_str = "Never"
-                                
+
+
                             active_ticker_dicts.append({
                                 "ticker": tkr,
                                 "source": info["label"],
@@ -814,6 +886,11 @@ class PipelineService:
                                 "total_mentions": info["total_mentions"],
                             })
                             
+                        if excluded_recent:
+                            logger.info(
+                                "[PipelineService] Re-analysis exclusion (%.0fh window): dropped %d tickers: %s",
+                                exclude_hours, len(excluded_recent), excluded_recent[:15],
+                            )
                         if trending_discovered:
                             multi_source = [t for t, i in trending_discovered.items() if i["source_count"] >= 2]
                             logger.info(
@@ -872,7 +949,9 @@ class PipelineService:
                             if inst.get("has_top_performer"):
                                 score += 10.0  # Top-performer conviction
                                 
-                            # Recency penalty: penalize score if analyzed in the last 3 days
+                            # Recency penalty, decaying through day 7 (was a
+                            # cliff at day 3, so a 5-day-old regular beat any
+                            # fresh unknown); never-analyzed gets a boost.
                             last_date = ensure_aware(last_analysis_map.get(t))
                             if last_date:
                                 days_ago = (datetime.now(timezone.utc) - last_date).days
@@ -882,6 +961,12 @@ class PipelineService:
                                     score -= 20.0
                                 elif days_ago == 2:
                                     score -= 10.0
+                                elif days_ago <= 5:
+                                    score -= 5.0
+                                elif days_ago <= 7:
+                                    score -= 3.0
+                            else:
+                                score += 20.0  # surface untouched tickers
 
                             scored_results.append({
                                 "ticker": t, "price": px, "chg": chg, "rvol": rvol, 
@@ -889,9 +974,28 @@ class PipelineService:
                                 "inst_funds": inst_fund_count,
                             })
                             
-                        # Sort by score descending and take top 20
+                        # Sort by score descending and take top 20, capped at
+                        # 2 per sector (diversity wave 2026-07-23) so four
+                        # semis can't fill half the gatekeeper table. Unknown
+                        # sector is exempt from the cap.
                         scored_results.sort(key=lambda x: x["score"], reverse=True)
-                        top_scorers = scored_results[:20]
+                        try:
+                            from app.services.ticker_meta import get_ticker_meta
+                            _meta = get_ticker_meta([s["ticker"] for s in scored_results[:60]])
+                        except Exception:
+                            _meta = {}
+                        sector_counts: dict[str, int] = {}
+                        bucketed = []
+                        for s in scored_results:
+                            sector = (_meta.get(s["ticker"]) or {}).get("sector")
+                            if sector:
+                                if sector_counts.get(sector, 0) >= 2:
+                                    continue
+                                sector_counts[sector] = sector_counts.get(sector, 0) + 1
+                            bucketed.append(s)
+                            if len(bucketed) >= 20:
+                                break
+                        top_scorers = bucketed
                         
                         logger.info(f"[PipelineService] Scoring Engine top picks: {[s['ticker'] for s in top_scorers]}")
                         
@@ -966,8 +1070,18 @@ class PipelineService:
                                     "status": "discovered",
                                 }])
 
-                        # Build markdown table for Gatekeeper with ONLY eligible stocks
-                        pm_stocks = eligible_stocks if eligible_stocks else top_scorers[:5]  # Fallback: top 5 if nothing eligible
+                        # Build markdown table for Gatekeeper — eligible stocks
+                        # PLUS the top few stale ones tagged STALE (diversity
+                        # wave 2026-07-23: stale was 100% invisible, so the PM
+                        # literally could not choose an informed override).
+                        top_stale = sorted(
+                            stale_stocks, key=lambda x: x.get("score", 0), reverse=True
+                        )[:4]
+                        pm_stocks = eligible_stocks + [
+                            dict(s, freshness="STALE (no material change)") for s in top_stale
+                        ]
+                        if not pm_stocks:
+                            pm_stocks = top_scorers[:5]  # Fallback: top 5 if nothing at all
                         md_lines = [
                             "| Ticker | Score | Source | Freshness | Price | Change % | Rel Vol | SMA-20 | RSI | Inst. Funds | Past Verdict | Past Reason |",
                             "|--------|-------|--------|-----------|-------|----------|---------|--------|-----|-------------|--------------|-------------|"
@@ -988,7 +1102,14 @@ class PipelineService:
                     min_tickers = min(5, max_tickers)
                     system_prompt = SYSTEM_PROMPT.replace("{min_tickers}", str(min_tickers)).replace("{max_tickers}", str(max_tickers))
                     stock_count = len(pm_stocks)
-                    user_prompt = f"Here are {stock_count} stocks that passed our Freshness Gate (all have new data or material changes):\n\n{snapshot_table}\n\nIMPORTANT: You must output ONLY a valid JSON object. Do NOT output any conversational text or formatting blocks. Your response must begin with {{ and end with }}."
+                    user_prompt = (
+                        f"Here are {stock_count} candidate stocks. Rows marked STALE in the Freshness "
+                        f"column have no material data change since their last analysis — only pick one "
+                        f"if you have a strong reason to override (e.g. a setup the gate can't see); "
+                        f"prefer fresh candidates.\n\n{snapshot_table}\n\n"
+                        "IMPORTANT: You must output ONLY a valid JSON object. Do NOT output any "
+                        "conversational text or formatting blocks. Your response must begin with { and end with }."
+                    )
                     
                     from app.services.bot_manager import get_active_bot_id
                     active_bot_id = get_active_bot_id()
@@ -1032,7 +1153,31 @@ class PipelineService:
                         if invalid:
                             logger.warning("[PipelineService] Gatekeeper hallucinated tickers (dropped): %s", invalid)
                         selected = valid_selected
-                    
+
+                    # Enforce the mega-cap rule in code (it was prompt-only —
+                    # "MAXIMUM ONE MEGA-CAP" — with zero enforcement, and NVDA
+                    # ran on 13 of 14 days). Keep the first mega, drop the rest.
+                    if len(selected) > 1:
+                        try:
+                            from app.services.ticker_meta import get_ticker_meta
+                            _sel_meta = get_ticker_meta(selected)
+                            kept, mega_seen = [], 0
+                            for t in selected:
+                                if (_sel_meta.get(t) or {}).get("tier") == "mega":
+                                    mega_seen += 1
+                                    if mega_seen > 1:
+                                        continue
+                                kept.append(t)
+                            if len(kept) < len(selected):
+                                logger.warning(
+                                    "[PipelineService] Mega-cap cap enforced: dropped %s",
+                                    [t for t in selected if t not in kept],
+                                )
+                            selected = kept
+                        except Exception as e:
+                            logger.warning("[PipelineService] mega-cap enforcement failed (non-fatal): %s", e)
+
+
                     if selected:
                         # Hard cap: the prompt asks the gatekeeper for at most
                         # max_tickers, but LLM output isn't guaranteed to comply.

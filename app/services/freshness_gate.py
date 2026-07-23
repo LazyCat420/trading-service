@@ -30,11 +30,14 @@ logger = logging.getLogger(__name__)
 # ── Default thresholds (used if DB config not available) ──
 _DEFAULTS = {
     "price_delta_max_pct": 5.0,
-    "news_count_max": 3.0,
+    # 2 fresh articles = full news signal (was 3 — a ticker with 2 new
+    # articles, flat price and no RSI cross scored ~0.17 → hard STALE).
+    "news_count_max": 2.0,
     "volume_ratio_max": 2.0,
     "rsi_boundary_weight": 1.0,
     "fund_delta_max": 3.0,
-    "composite_threshold": 0.40,
+    # was 0.40 — too strict; diversity wave 2026-07-23.
+    "composite_threshold": 0.25,
 }
 
 # Weights for each signal dimension

@@ -1433,12 +1433,28 @@ async def run_v3_pipeline(
     # LAYER 6: Policy Gates (Trade Execution Rules)
     # ═══════════════════════════════════════════════════════════════════
     policy_action = _apply_policy_gates(desk)
-    
+
     emit(
         "analyzing", f"v3_policy_{ticker}",
         f"🛡️ {ticker}: Policy Gates evaluated → {policy_action}",
         status="ok",
     )
+
+    # Persist the ENFORCED label on the trade row. Without this, a blocked
+    # SELL/BUY is indistinguishable from an executed one in trade_results —
+    # the 07-23 audit found 3 SELLs on unheld tickers with no recorded gate.
+    try:
+        _persist_policy_action(cycle_id, ticker, policy_action)
+    except Exception as pe:
+        logger.warning("[V3] %s: policy_action persist failed (non-fatal): %s", ticker, pe)
+    _decided = (desk.trade_decision or desk.final_decision or {})
+    if policy_action.startswith("HOLD_") and (_decided.get("action") in ("BUY", "SELL")):
+        emit(
+            "analyzing", f"v3_policy_blocked_{ticker}",
+            f"🚫 {ticker}: {_decided.get('action')} @ {_decided.get('confidence', '?')}% "
+            f"BLOCKED by policy gate → {policy_action}",
+            status="warning",
+        )
 
     # ═══════════════════════════════════════════════════════════════════
     # BUILD RESULT — V1-compatible shape for downstream phases
@@ -1482,6 +1498,26 @@ async def run_v3_pipeline(
 
     return result
 
+def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> None:
+    """Record the enforced policy label on the trade row (PG + Mongo mirror)."""
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        db.execute(
+            "UPDATE trade_results SET policy_action = %s WHERE cycle_id = %s AND ticker = %s",
+            [policy_action, cycle_id, ticker],
+        )
+    try:
+        from app.db import mongo_store
+        if mongo_store.writes_mongo("trade_results"):
+            mongo_store.get_doc_db()["trade_results"].update_many(
+                {"cycle_id": cycle_id, "ticker": ticker},
+                {"$set": {"policy_action": policy_action}},
+            )
+    except Exception as me:
+        logger.warning("[V3] mongo policy_action mirror failed (non-fatal): %s", me)
+
+
 def _apply_policy_gates(desk: SharedDesk) -> str:
     """Apply explicit orchestration policy gates to the final decision.
 
@@ -1506,8 +1542,23 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     # (held is False); if holdings are unknown (None — e.g. the context fetch
     # raised at build time) fall through and let the executor's own position
     # check + paper_trader guard remain the backstop.
-    if action == "SELL" and desk.cycle_metadata.get("held") is False:
-        return "HOLD_NO_POSITION"
+    if action == "SELL":
+        held = desk.cycle_metadata.get("held")
+        if held is None:
+            # Holdings unknown (context fetch failed at build time) — resolve
+            # live instead of falling through: the fallthrough is how three
+            # unheld SELLs reached the executor as silent no-ops (07-23 audit).
+            try:
+                from app.trading.paper_trader import get_portfolio
+                portfolio = get_portfolio(desk.cycle_metadata.get("bot_id") or "")
+                held = any(
+                    (p.get("ticker") or "").upper() == desk.ticker.upper()
+                    for p in (portfolio.get("positions") or [])
+                )
+            except Exception:
+                held = None  # truly unknown — executor guard stays the backstop
+        if held is False:
+            return "HOLD_NO_POSITION"
 
     # Dynamic confidence floor (plan 3.1): the board may RAISE the bar for
     # this specific decision, never lower the firm-wide threshold.

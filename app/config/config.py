@@ -181,6 +181,7 @@ class Settings(BaseSettings):
     TRIAGE_NEGLECT_MAX_DAYS: int = 5  # flag neglected after N days
     TRIAGE_MAX_CONSECUTIVE_GLANCE: int = 5  # force Standard after N Glance skips
     TRIAGE_DEEP_NEWS_VOLUME: int = 5  # >= N news articles in 24h → Deep tier
+    PRECOLLECT_TIMEOUT_SECONDS: int = 90  # per-ticker pre-collection budget (was 45)
 
     # ── Alpha Decay Purge (Mathematical Pruning) ──
     ALPHA_DECAY_ENABLED: bool = True  # toggle fundamental math purge

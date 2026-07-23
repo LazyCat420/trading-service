@@ -88,10 +88,35 @@ def test_gate_executes_sell_when_held():
     assert _apply_policy_gates(_sell_desk(held=True)) == "EXECUTE_SELL"
 
 
-def test_gate_falls_through_when_holdings_unknown():
-    # held missing (context fetch raised at desk build) → don't hard-block on a
-    # guess; let the executor's own position check + paper_trader be the backstop.
-    assert _apply_policy_gates(_sell_desk(held=None)) == "EXECUTE_SELL"
+def test_gate_resolves_unknown_holdings_live_and_blocks_unheld():
+    # held missing (context fetch raised at desk build) → resolve LIVE from
+    # the portfolio instead of falling through; the fallthrough is how three
+    # unheld SELLs reached the executor as silent no-ops (07-23 audit).
+    from unittest.mock import patch
+
+    with patch("app.trading.paper_trader.get_portfolio",
+               lambda bot_id: {"positions": []}):
+        assert _apply_policy_gates(_sell_desk(held=None)) == "HOLD_NO_POSITION"
+
+
+def test_gate_resolves_unknown_holdings_live_and_allows_held():
+    from unittest.mock import patch
+
+    desk = _sell_desk(held=None)
+    with patch("app.trading.paper_trader.get_portfolio",
+               lambda bot_id: {"positions": [{"ticker": desk.ticker}]}):
+        assert _apply_policy_gates(desk) == "EXECUTE_SELL"
+
+
+def test_gate_falls_through_when_holdings_truly_unknown():
+    # Live resolution ALSO failed → executor guard stays the backstop.
+    from unittest.mock import patch
+
+    def _boom(bot_id):
+        raise RuntimeError("portfolio unavailable")
+
+    with patch("app.trading.paper_trader.get_portfolio", _boom):
+        assert _apply_policy_gates(_sell_desk(held=None)) == "EXECUTE_SELL"
 
 
 def test_not_held_beats_low_confidence_label():

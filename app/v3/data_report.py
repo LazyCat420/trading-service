@@ -138,7 +138,11 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     # reddit/youtube were blowing the budget on nearly every non-fast-path ticker.
     t_collect = time.monotonic()
     task_map = {asyncio.create_task(run_with_telemetry(n, c)): n for n, c in coros.items()}
-    done, pending = await asyncio.wait(task_map.keys(), timeout=45.0)
+    # 45s lost reddit/youtube/multi-api on 4 of 5 tickers in the 07-23 cycle
+    # audit — agents ran on finnhub+yfinance only. Configurable, default 90s.
+    from app.config import settings as _settings
+    _precollect_budget = float(getattr(_settings, "PRECOLLECT_TIMEOUT_SECONDS", 90))
+    done, pending = await asyncio.wait(task_map.keys(), timeout=_precollect_budget)
     timed_out = sorted(task_map[t] for t in pending)
     # Don't cancel the stragglers — the report proceeds without them, but they
     # keep collecting in the background and land in the DB for the NEXT cycle
@@ -183,7 +187,8 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         f" skipped(fast-path)={','.join(skipped)}" if skipped else "",
     )
     if timed_out:
-        _emit("precollect_timeout", f"Timed out after 45s: {', '.join(timed_out)}", "warning")
+        _emit("precollect_timeout",
+              f"Timed out after {_precollect_budget:.0f}s: {', '.join(timed_out)}", "warning")
 
     from app.v3 import collector_stats
     collector_stats.record(cycle_id, ticker, ok=ok, errored=errored,
