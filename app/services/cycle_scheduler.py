@@ -763,9 +763,27 @@ class SchedulerService:
                     misfire_grace_time=3600,
                     coalesce=True,
                 )
+                scheduler.add_job(
+                    SchedulerService._run_youtube_prewarm,
+                    trigger=IntervalTrigger(hours=4),
+                    id="youtube_prewarm",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                scheduler.add_job(
+                    SchedulerService._run_youtube_channel_sweep,
+                    trigger=CronTrigger(hour=1, minute=30,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="youtube_channel_sweep",
+                    replace_existing=True,
+                    misfire_grace_time=7200,
+                    coalesce=True,
+                )
                 logger.info(
                     "[SCHEDULER] Registered collectors: PCR (1:15 PM PT), insider "
-                    "(4:30 AM PT), economic calendar (12h), social (6h)"
+                    "(4:30 AM PT), economic calendar (12h), social (6h), "
+                    "youtube prewarm (4h), youtube channel sweep (1:30 AM PT)"
                 )
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register wave collectors: %s", e)
@@ -1097,6 +1115,60 @@ class SchedulerService:
             logger.info("[SCHEDULER] Fundamentals refresh: %d/%d tickers updated", done, len(rows))
         except Exception as e:
             logger.error("[SCHEDULER] Fundamentals refresh failed: %s", e)
+
+    @staticmethod
+    async def _run_youtube_prewarm(batch: int = 10):
+        """Pre-warm youtube_transcripts for the stalest active-watchlist
+        tickers so per-ticker precollect finds them already stored (the live
+        fetch blows even the 90s budget on cold tickers). Pure scraper, no LLM.
+        """
+        try:
+            from app.collectors.youtube_collector import collect_for_ticker
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT w.ticker, MAX(y.published_at) AS newest
+                    FROM watchlist w
+                    LEFT JOIN youtube_transcripts y ON y.ticker = w.ticker
+                    WHERE w.status = 'active'
+                    GROUP BY w.ticker
+                    ORDER BY newest ASC NULLS FIRST
+                    LIMIT %s
+                    """,
+                    [batch],
+                ).fetchall()
+            total = 0
+            for i, (ticker, _newest) in enumerate(rows):
+                try:
+                    stats = await collect_for_ticker(ticker, max_results=5)
+                    total += stats.get("stored", 0) if isinstance(stats, dict) else 0
+                except Exception as te:
+                    logger.warning("[SCHEDULER] youtube prewarm %s failed: %s", ticker, te)
+                # Deliberately slow: this runs in the background between
+                # cycles, so pace the scrape (rate-limit avoidance) — the data
+                # just needs to be warm by the time the next cycle starts.
+                if i < len(rows) - 1:
+                    await asyncio.sleep(45)
+            logger.info(
+                "[SCHEDULER] YouTube prewarm: %d transcripts stored over %d tickers",
+                total, len(rows),
+            )
+        except Exception as e:
+            logger.error("[SCHEDULER] YouTube prewarm failed: %s", e)
+
+    @staticmethod
+    async def _run_youtube_channel_sweep():
+        """Nightly channel + search sweep (collect_all had NO caller — channel
+        discovery never ran). Bounded to keep the scrape load modest."""
+        try:
+            from app.collectors.youtube_collector import collect_all
+
+            total = await collect_all(max_videos=3, days_back=7, max_queries=10)
+            logger.info("[SCHEDULER] YouTube channel sweep: %s transcripts stored", total)
+        except Exception as e:
+            logger.error("[SCHEDULER] YouTube channel sweep failed: %s", e)
 
     @staticmethod
     async def _run_pcr_collection():
