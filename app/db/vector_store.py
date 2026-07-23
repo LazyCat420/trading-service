@@ -82,9 +82,9 @@ class VectorStore:
 
     @staticmethod
     def _writes_pg() -> bool:
-        from app.db.mongo_store import backend_for
+        from app.db.mongo_store import writes_pg
 
-        return backend_for(_TABLE) in ("pg", "dual")
+        return writes_pg(_TABLE)
 
     _mongo_indexes_ready = False
 

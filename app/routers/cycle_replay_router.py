@@ -17,6 +17,164 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.db.connection import get_db
 
+
+# ── PG→Mongo read flips (MONGO_STORE_BACKEND mongo_read/mongo) ─────────────
+# Each helper serves from Mongo when the table's flag says so, and falls back
+# to the original SQL on any Mongo error — PG stays fresh in mongo_read mode,
+# so the fallback is always correct, just logged for soak visibility.
+
+def _mongo_reads(table: str) -> bool:
+    try:
+        from app.db import mongo_store
+        return mongo_store.reads_mongo(table)
+    except Exception:
+        return False
+
+
+def _cycles_page(db, limit: int, offset: int) -> list[tuple]:
+    """Newest-first page of (cycle_id, started_at, finished_at, step_count, total_ms)."""
+    if _mongo_reads("pipeline_events"):
+        try:
+            from app.db import mongo_store
+            docs = mongo_store.aggregate("pipeline_events", [
+                {"$match": {"cycle_id": {"$nin": [None, ""]}}},
+                {"$group": {
+                    "_id": "$cycle_id",
+                    "started_at": {"$min": "$timestamp"},
+                    "finished_at": {"$max": "$timestamp"},
+                    "steps": {"$addToSet": "$step"},
+                    "total_ms": {"$sum": {"$ifNull": ["$elapsed_ms", 0]}},
+                }},
+                {"$sort": {"started_at": -1}},
+                {"$skip": offset},
+                {"$limit": limit},
+            ])
+            return [
+                (d["_id"], d.get("started_at"), d.get("finished_at"),
+                 len(d.get("steps") or []), d.get("total_ms") or 0)
+                for d in docs
+            ]
+        except Exception as e:
+            logger.warning("[cycles] mongo page read failed, PG fallback: %s", e)
+    return db.execute(
+        """
+        SELECT
+            pe.cycle_id,
+            MIN(pe.timestamp) AS started_at,
+            MAX(pe.timestamp) AS finished_at,
+            COUNT(DISTINCT pe.step) AS step_count,
+            SUM(pe.elapsed_ms) AS total_ms
+        FROM pipeline_events pe
+        WHERE pe.cycle_id IS NOT NULL
+          AND pe.cycle_id != ''
+        GROUP BY pe.cycle_id
+        ORDER BY MIN(pe.timestamp) DESC
+        LIMIT %s OFFSET %s
+        """,
+        [limit, offset],
+    ).fetchall()
+
+
+def _cycles_total(db) -> int:
+    if _mongo_reads("pipeline_events"):
+        try:
+            from app.db import mongo_store
+            vals = mongo_store.distinct_values(
+                "pipeline_events", "cycle_id", {"cycle_id": {"$nin": [None, ""]}}
+            )
+            return len(vals)
+        except Exception as e:
+            logger.warning("[cycles] mongo total read failed, PG fallback: %s", e)
+    row = db.execute(
+        """
+        SELECT COUNT(DISTINCT cycle_id)
+        FROM pipeline_events
+        WHERE cycle_id IS NOT NULL AND cycle_id != ''
+        """
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def _has_done_event(db, cycle_id: str) -> bool:
+    if _mongo_reads("pipeline_events"):
+        try:
+            from app.db import mongo_store
+            return bool(mongo_store.find_docs(
+                "pipeline_events",
+                {"cycle_id": cycle_id, "step": {"$regex": "done"}},
+                projection={"_id": 1}, limit=1,
+            ))
+        except Exception as e:
+            logger.warning("[cycles] mongo done-check failed, PG fallback: %s", e)
+    return db.execute(
+        "SELECT 1 FROM pipeline_events WHERE cycle_id = %s AND step LIKE '%%done%%' LIMIT 1",
+        [cycle_id],
+    ).fetchone() is not None
+
+
+def _trade_actions(db, cycle_id: str) -> list[tuple]:
+    """(ticker, action, confidence) rows for a cycle."""
+    if _mongo_reads("trade_results"):
+        try:
+            from app.db import mongo_store
+            docs = mongo_store.find_docs(
+                "trade_results", {"cycle_id": cycle_id},
+                projection={"_id": 0, "ticker": 1, "action": 1, "confidence": 1},
+            )
+            return [(d.get("ticker"), d.get("action"), d.get("confidence")) for d in docs]
+        except Exception as e:
+            logger.warning("[cycles] mongo actions read failed, PG fallback: %s", e)
+    return db.execute(
+        "SELECT ticker, action, confidence FROM trade_results WHERE cycle_id = %s",
+        [cycle_id],
+    ).fetchall()
+
+
+def _distinct_trade_tickers(db, cycle_id: str) -> list[tuple]:
+    if _mongo_reads("trade_results"):
+        try:
+            from app.db import mongo_store
+            return [(t,) for t in mongo_store.distinct_values(
+                "trade_results", "ticker", {"cycle_id": cycle_id}) if t]
+        except Exception as e:
+            logger.warning("[cycles] mongo tickers read failed, PG fallback: %s", e)
+    return db.execute(
+        "SELECT DISTINCT ticker FROM trade_results WHERE cycle_id = %s",
+        [cycle_id],
+    ).fetchall()
+
+
+def _latest_trade_row(db, cycle_id: str, ticker: str):
+    """Latest (action, confidence, reasoning, signal_weights, risk_flags,
+    regime, persona_used, created_at) for a cycle/ticker, or None."""
+    if _mongo_reads("trade_results"):
+        try:
+            from app.db import mongo_store
+            docs = mongo_store.find_docs(
+                "trade_results", {"cycle_id": cycle_id, "ticker": ticker},
+                sort=[("created_at", -1)], limit=1,
+            )
+            if not docs:
+                return None
+            d = docs[0]
+            return (d.get("action"), d.get("confidence"), d.get("reasoning"),
+                    d.get("signal_weights"), d.get("risk_flags"), d.get("regime"),
+                    d.get("persona_used"), d.get("created_at"))
+        except Exception as e:
+            logger.warning("[cycles] mongo trade-detail read failed, PG fallback: %s", e)
+    return db.execute(
+        """
+        SELECT action, confidence, reasoning,
+               signal_weights, risk_flags, regime,
+               persona_used, created_at
+        FROM trade_results
+        WHERE cycle_id = %s AND ticker = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        [cycle_id, ticker],
+    ).fetchone()
+
 router = APIRouter(prefix="/api/v1/cycles", tags=["cycle-replay"])
 logger = logging.getLogger(__name__)
 
@@ -104,23 +262,7 @@ def list_cycles(
     try:
         with get_db() as db:
             # Get distinct cycles from pipeline_events (most reliable source)
-            rows = db.execute(
-                """
-                SELECT
-                    pe.cycle_id,
-                    MIN(pe.timestamp) AS started_at,
-                    MAX(pe.timestamp) AS finished_at,
-                    COUNT(DISTINCT pe.step) AS step_count,
-                    SUM(pe.elapsed_ms) AS total_ms
-                FROM pipeline_events pe
-                WHERE pe.cycle_id IS NOT NULL
-                  AND pe.cycle_id != ''
-                GROUP BY pe.cycle_id
-                ORDER BY MIN(pe.timestamp) DESC
-                LIMIT %s OFFSET %s
-                """,
-                [limit, offset],
-            ).fetchall()
+            rows = _cycles_page(db, limit, offset)
 
             cycles = []
             for row in rows:
@@ -155,14 +297,7 @@ def list_cycles(
                     outcomes[a[0]] = a[1]
 
                 # Get final actions from trade_results
-                action_rows = db.execute(
-                    """
-                    SELECT ticker, action, confidence
-                    FROM trade_results
-                    WHERE cycle_id = %s
-                    """,
-                    [cycle_id],
-                ).fetchall()
+                action_rows = _trade_actions(db, cycle_id)
                 actions = {
                     a[0]: {"action": a[1], "confidence": a[2]}
                     for a in (action_rows or [])
@@ -180,10 +315,7 @@ def list_cycles(
 
                 # Fallback for historical cycles without telemetry
                 if not tickers:
-                    tr_tickers = db.execute(
-                        "SELECT DISTINCT ticker FROM trade_results WHERE cycle_id = %s",
-                        [cycle_id]
-                    ).fetchall()
+                    tr_tickers = _distinct_trade_tickers(db, cycle_id)
                     if tr_tickers:
                         tickers = [t[0] for t in tr_tickers]
 
@@ -191,13 +323,8 @@ def list_cycles(
                 if not is_completed:
                     if actions:
                         is_completed = True
-                    else:
-                        done_evt = db.execute(
-                            "SELECT 1 FROM pipeline_events WHERE cycle_id = %s AND step LIKE '%%done%%' LIMIT 1",
-                            [cycle_id]
-                        ).fetchone()
-                        if done_evt:
-                            is_completed = True
+                    elif _has_done_event(db, cycle_id):
+                        is_completed = True
 
                 # A cycle only counts as running if the live singleton claims it
                 # AND its events are still fresh — a hard kill (crash-loop, OOM,
@@ -225,14 +352,7 @@ def list_cycles(
                 })
 
             # Get total count for pagination
-            total_row = db.execute(
-                """
-                SELECT COUNT(DISTINCT cycle_id)
-                FROM pipeline_events
-                WHERE cycle_id IS NOT NULL AND cycle_id != ''
-                """
-            ).fetchone()
-            total = total_row[0] if total_row else 0
+            total = _cycles_total(db)
 
             return {
                 "cycles": cycles,
@@ -543,18 +663,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
             ]
 
             # Get trade result
-            trade_row = db.execute(
-                """
-                SELECT action, confidence, reasoning,
-                       signal_weights, risk_flags, regime,
-                       persona_used, created_at
-                FROM trade_results
-                WHERE cycle_id = %s AND ticker = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                [cycle_id, ticker],
-            ).fetchone()
+            trade_row = _latest_trade_row(db, cycle_id, ticker)
 
             trade_result = None
             if trade_row:

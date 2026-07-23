@@ -62,17 +62,32 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
 
 
     try:
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT confidence FROM analysis_results WHERE cycle_id=%s AND confidence IS NOT NULL",
-                [cycle_id],
-            ).fetchall()
-            if rows:
-                confs = [r[0] for r in rows]
-                if max(confs) - min(confs) < 10 and len(confs) >= 3:
-                    issues.append({"issue": f"Uniform confidence ({min(confs)}-{max(confs)})", "severity": "info"})
-                if sum(confs) / len(confs) < 40:
-                    issues.append({"issue": f"Low avg confidence: {sum(confs) / len(confs):.0f}%", "severity": "warning"})
+        rows = None
+        try:
+            from app.db import mongo_store
+            if mongo_store.reads_mongo("analysis_results"):
+                rows = [
+                    (d.get("confidence"),)
+                    for d in mongo_store.find_docs(
+                        "analysis_results",
+                        {"cycle_id": cycle_id, "confidence": {"$ne": None}},
+                        projection={"_id": 0, "confidence": 1},
+                    )
+                ]
+        except Exception:
+            rows = None
+        if rows is None:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT confidence FROM analysis_results WHERE cycle_id=%s AND confidence IS NOT NULL",
+                    [cycle_id],
+                ).fetchall()
+        if rows:
+            confs = [r[0] for r in rows]
+            if max(confs) - min(confs) < 10 and len(confs) >= 3:
+                issues.append({"issue": f"Uniform confidence ({min(confs)}-{max(confs)})", "severity": "info"})
+            if sum(confs) / len(confs) < 40:
+                issues.append({"issue": f"Low avg confidence: {sum(confs) / len(confs):.0f}%", "severity": "warning"})
     except Exception:
         pass
 

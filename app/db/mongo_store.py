@@ -7,9 +7,11 @@ by idempotent upsert, read by key). This module is the Mongo home for those
 tables, with a **per-table backend flag** so each table can be cut over and
 rolled back independently:
 
-    pg    → write/read Postgres only (default — behaviour is UNCHANGED)
-    dual  → write BOTH; read Postgres (parity-check / soak phase)
-    mongo → write/read Mongo only (cutover complete)
+    pg         → write/read Postgres only (default — behaviour is UNCHANGED)
+    dual       → write BOTH; read Postgres (parity-check / soak phase)
+    mongo_read → write BOTH; read Mongo (trading-service reads flipped, but PG
+                 stays fresh for trading-client, which still reads PG directly)
+    mongo      → write/read Mongo only (cutover complete, PG table droppable)
 
 Backends are set via the MONGO_STORE_BACKEND env var, a comma-separated list of
 `table:mode` pairs, e.g.  MONGO_STORE_BACKEND="pipeline_events:dual,trade_results:mongo".
@@ -34,7 +36,7 @@ from app.db.mongo import get_mongo_client
 logger = logging.getLogger(__name__)
 
 # ── Per-table backend flags ────────────────────────────────────────────────
-_VALID_MODES = {"pg", "dual", "mongo"}
+_VALID_MODES = {"pg", "dual", "mongo_read", "mongo"}
 
 
 def _parse_backends() -> dict[str, str]:
@@ -65,12 +67,19 @@ def backend_for(table: str) -> str:
 
 def writes_mongo(table: str) -> bool:
     """True when writes must ALSO (or ONLY) go to Mongo."""
-    return backend_for(table) in ("dual", "mongo")
+    return backend_for(table) in ("dual", "mongo_read", "mongo")
 
 
 def reads_mongo(table: str) -> bool:
-    """True when reads must come from Mongo (only after cutover)."""
-    return backend_for(table) == "mongo"
+    """True when reads must come from Mongo."""
+    return backend_for(table) in ("mongo_read", "mongo")
+
+
+def writes_pg(table: str) -> bool:
+    """True when writes must still go to Postgres (everything except full
+    cutover — mongo_read keeps PG fresh for direct-PG readers like
+    trading-client)."""
+    return backend_for(table) in ("pg", "dual", "mongo_read")
 
 
 # ── Connection (own DB, shared client) ─────────────────────────────────────
@@ -130,6 +139,9 @@ def ensure_indexes() -> None:
              partialFilterExpression={"id": {"$type": _ID_TYPES}})
     _try("agent_audit_log", "request_id", unique=True,
          partialFilterExpression={"request_id": {"$type": "string"}})
+    # PG ages llm_audit_logs out via AUDIT_LOG_TTL_DAYS (14d) — the mirror
+    # must decay the same way or it diverges and grows unbounded.
+    _try("llm_audit_logs", "created_at", expireAfterSeconds=14 * 86400)
     _try("context_blobs", "context_hash", unique=True,
          partialFilterExpression={"context_hash": {"$type": "string"}})
     # Read-path keys used by the report/replay UIs after cutover.
@@ -186,8 +198,18 @@ def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = Non
     return list(cur)
 
 
+def aggregate(collection: str, pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Run an aggregation pipeline (the Mongo replacement for SQL GROUP BY /
+    DISTINCT ON readers)."""
+    return list(get_doc_db()[collection].aggregate(pipeline, allowDiskUse=True))
+
+
 def count_docs(collection: str, query: Optional[dict] = None) -> int:
     return get_doc_db()[collection].count_documents(query or {})
+
+
+def distinct_values(collection: str, field: str, query: Optional[dict] = None) -> list:
+    return get_doc_db()[collection].distinct(field, query or {})
 
 
 def mirror_pipeline_event(record: dict[str, Any]) -> None:

@@ -63,6 +63,17 @@ def _recently_researched(db, tickers: list[str]) -> list[str]:
     if not tickers:
         return []
     cooldown_hours = int(get_param("TICKER_COOLDOWN_HOURS"))
+    try:
+        from app.db import mongo_store
+        if mongo_store.reads_mongo("analysis_results"):
+            from datetime import datetime, timedelta
+            cutoff = datetime.utcnow() - timedelta(hours=cooldown_hours)
+            return [t for t in mongo_store.distinct_values(
+                "analysis_results", "ticker",
+                {"ticker": {"$in": tickers}, "created_at": {"$gte": cutoff}},
+            ) if t]
+    except Exception as me:
+        logger.warning("[governor] mongo cooldown read failed, PG fallback: %s", me)
     rows = db.execute(
         "SELECT DISTINCT ticker FROM analysis_results "
         "WHERE ticker = ANY(%s) AND created_at >= NOW() - make_interval(hours => %s)",
@@ -370,11 +381,30 @@ def list_scheduled_research() -> dict:
             "AND payload::text LIKE %s ORDER BY created_at",
             ["%research_request%"],
         ).fetchall()
-        recent_rows = db.execute(
-            "SELECT ticker, MAX(created_at) FROM analysis_results "
-            "WHERE created_at >= NOW() - INTERVAL '48 hours' GROUP BY ticker "
-            "ORDER BY MAX(created_at) DESC LIMIT 25"
-        ).fetchall()
+        recent_rows = None
+        try:
+            from app.db import mongo_store
+            if mongo_store.reads_mongo("analysis_results"):
+                from datetime import datetime, timedelta
+                cutoff = datetime.utcnow() - timedelta(hours=48)
+                recent_rows = [
+                    (d["_id"], d.get("last_date"))
+                    for d in mongo_store.aggregate("analysis_results", [
+                        {"$match": {"created_at": {"$gte": cutoff}}},
+                        {"$group": {"_id": "$ticker", "last_date": {"$max": "$created_at"}}},
+                        {"$sort": {"last_date": -1}},
+                        {"$limit": 25},
+                    ])
+                ]
+        except Exception as me:
+            logger.warning("[governor] mongo recent read failed, PG fallback: %s", me)
+            recent_rows = None
+        if recent_rows is None:
+            recent_rows = db.execute(
+                "SELECT ticker, MAX(created_at) FROM analysis_results "
+                "WHERE created_at >= NOW() - INTERVAL '48 hours' GROUP BY ticker "
+                "ORDER BY MAX(created_at) DESC LIMIT 25"
+            ).fetchall()
 
     schedules = []
     for r in sched_rows:

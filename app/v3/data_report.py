@@ -52,40 +52,63 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     previous_analysis_md = ""
     is_fast_path = False
 
-    with get_db() as db:
-        recent = db.execute(
-            """
-            SELECT thesis_summary, created_at,
-                   created_at >= NOW() - INTERVAL '48 hours' AS is_recent
-            FROM analysis_results
-            WHERE ticker = %s
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            [ticker]
-        ).fetchone()
+    recent = None
+    _mongo_hit = False
+    try:
+        from app.db import mongo_store
+        if mongo_store.reads_mongo("analysis_results"):
+            docs = mongo_store.find_docs(
+                "analysis_results", {"ticker": ticker},
+                sort=[("created_at", -1)], limit=1,
+                projection={"_id": 0, "thesis_summary": 1, "created_at": 1},
+            )
+            if docs:
+                from datetime import datetime, timedelta, timezone
+                ca = docs[0].get("created_at")
+                # pymongo returns naive-UTC datetimes; compare like-with-like.
+                _now = datetime.utcnow() if (ca is not None and ca.tzinfo is None) \
+                    else datetime.now(timezone.utc)
+                is_recent = bool(ca and ca >= _now - timedelta(hours=48))
+                recent = (docs[0].get("thesis_summary"), ca, is_recent)
+            _mongo_hit = True
+    except Exception as me:
+        logger.warning("[data_report] mongo thesis read failed, PG fallback: %s", me)
+        _mongo_hit = False
+    if not _mongo_hit:
+        with get_db() as db:
+            recent = db.execute(
+                """
+                SELECT thesis_summary, created_at,
+                       created_at >= NOW() - INTERVAL '48 hours' AS is_recent
+                FROM analysis_results
+                WHERE ticker = %s
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                [ticker]
+            ).fetchone()
 
-        if recent and recent[0]:
-            if recent[2]:
-                is_fast_path = True
-                previous_analysis_md = (
-                    f"## 0. PREVIOUS ANALYSIS (FAST-PATH)\n"
-                    f"*This stock was recently analyzed on {recent[1]}. Build your new thesis ON TOP of this past summary using today's fresh news and price action:*\n\n"
-                    f"{recent[0]}\n\n"
-                )
-                _emit("precollect_fastpath", "Fast-Path engaged! Skipping heavy scrapers.", "ok")
-            else:
-                # Cap the stale thesis so it can't crowd fresh data out of the
-                # 10k-char report budget.
-                prior_text = recent[0]
-                if len(prior_text) > 2500:
-                    prior_text = prior_text[:2500] + "\n[... prior thesis truncated ...]"
-                previous_analysis_md = (
-                    f"## 0. PRIOR RESEARCH ON FILE (dated {recent[1]})\n"
-                    f"*This stock was researched before. The thesis below may be stale — verify its claims "
-                    f"against today's fresh data, note what changed, and build on it rather than starting over:*\n\n"
-                    f"{prior_text}\n\n"
-                )
-                _emit("precollect_prior", "Prior research found — seeding report with last thesis.", "ok")
+    if recent and recent[0]:
+        if recent[2]:
+            is_fast_path = True
+            previous_analysis_md = (
+                f"## 0. PREVIOUS ANALYSIS (FAST-PATH)\n"
+                f"*This stock was recently analyzed on {recent[1]}. Build your new thesis ON TOP of this past summary using today's fresh news and price action:*\n\n"
+                f"{recent[0]}\n\n"
+            )
+            _emit("precollect_fastpath", "Fast-Path engaged! Skipping heavy scrapers.", "ok")
+        else:
+            # Cap the stale thesis so it can't crowd fresh data out of the
+            # 10k-char report budget.
+            prior_text = recent[0]
+            if len(prior_text) > 2500:
+                prior_text = prior_text[:2500] + "\n[... prior thesis truncated ...]"
+            previous_analysis_md = (
+                f"## 0. PRIOR RESEARCH ON FILE (dated {recent[1]})\n"
+                f"*This stock was researched before. The thesis below may be stale — verify its claims "
+                f"against today's fresh data, note what changed, and build on it rather than starting over:*\n\n"
+                f"{prior_text}\n\n"
+            )
+            _emit("precollect_prior", "Prior research found — seeding report with last thesis.", "ok")
 
     _FULL_COLLECTORS = ("yfinance_price", "yfinance_fund", "finnhub_news",
                         "multi_api_news", "reddit", "youtube")

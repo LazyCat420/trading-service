@@ -43,7 +43,7 @@ EXTRA_SSH_SYNC() {
   # must be appended HERE, not via deploy-kit/.env.deploy (SKIP_ENV_DEPLOY=true).
   # The default below IS the live state — a redeploy without MONGO_STORE_BACKEND
   # exported must not regress any table's backend.
-  MONGO_STORE_DEFAULT="pipeline_events:dual,execution_errors:dual,cycle_audit_log:dual,agent_audit_log:dual,llm_audit_logs:dual,agent_traces:dual,agent_tool_telemetry:dual,v3_agent_telemetry:dual,trade_results:dual,ticker_reports:dual,analysis_results:dual,context_blobs:dual,embeddings:mongo"
+  MONGO_STORE_DEFAULT="pipeline_events:mongo_read,execution_errors:dual,cycle_audit_log:dual,agent_audit_log:dual,llm_audit_logs:mongo_read,agent_traces:dual,agent_tool_telemetry:dual,v3_agent_telemetry:dual,trade_results:mongo_read,ticker_reports:mongo_read,analysis_results:mongo_read,context_blobs:dual,embeddings:mongo"
   ssh "$DEPLOY_SSH_HOST" "echo 'MONGO_STORE_BACKEND=${MONGO_STORE_BACKEND:-$MONGO_STORE_DEFAULT}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes' 2>/dev/null || sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes'"
   ssh "$DEPLOY_SSH_HOST" "sudo chown -R 1001:1001 '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes'"

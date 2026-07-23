@@ -187,14 +187,27 @@ class PipelineStateDB:
                                 d["events"] = []
 
                         try:
-                            ar_rows = db.execute(
-                                "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
-                                [cycle_id],
-                            ).fetchall()
+                            ar_rows = None
+                            if mongo_store.reads_mongo("analysis_results"):
+                                try:
+                                    ar_rows = [
+                                        (d.get("ticker"), d.get("result_json"))
+                                        for d in mongo_store.find_docs(
+                                            "analysis_results", {"cycle_id": cycle_id},
+                                            projection={"_id": 0, "ticker": 1, "result_json": 1},
+                                        )
+                                    ]
+                                except Exception as me:
+                                    logger.warning("[PipelineStateDB] mongo results read failed, PG fallback: %s", me)
+                            if ar_rows is None:
+                                ar_rows = db.execute(
+                                    "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
+                                    [cycle_id],
+                                ).fetchall()
                             results = []
                             for ar in ar_rows:
                                 try:
-                                    res = json.loads(ar[1])
+                                    res = ar[1] if isinstance(ar[1], dict) else json.loads(ar[1])
                                     if "ticker" not in res:
                                         res["ticker"] = ar[0]
                                     results.append(res)

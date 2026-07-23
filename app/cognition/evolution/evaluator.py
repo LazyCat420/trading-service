@@ -61,21 +61,42 @@ async def run_auditor(chunk: str, cycle_id: str, auditor_id: int) -> dict:
 async def run_post_cycle_evaluation(cycle_id: str):
     logger.info(f"[Evaluator] Starting random peer-to-peer audit for {cycle_id}")
     try:
-        with get_db() as db:
-            # Fetch events. Sort by errors/failures first, then random. Limit to 30 to form 3 chunks of 10.
-            rows = db.execute(
-                """
-                SELECT phase, step, detail, status 
-                FROM pipeline_events 
-                WHERE cycle_id = %s 
-                ORDER BY 
-                    CASE WHEN status != 'ok' THEN 0 ELSE 1 END ASC,
-                    RANDOM()
-                LIMIT 30
-                """,
-                [cycle_id]
-            ).fetchall()
-            
+        rows = None
+        try:
+            from app.db import mongo_store
+            if mongo_store.reads_mongo("pipeline_events"):
+                import random
+                docs = mongo_store.find_docs(
+                    "pipeline_events", {"cycle_id": cycle_id},
+                    projection={"_id": 0, "phase": 1, "step": 1, "detail": 1, "status": 1},
+                )
+                # Same shape as the SQL: errors first, random within each group,
+                # capped at 30 (3 chunks of 10).
+                random.shuffle(docs)
+                docs.sort(key=lambda d: 0 if (d.get("status") or "ok") != "ok" else 1)
+                rows = [
+                    (d.get("phase"), d.get("step"), d.get("detail"), d.get("status"))
+                    for d in docs[:30]
+                ]
+        except Exception as me:
+            logger.warning("[Evaluator] mongo events read failed, PG fallback: %s", me)
+            rows = None
+        if rows is None:
+            with get_db() as db:
+                # Fetch events. Sort by errors/failures first, then random. Limit to 30 to form 3 chunks of 10.
+                rows = db.execute(
+                    """
+                    SELECT phase, step, detail, status
+                    FROM pipeline_events
+                    WHERE cycle_id = %s
+                    ORDER BY
+                        CASE WHEN status != 'ok' THEN 0 ELSE 1 END ASC,
+                        RANDOM()
+                    LIMIT 30
+                    """,
+                    [cycle_id]
+                ).fetchall()
+
         if not rows:
             logger.warning(f"[Evaluator] No events found for cycle {cycle_id}. Skipping.")
             return

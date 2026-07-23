@@ -24,12 +24,26 @@ def _audit_triage(cycle_id: str, cycle_summary: dict, tickers: list[str]) -> dic
         "stale_tickers": [], "issues": []
     }
     try:
-        with get_db() as db:
-            tier_rows = db.execute(
-                "SELECT triage_tier, COUNT(*) FROM analysis_results "
-                "WHERE cycle_id = %s GROUP BY triage_tier",
-                [cycle_id],
-            ).fetchall()
+        tier_rows = None
+        try:
+            from app.db import mongo_store
+            if mongo_store.reads_mongo("analysis_results"):
+                tier_rows = [
+                    (d["_id"], d.get("n", 0))
+                    for d in mongo_store.aggregate("analysis_results", [
+                        {"$match": {"cycle_id": cycle_id}},
+                        {"$group": {"_id": "$triage_tier", "n": {"$sum": 1}}},
+                    ])
+                ]
+        except Exception:
+            tier_rows = None
+        if tier_rows is None:
+            with get_db() as db:
+                tier_rows = db.execute(
+                    "SELECT triage_tier, COUNT(*) FROM analysis_results "
+                    "WHERE cycle_id = %s GROUP BY triage_tier",
+                    [cycle_id],
+                ).fetchall()
         for tier, count in tier_rows:
             tier = (tier or "").lower()
             if "glance" in tier:
@@ -42,13 +56,28 @@ def _audit_triage(cycle_id: str, cycle_summary: dict, tickers: list[str]) -> dic
         # Stale = analyzed tickers whose latest analysis is older than 48h
         if tickers:
             cutoff_48h = datetime.now(timezone.utc) - timedelta(hours=48)
-            placeholders = ",".join(["%s"] * len(tickers))
-            with get_db() as db:
-                last_rows = db.execute(
-                    f"SELECT ticker, MAX(created_at) FROM analysis_results "
-                    f"WHERE ticker IN ({placeholders}) GROUP BY ticker",
-                    list(tickers),
-                ).fetchall()
+            last_rows = None
+            try:
+                from app.db import mongo_store
+                if mongo_store.reads_mongo("analysis_results"):
+                    last_rows = [
+                        (d["_id"], d.get("last_date"))
+                        for d in mongo_store.aggregate("analysis_results", [
+                            {"$match": {"ticker": {"$in": list(tickers)}}},
+                            {"$group": {"_id": "$ticker",
+                                        "last_date": {"$max": "$created_at"}}},
+                        ])
+                    ]
+            except Exception:
+                last_rows = None
+            if last_rows is None:
+                placeholders = ",".join(["%s"] * len(tickers))
+                with get_db() as db:
+                    last_rows = db.execute(
+                        f"SELECT ticker, MAX(created_at) FROM analysis_results "
+                        f"WHERE ticker IN ({placeholders}) GROUP BY ticker",
+                        list(tickers),
+                    ).fetchall()
             last_map = {r[0]: r[1] for r in last_rows}
             for ticker in tickers:
                 last = last_map.get(ticker)

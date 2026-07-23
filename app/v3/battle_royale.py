@@ -19,12 +19,28 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
     logger.info("[BattleRoyale] Starting Battle Royale for cycle %s", cycle_id)
     
     # 1. Gather all analysis results for this cycle
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
-            [cycle_id]
-        ).fetchall()
-        
+    rows = None
+    try:
+        from app.db import mongo_store
+        if mongo_store.reads_mongo("analysis_results"):
+            rows = [
+                (d.get("ticker"), d.get("result_json"))
+                for d in mongo_store.find_docs(
+                    "analysis_results", {"cycle_id": cycle_id},
+                    projection={"_id": 0, "ticker": 1, "result_json": 1},
+                )
+            ]
+    except Exception as me:
+        logger.warning("[BattleRoyale] mongo results read failed, PG fallback: %s", me)
+        rows = None
+    if rows is None:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
+                [cycle_id]
+            ).fetchall()
+
+
     if not rows:
         logger.warning("[BattleRoyale] No analysis results found for cycle %s", cycle_id)
         return False

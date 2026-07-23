@@ -451,11 +451,25 @@ class PipelineService:
                 steps_total = ok + err + skipped
                 ticker_count = len(summary.get("tickers_final") or [])
                 total_ms = summary.get("elapsed_ms")
+                tokens_row = None
+                try:
+                    from app.db import mongo_store
+                    if mongo_store.reads_mongo("llm_audit_logs"):
+                        _agg = mongo_store.aggregate("llm_audit_logs", [
+                            {"$match": {"cycle_id": cycle_id}},
+                            {"$group": {"_id": None,
+                                        "t": {"$sum": {"$ifNull": ["$tokens_used", 0]}}}},
+                        ])
+                        tokens_row = ((_agg[0].get("t") or 0),) if _agg else (0,)
+                except Exception as me:
+                    logger.warning("[PipelineService] mongo tokens read failed, PG fallback: %s", me)
+                    tokens_row = None
                 with get_db() as db:
-                    tokens_row = db.execute(
-                        "SELECT COALESCE(SUM(tokens_used), 0) FROM llm_audit_logs WHERE cycle_id = %s",
-                        [cycle_id],
-                    ).fetchone()
+                    if tokens_row is None:
+                        tokens_row = db.execute(
+                            "SELECT COALESCE(SUM(tokens_used), 0) FROM llm_audit_logs WHERE cycle_id = %s",
+                            [cycle_id],
+                        ).fetchone()
                     db.execute(
                         """INSERT INTO cycle_benchmarks
                         (cycle_id, started_at, finished_at, total_ms, ticker_count, avg_ticker_ms,
@@ -755,14 +769,30 @@ class PipelineService:
                         
                         # 4. Fetch Last Analysis Date for all
                         if all_pool:
-                            placeholders = ','.join(['%s'] * len(all_pool))
-                            last_analysis_rows = db.execute(f"""
-                                SELECT ticker, MAX(created_at) as last_date 
-                                FROM analysis_results 
-                                WHERE ticker IN ({placeholders}) 
-                                GROUP BY ticker
-                            """, list(all_pool.keys())).fetchall()
-                            
+                            last_analysis_rows = None
+                            try:
+                                from app.db import mongo_store
+                                if mongo_store.reads_mongo("analysis_results"):
+                                    last_analysis_rows = [
+                                        (d["_id"], d.get("last_date"))
+                                        for d in mongo_store.aggregate("analysis_results", [
+                                            {"$match": {"ticker": {"$in": list(all_pool.keys())}}},
+                                            {"$group": {"_id": "$ticker",
+                                                        "last_date": {"$max": "$created_at"}}},
+                                        ])
+                                    ]
+                            except Exception as me:
+                                logger.warning("[PipelineService] mongo last-analysis read failed, PG fallback: %s", me)
+                                last_analysis_rows = None
+                            if last_analysis_rows is None:
+                                placeholders = ','.join(['%s'] * len(all_pool))
+                                last_analysis_rows = db.execute(f"""
+                                    SELECT ticker, MAX(created_at) as last_date
+                                    FROM analysis_results
+                                    WHERE ticker IN ({placeholders})
+                                    GROUP BY ticker
+                                """, list(all_pool.keys())).fetchall()
+
                             last_analysis_map = {r[0]: r[1] for r in last_analysis_rows}
                         else:
                             last_analysis_map = {}
@@ -865,16 +895,35 @@ class PipelineService:
                         
                         logger.info(f"[PipelineService] Scoring Engine top picks: {[s['ticker'] for s in top_scorers]}")
                         
-                        # Phase 4B: Fetch past verdicts for top 20
-                        placeholders = ','.join(['%s'] * len(top_scorers))
-                        with get_db() as db:
-                            past_results_rows = db.execute(f"""
-                                SELECT DISTINCT ON (ticker) ticker, action, confidence, reasoning, created_at
-                                FROM trade_results
-                                WHERE ticker IN ({placeholders})
-                                ORDER BY ticker, created_at DESC
-                            """, [s['ticker'] for s in top_scorers]).fetchall()
-                            past_results_map = {r[0]: {"action": r[1], "conf": r[2], "reason": r[3]} for r in past_results_rows}
+                        # Phase 4B: Fetch past verdicts for top 20 (latest per ticker)
+                        past_results_rows = None
+                        try:
+                            from app.db import mongo_store
+                            if mongo_store.reads_mongo("trade_results"):
+                                past_results_rows = [
+                                    (d["_id"], d.get("action"), d.get("confidence"), d.get("reasoning"))
+                                    for d in mongo_store.aggregate("trade_results", [
+                                        {"$match": {"ticker": {"$in": [s['ticker'] for s in top_scorers]}}},
+                                        {"$sort": {"ticker": 1, "created_at": -1}},
+                                        {"$group": {"_id": "$ticker",
+                                                    "action": {"$first": "$action"},
+                                                    "confidence": {"$first": "$confidence"},
+                                                    "reasoning": {"$first": "$reasoning"}}},
+                                    ])
+                                ]
+                        except Exception as me:
+                            logger.warning("[PipelineService] mongo past-verdicts read failed, PG fallback: %s", me)
+                            past_results_rows = None
+                        if past_results_rows is None:
+                            placeholders = ','.join(['%s'] * len(top_scorers))
+                            with get_db() as db:
+                                past_results_rows = db.execute(f"""
+                                    SELECT DISTINCT ON (ticker) ticker, action, confidence, reasoning, created_at
+                                    FROM trade_results
+                                    WHERE ticker IN ({placeholders})
+                                    ORDER BY ticker, created_at DESC
+                                """, [s['ticker'] for s in top_scorers]).fetchall()
+                        past_results_map = {r[0]: {"action": r[1], "conf": r[2], "reason": r[3]} for r in past_results_rows}
                         
                         # ── FRESHNESS GATE: classify stocks as NEW/CHANGED/STALE ──
                         from app.services.freshness_gate import run_freshness_gate

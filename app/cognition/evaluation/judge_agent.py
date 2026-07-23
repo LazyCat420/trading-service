@@ -206,11 +206,30 @@ async def evaluate_decision(decision_id: str) -> bool:
 
         try:
             # 1. Fetch raw logs
-            log = db.execute(
-                "SELECT cycle_id, ticker, context_hash, raw_response, created_at "
-                "FROM llm_audit_logs WHERE id = %s",
-                [decision_id],
-            ).fetchone()
+            log = None
+            _mongo_hit = False
+            try:
+                from app.db import mongo_store
+                if mongo_store.reads_mongo("llm_audit_logs"):
+                    docs = mongo_store.find_docs(
+                        "llm_audit_logs", {"id": decision_id}, limit=1,
+                        projection={"_id": 0, "cycle_id": 1, "ticker": 1,
+                                    "context_hash": 1, "raw_response": 1, "created_at": 1},
+                    )
+                    if docs:
+                        d = docs[0]
+                        log = (d.get("cycle_id"), d.get("ticker"), d.get("context_hash"),
+                               d.get("raw_response"), d.get("created_at"))
+                    _mongo_hit = True
+            except Exception as me:
+                logger.warning("[Judge] mongo log read failed, PG fallback: %s", me)
+                _mongo_hit = False
+            if not _mongo_hit:
+                log = db.execute(
+                    "SELECT cycle_id, ticker, context_hash, raw_response, created_at "
+                    "FROM llm_audit_logs WHERE id = %s",
+                    [decision_id],
+                ).fetchone()
 
             if not log:
                 logger.error(f"Cannot evaluate {decision_id}. Log not found.")

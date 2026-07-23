@@ -175,25 +175,46 @@ def run_freshness_gate(
 
     if tickers:
         try:
-            with get_db() as db:
-                placeholders = ",".join(["%s"] * len(tickers))
-                rows = db.execute(
-                    f"""
-                    SELECT DISTINCT ON (ticker)
-                        ticker, analysis_price, analysis_rsi, analysis_fund_count, created_at
-                    FROM analysis_results
-                    WHERE ticker IN ({placeholders})
-                    ORDER BY ticker, created_at DESC
-                    """,
-                    tickers,
-                ).fetchall()
-                for row in rows:
-                    analysis_snapshots[row[0]] = {
-                        "analysis_price": row[1],
-                        "analysis_rsi": row[2],
-                        "analysis_fund_count": row[3] or 0,
-                        "created_at": row[4],
-                    }
+            rows = None
+            try:
+                from app.db import mongo_store
+                if mongo_store.reads_mongo("analysis_results"):
+                    rows = [
+                        (d["_id"], d.get("analysis_price"), d.get("analysis_rsi"),
+                         d.get("analysis_fund_count"), d.get("created_at"))
+                        for d in mongo_store.aggregate("analysis_results", [
+                            {"$match": {"ticker": {"$in": tickers}}},
+                            {"$sort": {"ticker": 1, "created_at": -1}},
+                            {"$group": {"_id": "$ticker",
+                                        "analysis_price": {"$first": "$analysis_price"},
+                                        "analysis_rsi": {"$first": "$analysis_rsi"},
+                                        "analysis_fund_count": {"$first": "$analysis_fund_count"},
+                                        "created_at": {"$first": "$created_at"}}},
+                        ])
+                    ]
+            except Exception as me:
+                logger.warning("[FreshnessGate] mongo snapshot read failed, PG fallback: %s", me)
+                rows = None
+            if rows is None:
+                with get_db() as db:
+                    placeholders = ",".join(["%s"] * len(tickers))
+                    rows = db.execute(
+                        f"""
+                        SELECT DISTINCT ON (ticker)
+                            ticker, analysis_price, analysis_rsi, analysis_fund_count, created_at
+                        FROM analysis_results
+                        WHERE ticker IN ({placeholders})
+                        ORDER BY ticker, created_at DESC
+                        """,
+                        tickers,
+                    ).fetchall()
+            for row in rows:
+                analysis_snapshots[row[0]] = {
+                    "analysis_price": row[1],
+                    "analysis_rsi": row[2],
+                    "analysis_fund_count": row[3] or 0,
+                    "created_at": row[4],
+                }
         except Exception as e:
             logger.warning("[FreshnessGate] Could not fetch analysis snapshots: %s", e)
 
