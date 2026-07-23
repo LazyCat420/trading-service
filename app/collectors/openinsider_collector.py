@@ -72,20 +72,27 @@ async def collect_cluster_buys(days: int = 30) -> int:
     rows = []
     for tr in tr_elements:
         tds = tr.find_all("td")
-        if len(tds) < 12:
+        # Live layout (2026-07): X, Filing Date, Trade Date, Ticker,
+        # Company Name, Insider Name, Title, Trade Type, Price, Qty, Owned,
+        # ΔOwn, Value, 1d, 1w, 1m, 6m — the old offsets skipped Company Name
+        # and shifted every field one left, storing blank rows.
+        if len(tds) < 13:
             continue
 
         filing_date_str = tds[1].text.strip()
         trade_date_str = tds[2].text.strip()
         ticker = tds[3].text.strip().upper()
-        insider_name = tds[4].text.strip()
-        insider_title = tds[5].text.strip()
-        trade_type_full = tds[6].text.strip()
-        price_str = tds[7].text.strip()
-        qty_str = tds[8].text.strip()
-        owned_str = tds[9].text.strip()
-        delta_str = tds[10].text.strip()
-        value_str = tds[11].text.strip()
+        insider_name = tds[5].text.strip()
+        insider_title = tds[6].text.strip()
+        trade_type_full = tds[7].text.strip()
+        price_str = tds[8].text.strip()
+        qty_str = tds[9].text.strip()
+        owned_str = tds[10].text.strip()
+        delta_str = tds[11].text.strip()
+        value_str = tds[12].text.strip()
+
+        if not ticker or not insider_name:
+            continue
 
         price = clean_float(price_str)
         qty = clean_int(qty_str)

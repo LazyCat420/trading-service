@@ -32,10 +32,11 @@ async def test_collect_cluster_buys_success(mock_fetch, mock_db):
         <thead><tr><th>Header</th></tr></thead>
         <tbody>
             <tr>
-                <td>details</td>
+                <td>M</td>
                 <td>2026-05-15 18:20:10</td>
                 <td>2026-05-14</td>
                 <td>AAPL</td>
+                <td>Apple Inc</td>
                 <td>Cook Timothy D</td>
                 <td>CEO</td>
                 <td>P - Purchase</td>
