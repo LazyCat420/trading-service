@@ -29,8 +29,20 @@ broke the explicit-tickers trade path (UnboundLocalError) — always alias
 function-local imports in that file.
 
 Watch during soak: diversity of the next ~10 organic cycles (expect top-5
-analysis share to fall from 33%), whether the PM over-picks STALE rows, and
-youtube precollect (consider dropping it from the per-ticker coro set).
+analysis share to fall from 33%), whether the PM over-picks STALE rows.
+
+## Addendum: YouTube background sweeps (deployed + verified same day)
+youtube stays in per-ticker precollect (transcripts feed data reports +
+tournament evidence packets; pure scraper, zero LLM cost). Two new scheduler
+jobs keep youtube_transcripts warm so cycle-time reads hit stored data:
+- `youtube_prewarm` every 4h — 10 stalest active-watchlist tickers,
+  deliberately paced (45s between tickers) to avoid rate limits; data is
+  ready before the next cycle.
+- `youtube_channel_sweep` nightly 1:30 AM PT — collect_all (channel +
+  search discovery) previously had ZERO callers; now bounded (3 videos/
+  channel, 7d, 10 queries).
+Verified live: registration logged; manual 2-ticker batch stored 4 new
+transcripts (7,667 → 7,671).
 
 ---
 
