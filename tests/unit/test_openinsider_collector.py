@@ -25,8 +25,8 @@ def test_clean_helpers():
     assert clean_int("-50") == -50
 
 @pytest.mark.asyncio
-@patch("app.services.scraper_client.scraper_client.scrape")
-async def test_collect_cluster_buys_success(mock_scrape, mock_db):
+@patch("app.collectors.openinsider_collector._fetch_html")
+async def test_collect_cluster_buys_success(mock_fetch, mock_db):
     html_content = """
     <table class="tinytable">
         <thead><tr><th>Header</th></tr></thead>
@@ -48,7 +48,7 @@ async def test_collect_cluster_buys_success(mock_scrape, mock_db):
         </tbody>
     </table>
     """
-    mock_scrape.return_value = {"success": True, "content": html_content}
+    mock_fetch.return_value = html_content
 
     count = await collect_cluster_buys(days=30)
     assert count == 1

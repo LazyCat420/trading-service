@@ -1,14 +1,28 @@
 """
-tradingeconomics_collector.py — Scrapes calendar data from TradingEconomics.
+tradingeconomics_collector.py — economic-calendar collection.
+
+Primary source: ForexFactory's public weekly JSON feed (stable, no scraping).
+Fallback: the original TradingEconomics HTML table, fetched as RAW html via
+httpx — the scraper-service /scrape endpoint returns text-extracted content
+(no tags), which table parsing can never work on.
 """
 import logging
 import datetime
 import hashlib
+import httpx
 from bs4 import BeautifulSoup
-from app.services.scraper_client import scraper_client
 from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
+
+_FF_FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 def parse_val(val_str: str) -> float | None:
     if not val_str:
@@ -32,16 +46,73 @@ def parse_val(val_str: str) -> float | None:
     except ValueError:
         return None
 
-async def collect_economic_calendar() -> int:
-    """Scrapes Trading Economics calendar, writing to economic_calendar."""
-    url = "https://tradingeconomics.com/calendar"
-    
-    res = await scraper_client.scrape(url, engine="http")
-    if not res or not res.get("content"):
-        logger.error("[tradingeconomics] Scraper failed to fetch TradingEconomics page")
+async def _collect_forexfactory() -> int:
+    """Pull this week's calendar from ForexFactory's public JSON feed and
+    upsert into economic_calendar. Returns rows written (0 on any failure)."""
+    try:
+        async with httpx.AsyncClient(timeout=30, headers=_BROWSER_HEADERS) as client:
+            resp = await client.get(_FF_FEED_URL)
+            resp.raise_for_status()
+            events = resp.json()
+    except Exception as e:
+        logger.warning("[tradingeconomics] ForexFactory feed failed: %s", e)
+        return 0
+    if not isinstance(events, list):
         return 0
 
-    soup = BeautifulSoup(res["content"], "html.parser")
+    rows = []
+    for ev in events:
+        event_name = (ev.get("title") or "").strip()
+        country = (ev.get("country") or "").strip().upper()
+        if not event_name or not country:
+            continue
+        try:
+            event_date = datetime.datetime.fromisoformat(ev.get("date"))
+        except (TypeError, ValueError):
+            continue
+        impact = (ev.get("impact") or "").strip().lower()
+        importance = impact if impact in ("high", "medium", "low") else "low"
+        forecast = parse_val(str(ev.get("forecast") or ""))
+        previous = parse_val(str(ev.get("previous") or ""))
+
+        id_input = f"{event_name}_{country}_{event_date.isoformat()}"
+        event_id = hashlib.sha256(id_input.encode("utf-8")).hexdigest()
+        rows.append((
+            event_id, event_name, country, event_date,
+            None, forecast, previous, importance, "forexfactory"
+        ))
+
+    if rows:
+        with get_db() as db:
+            db.executemany("""
+                INSERT INTO economic_calendar
+                (id, event_name, country, event_date, actual, forecast, previous, importance, source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE
+                SET actual = EXCLUDED.actual, forecast = EXCLUDED.forecast, previous = EXCLUDED.previous
+            """, rows)
+        logger.info("[tradingeconomics] ForexFactory feed: %d calendar events", len(rows))
+    return len(rows)
+
+
+async def collect_economic_calendar() -> int:
+    """Collect the economic calendar: ForexFactory JSON first, TE HTML fallback."""
+    count = await _collect_forexfactory()
+    if count:
+        return count
+
+    url = "https://tradingeconomics.com/calendar"
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+                                     headers=_BROWSER_HEADERS) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            html = resp.text
+    except Exception as e:
+        logger.error("[tradingeconomics] Failed to fetch TradingEconomics page: %s", e)
+        return 0
+
+    soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", id="calendar")
     if not table:
         logger.warning("[tradingeconomics] Table id='calendar' not found in HTML")

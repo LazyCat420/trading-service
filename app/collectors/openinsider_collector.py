@@ -1,15 +1,37 @@
 """
 openinsider_collector.py — Scrapes insider trades from OpenInsider.
-Uses scraper-service to bypass Cloudflare.
+
+Fetches raw HTML directly (httpx + browser headers): the scraper-service
+/scrape endpoint returns text-EXTRACTED content (no tags, truncated), which
+BeautifulSoup table parsing can never work on.
 """
 import logging
 import datetime
 import hashlib
+import httpx
 from bs4 import BeautifulSoup
-from app.services.scraper_client import scraper_client
 from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
+
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+async def _fetch_html(url: str) -> str | None:
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+                                     headers=_BROWSER_HEADERS) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.text
+    except Exception as e:
+        logger.error("[openinsider] fetch failed for %s: %s", url, e)
+        return None
 
 def clean_float(val: str) -> float | None:
     if not val:
@@ -33,12 +55,12 @@ async def collect_cluster_buys(days: int = 30) -> int:
     """Scrape OpenInsider screener for cluster buys."""
     url = f"http://openinsider.com/screener?s=&o=&pl=&ph=&ll=&lh=&fd={days}&fdr=&td=&tdr=&feession=&cession=&sicl=&sich=&grp=1&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=1&cnt=100&page=1"
     
-    res = await scraper_client.scrape(url, engine="http")
-    if not res or not res.get("content"):
+    html = await _fetch_html(url)
+    if not html:
         logger.error("[openinsider] Failed to fetch OpenInsider HTML content")
         return 0
 
-    soup = BeautifulSoup(res["content"], "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", class_="tinytable")
     if not table:
         logger.warning("[openinsider] table.tinytable not found in page HTML")
