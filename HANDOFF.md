@@ -1,3 +1,39 @@
+# HANDOFF — Wave 4 (2026-07-23): ticker-diversity + policy-gate hardening — CYCLE-VERIFIED
+
+Deployed + verified on discovery cycle `cycle-v3-1784792603` (07:47Z). The
+gatekeeper picked **TAX, SMCI, IBM, MSCI** — zero overlap with the regulars —
+and the top-20 included the previously-stranded discovery tickers (LMT, SHOP,
+BLK, VZ, ABT, ABNB, CVX). Baseline problem (14d data): 66.7% of analyses were
+<24h re-runs, NVDA ran 13/14 days, 25/46 discovered tickers never cycled.
+
+What's live (all in the discovery path, pipeline_service.py unless noted):
+1. Hard re-analysis exclusion — governed param `PIPELINE_REANALYSIS_EXCLUDE_HOURS`
+   (12h default, held positions exempt, 0 disables).
+2. discovered_tickers (valid, 7d, top 30) merged into the candidate pool.
+3. Trending LIMITs 40/30/15 (were 10/10/5) + per-ticker mention cap 10.
+4. Recency penalty through day 7 + +20 for never-analyzed.
+5. Freshness gate: composite 0.40→0.25, news_count_max 3→2 (LIVE SQL applied
+   to freshness_gate_config + code defaults).
+6. Gatekeeper sees top-4 STALE-tagged rows; sector cap 2/sector on top-20
+   (new app/services/ticker_meta.py); mega-cap ≤1 enforced in code post-LLM.
+7. Policy gate (orchestrator): SELL with unknown holdings resolves LIVE from
+   the portfolio; enforced label persisted to **trade_results.policy_action**
+   (new column, both stores) + visible 🚫 blocked event. Verified in-cycle:
+   IBM SELL@68 → HOLD_NO_POSITION (the exact silent-no-op hole, now caught).
+8. Precollect budget 45s → `PRECOLLECT_TIMEOUT_SECONDS` (90s): reddit +
+   multi-api now finish; only youtube still times out.
+
+Trap fixed en route: a bare `from parameter_store import get_param` inside
+the discovery branch shadowed the name for the WHOLE `_run_all_v3` scope and
+broke the explicit-tickers trade path (UnboundLocalError) — always alias
+function-local imports in that file.
+
+Watch during soak: diversity of the next ~10 organic cycles (expect top-5
+analysis share to fall from 33%), whether the PM over-picks STALE rows, and
+youtube precollect (consider dropping it from the per-ticker coro set).
+
+---
+
 # HANDOFF — Wave 3 (2026-07-23): Mongo read-flips + alt-data/book-brief injection + 13F/fundamentals cadence
 
 Commits: trading-service through `wave-3 HEAD` (read-flips + alt-data/book-brief/scheduler), lazy-agent mirror synced. All deployed; **cycle-verified** on `cycle-v3-1784788522` (NVDA analyze-only, 8 agents, clean).
