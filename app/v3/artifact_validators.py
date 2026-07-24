@@ -160,6 +160,19 @@ def validate_fundamental_report_artifact(artifact: dict) -> dict:
     if not isinstance(artifact, dict):
         return artifact
 
+    # thesis_direction is REQUIRED and consumed directionally by the
+    # contradiction shadow, the debate and the scorecard — but 5 live artifacts
+    # emitted the schema placeholder "BULLISH|BEARISH|NEUTRAL" verbatim, which
+    # every consumer then read as an unmatched string. Coerce to the
+    # least-committal stance and say so, matching the regime artifact's
+    # fallback convention.
+    thesis = str(artifact.get("thesis_direction", "")).strip().upper()
+    if thesis and thesis not in {"BULLISH", "BEARISH", "NEUTRAL"}:
+        _note(artifact, f"thesis_direction {artifact.get('thesis_direction')!r} → NEUTRAL")
+        artifact["thesis_direction"] = "NEUTRAL"
+    elif thesis:
+        artifact["thesis_direction"] = thesis
+
     horizon = str(artifact.get("horizon", "")).strip().upper()
     if horizon:
         if horizon in {"WEEKS", "QUARTERS", "YEARS"}:

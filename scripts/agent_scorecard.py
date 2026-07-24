@@ -188,6 +188,72 @@ def fetch_rows(since: str) -> list[dict]:
     return out
 
 
+def fetch_rows_from_prices(since: str, horizon: int = 7) -> list[dict]:
+    """Every desk scored directly against price_history — no waiting.
+
+    `decision_outcomes` was never the data limit, only the bookkeeping limit:
+    it carries one row per *actionable* decision and is written by a separate
+    resolver on a 7-day timer, which capped the scorecard at 53 samples. But a
+    desk already knows its ticker and its date, and price_history knows what
+    happened next. Measured 2026-07-24 that is **520 desks at +7 sessions and
+    865 at +1** — a 10-16x larger sample, available immediately, and it
+    includes the HOLD desks that never get an outcome row at all.
+
+    Convention: entry is the first close on/after the desk date, exit is
+    `horizon` sessions later. Applied identically to every agent, so
+    cross-agent comparisons stay fair even where the fill is idealized.
+    """
+    from app.db.connection import get_db
+
+    sessions = horizon + 1  # entry + horizon forward sessions
+    with get_db() as db:
+        rows = db.execute(
+            """
+            SELECT s.cycle_id, s.ticker, s.created_at, s.desk_data
+            FROM shared_desk s
+            WHERE s.created_at >= %s
+            ORDER BY s.created_at ASC
+            """,
+            [since],
+        ).fetchall()
+
+        out = []
+        for cycle_id, ticker, created_at, desk_data in rows:
+            desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
+            prices = db.execute(
+                """
+                SELECT close FROM price_history
+                WHERE ticker = %s AND close IS NOT NULL AND date >= %s
+                ORDER BY date ASC LIMIT %s
+                """,
+                [ticker, created_at.date() if hasattr(created_at, "date") else created_at,
+                 sessions],
+            ).fetchall()
+            if len(prices) < sessions:
+                continue  # window hasn't closed yet
+            try:
+                entry = float(prices[0][0])
+                exit_ = float(prices[-1][0])
+            except (TypeError, ValueError):
+                continue
+            # NaN survives the NOT NULL filter.
+            if not entry or entry != entry or exit_ != exit_:
+                continue
+
+            decision = desk.get("trade_decision") or desk.get("final_decision") or {}
+            out.append({
+                "cycle_id": cycle_id,
+                "ticker": ticker,
+                "action": decision.get("action"),
+                "confidence": decision.get("confidence"),
+                "move_pct": (exit_ - entry) / entry * 100.0,
+                "outcome": None,
+                "created_at": created_at,
+                "desk": desk,
+            })
+    return out
+
+
 def score_agents(rows: list[dict]) -> dict:
     stats: dict[str, dict] = defaultdict(lambda: {
         "n": 0, "decisive": 0, "hits": 0, "misses": 0,
@@ -321,25 +387,41 @@ def main() -> int:
     ap.add_argument("--since", default="2026-06-18",
                     help="Only score decisions created on/after this date (default: shared_desk history start)")
     ap.add_argument("--json", dest="json_out", help="Also write the raw report to this path")
+    ap.add_argument("--source", choices=("outcomes", "price"), default="outcomes",
+                    help="outcomes = resolved decision_outcomes (the original, "
+                         "bookkeeping-limited sample). price = score every desk "
+                         "straight from price_history — ~10x the sample, no wait.")
+    ap.add_argument("--horizon", type=int, default=7,
+                    help="Forward trading sessions to score over (price source only)")
     args = ap.parse_args()
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    rows = fetch_rows(args.since)
+    if args.source == "price":
+        rows = fetch_rows_from_prices(args.since, args.horizon)
+        source_label = f"desks scored on the +{args.horizon}-session move"
+    else:
+        rows = fetch_rows(args.since)
+        source_label = "resolved decisions"
     if not rows:
-        print(f"No resolved decisions with a persisted desk since {args.since}.")
+        print(f"No scoreable desks since {args.since} (source={args.source}).")
         return 1
 
     report = score_agents(rows)
     handoffs = score_handoffs(rows)
 
-    wins = sum(1 for r in rows if r["outcome"] == "WIN")
-    losses = sum(1 for r in rows if r["outcome"] == "LOSS")
-    flats = sum(1 for r in rows if r["outcome"] in ("FLAT", "HOLD_CORRECT", "HOLD_MISS"))
+    if args.source == "price":
+        wins = sum(1 for r in rows if r["move_pct"] > DEADBAND_PCT)
+        losses = sum(1 for r in rows if r["move_pct"] < -DEADBAND_PCT)
+        flats = len(rows) - wins - losses
+    else:
+        wins = sum(1 for r in rows if r["outcome"] == "WIN")
+        losses = sum(1 for r in rows if r["outcome"] == "LOSS")
+        flats = sum(1 for r in rows if r["outcome"] in ("FLAT", "HOLD_CORRECT", "HOLD_MISS"))
 
     print(f"\n{'='*104}")
-    print(f"AGENT SCORECARD — {len(rows)} resolved decisions since {args.since} "
-          f"({wins}W / {losses}L / {flats}F)")
+    print(f"AGENT SCORECARD — {len(rows)} {source_label} since {args.since} "
+          f"({wins}↑ / {losses}↓ / {flats}→)")
     print(f"{'='*104}")
     print(f"{'agent':<24} {'n':>4} {'dir':>5} {'dec':>5} {'hit%':>6} {'95% CI':>14} "
           f"{'edge%':>7} {'brier':>6} {'confΔ':>6} {'flat%':>6}")

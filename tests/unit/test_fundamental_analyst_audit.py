@@ -1,11 +1,18 @@
 """Tests for the 2026-07-24 Fundamental Analyst audit (Phase 3).
 
-Measured over 322 real reports and 56 resolved outcomes:
+Measured over 322 real reports.
 
-- its directional call had no demonstrated edge — BULLISH calls averaged a
-  -0.54% realized move and BEARISH calls +0.72% — while stated confidence sat
-  at 76-84. Fetching more data did NOT explain it: zero-tool runs scored
-  slightly BETTER (40% vs 29%), so the fix is not "call more tools".
+- CORRECTED 2026-07-24: the original read ("BULLISH calls averaged -0.54%")
+  came from 53 resolved outcomes and does NOT survive the full sample. Scored
+  against price_history directly (n=387), BULLISH averages +0.43% at 53% hit
+  and the desk is the best-performing research agent at 56.5%. What does hold
+  at full power: BEARISH calls are still inverted (+0.75% average move, 42%
+  hit), and NEUTRAL is 170 of 387 calls on stocks that then moved +3.74% on
+  average, with only 13% actually staying flat — which is the horizon mismatch
+  this phase addresses, not a weak analyst.
+- Confidence sat at 76-84 regardless. Fetching more data did NOT explain the
+  gap: zero-tool runs scored slightly BETTER, so the fix is not "call more
+  tools".
 - nothing in V3 carried a horizon (`grep horizon` returned nothing), so a
   multi-quarter business view was consumed as a vote on a trade that resolves
   in 7 days. near_term_read is the horizon-matched signal.
@@ -117,3 +124,22 @@ class TestPromptContract:
 
         assert "near_term_read" in SYSTEM_PROMPT
         assert "matters_this_week" in SYSTEM_PROMPT
+
+
+class TestThesisDirectionNormalization:
+    """5 live artifacts emitted the schema placeholder verbatim as their
+    direction; every downstream consumer read it as an unmatched string."""
+
+    def test_echoed_schema_literal_becomes_neutral(self):
+        out = coerce("fundamental_report", _report(thesis_direction="BULLISH|BEARISH|NEUTRAL"))
+        assert out["thesis_direction"] == "NEUTRAL"
+        assert any("thesis_direction" in n for n in out.get("_validator_notes", []))
+
+    @pytest.mark.parametrize("raw", ["bullish", "Bearish", "NEUTRAL"])
+    def test_case_is_normalized(self, raw):
+        out = coerce("fundamental_report", _report(thesis_direction=raw))
+        assert out["thesis_direction"] == raw.upper()
+
+    def test_valid_direction_is_untouched(self):
+        out = coerce("fundamental_report", _report(thesis_direction="BEARISH"))
+        assert out["thesis_direction"] == "BEARISH"
