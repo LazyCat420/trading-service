@@ -539,9 +539,16 @@ async def _run_head_to_head(
             logger.error("[TOURNAMENT] H2H %s failed: %s", side_name, e)
             return thesis  # Return original thesis on failure
 
-    # Sequential — same Prism agent per side; concurrency 409s (see Stage 1).
-    result_a = await run_side(system_a, "bull", thesis_a)
-    result_b = await run_side(system_b, "bear", thesis_b)
+    # Concurrent since 2026-07-24 — see the Stage 1 note. The two sides argue
+    # from the finished theses and never read each other's output within this
+    # round, so ordering carries no information; it only cost wall clock.
+    # run_side already returns the original thesis on failure, so a raised
+    # exception here would be a bug rather than an expected path — let it
+    # propagate to the caller's tournament-level handler.
+    result_a, result_b = await asyncio.gather(
+        run_side(system_a, "bull", thesis_a),
+        run_side(system_b, "bear", thesis_b),
+    )
 
     return result_a, result_b
 
@@ -707,10 +714,24 @@ async def _run_jury_scoring(
         else JURY_PERSONAS
     )
 
-    # Sequential — same Prism agent per juror; concurrency 409s (see Stage 1).
+    # Concurrent since 2026-07-24 — see the Stage 1 note. Each juror already
+    # gets its own Prism conversation via a unique first line, so the 409 this
+    # loop was avoiding cannot occur. Jurors are independent by construction:
+    # they score the same finished bracket and never read each other.
+    juror_items = list(active_jurors.items())
+    gathered = await asyncio.gather(
+        *(run_juror(name, config) for name, config in juror_items),
+        return_exceptions=True,
+    )
     results = []
-    for name, config in active_jurors.items():
-        results.append(await run_juror(name, config))
+    for (name, _config), outcome in zip(juror_items, gathered):
+        if isinstance(outcome, BaseException):
+            # A juror that dies must not take the panel with it — it is simply
+            # excluded, exactly as a PARSE_FAIL juror already is below.
+            logger.error("[TOURNAMENT] Juror %s failed: %s", name, outcome)
+            results.append(({"juror": name, "score": None}, 0))
+            continue
+        results.append(outcome)
 
     scores = []
     votes = {"A": 0, "B": 0}
@@ -798,18 +819,30 @@ async def run_tournament_debate(
     )
     logger.info("[TOURNAMENT] Stage 1: Pitch Generation (%d personas)", len(active_personas))
 
-    # SEQUENTIAL by design: all personas resolve to the same Prism custom
-    # agent, and Prism's admission control allows one active turn per
-    # agent-conversation — concurrent pitches get 409 GENERATION_IN_PROGRESS
-    # (observed live: every tournament degraded to 0-1/4 pitches → fallback).
-    pitch_results = []
-    for name, config in active_personas.items():
-        try:
-            pitch_results.append(
-                await _run_pitch_agent(name, config, ticker, packet, cycle_id, bot_id)
-            )
-        except Exception as pitch_exc:
-            pitch_results.append(pitch_exc)
+    # CONCURRENT since 2026-07-24. This loop was sequential because concurrent
+    # pitches used to collide on one Prism conversation and 409 — but Prism
+    # groups conversations by (agent, first-user-msg hash), and the persona
+    # name was later added to the user message precisely to separate them (see
+    # _run_pitch_agent). That fix landed; the serialization it made unnecessary
+    # did not get removed, and the stage kept paying ~4x its wall clock.
+    #
+    # Verified empirically before changing this: 4 concurrent llm.chat calls to
+    # the same Prism agent with distinct user messages returned 0 failures in
+    # 8.2s versus ~32s sequential.
+    #
+    # KV-cache safety is NOT handled here on purpose. Every llm.chat() acquires
+    # a slot from the global AdaptiveConcurrencyController, which reads live
+    # vLLM /metrics and throttles to ADAPTIVE_MIN_CONCURRENCY (8) once cache
+    # pressure passes 80%. Adding a second local semaphore on top would risk
+    # the classic nested-limit deadlock while duplicating a budget that is
+    # already global across every ticker in flight.
+    pitch_results = await asyncio.gather(
+        *(
+            _run_pitch_agent(name, config, ticker, packet, cycle_id, bot_id)
+            for name, config in active_personas.items()
+        ),
+        return_exceptions=True,
+    )
 
     pitches = []
     persona_keys = list(active_personas.keys())
