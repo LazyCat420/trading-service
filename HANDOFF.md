@@ -167,11 +167,50 @@ HOLD/size-0, bearish reasoning retained) → no-trade-available gate (unheld +
 both research desks BEARISH → skip the ~246s tournament, board still decides).
 Kill switch `V3_NO_TRADE_GATE=false`.
 
+### bot_id resolution — one bug, four silent failures (`a97929e`)
+
+Investigating why `hrp_weight_suggestion` was null in 516/568 quant reports
+found a root cause far wider than sizing. `run_v3_pipeline(bot_id: str = "")`
+was never passed a bot_id by its only caller, so every desk stored `bot_id=''`
+and the fallbacks resolved to `settings.BOT_ID` — a bot with **zero
+positions** — while the active bot held 9.
+
+| System | Was | Now |
+|---|---|---|
+| HRP sizing | **never ran** (needs ≥2 tickers, saw an empty book) | computes |
+| `held` flag | **False for everything**, incl. genuinely-held TSM/JPM/ALLY | correct |
+| Drawdown breaker | 0 rows → `None` → **could never trip** | returns -0.45% |
+| Book brief | described an empty portfolio to quant + board | real 9 positions |
+
+GARCH needs no bot_id and kept working, so the quant-math block looked healthy
+— of 51 desks carrying one, **zero** had an HRP line. **The board was never
+"ignoring" the covariance math; it was never given any.** The +0.24 correlation
+reported earlier came from 16 rows of model-invented numbers.
+
+`resolve_bot_id()` (explicit > active > settings) in `portfolio_tools` is now
+the single resolver. Never reintroduce a bare `settings.BOT_ID` fallback.
+`trading_tools.py` already resolved correctly and is unchanged.
+
 ---
 
 ## Open items — act on these next
 
+- **RE-DERIVE THE PHASE 6 NUMBERS ONCE FRESH CYCLES LAND.** The 69%
+  unactionable figure and the executability split are computed from the desk
+  `held` flag, which was wrong for every desk before `a97929e`. The SELL
+  direction of the finding holds (those were held=False and genuinely
+  unshortable), but the counts will move. Do not quote 69% as settled.
+- **Historical `held` is unreliable, and worse than merely wrong.** 16 tickers
+  (AMZN, GOOGL, META, WFC, XOM, DIS, CRM, ASML) carry `held=true` on desks
+  despite having **no BUY fill in any bot's history**, and agents were shown
+  fabricated positions — "CURRENTLY HOLDING WFC: Entry $86.30, P&L +0.1%, Held
+  10 days". Current code returns held=False for these, so it is a legacy
+  artifact, not a live fault. Root cause never established; a purged bot
+  profile is the leading theory. Anything mining desks before 2026-07-24 for
+  position state must treat `held` as untrusted.
 - **POSITION SIZING IS A HABIT, NOT A CALCULATION — highest-value open item.**
+  (Now genuinely buildable: HRP produces real numbers for the first time.
+  Confirm HRP lands in a live block before building the sizing frame on it.)
   Sizing is already agentic (agent proposes `position_size_pct`, code haircuts
   it in `resolve_buy_size_pct`), but across 181 BUYs the board used only **10
   distinct values**, and 80% were exactly 3%, 4% or 5%. Correlation with the
