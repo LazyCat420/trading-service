@@ -161,6 +161,51 @@ async def _persist_quant_chart(ticker: str, artifact: dict) -> None:
     logger.info("[V3Runner] %s: persisted %d chart overlays (%s)", ticker, len(overlays), result[:60] if isinstance(result, str) else result)
 
 
+async def _persist_quant_signals(desk: Any, cycle_id: str, artifact: dict) -> None:
+    """Post the quant's `signals` section to the whiteboard from its artifact.
+
+    The prompt called this write MANDATORY ("a run with zero whiteboard writes
+    is incomplete") and it happened in 9 of 56 runs — because the agent emits
+    its final JSON on turn 1 in 84% of runs and never reaches the step. The
+    debate and Board are supposed to argue over these levels, so the desk was
+    usually missing the only numbers it has.
+
+    Same fix as the chart overlays: derive it from the artifact, which the
+    model reliably fills, instead of depending on a mid-loop tool call.
+    """
+    metrics = artifact.get("risk_metrics") or {}
+    if not isinstance(metrics, dict):
+        metrics = {}
+
+    content = {
+        "thesis_direction": artifact.get("thesis_direction"),
+        "confidence": artifact.get("confidence"),
+        "rsi": metrics.get("rsi"),
+        "atr": metrics.get("atr"),
+        "volatility_regime": metrics.get("volatility_regime"),
+        "vol_signal": metrics.get("vol_signal"),
+        "sma_200_status": metrics.get("sma_200_status"),
+        "bollinger_position": metrics.get("bollinger_position"),
+        "stop_loss_suggestion": artifact.get("stop_loss_suggestion"),
+        "hrp_weight_suggestion": artifact.get("hrp_weight_suggestion"),
+        "position_sizing_note": artifact.get("position_sizing_note"),
+        "open_questions": artifact.get("sub_analyses_requested") or [],
+    }
+    content = {k: v for k, v in content.items() if v not in (None, "", [])}
+    if not content:
+        return
+
+    from app.agents.whiteboard import whiteboard
+
+    await whiteboard.write_section(
+        ticker=desk.ticker,
+        cycle_id=cycle_id,
+        section="signals",
+        content=content,
+        author_agent="v3_quant_analyst",
+    )
+
+
 async def run_v3_agent(
     desk: SharedDesk,
     agent_module: Any,
@@ -318,6 +363,12 @@ async def run_v3_agent(
             quant_math = desk.cycle_metadata.get("quant_math_context", "")
             if quant_math:
                 dynamic_sections.append((_KEEP, quant_math))
+            # Verified indicator values — never shed: these are the numbers the
+            # agent would otherwise invent (measured 2026-07-24), and they are
+            # what the reconciliation pass will enforce on its artifact anyway.
+            tech_baseline = desk.cycle_metadata.get("technical_baseline_context", "")
+            if tech_baseline:
+                dynamic_sections.append((_KEEP, tech_baseline))
             book_brief = desk.cycle_metadata.get("book_brief_context", "")
             if book_brief:
                 dynamic_sections.append((_KEEP, book_brief))
@@ -717,11 +768,45 @@ async def run_v3_agent(
         # artifact's `overlays` field (which the model reliably fills) and we
         # write the chart here, independent of whether the tool was called.
         if agent_name == "v3_quant_analyst":
+            # Fabrication guard (2026-07-24 audit): 171 of 305 quant reports
+            # carried an RSI that matched NO number anywhere on the desk, and
+            # 148 of those came from runs with zero tool calls. risk_metrics
+            # drives volatility_regime and stop placement, so a made-up RSI is
+            # not a cosmetic problem. Verifiable fields are replaced with
+            # values computed from stored data; the model's originals are kept
+            # on the artifact so the rate stays measurable.
+            try:
+                from app.quant.technical_baseline import reconcile_risk_metrics
+
+                report = reconcile_risk_metrics(
+                    artifact, desk.ticker, model_used_tools=loops_used > 1
+                )
+                if report.get("corrected"):
+                    logger.warning(
+                        "[V3Runner] %s: quant risk_metrics disagreed with stored "
+                        "data (%sapplied, baseline %s): %s",
+                        desk.ticker,
+                        "" if report.get("applied") else "NOT ",
+                        report.get("as_of", "?"),
+                        report["corrected"],
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] risk_metrics reconciliation failed for %s: %s: %s",
+                    desk.ticker, type(e).__name__, e,
+                )
             try:
                 await _persist_quant_chart(desk.ticker, artifact)
             except Exception as e:
                 logger.warning(
                     "[V3Runner] chart overlay persist failed for %s: %s: %s",
+                    desk.ticker, type(e).__name__, e,
+                )
+            try:
+                await _persist_quant_signals(desk, cycle_id, artifact)
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] quant signals whiteboard write failed for %s: %s: %s",
                     desk.ticker, type(e).__name__, e,
                 )
 

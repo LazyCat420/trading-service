@@ -167,6 +167,24 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: quant math precompute failed (non-fatal): %s", ticker, e)
 
+    # Verified technical baseline (2026-07-24 audit): the quant desk was
+    # reporting RSI/ATR/SMA values that matched nothing on the desk in 56% of
+    # reports. The authoritative numbers live in the `technicals` table — put
+    # them in front of the agent instead of hoping it calls a tool (it makes
+    # none in 84% of runs).
+    try:
+        from app.quant.technical_baseline import build_technical_baseline_block
+        tech_block = await asyncio.wait_for(
+            asyncio.to_thread(build_technical_baseline_block, ticker),
+            timeout=15,
+        )
+        if tech_block:
+            desk.cycle_metadata["technical_baseline_context"] = tech_block
+            logger.info("[V3] %s: verified technical baseline injected (%d chars)",
+                        ticker, len(tech_block))
+    except Exception as e:
+        logger.warning("[V3] %s: technical baseline failed (non-fatal): %s", ticker, e)
+
     # Alternative data (2026-07-23 collector wave): insider cluster buys +
     # social chatter, precomputed for the research analysts — same rationale
     # as the quant block, the data must be ON the desk, not behind a tool.
