@@ -108,11 +108,54 @@ FUNDAMENTAL_REPORT_SCHEMA: dict = {
         "thesis_direction": {
             "type": "string",
             "enum": ["BULLISH", "BEARISH", "NEUTRAL"],
+            "description": (
+                "The BUSINESS view, over `horizon` — not a trade signal for "
+                "this week. See near_term_read for the trade-horizon call."
+            ),
+        },
+        "horizon": {
+            "type": "string",
+            "enum": ["WEEKS", "QUARTERS", "YEARS"],
+            "description": (
+                "Over what period thesis_direction is expected to play out. "
+                "Added 2026-07-24: nothing in V3 carried a horizon, so a "
+                "multi-quarter business view was consumed as a vote on a trade "
+                "that resolves in 7 days."
+            ),
+        },
+        "near_term_read": {
+            "type": "object",
+            "description": (
+                "The horizon-matched signal (2026-07-24 audit). Trades resolve "
+                "on a 7-day horizon; fundamentals rarely move a stock in a "
+                "week. This states whether the fundamental picture is actually "
+                "expected to bear on the NEXT 1-2 WEEKS, so downstream desks "
+                "stop reading a 3-year view as a 5-day one."
+            ),
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": ["BULLISH", "BEARISH", "NEUTRAL"],
+                },
+                "matters_this_week": {
+                    "type": "boolean",
+                    "description": (
+                        "False when the thesis is real but has no near-term "
+                        "trigger — the honest answer most of the time."
+                    ),
+                },
+                "why": {"type": "string"},
+            },
         },
         "confidence": {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            "description": (
+                "Confidence in thesis_direction. Historically pinned at 76-84 "
+                "while directional accuracy sat near chance — it must track "
+                "what was actually verified."
+            ),
         },
         "data_gaps": {
             "type": "array",

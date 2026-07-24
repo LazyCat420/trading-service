@@ -73,6 +73,19 @@ def _stance(artifact: dict) -> int | None:
     direction; pre-2026-07-24 desk_notes carried no direction field either)."""
     if not isinstance(artifact, dict):
         return None
+
+    # Horizon-matched grading (2026-07-24 audit): outcomes resolve on a 7-day
+    # horizon, so for the fundamental desk the gradeable claim is its
+    # near_term_read — not thesis_direction, which is an explicitly
+    # multi-quarter business view. Scoring a YEARS thesis against a 7-day move
+    # measures the wrong thing and reads as noise no matter how good the
+    # analysis is.
+    read = artifact.get("near_term_read")
+    if isinstance(read, dict):
+        key = str(read.get("direction", "")).strip().upper()
+        if key in _DIRECTION_MAP:
+            return _DIRECTION_MAP[key]
+
     for field in _DIRECTION_FIELDS:
         raw = artifact.get(field)
         if raw is None:

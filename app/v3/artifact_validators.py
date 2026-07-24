@@ -150,6 +150,55 @@ def validate_desk_note_artifact(artifact: dict) -> dict:
     return artifact
 
 
+def validate_fundamental_report_artifact(artifact: dict) -> dict:
+    """Normalize the horizon fields added by the 2026-07-24 audit.
+
+    near_term_read.direction is what downstream desks weigh for a trade that
+    resolves in ~7 days, and what the scorecard grades, so a stray "bullish"
+    or an echoed schema literal must not survive as an unmatched string.
+    """
+    if not isinstance(artifact, dict):
+        return artifact
+
+    horizon = str(artifact.get("horizon", "")).strip().upper()
+    if horizon:
+        if horizon in {"WEEKS", "QUARTERS", "YEARS"}:
+            artifact["horizon"] = horizon
+        else:
+            _note(artifact, f"horizon {artifact.get('horizon')!r} invalid — dropped")
+            artifact.pop("horizon", None)
+
+    read = artifact.get("near_term_read")
+    if isinstance(read, dict):
+        direction = str(read.get("direction", "")).strip().upper()
+        if direction in {"BULLISH", "BEARISH", "NEUTRAL"}:
+            read["direction"] = direction
+        else:
+            if direction:
+                _note(artifact, f"near_term_read.direction={read.get('direction')!r} invalid — dropped")
+            read.pop("direction", None)
+
+        matters = read.get("matters_this_week")
+        if isinstance(matters, str):
+            lowered = matters.strip().lower()
+            if lowered in ("true", "yes"):
+                read["matters_this_week"] = True
+            elif lowered in ("false", "no"):
+                read["matters_this_week"] = False
+            else:
+                read.pop("matters_this_week", None)
+        elif matters is not None and not isinstance(matters, bool):
+            read.pop("matters_this_week", None)
+
+        # A read with nothing directional in it tells downstream nothing.
+        if not read.get("direction"):
+            artifact.pop("near_term_read", None)
+    elif read is not None:
+        artifact.pop("near_term_read", None)
+
+    return artifact
+
+
 def validate_trade_decision_artifact(artifact: dict) -> dict:
     """Make dynamic_trigger actually evaluable (value=None never fires)."""
     if not isinstance(artifact, dict):
@@ -201,6 +250,7 @@ def validate_trade_decision_artifact(artifact: dict) -> dict:
 _VALIDATORS = {
     "regime_classification": validate_regime_artifact,
     "desk_note": validate_desk_note_artifact,
+    "fundamental_report": validate_fundamental_report_artifact,
     "trade_decision": validate_trade_decision_artifact,
     # The board's final_decision carries the same dynamic_trigger shape.
     "final_decision": validate_trade_decision_artifact,
