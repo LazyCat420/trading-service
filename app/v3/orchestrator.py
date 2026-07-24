@@ -759,6 +759,57 @@ async def run_v3_pipeline(
                 _queue_agent("board_of_directors", None, parent="regime_engine")
             return
 
+        # ── No-trade-available gate (2026-07-24 audit) ──
+        # There is no shorting: on a ticker the bot does not hold, the only
+        # executable outcome is BUY. When BOTH research desks came back
+        # BEARISH, the debate is being asked to find a buy case that its own
+        # inputs unanimously reject — and the tournament is the single most
+        # expensive stage in the pipeline (~246s).
+        #
+        # Measured over 5 weeks this fires on 100 desks: 73 unactionable SELLs
+        # and 24 no-op HOLDs. It does NOT skip the Board — 3 of those 100 did
+        # end in a BUY, and while all 3 underperformed the always-long baseline
+        # (+2.55% vs +4.05%), a gate that silently deletes profitable trades on
+        # n=3 is not one to install. The board still decides; it just decides
+        # without a debate it had no material chance of using.
+        if (
+            _settings_no_trade_gate_enabled()
+            and desk.cycle_metadata.get("held") is False
+            and _research_unanimously_bearish(desk)
+        ):
+            logger.info(
+                "[V3] %s: no-trade-available gate — unheld + research unanimously "
+                "BEARISH; skipping the tournament, board still decides", ticker,
+            )
+            emit(
+                "analyzing", f"v3_no_trade_gate_{ticker}",
+                f"⏭️ {ticker}: unheld and research is unanimously bearish — "
+                f"no buy case to debate, skipping to the Board",
+                status="ok",
+            )
+            skip_note = (
+                "Debate SKIPPED: this ticker is NOT held and both research "
+                "desks returned BEARISH. With no shorting, the only executable "
+                "action here is BUY, which the research unanimously rejects. "
+                "You may still call BUY if you believe the research is wrong — "
+                "but say why explicitly, because no debate stress-tested it."
+            )
+            desk.append_artifact("tournament_result", {
+                "summary": skip_note, "action": "HOLD", "confidence": 0,
+                "winning_side": "skipped", "pitches": [], "survivors": [],
+                "h2h": {}, "jury_verdict": {}, "vetoed": False, "skipped": True,
+                "risk_flags": ["debate_skipped_no_trade_available"],
+                "total_tokens": 0,
+            })
+            desk.append_artifact("debate_judge", {
+                "summary": skip_note, "action": "HOLD", "confidence": 0,
+                "winning_side": "skipped", "source": "no_trade_available_gate",
+            })
+            if not board_dispatched:
+                board_dispatched = True
+                _queue_agent("board_of_directors", None, parent="quant_analyst")
+            return
+
         if _cog_settings.TOURNAMENT_MODE:
             _queue_agent("tournament_debate", None, parent="quant_analyst")
         else:
@@ -1889,6 +1940,43 @@ async def _run_board_of_directors(
         include_debate_context=True,
         parent_agent=parent_agent,
     )
+
+
+def _settings_no_trade_gate_enabled() -> bool:
+    """Kill switch for the no-trade-available gate. Defaults ON; set
+    V3_NO_TRADE_GATE=false to restore the always-debate behavior."""
+    try:
+        from app.config import settings as _s
+        return bool(getattr(_s, "V3_NO_TRADE_GATE", True))
+    except Exception:  # noqa: BLE001 — a config miss must not disable the gate
+        return True
+
+
+def _research_unanimously_bearish(desk) -> bool:
+    """True only when EVERY research desk that reported came back BEARISH.
+
+    Deliberately strict. It requires at least two opinions and treats a missing
+    or unparseable stance as "not bearish", so a failed analyst can never
+    manufacture unanimity — the gate should under-fire rather than skip a
+    debate that had something to say.
+    """
+    stances = []
+    for key in ("fundamental_report", "quant_report", "desk_note"):
+        artifact = getattr(desk, key, None) or {}
+        if not isinstance(artifact, dict):
+            continue
+        raw = artifact.get("thesis_direction")
+        # The junior's desk_note has no thesis_direction; its catalyst_call
+        # carries the equivalent claim.
+        if raw is None and isinstance(artifact.get("catalyst_call"), dict):
+            raw = artifact["catalyst_call"].get("direction")
+        if raw is None:
+            continue
+        stances.append(str(raw).strip().upper())
+
+    if len(stances) < 2:
+        return False
+    return all(s == "BEARISH" for s in stances)
 
 
 def _format_macro_briefing(snapshot: dict) -> str:

@@ -260,6 +260,38 @@ def validate_trade_decision_artifact(artifact: dict) -> dict:
     return artifact
 
 
+def coerce_unshortable_sell(artifact: dict, *, held: bool) -> dict:
+    """A SELL on a ticker the bot does not hold is not a decision — it is an
+    illegal move, and there is no shorting.
+
+    Measured over 5 weeks: 167 of 176 SELL decisions (95%) were on unheld
+    tickers. Every one was blocked by the policy gate at the very END of the
+    pipeline, after ~1,243s of agent time — the most expensive decisions in
+    the system and the least actionable. They also polluted the decision
+    record, which is what made the board look like it was destroying value.
+
+    The prompt already says so; the constraint was being shed from the prompt
+    (fixed in agent_runner) and models ignored it anyway. This is the backstop:
+    the artifact is rewritten to HOLD, keeping the bearish view visible in the
+    reasoning rather than pretending a sell order was reasonable.
+    """
+    if not isinstance(artifact, dict) or held:
+        return artifact
+    if str(artifact.get("action") or "").strip().upper() != "SELL":
+        return artifact
+
+    artifact["action"] = "HOLD"
+    artifact["_coerced_from"] = "SELL"
+    artifact["position_size_pct"] = 0
+    _note(
+        artifact,
+        "SELL on an unheld ticker is not executable (no shorting) — coerced to "
+        "HOLD/no-position; the bearish view is retained in the reasoning",
+    )
+    logger.info("[ArtifactValidator] unheld SELL coerced to HOLD (no shorting)")
+    return artifact
+
+
 _VALIDATORS = {
     "regime_classification": validate_regime_artifact,
     "desk_note": validate_desk_note_artifact,

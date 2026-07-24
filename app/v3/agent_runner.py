@@ -390,9 +390,18 @@ async def run_v3_agent(
                 f"## MARKET DATA BRIEFING FOR THIS CYCLE\n{data_report}",
             ))
 
+        # NEVER SHED (2026-07-24 audit). This section carries "NO OPEN POSITION
+        # in X — the bot cannot SELL what it does not hold (no shorting)", which
+        # is not context, it is a hard constraint on which actions are even
+        # legal. At shed_order 2 it was among the FIRST things dropped when a
+        # prompt overflowed Prism's 2048-token embedder — and 167 of 176 SELL
+        # decisions (95%) were on tickers the bot did not hold, every one of
+        # them policy-blocked after the desk had already spent ~1,243s on it.
+        # Dropping a position constraint to save tokens is never the right
+        # trade; shed memory or the whiteboard summary instead.
         portfolio_ctx = desk.cycle_metadata.get("portfolio_context", "")
         if portfolio_ctx:
-            dynamic_sections.append((2, f"## Portfolio Context\n{portfolio_ctx}"))
+            dynamic_sections.append((_KEEP, f"## Portfolio Context\n{portfolio_ctx}"))
 
         directives_ctx = desk.cycle_metadata.get("directives_context", "")
         if directives_ctx:
@@ -756,6 +765,16 @@ async def run_v3_agent(
         # fire (order_triggers gates on `value is not None`).
         from app.v3.artifact_validators import validate_artifact as _coerce_artifact
         artifact = _coerce_artifact(artifact_type, artifact)
+
+        # A SELL the bot cannot place is not a verdict. Applied to the decision
+        # artifacts only, and only when the desk knows the position is not held
+        # (a MISSING `held` key is not treated as "not held" — that would coerce
+        # real exits on any cycle whose portfolio lookup failed).
+        if artifact_type in ("final_decision", "trade_decision"):
+            _held = desk.cycle_metadata.get("held")
+            if _held is False:
+                from app.v3.artifact_validators import coerce_unshortable_sell
+                artifact = coerce_unshortable_sell(artifact, held=False)
 
         # Append to SharedDesk
         desk.append_artifact(artifact_type, artifact)
