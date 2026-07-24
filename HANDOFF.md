@@ -1,8 +1,26 @@
 # HANDOFF — Agent-by-agent audit of the V3 trading cycle (2026-07-24)
 
 A systematic audit of every agent in the V3 cycle, in pipeline order, each
-phase building on the last. **Phases 0-4 are done and live** (`43a79fd`).
-Phases 5-8 are not started.
+phase building on the last. **Phases 0-6 are done and live** (`90e7452`).
+Phases 7-8 are not started.
+
+> ## ⚠ READ THIS BEFORE TRUSTING ANY NUMBER IN THIS FILE
+>
+> Midway through, this audit's own measurement was found to be wrong, and it
+> had inverted a headline conclusion. **"The decision layer destroys the
+> research layer's value" is RETRACTED** — it was two stacked scoring errors:
+> 69% of scored decisions could not change the book (policy-blocked SELLs on
+> unheld tickers, no-op HOLDs), and HOLD on a *held* position was scored as
+> predicting flatness when it means staying long. Correcting both moved the
+> board from 39.6% hit / -1.75 edge to 68.5% / +3.17.
+>
+> The corrected number is **not** evidence of skill either: always-long over
+> the same desks earns +4.05% vs the board's +2.91%, i.e. **-1.14% against the
+> null** in a 95-up/30-down window.
+>
+> **Always run `--executable-only` and beat the printed always-long BASELINE,
+> never zero.** Every conclusion drawn before 2026-07-24 was measured against
+> zero and is suspect.
 
 **Decisions taken with the user for the remaining phases:**
 1. Tournament (5) and Board (6) are audited **together** — the board's whole
@@ -121,12 +139,56 @@ model's originals so the rate stays measurable. **Correction is conditional** �
 see Gotchas. The "MANDATORY" whiteboard `signals` write (9 of 56 runs) is now
 posted from the artifact in code.
 
+### Phase 6 — board / unactionable-decision waste (`90e7452`)
+
+The board did **not** need the override constraint I had planned (see the
+retraction above). The real finding was where its compute goes. Across 821
+decisions / 202 agent-hours:
+
+| decision | n | agent-hours | avg |
+|---|---|---|---|
+| HOLD unheld (screening "no") | 343 | 55.1 | 578s |
+| BUY (actionable) | 182 | 53.3 | 1054s |
+| **SELL unheld (CATEGORY ERROR)** | **167** | **57.7** | **1243s** |
+| HOLD held (actionable) | 120 | 32.2 | 966s |
+| SELL held (actionable) | 9 | 3.6 | 1443s |
+
+The unactionable SELLs were the **most expensive decisions in the system and
+the least useful** — 29% of all compute, every one blocked by the policy gate
+at the very end.
+
+**Root cause: the constraint was being shed from the prompt.**
+`portfolio_context` carries "the bot cannot SELL what it does not hold (no
+shorting)" and sat at `shed_order 2` — one of the FIRST sections dropped when a
+prompt overflowed Prism's 2048-token embedder. Now `_KEEP`.
+
+Three layers: never-shed constraint → `coerce_unshortable_sell` (unheld SELL →
+HOLD/size-0, bearish reasoning retained) → no-trade-available gate (unheld +
+both research desks BEARISH → skip the ~246s tournament, board still decides).
+Kill switch `V3_NO_TRADE_GATE=false`.
+
 ---
 
 ## Open items — act on these next
 
-- **Phases 5-8 not started**: tournament+board (together), synthesizer, then
-  the whole-cycle audit.
+- **POSITION SIZING IS A HABIT, NOT A CALCULATION — highest-value open item.**
+  Sizing is already agentic (agent proposes `position_size_pct`, code haircuts
+  it in `resolve_buy_size_pct`), but across 181 BUYs the board used only **10
+  distinct values**, and 80% were exactly 3%, 4% or 5%. Correlation with the
+  quant's covariance-aware `hrp_weight_suggestion` is **+0.24** (n=16) — and
+  mean HRP suggestion is **0.75%** against a mean board size of **4.41%**,
+  ~6× larger. The portfolio math is computed and then ignored.
+  - **Check FIRST, do not assume**: most `hrp_weight_suggestion` values are
+    0.0. Either the quant is not populating the field, or HRP genuinely says
+    "too correlated with the book, do not add" and the board has been
+    overriding it on every trade. Those imply opposite fixes.
+  - Proposed shape (same precompute-inject pattern that worked for GARCH/HRP
+    and the Phase 4 technical baseline): compute the binding constraints in
+    code and hand the agent a **bracket**, not a blank field — risk-based size
+    (1% equity at the ATR stop), HRP correlation ceiling, cash available,
+    concentration cap, and which one BINDS. Four lines, not a data dump. The
+    agent's job becomes judgment within the bracket.
+- **Phases 7-8 not started**: synthesizer, then the whole-cycle audit.
 - **Tournament parallelization — verify these three BEFORE fanning out.** The
   246s is 9 sequential LLM calls, serialized because concurrent turns on one
   Prism agent-conversation return 409. The KV-cache guard already exists
