@@ -8,7 +8,12 @@ Each schema defines the JSON structure an agent must return.
 
 DESK_NOTE_SCHEMA: dict = {
     "type": "object",
-    "required": ["summary", "key_findings", "data_gaps", "confidence"],
+    # triage_recommendation is REQUIRED (2026-07-24 audit): the orchestrator
+    # routes on it and treats anything unrecognized as FULL, so when the model
+    # omitted it the pipeline silently ran the expensive path. It was missing
+    # in 90 of 337 runs (27%) with nothing logged.
+    "required": ["summary", "key_findings", "data_gaps", "confidence",
+                 "triage_recommendation"],
     "properties": {
         "summary": {
             "type": "string",
@@ -47,6 +52,36 @@ DESK_NOTE_SCHEMA: dict = {
                 "orchestrator: FULL = normal, QUANT_ONLY = skip the "
                 "Fundamental Analyst, SKIP = end the pipeline (no catalysts)"
             ),
+        },
+        "catalyst_call": {
+            "type": "object",
+            "description": (
+                "The junior's one falsifiable claim (2026-07-24 audit). Recon "
+                "that lists headlines without saying which way they cut is not "
+                "scoreable — this agent was 0-for-53 'decisive' in the agent "
+                "scorecard, i.e. it could never be right or wrong. Graded "
+                "against the realized 5-day move."
+            ),
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": ["BULLISH", "BEARISH", "NEUTRAL"],
+                    "description": "Which way the dominant catalyst cuts",
+                },
+                "catalyst": {
+                    "type": "string",
+                    "description": "The single catalyst this call rests on",
+                },
+                "already_priced_in": {
+                    "type": "boolean",
+                    "description": "Whether the tape appears to have absorbed it",
+                },
+                "conviction": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                },
+            },
         },
     },
 }

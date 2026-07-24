@@ -13,7 +13,10 @@ import pytest
 
 @pytest.mark.parametrize("agent_name, enable_tools, expected_turns", [
     ("user_chat", True, 15),
-    ("v3_junior_analyst", True, 5),
+    # 7 since the 2026-07-24 audit: 96% of runs finished at the old 5-turn
+    # ceiling, so the budget was the normal path and the depth-first lead trace
+    # could never run.
+    ("v3_junior_analyst", True, 7),
     ("v3_fundamental_analyst", True, 12),
     ("v3_quant_analyst", True, 14),
     ("v3_bull_agent", True, 3),

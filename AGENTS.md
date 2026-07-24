@@ -28,16 +28,31 @@ Layer 5: Synthesis        → Decision Synthesizer (optional, controlled by DECI
 
 ## 2. Agent Budget Limits
 
-| Agent | Max Turns | Max Tool Calls | Model Type |
-|---|---|---|---|
-| Junior Analyst | 10 | 15 | Tools-enabled |
-| Fundamental Analyst | 12 | 20 | Tools-enabled |
-| Quant Analyst | 12 | 20 | Tools-enabled |
-| Bull Agent | 3 | 0 | Pure reasoning |
-| Bear Agent | 3 | 0 | Pure reasoning |
-| Regime Engine | 5 | 8 | Tools-enabled |
-| Board of Directors | 5 | 0 | Pure reasoning |
-| Decision Synthesizer | 7 (default) | 10 (default) | Pure reasoning |
+> **Which table is live** (corrected 2026-07-24): the V3 pipeline's turn budget
+> comes from `AGENT_BUDGET_OVERRIDES` in `app/agents/tool_whitelists.py`, read
+> via `get_agent_budget_turns()`. `guardrails.AGENT_ROLE_BUDGETS` below serves
+> only the non-V3 prism path. The two disagree, and this file previously
+> documented the one V3 does not use.
+
+**Live V3 budgets** (`AGENT_BUDGET_OVERRIDES`, turns only — there is no separate
+tool-call cap on this path):
+
+| Agent | Max Turns | Model Type |
+|---|---|---|
+| Junior Analyst | 7 | Tools-enabled |
+| Fundamental Analyst | 12 | Tools-enabled |
+| Quant Analyst | 14 | Tools-enabled |
+| Bull Agent | 3 | Small verify toolset |
+| Bear Agent | 3 | Small verify toolset |
+| Regime Engine | 5 | Tools-enabled |
+| Board of Directors | 5 | Tools-enabled |
+| Decision Synthesizer | 5 | Pure reasoning |
+
+Any agent with `enable_tools=False` gets `max_turns=1` regardless of the table.
+Agents absent from the dict inherit `_DEFAULT_BUDGET = 9999`.
+
+**Non-V3 path only** (`guardrails.AGENT_ROLE_BUDGETS`): junior 10/15,
+fundamental 12/20, quant 12/20, bull 3/0, bear 3/0, regime 5/8, board 5/3.
 
 **Enforcement**: `V3AgentBudget.is_exhausted()` checks turns AND tool calls.
 

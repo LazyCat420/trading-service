@@ -69,8 +69,8 @@ DEADBAND_PCT = 1.0
 
 def _stance(artifact: dict) -> int | None:
     """Directional stance in {-1, 0, 1}, or None when the agent makes no
-    directional claim at all (e.g. the regime engine, or the junior analyst,
-    whose desk_note carries no direction field)."""
+    directional claim at all (the regime engine scores factors, not a
+    direction; pre-2026-07-24 desk_notes carried no direction field either)."""
     if not isinstance(artifact, dict):
         return None
     for field in _DIRECTION_FIELDS:
@@ -80,10 +80,32 @@ def _stance(artifact: dict) -> int | None:
         key = str(raw).strip().upper()
         if key in _DIRECTION_MAP:
             return _DIRECTION_MAP[key]
+
+    # The junior analyst's stance lives one level down, in the catalyst_call
+    # added by the 2026-07-24 audit — before that it was 0-for-53 "decisive",
+    # i.e. structurally incapable of being scored.
+    call = artifact.get("catalyst_call")
+    if isinstance(call, dict):
+        key = str(call.get("direction", "")).strip().upper()
+        if key in _DIRECTION_MAP:
+            return _DIRECTION_MAP[key]
     return None
 
 
 def _confidence(artifact: dict) -> float | None:
+    # Calibration must score confidence in the CLAIM being graded. The junior's
+    # top-level `confidence` rates its findings, not its direction, so when a
+    # catalyst_call is present its conviction is the honest number.
+    if isinstance(artifact, dict):
+        call = artifact.get("catalyst_call")
+        if isinstance(call, dict) and call.get("direction") is not None:
+            try:
+                conviction = float(call.get("conviction"))
+                if 0.0 <= conviction <= 100.0:
+                    return conviction
+            except (TypeError, ValueError):
+                pass
+
     for field in ("confidence", "final_confidence"):
         val = artifact.get(field)
         if val is None:

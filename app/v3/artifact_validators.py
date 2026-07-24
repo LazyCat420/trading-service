@@ -99,6 +99,57 @@ def validate_regime_artifact(artifact: dict) -> dict:
     return artifact
 
 
+def validate_desk_note_artifact(artifact: dict) -> dict:
+    """Normalize the junior's routing field and its falsifiable claim.
+
+    triage_recommendation drives orchestrator routing and catalyst_call is
+    graded against the tape — both are matched on exact enums, so a stray
+    "full" or an echoed schema literal would silently route to the default or
+    score as a permanent miss.
+    """
+    if not isinstance(artifact, dict):
+        return artifact
+
+    valid_triage = {"FULL", "QUANT_ONLY", "SKIP"}
+    triage = str(artifact.get("triage_recommendation", "")).strip().upper()
+    if triage and triage not in valid_triage:
+        # The orchestrator already treats unrecognized values as FULL; make
+        # that explicit in the stored artifact rather than implicit in routing.
+        _note(artifact, f"triage_recommendation {artifact.get('triage_recommendation')!r} → FULL")
+        artifact["triage_recommendation"] = "FULL"
+    elif triage:
+        artifact["triage_recommendation"] = triage
+
+    call = artifact.get("catalyst_call")
+    if isinstance(call, dict):
+        direction = str(call.get("direction", "")).strip().upper()
+        if direction in {"BULLISH", "BEARISH", "NEUTRAL"}:
+            call["direction"] = direction
+        else:
+            if direction:
+                _note(artifact, f"catalyst_call.direction={call.get('direction')!r} invalid — dropped")
+            call.pop("direction", None)
+        try:
+            call["conviction"] = min(100.0, max(0.0, float(call.get("conviction"))))
+        except (TypeError, ValueError):
+            call.pop("conviction", None)
+        priced = call.get("already_priced_in")
+        if isinstance(priced, str):
+            lowered = priced.strip().lower()
+            if lowered in ("true", "yes"):
+                call["already_priced_in"] = True
+            elif lowered in ("false", "no"):
+                call["already_priced_in"] = False
+            else:
+                call.pop("already_priced_in", None)
+        if not call.get("direction"):
+            artifact.pop("catalyst_call", None)
+    elif call is not None:
+        artifact.pop("catalyst_call", None)
+
+    return artifact
+
+
 def validate_trade_decision_artifact(artifact: dict) -> dict:
     """Make dynamic_trigger actually evaluable (value=None never fires)."""
     if not isinstance(artifact, dict):
@@ -149,6 +200,7 @@ def validate_trade_decision_artifact(artifact: dict) -> dict:
 
 _VALIDATORS = {
     "regime_classification": validate_regime_artifact,
+    "desk_note": validate_desk_note_artifact,
     "trade_decision": validate_trade_decision_artifact,
     # The board's final_decision carries the same dynamic_trigger shape.
     "final_decision": validate_trade_decision_artifact,

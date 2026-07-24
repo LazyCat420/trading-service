@@ -312,7 +312,15 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     # User chat — generous budget for interactive sessions
     "user_chat": 15,
     # ── V3 Pure Agentic Pipeline Agents (real limits, not V2's 9999) ──
-    "v3_junior_analyst": 5,
+    # 7 (from 5) on 2026-07-24: measured over 56 runs, 96% finished at the
+    # 5-6 loop ceiling — the budget WAS the normal path, not an edge case. The
+    # documented loop spends every turn on retrieval (news, holdings, search,
+    # whiteboard_write), so step 3 "TRACE one lead depth-first" — the step that
+    # produces a quantified finding instead of five headlines — was structurally
+    # unreachable, and 34% of runs never got their mandatory whiteboard write in.
+    # Removing the redundant step-1 whiteboard_read (the board is already in the
+    # prompt) frees one turn; this adds the two the trace actually needs.
+    "v3_junior_analyst": 7,
     # Raised from 7 on 2026-07-19: every *successful* run was landing on
     # exactly 7 loops, i.e. the ceiling was the normal path rather than an
     # edge case, and runs that hit it often emit a pseudo tool call instead
