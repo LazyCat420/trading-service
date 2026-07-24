@@ -1270,7 +1270,13 @@ class PipelineService:
 
                 agent_locale = cls._state.get("agent_locale", "default")
                 prism_overrides = cls._state.get("prism_overrides", {})
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives)
+                # bot_id was NEVER passed (2026-07-24 audit). run_v3_pipeline
+                # defaults it to "", every desk stored bot_id='', and the
+                # downstream fallback resolved to a bot with no positions — so
+                # the desk believed it held nothing, and the HRP sizing branch
+                # (which needs >=2 tickers in the book) never once ran.
+                from app.services.bot_manager import get_active_bot_id
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, bot_id=get_active_bot_id(), emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives)
 
                 # Execute Trade — gated by the cycle's trade flag and confidence threshold
                 action = result.get("action", "HOLD")

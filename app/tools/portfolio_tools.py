@@ -8,9 +8,43 @@ from app.trading.paper_trader import _get_current_price
 
 logger = logging.getLogger(__name__)
 
+
+def resolve_bot_id(bot_id: str = "") -> str:
+    """THE single way to turn an empty bot_id into a real one.
+
+    2026-07-24 audit. Three sources of truth disagreed, and the wrong one was
+    winning: callers fell back to ``settings.BOT_ID`` (= 'lazy-trader-v4',
+    which holds **zero positions**) while the genuinely active bot was
+    'test_bot' with 9 open positions. The pipeline never passed an explicit
+    bot_id, so in production:
+
+      * every ticker resolved to held=False — including TSM/JPM/ALLY, which
+        the desk really did own,
+      * agents were told "NO OPEN POSITION" about their own book and could not
+        reason about an exit,
+      * the HRP branch of the quant-math block silently never ran, because it
+        needs >=2 tickers in the portfolio and saw an empty one. HRP has
+        therefore NEVER been computed in production.
+
+    ``get_active_bot_id()`` is DB-backed (is_active = TRUE), cached with a TTL,
+    and already falls back to settings.BOT_ID — so it is strictly better as the
+    default than settings.BOT_ID alone. Prefer an explicit bot_id when the
+    caller has one; never reintroduce a bare ``settings.BOT_ID`` fallback.
+    """
+    if bot_id:
+        return bot_id
+    try:
+        from app.services.bot_manager import get_active_bot_id
+        resolved = get_active_bot_id()
+        if resolved:
+            return resolved
+    except Exception as e:  # noqa: BLE001 — must still return something usable
+        logger.warning("[PortfolioTools] active-bot lookup failed (%s) — using settings.BOT_ID", e)
+    return settings.BOT_ID
+
+
 def get_position_context(ticker: str, bot_id: str = "") -> dict:
-    if not bot_id:
-        bot_id = settings.BOT_ID
+    bot_id = resolve_bot_id(bot_id)
 
     with get_db() as db:
         ticker = ticker.upper()
@@ -166,7 +200,7 @@ def _current_holdings(bot_id: str = "") -> tuple[dict[str, float], float, float]
     """(market_value per held ticker, cash, total equity) for the active bot."""
     from app.trading.paper_trader import get_portfolio
 
-    portfolio = get_portfolio(bot_id or settings.BOT_ID)
+    portfolio = get_portfolio(resolve_bot_id(bot_id))
     cash = float(portfolio.get("cash") or 0.0)
     values: dict[str, float] = {}
     for p in portfolio.get("positions", []):

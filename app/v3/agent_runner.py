@@ -772,9 +772,34 @@ async def run_v3_agent(
         # real exits on any cycle whose portfolio lookup failed).
         if artifact_type in ("final_decision", "trade_decision"):
             _held = desk.cycle_metadata.get("held")
-            if _held is False:
-                from app.v3.artifact_validators import coerce_unshortable_sell
-                artifact = coerce_unshortable_sell(artifact, held=False)
+            if _held is False and str(artifact.get("action") or "").upper() == "SELL":
+                # Re-check against the live book before suppressing an exit.
+                # `held` is computed once at desk build; when bot_id resolution
+                # was broken it read False for EVERY ticker, including ones the
+                # desk genuinely owned (2026-07-24). Coercing on that stale flag
+                # alone would have converted real exits into HOLDs — the one
+                # failure mode of this guard that costs money.
+                _really_held = None
+                try:
+                    from app.tools.portfolio_tools import get_position_context
+                    _really_held = bool(
+                        get_position_context(desk.ticker, bot_id).get("held")
+                    )
+                except Exception as _pos_err:  # noqa: BLE001
+                    logger.warning(
+                        "[V3Runner] %s: live position re-check failed (%s) — "
+                        "leaving the SELL intact rather than risk suppressing a "
+                        "real exit", desk.ticker, _pos_err,
+                    )
+                if _really_held is False:
+                    from app.v3.artifact_validators import coerce_unshortable_sell
+                    artifact = coerce_unshortable_sell(artifact, held=False)
+                elif _really_held:
+                    logger.error(
+                        "[V3Runner] %s: desk metadata said held=False but the bot "
+                        "DOES hold it — SELL preserved; bot_id resolution is wrong",
+                        desk.ticker,
+                    )
 
         # Append to SharedDesk
         desk.append_artifact(artifact_type, artifact)

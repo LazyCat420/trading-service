@@ -23,11 +23,14 @@ def build_book_brief(ticker: str, bot_id: str = "") -> str:
     """Book-level brief for the sizing agents. "" when the book is empty."""
     ticker = (ticker or "").strip().upper()
     try:
-        from app.config import settings
         from app.trading.paper_trader import get_portfolio
-        from app.tools.portfolio_tools import _get_current_price
+        from app.tools.portfolio_tools import _get_current_price, resolve_bot_id
 
-        portfolio = get_portfolio(bot_id or settings.BOT_ID)
+        # Was `bot_id or settings.BOT_ID`, which resolved to a bot holding
+        # nothing — so the book brief injected into the quant and board prompts
+        # described an empty portfolio while the desk actually held 9 positions
+        # (2026-07-24 audit).
+        portfolio = get_portfolio(resolve_bot_id(bot_id))
     except Exception as e:
         logger.debug("[BookBrief] portfolio load failed (non-fatal): %s", e)
         return ""
