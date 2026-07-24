@@ -69,6 +69,33 @@ def validate_regime_artifact(artifact: dict) -> dict:
     elif isinstance(mods, list):
         artifact["suggested_pipeline_modifications"] = [str(m) for m in mods if m]
 
+    # forward_call is the engine's one gradeable claim (scored 5 trading days
+    # later against SPX/VIX). The grader matches on exact enums, so normalize
+    # case and drop the schema literal models sometimes echo back verbatim —
+    # an un-normalized "Up" would silently score as a miss forever.
+    fc = artifact.get("forward_call")
+    if isinstance(fc, dict):
+        for key, valid in (
+            ("spx_direction", {"UP", "DOWN", "FLAT"}),
+            ("vol_direction", {"RISING", "FALLING", "STABLE"}),
+        ):
+            raw = str(fc.get(key, "")).strip().upper()
+            if raw not in valid:
+                if raw:
+                    _note(artifact, f"forward_call.{key}={fc.get(key)!r} invalid — dropped")
+                fc.pop(key, None)
+            else:
+                fc[key] = raw
+        try:
+            conviction = float(fc.get("conviction"))
+            fc["conviction"] = min(100.0, max(0.0, conviction))
+        except (TypeError, ValueError):
+            fc.pop("conviction", None)
+        if not fc.get("spx_direction") and not fc.get("vol_direction"):
+            artifact.pop("forward_call", None)
+    elif fc is not None:
+        artifact.pop("forward_call", None)
+
     return artifact
 
 

@@ -222,6 +222,12 @@ _OPTIONAL_FIELDS: dict[str, list[str]] = {
         "verified_bull_claims", "unverified_bull_claims",
         "verified_bear_claims", "unverified_bear_claims",
     ],
+    # NB: forward_call is deliberately NOT listed here. _score_data_completeness
+    # buckets on a ratio, so a 5th optional field leaves 4-of-5 and 5-of-5 in
+    # the same >=0.8 bucket — adding it would look like enforcement while
+    # changing nothing, and re-cutting the buckets would move the quality
+    # baseline for every artifact type. forward_call is graded against the
+    # realized tape by scripts/grade_regime_calls.py instead.
     "regime_classification": ["rationale", "vix_level", "yield_trend", "dxy_trend"],
     "final_decision": ["position_size_pct", "stop_loss", "take_profit", "persona_used", "regime"],
     "trade_decision": ["signal_weights", "signal_assessments", "risk_flags", "stop_loss", "take_profit"],

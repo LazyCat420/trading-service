@@ -1136,15 +1136,58 @@ async def run_v3_pipeline(
             status="running",
         )
         run_counts["regime_engine"] += 1
-        outcome = await _run_agent_with_circuit_breaker(
-            desk=desk,
-            agent_module=regime_engine,
-            phase_name="regime_engine",
-            breaker=breaker,
-            cycle_id=cycle_id,
-            bot_id=bot_id,
-            emit=emit,
-        )
+
+        # The regime is a property of the MARKET, not of this ticker, so it is
+        # classified once per cycle and shared. Running it per ticker made the
+        # same cycle contradict itself in 35 of 64 multi-ticker cycles (see
+        # regime_cache). The lock is held across the LLM call so concurrent
+        # tickers wait for the first answer instead of computing rivals.
+        from app.v3 import regime_cache
+
+        async with regime_cache.get_lock(cycle_id):
+            cached_regime = regime_cache.get(cycle_id)
+            if cached_regime is not None:
+                desk.append_artifact("regime_classification", cached_regime)
+                outcome = PhaseOutcome.SUCCESS
+                logger.info(
+                    "[V3] %s: reusing this cycle's regime classification (%s) — "
+                    "not re-running the engine",
+                    ticker, cached_regime.get("regime", "?"),
+                )
+                emit(
+                    "analyzing", f"v3_regime_engine_reuse_{ticker}",
+                    f"🌐 {ticker}: Regime {cached_regime.get('regime', '?')} "
+                    f"(classified once for this cycle)",
+                    status="ok",
+                )
+                # Without a telemetry row this ticker's regime node vanishes
+                # from the replay flow graph and the regime→analyst edges break
+                # (the same "islands" bug the tournament had). Zero elapsed is
+                # accurate: no LLM call happened.
+                desk.record_agent_telemetry({
+                    "agent_name": "v3_regime_engine",
+                    "ticker": ticker,
+                    "elapsed_ms": 0,
+                    "loops_used": 0,
+                    "token_usage": 0,
+                    "outcome": "SUCCESS",
+                    "phase": desk.phase.value,
+                    "quality_score": int(cached_regime.get("_quality_score", -1) or -1),
+                    "reused": True,
+                })
+            else:
+                outcome = await _run_agent_with_circuit_breaker(
+                    desk=desk,
+                    agent_module=regime_engine,
+                    phase_name="regime_engine",
+                    breaker=breaker,
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                    emit=emit,
+                )
+                if outcome == PhaseOutcome.SUCCESS and desk.regime_classification:
+                    regime_cache.put(cycle_id, desk.regime_classification)
+
         breaker.record_outcome("regime_engine", outcome)
         if outcome in (PhaseOutcome.TIMED_OUT,):
             whiteboard.unsubscribe(whiteboard_subscriber)
@@ -1899,6 +1942,21 @@ def _format_macro_briefing(snapshot: dict) -> str:
     try:
         from app.v3.alt_data_block import alt_macro_lines
         lines.extend(alt_macro_lines())
+    except Exception:
+        pass
+
+    # Computed trend/breadth (2026-07-24 audit): every line above is a LEVEL.
+    # trend_strength, sector_momentum and liquidity are slope/breadth questions
+    # that a list of levels cannot answer — and the engine made 0 tool calls in
+    # 366 runs while still scoring trend_strength 0.81 on average. These lines
+    # are the measured slopes those factors are supposed to read. Kept LAST so
+    # the header covers only what it actually computed.
+    try:
+        from app.v3.macro_trend import build_macro_trend_lines
+        trend_lines = build_macro_trend_lines()
+        if trend_lines:
+            lines.append("Computed trend (measured from daily closes, not estimated):")
+            lines.extend(trend_lines)
     except Exception:
         pass
 
