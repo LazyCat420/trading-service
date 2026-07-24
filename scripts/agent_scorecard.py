@@ -254,6 +254,35 @@ def fetch_rows_from_prices(since: str, horizon: int = 7) -> list[dict]:
     return out
 
 
+def classify_executability(desk: dict, action: str | None) -> str:
+    """What a decision can actually DO to the book.
+
+    Added 2026-07-24 after this scorecard produced a badly misleading result.
+    It scored every desk equally and reported the board at -0.77 edge, which
+    read as "the board destroys value". It does not: **69% of scored decisions
+    cannot change the book at all**.
+
+      177  HOLD on a ticker not held   — a pure no-op
+      137  SELL on a ticker not held   — policy-blocked, never executes
+       88  BUY                         — real
+       46  HOLD on a held position     — real (keeps exposure)
+        9  SELL on a held position     — real (exits)
+
+    Scoring an unexecutable opinion against realized prices measures nothing,
+    and a "SELL" the bot cannot place dragged the whole aggregate negative.
+    Judge decision-making on `consequential` rows only.
+    """
+    act = str(action or "").strip().upper()
+    held = bool((desk.get("cycle_metadata") or {}).get("held"))
+    if act == "BUY":
+        return "consequential"          # opens or adds
+    if act == "SELL":
+        return "consequential" if held else "blocked"
+    if act == "HOLD":
+        return "consequential" if held else "noop"
+    return "unknown"
+
+
 def score_agents(rows: list[dict]) -> dict:
     stats: dict[str, dict] = defaultdict(lambda: {
         "n": 0, "decisive": 0, "hits": 0, "misses": 0,
@@ -274,6 +303,22 @@ def score_agents(rows: list[dict]) -> dict:
             st["n"] += 1
 
             stance = _stance(artifact)
+
+            # HOLD on a position you ALREADY OWN is not a neutral forecast —
+            # it is a decision to stay long, and it is right when the position
+            # rises. Scoring it as "predicts flatness" punished every correct
+            # hold: measured, those 46 desks rose 9.9% on average over the
+            # window and scored 0% under the flat rule. Only the decision-layer
+            # agents own the position; an analyst's NEUTRAL thesis still means
+            # neutral.
+            if (
+                stance == 0
+                and label in ("board_of_directors", "decision_synthesizer")
+                and str(artifact.get("action") or "").strip().upper() == "HOLD"
+                and bool((row["desk"].get("cycle_metadata") or {}).get("held"))
+            ):
+                stance = 1
+
             if stance is None:
                 st["no_stance"] += 1
                 continue
@@ -393,6 +438,11 @@ def main() -> int:
                          "straight from price_history — ~10x the sample, no wait.")
     ap.add_argument("--horizon", type=int, default=7,
                     help="Forward trading sessions to score over (price source only)")
+    ap.add_argument("--executable-only", action="store_true",
+                    help="Score ONLY decisions that can change the book. 69%% of "
+                         "desks are policy-blocked SELLs on unheld tickers or "
+                         "HOLDs on nothing; including them measures opinions "
+                         "rather than trades and drags every aggregate negative.")
     args = ap.parse_args()
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -406,6 +456,21 @@ def main() -> int:
     if not rows:
         print(f"No scoreable desks since {args.since} (source={args.source}).")
         return 1
+
+    # Executability breakdown — printed ALWAYS, because the unqualified
+    # aggregate is what produced the "board destroys value" misread.
+    buckets: dict[str, int] = defaultdict(int)
+    for r in rows:
+        r["executability"] = classify_executability(r["desk"], r.get("action"))
+        buckets[r["executability"]] += 1
+    total = len(rows)
+    consequential = buckets.get("consequential", 0)
+
+    if args.executable_only:
+        rows = [r for r in rows if r["executability"] == "consequential"]
+        if not rows:
+            print("No consequential decisions in this window.")
+            return 1
 
     report = score_agents(rows)
     handoffs = score_handoffs(rows)
@@ -421,7 +486,29 @@ def main() -> int:
 
     print(f"\n{'='*104}")
     print(f"AGENT SCORECARD — {len(rows)} {source_label} since {args.since} "
-          f"({wins}↑ / {losses}↓ / {flats}→)")
+          f"({wins}↑ / {losses}↓ / {flats}→)"
+          + ("  [CONSEQUENTIAL ONLY]" if args.executable_only else ""))
+    print(f"{'='*104}")
+    print(f"executability of the {total} desks in this window: "
+          f"consequential {consequential} ({consequential/total*100:.0f}%) | "
+          f"policy-blocked SELL {buckets.get('blocked', 0)} | "
+          f"HOLD no-op {buckets.get('noop', 0)} | unknown {buckets.get('unknown', 0)}")
+    if not args.executable_only and consequential < total:
+        print("  ⚠ figures below INCLUDE decisions that cannot change the book. "
+              "Re-run with --executable-only to judge decision quality.")
+
+    # THE NULL HYPOTHESIS. An agent that is long in a rising tape looks
+    # brilliant against zero, so "positive edge" alone means nothing. This
+    # baseline is what doing nothing clever — staying long every ticker the
+    # desk looked at — would have earned over the same window. Any agent whose
+    # edge does not clear this line is selling beta as alpha.
+    if rows:
+        naive = sum(r["move_pct"] for r in rows) / len(rows)
+        up = sum(1 for r in rows if r["move_pct"] > DEADBAND_PCT)
+        down = sum(1 for r in rows if r["move_pct"] < -DEADBAND_PCT)
+        print(f"BASELINE — always-long over the same desks: {naive:+.2f}% "
+              f"(tape: {up} up / {down} down / {len(rows)-up-down} flat). "
+              f"Beat THIS, not zero.")
     print(f"{'='*104}")
     print(f"{'agent':<24} {'n':>4} {'dir':>5} {'dec':>5} {'hit%':>6} {'95% CI':>14} "
           f"{'edge%':>7} {'brier':>6} {'confΔ':>6} {'flat%':>6}")
