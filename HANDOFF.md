@@ -1,105 +1,141 @@
-# HANDOFF — Cycle-audit fix wave (2026-07-24): datetime P1 + silent-failure surfacing + Mongo-layer repairs
+# HANDOFF — Agent-by-agent audit of the V3 trading cycle (2026-07-24)
 
-Full-ecosystem audit of cycle `cycle-v3-1784876033` (last night's run) across
-trading-service / scraper-service / lazy-tool-service / trading-client /
-prism-service, plus a MongoDB consolidation audit. All 5 service links PASS and
-all 4 deployments matched git. The cycle itself completed (LMT+VZ BUYs executed,
-2 unheld SELLs correctly policy-blocked, 0 trade errors) — but the audit found
-one P1 that degraded it and several silent-failure holes. All fixed below;
-1141 tests pass.
+A systematic audit of every agent in the V3 cycle, in pipeline order, each
+phase building on the last. **Phases 0 and 1 are done and live** (`65a4050`).
+Phases 2-8 are not started.
 
-## P1 — `datetime` shadowing destroyed data reports for NEW tickers
+The governing rule for this wave: **no agent gets tuned without a measurable
+target.** That is why Phase 0 exists and why it came first.
 
-`app/v3/data_report.py` had a function-local
-`from datetime import datetime, timedelta, timezone` inside the Mongo-thesis
-branch (introduced by the read-flip commit 346c544). For any ticker with **no
-prior analysis_results doc** (exactly the FreshnessGate "NEW" tickers) the
-branch didn't run, so line ~362 `datetime.now(timezone.utc)` raised
-UnboundLocalError and the **entire ~10k-char data report was replaced with an
-error string** — the agents analyzed those tickers data-blind. In last night's
-cycle that hit **VZ, BLK, DOG (3 of 6), including the executed $2.1k VZ BUY**;
-11 tickers were hit over 24h, and agents stored the error string into their
-memory stores. Fix: module-level import now carries `timedelta`; the shadowing
-local import is deleted.
+---
 
-## Silent-failure surfacing (the "green but broken" holes)
+## What is live right now
 
-- **Report-assembly failures now count**: `orchestrator.py` records a
-  `data_report` failure into `collector_stats` and emits
-  `v3_precollect_err_<ticker>` (status=error). Previously `collector_failures`
-  read `[]` while 3/6 tickers ran data-blind.
-- **Twitter sweep 0-posts is now a WARNING**: root cause is
-  **`TWITTER_ACCOUNTS` env in scraper-service is empty** (twscrape has no
-  credentials) — every sweep "succeeds" with 0 posts. NEEDS USER: real X
-  account credentials in scraper-service env to actually fix.
-- **Vision deep-read fallback gated off** (`VISION_DEEP_READ_ENABLED=False`,
-  config.py): the standalone scraper image has no vLLM OCR stack, so every
-  `engine="vision"` request was a guaranteed failure (~100 errors/24h). This
-  path was already dead — reviving it means porting the OCR stack into
-  scraper-service (open item, not attempted).
+**`65a4050`** — deployed to synology 2026-07-24T20:09Z, health OK on :3031.
+1156 tests pass (1141 before this wave).
 
-## Self-heal watchdog + evaluator repairs
+### Phase 0 — the measurement target (`scripts/agent_scorecard.py`)
 
-- `scripts/self_healing_watchdog.py` fetched cycle JSONL logs via **ssh — but
-  the container has no ssh binary** and `logs/` IS the NAS volume mount. Now
-  reads `log_manager.CYCLE_DIR/<cycle>.jsonl` locally (ssh only as a dev-box
-  fallback via `shutil.which`).
-- Watchdog no longer classifies **policy outcomes as crashes**
-  (`trade_rejected*/SELL_NO_POSITION/HOLD_NO_POSITION/HOLD_NO_SIGNAL/
-  policy_blocked` filtered from error events).
-- `judge_agent.py`: a Mongo **miss** on llm_audit_logs no longer counts as a
-  hit — falls through to PG. The mirror only keeps 14 days (TTL), PG has full
-  history; this was the "Log not found" ×8.
+Every agent had latency/loop/`quality_score` telemetry, but `quality_score`
+grades the *shape* of an artifact, not whether it was right. Nothing scored an
+agent against the market.
 
-## Mongo layer
+The scorecard joins the two halves that were never joined —
+`decision_outcomes` (resolved P&L, 7-day horizon) and `shared_desk` (every
+agent's artifact for the same cycle+ticker; **201/201 decisions since 06-18
+join**) — and reports per agent: hit rate with a Wilson 95% interval, `edge%`
+(mean signed move from following that agent), Brier calibration, and the
+confidence gap between right and wrong calls. It also scores handoffs: does a
+downstream override of an upstream agent pay?
 
-- `rlm_audit.py` context_blobs mirror docs now carry `created_at`, written via
-  new `upsert_doc(..., insert_only=True)` (`$setOnInsert` — matches PG's
-  ON CONFLICT DO NOTHING; `$set` would have clobbered timestamps on dedup).
-- `mongo_store.ensure_indexes`: added `trade_results (cycle_id, ticker)` index
-  (every write/read uses that key; was collection-scanning). Corrected the
-  **false TTL comment** on llm_audit_logs: PG does NOT age that table
-  (AUDIT_LOG_TTL_DAYS only rotates files). DECISION NEEDED before full mongo
-  cutover of llm_audit_logs: drop the 14d TTL or accept losing >14d history.
-- **Backfill top-up run 2026-07-24** for the fixed-window gap (07-22 22:41 →
-  07-23 02:23 UTC, rows written between last backfill and the dual-flag
-  redeploy) across execution_errors, cycle_audit_log, agent_audit_log,
-  agent_traces, agent_tool_telemetry, v3_agent_telemetry, trade_results,
-  ticker_reports, analysis_results, context_blobs. Backups first:
-  `/volume1/docker/trading-service/backups/2026-07-24-audit/` (pg_dump +
-  mongodump of analysis_results + row-count snapshot).
-- **analysis_results legacy dupes** (44 (cycle_id,ticker) groups, newest
-  2026-05-29, present in BOTH stores) deduped keeping newest — see backups.
+```bash
+.venv/bin/python scripts/agent_scorecard.py --since 2026-06-18
+```
 
-## Scheduler
+**Baseline — 53 resolved decisions, 17W/24L/12F.** Re-run after each phase and
+compare against this:
 
-- **YouTube nightly channel sweep never ran**: the in-memory scheduler
-  registered the 1:30 AM PT cron AFTER the slot on restart nights (observed:
-  container up 01:16, scheduler up 01:43). Added missed-slot catch-up: if boot
-  lands within 6h after 1:30 PT, a one-shot run fires 3 min after startup
-  (transcripts dedup on video_id, double-run is a no-op).
+| agent | n | decisive | hit% | 95% CI | edge% | brier | confΔ |
+|---|---|---|---|---|---|---|---|
+| regime_engine | 53 | 0 | — | — | — | — | — |
+| junior_analyst | 53 | 0 | — | — | — | — | — |
+| fundamental_analyst | 53 | 32 | 46.9 | 31–64 | -0.09 | 0.393 | -1.9 |
+| quant_analyst | 53 | 29 | 41.4 | 26–59 | +0.07 | 0.354 | -0.5 |
+| tournament_debate | 53 | 40 | 60.0 | 45–74 | **+0.39** | **0.262** | +3.0 |
+| board_of_directors | 53 | 41 | 41.5 | 28–57 | **-0.49** | 0.366 | +1.7 |
+| decision_synthesizer | 53 | 41 | 41.5 | 28–57 | -0.49 | 0.368 | +1.2 |
 
-## Tests
+`debate_judge` is omitted: the orchestrator copies `tournament_result` into it,
+so it is the same row twice — do not read it as independent confirmation.
 
-- `tests/test_scraper_client.py` rewritten to mock the **httpx seam** — the old
-  tests patched `app.scraper.service` (no longer imported) and
-  `test_scrape_success` was doing a LIVE scrape of example.com through the
-  production scraper; the other tests passed only because connection failures
-  coincidentally matched failure-path assertions.
+### Phase 1 — regime engine (`65a4050`)
 
-## Cross-service notes (no code change)
+Three defects, all measured over 14 days / 366 runs:
 
-- **lupos-bot is DOWN 31h+** — crash-looping on missing `LUPOS_TOKEN` (vault
-  has no such secret). NEEDS USER: provide the token.
-- **API_SERVER_KEY three-way drift**: deployed trading-service =
-  `lazycat-secure-…-2026` (from vault master, synced by deploy.sh — redeploys
-  are safe); lazy-agent-service compose hardcodes a DIFFERENT
-  `API_SERVER_KEY` in `environment:` (unused by the bridge, which
-  authenticates via `TRADING_SERVICE_API_KEY` from deploy-kit/.env.deploy —
-  currently matching). Local `.env` was stale (`diagnostics_key_123`) → synced.
-  Rotation of any of these keys must touch vault + deploy-kit together.
-- **prism E11000 requestId dupes** (32×/24h): lazycat-sdk retry path re-sends
-  `requestId-N` suffixes; caller-side fix belongs in lazycat-sdk retry
-  telemetry. Not fixed this wave.
-- trading-client got clickable-tickers-everywhere (see its HANDOFF; deployed +
-  click-tested live).
+1. **A global classifier was running per ticker.** `run_v3_pipeline` is invoked
+   per ticker, so the engine answered the same question about the same market
+   up to 6 times concurrently — and **disagreed with itself in 35 of 64
+   multi-ticker cycles**. 25 of 121 cycles reported more than one VIX level
+   (one cited 15.03, 15.57 and 22.00 at once). The label picks the Board
+   persona, so that routing was partly noise. `app/v3/regime_cache.py` now
+   classifies once per cycle behind an asyncio lock.
+2. **Three of seven factors were scored from data the engine never had.** The
+   briefing was a list of *levels*; `trend_strength`, `sector_momentum` and
+   `liquidity` are slope/breadth questions. The engine made **zero** tool calls
+   in 366 runs and still returned `trend_strength` averaging 0.81.
+   `app/v3/macro_trend.py` computes the real inputs from `asset_prices`.
+3. **It predicted nothing, so it could never be wrong** — 53/53 artifacts
+   unscoreable. It now emits `forward_call` (5-day SPX direction, VIX
+   direction, conviction), graded by `scripts/grade_regime_calls.py`.
+
+---
+
+## Open items — act on these next
+
+- **Phases 2-8 not started**, in this order: junior → fundamental → quant →
+  tournament → board → synthesizer → whole-cycle audit. The per-agent measured
+  starting state is in the task list and in the Phase 0 baseline above.
+- **The board is where the damage is.** It overrides the debate on 23/53
+  decisions at a 32% hit rate (-0.96% edge); overriding the fundamental
+  analyst hits 20% (-2.14%). Three independent comparisons all point the same
+  way: a 60%-accurate debate goes in, a 41.5% verdict comes out. Phase 6.
+- **The synthesizer never overrides the board directionally — 0 of 53.** 74s
+  and ~34k tokens per ticker for a directional rubber stamp. Phase 7.
+- **Verify Phase 1 after the next cycle** (~04:15 UTC). Two checks:
+  ```bash
+  .venv/bin/python scripts/grade_regime_calls.py --since 2026-07-24
+  ```
+  and confirm one regime per cycle:
+  ```sql
+  SELECT cycle_id, COUNT(DISTINCT desk_data->'regime_classification'->>'regime')
+  FROM shared_desk WHERE created_at > '2026-07-24' GROUP BY 1;  -- must all be 1
+  ```
+  `forward_call` needs 5 trading days before it grades; expect "pending" first.
+- **`strategy_performance` is dead** and should be either fixed or dropped.
+  `evaluate_pnl()` has **zero callers**, so nothing ever resolves (60/1979),
+  and every V3 row is stamped `agent_prompt_hash="v3_pipeline"` — one bucket
+  for the whole pipeline, so it could not attribute to an agent even if it ran.
+  `decision_outcomes` is the live, working table; use that.
+- **`market_regime` table is a dead placeholder** — `vix_zscore` 0.0,
+  `breadth_sp500` 50.0, yields NaN, `regime_label` 'Neutral' on all 78 rows.
+  Do not wire it into anything. `macro_trend.py` reads `asset_prices` instead.
+- **SPY/QQQ/sector ETFs in `price_history` stop at 07-17** while 515 other
+  tickers are current — index/ETF symbols are not in the daily refresh set.
+  `macro_trend.py` sidesteps this by using `asset_prices` (fresh to 07-24), but
+  anything else reading index history from `price_history` is a week stale.
+
+---
+
+## Gotchas
+
+- **`quality_score` is not accuracy.** It grades artifact shape. An agent can
+  score 82 and be wrong more than half the time — the quant analyst does
+  exactly that. Judge changes with the scorecard, not this.
+- **`_score_data_completeness` buckets on a ratio**, so adding a 5th optional
+  field leaves 4-of-5 and 5-of-5 in the same ≥0.8 bucket. `forward_call` is
+  deliberately NOT in `_OPTIONAL_FIELDS` — adding it looks like enforcement
+  while changing nothing, and re-cutting the buckets would move the quality
+  baseline for every artifact type mid-audit.
+- **Holding the regime lock across the LLM call is intentional.** Tickers 2..N
+  wait for the first answer rather than computing rivals. Wall clock is
+  unchanged for one wave (they used to spend that time in parallel anyway) and
+  strictly better for watchlists larger than the concurrency cap.
+- **A reused regime still records a telemetry row** (`reused: True`,
+  `elapsed_ms: 0`). Without it the ticker's regime node vanishes from the
+  replay flow graph and the regime→analyst edges break — the same "islands"
+  bug the tournament had.
+- **`asset_prices` carries NaN** for symbols a vendor returned empty. NaN
+  compares false everywhere and survives a `NOT NULL` check; `macro_trend._finite`
+  and the grader both filter it. The `market_regime` table is what happens
+  when you don't.
+- **n=53 on the baseline.** Every CI overlaps 50%. No single cell is
+  significant — what is persuasive is the override pattern repeating across
+  three different upstream agents.
+
+## Where the reasoning lives
+
+Per-agent measured starting state (latency, loops vs budget, tool-call
+reality, whiteboard participation) is in the session task list, phases 2-8.
+`AGENTS.md` remains the harness-level source of truth for budgets and limits —
+note its §14 "Inactive Agents" and the Layer-3 debate description are now
+partly stale: the tournament, not bull/bear, is the live debate path.
