@@ -780,6 +780,25 @@ class SchedulerService:
                     misfire_grace_time=7200,
                     coalesce=True,
                 )
+                # Missed-slot catch-up: the scheduler is in-memory, so a
+                # restart shortly before/during the 1:30 AM slot loses the job
+                # (misfire_grace only covers jobs that were registered when the
+                # slot passed — observed 07-23: container up 01:16, scheduler
+                # up 01:43, sweep never ran). If we boot within 6h after the
+                # slot, run once shortly after startup; transcripts dedup on
+                # video_id so a double-run is a cheap no-op.
+                from apscheduler.triggers.date import DateTrigger
+                _pt_now = datetime.now(pytz.timezone("America/Los_Angeles"))
+                _slot = _pt_now.replace(hour=1, minute=30, second=0, microsecond=0)
+                if _slot < _pt_now < _slot + timedelta(hours=6):
+                    scheduler.add_job(
+                        SchedulerService._run_youtube_channel_sweep,
+                        trigger=DateTrigger(
+                            run_date=datetime.now(timezone.utc) + timedelta(minutes=3)),
+                        id="youtube_channel_sweep_catchup",
+                        replace_existing=True,
+                    )
+                    logger.info("[SCHEDULER] youtube channel sweep: missed 1:30 AM PT slot — catch-up run in 3 min")
                 logger.info(
                     "[SCHEDULER] Registered collectors: PCR (1:15 PM PT), insider "
                     "(4:30 AM PT), economic calendar (12h), social (6h), "

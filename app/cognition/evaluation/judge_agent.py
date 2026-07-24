@@ -220,7 +220,10 @@ async def evaluate_decision(decision_id: str) -> bool:
                         d = docs[0]
                         log = (d.get("cycle_id"), d.get("ticker"), d.get("context_hash"),
                                d.get("raw_response"), d.get("created_at"))
-                    _mongo_hit = True
+                        _mongo_hit = True
+                    # A miss is NOT a hit: the Mongo mirror only keeps 14 days
+                    # (TTL index) while PG has full history — older decisions
+                    # must fall through to the PG read below.
             except Exception as me:
                 logger.warning("[Judge] mongo log read failed, PG fallback: %s", me)
                 _mongo_hit = False

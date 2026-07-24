@@ -151,6 +151,10 @@ class Settings(BaseSettings):
     EMBEDDING_SERVER_URL: str = "http://localhost:8001/embed"
     REDIS_URL: str = "redis://localhost:6379"
     SCRAPER_SERVICE_URL: str = "http://scraper-service:8001"
+    # Vision OCR deep-read fallback. The standalone scraper-service image does
+    # not ship the vLLM OCR stack, so every engine="vision" request fails —
+    # keep this off until the vision engine actually works in that deployment.
+    VISION_DEEP_READ_ENABLED: bool = False
 
     # ── Per-API Concurrency Limits ──
     # Caps concurrent requests to each external service when multiple

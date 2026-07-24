@@ -26,6 +26,7 @@ degrade.
 
 import sys
 import os
+import shutil
 import subprocess
 import json
 import re
@@ -98,6 +99,23 @@ def get_active_cycle() -> tuple[str, str, str, str]:
             return row[0] or "", row[1] or "", row[2] or "", row[3] or ""
     return "", "", "", ""
 
+# Policy gate outcomes are recorded with status='error' in pipeline_events but
+# are normal, intended behavior (e.g. a SELL on an unheld position downgraded
+# to HOLD_NO_POSITION) — they are NOT crashes and must never trigger healing.
+_BENIGN_EVENT_MARKERS = (
+    "trade_rejected",
+    "SELL_NO_POSITION",
+    "HOLD_NO_POSITION",
+    "HOLD_NO_SIGNAL",
+    "policy_blocked",
+)
+
+
+def _is_benign_policy_event(step: str, detail: str) -> bool:
+    text = f"{step or ''} {detail or ''}"
+    return any(marker in text for marker in _BENIGN_EVENT_MARKERS)
+
+
 def get_latest_error_events(cycle_id: str) -> list[dict]:
     """Query recent error events from the database for the given cycle."""
     events = []
@@ -112,6 +130,8 @@ def get_latest_error_events(cycle_id: str) -> list[dict]:
             [cycle_id]
         )
         for row in db.fetchall():
+            if _is_benign_policy_event(row[1], row[2]):
+                continue
             events.append({
                 "phase": row[0],
                 "step": row[1],
@@ -121,7 +141,23 @@ def get_latest_error_events(cycle_id: str) -> list[dict]:
     return events
 
 def fetch_nas_cycle_logs(cycle_id: str) -> str:
-    """Fetch the JSONL log file for the cycle directly from the NAS."""
+    """Fetch the JSONL log file for the cycle.
+
+    Inside the container `logs/` IS the NAS volume (/volume1/docker/
+    trading-service/logs mounts at /app/logs), so read it locally first —
+    the container ships no ssh binary and every SSH attempt just errored.
+    SSH remains only as a dev-box fallback when the file isn't local.
+    """
+    from app.log_manager import log_manager
+    local_path = log_manager.CYCLE_DIR / f"{cycle_id}.jsonl"
+    try:
+        if local_path.exists():
+            return local_path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Local cycle log read failed for {local_path}: {e}")
+    if not shutil.which("ssh"):
+        logger.info(f"Cycle log {local_path} not found locally and no ssh binary — skipping log fetch.")
+        return ""
     remote_path = f"/volume1/docker/trading-service/logs/cycles/{cycle_id}.jsonl"
     logger.info(f"Fetching remote cycle logs from {remote_path}...")
     return run_ssh_command(f"cat {remote_path}")

@@ -161,7 +161,17 @@ async def collect_fintwit_sweep(limit: int = 20) -> int:
             
         await asyncio.sleep(2)  # brief pause between batches
         
-    logger.info(f"Twitter accounts sweep complete. Stored {total_stored} tweets.")
+    if total_stored == 0:
+        # A full sweep of 16 high-volume accounts yielding literally nothing
+        # means the backend is broken, not that FinTwit went quiet — as of
+        # 07-24 the scraper-service has no TWITTER_ACCOUNTS credentials
+        # configured, so twscrape returns [] for every request.
+        logger.warning(
+            "Twitter accounts sweep stored 0 tweets across %d accounts — "
+            "scraper backend likely unconfigured (TWITTER_ACCOUNTS env in "
+            "scraper-service).", len(all_accounts))
+    else:
+        logger.info(f"Twitter accounts sweep complete. Stored {total_stored} tweets.")
     return total_stored
 
 async def collect_all() -> int:

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db.connection import get_db
@@ -63,7 +63,6 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
                 projection={"_id": 0, "thesis_summary": 1, "created_at": 1},
             )
             if docs:
-                from datetime import datetime, timedelta, timezone
                 ca = docs[0].get("created_at")
                 # pymongo returns naive-UTC datetimes; compare like-with-like.
                 _now = datetime.utcnow() if (ca is not None and ca.tzinfo is None) \

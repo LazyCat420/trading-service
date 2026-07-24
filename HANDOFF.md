@@ -1,192 +1,105 @@
-# HANDOFF — Wave 4 (2026-07-23): ticker-diversity + policy-gate hardening — CYCLE-VERIFIED
+# HANDOFF — Cycle-audit fix wave (2026-07-24): datetime P1 + silent-failure surfacing + Mongo-layer repairs
 
-Deployed + verified on discovery cycle `cycle-v3-1784792603` (07:47Z). The
-gatekeeper picked **TAX, SMCI, IBM, MSCI** — zero overlap with the regulars —
-and the top-20 included the previously-stranded discovery tickers (LMT, SHOP,
-BLK, VZ, ABT, ABNB, CVX). Baseline problem (14d data): 66.7% of analyses were
-<24h re-runs, NVDA ran 13/14 days, 25/46 discovered tickers never cycled.
+Full-ecosystem audit of cycle `cycle-v3-1784876033` (last night's run) across
+trading-service / scraper-service / lazy-tool-service / trading-client /
+prism-service, plus a MongoDB consolidation audit. All 5 service links PASS and
+all 4 deployments matched git. The cycle itself completed (LMT+VZ BUYs executed,
+2 unheld SELLs correctly policy-blocked, 0 trade errors) — but the audit found
+one P1 that degraded it and several silent-failure holes. All fixed below;
+1141 tests pass.
 
-What's live (all in the discovery path, pipeline_service.py unless noted):
-1. Hard re-analysis exclusion — governed param `PIPELINE_REANALYSIS_EXCLUDE_HOURS`
-   (12h default, held positions exempt, 0 disables).
-2. discovered_tickers (valid, 7d, top 30) merged into the candidate pool.
-3. Trending LIMITs 40/30/15 (were 10/10/5) + per-ticker mention cap 10.
-4. Recency penalty through day 7 + +20 for never-analyzed.
-5. Freshness gate: composite 0.40→0.25, news_count_max 3→2 (LIVE SQL applied
-   to freshness_gate_config + code defaults).
-6. Gatekeeper sees top-4 STALE-tagged rows; sector cap 2/sector on top-20
-   (new app/services/ticker_meta.py); mega-cap ≤1 enforced in code post-LLM.
-7. Policy gate (orchestrator): SELL with unknown holdings resolves LIVE from
-   the portfolio; enforced label persisted to **trade_results.policy_action**
-   (new column, both stores) + visible 🚫 blocked event. Verified in-cycle:
-   IBM SELL@68 → HOLD_NO_POSITION (the exact silent-no-op hole, now caught).
-8. Precollect budget 45s → `PRECOLLECT_TIMEOUT_SECONDS` (90s): reddit +
-   multi-api now finish; only youtube still times out.
+## P1 — `datetime` shadowing destroyed data reports for NEW tickers
 
-Trap fixed en route: a bare `from parameter_store import get_param` inside
-the discovery branch shadowed the name for the WHOLE `_run_all_v3` scope and
-broke the explicit-tickers trade path (UnboundLocalError) — always alias
-function-local imports in that file.
+`app/v3/data_report.py` had a function-local
+`from datetime import datetime, timedelta, timezone` inside the Mongo-thesis
+branch (introduced by the read-flip commit 346c544). For any ticker with **no
+prior analysis_results doc** (exactly the FreshnessGate "NEW" tickers) the
+branch didn't run, so line ~362 `datetime.now(timezone.utc)` raised
+UnboundLocalError and the **entire ~10k-char data report was replaced with an
+error string** — the agents analyzed those tickers data-blind. In last night's
+cycle that hit **VZ, BLK, DOG (3 of 6), including the executed $2.1k VZ BUY**;
+11 tickers were hit over 24h, and agents stored the error string into their
+memory stores. Fix: module-level import now carries `timedelta`; the shadowing
+local import is deleted.
 
-Watch during soak: diversity of the next ~10 organic cycles (expect top-5
-analysis share to fall from 33%), whether the PM over-picks STALE rows.
+## Silent-failure surfacing (the "green but broken" holes)
 
-## Addendum: YouTube background sweeps (deployed + verified same day)
-youtube stays in per-ticker precollect (transcripts feed data reports +
-tournament evidence packets; pure scraper, zero LLM cost). Two new scheduler
-jobs keep youtube_transcripts warm so cycle-time reads hit stored data:
-- `youtube_prewarm` every 4h — 10 stalest active-watchlist tickers,
-  deliberately paced (45s between tickers) to avoid rate limits; data is
-  ready before the next cycle.
-- `youtube_channel_sweep` nightly 1:30 AM PT — collect_all (channel +
-  search discovery) previously had ZERO callers; now bounded (3 videos/
-  channel, 7d, 10 queries).
-Verified live: registration logged; manual 2-ticker batch stored 4 new
-transcripts (7,667 → 7,671).
+- **Report-assembly failures now count**: `orchestrator.py` records a
+  `data_report` failure into `collector_stats` and emits
+  `v3_precollect_err_<ticker>` (status=error). Previously `collector_failures`
+  read `[]` while 3/6 tickers ran data-blind.
+- **Twitter sweep 0-posts is now a WARNING**: root cause is
+  **`TWITTER_ACCOUNTS` env in scraper-service is empty** (twscrape has no
+  credentials) — every sweep "succeeds" with 0 posts. NEEDS USER: real X
+  account credentials in scraper-service env to actually fix.
+- **Vision deep-read fallback gated off** (`VISION_DEEP_READ_ENABLED=False`,
+  config.py): the standalone scraper image has no vLLM OCR stack, so every
+  `engine="vision"` request was a guaranteed failure (~100 errors/24h). This
+  path was already dead — reviving it means porting the OCR stack into
+  scraper-service (open item, not attempted).
 
----
+## Self-heal watchdog + evaluator repairs
 
-# HANDOFF — Wave 3 (2026-07-23): Mongo read-flips + alt-data/book-brief injection + 13F/fundamentals cadence
+- `scripts/self_healing_watchdog.py` fetched cycle JSONL logs via **ssh — but
+  the container has no ssh binary** and `logs/` IS the NAS volume mount. Now
+  reads `log_manager.CYCLE_DIR/<cycle>.jsonl` locally (ssh only as a dev-box
+  fallback via `shutil.which`).
+- Watchdog no longer classifies **policy outcomes as crashes**
+  (`trade_rejected*/SELL_NO_POSITION/HOLD_NO_POSITION/HOLD_NO_SIGNAL/
+  policy_blocked` filtered from error events).
+- `judge_agent.py`: a Mongo **miss** on llm_audit_logs no longer counts as a
+  hit — falls through to PG. The mirror only keeps 14 days (TTL), PG has full
+  history; this was the "Log not found" ×8.
 
-Commits: trading-service through `wave-3 HEAD` (read-flips + alt-data/book-brief/scheduler), lazy-agent mirror synced. All deployed; **cycle-verified** on `cycle-v3-1784788522` (NVDA analyze-only, 8 agents, clean).
+## Mongo layer
 
-## 1. Mongo consolidation — first read-flips LIVE
-New backend mode **`mongo_read`** (write BOTH, read Mongo): PG stays fresh for
-trading-client (which still reads PG directly), so partial flips are safe and
-rollback = flag change. Flipped: **pipeline_events, trade_results,
-ticker_reports, analysis_results, llm_audit_logs** (flag in deploy.sh default
-AND deploy-kit/.env.deploy — keep in sync). Every flipped call site logs
-"PG fallback" on Mongo error and falls back to the original SQL.
-- Pre-flip repair: 1,257 string timestamps → BSON dates (pipeline_events),
-  6 stringified result_summary → objects (ticker_reports). llm_audit_logs got
-  a 14d TTL index matching AUDIT_LOG_TTL_DAYS.
-- Readers still on PG (JOIN-blocked, fine under mongo_read): verdict/debate
-  services (ticker_user_notes), strategy_auditor (decision_evaluations),
-  outcome_tracker (price_history), plus telemetry tables (need soak).
-- VERIFIED: full cycle + /api/v1/cycles + state polling with **zero fallback
-  warnings**; post-cycle parity PG==Mongo on all 4 checked tables (42/1/1/8).
-- Next cutover steps: soak a few days → flip telemetry tables to mongo_read →
-  migrate trading-client reads → then `mongo` (stop PG writes) per table.
+- `rlm_audit.py` context_blobs mirror docs now carry `created_at`, written via
+  new `upsert_doc(..., insert_only=True)` (`$setOnInsert` — matches PG's
+  ON CONFLICT DO NOTHING; `$set` would have clobbered timestamps on dedup).
+- `mongo_store.ensure_indexes`: added `trade_results (cycle_id, ticker)` index
+  (every write/read uses that key; was collection-scanning). Corrected the
+  **false TTL comment** on llm_audit_logs: PG does NOT age that table
+  (AUDIT_LOG_TTL_DAYS only rotates files). DECISION NEEDED before full mongo
+  cutover of llm_audit_logs: drop the 14d TTL or accept losing >14d history.
+- **Backfill top-up run 2026-07-24** for the fixed-window gap (07-22 22:41 →
+  07-23 02:23 UTC, rows written between last backfill and the dual-flag
+  redeploy) across execution_errors, cycle_audit_log, agent_audit_log,
+  agent_traces, agent_tool_telemetry, v3_agent_telemetry, trade_results,
+  ticker_reports, analysis_results, context_blobs. Backups first:
+  `/volume1/docker/trading-service/backups/2026-07-24-audit/` (pg_dump +
+  mongodump of analysis_results + row-count snapshot).
+- **analysis_results legacy dupes** (44 (cycle_id,ticker) groups, newest
+  2026-05-29, present in BOTH stores) deduped keeping newest — see backups.
 
-## 2. Alt-data + book-brief injection (cycle-verified)
-- `app/v3/alt_data_block.py` → junior+fundamental prompts: insider cluster
-  buys (30d) + social chatter (7d); regime briefing gains SPY put/call +
-  upcoming high-impact US events (ForexFactory-fed economic_calendar).
-- `app/v3/book_brief.py` → quant+board prompts: equity/cash split,
-  concentration, position weights+P&L, sector tilt (company_registry), and
-  candidate-vs-book 250d correlation. First book-level signal in the panel;
-  note the "Portfolio Manager" module is actually the watchlist GATEKEEPER
-  (already runs in pipeline_service — do not "wire it in" again).
-- Verified in-cycle: "alt-data block injected (153 chars)" + "book brief
-  injected (180 chars)" + quant math, same NVDA cycle.
+## Scheduler
 
-## 3. Data cadence fixes
-- 13F: weekly year-round sweep (Sun 3:30 AM PT) added — the filing-month-only
-  cron went silent May 28→Aug 14 (holdings were a quarter stale). Note: Q2
-  13Fs are mostly due Aug 14; big catch-up lands then.
-- Fundamentals: nightly stale-first refresh (2:30 AM PT, 40 stalest active
-  watchlist tickers via data_rotator.fetch_fundamentals) — previously ONLY
-  cycle-analyzed tickers ever refreshed (653/727 were >14d stale).
+- **YouTube nightly channel sweep never ran**: the in-memory scheduler
+  registered the 1:30 AM PT cron AFTER the slot on restart nights (observed:
+  container up 01:16, scheduler up 01:43). Added missed-slot catch-up: if boot
+  lands within 6h after 1:30 PT, a one-shot run fires 3 min after startup
+  (transcripts dedup on video_id, double-run is a no-op).
 
----
+## Tests
 
-# HANDOFF — Data-collection wave 2 (2026-07-23, later session): bridge timeout + collectors + news cap
+- `tests/test_scraper_client.py` rewritten to mock the **httpx seam** — the old
+  tests patched `app.scraper.service` (no longer imported) and
+  `test_scrape_success` was doing a LIVE scrape of example.com through the
+  production scraper; the other tests passed only because connection failures
+  coincidentally matched failure-path assertions.
 
-Commits: trading-service `5365b36`..`cb8ef86`+1, lazy-agent-service `00d5c88`+3 mirror syncs. All deployed and live-verified.
+## Cross-service notes (no code change)
 
-## 1. :3031 tool-bridge per-tool timeouts (lazy-agent-service)
-`config.ts` + `src/services/LocalToolRouter.ts`: slow external-fetch tools
-(SLOW_TOOLS env list; lazy_web_search, scrape_url, read_url, get_sec_filings,
-run_tool_chain, get_market_map_data, get_ticker_summary, get_finnhub_news) now
-get `SLOW_TOOL_TIMEOUT_MS` (60s) instead of the global 30s that raced
-lazy_web_search's internal 20s+10s retries — the #1 tool-failure cause (~40
-aborts/7d). Fast tools keep 30s fail-fast. Abort errors now read
-"bridge timeout after Nms". Watch agent_tool_telemetry for the abort rate drop.
-
-## 2. Collectors wired + fixed (trading-service)
-Scheduler jobs (cycle process): PCR daily 1:15 PM PT · openinsider cluster
-buys daily 4:30 AM PT · economic calendar 12h · social sweep 6h. VERIFIED
-live: put_call_ratio 2 rows, economic_calendar 70 events (ForexFactory JSON
-primary — TE HTML is a fallback; scraper-service /scrape returns text-extracted
-content so table parsers must fetch RAW html via httpx), insider_trades 100
-real cluster buys (canned /latest-cluster-buys page; the old screener URL
-returns blank placeholder rows; cluster rows carry insider COUNT + industry),
-social_posts 282. `get_upcoming_events` now appends `macro_events` from
-economic_calendar (was called 55×/7d against an empty table). Watchlist gotcha:
-the column is `status` ('active'), NOT `is_active`.
-
-## 3. News URL fan-out cap
-`url_fanout_exceeded()` guards all 4 insert sites: max NEWS_URL_FANOUT_CAP (5)
-rows per URL (one story had been stored 110×; 58.6% of the table was dup-URL
-fan-out). Fails open. `idx_news_articles_url` created (live + migration).
-Historical dup rows NOT deleted (backup exists:
-`nas:/volume1/docker/backups/pre-migration/news_articles_pre_dedupe_2026-07-23.dump`).
-
----
-
-# HANDOFF — Embeddings → MongoDB cutover + dual-write correctness wave (2026-07-23)
-
-## What shipped (commit `60f6333`, deployed 2026-07-23T05:03Z)
-
-**Embeddings now live in MongoDB.** The pgvector island is retired from the live
-path; MongoDB is now the sole store for all trading-service/client logic except
-the remaining PG tables still awaiting their own migration phases.
-
-- `app/db/vector_store.py` — Mongo backend behind the `embeddings` key of
-  `MONGO_STORE_BACKEND` (pg|dual|mongo, **live = mongo**). Vectors stored as
-  packed little-endian float32 BinData (`dim` field alongside); cosine is
-  app-side numpy over the filtered candidate set (verified 43 ms for a
-  ticker-filtered top-12 over 27.3k docs); BM25 → Mongo `$text` index on
-  `content_preview` (hybrid retriever fuses by rank, so the score-scale change
-  is irrelevant).
-- `app/cognition/lesson_store.py` — evolution-lesson embed/search rerouted
-  through `vector_store` (was raw pgvector SQL).
-- `app/services/embedding_ingest.py` — boot backfill anti-join is
-  backend-aware: candidates from PG source tables, already-embedded filter via
-  one Mongo `$in` (`vector_store.existing_source_ids`).
-- `scripts/pg_embeddings_to_mongo.py` — standalone backfill/verify/dedupe
-  (psycopg2+pymongo+numpy only; runnable from dev box).
-
-**Migration run:** 28,000 PG rows → **27,306 Mongo docs**; the 694 skipped are
-all-zero (failed-embed) vectors that poison cosine recall — intentionally
-dropped. Sample cosine parity 1.000000. Live verification: `backend: mongo`,
-self-hit rank-1 score 1.0, `$text` 5 hits, boot clean.
-
-**Rollback:** PG `embeddings` table is UNTOUCHED (frozen at cutover) + a
-54 MB pg_dump at `nas:/volume1/docker/backups/pre-migration/embeddings_pre_mongo_2026-07-23.dump`.
-Rollback = remove `embeddings:mongo` from the flag (falls back to `pg`).
-Note new live writes go Mongo-only, so PG staleness grows from 2026-07-23.
-
-## Dual-write mirror fixes (from the 07-23 parity audit)
-
-- `mongo_store.ensure_indexes()` now builds natural-key **unique** indexes
-  (partial, `$type`-guarded) on all 12 dual collections + read-path compound
-  indexes. All verified built on live.
-- Deduped: execution_errors (−1,598), cycle_audit_log (−1,944),
-  agent_audit_log (−12 by request_id).
-- context_blobs backfill re-run to completion: 55,943 == 55,943.
-- Live writer fixes: pipeline_events mirror converts ISO-string timestamps →
-  BSON dates; battle_royale summary mirror stores `result_summary` as object;
-  tool/v3 telemetry + audit mirrors now carry `created_at` (and ids where PG's
-  serial was invisible); agent_audit_log upserts by `request_id`.
-- Every mirror's `except: pass` replaced with logged warnings (a 12-minute
-  silent Mongo write outage on 07-23 01:25Z had left zero trace).
-
-## ⚠ Flag management trap (bit us this deploy)
-
-`deploy-kit/.env.deploy` (gitignored, local) exports `MONGO_STORE_BACKEND` and
-**wins over deploy.sh's default** because PRE_BUILD sources it with `set -a`.
-Both places now hold the full 13-entry list (12×dual + embeddings:mongo) and
-must be kept in sync. deploy.sh's default alone is NOT authoritative.
-
-## Not done / next
-
-- Read-flips for the 12 dual tables (pipeline_events, trade_results,
-  ticker_reports, analysis_results, llm_audit_logs are parity-clean now;
-  agent_traces/telemetry tables need a soak with the fixed mirrors first).
-- lazy-agent-service `python/` mirror synced at `fe7cf8b` (source-only).
-- The 694 zero-vector source rows will be re-embedded by the boot backfill as
-  they surface in the recency window; failures skip harmlessly.
-- pgvector schema objects (embeddings table, 2 duplicate HNSW indexes,
-  dead `ontology_nodes.embedding`/`user_data` vector columns) can be dropped
-  after a few clean cycles — keep until soak passes.
+- **lupos-bot is DOWN 31h+** — crash-looping on missing `LUPOS_TOKEN` (vault
+  has no such secret). NEEDS USER: provide the token.
+- **API_SERVER_KEY three-way drift**: deployed trading-service =
+  `lazycat-secure-…-2026` (from vault master, synced by deploy.sh — redeploys
+  are safe); lazy-agent-service compose hardcodes a DIFFERENT
+  `API_SERVER_KEY` in `environment:` (unused by the bridge, which
+  authenticates via `TRADING_SERVICE_API_KEY` from deploy-kit/.env.deploy —
+  currently matching). Local `.env` was stale (`diagnostics_key_123`) → synced.
+  Rotation of any of these keys must touch vault + deploy-kit together.
+- **prism E11000 requestId dupes** (32×/24h): lazycat-sdk retry path re-sends
+  `requestId-N` suffixes; caller-side fix belongs in lazycat-sdk retry
+  telemetry. Not fixed this wave.
+- trading-client got clickable-tickers-everywhere (see its HANDOFF; deployed +
+  click-tested live).

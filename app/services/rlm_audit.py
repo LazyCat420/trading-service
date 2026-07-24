@@ -46,6 +46,9 @@ def log_rlm_audit_trail(
                 _blob_recs.append({
                     "context_hash": blob_hash, "content": blob_content,
                     "byte_size": len(blob_content.encode("utf-8")),
+                    # PG gets created_at from the column default; the Mongo
+                    # mirror must set it explicitly or the doc has none.
+                    "created_at": datetime.now(timezone.utc),
                 })
                 db.execute(
                     """
@@ -61,7 +64,10 @@ def log_rlm_audit_trail(
                 from app.db import mongo_store
                 if mongo_store.writes_mongo("context_blobs"):
                     for _r in _blob_recs:
-                        mongo_store.upsert_doc("context_blobs", {"context_hash": _r["context_hash"]}, _r)
+                        mongo_store.upsert_doc(
+                            "context_blobs", {"context_hash": _r["context_hash"]}, _r,
+                            insert_only=True,
+                        )
             except Exception:
                 pass
 

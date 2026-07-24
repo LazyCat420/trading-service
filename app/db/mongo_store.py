@@ -139,9 +139,15 @@ def ensure_indexes() -> None:
              partialFilterExpression={"id": {"$type": _ID_TYPES}})
     _try("agent_audit_log", "request_id", unique=True,
          partialFilterExpression={"request_id": {"$type": "string"}})
-    # PG ages llm_audit_logs out via AUDIT_LOG_TTL_DAYS (14d) — the mirror
-    # must decay the same way or it diverges and grows unbounded.
+    # NOTE: PG does NOT actually age llm_audit_logs out (AUDIT_LOG_TTL_DAYS
+    # only rotates log *files*), so this TTL makes the mirror a 14-day window
+    # while PG keeps full history. Before flipping llm_audit_logs to full
+    # `mongo`, either drop this TTL or accept losing >14d of history — the
+    # dashboard/box_scorecard/strategy_auditor readers use older rows.
     _try("llm_audit_logs", "created_at", expireAfterSeconds=14 * 86400)
+    # trade_results is written and read by (cycle_id, ticker) — same as
+    # ticker_reports/analysis_results below.
+    _try("trade_results", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
     _try("context_blobs", "context_hash", unique=True,
          partialFilterExpression={"context_hash": {"$type": "string"}})
     # Read-path keys used by the report/replay UIs after cutover.
@@ -170,10 +176,14 @@ def insert_docs(collection: str, docs: list[dict[str, Any]]) -> int:
     return len(docs)
 
 
-def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any]) -> None:
-    """Upsert `doc` by the `key` filter (the natural key). $set semantics."""
+def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],
+               insert_only: bool = False) -> None:
+    """Upsert `doc` by the `key` filter (the natural key). $set semantics.
+    insert_only=True mirrors PG's ON CONFLICT DO NOTHING: existing docs are
+    left untouched (use for immutable, content-addressed rows)."""
     ensure_indexes()
-    get_doc_db()[collection].update_one(key, {"$set": doc}, upsert=True)
+    update = {"$setOnInsert": doc} if insert_only else {"$set": doc}
+    get_doc_db()[collection].update_one(key, update, upsert=True)
 
 
 def bulk_upsert(collection: str, docs: list[dict[str, Any]], key_field: str = "id") -> int:

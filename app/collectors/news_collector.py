@@ -1035,7 +1035,12 @@ async def deep_read_article(url: str, max_chars: int = 15000) -> str | None:
     except Exception as e:
         logger.info(f"[news] deep-read crawl4ai error for {url[:50]}: {e}")
 
-    # Method 2: Vision pipeline via scraper-service
+    # Method 2: Vision pipeline via scraper-service (gated: the standalone
+    # scraper image has no vLLM OCR stack, so this fallback is guaranteed to
+    # fail there — see VISION_DEEP_READ_ENABLED).
+    from app.config import settings
+    if not getattr(settings, "VISION_DEEP_READ_ENABLED", False):
+        return None
     try:
         from app.services.scraper_client import scraper_client
         res = await scraper_client.scrape(url, engine="vision", options={"max_chars": max_chars})

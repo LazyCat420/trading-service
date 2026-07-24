@@ -106,6 +106,20 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.error("[V3] Failed to pre-collect data for %s: %s", ticker, e)
         data_report = f"Failed to pre-collect stock data: {e}"
+        # Report-assembly failures must show up in the cycle summary — the
+        # individual collectors may all have succeeded, but the ticker is
+        # still analyzed data-blind, so count it as a collector failure.
+        try:
+            from app.v3.collector_stats import record as _record_cstats
+            _record_cstats(cycle_id, ticker, ok=[], errored=["data_report"],
+                           timed_out=[], skipped=[])
+        except Exception:
+            pass
+        emit(
+            "analyzing", f"v3_precollect_err_{ticker}",
+            f"📥 {ticker}: data report FAILED — agents run without pre-collected data: {e}",
+            status="error",
+        )
 
     # Inject cycle metadata
     desk.cycle_metadata = _build_cycle_metadata(
