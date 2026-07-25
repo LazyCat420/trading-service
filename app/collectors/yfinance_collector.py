@@ -71,6 +71,12 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
         return 0
     df = await fetch_ohlcv_dataframe(ticker, period)
     if df is None:
+        # A failed/empty fetch still leaves whatever prices we already have,
+        # and those may be newer than the derived technicals — so repair them
+        # rather than returning early. yfinance returns NaN often enough
+        # (rate limits, after hours) that skipping here would leave the
+        # freshness of the whole table at the mercy of the vendor.
+        await _refresh_technicals(ticker)
         return 0
 
     from app.validation.schema import PriceHistorySchema
@@ -80,6 +86,7 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
         df = PriceHistorySchema.validate(df)
     except pandera.errors.SchemaError as e:
         logger.error(f"[yfinance] Validation failed for {ticker}: {e}")
+        await _refresh_technicals(ticker)
         return 0
 
     rows = []
@@ -114,7 +121,41 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
     count = len(rows)
 
     logger.info(f"[yfinance] {ticker}: {count} price rows written")
+    await _refresh_technicals(ticker)
     return count
+
+
+async def _refresh_technicals(ticker: str) -> None:
+    """Recompute the derived indicator rows for `ticker`.
+
+    Technicals are a pure function of `price_history`, so they are refreshed
+    HERE — at the single point prices are collected — rather than left to
+    whenever an agent happens to call `get_technical_indicators`. Nothing
+    scheduled that, which is why only 5 of 503 tickers were fresher than 3 days
+    while `price_history` was current for all of them, and why the quant
+    analyst was handed a **1963-12-26** RSI for CVX as its "VERIFIED TECHNICAL
+    BASELINE".
+
+    Deliberately hooked into `collect_price_history` rather than
+    `collect_all()`: the V3 precollect path (`app/v3/data_report.py`) calls
+    `collect_price_history` directly, so a hook one level up would never fire
+    during a cycle — the path that matters most.
+
+    Called on the failure paths too. A NaN/rate-limited fetch still leaves the
+    prices we already had, which may be newer than the technicals; skipping
+    then would put the table's freshness at the mercy of the vendor.
+
+    Fail-open: stale technicals are bad, but a failure here must never cost us
+    the price rows we just collected.
+    """
+    try:
+        from app.processors.technical_processor import compute_technicals
+
+        await asyncio.to_thread(compute_technicals, ticker)
+    except Exception as e:
+        logger.warning(
+            "[yfinance] %s: technicals refresh failed (non-fatal): %s", ticker, e
+        )
 
 
 async def fetch_fundamentals_dict(ticker: str) -> dict | None:
@@ -427,28 +468,12 @@ async def collect_all(ticker: str) -> dict:
     financials = await collect_financials(ticker)
     balance = await collect_balance_sheet(ticker)
 
-    # Technicals are a pure function of price_history, so they are refreshed
-    # here rather than left to whenever an agent happens to call
-    # get_technical_indicators. Nothing scheduled that, which is why only 5 of
-    # 503 tickers were fresher than 3 days while price_history was current for
-    # all of them — and why the quant analyst was handed a 71-day-old RSI as
-    # its "verified baseline". Fail-open: stale technicals are bad, but a
-    # failure here must not cost us the price rows we just collected.
-    tech_rows = 0
-    try:
-        from app.processors.technical_processor import compute_technicals
-
-        tech_rows = await asyncio.to_thread(compute_technicals, ticker)
-    except Exception as e:
-        logger.warning("[yfinance] %s: technicals refresh failed (non-fatal): %s", ticker, e)
-
     return {
         "ticker": ticker,
         "price_rows": prices,
         "fundamentals": fundies,
         "financial_rows": financials,
         "balance_rows": balance,
-        "technical_rows": tech_rows,
     }
 
 
