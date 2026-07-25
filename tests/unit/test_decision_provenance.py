@@ -143,6 +143,67 @@ class TestProvenanceResolutionAcrossArtifacts:
         assert _resolve_provenance(desk) is None
 
 
+class TestProvenanceReachesTradeResults:
+    """The desk is not the only record. `trade_results` is what the replay API,
+    the UI and the freshness gate read, and it was blind to provenance for a
+    full wave — a degraded fallback rendered as a confident verdict everywhere
+    a human actually looks.
+    """
+
+    def _save(self, verdict: dict):
+        import contextlib
+        from unittest.mock import MagicMock, patch
+
+        import app.services.trade_result_saver as trs
+
+        captured: dict = {}
+
+        class FakeDB:
+            def transaction(self):
+                return contextlib.nullcontext()
+
+            def execute(self, q, p=None):
+                if "INSERT INTO trade_results" in q:
+                    captured["sql"] = q
+                    captured["params"] = p
+                return MagicMock()
+
+        @contextlib.contextmanager
+        def fake_get_db():
+            yield FakeDB()
+
+        with patch("app.db.connection.get_db", fake_get_db):
+            trs.save_trade_result("T", "c1", verdict)
+        return captured
+
+    def test_provenance_is_persisted(self):
+        cap = self._save({
+            "action": "HOLD", "confidence": 60,
+            "decision_provenance": "board_degraded_fallback",
+        })
+        assert "decision_provenance" in cap["sql"]
+        assert "board_degraded_fallback" in cap["params"]
+
+    def test_missing_provenance_is_null_not_defaulted(self):
+        """Absent means UNKNOWN. Defaulting it to board_reasoned would assert
+        an agent decided when nothing recorded that."""
+        cap = self._save({"action": "HOLD", "confidence": 60})
+        # provenance sits just before created_at
+        assert cap["params"][-2] is None
+
+    def test_blank_provenance_is_normalized_to_null(self):
+        cap = self._save({
+            "action": "HOLD", "confidence": 60, "decision_provenance": "   ",
+        })
+        assert cap["params"][-2] is None
+
+    def test_non_string_provenance_is_rejected(self):
+        cap = self._save({
+            "action": "HOLD", "confidence": 60, "decision_provenance": 123,
+        })
+        assert cap["params"][-2] is None
+
+
 class TestTerminalPhaseRecorded:
     def test_terminal_phase_appears_in_phase_outcomes(self):
         """852/852 desks carried a `phase` absent from `phase_outcomes`, which
