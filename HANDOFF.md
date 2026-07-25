@@ -119,6 +119,11 @@ price history** (2707 at zero lag), vs 5 of 503 before. The deployed container
 confirms `compute_technical_baseline` now returns `stale=False age=0d` — so the
 Phase 4 quant reconciliation is authoritative for the first time.
 
+**Verified live — `cycle-observe-1784955045` (UNH held / CVX unheld): 15/15
+pass, 0 failures.** Both desks' RSI matches `technicals` exactly, sourced
+`as_of=2026-07-24`: CVX **71.44** (was a *1963* value), UNH **51.56**.
+Decisions: UNH `SELL`, CVX `HOLD`, both `board_reasoned`.
+
 **Two traps worth keeping:**
 - **The write must stay batched.** At ~490 rows/ticker a loop of `execute()`
   cost **22.6s/ticker** — a ~16h full repair. `executemany` → ~0.1s warm; the
@@ -127,11 +132,21 @@ Phase 4 quant reconciliation is authoritative for the first time.
   series, so it needs ~2× its window; measured, it raises at n=25 and succeeds
   at n=28. `ta` *raises* on a short frame rather than returning NaN, so the old
   `>=5` floor let 12 thin tickers crash the writer mid-backfill.
+- **The hook lives in `collect_price_history`, NOT `collect_all`.** The V3
+  precollect path (`app/v3/data_report.py`) calls `collect_price_history`
+  directly, so a hook one level up fires only on the scheduler path and every
+  *cycle* stays stale. I shipped it in the wrong place first and caught it by
+  tracing a live cycle. It also runs on the failure paths: yfinance returns NaN
+  often enough (rate limits, after hours) that skipping then would leave the
+  table's freshness at the vendor's mercy while stored prices are already
+  newer. A test guards that precollect still calls `collect_price_history`.
 - `scripts/refresh_technicals.py` repairs the backlog. Its staleness query is
   deliberately two grouped scans joined in Python — the equivalent SQL JOIN
   makes the planner fan out to parallel workers and blows the postgres
   container's default **64MB `/dev/shm`**, and that container is not ours to
   reconfigure.
+- **Don't deploy while a cycle is in flight** — the restart kills it
+  (`Cycle stopped by user`). I did exactly that and had to re-run.
 
 **⚠ Harness trap I hit while verifying:** desks are written incrementally and
 the board/synthesizer artifacts land AFTER the per-ticker "Pipeline complete"
