@@ -97,8 +97,41 @@ tickers): 15/15 pass, 0 failures.** Chain confirmed live
 (held exit), KO `HOLD @65`; both `board_reasoned`, `PM_DONE: REACHED` on both.
 1277 tests.
 
-**Still open:** the `technicals` collector gap itself (5 of 503 tickers fresh)
-— a data-pipeline job, deliberately not done inside an agent phase.
+### ✅ `technicals` staleness FIXED (`e04c7b9`, `89174d6`) — it was never a collector gap
+
+**`price_history` was current for every ticker the whole time.** The staleness
+was three bugs in the derived-indicator *writer*:
+
+1. **`compute_technicals` read the OLDEST prices.** `ORDER BY date ASC LIMIT
+   500` — so for MSFT (10,169 rows back to 1986) every run recomputed
+   `1986-03-13 .. 1988-03-03` and never touched a recent date. **CVX's newest
+   technical row was 1963-12-26** against a 2026-07-24 price — a 22,856-day lag
+   handed to the quant analyst as its "VERIFIED TECHNICAL BASELINE".
+2. **`ON CONFLICT DO NOTHING` could never CORRECT a row**, only add missing
+   ones, so the damage could only accumulate. Now `DO UPDATE`.
+3. **Nothing scheduled it.** It ran only when an agent happened to call
+   `get_technical_indicators` — hence the ragged 8–71 day staleness.
+   `collect_all` now refreshes technicals right where prices land (fail-open:
+   a failure there must not cost the price rows just collected).
+
+**Result: 2708 tickers carry technicals and 100% are fresh against their own
+price history** (2707 at zero lag), vs 5 of 503 before. The deployed container
+confirms `compute_technical_baseline` now returns `stale=False age=0d` — so the
+Phase 4 quant reconciliation is authoritative for the first time.
+
+**Two traps worth keeping:**
+- **The write must stay batched.** At ~490 rows/ticker a loop of `execute()`
+  cost **22.6s/ticker** — a ~16h full repair. `executemany` → ~0.1s warm; the
+  whole 2631-ticker backfill ran in **321s**. Pinned by a test.
+- **The minimum is 28 sessions, not 14.** ADX smooths an already-smoothed
+  series, so it needs ~2× its window; measured, it raises at n=25 and succeeds
+  at n=28. `ta` *raises* on a short frame rather than returning NaN, so the old
+  `>=5` floor let 12 thin tickers crash the writer mid-backfill.
+- `scripts/refresh_technicals.py` repairs the backlog. Its staleness query is
+  deliberately two grouped scans joined in Python — the equivalent SQL JOIN
+  makes the planner fan out to parallel workers and blows the postgres
+  container's default **64MB `/dev/shm`**, and that container is not ours to
+  reconfigure.
 
 **⚠ Harness trap I hit while verifying:** desks are written incrementally and
 the board/synthesizer artifacts land AFTER the per-ticker "Pipeline complete"

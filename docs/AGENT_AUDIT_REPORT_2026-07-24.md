@@ -321,7 +321,21 @@ single resolver. **Never reintroduce a bare `settings.BOT_ID` fallback.**
 4. **Junior's `SKIP` has never fired** in 337 runs; `QUANT_ONLY` fires 2%. The
    Triage Gate (separate, pre-existing) *does* work — it skipped MP in **0.8s vs
    ~480s**. Worth asking whether junior-level triage should exist at all.
-5. **`technicals` is stale for most tickers** — and it is worse than the
+5. ✅ **FIXED 2026-07-25 (`e04c7b9`, `89174d6`) — and it was never a collector
+   gap.** `price_history` was current for every ticker the whole time; the
+   staleness was three bugs in the derived-indicator *writer*.
+   **`compute_technicals` read the OLDEST prices** (`ORDER BY date ASC LIMIT
+   500`), so MSFT recomputed 1986–1988 every run and **CVX's newest technical
+   row was 1963-12-26** — a 22,856-day lag served as a "VERIFIED" baseline.
+   `ON CONFLICT DO NOTHING` then made it impossible to correct, and nothing
+   scheduled the recompute at all. Now: newest-N window, `DO UPDATE`, and
+   `collect_all` refreshes technicals wherever it refreshes prices.
+   **2708 tickers, 100% fresh against their own price history**; the deployed
+   container reports `stale=False age=0d`, so the Phase 4 reconciliation below
+   is authoritative for the first time. See HANDOFF for the batching and
+   28-session traps. *Original finding, for the record:*
+
+   **`technicals` is stale for most tickers** — and it is worse than the
    "GOOGL 7d, IP 9d" spot checks suggested. Measured across the table
    (2026-07-25): **only 5 of 503 tickers (1%) are fresher than 3 days.** The
    bulk sit at 8–10 days and the tail runs to months — VZ's RSI came from
