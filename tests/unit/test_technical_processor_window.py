@@ -118,8 +118,18 @@ class TestWritesAreBatched:
 
 
 class TestGuards:
-    @pytest.mark.parametrize("n", [0, 1, 4])
-    def test_too_little_history_writes_nothing(self, n):
+    @pytest.mark.parametrize("n", [0, 1, 4, 9, 15, 24, 27])
+    def test_too_little_history_skips_cleanly(self, n):
+        """`ta` RAISES on a short frame rather than returning NaN, so a thin
+        ticker must be skipped, not attempted. The old >=5 floor let 12
+        tickers (9-24 rows) crash the writer mid-backfill."""
         db, written = _run(_prices(dt.date(2024, 1, 1), n))
         assert written == 0
         assert not db.inserts
+
+    def test_28_sessions_is_enough(self):
+        """ADX smooths an already-smoothed series, so at window=14 it needs
+        ~2x the window: measured, it raises at 25 rows and succeeds at 28."""
+        db, written = _run(_prices(dt.date(2024, 1, 1), 28))
+        assert written > 0
+        assert db.inserts

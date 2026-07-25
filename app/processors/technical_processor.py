@@ -13,6 +13,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Minimum sessions before the `ta` indicators are computable at all.
+#
+# NOT 14. ADX smooths an already-smoothed series, so at window=14 it needs
+# ~2x the window to warm up: measured, it raises at n=25 and succeeds at n=28.
+# `ta` raises (IndexError / "negative dimensions are not allowed") rather than
+# returning NaN on a short frame, so this is a hard floor, not a quality bar.
+# The old >=5 floor let 12 thin tickers (9-24 rows) crash the writer instead of
+# skipping cleanly.
+_MIN_SESSIONS = 28
+
 
 def compute_technicals(ticker: str, period: int = 500) -> int:
     """
@@ -48,11 +58,12 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
             [ticker, period],
         ).fetchall()
 
-        if not rows or len(rows) < 5:
+        if not rows or len(rows) < _MIN_SESSIONS:
             logger.debug(
-                "[tech] %s: not enough price data (%d rows, need >=5)",
+                "[tech] %s: not enough price data (%d rows, need >=%d)",
                 ticker,
                 len(rows) if rows else 0,
+                _MIN_SESSIONS,
             )
             return 0
 
