@@ -96,12 +96,17 @@ decision class, 9 of 821 before this wave), `LLY HOLD @64`, `AMD HOLD @78`.
 
 Three things this cycle established that the first two could not:
 
-- **The unheld-SELL fix works by persuasion, not by patching.** AMD's tournament
-  returned **SELL @80% (bear won)** with all three research desks BEARISH, and
-  the board still chose HOLD. `coerce_unshortable_sell` **never fired** — no
-  coercion line in the logs. The never-shed constraint changed what the board
-  *concluded*, so the backstop had nothing to rewrite. That is the intended
-  mechanism rather than a late correction.
+- **The unheld-SELL fix holds — via both layers, and the backstop was load-bearing.**
+  AMD's tournament returned **SELL @80% (bear won)** with all three research
+  desks BEARISH. The **board** independently chose HOLD @65 (the never-shed
+  constraint doing its job), but the **synthesizer** still came back SELL and was
+  rewritten by `coerce_unshortable_sell` — its `trade_decision` carries
+  `_coerced_from: "SELL"` and a validator note. ⚠ *An earlier version of this
+  section claimed the coercion never fired. That was wrong: coercion is recorded
+  in **artifact metadata, not the logs**, and I checked only the logs. This is
+  now open item **A3** in `DECISION_INTEGRITY_PLAN.md` — a guardrail nobody can
+  count is a guardrail nobody can trust.* Coercion has fired **once in 852 desks**
+  since 07-01; AMD was its first live exercise.
 - **`portfolio_context` survives real overflow pressure.** The board shed 4
   sections and the synthesizer 3 on this cycle (both still overflowed to the
   system prompt). `portfolio_context` was in neither shed list — the `_KEEP`
@@ -352,6 +357,23 @@ single resolver. **Never reintroduce a bare `settings.BOT_ID` fallback.**
    drops these rows — **all 10 observed cases are HOLDs**, so the omission is
    not random. Reconcile `shared_desk` against `trade_results` before quoting
    any desk-derived count.
+
+   **Root cause found 2026-07-25 — see `docs/DECISION_INTEGRITY_PLAN.md`.** It
+   is a write-path bug, **not** a decision bias. `final_decision` only
+   propagates when the board returns `SUCCESS`/`DATA_GAP`
+   (`orchestrator.py:1442`); a board that degrades any other way writes none —
+   *and* degrades to the conservative default, hardcoded as
+   `{"action": "HOLD", "confidence": 0}` (`orchestrator.py:798`). One cause,
+   both effects, so the HOLD correlation is a consequence rather than a bias.
+   Two things de-fang the "10 of 10" figure: **HOLD's base rate is 52%** of the
+   same 400 rows (not ~33%), making 9-in-a-row ~1-in-344 rather than
+   astronomical; and **9 of the 10 desks have `trade_decision` fully persisted**
+   at `PM_DONE`, so the pipeline did produce and save a real verdict.
+
+   The defect worth fixing is narrower but real: **a degraded board is
+   indistinguishable from a confident no-signal HOLD.** `orchestrator.py:1434`
+   shows this was already fixed once for board *timeouts* (deferred item 8.2);
+   the fix never covered the other degrade paths.
 
 ---
 

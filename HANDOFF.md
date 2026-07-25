@@ -51,13 +51,17 @@ tickers none of the earlier verification cycles touched, deliberately mixing
 pass locally. Decisions: `AXP SELL @60` (an executable exit — the rarest class,
 9 of 821 before this wave), `LLY HOLD @64`, `AMD HOLD @78`.
 
-The strongest single result: **AMD's tournament returned SELL @80% with all
-three research desks BEARISH on an unheld ticker, and the board chose HOLD
-anyway — `coerce_unshortable_sell` never fired.** The never-shed constraint
-changed what the board concluded, so the backstop had nothing to rewrite. The
-shed logs also confirm `portfolio_context` stayed out of both the board's
-4-section and the synthesizer's 3-section shed lists under real overflow —
-`_KEEP` holds under exactly the pressure that originally broke it.
+AMD is the interesting case: its tournament returned **SELL @80% with all three
+research desks BEARISH on an unheld ticker**. The **board** independently chose
+HOLD @65 (the never-shed constraint working), but the **synthesizer** still came
+back SELL and was rewritten by `coerce_unshortable_sell` (`_coerced_from: "SELL"`
+on its `trade_decision`). ⚠ *I first reported that the coercion "never fired" —
+wrong: coercion is recorded in **artifact metadata, not the logs**, and I checked
+only the logs. Both layers were needed; the backstop was load-bearing.* Coercion
+has fired **once in 852 desks** since 07-01. The shed logs do confirm
+`portfolio_context` stayed out of both the board's 4-section and the
+synthesizer's 3-section shed lists under real overflow — `_KEEP` holds under
+exactly the pressure that originally broke it.
 
 **Four things changed since the report was written — read these before picking
 up any open item:**
@@ -80,13 +84,20 @@ up any open item:**
    (a real improvement — now sourced and traceable, and the 5-day stale guard
    works), but the reconciliation is authoritative far less often than assumed.
 4. **NEW — ~2% of desks never persist `final_decision` though the decision was
-   made.** AMD is the 10th case: board and synthesizer both logged, the
-   `trade_results` row exists, but `shared_desk.desk_data->'final_decision'` is
-   `null`. 9 of the last 400 `trade_results` rows show the same split back to
-   07-06 — pre-existing. **All 10 observed cases are HOLDs**, so desk-derived
-   counts drop them non-randomly. It is also the lone ❌ in the verification
-   run: a persistence fault, not an agent one. Reconcile `shared_desk` against
-   `trade_results` before quoting any desk-based number.
+   made.** AMD is the 10th case. **Root-caused 2026-07-25 → plan in
+   `docs/DECISION_INTEGRITY_PLAN.md`.** It is a **write-path bug, not a
+   decision bias**: `final_decision` only propagates when the board returns
+   `SUCCESS`/`DATA_GAP` (`orchestrator.py:1442`), and a board that degrades any
+   other way writes none *and* falls back to the hardcoded
+   `{"action": "HOLD", "confidence": 0}` (`orchestrator.py:798`) — one cause,
+   both effects. The "all 10 are HOLDs" figure is far weaker than it looks:
+   **HOLD's base rate is 52%** of the same 400 rows, so 9-in-a-row is ~1-in-344,
+   and **9 of the 10 have `trade_decision` fully persisted** at `PM_DONE`.
+   The real defect: **a degraded board is indistinguishable from a confident
+   no-signal HOLD** — already fixed once for board *timeouts* (deferred item
+   8.2, see the comment at `orchestrator.py:1434`), never extended to the other
+   degrade paths. Still reconcile `shared_desk` against `trade_results` before
+   quoting desk-based numbers.
 
 **Timing across the full history** (not just the like-for-like pair): tournament
 mean **483.3s (n=229) → 86.6s (n=4)**, ~5.6×. Per-ticker agent-time
