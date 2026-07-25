@@ -477,10 +477,20 @@ def main() -> int:
     # real, confident opinion. Excluded by DEFAULT rather than behind a flag:
     # every wrong headline in this audit came from a permissive default, so
     # loosening should require the flag, not tightening.
+    # Read provenance across BOTH decision artifacts and let any degraded one
+    # win. Reading only the first non-empty artifact silently un-flagged the
+    # backfilled desks: their trade_decision predates the field (provenance
+    # None) and masked a final_decision explicitly marked degraded. A filter
+    # that fails open exactly on the rows it exists to catch is worse than none.
     degraded_n = 0
     for r in rows:
-        art = r["desk"].get("trade_decision") or r["desk"].get("final_decision") or {}
-        r["provenance"] = (art or {}).get("decision_provenance")
+        found = [
+            (r["desk"].get(k) or {}).get("decision_provenance")
+            for k in ("final_decision", "trade_decision")
+        ]
+        found = [p for p in found if p]
+        bad = [p for p in found if p != "board_reasoned"]
+        r["provenance"] = bad[0] if bad else (found[0] if found else None)
     # Rows predating the field have provenance None and are kept — they are
     # not KNOWN-degraded, and dropping the entire pre-2026-07-25 history would
     # be a bigger distortion than the ~2% it removes.

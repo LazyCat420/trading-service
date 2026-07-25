@@ -93,6 +93,56 @@ class TestProvenanceStamping:
             assert p.value not in scoreable
 
 
+def _resolve_provenance(desk: dict) -> str | None:
+    """Mirror of the scorecard's resolution rule (scripts/agent_scorecard.py).
+
+    Kept in sync by hand: the script is not importable as a module, and the
+    rule is subtle enough to be worth pinning.
+    """
+    found = [
+        (desk.get(k) or {}).get("decision_provenance")
+        for k in ("final_decision", "trade_decision")
+    ]
+    found = [p for p in found if p]
+    bad = [p for p in found if p != "board_reasoned"]
+    return bad[0] if bad else (found[0] if found else None)
+
+
+class TestProvenanceResolutionAcrossArtifacts:
+    """An unstamped artifact must never mask a stamped degrade.
+
+    The backfilled desks caught this: their `trade_decision` predates the
+    field, so a filter reading only the first non-empty artifact scored a
+    known-degraded desk as if an agent had decided it.
+    """
+
+    def test_degraded_final_decision_wins_over_unstamped_trade_decision(self):
+        desk = {
+            "final_decision": {"decision_provenance": "board_degraded_fallback"},
+            "trade_decision": {"action": "HOLD"},  # pre-provenance artifact
+        }
+        assert _resolve_provenance(desk) == "board_degraded_fallback"
+
+    def test_degraded_trade_decision_wins_over_reasoned_final(self):
+        desk = {
+            "final_decision": {"decision_provenance": "board_reasoned"},
+            "trade_decision": {"decision_provenance": "coerced_unshortable"},
+        }
+        assert _resolve_provenance(desk) == "coerced_unshortable"
+
+    def test_all_reasoned_resolves_reasoned(self):
+        desk = {
+            "final_decision": {"decision_provenance": "board_reasoned"},
+            "trade_decision": {"decision_provenance": "board_reasoned"},
+        }
+        assert _resolve_provenance(desk) == "board_reasoned"
+
+    def test_legacy_desk_resolves_none(self):
+        """Pre-2026-07-25 desks are unknown, not degraded — they stay in."""
+        desk = {"final_decision": {"action": "BUY"}, "trade_decision": {"action": "BUY"}}
+        assert _resolve_provenance(desk) is None
+
+
 class TestTerminalPhaseRecorded:
     def test_terminal_phase_appears_in_phase_outcomes(self):
         """852/852 desks carried a `phase` absent from `phase_outcomes`, which
