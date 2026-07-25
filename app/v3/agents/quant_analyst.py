@@ -18,21 +18,36 @@ TOOL_WHITELIST = [
     "get_market_data",
     "get_technical_indicators",
     "get_polygon_price_history",
-    "get_options_flow",
-    "calculate_risk_reward",
+    # get_options_flow, calculate_risk_reward and get_position_pnl dropped
+    # 2026-07-25: ZERO calls in 60 days (scripts/tool_audit.py) AND nothing in
+    # the prompt asks for them. The quant sits at the 20-tool sanity cap, so an
+    # untouched tool costs a slot and prompt tokens on every run.
+    #
+    # NOT dropped, despite also being at zero: calculate_stop_loss and
+    # save_equation (used within 30d — last week was almost all HOLDs, and the
+    # stop/entry tools go quiet without being dead), and
+    # get_portfolio_covariance / request_peer_analysis, which step 5 and the
+    # uncertainty rule name explicitly as conditional escape hatches. Deleting
+    # a tool the prompt still instructs turns a live instruction into a dead
+    # end — pinned by test_no_prompt_names_a_tool_the_agent_cannot_call.
     "calculate_stop_loss",
     # calculate_position_size (flat cash-percent) dropped 2026-07-21: sizing
     # now goes through calculate_hrp_allocation, which is covariance-aware.
     "get_portfolio_state",
-    "get_position_pnl",
     # Portfolio-level math (2026-07-21): covariance-aware sizing instead of
-    # single-ticker flat-risk, plus forward-looking vol.
+    # single-ticker flat-risk, plus forward-looking vol. The covariance matrix
+    # is now precomputed into the prompt by app/quant/context_block.py, which
+    # is why get_portfolio_covariance shows zero calls — the agent gets the
+    # answer without asking. Kept anyway: step 5 directs it there for what the
+    # block does NOT answer (correlation structure, alternative universes).
     "get_portfolio_covariance",
     "calculate_hrp_allocation",
     "forecast_volatility_garch",
     "whiteboard_write",
     "whiteboard_read",
     "whiteboard_annotate",
+    # Zero calls in 60d but the uncertainty rule names it ("At most one
+    # `request_peer_analysis`") — a capped escape hatch, not dead weight.
     "request_peer_analysis",
     "search_equations",
     "save_equation",
@@ -40,8 +55,9 @@ TOOL_WHITELIST = [
     "run_backtest",
     # save_trading_chart dropped 2026-07-21: the prompt already told the agent
     # NOT to call it (the desk renders the artifact's overlays automatically).
-    # Read-only view of live risk limits (changes are PM/board territory)
-    "get_parameters",
+    # get_parameters dropped 2026-07-25: zero calls in 60 days and no prompt
+    # instruction — live risk limits already reach the quant through the
+    # precomputed sizing bracket, so there is nothing left for it to ask.
 ]
 
 SYSTEM_PROMPT = """You are the Quant/Risk Analyst at a quantitative trading firm. You judge this ticker PURELY on math — deliberately blind to news and narratives (the desk reports tell you only WHICH ticker; ignore their opinions).

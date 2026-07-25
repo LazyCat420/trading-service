@@ -11,6 +11,12 @@ AGENT_NAME = "v3_regime_engine"
 # No get_institutional_holdings: the regime engine classifies market-wide
 # state (SPY/QQQ/VIX trend, breadth, macro headlines) — per-ticker 13F
 # ownership is analyst-layer data, not regime data.
+# get_technical_indicators / get_finnhub_news show zero calls in 60 days, but
+# they are KEPT: step 1 of the prompt names them as the escape hatch for a
+# value missing from the macro briefing ("A value genuinely absent → fetch it").
+# Zero calls means the briefing has been complete, which is the system working —
+# not waste. Removing them would delete the fallback and leave the instruction
+# pointing at nothing. See scripts/tool_audit.py for the usage data.
 TOOL_WHITELIST = [
     "get_market_data",
     "get_technical_indicators",

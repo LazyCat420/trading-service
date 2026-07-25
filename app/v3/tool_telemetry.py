@@ -37,6 +37,67 @@ def _hash_args(arguments: dict | None) -> str:
         return "unhashable"
 
 
+# Prism renames every tool it registers. Strip before comparing to a whitelist
+# or every call looks non-compliant (this exact artifact produced a "zero
+# whitelisted tools are used by any agent" misread on 2026-07-25).
+_MCP_PREFIX = "mcp__lazy-tool-service__"
+
+# Framework-injected; never on an agent whitelist by design.
+_META_TOOLS = frozenset({
+    "discover_and_enable_tools", "enable_tools", "search_tools", "think",
+})
+
+# Reaching any of these from a trading agent is a security regression, not
+# drift. Each was observed SUCCEEDING before the lockdown.
+_FORBIDDEN = frozenset({
+    "execute_command", "execute_python", "execute_javascript", "execute_skill",
+    "write_file", "query_datastore",
+})
+
+
+def _canary_check(agent_name: str, tool_name: str) -> None:
+    """Log loudly when an agent calls something outside its whitelist.
+
+    Deliberately does NOT block the call: this module is telemetry, and a
+    telemetry path that can abort a cycle is worse than the drift it detects.
+    The enforcement lives in the Prism persona pin; this makes a breach
+    *visible* the moment it happens instead of at the next manual audit.
+    """
+    try:
+        if not agent_name or not str(agent_name).startswith("v3_"):
+            return
+        tool = str(tool_name or "")
+        if tool.startswith(_MCP_PREFIX):
+            tool = tool[len(_MCP_PREFIX):]
+        if not tool:
+            # Empty tool names: 175 of these landed on 2026-07-13, all failures,
+            # none since. Cheap to keep flagging — a silent malformed-dispatch
+            # path is how that went unnoticed for weeks.
+            logger.warning(
+                "[ToolCanary] %s emitted an EMPTY tool name — malformed tool "
+                "dispatch (last seen 2026-07-13)", agent_name,
+            )
+            return
+        if tool in _META_TOOLS:
+            return
+
+        from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
+
+        allowed = AGENT_TOOL_WHITELISTS.get(agent_name)
+        if allowed is None or tool in allowed:
+            return
+
+        severity = logger.error if tool in _FORBIDDEN else logger.warning
+        severity(
+            "[ToolCanary] OFF-WHITELIST%s: %s called %r, which is not on its "
+            "whitelist. The 2026-07-22 meta-tool lockdown should make this "
+            "impossible — check the CUSTOM_V3_* persona availableTools pin.",
+            " (FORBIDDEN)" if tool in _FORBIDDEN else "", agent_name, tool,
+        )
+    except Exception as e:  # never let the canary break telemetry
+        logger.debug("[ToolCanary] check failed (non-fatal): %s", e)
+
+
 def record_tool_call(
     cycle_id: str,
     agent_name: str,
@@ -53,6 +114,17 @@ def record_tool_call(
     Non-fatal: all exceptions are caught and logged. Tool telemetry
     should never abort a pipeline.
     """
+    # ── Off-whitelist canary (2026-07-25) ──
+    # The 2026-07-22 meta-tool lockdown (bad7904) closed a real hole: agents
+    # had reached execute_command / write_file / execute_python through
+    # catalog discovery, and the calls SUCCEEDED. Off-whitelist calls have
+    # been zero since 07-23 — but that was protected by nothing, and the only
+    # evidence of a regression would have been a tool name sitting in a table
+    # nobody queries. A unit test catches config drift at CI time; this
+    # catches a Prism-side persona re-sync at RUNTIME, which is the path the
+    # original hole actually came through.
+    _canary_check(agent_name, tool_name)
+
     try:
         from app.db.connection import get_db
 

@@ -15,6 +15,18 @@ AGENT_NAME = "v3_portfolio_manager"
 
 ARTIFACT_TYPE = "portfolio_screener"
 
+# RUNTIME: the PM is invoked with `enable_tools=False` (pipeline_service.py
+# ~line 1128, "DISABLED tools so it strictly outputs JSON") and records ZERO
+# tool calls in 60 days. That makes this list look like dead config, and it has
+# been proposed for deletion twice.
+#
+# DO NOT DELETE IT. `prism_registration` reads `module.TOOL_WHITELIST` directly
+# and passes it as the persona's `availableTools`. An EMPTY availableTools does
+# not mean "no tools" to Prism — it means UNSCOPED, i.e. full-catalog discovery
+# headroom (observed live on CUSTOM_V3_DECISION_SYNTHESIZER 2026-07-22; that is
+# how agents reached execute_command/write_file before the meta-tool lockdown).
+# The non-empty list is what keeps the registered persona scoped.
+# Pinned by tests/unit/test_tool_whitelist_enforcement.py.
 TOOL_WHITELIST = [
     "get_finnhub_news",
     "lazy_web_search",

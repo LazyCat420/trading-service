@@ -34,12 +34,18 @@ TOOL_WHITELIST = [
     "request_peer_analysis",
     # Research sniping: earnings dates are this desk's home turf — schedule a
     # one-shot research cycle to land on the fresh numbers (governor-capped).
+    # KEPT despite zero calls in 60 days: the SYSTEM_PROMPT explicitly directs
+    # their use ("`schedule_research`/`request_research_now` only for a dated
+    # catalyst within ~10 days"). Removing the tool while the prompt still asks
+    # for it turns a live instruction into a dead end — if these are genuinely
+    # unwanted, delete the prompt line FIRST, then the tools.
     "get_upcoming_events",
     "list_scheduled_research",
     "schedule_research",
     "request_research_now",
-    # Read-only view of live risk limits (changes are PM/board territory)
-    "get_parameters",
+    # get_parameters dropped 2026-07-25: zero calls in 60 days and nothing in
+    # the prompt asks for it — the risk envelope reaches this desk through the
+    # precomputed context block, not a tool call.
 ]
 
 
