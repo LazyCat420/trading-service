@@ -1,8 +1,28 @@
 # Decision-integrity plan — degraded decisions must not look like confident ones
 
-**Date:** 2026-07-25 · **Status:** proposed, nothing implemented
+**Date:** 2026-07-25 · **Status:** ✅ **all three phases IMPLEMENTED and deployed** (`eac617a`, `d42785a`)
 **Trigger:** "why are all 10 cases HOLDs? doesn't that mean something is wrong
 with how we make decisions?"
+
+> **Implementation notes (what changed vs. this plan):**
+>
+> - **The "all 10 are HOLDs" premise was itself slightly wrong.** The true set
+>   is **9 HOLD + 1 BUY** (CPS, 2026-06-24). The all-HOLD reading came from the
+>   400-row sample window, not the data. The conclusion is unaffected — it was
+>   never a decision bias — but the pattern was weaker still than §1 argued.
+> - **Found a second, worse units bug while building the sizing bracket.** HRP
+>   weights sum to 1.0 across the **invested** universe, but the injected line
+>   called them "% of equity". On a 47%-cash book those differ by ~2×, so VZ's
+>   "19.2% of equity" was really **7.9% of equity** of headroom. The board
+>   copying that figure was reading a line that was simply wrong, not
+>   misreading a correct one. Both the bracket and the original HRP line now
+>   state the basis explicitly. See **A4** — the fix is larger than planned.
+> - **The provenance filter shipped broken and was caught by its own backfill.**
+>   It read `trade_decision` first, so on backfilled desks — whose
+>   `trade_decision` predates the field — an explicitly degraded
+>   `final_decision` was masked, reporting 0 degraded when there were 7. Fixed
+>   in `d42785a`; a filter that fails open on exactly the rows it exists to
+>   catch is worse than no filter. Regression test pins it.
 
 ---
 
@@ -91,7 +111,13 @@ Three rules follow, and they should be the standard for this work:
 
 ## 4. Plan
 
-### Phase A — stop the laundering (do this first; small, high value)
+### Phase A — stop the laundering ✅ SHIPPED (`eac617a`)
+
+*Implemented in `app/v3/shared_desk.py` (`DecisionProvenance`, stamped inside
+`append_artifact`), `app/v3/orchestrator.py` (unconditional write + degraded
+sentinel), `app/v3/artifact_validators.py` + `app/v3/telemetry.py`
+(`v3_guardrail_firings`). 20 tests in `tests/unit/test_decision_provenance.py`.*
+
 
 - **A1. Add an explicit `decision_provenance` field** to `final_decision` /
   `trade_decision`, always present, one of:
@@ -116,7 +142,13 @@ Three rules follow, and they should be the standard for this work:
 "board degraded" from "board chose HOLD"; confirm `verify_audit_phases.py`'s
 11th check goes green for the right reason.
 
-### Phase B — reconciliation as a standing check
+### Phase B — reconciliation as a standing check ✅ SHIPPED (`eac617a`, `d42785a`)
+
+*3 new checks in `verify_audit_phases.py`; `--include-degraded` (off by
+default) + provenance breakdown in `agent_scorecard.py`;
+`scripts/backfill_desk_decisions.py` repaired all 10 historical desks after a
+1766-row backup.*
+
 
 - **B1. Add a `shared_desk` ↔ `trade_results` reconciliation** to
   `verify_audit_phases.py` and the scorecard: any row present in one and absent
@@ -127,7 +159,15 @@ Three rules follow, and they should be the standard for this work:
   rule), and stamp backfilled rows so they are distinguishable from natively
   written ones.
 
-### Phase C — the two data-quality items
+### Phase C — the two data-quality items ✅ SHIPPED (`eac617a`)
+
+*New `app/quant/sizing_bracket.py` (12 tests, incl. a direct reproduction of
+the VZ units failure); HRP line in `context_block.py` restated in INVESTED-
+capital terms; `technical_baseline.py` no longer calls a stale baseline
+"authoritative". The collector gap itself (C2's first half) is **NOT** fixed —
+still only 5 of 503 tickers fresh; that is a data-pipeline job, not an agent
+one.*
+
 
 - **C1. Sizing bracket (the top open item, now unblocked).** Build it as
   planned, but the injected block must **state units explicitly** and label HRP
