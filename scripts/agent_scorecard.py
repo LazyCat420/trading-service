@@ -443,6 +443,12 @@ def main() -> int:
                          "desks are policy-blocked SELLs on unheld tickers or "
                          "HOLDs on nothing; including them measures opinions "
                          "rather than trades and drags every aggregate negative.")
+    ap.add_argument("--include-degraded", action="store_true",
+                    help="Include decisions no agent actually made (degraded "
+                         "board fallbacks, coercions). OFF by default: a "
+                         "degraded board emits HOLD@0, which scores as a real "
+                         "opinion and is indistinguishable from a no-signal "
+                         "HOLD unless provenance is checked.")
     args = ap.parse_args()
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -466,6 +472,29 @@ def main() -> int:
     total = len(rows)
     consequential = buckets.get("consequential", 0)
 
+    # Provenance filter (2026-07-25). A degraded board writes no decision and
+    # the pipeline falls through to a hardcoded HOLD@0 — which scored as a
+    # real, confident opinion. Excluded by DEFAULT rather than behind a flag:
+    # every wrong headline in this audit came from a permissive default, so
+    # loosening should require the flag, not tightening.
+    degraded_n = 0
+    for r in rows:
+        art = r["desk"].get("trade_decision") or r["desk"].get("final_decision") or {}
+        r["provenance"] = (art or {}).get("decision_provenance")
+    # Rows predating the field have provenance None and are kept — they are
+    # not KNOWN-degraded, and dropping the entire pre-2026-07-25 history would
+    # be a bigger distortion than the ~2% it removes.
+    degraded_n = sum(
+        1 for r in rows
+        if r["provenance"] and r["provenance"] != "board_reasoned"
+    )
+    if not args.include_degraded and degraded_n:
+        rows = [
+            r for r in rows
+            if not r["provenance"] or r["provenance"] == "board_reasoned"
+        ]
+    unstamped = sum(1 for r in rows if not r.get("provenance"))
+
     if args.executable_only:
         rows = [r for r in rows if r["executability"] == "consequential"]
         if not rows:
@@ -487,12 +516,22 @@ def main() -> int:
     print(f"\n{'='*104}")
     print(f"AGENT SCORECARD — {len(rows)} {source_label} since {args.since} "
           f"({wins}↑ / {losses}↓ / {flats}→)"
-          + ("  [CONSEQUENTIAL ONLY]" if args.executable_only else ""))
+          + ("  [CONSEQUENTIAL ONLY]" if args.executable_only else "")
+          + ("  [INCL. DEGRADED]" if args.include_degraded else ""))
     print(f"{'='*104}")
     print(f"executability of the {total} desks in this window: "
           f"consequential {consequential} ({consequential/total*100:.0f}%) | "
           f"policy-blocked SELL {buckets.get('blocked', 0)} | "
           f"HOLD no-op {buckets.get('noop', 0)} | unknown {buckets.get('unknown', 0)}")
+    # Provenance — a decision no agent made is not evidence about that agent.
+    if degraded_n:
+        print(f"provenance: {degraded_n} decision(s) were NOT made by an agent "
+              f"(degraded fallback / coercion) — "
+              + ("INCLUDED (--include-degraded)" if args.include_degraded
+                 else "EXCLUDED from the figures below"))
+    if unstamped:
+        print(f"  note: {unstamped} row(s) predate decision_provenance "
+              f"(2026-07-25) and cannot be filtered — kept, not verified.")
     if not args.executable_only and consequential < total:
         print("  ⚠ figures below INCLUDE decisions that cannot change the book. "
               "Re-run with --executable-only to judge decision quality.")

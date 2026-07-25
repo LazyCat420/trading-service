@@ -186,7 +186,11 @@ def test_quant_math_block_composes_all_lines(monkeypatch):
     block = cb.build_quant_math_block("AAPL")
     assert "PRECOMPUTED QUANT MATH" in block
     assert "EXPANSION" in block
-    assert "HRP covariance-aware sizing" in block and "AAPL" in block
+    # Renamed 2026-07-25: the line now states its basis (INVESTED capital, not
+    # equity) and labels itself a target weight, because the board read the old
+    # "% of equity" wording literally and sized an order at 19.2%.
+    assert "HRP covariance-aware target weight" in block and "AAPL" in block
+    assert "INVESTED capital" in block
     assert "REDUCE" in block
 
 

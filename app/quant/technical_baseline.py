@@ -198,18 +198,29 @@ def build_technical_baseline_block(ticker: str) -> str:
     if not b:
         return ""
 
-    lines = [
-        "VERIFIED TECHNICAL BASELINE (computed from stored daily data — "
-        "these are the authoritative values; do NOT restate them from memory "
-        "or estimate around them):"
-    ]
+    # The header is conditional on freshness. A stale baseline used to sit
+    # under "these are the authoritative values; do NOT estimate around them"
+    # — which is a false statement about a 71-day-old RSI, and it is the model
+    # that pays for it. Measured 2026-07-25: only 5 of 503 tickers are fresher
+    # than 3 days, so the stale branch is the COMMON case, not the exception.
     if b.get("stale"):
+        lines = [
+            "STORED TECHNICAL BASELINE (computed from stored daily data — "
+            "STALE, see the date below. Prefer a live tool call if you have "
+            "one; otherwise treat these as the best available anchor and say "
+            "so, rather than inventing different numbers):"
+        ]
         lines.append(
             f"  ⚠ STALE: latest stored session is {b['as_of']} "
             f"({b.get('age_days')} days old) — treat levels as indicative and "
             f"say so in data_gaps."
         )
     else:
+        lines = [
+            "VERIFIED TECHNICAL BASELINE (computed from stored daily data — "
+            "these are the authoritative values; do NOT restate them from "
+            "memory or estimate around them):"
+        ]
         lines.append(f"  as of {b['as_of']}")
 
     if "close" in b:

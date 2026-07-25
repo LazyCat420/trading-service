@@ -260,7 +260,9 @@ def validate_trade_decision_artifact(artifact: dict) -> dict:
     return artifact
 
 
-def coerce_unshortable_sell(artifact: dict, *, held: bool) -> dict:
+def coerce_unshortable_sell(
+    artifact: dict, *, held: bool, ticker: str = "", cycle_id: str = "",
+) -> dict:
     """A SELL on a ticker the bot does not hold is not a decision — it is an
     illegal move, and there is no shorting.
 
@@ -274,6 +276,14 @@ def coerce_unshortable_sell(artifact: dict, *, held: bool) -> dict:
     (fixed in agent_runner) and models ignored it anyway. This is the backstop:
     the artifact is rewritten to HOLD, keeping the bearish view visible in the
     reasoning rather than pretending a sell order was reasonable.
+
+    2026-07-25: this used to log a line naming neither the ticker nor the
+    cycle, and recorded the firing ONLY in artifact metadata. A reviewer
+    grepped the logs for the ticker, found nothing, and concluded the guardrail
+    had never fired when in fact it had — the false conclusion being that the
+    prompt fix alone was sufficient. A guardrail nobody can count is a
+    guardrail nobody can trust, so it now names the ticker and increments a
+    telemetry counter.
     """
     if not isinstance(artifact, dict) or held:
         return artifact
@@ -283,12 +293,29 @@ def coerce_unshortable_sell(artifact: dict, *, held: bool) -> dict:
     artifact["action"] = "HOLD"
     artifact["_coerced_from"] = "SELL"
     artifact["position_size_pct"] = 0
+    artifact["decision_provenance"] = "coerced_unshortable"
     _note(
         artifact,
         "SELL on an unheld ticker is not executable (no shorting) — coerced to "
         "HOLD/no-position; the bearish view is retained in the reasoning",
     )
-    logger.info("[ArtifactValidator] unheld SELL coerced to HOLD (no shorting)")
+    logger.info(
+        "[ArtifactValidator][GUARDRAIL] coerce_unshortable_sell FIRED — "
+        "%s/%s: unheld SELL coerced to HOLD (no shorting)",
+        cycle_id or "?", ticker or "?",
+    )
+    # Imported lazily: this module is deliberately dependency-free so the
+    # validators stay unit-testable without a DB, and telemetry imports
+    # shared_desk.
+    try:
+        from app.v3.telemetry import record_guardrail_firing
+
+        record_guardrail_firing(
+            "coerce_unshortable_sell", ticker=ticker, cycle_id=cycle_id,
+            detail={"coerced_from": "SELL", "artifact": artifact.get("_artifact_type")},
+        )
+    except Exception as e:  # never let telemetry break a safety rewrite
+        logger.warning("[ArtifactValidator] guardrail telemetry failed: %s", e)
     return artifact
 
 

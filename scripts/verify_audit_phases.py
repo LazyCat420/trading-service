@@ -163,6 +163,53 @@ def main() -> int:
     check("every ticker produced a decision",
           PASS if all(acts.values()) else FAIL, f"{acts}")
 
+    # ── decision integrity (2026-07-25) ──────────────────────────────────
+    # Every decision artifact must say where its action came from. Before
+    # this, a degraded board wrote NOTHING and the desk was indistinguishable
+    # from a confident no-signal HOLD.
+    prov = {}
+    for t, d in desks.items():
+        for key in ("final_decision", "trade_decision"):
+            art = d.get(key)
+            if isinstance(art, dict):
+                prov[f"{t}.{key}"] = art.get("decision_provenance")
+    missing_prov = [k for k, v in prov.items() if not v]
+    check("every decision artifact declares decision_provenance",
+          NA if not prov else (PASS if not missing_prov else FAIL),
+          f"{len(prov) - len(missing_prov)}/{len(prov)} stamped"
+          + (f"; MISSING: {missing_prov}" if missing_prov else "")
+          + f"; values={sorted({v for v in prov.values() if v})}")
+
+    degraded = [k for k, v in prov.items() if v == "board_degraded_fallback"]
+    check("no board degraded to a fallback this cycle",
+          PASS if not degraded else NA,
+          f"degraded: {degraded}" if degraded
+          else "none — every decision is a real agent verdict")
+
+    # ── shared_desk <-> trade_results reconciliation ─────────────────────
+    # These two records of the same decision silently diverged for 19 days
+    # (10 desks, all HOLD). A standing check turns that into an alert.
+    with get_db() as db:
+        tr_rows = db.execute(
+            "SELECT ticker, action FROM trade_results WHERE cycle_id = %s",
+            [cycle_id],
+        ).fetchall()
+    tr = {r[0]: r[1] for r in tr_rows}
+    mismatches = []
+    for t, d in desks.items():
+        desk_act = (d.get("trade_decision") or d.get("final_decision") or {}).get("action")
+        saved = tr.get(t)
+        if saved is None and desk_act:
+            mismatches.append(f"{t}: desk={desk_act} but NO trade_results row")
+        elif saved and not desk_act:
+            mismatches.append(f"{t}: trade_results={saved} but desk has no action")
+        elif saved and desk_act and str(saved).upper() != str(desk_act).upper():
+            mismatches.append(f"{t}: desk={desk_act} != trade_results={saved}")
+    check("shared_desk reconciles with trade_results",
+          NA if not tr and not any(acts.values()) else (PASS if not mismatches else FAIL),
+          f"{len(tr)} saved rows vs {len(desks)} desks; "
+          + (f"MISMATCH: {mismatches}" if mismatches else "all agree"))
+
     # ── report ───────────────────────────────────────────────────────────
     width = max(len(n) for n, _, _ in _results) + 2
     print(f"{'check':{width}} {'result':7} detail")

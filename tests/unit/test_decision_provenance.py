@@ -1,0 +1,141 @@
+"""Decision provenance — a degraded decision must never look like a real one.
+
+Regression cover for the 2026-07-25 finding: 10 desks reached PM_DONE with a
+real decision saved to `trade_results` while the desk's `final_decision` stayed
+null, because it only propagated on a SUCCESS/DATA_GAP board outcome. Nine were
+HOLD, which made it look like a decision bias; it was a write-path bug, and the
+HOLD skew came from the degraded path defaulting to HOLD@0.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.v3.artifact_validators import coerce_unshortable_sell
+from app.v3.shared_desk import (
+    DecisionProvenance,
+    DeskPhase,
+    PhaseOutcome,
+    SharedDesk,
+)
+
+
+def _desk() -> SharedDesk:
+    return SharedDesk(cycle_id="cycle-test-1", ticker="TEST")
+
+
+class TestProvenanceStamping:
+    def test_decision_artifacts_are_always_stamped(self):
+        """A caller that forgets provenance still cannot produce an unmarked
+        decision — that is the whole point of stamping in append_artifact."""
+        desk = _desk()
+        desk.append_artifact("final_decision", {"summary": "s", "action": "BUY"})
+        assert (
+            desk.final_decision["decision_provenance"]
+            == DecisionProvenance.BOARD_REASONED.value
+        )
+
+    def test_trade_decision_is_stamped_too(self):
+        desk = _desk()
+        desk.append_artifact("trade_decision", {"summary": "s", "action": "HOLD"})
+        assert (
+            desk.trade_decision["decision_provenance"]
+            == DecisionProvenance.BOARD_REASONED.value
+        )
+
+    def test_explicit_provenance_is_preserved(self):
+        """A degrade path sets provenance itself; stamping must not clobber it."""
+        desk = _desk()
+        desk.append_artifact("final_decision", {
+            "summary": "board failed",
+            "action": None,
+            "decision_provenance": DecisionProvenance.BOARD_DEGRADED_FALLBACK.value,
+        })
+        assert (
+            desk.final_decision["decision_provenance"]
+            == DecisionProvenance.BOARD_DEGRADED_FALLBACK.value
+        )
+
+    def test_coerced_artifact_keeps_coercion_provenance(self):
+        """A coercion that ran in agent_runner (before the desk) survives."""
+        desk = _desk()
+        desk.append_artifact("final_decision", {
+            "summary": "s", "action": "HOLD", "_coerced_from": "SELL",
+        })
+        assert (
+            desk.final_decision["decision_provenance"]
+            == DecisionProvenance.COERCED_UNSHORTABLE.value
+        )
+
+    def test_unknown_provenance_is_replaced_not_trusted(self):
+        desk = _desk()
+        desk.append_artifact("final_decision", {
+            "summary": "s", "action": "BUY", "decision_provenance": "nonsense",
+        })
+        assert desk.final_decision["decision_provenance"] in {
+            p.value for p in DecisionProvenance
+        }
+
+    def test_non_decision_artifacts_are_not_stamped(self):
+        """Only artifacts carrying a tradeable action need provenance."""
+        desk = _desk()
+        desk.append_artifact("quant_report", {"summary": "s"})
+        assert "decision_provenance" not in desk.quant_report
+
+    def test_only_board_reasoned_is_scoreable(self):
+        scoreable = DecisionProvenance.scoreable()
+        assert DecisionProvenance.BOARD_REASONED.value in scoreable
+        for p in (
+            DecisionProvenance.BOARD_DEGRADED_FALLBACK,
+            DecisionProvenance.COERCED_UNSHORTABLE,
+            DecisionProvenance.TIMEOUT_ABORT,
+        ):
+            assert p.value not in scoreable
+
+
+class TestTerminalPhaseRecorded:
+    def test_terminal_phase_appears_in_phase_outcomes(self):
+        """852/852 desks carried a `phase` absent from `phase_outcomes`, which
+        made "did the PM stage run?" unanswerable."""
+        desk = _desk()
+        desk.advance_phase(DeskPhase.RESEARCH_DONE)
+        desk.advance_phase(DeskPhase.DEBATE_DONE)
+        desk.advance_phase(DeskPhase.PM_DONE)
+        assert "PM_DONE" in desk.phase_outcomes
+
+    def test_aborted_is_recorded_too(self):
+        desk = _desk()
+        desk.advance_phase(DeskPhase.ABORTED, PhaseOutcome.TIMED_OUT)
+        assert "ABORTED" in desk.phase_outcomes
+
+    def test_non_terminal_phases_still_grade_the_phase_left(self):
+        desk = _desk()
+        desk.advance_phase(DeskPhase.RESEARCH_DONE, PhaseOutcome.DATA_GAP)
+        assert desk.phase_outcomes["INIT"] == PhaseOutcome.DATA_GAP.value
+
+
+class TestCoercionIsCountable:
+    def test_coercion_stamps_provenance(self):
+        art = coerce_unshortable_sell(
+            {"action": "SELL", "confidence": 80}, held=False, ticker="AMD",
+        )
+        assert art["action"] == "HOLD"
+        assert art["_coerced_from"] == "SELL"
+        assert art["decision_provenance"] == "coerced_unshortable"
+
+    def test_held_sell_is_untouched(self):
+        art = coerce_unshortable_sell(
+            {"action": "SELL", "confidence": 80}, held=True, ticker="AXP",
+        )
+        assert art["action"] == "SELL"
+        assert "decision_provenance" not in art
+
+    def test_ticker_is_optional_for_backwards_compat(self):
+        """Existing call sites pass only (artifact, held=)."""
+        art = coerce_unshortable_sell({"action": "SELL"}, held=False)
+        assert art["action"] == "HOLD"
+
+    @pytest.mark.parametrize("action", ["BUY", "HOLD", ""])
+    def test_non_sell_untouched(self, action):
+        art = coerce_unshortable_sell({"action": action}, held=False)
+        assert art.get("action") == action

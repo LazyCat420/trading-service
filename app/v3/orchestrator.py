@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from app.v3.shared_desk import SharedDesk, DeskPhase, PhaseOutcome
+from app.v3.shared_desk import SharedDesk, DeskPhase, PhaseOutcome, DecisionProvenance
 from app.v3.guardrails import CircuitBreaker
 from app.services.adaptive_concurrency import concurrency_controller
 from app.v3.telemetry import persist_telemetry
@@ -805,6 +805,10 @@ async def run_v3_pipeline(
                 "summary": skip_note, "action": "HOLD", "confidence": 0,
                 "winning_side": "skipped", "source": "no_trade_available_gate",
             })
+            # The board still genuinely decides after this gate, so its
+            # provenance stays BOARD_REASONED — but it decided without a
+            # debate, and scoring should be able to tell those apart.
+            desk.cycle_metadata["debate_skipped_by_gate"] = True
             if not board_dispatched:
                 board_dispatched = True
                 _queue_agent("board_of_directors", None, parent="quant_analyst")
@@ -1438,6 +1442,34 @@ async def run_v3_pipeline(
                 if abort:
                     whiteboard.unsubscribe(whiteboard_subscriber)
                     return abort
+                # 2026-07-25: deferred item 8.2 covered board TIMEOUTS only. Every
+                # other degrade path still left final_decision null on the desk
+                # while the synthesizer ran on and produced a real trade_decision —
+                # 10 desks found that way, all HOLD, because the degrade path and
+                # the HOLD default share one cause. `null` meant both "never ran"
+                # and "ran and we lost it". Record an explicit degraded sentinel
+                # instead, so the two are always distinguishable.
+                if not desk.final_decision:
+                    desk.append_artifact("final_decision", {
+                        "summary": (
+                            f"Board did not produce a decision "
+                            f"(outcome={outcome.value}). No agent verdict — this is "
+                            f"a recorded degrade, not a no-signal HOLD."
+                        ),
+                        "action": None,
+                        "confidence": 0,
+                        "decision_provenance": DecisionProvenance.BOARD_DEGRADED_FALLBACK.value,
+                        "degrade_outcome": outcome.value,
+                        "risk_flags": ["board_degraded_no_decision"],
+                    })
+                    save_desk(desk)
+                    logger.warning(
+                        "[V3] %s: board produced no final_decision (outcome=%s) — "
+                        "recorded degraded sentinel", ticker, outcome.value,
+                    )
+                    emit("analyzing", f"v3_board_degraded_{ticker}",
+                         f"⚠️ {ticker}: Board produced no decision ({outcome.value})",
+                         status="warn")
                 # Write final_decision to whiteboard so subscriber chains decision_synthesizer
                 if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.final_decision:
                     await whiteboard.write_section(

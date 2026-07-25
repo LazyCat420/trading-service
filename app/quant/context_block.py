@@ -67,11 +67,22 @@ def build_quant_math_block(ticker: str, bot_id: str = "") -> str:
                 dr = portfolio_math.diversification_ratio(weights, cov)
                 cond = portfolio_math.condition_number(cov)
                 w_t = w_map[ticker]
+                # UNITS (fixed 2026-07-25): HRP weights sum to 1.0 across the
+                # INVESTED universe, so this is a fraction of invested capital,
+                # not of equity. Calling it "% of equity" overstated it by
+                # ~2x on a 47%-cash book — and the board read one such line
+                # literally, sizing VZ at 19.2%. State the basis explicitly and
+                # label it a target weight, never an order size.
+                _invested = sum(held_values.values()) or equity
                 parts.append(
-                    f"- HRP covariance-aware sizing (holdings + {ticker}): target "
-                    f"weight for {ticker} = {w_t * 100:.1f}% of equity "
-                    f"(≈${w_t * equity:,.0f}); portfolio diversification ratio "
-                    f"{dr:.2f}; covariance condition {cond:.0f} "
+                    f"- HRP covariance-aware target weight for {ticker} = "
+                    f"{w_t * 100:.1f}% of INVESTED capital "
+                    f"(≈${w_t * _invested:,.0f}; the book is "
+                    f"{(equity - _invested) / equity * 100:.0f}% cash). This is a "
+                    f"portfolio target weight, NOT an order size — see the "
+                    f"SIZING BRACKET for what may actually be bought. "
+                    f"Diversification ratio {dr:.2f}; covariance condition "
+                    f"{cond:.0f} "
                     f"({'HIGH — estimates unstable' if cond > 1000 else 'OK'})"
                 )
                 held_total = sum(held_values.values())
@@ -103,9 +114,26 @@ def build_quant_math_block(ticker: str, bot_id: str = "") -> str:
     except Exception as e:
         logger.debug("[QuantMathBlock] %s: health failed (non-fatal): %s", ticker, e)
 
-    if not parts:
+    # ── Sizing bracket (2026-07-25) ──
+    # Appended as its own block rather than another bullet: sizing needs the
+    # units stated and the binding constraint named, which is exactly what a
+    # one-line bullet loses. See app/quant/sizing_bracket.py for why.
+    bracket = ""
+    try:
+        from app.quant.sizing_bracket import build_sizing_bracket
+
+        bracket = build_sizing_bracket(ticker, bot_id)
+    except Exception as e:
+        logger.debug("[QuantMathBlock] %s: sizing bracket failed: %s", ticker, e)
+
+    if not parts and not bracket:
         return ""
-    return (
-        "## PRECOMPUTED QUANT MATH (computed in code this cycle — cite these "
-        "numbers directly; tools only for deeper dives)\n" + "\n".join(parts)
-    )
+    block = ""
+    if parts:
+        block = (
+            "## PRECOMPUTED QUANT MATH (computed in code this cycle — cite these "
+            "numbers directly; tools only for deeper dives)\n" + "\n".join(parts)
+        )
+    if bracket:
+        block = (block + "\n\n" + bracket) if block else bracket
+    return block

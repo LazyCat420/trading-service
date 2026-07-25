@@ -132,6 +132,76 @@ def persist_telemetry(desk: SharedDesk) -> None:
         logger.warning("[V3Telemetry] Failed to persist telemetry: %s", e)
 
 
+_GUARDRAIL_TABLE_ENSURED = False
+
+
+def _ensure_guardrail_table() -> None:
+    """Create the v3_guardrail_firings table if it doesn't exist."""
+    global _GUARDRAIL_TABLE_ENSURED
+    if _GUARDRAIL_TABLE_ENSURED:
+        return
+
+    from app.db.connection import get_db
+
+    try:
+        with get_db() as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS v3_guardrail_firings (
+                    id SERIAL PRIMARY KEY,
+                    guardrail TEXT NOT NULL,
+                    cycle_id TEXT,
+                    ticker TEXT,
+                    detail JSONB,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v3_guardrail_name
+                ON v3_guardrail_firings (guardrail, created_at)
+            """)
+        _GUARDRAIL_TABLE_ENSURED = True
+    except Exception as e:
+        logger.warning("[V3Telemetry] Failed to ensure guardrail table: %s", e)
+
+
+def record_guardrail_firing(
+    guardrail: str,
+    *,
+    ticker: str = "",
+    cycle_id: str = "",
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """Record that a safety guardrail rewrote or blocked something.
+
+    Guardrails used to leave their evidence ONLY in artifact metadata. On
+    2026-07-25 that caused a real misdiagnosis: `coerce_unshortable_sell` fired
+    on AMD, the log line named no ticker, and a reviewer grepping the logs
+    concluded the guardrail had never run — and therefore that the prompt fix
+    alone had been sufficient. It had not; the backstop was load-bearing.
+
+    A guardrail that cannot be counted cannot be trusted or tuned, so every
+    firing lands in a queryable table. Fail-open: telemetry must never break
+    the pipeline it observes.
+    """
+    _ensure_guardrail_table()
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            db.execute(
+                """
+                INSERT INTO v3_guardrail_firings (guardrail, cycle_id, ticker, detail)
+                VALUES (%s, %s, %s, %s)
+                """,
+                [guardrail, cycle_id or None, ticker or None,
+                 json.dumps(detail or {}, default=str)],
+            )
+    except Exception as e:
+        logger.warning(
+            "[V3Telemetry] guardrail firing not recorded (non-fatal): %s", e
+        )
+
+
 def get_pipeline_summary(desk: SharedDesk) -> dict[str, Any]:
     """Build a summary of the pipeline's telemetry for logging/display."""
     total_ms = sum(e.get("elapsed_ms", 0) for e in desk.agent_telemetry)

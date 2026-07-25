@@ -64,7 +64,10 @@ class TestHrpRequiresARealPortfolio:
             lambda bot_id: ({}, 100000.0, 100000.0),
         )
         block = cb.build_quant_math_block("NVDA", "some-bot")
-        assert "HRP" not in block
+        # No HRP *calculation* — the sizing bracket's static caveat mentions
+        # the word, so assert on the computed line rather than the substring.
+        assert "HRP covariance-aware target weight" not in block
+        assert "HRP ceiling" not in block
 
     def test_block_never_raises_on_a_broken_portfolio(self, monkeypatch):
         """Precompute is fail-open: a portfolio error must degrade the block,

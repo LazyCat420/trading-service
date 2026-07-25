@@ -793,7 +793,10 @@ async def run_v3_agent(
                     )
                 if _really_held is False:
                     from app.v3.artifact_validators import coerce_unshortable_sell
-                    artifact = coerce_unshortable_sell(artifact, held=False)
+                    artifact = coerce_unshortable_sell(
+                        artifact, held=False,
+                        ticker=desk.ticker, cycle_id=desk.cycle_id,
+                    )
                 elif _really_held:
                     logger.error(
                         "[V3Runner] %s: desk metadata said held=False but the bot "

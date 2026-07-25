@@ -37,6 +37,38 @@ class PhaseOutcome(str, Enum):
     TIMED_OUT = "TIMED_OUT"
 
 
+class DecisionProvenance(str, Enum):
+    """How a decision artifact came to hold the action it holds.
+
+    The failure mode this exists to kill: a degraded board produced no
+    `final_decision`, the pipeline fell through to a hardcoded
+    `{"action": "HOLD", "confidence": 0}`, and the desk recorded something
+    indistinguishable from a confident no-signal HOLD. Ten such desks were
+    found on 2026-07-25, all HOLD — not because the board is biased, but
+    because the degrade path and the HOLD default share one cause.
+
+    Deferred item 8.2 fixed exactly this for board *timeouts* in 2026-07-15
+    and did not generalize. Making provenance a REQUIRED, enumerated field
+    rather than a convention is the generalization: a new fallback path
+    cannot silently reintroduce the bug, because it cannot produce a decision
+    artifact without saying where the action came from.
+
+    Only BOARD_REASONED means "an agent actually decided this". Everything
+    else is excluded from accuracy scoring by default (`--reasoned-only`).
+    """
+    BOARD_REASONED = "board_reasoned"                    # the board genuinely decided
+    BOARD_DEGRADED_FALLBACK = "board_degraded_fallback"  # board failed; default HOLD stood in
+    NO_TRADE_GATE_SKIP = "no_trade_gate_skip"            # unheld + unanimously bearish → debate skipped
+    COERCED_UNSHORTABLE = "coerced_unshortable"          # SELL on an unheld ticker rewritten to HOLD
+    TIMEOUT_ABORT = "timeout_abort"                      # phase timed out; desk aborted
+
+    @classmethod
+    def scoreable(cls) -> frozenset[str]:
+        """Provenances whose action reflects a real decision, so accuracy
+        measured over them means something."""
+        return frozenset({cls.BOARD_REASONED.value})
+
+
 # Valid phase transitions — enforced by SharedDesk.advance_phase()
 _VALID_TRANSITIONS: dict[DeskPhase, set[DeskPhase]] = {
     DeskPhase.INIT: {DeskPhase.RESEARCH_DONE, DeskPhase.ABORTED},
@@ -61,6 +93,12 @@ _VALID_ARTIFACT_TYPES = frozenset({
     "tournament_result",
     "delta_report",
 })
+
+# Artifacts that carry a tradeable action, and therefore must always declare
+# where that action came from. See DecisionProvenance.
+_DECISION_ARTIFACT_TYPES = frozenset({"final_decision", "trade_decision"})
+
+_VALID_PROVENANCE = frozenset(p.value for p in DecisionProvenance)
 
 # Max compressed context size to prevent context snowball
 _MAX_COMPRESSED_CONTEXT_CHARS = 8000
@@ -131,6 +169,29 @@ class SharedDesk:
         artifact["_appended_at"] = datetime.now(timezone.utc).isoformat()
         artifact["_artifact_type"] = artifact_type
 
+        # Every decision artifact says where its action came from. Stamped
+        # HERE rather than at the ~6 call sites so a future fallback path
+        # cannot produce an unmarked decision by forgetting to set it.
+        # A caller that already set provenance (a degrade/coercion path) wins;
+        # anything else reaching this point is a real agent decision.
+        if artifact_type in _DECISION_ARTIFACT_TYPES:
+            existing = artifact.get("decision_provenance")
+            if existing not in _VALID_PROVENANCE:
+                if existing is not None:
+                    logger.warning(
+                        "[SharedDesk] %s/%s: unknown decision_provenance %r on %s "
+                        "— recording as %s",
+                        self.cycle_id, self.ticker, existing, artifact_type,
+                        DecisionProvenance.BOARD_REASONED.value,
+                    )
+                # A coercion may have run before the artifact reached the desk
+                # (validators run in agent_runner), so honour its marker.
+                artifact["decision_provenance"] = (
+                    DecisionProvenance.COERCED_UNSHORTABLE.value
+                    if artifact.get("_coerced_from")
+                    else DecisionProvenance.BOARD_REASONED.value
+                )
+
         # Harvest optional free-form tags the agent put in its JSON (the
         # output directive advertises this). Normalized to '#lowercase'.
         raw_tags = artifact.get("tags")
@@ -182,6 +243,13 @@ class SharedDesk:
         old_phase = self.phase
         self.phase = new_phase
         self.phase_outcomes[old_phase.value] = outcome.value
+        # `outcome` grades the phase being LEFT, so a terminal phase (PM_DONE,
+        # ABORTED) never got an entry of its own — 852/852 desks carried a
+        # `phase` absent from `phase_outcomes`, which made "did the PM stage
+        # actually run?" unanswerable from the desk. Record reaching a terminal
+        # phase as an event in its own right.
+        if not _VALID_TRANSITIONS.get(new_phase):
+            self.phase_outcomes.setdefault(new_phase.value, "REACHED")
         logger.info(
             "[SharedDesk] %s/%s: Phase %s → %s (outcome: %s)",
             self.cycle_id[:12] if self.cycle_id else "?",
