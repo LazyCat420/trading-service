@@ -42,6 +42,12 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
         dynamic_trigger = verdict.get("dynamic_trigger")
         if not isinstance(dynamic_trigger, dict):
             dynamic_trigger = None
+        # Where this action came from. Absent only on artifacts written before
+        # 2026-07-25; a missing value is "unknown", NOT "an agent decided it",
+        # so it is stored as NULL rather than defaulting to board_reasoned.
+        provenance = verdict.get("decision_provenance")
+        if not isinstance(provenance, str) or not provenance.strip():
+            provenance = None
 
         result_id = str(uuid.uuid4())
 
@@ -61,6 +67,7 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                         risk_flags, stop_loss, take_profit,
                         position_size_pct, persona_used, regime,
                         internal_consensus_score, dynamic_trigger,
+                        decision_provenance,
                         created_at
                     ) VALUES (
                         %s, %s, %s, %s, %s,
@@ -68,6 +75,7 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                         %s, %s, %s,
                         %s, %s, %s,
                         %s, %s,
+                        %s,
                         %s
                     )
                     """,
@@ -88,6 +96,7 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                         regime,
                         consensus,
                         json.dumps(dynamic_trigger) if dynamic_trigger else None,
+                        provenance,
                         datetime.now(timezone.utc),
                     ],
                 )
@@ -104,7 +113,9 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                     "risk_flags": risk_flags, "stop_loss": stop_loss, "take_profit": take_profit,
                     "position_size_pct": position_size_pct, "persona_used": persona_used,
                     "regime": regime, "internal_consensus_score": consensus,
-                    "dynamic_trigger": dynamic_trigger, "created_at": datetime.now(timezone.utc),
+                    "dynamic_trigger": dynamic_trigger,
+                    "decision_provenance": provenance,
+                    "created_at": datetime.now(timezone.utc),
                 })
         except Exception:
             pass

@@ -146,7 +146,13 @@ def _distinct_trade_tickers(db, cycle_id: str) -> list[tuple]:
 
 def _latest_trade_row(db, cycle_id: str, ticker: str):
     """Latest (action, confidence, reasoning, signal_weights, risk_flags,
-    regime, persona_used, created_at) for a cycle/ticker, or None."""
+    regime, persona_used, created_at, decision_provenance) for a cycle/ticker,
+    or None.
+
+    `decision_provenance` is last so the positional unpacking above it is
+    unchanged. It is NULL on rows written before 2026-07-25 — absent means
+    "unknown", never "an agent decided this".
+    """
     if _mongo_reads("trade_results"):
         try:
             from app.db import mongo_store
@@ -159,14 +165,15 @@ def _latest_trade_row(db, cycle_id: str, ticker: str):
             d = docs[0]
             return (d.get("action"), d.get("confidence"), d.get("reasoning"),
                     d.get("signal_weights"), d.get("risk_flags"), d.get("regime"),
-                    d.get("persona_used"), d.get("created_at"))
+                    d.get("persona_used"), d.get("created_at"),
+                    d.get("decision_provenance"))
         except Exception as e:
             logger.warning("[cycles] mongo trade-detail read failed, PG fallback: %s", e)
     return db.execute(
         """
         SELECT action, confidence, reasoning,
                signal_weights, risk_flags, regime,
-               persona_used, created_at
+               persona_used, created_at, decision_provenance
         FROM trade_results
         WHERE cycle_id = %s AND ticker = %s
         ORDER BY created_at DESC
@@ -681,6 +688,11 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                     except Exception:
                         pass
 
+                # Provenance: whether an agent actually decided this, or the
+                # pipeline degraded/coerced its way to an action. Surfaced so
+                # the UI can mark it — a degraded HOLD rendered as a normal
+                # HOLD is the whole bug this field exists to prevent.
+                _prov = trade_row[8] if len(trade_row) > 8 else None
                 trade_result = {
                     "action": trade_row[0],
                     "confidence": trade_row[1],
@@ -690,6 +702,12 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                     "regime": trade_row[5],
                     "persona_used": trade_row[6],
                     "created_at": trade_row[7].isoformat() if trade_row[7] else None,
+                    "decision_provenance": _prov,
+                    # Convenience flag so clients don't have to know the enum.
+                    # NULL provenance is legacy/unknown, NOT degraded.
+                    "is_agent_decision": None if _prov is None else (
+                        _prov == "board_reasoned"
+                    ),
                 }
 
             # Extract key artifacts from desk_data for display

@@ -3240,6 +3240,15 @@ def _fix_eth_cagr_data(conn):
                 ALTER TABLE trade_results
                 ADD COLUMN IF NOT EXISTS policy_action TEXT;
             """)
+            # 2026-07-25: decision_provenance was added to the DESK but not
+            # here, so the table the UI, the replay API and the freshness gate
+            # all read still could not tell a degraded fallback from a real
+            # agent verdict — the same laundering this field exists to stop,
+            # left half-fixed. See docs/DECISION_INTEGRITY_PLAN.md.
+            cur.execute("""
+                ALTER TABLE trade_results
+                ADD COLUMN IF NOT EXISTS decision_provenance TEXT;
+            """)
             conn.commit()
     except Exception:
         try:
