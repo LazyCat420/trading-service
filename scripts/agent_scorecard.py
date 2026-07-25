@@ -432,10 +432,21 @@ def main() -> int:
     ap.add_argument("--since", default="2026-06-18",
                     help="Only score decisions created on/after this date (default: shared_desk history start)")
     ap.add_argument("--json", dest="json_out", help="Also write the raw report to this path")
-    ap.add_argument("--source", choices=("outcomes", "price"), default="outcomes",
-                    help="outcomes = resolved decision_outcomes (the original, "
-                         "bookkeeping-limited sample). price = score every desk "
-                         "straight from price_history — ~10x the sample, no wait.")
+    # DEFAULT FLIPPED 2026-07-25. `outcomes` caps at n=40 on the current DB.
+    # The limiter is NOT the date filter and NOT the resolver: 2,023 outcomes
+    # are resolved, but only **65 of them join to a shared_desk row** at all
+    # (measured 2026-07-25), so every --since from 2026-05-01 to 2026-07-01
+    # returns the same 65. It also never resolves HOLDs (78 rows, 0 resolved).
+    # Worse, that 65-row sample reported a *negative* always-long baseline
+    # where the 856-desk price sample reports +2.16% — so the default was
+    # quietly answering a much noisier question than the one anyone typing
+    # this command means to ask. The desk-join gap is a real open bug; until
+    # it is fixed, `price` is the honest default.
+    ap.add_argument("--source", choices=("outcomes", "price"), default="price",
+                    help="price (DEFAULT) = score every desk straight from "
+                         "price_history — ~10-20x the sample, no resolver wait, "
+                         "includes HOLDs. outcomes = resolved decision_outcomes "
+                         "only (bookkeeping-limited; n=40 as of 2026-07-25).")
     ap.add_argument("--horizon", type=int, default=7,
                     help="Forward trading sessions to score over (price source only)")
     ap.add_argument("--executable-only", action="store_true",
@@ -459,6 +470,22 @@ def main() -> int:
     else:
         rows = fetch_rows(args.since)
         source_label = "resolved decisions"
+        # Say out loud how much of the resolved data never reaches the score.
+        # Silence here is what let a 65-row join masquerade as the sample.
+        try:
+            from app.db.connection import get_db
+            with get_db() as _db:
+                _resolved = _db.execute(
+                    "SELECT count(*) FROM decision_outcomes "
+                    "WHERE resolved_at IS NOT NULL AND pnl_pct IS NOT NULL"
+                ).fetchone()[0]
+            if _resolved > len(rows):
+                print(f"⚠ {_resolved} resolved outcomes exist but only {len(rows)} join to a "
+                      f"shared_desk row — {_resolved - len(rows)} are unscoreable here.\n"
+                      f"  --since does not widen this; the JOIN is the limiter. "
+                      f"Use --source price for the full sample.")
+        except Exception:
+            pass
     if not rows:
         print(f"No scoreable desks since {args.since} (source={args.source}).")
         return 1
