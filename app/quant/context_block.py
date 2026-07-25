@@ -114,6 +114,44 @@ def build_quant_math_block(ticker: str, bot_id: str = "") -> str:
     except Exception as e:
         logger.debug("[QuantMathBlock] %s: health failed (non-fatal): %s", ticker, e)
 
+    # ── Cross-sectional factor exposures (2026-07-25) ──
+    # Only price-derived factors: `fundamentals` holds 76 snapshot dates from
+    # 2026-05-06, so value/profitability/investment cannot be built without
+    # look-ahead bias. See app/quant/factors.py.
+    try:
+        from app.quant import factors as factor_lib
+        from app.tools.portfolio_tools import _current_holdings
+
+        held_values, _c, _e = _current_holdings(bot_id)
+        universe = sorted(set(held_values) | {ticker})
+        if len(universe) >= factor_lib.MIN_CROSS_SECTION:
+            exposures = factor_lib.factor_exposures_for(ticker, universe)
+            if exposures:
+                rendered = ", ".join(
+                    f"{name} {z:+.2f}σ" for name, z in sorted(exposures.items())
+                )
+                parts.append(
+                    f"- Factor exposures for {ticker} (cross-sectional z-scores vs the "
+                    f"{len(universe)}-name book): {rendered}. Positive momentum = strong "
+                    f"12-1 trend; positive low_vol = CALMER than peers; positive reversal "
+                    f"= recent loser (bounce candidate). Price-derived only."
+                )
+    except Exception as e:
+        logger.debug("[QuantMathBlock] %s: factor exposures failed (non-fatal): %s", ticker, e)
+
+    # ── HMM regime shadow (2026-07-25) ──
+    # A price-only regime posterior that is emitted EVERY cycle, unlike the
+    # regime engine's forward_call (scoreable in 7 of 130 desks). Shadow only:
+    # it never overrides the Regime Engine. See app/quant/regime_hmm.py.
+    try:
+        from app.quant.regime_hmm import build_hmm_context_line
+
+        hmm_line = build_hmm_context_line()
+        if hmm_line:
+            parts.append(hmm_line)
+    except Exception as e:
+        logger.debug("[QuantMathBlock] %s: HMM shadow failed (non-fatal): %s", ticker, e)
+
     # ── Sizing bracket (2026-07-25) ──
     # Appended as its own block rather than another bullet: sizing needs the
     # units stated and the binding constraint named, which is exactly what a
