@@ -1,534 +1,189 @@
-# HANDOFF — Agent-by-agent audit of the V3 trading cycle (2026-07-24)
+# HANDOFF — Quant factor wave: price factors, statistical gates, residual alpha, HMM regime shadow (2026-07-25)
 
-A systematic audit of every agent in the V3 cycle, in pipeline order, each
-phase building on the last. **Phases 0-6 are done and live** (`90e7452`).
-Phases 7-8 are not started.
-
-> ## ⚠ READ THIS BEFORE TRUSTING ANY NUMBER IN THIS FILE
->
-> Midway through, this audit's own measurement was found to be wrong, and it
-> had inverted a headline conclusion. **"The decision layer destroys the
-> research layer's value" is RETRACTED** — it was two stacked scoring errors:
-> 69% of scored decisions could not change the book (policy-blocked SELLs on
-> unheld tickers, no-op HOLDs), and HOLD on a *held* position was scored as
-> predicting flatness when it means staying long. Correcting both moved the
-> board from 39.6% hit / -1.75 edge to 68.5% / +3.17.
->
-> The corrected number is **not** evidence of skill either: always-long over
-> the same desks earns +4.05% vs the board's +2.91%, i.e. **-1.14% against the
-> null** in a 95-up/30-down window.
->
-> **Always run `--executable-only` and beat the printed always-long BASELINE,
-> never zero.** Every conclusion drawn before 2026-07-24 was measured against
-> zero and is suspect.
-
-**Decisions taken with the user for the remaining phases:**
-1. Tournament (5) and Board (6) are audited **together** — the board's whole
-   job is consuming the debate, so auditing them apart analyses the same
-   handoff twice.
-2. Any board change ships **shadow-first**: log what the new behavior WOULD
-   decide alongside the live decision, the way `contradiction_shadow` already
-   works, and only promote it once there is evidence on live data. The board
-   moves real money; n=53 is not enough to rewire it blind.
-3. The tournament gets **parallelized caller-side only** — no Prism edits
-   (standing rule). See the concurrency constraints below before starting.
-
-The governing rule for this wave: **no agent gets tuned without a measurable
-target.** That is why Phase 0 exists and why it came first.
+Shipped `6a527d1` + `scripts/agent_scorecard.py` default fix. Previous wave's
+handoff archived to [`docs/HANDOFF_agent_audit_2026-07-24.md`](docs/HANDOFF_agent_audit_2026-07-24.md).
 
 ---
 
-## Decision integrity — all three phases SHIPPED (2026-07-25, `eac617a`+`d42785a`)
+## What this wave was
 
-`docs/DECISION_INTEGRITY_PLAN.md` is implemented, deployed and verified live.
-**`cycle-observe-1784949769` (AXP/INTC): 14/14 checks pass, 0 failures** — the
-first fully clean run. 1273 tests (from 1241).
+A plan arrived proposing a graph-engineering rewrite (11-node DAG runtime,
+YAML graph specs), seven Fama-French factor nodes, an HMM regime engine, and
+an RL allocation overlay. **Four ideas survived verification against the live
+DB; three were cut.** The cuts matter as much as the builds:
 
-**The principle:** *a degraded result must never be representable as a confident
-one.* This codebase's failure mode is laundering, not crashing.
-
-- **`DecisionProvenance` is stamped inside `append_artifact`**, not at the ~6
-  call sites — a new fallback path cannot emit an unmarked decision by
-  forgetting. This was the THIRD unmarked-fallback bug (timeout, degrade,
-  `bot_id`), so it is now structural rather than conventional.
-- **`final_decision` is written unconditionally.** A degrade records an explicit
-  sentinel (`action: None` + `degrade_outcome`), never a fake `HOLD@0`. `null`
-  used to mean both "never ran" and "ran and we lost it".
-- **Guardrails are countable** — `v3_guardrail_firings` table, and
-  `coerce_unshortable_sell` now names the ticker. It previously logged neither
-  ticker nor cycle, which is precisely how I misdiagnosed AMD.
-- **`--include-degraded` is OFF by default** on the scorecard, and
-  `verify_audit_phases.py` gained a standing `shared_desk` ↔ `trade_results`
-  reconciliation that would have caught this on 07-06 rather than 19 days later.
-- **10 historical desks backfilled** (`scripts/backfill_desk_decisions.py`)
-  after a 1766-row backup, stamped `_backfilled_from`.
-
-**⚠ Two corrections to what I reported earlier:**
-1. The set was **9 HOLD + 1 BUY** (CPS), not all-HOLD — an artifact of the
-   400-row sample window. The conclusion (write path, not decision bias) stands.
-2. **A worse units bug sat underneath the sizing problem.** HRP weights sum to
-   1.0 over the **INVESTED** universe, but the injected line called them "% of
-   equity" — ~2x apart on a 47%-cash book. VZ's "19.2% of equity" was really
-   **7.9%**. The board was copying a line that was simply wrong. Fixed in both
-   `context_block.py` and the new `app/quant/sizing_bracket.py`; a test
-   reproduces the VZ case exactly.
-
-The fix is visible in live reasoning — AXP's `SELL @75` cites *"HRP target
-weight (3.3% equity) is significantly lower than current exposure (8.3%
-equity)"*.
-
-### Follow-up — the field only reached HALF its consumers (`3f5db39` + client `33b2b8c`)
-
-The 14/14 run passed while provenance was still missing from **`trade_results`**
-— the table the replay API, the UI and the freshness gate all read. A degraded
-fallback still rendered as a confident verdict everywhere a human looks. The
-reconciliation check missed it because it compared only the **action**: two
-stores agreeing on "HOLD" while disagreeing on whether anything *decided* it is
-exactly the laundering the field exists to stop.
-
-Now: column on `trade_results` (PG + Mongo mirror; missing → **NULL**, never
-defaulted); `is_agent_decision` on the API; an amber "NOT AN AGENT DECISION"
-band in the UI keyed on `=== false` so legacy NULLs aren't badged; and a
-**provenance** reconciliation check beside the action one.
-
-**Re-verified on `cycle-observe-1784951526` (MSFT held / KO unheld, fresh
-tickers): 15/15 pass, 0 failures.** Chain confirmed live
-`desk → trade_results → API → is_agent_decision: true`. MSFT `SELL @68→60`
-(held exit), KO `HOLD @65`; both `board_reasoned`, `PM_DONE: REACHED` on both.
-1277 tests.
-
-### ✅ `technicals` staleness FIXED (`e04c7b9`, `89174d6`) — it was never a collector gap
-
-**`price_history` was current for every ticker the whole time.** The staleness
-was three bugs in the derived-indicator *writer*:
-
-1. **`compute_technicals` read the OLDEST prices.** `ORDER BY date ASC LIMIT
-   500` — so for MSFT (10,169 rows back to 1986) every run recomputed
-   `1986-03-13 .. 1988-03-03` and never touched a recent date. **CVX's newest
-   technical row was 1963-12-26** against a 2026-07-24 price — a 22,856-day lag
-   handed to the quant analyst as its "VERIFIED TECHNICAL BASELINE".
-2. **`ON CONFLICT DO NOTHING` could never CORRECT a row**, only add missing
-   ones, so the damage could only accumulate. Now `DO UPDATE`.
-3. **Nothing scheduled it.** It ran only when an agent happened to call
-   `get_technical_indicators` — hence the ragged 8–71 day staleness.
-   `collect_all` now refreshes technicals right where prices land (fail-open:
-   a failure there must not cost the price rows just collected).
-
-**Result: 2708 tickers carry technicals and 100% are fresh against their own
-price history** (2707 at zero lag), vs 5 of 503 before. The deployed container
-confirms `compute_technical_baseline` now returns `stale=False age=0d` — so the
-Phase 4 quant reconciliation is authoritative for the first time.
-
-**Verified live — `cycle-observe-1784955045` (UNH held / CVX unheld): 15/15
-pass, 0 failures.** Both desks' RSI matches `technicals` exactly, sourced
-`as_of=2026-07-24`: CVX **71.44** (was a *1963* value), UNH **51.56**.
-Decisions: UNH `SELL`, CVX `HOLD`, both `board_reasoned`.
-
-**Two traps worth keeping:**
-- **The write must stay batched.** At ~490 rows/ticker a loop of `execute()`
-  cost **22.6s/ticker** — a ~16h full repair. `executemany` → ~0.1s warm; the
-  whole 2631-ticker backfill ran in **321s**. Pinned by a test.
-- **The minimum is 28 sessions, not 14.** ADX smooths an already-smoothed
-  series, so it needs ~2× its window; measured, it raises at n=25 and succeeds
-  at n=28. `ta` *raises* on a short frame rather than returning NaN, so the old
-  `>=5` floor let 12 thin tickers crash the writer mid-backfill.
-- **The hook lives in `collect_price_history`, NOT `collect_all`.** The V3
-  precollect path (`app/v3/data_report.py`) calls `collect_price_history`
-  directly, so a hook one level up fires only on the scheduler path and every
-  *cycle* stays stale. I shipped it in the wrong place first and caught it by
-  tracing a live cycle. It also runs on the failure paths: yfinance returns NaN
-  often enough (rate limits, after hours) that skipping then would leave the
-  table's freshness at the vendor's mercy while stored prices are already
-  newer. A test guards that precollect still calls `collect_price_history`.
-- `scripts/refresh_technicals.py` repairs the backlog. Its staleness query is
-  deliberately two grouped scans joined in Python — the equivalent SQL JOIN
-  makes the planner fan out to parallel workers and blows the postgres
-  container's default **64MB `/dev/shm`**, and that container is not ours to
-  reconfigure.
-- **Don't deploy while a cycle is in flight** — the restart kills it
-  (`Cycle stopped by user`). I did exactly that and had to re-run.
-
-**⚠ Harness trap I hit while verifying:** desks are written incrementally and
-the board/synthesizer artifacts land AFTER the per-ticker "Pipeline complete"
-log line. A mid-flight read shows `phase=DEBATE_DONE` with null decisions —
-indistinguishable from the bug this wave fixed. Check `phase=PM_DONE` **and**
-`updated_at` before concluding.
+| Proposed | Verdict | Why |
+|---|---|---|
+| Graph runtime (nodes/edges/YAML) | **CUT** | `orchestrator.py` already is one — scoped per-node failure (`_run_agent_with_circuit_breaker`), fan-in state (`SharedDesk`), phase gating (`DeskPhase`), budgets, telemetry, run artifacts. Rebuilding it generically costs weeks and ships zero alpha. |
+| Value / profitability / investment / size factors | **CUT** | `fundamentals` = 4,782 rows, 737 tickers, **76 distinct snapshot dates, earliest 2026-05-06**. A current-snapshot table, not a panel. Backfilling today's book values across history is look-ahead bias. Earliest honest start ~2028. |
+| RL regime overlay | **CUT** | 3 states × ~2-3 regime transitions in any available test window. A learned policy is indistinguishable from a lucky one at that n — and the *existing* decision layer already trails buy-and-hold. |
+| Momentum / low-vol / beta / reversal factors | **BUILT** | Price-derived. `price_history` = 15.1M rows, 2,744 tickers, back to 1962, 2,072 with ≥10y. |
+| Newey-West / bootstrap / IS-OOS gates | **BUILT** | Every return series here is built from *overlapping* windows. |
+| Residual-alpha gate | **BUILT** | Directly answers the open question: alpha, or beta? |
+| HMM regimes | **BUILT — as a shadow** | Not a replacement. See below. |
 
 ---
 
-## What is live right now
+## THE HEADLINE MEASUREMENT
 
-**`65a4050`** — deployed to synology 2026-07-24T20:09Z, health OK on :3031.
-1156 tests pass (1141 before this wave).
+```
+scripts/residual_alpha_report.py --since 2026-05-01 --executable-only
+153 consequential desks, +7-session horizon
 
-### ✅ Re-tested 2026-07-25 — third live cycle, independent tickers
+BASELINE  always-long over the same desks : +2.14%
+PIPELINE  return signed to actions taken  : +1.53%
+          difference vs the null          : -0.62%
 
-`cycle-observe-1784946884` (**AXP/LLY/AMD**) through the deployed container —
-tickers none of the earlier verification cycles touched, deliberately mixing
-**held** (AXP, LLY) and **unheld** (AMD). **10/11 checks pass.** 1241 tests
-pass locally. Decisions: `AXP SELL @60` (an executable exit — the rarest class,
-9 of 821 before this wave), `LLY HOLD @64`, `AMD HOLD @78`.
-
-AMD is the interesting case: its tournament returned **SELL @80% with all three
-research desks BEARISH on an unheld ticker**. The **board** independently chose
-HOLD @65 (the never-shed constraint working), but the **synthesizer** still came
-back SELL and was rewritten by `coerce_unshortable_sell` (`_coerced_from: "SELL"`
-on its `trade_decision`). ⚠ *I first reported that the coercion "never fired" —
-wrong: coercion is recorded in **artifact metadata, not the logs**, and I checked
-only the logs. Both layers were needed; the backstop was load-bearing.* Coercion
-has fired **once in 852 desks** since 07-01. The shed logs do confirm
-`portfolio_context` stayed out of both the board's 4-section and the
-synthesizer's 3-section shed lists under real overflow — `_KEEP` holds under
-exactly the pressure that originally broke it.
-
-**Four things changed since the report was written — read these before picking
-up any open item:**
-
-1. **HRP is confirmed live — the top open item is unblocked.** Real varying
-   weights across 8 desks (JPM 0.123, VZ 0.192, LLY 0.099, TSM 0.069, AXP
-   0.063, NVDA 0.006). The old "mostly 0.0" was the `bot_id` bug: HRP was never
-   running, not running and returning zero. **Units trap**: the board sized VZ
-   at 19.2% = HRP's `0.192 × 100`, reading a portfolio *target weight* as a
-   single *order size*. Contained by `MAX_POSITION_SIZE_PCT` (live **0.10**),
-   but by the cap, not the reasoning. The sizing bracket must state units and
-   label HRP a ceiling.
-2. **"The synthesizer never overrides the board — 0 of 53" is RETRACTED.** At
-   n=557 it differs on **108 (19%)** including **8 hard BUY↔SELL flips**. Its
-   overrides are also the only handoff of four that pays (n=12, +5.52 edge, 88%
-   hit). Do not open Phase 7 assuming the layer is inert.
-3. **`technicals` staleness is far worse than "GOOGL 7d, IP 9d"** — only **5 of
-   503 tickers (1%)** are fresher than 3 days; VZ's RSI was **71 days** stale
-   and still fed a live BUY. Phase 4 swapped fabricated numbers for stale ones
-   (a real improvement — now sourced and traceable, and the 5-day stale guard
-   works), but the reconciliation is authoritative far less often than assumed.
-4. **NEW — ~2% of desks never persist `final_decision` though the decision was
-   made.** AMD is the 10th case. **Root-caused 2026-07-25 → plan in
-   `docs/DECISION_INTEGRITY_PLAN.md`.** It is a **write-path bug, not a
-   decision bias**: `final_decision` only propagates when the board returns
-   `SUCCESS`/`DATA_GAP` (`orchestrator.py:1442`), and a board that degrades any
-   other way writes none *and* falls back to the hardcoded
-   `{"action": "HOLD", "confidence": 0}` (`orchestrator.py:798`) — one cause,
-   both effects. The "all 10 are HOLDs" figure is far weaker than it looks:
-   **HOLD's base rate is 52%** of the same 400 rows, so 9-in-a-row is ~1-in-344,
-   and **9 of the 10 have `trade_decision` fully persisted** at `PM_DONE`.
-   The real defect: **a degraded board is indistinguishable from a confident
-   no-signal HOLD** — already fixed once for board *timeouts* (deferred item
-   8.2, see the comment at `orchestrator.py:1434`), never extended to the other
-   degrade paths. Still reconcile `shared_desk` against `trade_results` before
-   quoting desk-based numbers.
-
-**Timing across the full history** (not just the like-for-like pair): tournament
-mean **483.3s (n=229) → 86.6s (n=4)**, ~5.6×. Per-ticker agent-time
-**600–800s → 260–473s**. Quant RSI now matches `technicals` to the cent on
-**7/7** post-fix desks, against 56% fabricated before — the most conclusively
-fixed finding in the audit.
-
-### Phase 0 — the measurement target (`scripts/agent_scorecard.py`)
-
-Every agent had latency/loop/`quality_score` telemetry, but `quality_score`
-grades the *shape* of an artifact, not whether it was right. Nothing scored an
-agent against the market.
-
-The scorecard joins the two halves that were never joined —
-`decision_outcomes` (resolved P&L, 7-day horizon) and `shared_desk` (every
-agent's artifact for the same cycle+ticker; **201/201 decisions since 06-18
-join**) — and reports per agent: hit rate with a Wilson 95% interval, `edge%`
-(mean signed move from following that agent), Brier calibration, and the
-confidence gap between right and wrong calls. It also scores handoffs: does a
-downstream override of an upstream agent pay?
-
-```bash
-.venv/bin/python scripts/agent_scorecard.py --since 2026-06-18
+Residual alpha: -0.53% per decision (t=-0.904, gate 2.5) — NOT distinguishable from zero.
+  raw mean +1.12% = +1.65% explained by factor exposure + -0.53% residual.
+  n=106, R²=0.4001, NW lag=6
+    momentum   loading +1.976 (t=3.194)
+    low_vol    loading +0.665 (t=1.198)
+    beta       loading -2.884 (t=-2.486)
+    reversal   loading +0.425 (t=0.681)
 ```
 
-**Baseline — 53 resolved decisions, 17W/24L/12F.** Re-run after each phase and
-compare against this:
+**The pipeline's return is explained by its factor exposure.** This is the
+first time that is sayable with a t-stat rather than an anecdote. Note the
+*negative* beta loading alongside a positive raw return — the book leans
+toward low-beta names and still trails always-long, so this is not the simple
+"it just bought high-beta in a rising tape" story; the momentum loading
+(+1.98, t=3.19) is doing most of the explaining.
 
-| agent | n | decisive | hit% | 95% CI | edge% | brier | confΔ |
-|---|---|---|---|---|---|---|---|
-| regime_engine | 53 | 0 | — | — | — | — | — |
-| junior_analyst | 53 | 0 | — | — | — | — | — |
-| fundamental_analyst | 53 | 32 | 46.9 | 31–64 | -0.09 | 0.393 | -1.9 |
-| quant_analyst | 53 | 29 | 41.4 | 26–59 | +0.07 | 0.354 | -0.5 |
-| tournament_debate | 53 | 40 | 60.0 | 45–74 | **+0.39** | **0.262** | +3.0 |
-| board_of_directors | 53 | 41 | 41.5 | 28–57 | **-0.49** | 0.366 | +1.7 |
-| decision_synthesizer | 53 | 41 | 41.5 | 28–57 | -0.49 | 0.368 | +1.2 |
+This is a **null result, not a broken script** — the report says so in its own
+output so the next reader doesn't file it as a bug.
 
-`debate_judge` is omitted: the orchestrator copies `tournament_result` into it,
-so it is the same row twice — do not read it as independent confirmation.
-
-### Phase 1 — regime engine (`65a4050`)
-
-Three defects, all measured over 14 days / 366 runs:
-
-1. **A global classifier was running per ticker.** `run_v3_pipeline` is invoked
-   per ticker, so the engine answered the same question about the same market
-   up to 6 times concurrently — and **disagreed with itself in 35 of 64
-   multi-ticker cycles**. 25 of 121 cycles reported more than one VIX level
-   (one cited 15.03, 15.57 and 22.00 at once). The label picks the Board
-   persona, so that routing was partly noise. `app/v3/regime_cache.py` now
-   classifies once per cycle behind an asyncio lock.
-2. **Three of seven factors were scored from data the engine never had.** The
-   briefing was a list of *levels*; `trend_strength`, `sector_momentum` and
-   `liquidity` are slope/breadth questions. The engine made **zero** tool calls
-   in 366 runs and still returned `trend_strength` averaging 0.81.
-   `app/v3/macro_trend.py` computes the real inputs from `asset_prices`.
-3. **It predicted nothing, so it could never be wrong** — 53/53 artifacts
-   unscoreable. It now emits `forward_call` (5-day SPX direction, VIX
-   direction, conviction), graded by `scripts/grade_regime_calls.py`.
-
-### Phase 2 — junior analyst (`c4df26e`)
-
-- **Budget starvation**: 96% of runs finished at the 5-turn ceiling, so step 3
-  "TRACE one lead depth-first" was unreachable and 34% never made their
-  mandatory whiteboard write. Budget 5 → 7, and the mandated step-1
-  `whiteboard_read` is gone — `whiteboard.summarize()` is **already injected
-  into every agent's prompt**, so that call re-fetched what the agent held.
-- **The triage gate was not binding**: `triage_recommendation` routes the
-  pipeline and anything unrecognized becomes FULL (the expensive path). It was
-  **missing in 90 of 337 runs (27%)** with nothing logged; SKIP has never
-  fired; QUANT_ONLY fires 2% of the time. Now required + normalized.
-- **It could never be wrong** (0-for-53 decisive) → new `catalyst_call`.
-
-### Phase 3 — fundamental analyst (`343fb37`)
-
-- **The obvious hypothesis was wrong.** 37% of runs make zero tool calls, but
-  those runs score *better* (40% vs 29%). "Call more tools" would have been the
-  wrong fix; the prompt is unchanged on that axis.
-- **No horizon concept existed anywhere in V3** (`grep horizon` → nothing). A
-  multi-quarter business view was consumed as a vote on a 7-day trade — by the
-  debate, by the Buffett persona, by the contradiction shadow. BULLISH calls
-  averaged a **-0.54%** realized move, BEARISH **+0.72%**, at 76-84 stated
-  confidence. New `horizon` + `near_term_read`; the scorecard grades the
-  horizon-matched claim and falls back for old artifacts.
-- moat carried no number in 70% of reports, management in 38% → quantitative
-  proxies (gross margin trend, ROIC, countable capital allocation).
-
-### Phase 4 — quant analyst (`43a79fd`)
-
-**The most serious correctness finding of the audit.** Tracing every RSI in 305
-reports back to the text the agent was given: only 134 matched a number
-anywhere on the desk. **171 did not, 148 of those from zero-tool runs.** IP
-reported 58.0 against a desk value of 71.19; GOOGL 47.0 against 53.7. These set
-`volatility_regime` and stop placement and the Board reads them as fact.
-
-Root cause is a category error, not a weak prompt: those values already exist
-in the `technicals` table. `app/quant/technical_baseline.py` computes them,
-injects them (never shed), and reconciles the artifact afterwards, keeping the
-model's originals so the rate stays measurable. **Correction is conditional** —
-see Gotchas. The "MANDATORY" whiteboard `signals` write (9 of 56 runs) is now
-posted from the artifact in code.
-
-### Phase 6 — board / unactionable-decision waste (`90e7452`)
-
-The board did **not** need the override constraint I had planned (see the
-retraction above). The real finding was where its compute goes. Across 821
-decisions / 202 agent-hours:
-
-| decision | n | agent-hours | avg |
-|---|---|---|---|
-| HOLD unheld (screening "no") | 343 | 55.1 | 578s |
-| BUY (actionable) | 182 | 53.3 | 1054s |
-| **SELL unheld (CATEGORY ERROR)** | **167** | **57.7** | **1243s** |
-| HOLD held (actionable) | 120 | 32.2 | 966s |
-| SELL held (actionable) | 9 | 3.6 | 1443s |
-
-The unactionable SELLs were the **most expensive decisions in the system and
-the least useful** — 29% of all compute, every one blocked by the policy gate
-at the very end.
-
-**Root cause: the constraint was being shed from the prompt.**
-`portfolio_context` carries "the bot cannot SELL what it does not hold (no
-shorting)" and sat at `shed_order 2` — one of the FIRST sections dropped when a
-prompt overflowed Prism's 2048-token embedder. Now `_KEEP`.
-
-Three layers: never-shed constraint → `coerce_unshortable_sell` (unheld SELL →
-HOLD/size-0, bearish reasoning retained) → no-trade-available gate (unheld +
-both research desks BEARISH → skip the ~246s tournament, board still decides).
-Kill switch `V3_NO_TRADE_GATE=false`.
-
-### bot_id resolution — one bug, four silent failures (`a97929e`)
-
-Investigating why `hrp_weight_suggestion` was null in 516/568 quant reports
-found a root cause far wider than sizing. `run_v3_pipeline(bot_id: str = "")`
-was never passed a bot_id by its only caller, so every desk stored `bot_id=''`
-and the fallbacks resolved to `settings.BOT_ID` — a bot with **zero
-positions** — while the active bot held 9.
-
-| System | Was | Now |
-|---|---|---|
-| HRP sizing | **never ran** (needs ≥2 tickers, saw an empty book) | computes |
-| `held` flag | **False for everything**, incl. genuinely-held TSM/JPM/ALLY | correct |
-| Drawdown breaker | 0 rows → `None` → **could never trip** | returns -0.45% |
-| Book brief | described an empty portfolio to quant + board | real 9 positions |
-
-GARCH needs no bot_id and kept working, so the quant-math block looked healthy
-— of 51 desks carrying one, **zero** had an HRP line. **The board was never
-"ignoring" the covariance math; it was never given any.** The +0.24 correlation
-reported earlier came from 16 rows of model-invented numbers.
-
-`resolve_bot_id()` (explicit > active > settings) in `portfolio_tools` is now
-the single resolver. Never reintroduce a bare `settings.BOT_ID` fallback.
-`trading_tools.py` already resolved correctly and is unchanged.
+**Caveats, stated up front:** n=106 after factor-exposure joins. The window is
+91-up/48-down, a rising tape that flatters always-long. R²=0.40 means 60% of
+variance is still unexplained. This is one measurement, not a verdict on the
+pipeline.
 
 ---
 
-## Open items — act on these next
+## The four modules
 
-- **RE-DERIVE THE PHASE 6 NUMBERS ONCE FRESH CYCLES LAND.** The 69%
-  unactionable figure and the executability split are computed from the desk
-  `held` flag, which was wrong for every desk before `a97929e`. The SELL
-  direction of the finding holds (those were held=False and genuinely
-  unshortable), but the counts will move. Do not quote 69% as settled.
-- **Historical `held` is unreliable, and worse than merely wrong.** 16 tickers
-  (AMZN, GOOGL, META, WFC, XOM, DIS, CRM, ASML) carry `held=true` on desks
-  despite having **no BUY fill in any bot's history**, and agents were shown
-  fabricated positions — "CURRENTLY HOLDING WFC: Entry $86.30, P&L +0.1%, Held
-  10 days". Current code returns held=False for these, so it is a legacy
-  artifact, not a live fault. Root cause never established; a purged bot
-  profile is the leading theory. Anything mining desks before 2026-07-24 for
-  position state must treat `held` as untrusted.
-- **POSITION SIZING IS A HABIT, NOT A CALCULATION — highest-value open item.**
-  (Now genuinely buildable: HRP produces real numbers for the first time.
-  Confirm HRP lands in a live block before building the sizing frame on it.)
-  Sizing is already agentic (agent proposes `position_size_pct`, code haircuts
-  it in `resolve_buy_size_pct`), but across 181 BUYs the board used only **10
-  distinct values**, and 80% were exactly 3%, 4% or 5%. Correlation with the
-  quant's covariance-aware `hrp_weight_suggestion` is **+0.24** (n=16) — and
-  mean HRP suggestion is **0.75%** against a mean board size of **4.41%**,
-  ~6× larger. The portfolio math is computed and then ignored.
-  - ~~**Check FIRST, do not assume**: most `hrp_weight_suggestion` values are
-    0.0. Either the quant is not populating the field, or HRP genuinely says
-    "too correlated with the book, do not add" and the board has been
-    overriding it on every trade.~~ **ANSWERED 2026-07-25 — neither.** HRP was
-    never *running* (the `bot_id` bug), not running and returning zero. 8
-    post-fix desks carry real varying weights (JPM 0.123, VZ 0.192, LLY 0.099,
-    TSM 0.069, AXP 0.063, NVDA 0.006). This item is unblocked; see the units
-    trap in "What is live right now".
-  - Proposed shape (same precompute-inject pattern that worked for GARCH/HRP
-    and the Phase 4 technical baseline): compute the binding constraints in
-    code and hand the agent a **bracket**, not a blank field — risk-based size
-    (1% equity at the ATR stop), HRP correlation ceiling, cash available,
-    concentration cap, and which one BINDS. Four lines, not a data dump. The
-    agent's job becomes judgment within the bracket.
-- **Phases 7-8 not started**: synthesizer, then the whole-cycle audit.
-- **Tournament parallelization — verify these three BEFORE fanning out.** The
-  246s is 9 sequential LLM calls, serialized because concurrent turns on one
-  Prism agent-conversation return 409. The KV-cache guard already exists
-  (`AdaptiveConcurrencyController` reads live vLLM `/metrics`;
-  `ADAPTIVE_MIN_CONCURRENCY=8` when cache pressure >80%, max 24 under 60%).
-  1. **Do the tournament's `llm.chat` calls actually route through that
-     controller?** If they bypass it, fan-out is genuinely unsafe — this gates
-     the whole approach.
-  2. **Slots must be acquired globally, not via a private semaphore.** 6
-     tickers × 4 pitches = 24 in flight while the controller believes it is
-     idle.
-  3. **Preserve prefix-cache reuse.** `V3_PROMPT_SPLIT` keeps system prompts
-     byte-identical so vLLM reuses the prefix. Giving each persona its own
-     identity must NOT give each its own system prefix, or KV pressure rises
-     exactly when concurrency does.
-- **`technicals` is stale for most tickers** — **measured 2026-07-25: only 5 of
-  503 tickers (1%) are fresher than 3 days**, far worse than the GOOGL 7d / IP
-  9d / NVDA 7d spot checks implied. The bulk sit at 8–10 days, the tail runs to
-  months (VZ's RSI was 71 days stale and still fed a live BUY), while
-  `price_history` is current for 515. Collector gap, not an agent one —
-  deliberately not fixed inside an agent phase. Fixing it makes the Phase 4
-  reconciliation authoritative far more often, and it is a bigger lever than
-  the original wording suggested.
-- **NEW 2026-07-25 — ~2% of desks never persist `final_decision`, though the
-  decision was made and executed.** On AMD the board logged `final_decision`
-  (HOLD @65) and the synthesizer appended `trade_decision` (2145 bytes, HOLD
-  @78), and the `trade_results` row exists — but
-  `shared_desk.desk_data->'final_decision'` is `null` and the desk's
-  `updated_at` froze ~96s *before* the decision was produced. **9 of the last
-  400 `trade_results` rows (2%)** show the same split back to 2026-07-06
-  (GOOGL, MCD, QCOM, PAM, LLY, AMZN, AMP, TSLA, BAC) — pre-existing, not from
-  this wave. **All 10 observed cases are HOLDs**, so every desk-derived count in
-  this file drops them non-randomly. It is also the lone ❌ in the third
-  verification cycle — a persistence fault, not an agent one. Reconcile
-  `shared_desk` against `trade_results` before quoting desk-based numbers.
-- **The board is where the damage is.** It overrides the debate on 23/53
-  decisions at a 32% hit rate (-0.96% edge); overriding the fundamental
-  analyst hits 20% (-2.14%). Three independent comparisons all point the same
-  way: a 60%-accurate debate goes in, a 41.5% verdict comes out. Phase 6.
-- ~~**The synthesizer never overrides the board directionally — 0 of 53.** 74s
-  and ~34k tokens per ticker for a directional rubber stamp.~~ **RETRACTED
-  2026-07-25 — an artifact of the 53-desk window.** At n=557 the synthesizer
-  differs from the board on **108 (19%)**: 8 hard BUY↔SELL flips (AAPL, IP,
-  BAC, FCF, F×2, C, CRM), 38 BUY→HOLD, 25 SELL→HOLD. Its overrides are also the
-  only one of the four handoffs that pays (n=12, +5.52 edge, 88% hit vs
-  agreeing n=74, −0.61, 48%) — small n, so a hypothesis to power, not a result.
-  **Do not open Phase 7 assuming the layer is inert.**
-- **Verify Phase 1 after the next cycle** (~04:15 UTC). Two checks:
-  ```bash
-  .venv/bin/python scripts/grade_regime_calls.py --since 2026-07-24
-  ```
-  and confirm one regime per cycle:
-  ```sql
-  SELECT cycle_id, COUNT(DISTINCT desk_data->'regime_classification'->>'regime')
-  FROM shared_desk WHERE created_at > '2026-07-24' GROUP BY 1;  -- must all be 1
-  ```
-  `forward_call` needs 5 trading days before it grades; expect "pending" first.
-- **`strategy_performance` is dead** and should be either fixed or dropped.
-  `evaluate_pnl()` has **zero callers**, so nothing ever resolves (60/1979),
-  and every V3 row is stamped `agent_prompt_hash="v3_pipeline"` — one bucket
-  for the whole pipeline, so it could not attribute to an agent even if it ran.
-  `decision_outcomes` is the live, working table; use that.
-- **`market_regime` table is a dead placeholder** — `vix_zscore` 0.0,
-  `breadth_sp500` 50.0, yields NaN, `regime_label` 'Neutral' on all 78 rows.
-  Do not wire it into anything. `macro_trend.py` reads `asset_prices` instead.
-- **SPY/QQQ/sector ETFs in `price_history` stop at 07-17** while 515 other
-  tickers are current — index/ETF symbols are not in the daily refresh set.
-  `macro_trend.py` sidesteps this by using `asset_prices` (fresh to 07-24), but
-  anything else reading index history from `price_history` is a week stale.
+### `app/quant/factors.py`
+Momentum 12-1, low-vol, beta, short-term reversal → **cross-sectional
+z-scores** (a factor value for one ticker in isolation is meaningless).
+
+- The **12-1 skip month is load-bearing**: the recent month carries short-term
+  reversal, the *opposite* sign to momentum. 12-0 reliably destroys the effect.
+- `low_vol` and `reversal` are **sign-flipped** so a high score always means
+  the desirable end. Returning raw vol would invert every downstream ranking.
+- **SPY is an input to beta, never a member of the ranked cross-section.**
+- A cross-section under `MIN_CROSS_SECTION` (5) yields **no factor at all**,
+  never zero-fill. A zero-filled factor reads as "perfectly average" and is a
+  fabrication.
+
+### `app/quant/stat_gates.py`
+Newey-West t-stat, stationary bootstrap CI, chronological IS/OOS degradation.
+
+- Every return series here is built from **overlapping** forward windows, so
+  consecutive observations are mechanically correlated and the naive t-stat
+  overstates significance by ~√overlap. NW lag is floored at the horizon.
+- Bootstrap is **Politis-Romano stationary** (geometric blocks, wrapping). A
+  fixed-block bootstrap severs dependence at every boundary and silently
+  narrows the interval on exactly the autocorrelated data we care about.
+- **`INSUFFICIENT_DATA` is a distinct verdict from `FAIL`.** "Couldn't check"
+  must never read as "checked and fine" — that is the laundering failure mode
+  in one enum.
+- Guards a real trap: two negative Sharpes divide to a *positive* retention
+  ratio, so `is_oos_degradation` returns `retention=None` when IS Sharpe ≤ 0.
+
+### `app/quant/residual_alpha.py` + `scripts/residual_alpha_report.py`
+OLS with Newey-West standard errors. Exposures computed **as of the decision
+date** from that date's cross-section (using today's exposures for a two-
+month-old decision would be look-ahead). Returns are **signed to the action
+taken** — a SELL before a fall is a positive return.
+
+**Reports only. It never gates a trade** — a residual-alpha estimate over a
+few hundred decisions in one rising tape is a diagnostic, not a risk control.
+
+### `app/quant/regime_hmm.py`
+2/3-state Gaussian HMM on SPY daily returns, BIC-selected.
+
+**Why a shadow and not a replacement:** `v3_regime_engine` is the
+best-calibrated agent in the pipeline (+7.65 edge, 85.7% hit, Brier 0.146) —
+but on **n=7 of 130 desks**, because 94% of its output carries no falsifiable
+claim. That 85.7% cannot be distinguished from seven lucky draws. The HMM
+emits a posterior **every day, unconditionally, from prices alone**, which
+makes it the measurable baseline the agent must beat. It is injected as
+context explicitly framed as "NOT a directive", never overrides the Regime
+Engine, and never gates a trade.
+
+- **Baum-Welch runs in LOG SPACE.** Naive forward-backward underflows to nan
+  within ~200 daily observations; log-space + logsumexp is the only version
+  that survives a 2-year window. There is a regression test on 2,000 obs.
+- **Deterministic quantile init.** EM is only locally optimal — a random start
+  would tell a different regime story every cycle.
+- **States ordered by volatility ascending** → CALM / TRANSITIONAL / STRESSED
+  mean the same thing every run.
+
+Live output on 2026-07-25 (n=547, 3-state by BIC): TRANSITIONAL @ 50%
+posterior; STRESSED state carries 77% annualized vol and -0.81% mean daily
+return — economically sensible.
 
 ---
 
-## Gotchas
+## Traps found (will bite again)
 
-- **`quality_score` is not accuracy.** It grades artifact shape. An agent can
-  score 82 and be wrong more than half the time — the quant analyst does
-  exactly that. Judge changes with the scorecard, not this.
-- **`_score_data_completeness` buckets on a ratio**, so adding a 5th optional
-  field leaves 4-of-5 and 5-of-5 in the same ≥0.8 bucket. `forward_call` is
-  deliberately NOT in `_OPTIONAL_FIELDS` — adding it looks like enforcement
-  while changing nothing, and re-cutting the buckets would move the quality
-  baseline for every artifact type mid-audit.
-- **Holding the regime lock across the LLM call is intentional.** Tickers 2..N
-  wait for the first answer rather than computing rivals. Wall clock is
-  unchanged for one wave (they used to spend that time in parallel anyway) and
-  strictly better for watchlists larger than the concurrency cap.
-- **A reused regime still records a telemetry row** (`reused: True`,
-  `elapsed_ms: 0`). Without it the ticker's regime node vanishes from the
-  replay flow graph and the regime→analyst edges break — the same "islands"
-  bug the tournament had.
-- **`asset_prices` carries NaN** for symbols a vendor returned empty. NaN
-  compares false everywhere and survives a `NOT NULL` check; `macro_trend._finite`
-  and the grader both filter it. The `market_regime` table is what happens
-  when you don't.
-- **n=53 on the baseline.** Every CI overlaps 50%. No single cell is
-  significant — what is persuasive is the override pattern repeating across
-  three different upstream agents.
-- **Quant reconciliation is conditional on purpose.** `technicals` lags for
-  most tickers, so overwriting a value the agent genuinely fetched live with a
-  week-old stored one is its own regression. Fresh → correct. Stale + agent
-  used NO tools → correct anyway (it had no source) and flag the gap. Stale +
-  agent used tools → do NOT overwrite, record the discrepancy under
-  `_unreconciled_metrics`. Anyone "simplifying" this to an unconditional
-  overwrite will reintroduce a different wrong number.
-- **Sanitize NaN where values are CONSUMED, not only where they are fetched.**
-  A test caught this in `technical_baseline`: NaN survives a `NOT NULL` check
-  and compares false against every threshold, so one arriving by any other path
-  lands in `risk_metrics` looking like real data.
-- **The `catalyst_call` / `near_term_read` / `forward_call` fields are all
-  graded on exact enums.** Their validators normalize case and drop echoed
-  schema literals ("BULLISH|BEARISH|NEUTRAL"). An un-normalized value scores as
-  a permanent miss rather than an error, which is invisible.
+- **`np.float64` survives `round()`** and then breaks `json.dumps` when the
+  desk artifact serializes. Cast `float()` *inside* the round, not around it.
+  Caught only by serializing the real output, not by the unit tests.
+- **`agent_scorecard.py --source outcomes` caps at n=40 and `--since` cannot
+  widen it.** The limiter is neither the date nor the resolver: **2,023
+  outcomes are resolved but only 65 JOIN to a `shared_desk` row**, so every
+  `--since` from 05-01 to 07-01 returns the identical 65. That sample also
+  reports a *negative* always-long baseline where the 856-desk price sample
+  reports +2.16%. **Fixed: `--source price` is now the DEFAULT** and the
+  outcomes path prints the resolved-vs-joinable gap. **The desk-join gap
+  itself is still an open bug.**
+- **HOLDs-never-resolve is NOT a bug** — I called it one and was wrong. All 78
+  unresolved HOLD rows were created 2026-07-20..07-25, inside the 7-day
+  window; **zero** are older. HOLD tracking was switched on recently and the
+  resolver handles it correctly. *Check row ages before calling a `0 resolved`
+  count a defect.*
+- **`pipeline_state` can be read stale.** A query right after triggering a
+  cycle returns the *previous* run's `done`, which reads as "the cycle
+  finished instantly". Key progress queries on the actual `cycle_id`.
+- `shared_desk`'s column is **`phase`**, not `desk_phase`. `positions` uses
+  **`qty`**, not `quantity`.
+- Container still has **no sklearn / hmmlearn / arch** — all of this is
+  hand-rolled numpy/scipy.
+- New tests take ~3 min: the 10k-resample bootstrap runs a Python loop per
+  resample. Acceptable for a gate that runs offline; do not put it on the
+  cycle's hot path.
 
-## Where the reasoning lives
+---
 
-Per-agent measured starting state (latency, loops vs budget, tool-call
-reality, whiteboard participation) is in the session task list, phases 2-8.
-`AGENTS.md` remains the harness-level source of truth for budgets and limits —
-note its §14 "Inactive Agents" and the Layer-3 debate description are now
-partly stale: the tournament, not bull/bear, is the live debate path.
+## Verification
+
+- **24/24** new unit tests pass (`tests/unit/test_quant_factor_wave.py`).
+- **22/22** related existing tests still pass (sizing bracket, context-block
+  fail-open, buy sizing) — no regression from the `context_block.py` edit.
+- Factors + HMM verified on **real DB data**, not just fixtures: KO/JPM rank
+  highest on low-vol, AMD highest on beta and momentum — economically sensible.
+- `build_quant_math_block('UNH', 'test_bot')` renders both new lines in the
+  **deployed image**, alongside the existing GARCH/HRP/sizing-bracket content.
+- Deployed to NAS (145s), container healthy, all four modules import.
+
+---
+
+## Open / next
+
+1. **The override matrix is the cheapest win available.** Board overriding
+   fundamental = **-2.38 edge, 18% hit (n=34)**; overriding quant = -1.56;
+   overriding debate = -0.52 at 25% hit. *Every* override is negative except
+   the synthesizer's (+5.65, 88%, n=12). That is a tunable gate needing no new
+   machinery — but n is small, so instrument before acting.
+2. **Make `forward_call` mandatory on the regime engine** so the pipeline's
+   best agent becomes gradeable on all 130 desks instead of 7. Then compare it
+   head-to-head against the HMM shadow over the same days.
+3. **Fix the `decision_outcomes` → `shared_desk` join gap** (2,023 resolved,
+   65 joinable).
+4. **Distribution-collapse canary** — flag any agent field whose distinct-count
+   collapses or whose top value exceeds 70%. Would have caught the fabricated
+   RSIs, the 3/4/5% sizing habit, and the missing-`final_decision` bug, all
+   found by hand months apart.
+5. Keep collecting `fundamentals` snapshots — the fundamental factors unlock
+   for free once the panel is deep enough.
