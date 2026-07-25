@@ -38,6 +38,56 @@ target.** That is why Phase 0 exists and why it came first.
 
 ---
 
+## Decision integrity — all three phases SHIPPED (2026-07-25, `eac617a`+`d42785a`)
+
+`docs/DECISION_INTEGRITY_PLAN.md` is implemented, deployed and verified live.
+**`cycle-observe-1784949769` (AXP/INTC): 14/14 checks pass, 0 failures** — the
+first fully clean run. 1273 tests (from 1241).
+
+**The principle:** *a degraded result must never be representable as a confident
+one.* This codebase's failure mode is laundering, not crashing.
+
+- **`DecisionProvenance` is stamped inside `append_artifact`**, not at the ~6
+  call sites — a new fallback path cannot emit an unmarked decision by
+  forgetting. This was the THIRD unmarked-fallback bug (timeout, degrade,
+  `bot_id`), so it is now structural rather than conventional.
+- **`final_decision` is written unconditionally.** A degrade records an explicit
+  sentinel (`action: None` + `degrade_outcome`), never a fake `HOLD@0`. `null`
+  used to mean both "never ran" and "ran and we lost it".
+- **Guardrails are countable** — `v3_guardrail_firings` table, and
+  `coerce_unshortable_sell` now names the ticker. It previously logged neither
+  ticker nor cycle, which is precisely how I misdiagnosed AMD.
+- **`--include-degraded` is OFF by default** on the scorecard, and
+  `verify_audit_phases.py` gained a standing `shared_desk` ↔ `trade_results`
+  reconciliation that would have caught this on 07-06 rather than 19 days later.
+- **10 historical desks backfilled** (`scripts/backfill_desk_decisions.py`)
+  after a 1766-row backup, stamped `_backfilled_from`.
+
+**⚠ Two corrections to what I reported earlier:**
+1. The set was **9 HOLD + 1 BUY** (CPS), not all-HOLD — an artifact of the
+   400-row sample window. The conclusion (write path, not decision bias) stands.
+2. **A worse units bug sat underneath the sizing problem.** HRP weights sum to
+   1.0 over the **INVESTED** universe, but the injected line called them "% of
+   equity" — ~2x apart on a 47%-cash book. VZ's "19.2% of equity" was really
+   **7.9%**. The board was copying a line that was simply wrong. Fixed in both
+   `context_block.py` and the new `app/quant/sizing_bracket.py`; a test
+   reproduces the VZ case exactly.
+
+The fix is visible in live reasoning — AXP's `SELL @75` cites *"HRP target
+weight (3.3% equity) is significantly lower than current exposure (8.3%
+equity)"*.
+
+**Still open:** the `technicals` collector gap itself (5 of 503 tickers fresh)
+— a data-pipeline job, deliberately not done inside an agent phase.
+
+**⚠ Harness trap I hit while verifying:** desks are written incrementally and
+the board/synthesizer artifacts land AFTER the per-ticker "Pipeline complete"
+log line. A mid-flight read shows `phase=DEBATE_DONE` with null decisions —
+indistinguishable from the bug this wave fixed. Check `phase=PM_DONE` **and**
+`updated_at` before concluding.
+
+---
+
 ## What is live right now
 
 **`65a4050`** — deployed to synology 2026-07-24T20:09Z, health OK on :3031.

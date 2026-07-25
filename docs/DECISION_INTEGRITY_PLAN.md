@@ -74,6 +74,41 @@ the first live exercise of that backstop.
 
 ---
 
+## 1b. Live verification — `cycle-observe-1784949769` (AXP/INTC)
+
+Run through the deployed container at `eac617a`. **14/14 checks pass, 0
+failures** — the first fully clean run of `verify_audit_phases.py` (3 of those
+checks are new in this wave). Tickers chosen to exercise both new paths: **AXP**
+held with HRP headroom already at zero, **INTC** unheld to arm the coercion
+backstop.
+
+| what it proves | evidence |
+|---|---|
+| provenance stamped end-to-end | 4/4 artifacts `board_reasoned` |
+| desk ↔ trade_results agree | `2 saved rows vs 2 desks; all agree` |
+| terminal phase recorded | `PM_DONE: REACHED` on both (was 852/852 missing) |
+| no silent degrade | "none — every decision is a real agent verdict" |
+| guardrail counter armed | 0 firings, correctly: INTC's board chose HOLD unprompted |
+
+**The units fix is visible in the board's own reasoning.** AXP came out
+`SELL @75 → synth SELL @84`, justified as:
+
+> *"HRP target weight (3.3% equity) is significantly lower than current
+> exposure (8.3% equity)"*
+
+That is the corrected conversion being reasoned over. Under the old line the
+board would have been shown "6.3% of equity" and compared it against 8.3% on a
+different basis — the same mismatch that produced the 19.2% VZ order.
+
+⚠ **Harness note, and I made this mistake during verification:** desks are
+written incrementally and the final board/synthesizer artifacts land *after*
+the per-ticker "Pipeline complete" log line. Reading a desk mid-flight shows
+`phase=DEBATE_DONE` with null decisions, which looks exactly like the bug this
+wave fixed. Confirm `phase=PM_DONE` **and** `updated_at` after the last agent
+before concluding anything.
+
+---
+
 ## 2. What is actually wrong, ranked
 
 | # | Issue | Severity | Evidence |
