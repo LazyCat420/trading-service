@@ -281,8 +281,17 @@ async def schedule_research(
         }
 
     with get_db() as db:
+        # Counts SCHEDULE rows only. If anything ever starts mirroring the
+        # ~26 APScheduler system jobs (market_open_cycle, stop-loss monitor,
+        # collectors, ...) into this table, an unfiltered count would sail past
+        # ScheduleValidator.MAX_SYSTEM_SCHEDULES (10) permanently and reject
+        # every non-critical agent schedule with "System has reached max active
+        # schedules" — a silent throttle of the whole research budget with no
+        # visible cause. The exclusion is cheap insurance; system jobs are
+        # surfaced read-only via /api/diagnostics/system-jobs instead.
         system_active = db.execute(
-            "SELECT COUNT(*) FROM cycle_schedules WHERE is_active = TRUE"
+            "SELECT COUNT(*) FROM cycle_schedules "
+            "WHERE is_active = TRUE AND COALESCE(job_type, 'user') <> 'system'"
         ).fetchone()[0]
 
         ok, why = ScheduleValidator.validate_proposal({

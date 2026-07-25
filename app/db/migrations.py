@@ -3540,3 +3540,15 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── cycle_schedules.job_type (2026-07-25) ──
+    # Distinguishes agent-created schedules from system jobs. Nothing writes
+    # 'system' today: the ~26 APScheduler jobs (market_open_cycle, stop-loss
+    # monitor, collectors, ...) are surfaced read-only via
+    # /api/diagnostics/system-jobs rather than mirrored into this table,
+    # because research_governor counts active rows against
+    # ScheduleValidator.MAX_SYSTEM_SCHEDULES (10) and 26 extra rows would
+    # permanently reject new agent schedules. The column exists so that count
+    # can exclude them, and so the distinction is expressible if it is ever
+    # needed.
+    _safe_add_column(conn, "cycle_schedules", "job_type", "TEXT DEFAULT 'user'")

@@ -579,6 +579,61 @@ class SchedulerService:
         return result
 
     @staticmethod
+    def list_system_jobs() -> list[dict]:
+        """Every job living in the APScheduler engine, described for a UI.
+
+        ## Why this reads the engine instead of a table
+
+        The 6:30 AM PT weekday trading run has repeatedly been reported as "a
+        schedule nobody created" because it is invisible everywhere a human
+        looks: it is registered programmatically in ``start()`` as
+        ``market_open_cycle`` and never written to ``cycle_schedules``, which
+        is what the UI reads. Same for ~25 sibling jobs (stop-loss monitor,
+        watchdog, collectors, watch-desk evaluation, ...).
+
+        The obvious fix — upsert them into ``cycle_schedules`` with a
+        ``job_type='system'`` flag — is a TRAP, and would have caused a subtle
+        outage:
+
+          * ``ScheduleValidator.MAX_SYSTEM_SCHEDULES`` is **10**, and
+            ``research_governor`` counts **every** active row
+            (``SELECT COUNT(*) FROM cycle_schedules WHERE is_active = TRUE``)
+            before allowing a new agent schedule. Inserting 26 system rows
+            pushes the count permanently over the cap, and every non-critical
+            agent research schedule is rejected with "System has reached max
+            active schedules" — a silent throttle of the research budget with
+            no obvious cause.
+          * ``research_governor`` documents itself as "the ONLY writer of
+            bot-created cycle_schedules rows". A second writer breaks that.
+
+        So the split is deliberate: ``cycle_schedules`` holds agent-created
+        schedules, the engine holds system jobs. This function makes the second
+        half *visible* without merging the two, which is all the UI needed.
+        """
+        out: list[dict] = []
+        for job in scheduler.get_jobs():
+            nrt = getattr(job, "next_run_time", None)
+            trigger = getattr(job, "trigger", None)
+            out.append({
+                "id": job.id,
+                "name": getattr(job, "name", None) or job.id,
+                "job_type": "system",
+                "trigger": str(trigger) if trigger is not None else None,
+                # str(CronTrigger) renders as "cron[hour='6', minute='30', ...]",
+                # which is what a human needs to answer "why did it run then?".
+                "schedule_type": type(trigger).__name__.replace("Trigger", "").lower()
+                                 if trigger is not None else None,
+                "next_run_at": nrt.astimezone(timezone.utc).isoformat() if nrt else None,
+                # A job with no next_run_time is PAUSED, not deleted — worth
+                # surfacing, since a paused market-open cycle looks identical to
+                # a healthy one in a list that only shows names.
+                "paused": nrt is None,
+                "editable": False,
+            })
+        out.sort(key=lambda j: (j["next_run_at"] is None, j["next_run_at"] or "", j["id"]))
+        return out
+
+    @staticmethod
     def start():
         if not scheduler.running:
             # Load existing schedules and start engine FIRST

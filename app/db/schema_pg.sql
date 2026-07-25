@@ -376,6 +376,15 @@ CREATE TABLE IF NOT EXISTS cycle_schedules (
     run_count       INTEGER DEFAULT 0,
     last_status     TEXT,
     last_error      TEXT,
+    -- 'user' (agent/human-created, the only kind today) | 'system'.
+    -- Nothing writes 'system' yet and nothing should without care: the ~26
+    -- APScheduler system jobs are surfaced read-only through
+    -- /api/diagnostics/system-jobs, NOT mirrored here, because
+    -- research_governor counts active rows against
+    -- ScheduleValidator.MAX_SYSTEM_SCHEDULES (10) and 26 extra rows would
+    -- permanently reject new agent schedules. The column exists so that count
+    -- can exclude them if that ever changes.
+    job_type        TEXT DEFAULT 'user',
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
