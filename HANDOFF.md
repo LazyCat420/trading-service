@@ -77,6 +77,26 @@ The fix is visible in live reasoning — AXP's `SELL @75` cites *"HRP target
 weight (3.3% equity) is significantly lower than current exposure (8.3%
 equity)"*.
 
+### Follow-up — the field only reached HALF its consumers (`3f5db39` + client `33b2b8c`)
+
+The 14/14 run passed while provenance was still missing from **`trade_results`**
+— the table the replay API, the UI and the freshness gate all read. A degraded
+fallback still rendered as a confident verdict everywhere a human looks. The
+reconciliation check missed it because it compared only the **action**: two
+stores agreeing on "HOLD" while disagreeing on whether anything *decided* it is
+exactly the laundering the field exists to stop.
+
+Now: column on `trade_results` (PG + Mongo mirror; missing → **NULL**, never
+defaulted); `is_agent_decision` on the API; an amber "NOT AN AGENT DECISION"
+band in the UI keyed on `=== false` so legacy NULLs aren't badged; and a
+**provenance** reconciliation check beside the action one.
+
+**Re-verified on `cycle-observe-1784951526` (MSFT held / KO unheld, fresh
+tickers): 15/15 pass, 0 failures.** Chain confirmed live
+`desk → trade_results → API → is_agent_decision: true`. MSFT `SELL @68→60`
+(held exit), KO `HOLD @65`; both `board_reasoned`, `PM_DONE: REACHED` on both.
+1277 tests.
+
 **Still open:** the `technicals` collector gap itself (5 of 503 tickers fresh)
 — a data-pipeline job, deliberately not done inside an agent phase.
 

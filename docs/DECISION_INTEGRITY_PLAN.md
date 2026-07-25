@@ -107,6 +107,35 @@ the per-ticker "Pipeline complete" log line. Reading a desk mid-flight shows
 wave fixed. Confirm `phase=PM_DONE` **and** `updated_at` after the last agent
 before concluding anything.
 
+### Follow-up: the field only reached HALF its consumers (fixed `3f5db39`)
+
+The 14/14 run above passed while a real gap was still open: provenance was
+written to `shared_desk` but **not to `trade_results`** — the table the replay
+API, the UI, and the freshness gate's past-verdict lookup all read. A degraded
+fallback therefore still rendered as a confident verdict everywhere a human
+actually looks.
+
+The reconciliation check missed it because it compared only the **action**.
+Two stores agreeing on "HOLD" while disagreeing on *whether anything decided
+it* is precisely the laundering this field exists to stop. Fixed:
+
+- `decision_provenance` column on `trade_results`; written to PG + the Mongo
+  mirror. Missing → **NULL**, never defaulted to `board_reasoned`.
+- `cycle_replay_router` returns it plus an `is_agent_decision` convenience flag.
+- The UI marks non-agent decisions with an amber band naming the cause
+  (`trading-client` `33b2b8c`). Keyed on `=== false`, so legacy NULL rows are
+  not badged as degraded.
+- **A provenance reconciliation check** now runs alongside the action one.
+
+**Re-verified on `cycle-observe-1784951526` (MSFT held / KO unheld — fresh
+tickers): 15/15 pass.** Full chain confirmed live:
+`desk → trade_results → API → is_agent_decision: true`. MSFT `SELL @68→60` (a
+held exit), KO `HOLD @65`. Both `board_reasoned`; `PM_DONE: REACHED` on both.
+
+The KO bracket also exercised the not-yet-held HRP branch correctly: target
+**20.4% of invested = 13.5% of equity**, with the 10% hard cap correctly
+binding instead — the VZ failure mode, now caught by construction.
+
 ---
 
 ## 2. What is actually wrong, ranked
