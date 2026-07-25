@@ -427,12 +427,28 @@ async def collect_all(ticker: str) -> dict:
     financials = await collect_financials(ticker)
     balance = await collect_balance_sheet(ticker)
 
+    # Technicals are a pure function of price_history, so they are refreshed
+    # here rather than left to whenever an agent happens to call
+    # get_technical_indicators. Nothing scheduled that, which is why only 5 of
+    # 503 tickers were fresher than 3 days while price_history was current for
+    # all of them — and why the quant analyst was handed a 71-day-old RSI as
+    # its "verified baseline". Fail-open: stale technicals are bad, but a
+    # failure here must not cost us the price rows we just collected.
+    tech_rows = 0
+    try:
+        from app.processors.technical_processor import compute_technicals
+
+        tech_rows = await asyncio.to_thread(compute_technicals, ticker)
+    except Exception as e:
+        logger.warning("[yfinance] %s: technicals refresh failed (non-fatal): %s", ticker, e)
+
     return {
         "ticker": ticker,
         "price_rows": prices,
         "fundamentals": fundies,
         "financial_rows": financials,
         "balance_rows": balance,
+        "technical_rows": tech_rows,
     }
 
 

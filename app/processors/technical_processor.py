@@ -19,16 +19,31 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
     Compute all technical indicators for a ticker and write to technicals table.
     Needs at least 5 rows (more = better indicators).
     Returns number of rows written.
+
+    2026-07-25 — this function had been computing the WRONG END of history.
+    `ORDER BY date ASC LIMIT 500` takes the OLDEST 500 sessions, so for MSFT
+    (10,169 rows back to 1986) every run recomputed 1986-03-13 .. 1988-03-03
+    and never touched a recent date. Combined with `ON CONFLICT DO NOTHING`,
+    which cannot correct an existing row, the table was effectively append-only
+    from ancient history: only 5 of 503 tickers were fresher than 3 days while
+    `price_history` was current for all of them.
+
+    The window is now the most recent `period` sessions, re-sorted ascending
+    because every `ta` indicator is order-dependent.
     """
     with get_db() as db:
-        # Fetch price history
+        # Most recent `period` sessions (inner ORDER BY DESC), then flipped to
+        # chronological order for the indicator math.
         rows = db.execute(
             """
-            SELECT date, open, high, low, close, volume
-            FROM price_history
-            WHERE ticker = %s
+            SELECT date, open, high, low, close, volume FROM (
+                SELECT date, open, high, low, close, volume
+                FROM price_history
+                WHERE ticker = %s
+                ORDER BY date DESC
+                LIMIT %s
+            ) recent
             ORDER BY date ASC
-            LIMIT %s
         """,
             [ticker, period],
         ).fetchall()
@@ -124,8 +139,10 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
             )
 
         if rows_to_insert:
-            for r in rows_to_insert:
-                db.execute(
+            # executemany, not a loop of execute: at ~490 rows per ticker the
+            # per-statement round trip dominated (22.6s/ticker measured), which
+            # made a full-universe repair a ~16h job instead of minutes.
+            db.executemany(
                     """
                     INSERT INTO technicals
                     (ticker, date, rsi_14, macd, macd_signal, macd_hist,
@@ -133,10 +150,30 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
                      bb_upper, bb_mid, bb_lower, atr_14, adx_14,
                      stoch_k, stoch_d, obv, vwap, support, resistance)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, date) DO NOTHING
+                    ON CONFLICT (ticker, date) DO UPDATE SET
+                        rsi_14 = EXCLUDED.rsi_14,
+                        macd = EXCLUDED.macd,
+                        macd_signal = EXCLUDED.macd_signal,
+                        macd_hist = EXCLUDED.macd_hist,
+                        sma_20 = EXCLUDED.sma_20,
+                        sma_50 = EXCLUDED.sma_50,
+                        sma_200 = EXCLUDED.sma_200,
+                        ema_12 = EXCLUDED.ema_12,
+                        ema_26 = EXCLUDED.ema_26,
+                        bb_upper = EXCLUDED.bb_upper,
+                        bb_mid = EXCLUDED.bb_mid,
+                        bb_lower = EXCLUDED.bb_lower,
+                        atr_14 = EXCLUDED.atr_14,
+                        adx_14 = EXCLUDED.adx_14,
+                        stoch_k = EXCLUDED.stoch_k,
+                        stoch_d = EXCLUDED.stoch_d,
+                        obv = EXCLUDED.obv,
+                        vwap = EXCLUDED.vwap,
+                        support = EXCLUDED.support,
+                        resistance = EXCLUDED.resistance
                 """,
-                    r,
-                )
+                rows_to_insert,
+            )
 
         count = len(rows_to_insert)
 
