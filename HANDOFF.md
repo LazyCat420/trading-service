@@ -43,6 +43,57 @@ target.** That is why Phase 0 exists and why it came first.
 **`65a4050`** — deployed to synology 2026-07-24T20:09Z, health OK on :3031.
 1156 tests pass (1141 before this wave).
 
+### ✅ Re-tested 2026-07-25 — third live cycle, independent tickers
+
+`cycle-observe-1784946884` (**AXP/LLY/AMD**) through the deployed container —
+tickers none of the earlier verification cycles touched, deliberately mixing
+**held** (AXP, LLY) and **unheld** (AMD). **10/11 checks pass.** 1241 tests
+pass locally. Decisions: `AXP SELL @60` (an executable exit — the rarest class,
+9 of 821 before this wave), `LLY HOLD @64`, `AMD HOLD @78`.
+
+The strongest single result: **AMD's tournament returned SELL @80% with all
+three research desks BEARISH on an unheld ticker, and the board chose HOLD
+anyway — `coerce_unshortable_sell` never fired.** The never-shed constraint
+changed what the board concluded, so the backstop had nothing to rewrite. The
+shed logs also confirm `portfolio_context` stayed out of both the board's
+4-section and the synthesizer's 3-section shed lists under real overflow —
+`_KEEP` holds under exactly the pressure that originally broke it.
+
+**Four things changed since the report was written — read these before picking
+up any open item:**
+
+1. **HRP is confirmed live — the top open item is unblocked.** Real varying
+   weights across 8 desks (JPM 0.123, VZ 0.192, LLY 0.099, TSM 0.069, AXP
+   0.063, NVDA 0.006). The old "mostly 0.0" was the `bot_id` bug: HRP was never
+   running, not running and returning zero. **Units trap**: the board sized VZ
+   at 19.2% = HRP's `0.192 × 100`, reading a portfolio *target weight* as a
+   single *order size*. Contained by `MAX_POSITION_SIZE_PCT` (live **0.10**),
+   but by the cap, not the reasoning. The sizing bracket must state units and
+   label HRP a ceiling.
+2. **"The synthesizer never overrides the board — 0 of 53" is RETRACTED.** At
+   n=557 it differs on **108 (19%)** including **8 hard BUY↔SELL flips**. Its
+   overrides are also the only handoff of four that pays (n=12, +5.52 edge, 88%
+   hit). Do not open Phase 7 assuming the layer is inert.
+3. **`technicals` staleness is far worse than "GOOGL 7d, IP 9d"** — only **5 of
+   503 tickers (1%)** are fresher than 3 days; VZ's RSI was **71 days** stale
+   and still fed a live BUY. Phase 4 swapped fabricated numbers for stale ones
+   (a real improvement — now sourced and traceable, and the 5-day stale guard
+   works), but the reconciliation is authoritative far less often than assumed.
+4. **NEW — ~2% of desks never persist `final_decision` though the decision was
+   made.** AMD is the 10th case: board and synthesizer both logged, the
+   `trade_results` row exists, but `shared_desk.desk_data->'final_decision'` is
+   `null`. 9 of the last 400 `trade_results` rows show the same split back to
+   07-06 — pre-existing. **All 10 observed cases are HOLDs**, so desk-derived
+   counts drop them non-randomly. It is also the lone ❌ in the verification
+   run: a persistence fault, not an agent one. Reconcile `shared_desk` against
+   `trade_results` before quoting any desk-based number.
+
+**Timing across the full history** (not just the like-for-like pair): tournament
+mean **483.3s (n=229) → 86.6s (n=4)**, ~5.6×. Per-ticker agent-time
+**600–800s → 260–473s**. Quant RSI now matches `technicals` to the cent on
+**7/7** post-fix desks, against 56% fabricated before — the most conclusively
+fixed finding in the audit.
+
 ### Phase 0 — the measurement target (`scripts/agent_scorecard.py`)
 
 Every agent had latency/loop/`quality_score` telemetry, but `quality_score`
@@ -217,10 +268,14 @@ the single resolver. Never reintroduce a bare `settings.BOT_ID` fallback.
   quant's covariance-aware `hrp_weight_suggestion` is **+0.24** (n=16) — and
   mean HRP suggestion is **0.75%** against a mean board size of **4.41%**,
   ~6× larger. The portfolio math is computed and then ignored.
-  - **Check FIRST, do not assume**: most `hrp_weight_suggestion` values are
+  - ~~**Check FIRST, do not assume**: most `hrp_weight_suggestion` values are
     0.0. Either the quant is not populating the field, or HRP genuinely says
     "too correlated with the book, do not add" and the board has been
-    overriding it on every trade. Those imply opposite fixes.
+    overriding it on every trade.~~ **ANSWERED 2026-07-25 — neither.** HRP was
+    never *running* (the `bot_id` bug), not running and returning zero. 8
+    post-fix desks carry real varying weights (JPM 0.123, VZ 0.192, LLY 0.099,
+    TSM 0.069, AXP 0.063, NVDA 0.006). This item is unblocked; see the units
+    trap in "What is live right now".
   - Proposed shape (same precompute-inject pattern that worked for GARCH/HRP
     and the Phase 4 technical baseline): compute the binding constraints in
     code and hand the agent a **bracket**, not a blank field — risk-based size
@@ -243,16 +298,38 @@ the single resolver. Never reintroduce a bare `settings.BOT_ID` fallback.
      byte-identical so vLLM reuses the prefix. Giving each persona its own
      identity must NOT give each its own system prefix, or KV pressure rises
      exactly when concurrency does.
-- **`technicals` is stale for most tickers** (GOOGL 7d, IP 9d, NVDA 7d) while
+- **`technicals` is stale for most tickers** — **measured 2026-07-25: only 5 of
+  503 tickers (1%) are fresher than 3 days**, far worse than the GOOGL 7d / IP
+  9d / NVDA 7d spot checks implied. The bulk sit at 8–10 days, the tail runs to
+  months (VZ's RSI was 71 days stale and still fed a live BUY), while
   `price_history` is current for 515. Collector gap, not an agent one —
   deliberately not fixed inside an agent phase. Fixing it makes the Phase 4
-  reconciliation authoritative far more often.
+  reconciliation authoritative far more often, and it is a bigger lever than
+  the original wording suggested.
+- **NEW 2026-07-25 — ~2% of desks never persist `final_decision`, though the
+  decision was made and executed.** On AMD the board logged `final_decision`
+  (HOLD @65) and the synthesizer appended `trade_decision` (2145 bytes, HOLD
+  @78), and the `trade_results` row exists — but
+  `shared_desk.desk_data->'final_decision'` is `null` and the desk's
+  `updated_at` froze ~96s *before* the decision was produced. **9 of the last
+  400 `trade_results` rows (2%)** show the same split back to 2026-07-06
+  (GOOGL, MCD, QCOM, PAM, LLY, AMZN, AMP, TSLA, BAC) — pre-existing, not from
+  this wave. **All 10 observed cases are HOLDs**, so every desk-derived count in
+  this file drops them non-randomly. It is also the lone ❌ in the third
+  verification cycle — a persistence fault, not an agent one. Reconcile
+  `shared_desk` against `trade_results` before quoting desk-based numbers.
 - **The board is where the damage is.** It overrides the debate on 23/53
   decisions at a 32% hit rate (-0.96% edge); overriding the fundamental
   analyst hits 20% (-2.14%). Three independent comparisons all point the same
   way: a 60%-accurate debate goes in, a 41.5% verdict comes out. Phase 6.
-- **The synthesizer never overrides the board directionally — 0 of 53.** 74s
-  and ~34k tokens per ticker for a directional rubber stamp. Phase 7.
+- ~~**The synthesizer never overrides the board directionally — 0 of 53.** 74s
+  and ~34k tokens per ticker for a directional rubber stamp.~~ **RETRACTED
+  2026-07-25 — an artifact of the 53-desk window.** At n=557 the synthesizer
+  differs from the board on **108 (19%)**: 8 hard BUY↔SELL flips (AAPL, IP,
+  BAC, FCF, F×2, C, CRM), 38 BUY→HOLD, 25 SELL→HOLD. Its overrides are also the
+  only one of the four handoffs that pays (n=12, +5.52 edge, 88% hit vs
+  agreeing n=74, −0.61, 48%) — small n, so a hypothesis to power, not a result.
+  **Do not open Phase 7 assuming the layer is inert.**
 - **Verify Phase 1 after the next cycle** (~04:15 UTC). Two checks:
   ```bash
   .venv/bin/python scripts/grade_regime_calls.py --since 2026-07-24
