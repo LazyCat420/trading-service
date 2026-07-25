@@ -32,6 +32,17 @@ def _note(artifact: dict, msg: str) -> None:
     artifact.setdefault("_validator_notes", []).append(msg)
 
 
+# Agents speak different dialects: analysts emit thesis_direction, decision
+# makers emit action, the debate emits winning_side. Kept in sync with
+# scripts/agent_scorecard.py::_DIRECTION_MAP so the shadow flag and the
+# scorecard classify the same desk identically.
+_STANCE_MAP = {
+    "BULLISH": 1, "BUY": 1, "BULL": 1, "LONG": 1,
+    "BEARISH": -1, "SELL": -1, "BEAR": -1, "SHORT": -1,
+    "NEUTRAL": 0, "HOLD": 0, "TIE": 0, "SPLIT": 0,
+}
+
+
 def validate_regime_artifact(artifact: dict) -> dict:
     """Coerce the regime enum, clamp factors to [0,1], normalize mods list."""
     if not isinstance(artifact, dict):
@@ -316,6 +327,104 @@ def coerce_unshortable_sell(
         )
     except Exception as e:  # never let telemetry break a safety rewrite
         logger.warning("[ArtifactValidator] guardrail telemetry failed: %s", e)
+    return artifact
+
+
+def flag_bearish_override_of_fundamental(
+    artifact: dict, *, fundamental_report: dict | None,
+    ticker: str = "", cycle_id: str = "",
+) -> dict:
+    """SHADOW ONLY — mark the one board override measured to destroy value.
+
+    Measured 2026-07-25 over 856 desks (`scripts/override_matrix.py`,
+    `scripts/override_diagnosis.py`), this is the single handoff that survives
+    a 20,000-iteration permutation test:
+
+        board AGREES with the fundamental desk : +0.06%   (n=86)
+        board OVERRIDES it                     : -2.32%   (n=35)
+        difference -2.38%, permutation p=0.0015   [EXECUTABLE decisions only]
+
+    And the damage is not spread across overrides — it sits in exactly one
+    quadrant, from `override_diagnosis.py` H1:
+
+        desk NEUTRAL -> board BEARISH   n=68  mean=-2.81%   <-- this
+        desk BULLISH -> board BEARISH   n=13  mean=-0.87%
+        desk NEUTRAL -> board BULLISH   n=18  mean=+1.60%
+        desk BEARISH -> board BULLISH   n= 4  mean=+2.50%
+
+    Every *bullish* override is positive. The costly move is specifically the
+    board turning bearish over a desk that reported no near-term view. Board
+    confidence does NOT discriminate (high half -0.98%, low half -0.96%,
+    p=0.97), so the board cannot self-police this with a confidence threshold.
+
+    ## Why this only FLAGS and does not rewrite
+
+    Two reasons, both learned the hard way on this codebase.
+
+    1. **n=35 executable overrides.** Enough to detect a -2.38% effect, not
+       enough to rewire the board. The standing rule from the 2026-07-24 audit
+       is that board changes ship shadow-first and are promoted only on live
+       evidence.
+    2. **The raw figure was mostly unexecutable.** Of the 68 damaging desks,
+       42 were policy-blocked SELLs on unheld tickers and 15 were no-op HOLDs;
+       only 9 could move the book. Scoring those blocked SELLs as real losses
+       is exactly what produced the retracted "decision layer destroys value"
+       headline. The effect survives on executable-only rows (that is the
+       p=0.0015 above), but a rewrite driven by the unfiltered number would
+       have been tuned on noise.
+
+    The flag makes the population countable in `shared_desk`, so promotion to
+    an actual coercion can be decided on accumulated live data rather than on
+    this one 30-day window.
+    """
+    if not isinstance(artifact, dict) or not isinstance(fundamental_report, dict):
+        return artifact
+
+    def _dir(a: dict) -> int | None:
+        read = a.get("near_term_read")
+        if isinstance(read, dict):
+            key = str(read.get("direction", "")).strip().upper()
+            if key in _STANCE_MAP:
+                return _STANCE_MAP[key]
+        for field in ("thesis_direction", "action", "winning_side"):
+            raw = a.get(field)
+            if raw is None:
+                continue
+            key = str(raw).strip().upper()
+            if key in _STANCE_MAP:
+                return _STANCE_MAP[key]
+        return None
+
+    desk_dir, board_dir = _dir(fundamental_report), _dir(artifact)
+    # The measured-costly quadrant only: desk had NO near-term view (NEUTRAL)
+    # and the board went bearish anyway.
+    if desk_dir != 0 or board_dir is None or board_dir >= 0:
+        return artifact
+
+    artifact["_shadow_flags"] = sorted(
+        set(artifact.get("_shadow_flags") or []) | {"bearish_override_of_neutral_fundamental"}
+    )
+    _note(
+        artifact,
+        "SHADOW: board went bearish over a fundamental desk reporting no "
+        "near-term view — the one override quadrant measured to lose money "
+        "(-2.81%/decision, n=68; -2.38% executable-only at p=0.0015). "
+        "Decision NOT altered; flagged so the population can be counted.",
+    )
+    logger.info(
+        "[ArtifactValidator][SHADOW] bearish_override_of_neutral_fundamental — %s/%s",
+        cycle_id or "?", ticker or "?",
+    )
+    try:
+        from app.v3.telemetry import record_guardrail_firing
+
+        record_guardrail_firing(
+            "bearish_override_of_neutral_fundamental",
+            ticker=ticker, cycle_id=cycle_id,
+            detail={"shadow": True, "board_action": artifact.get("action")},
+        )
+    except Exception as e:
+        logger.warning("[ArtifactValidator] shadow telemetry failed: %s", e)
     return artifact
 
 

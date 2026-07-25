@@ -804,6 +804,30 @@ async def run_v3_agent(
                         desk.ticker,
                     )
 
+        # SHADOW (2026-07-25): mark the one board override measured to lose
+        # money — board turning bearish over a fundamental desk that reported
+        # NO near-term view (-2.81%/decision, n=68; -2.38% executable-only at
+        # permutation p=0.0015). Flags only, never rewrites: n=35 executable
+        # overrides is enough to detect the effect, not to rewire the board,
+        # and the standing rule is that board changes ship shadow-first.
+        if artifact_type in ("final_decision", "trade_decision"):
+            try:
+                from app.v3.artifact_validators import (
+                    flag_bearish_override_of_fundamental,
+                )
+
+                artifact = flag_bearish_override_of_fundamental(
+                    artifact,
+                    fundamental_report=getattr(desk, "fundamental_report", None),
+                    ticker=desk.ticker, cycle_id=desk.cycle_id,
+                )
+            except Exception as _shadow_err:  # noqa: BLE001
+                # A shadow flag must never be able to affect a decision.
+                logger.warning(
+                    "[V3Runner] %s: override shadow flag failed (non-fatal): %s",
+                    desk.ticker, _shadow_err,
+                )
+
         # Append to SharedDesk
         desk.append_artifact(artifact_type, artifact)
 
