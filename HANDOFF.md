@@ -127,6 +127,22 @@ return — economically sensible.
 
 ## Traps found (will bite again)
 
+- **⚠ THE ONE THAT ACTUALLY BROKE PRODUCTION: a slow context block fails open
+  and takes its NEIGHBOURS with it.** `build_quant_math_block` runs once per
+  *ticker* under a single timeout. The HMM shadow costs **~32s** (two
+  Baum-Welch fits), so at the old 25s budget the whole block timed out on
+  every ticker — silently dropping **GARCH, HRP and the sizing bracket** as
+  well, none of which had anything to do with the new code. Verified in
+  `cycle-v3-1784960316`: all three desks logged
+  `quant math precompute failed (non-fatal): ` with an **empty message**
+  (that is how `asyncio.TimeoutError` stringifies) and no
+  `quant_math_context` on any desk. Fixed `b44b994`: per-cycle cache
+  (36.9s → 0.2s, ~185×), timeout 25s → 60s, and `TimeoutError` is now caught
+  separately and names what went missing.
+  **Two lessons.** (1) *A standalone timing check does not prove a component
+  fits its budget* — mine passed because nothing else was competing. Measure
+  inside the real caller. (2) *Fail-open composition is not free*: adding a
+  slow item to a shared block silently removes the fast ones already in it.
 - **`np.float64` survives `round()`** and then breaks `json.dumps` when the
   desk artifact serializes. Cast `float()` *inside* the round, not around it.
   Caught only by serializing the real output, not by the unit tests.
