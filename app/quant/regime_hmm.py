@@ -40,6 +40,7 @@ STRESSED, so the label means the same thing every run.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import date, timedelta
 
 import numpy as np
@@ -300,19 +301,71 @@ def classify_regime(
     }
 
 
+# ── Per-run cache ─────────────────────────────────────────────────────────
+# A fit costs ~32s and the answer is market-wide, so every ticker in a wave
+# would otherwise pay it again for an identical result. Keyed by the as_of
+# date (None -> today) and guarded by a threading.Lock because
+# build_quant_math_block is invoked from asyncio.to_thread, i.e. concurrently
+# across tickers. Tickers 2..N block on the lock and then read the cache
+# rather than starting their own fit.
+_CACHE: dict[str, dict] = {}
+_CACHE_LOCK = threading.Lock()
+_CACHE_MAX = 4
+
+
+def _cached_classification(as_of: date | None = None) -> dict:
+    key = str(as_of or date.today())
+    cached = _CACHE.get(key)
+    if cached is not None:
+        return cached
+    with _CACHE_LOCK:
+        # Re-check inside the lock: a concurrent caller may have filled it
+        # while this thread waited.
+        cached = _CACHE.get(key)
+        if cached is not None:
+            return cached
+        result = classify_regime(as_of=as_of)
+        # Cache failures too — a failing fit costs the same ~32s as a
+        # successful one, and retrying it per ticker is the exact stall this
+        # cache exists to prevent. The block just renders nothing.
+        _CACHE[key] = result
+        if len(_CACHE) > _CACHE_MAX:
+            for stale in sorted(_CACHE)[:-_CACHE_MAX]:
+                _CACHE.pop(stale, None)
+        return result
+
+
+def reset_cache() -> None:
+    """Drop the cache. For tests and for a forced recompute."""
+    with _CACHE_LOCK:
+        _CACHE.clear()
+
+
 def build_hmm_context_line(as_of: date | None = None) -> str:
     """One-paragraph context block for the desk. Empty string on any failure.
 
     Explicitly framed to the reading agent as a *statistical shadow*, not an
     instruction — it must not read as a competing directive to the regime
     engine's own board_directive.
+
+    CACHED, and that is load-bearing. A fit is **~32s** (two Baum-Welch runs,
+    2- and 3-state, over ~550 observations). `build_quant_math_block` runs
+    once per TICKER under a 25s timeout, so an uncached call blew the budget
+    and made the whole block fail open — silently dropping GARCH, HRP *and*
+    the sizing bracket, not just the HMM. Caught 2026-07-25 in the first live
+    cycle: all three tickers logged "quant math precompute failed (non-fatal)"
+    with an empty message (the signature of asyncio.TimeoutError).
+
+    The result is MARKET-WIDE and identical for every ticker in a cycle, so
+    computing it per ticker was always waste — the same reasoning that made
+    `app/v3/regime_cache.py` cache the LLM regime engine per cycle.
     """
     try:
-        r = classify_regime(as_of=as_of)
+        r = _cached_classification(as_of)
     except Exception as e:
         logger.debug("[RegimeHMM] context line failed (non-fatal): %s", e)
         return ""
-    if not r.get("ok"):
+    if not r or not r.get("ok"):
         return ""
 
     probs = ", ".join(f"{k} {v:.0%}" for k, v in r["state_probabilities"].items())

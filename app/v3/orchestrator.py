@@ -156,16 +156,31 @@ async def run_v3_pipeline(
     # quant + board). Off-loop via to_thread: GARCH is ~1s of CPU + DB reads.
     try:
         from app.quant.context_block import build_quant_math_block
+        # 60s, raised from 25s on 2026-07-25. The HMM regime shadow costs ~32s
+        # on its FIRST call of a cycle (two Baum-Welch fits; cached per cycle
+        # thereafter, so tickers 2..N are ~free). At 25s the whole block timed
+        # out and failed open, silently dropping GARCH, HRP and the sizing
+        # bracket as well — a degrade that logs an EMPTY exception message and
+        # is otherwise invisible. Budget the first-call cost explicitly.
         quant_math = await asyncio.wait_for(
             asyncio.to_thread(build_quant_math_block, ticker, bot_id),
-            timeout=25,
+            timeout=60,
         )
         if quant_math:
             desk.cycle_metadata["quant_math_context"] = quant_math
             logger.info("[V3] %s: precomputed quant math injected (%d chars)",
                         ticker, len(quant_math))
+    except asyncio.TimeoutError:
+        # asyncio.TimeoutError stringifies to "" — the original handler logged
+        # "failed (non-fatal): " with nothing after it, which is how a
+        # cycle-wide loss of GARCH/HRP/sizing context went unnoticed. Name it.
+        logger.warning(
+            "[V3] %s: quant math precompute TIMED OUT after 60s — GARCH, HRP and "
+            "the sizing bracket are all MISSING from this desk", ticker,
+        )
     except Exception as e:
-        logger.warning("[V3] %s: quant math precompute failed (non-fatal): %s", ticker, e)
+        logger.warning("[V3] %s: quant math precompute failed (non-fatal): %s (%s)",
+                       ticker, e, type(e).__name__)
 
     # Verified technical baseline (2026-07-24 audit): the quant desk was
     # reporting RSI/ATR/SMA values that matched nothing on the desk in 56% of

@@ -279,10 +279,59 @@ def test_hmm_rejects_short_series():
 
 def test_classify_regime_fails_open_on_db_error():
     """Contract: the HMM must never be able to stop a cycle."""
+    regime_hmm.reset_cache()
     with patch.object(regime_hmm, "load_market_returns", side_effect=RuntimeError("db down")):
         out = regime_hmm.classify_regime()
+        assert regime_hmm.build_hmm_context_line() == ""
+    regime_hmm.reset_cache()
     assert not out["ok"]
-    assert regime_hmm.build_hmm_context_line() is not None
+
+
+def test_hmm_classification_is_cached_per_run():
+    """THE REGRESSION GUARD. A fit is ~32s and the answer is market-wide, so an
+    uncached per-ticker call blew build_quant_math_block's timeout and made the
+    WHOLE block fail open — silently dropping GARCH, HRP and the sizing bracket
+    too. Caught live 2026-07-25; the failure logged an empty message."""
+    regime_hmm.reset_cache()
+    fake = {"ok": True, "regime": "CALM", "confidence": 90.0,
+            "state_probabilities": {"CALM": 0.9}, "n_states": 2,
+            "selected_by": "BIC", "observations": 500, "ticker": "SPY",
+            "state_stats": {"CALM": {"annualized_vol_pct": 12.0,
+                                     "expected_duration_days": 20.0,
+                                     "mean_daily_return_pct": 0.04}}}
+    with patch.object(regime_hmm, "classify_regime", return_value=fake) as fit:
+        for _ in range(5):
+            regime_hmm.build_hmm_context_line()
+    assert fit.call_count == 1, "HMM refit per call — the 25s timeout regression"
+    regime_hmm.reset_cache()
+
+
+def test_hmm_failures_are_cached_too():
+    """A FAILING fit costs the same ~32s as a successful one. Retrying it per
+    ticker is the exact stall the cache exists to prevent."""
+    regime_hmm.reset_cache()
+    with patch.object(regime_hmm, "classify_regime",
+                      return_value={"ok": False, "reason": "nope"}) as fit:
+        for _ in range(4):
+            assert regime_hmm.build_hmm_context_line() == ""
+    assert fit.call_count == 1
+    regime_hmm.reset_cache()
+
+
+def test_quant_block_timeout_budgets_the_hmm_first_call():
+    """The orchestrator's timeout must exceed the HMM's uncached cost (~32s).
+    Caching alone is not enough — the FIRST ticker of a cycle still pays it."""
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "app" / "v3" / "orchestrator.py"
+    text = src.read_text()
+    block = text[text.index("build_quant_math_block"):]
+    timeout = int(re.search(r"timeout=(\d+)", block).group(1))
+    assert timeout >= 45, (
+        f"quant math timeout is {timeout}s; the HMM's first fit alone measured "
+        f"~32s, so the block will fail open and drop GARCH/HRP/sizing too"
+    )
 
 
 def test_context_line_is_framed_as_a_shadow():
@@ -295,6 +344,8 @@ def test_context_line_is_framed_as_a_shadow():
                                  "expected_duration_days": 30.0,
                                  "mean_daily_return_pct": 0.05}},
     }
+    regime_hmm.reset_cache()
     with patch.object(regime_hmm, "classify_regime", return_value=fake):
         line = regime_hmm.build_hmm_context_line()
+    regime_hmm.reset_cache()
     assert "NOT" in line and "does not override" in line
