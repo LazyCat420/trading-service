@@ -67,6 +67,18 @@ reports believed was already fixed.
 
 ## Traps (will bite again)
 
+- **⚠ A HEALTHY HTTP ENDPOINT IS NOT A HEALTHY CONTAINER.** `4517ba1` was a
+  hotfix for a bug *this wave introduced*, caught minutes after deploy by
+  watching the container instead of trusting the deploy's exit code. The new
+  bulk technicals pass ran 507 recomputes back-to-back at boot, pinned CPU at
+  ~86%, and timed out Docker's 10s healthcheck three times → **UNHEALTHY, while
+  `/health` was answering in 0.02s.** The app was fine; the event loop never got
+  a turn. Any `await`-less loop over hundreds of CPU-bound items does this. Yield
+  with `await asyncio.sleep(0)` between items, bound each item, and cap the pass.
+- **"~0.1s each" is not the number that matters.** Each recompute is individually
+  fast, which is exactly why the loop looked safe. The cost was in the *absence
+  of gaps* between 507 of them. Multiply, then ask what else needs the loop.
+
 - **⚠ A DOCUMENTED LESSON IS NOT AN IMPLEMENTED FIX.** The last HANDOFF describes
   the fail-open composition trap at length and states the rule — *"fail-open
   composition is not free"*. But the fix it shipped (timeout 25s → 60s, cache the
@@ -145,6 +157,10 @@ the first cycle's sizing and held-flag behaviour.
    lazily created, absent from both `migrations.py` and `schema_pg.sql`.
 6. **The fifth bot_id resolver** in `bot_manager.py` has different semantics (a
    `"default"` sentinel). Merging it is an ownership decision, not a rename.
-7. **The sp500 technicals refresh is sequential** over ~503 tickers. The batched
-   `executemany` inside `compute_technicals` is fast; the loop around it is not.
-   Unmeasured at real scale.
+7. ✅ **The sp500 technicals refresh** — flagged here as "unmeasured at real
+   scale", and it bit within minutes. Throttled in `4517ba1` and **verified on
+   the redeploy: 11 consecutive healthy samples across the same window that
+   previously failed 3 checks, `FailingStreak=0`, and
+   `507/507 tickers (0 failed, 0 deferred)`.** The `0 deferred` is the number to
+   watch on the next daily run: a non-zero tail means the 240s ceiling is
+   binding and wants raising.
