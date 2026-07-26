@@ -96,8 +96,17 @@ def test_vague_skill_fails_gate():
 
 
 def test_near_noop_edit_fails_gate():
-    sim = so._simulate_score_with_skill(GOOD_SKILL + " x", GOOD_SKILL, 0.55, REFLECTION)
-    assert sim - 0.55 <= so.MIN_SCORE_DELTA
+    """A near-noop must still be rejected — but by the STRUCTURAL gate now.
+
+    2026-07-25: this check used to live in the scorer, where content bonuses
+    could outweigh it. Measured on the board agent's real history, the whole-doc
+    similarity penalty never once fired (consecutive edits ran 0.84-0.94 against
+    a 0.95 threshold) and 7 of 7 rewrites were accepted, one of them a pure
+    bullet rename. Rejecting a cosmetic edit is now `_substantive_change`'s job,
+    so it cannot be out-pointed; the assertion moves with it.
+    """
+    substantive, reason = so._substantive_change(GOOD_SKILL + " x", GOOD_SKILL)
+    assert not substantive, f"a near-noop edit was treated as substantive: {reason}"
 
 
 def test_genuine_replacement_passes_gate():

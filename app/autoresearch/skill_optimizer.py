@@ -50,7 +50,24 @@ MIN_SCORE_DELTA = 0.005
 MIN_RESOLVED_ROWS = 5
 BASELINE_WINDOW_ROWS = 10
 # Skill docs ride in every system prompt — keep them small.
-MAX_SKILL_CHARS = 4000
+#
+# 2026-07-25 audit: this was 4000 while the PROMPT told the model 1500, so the
+# stated limit was never enforced and the board doc grew 1146 -> 1812 chars
+# over 20 versions, every one of them an accepted REPLACE. A limit the code
+# does not enforce is a suggestion, and the model treated it as one.
+MAX_SKILL_CHARS = 1800
+# What the prompt asks for. Kept below MAX_SKILL_CHARS so there is a little
+# slack between "what we request" and "what we reject" — a doc landing at
+# 1520 is not worth throwing away.
+TARGET_SKILL_CHARS = 1500
+
+# A candidate must differ from the current doc by more than cosmetics. The old
+# near-noop check compared WHOLE-DOC similarity at a 0.95 threshold; real edits
+# landed at 0.84-0.94 and sailed through, including a version whose only change
+# was renaming "Conviction-Winrate Scaling" to "Dynamic Conviction Scaling"
+# with a byte-identical body. Bullet-level comparison catches that; whole-doc
+# similarity structurally cannot.
+MIN_NEW_BULLET_CHARS = 40
 # Per-agent LLM proposal timeout and an overall wall-clock budget so a slow
 # LLM can't push autoresearch toward its 30-minute stale threshold.
 PER_AGENT_TIMEOUT_SEC = 120.0
@@ -187,41 +204,163 @@ def _compute_baseline_score() -> float | None:
     return (num / den) if den > 0 else None
 
 
+def _bullets(text: str) -> list[str]:
+    """The doc's bullet lines, normalized for comparison.
+
+    Normalization deliberately strips the LABEL (`- **Name**:`) and markdown
+    emphasis, so two bullets with the same body under different names compare
+    EQUAL. That is the whole point: renaming a rule is not learning one.
+    """
+    out = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line.startswith(("-", "*", "•")):
+            continue
+        line = line.lstrip("-*• \t")
+        # Drop a leading "**Label**:" / "Label:" prefix.
+        line = re.sub(r"^\*{0,2}[^:*]{1,60}\*{0,2}\s*:\s*", "", line)
+        line = re.sub(r"[*_`#]", "", line).lower()
+        line = re.sub(r"[^a-z0-9%.<>= ]+", " ", line)
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            out.append(line)
+    return out
+
+
+def _substantive_change(candidate: str, current: str) -> tuple[bool, str]:
+    """Does the candidate add or remove real GUIDANCE, not just wording?
+
+    Returns (is_substantive, reason_when_not).
+
+    Compares normalized bullet BODIES rather than whole-doc text. The old
+    whole-doc similarity check at 0.95 never fired on a real edit: measured
+    across the board agent's 8 most recent versions, consecutive similarity ran
+    0.84-0.94 — every one accepted, including a pure rename. Bullet-level
+    comparison is the only form that catches relabeling.
+    """
+    if not current:
+        return True, ""
+
+    cur_set = set(_bullets(current))
+    cand_list = _bullets(candidate)
+    cand_set = set(cand_list)
+
+    added = [b for b in cand_list if b not in cur_set]
+    removed = [b for b in cur_set if b not in cand_set]
+
+    # A deletion is a legitimate edit on its own — dropping a bullet that no
+    # longer earns its space is exactly what the prompt asks for.
+    if removed and not added:
+        return True, ""
+
+    meaningful = [b for b in added if len(b) >= MIN_NEW_BULLET_CHARS]
+
+    # A bullet counts as NEW only if it is not a near-copy of one already
+    # present. Appending a word to an existing bullet produces a technically
+    # "added" bullet whose content is inherited — the near-noop shape. Compare
+    # each candidate bullet against its closest current match.
+    import difflib
+    genuinely_new = []
+    for b in meaningful:
+        closest = difflib.get_close_matches(b, list(cur_set), n=1, cutoff=0.0)
+        if closest and difflib.SequenceMatcher(None, b, closest[0]).ratio() > 0.85:
+            continue  # a reworded copy of an existing rule, not a new one
+        genuinely_new.append(b)
+
+    if not genuinely_new:
+        if added:
+            return False, f"cosmetic_only ({len(added)} reworded/trivial bullet(s))"
+        return False, "no_bullet_changed (rename or reformat only)"
+    return True, ""
+
+
 def _simulate_score_with_skill(
     candidate: str, current: str, baseline: float, reflection: dict
 ) -> float:
-    """Heuristic simulated score: baseline plus content-quality adjustments.
+    """Heuristic content score: baseline plus quality adjustments.
 
-    NOT a replay — a true replay would re-run the V3 pipeline on historical
-    data. These checks reward specific, actionable, reflection-grounded edits
-    and penalize vague or near-noop ones; MIN_SCORE_DELTA is the matching low
-    acceptance bar.
+    ⚠ NOT a measure of trading accuracy, and it never was. A true replay would
+    re-run the V3 pipeline on historical data; `decision_outcomes` carries no
+    `agent_name`, so per-agent realized accuracy is not attributable either.
+    This only asks "is this doc better WRITTEN" — specific, actionable, and
+    grounded in the cycle's own reflection.
+
+    2026-07-25 audit: the previous version awarded every bonus to nearly every
+    candidate. Measured over the board agent's real stored versions, 6 of 7
+    accepted edits scored `+0.0150` — the exact maximum — and all 66 recorded
+    rejections scored exactly `-0.0050`. It emitted one of two values, so it
+    ranked nothing. Worse, fed a genuine edit and deliberate keyword soup, it
+    scored the SOUP higher, because "contains a digit" and "contains an
+    imperative verb" are satisfied by any rewrite.
+
+    The fix is proportional credit rather than flat bonuses, plus penalties for
+    the specific degenerate shapes that were passing. The structural check
+    (`_substantive_change`) runs SEPARATELY and is not scored — a rename must
+    be rejected outright, not out-pointed.
     """
     delta = 0.0
     lowered = candidate.lower()
+    cand_bullets = _bullets(candidate)
 
-    # Specificity: concrete numbers/thresholds beat platitudes.
-    if re.search(r"\d", candidate):
-        delta += 0.004
-    # Actionability: imperative guidance the agent can actually follow.
-    if any(h in lowered for h in _IMPERATIVE_HINTS):
-        delta += 0.004
-    # Grounding: overlaps this cycle's reflection recommendations.
+    # Specificity: proportional to how many bullets carry a real threshold,
+    # not a flat bonus for one digit anywhere in the document.
+    if cand_bullets:
+        with_numbers = sum(1 for b in cand_bullets if re.search(r"\d", b))
+        delta += 0.004 * min(1.0, with_numbers / len(cand_bullets))
+
+    # Actionability: same treatment — share of bullets that are imperative.
+    if cand_bullets:
+        imperative = sum(
+            1 for b in cand_bullets if any(h in b for h in _IMPERATIVE_HINTS)
+        )
+        delta += 0.004 * min(1.0, imperative / len(cand_bullets))
+
+    # Grounding: the NEW material must overlap this cycle's reflection.
+    # Scoring overlap across the whole doc rewarded a candidate for text it
+    # inherited, and let keyword-stuffing fake it — the reason soup outscored
+    # a real edit in the 2026-07-25 measurement. Only newly-added bullets count.
     recs = " ".join(str(r) for r in (reflection.get("recommendations") or [])).lower()
     rec_terms = {w for w in re.findall(r"[a-z]{5,}", recs)}
-    cand_terms = {w for w in re.findall(r"[a-z]{5,}", lowered)}
-    if rec_terms and len(rec_terms & cand_terms) >= 3:
-        delta += 0.004
-    # Substantive but bounded.
-    if 150 <= len(candidate) <= 2500:
+    if rec_terms:
+        cur_set = set(_bullets(current))
+        new_text = " ".join(b for b in cand_bullets if b not in cur_set)
+        new_terms = {w for w in re.findall(r"[a-z]{5,}", new_text)}
+        if len(rec_terms & new_terms) >= 3:
+            delta += 0.004
+
+    # Shape: the prompt asks for 3-8 bullets under TARGET_SKILL_CHARS. Reward
+    # docs that actually comply instead of any doc over 150 chars.
+    if 3 <= len(cand_bullets) <= 8 and len(candidate) <= TARGET_SKILL_CHARS:
         delta += 0.003
-    # Near-noop: barely differs from the current doc. The penalty must outweigh
-    # every bonus combined (max +0.015) so a cosmetic edit can't clear the gate.
-    if current:
-        import difflib
-        if difflib.SequenceMatcher(None, candidate, current).ratio() > 0.95:
-            delta -= 0.02
-    # Vague filler with no imperative content.
+
+    # ── Penalties for the shapes that were slipping through ──
+
+    # Bloat: the doc rides in every system prompt every cycle.
+    if len(candidate) > TARGET_SKILL_CHARS:
+        overshoot = (len(candidate) - TARGET_SKILL_CHARS) / TARGET_SKILL_CHARS
+        delta -= min(0.02, 0.01 * overshoot * 4)
+
+    # Accretion: more bullets than the prompt allows means nothing was dropped.
+    if len(cand_bullets) > 8:
+        delta -= 0.004 * (len(cand_bullets) - 8)
+
+    # Repetition — the keyword-soup tell. A bullet that says "mandate" nine
+    # times is gaming the imperative check, not giving nine instructions.
+    # Measured on the WHOLE doc AND on the newly-added text separately: a long
+    # healthy doc dilutes one stuffed bullet's ratio below any useful
+    # threshold, so whole-doc measurement alone cannot see it.
+    cur_bullets_set = set(_bullets(current))
+    added_text = " ".join(b for b in cand_bullets if b not in cur_bullets_set)
+    for scope, min_words in ((lowered, 20), (added_text, 12)):
+        words = re.findall(r"[a-z]{4,}", scope)
+        if len(words) < min_words:
+            continue
+        top = max((words.count(w) for w in set(words)), default=0)
+        if top / len(words) > 0.15:
+            delta -= 0.012
+            break
+
+    # Vague filler with no imperative content at all.
     if not any(h in lowered for h in _IMPERATIVE_HINTS):
         delta -= 0.01
 
@@ -264,10 +403,31 @@ async def _optimize_one_agent(
         pass
     if reject_reason is None and _FORBIDDEN_PATTERNS.search(candidate):
         reject_reason = "meta_instruction_injection"
+    # Size gate, with an escape hatch for docs that are ALREADY over budget.
+    # Tightening MAX_SKILL_CHARS from 4000 to 1800 left 5 of 7 live docs above
+    # the target and one (the board's, 1811) above the ceiling itself. Without
+    # this, an over-budget doc is frozen forever: every candidate at or near
+    # its size is rejected, so it can never shrink back. An edit that makes an
+    # over-budget doc SMALLER is always allowed through this gate.
     if reject_reason is None and len(candidate) > MAX_SKILL_CHARS:
-        reject_reason = f"too_long ({len(candidate)} > {MAX_SKILL_CHARS})"
+        shrinking = len(current_text) > MAX_SKILL_CHARS and len(candidate) < len(current_text)
+        if not shrinking:
+            reject_reason = f"too_long ({len(candidate)} > {MAX_SKILL_CHARS})"
+        else:
+            logger.info(
+                "[SkillOpt] %s: over-budget doc shrinking %d -> %d, allowed",
+                agent_name, len(current_text), len(candidate),
+            )
     if reject_reason is None and cand_hash == _hash(current_text):
         return "skipped"  # byte-identical no-op
+
+    # Structural gate, deliberately NOT part of the score: a rename must be
+    # rejected outright rather than out-pointed by content bonuses. The old
+    # near-noop check lived in the scorer and never fired on a real edit.
+    if reject_reason is None:
+        substantive, why = _substantive_change(candidate, current_text)
+        if not substantive:
+            reject_reason = why
 
     if reject_reason:
         _log_rejection(agent_name, cand_hash, cycle_id, reject_reason, None, rationale)
@@ -314,6 +474,18 @@ def _build_optimizer_prompt(
     recs_block = "\n".join(f"- {str(r)[:300]}" for r in recs[:5]) or "- (none)"
     current_block = current_skill.strip() or "(no skill doc yet — this would be version 1)"
 
+    # An already-over-budget doc must be told to shrink, or the size gate
+    # freezes it: every candidate near its size is rejected, so it can never
+    # come back down. See the shrink escape hatch in _optimize_one_agent.
+    over_budget_rule = ""
+    if len(current_skill) > TARGET_SKILL_CHARS:
+        over_budget_rule = (
+            f"- THIS DOC IS CURRENTLY OVER BUDGET ({len(current_skill)} chars vs "
+            f"{TARGET_SKILL_CHARS}). Your edit MUST make it SHORTER: merge overlapping "
+            f"bullets or drop the weakest one. An edit that does not reduce the "
+            f"length will be rejected.\n"
+        )
+
     return (
         f"You maintain the persistent SKILL DOC for one trading agent. The doc is a short "
         f"markdown block prepended to that agent's system prompt every cycle, so it must be "
@@ -327,9 +499,14 @@ def _build_optimizer_prompt(
         f"Recommendations:\n{recs_block}\n\n"
         f"TASK: Propose at most ONE edit to the skill doc that would plausibly improve this "
         f"agent's future decisions. Rules:\n"
-        f"- Keep the doc under 1500 characters: 3-8 imperative bullet points, specific and "
+        f"- Keep the doc under {TARGET_SKILL_CHARS} characters: 3-8 imperative bullet points, specific and "
         f"checkable (thresholds, data sources, failure modes), no restating the agent's role.\n"
         f"- Only encode durable lessons; drop bullets that no longer earn their space.\n"
+        f"- Renaming or rewording an existing bullet is NOT an improvement and will be "
+        f"rejected. An edit must add genuinely new guidance or remove a bullet.\n"
+        f"- The doc is already at its size budget. If you add a bullet, say which one "
+        f"you dropped to make room.\n"
+        f"{over_budget_rule}"
         f"- If nothing clearly improves the doc, choose SKIP. SKIP is the correct default.\n\n"
         f"Output ONLY a JSON object:\n"
         f'{{"action": "ADD" | "DELETE" | "REPLACE" | "SKIP", '
