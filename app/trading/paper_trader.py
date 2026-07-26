@@ -234,6 +234,75 @@ def _ensure_bot(bot_id: str):
             )
 
 
+def _ticker_liquidity(ticker: str) -> tuple[float | None, float | None]:
+    """(average daily dollar volume, daily volatility) over the last 90 days.
+
+    Both are inputs to the execution-cost model. Returns (None, None) on any
+    failure — the cost model treats unknown liquidity as "charge the
+    conservative default", never as "free".
+    """
+    try:
+        with get_db() as db:
+            row = db.execute(
+                """
+                SELECT avg(close * volume) AS adv,
+                       stddev(close / NULLIF(prev_close, 0) - 1) AS vol
+                FROM (
+                    SELECT close, volume,
+                           lag(close) OVER (ORDER BY date) AS prev_close
+                    FROM price_history
+                    WHERE ticker = %s AND date > current_date - 90
+                      AND close > 0 AND volume > 0
+                ) x
+                """,
+                [ticker],
+            ).fetchone()
+        if not row:
+            return None, None
+        adv = float(row[0]) if row[0] else None
+        vol = float(row[1]) if row[1] else None
+        return adv, vol
+    except Exception as e:  # noqa: BLE001 — costs must never block a trade
+        logger.warning("[paper] %s: liquidity lookup failed: %s", ticker, e)
+        return None, None
+
+
+def _apply_execution_cost(
+    ticker: str, reference_price: float, side: str, order_value: float,
+) -> tuple[float, dict]:
+    """Return (fill_price, cost_breakdown) for an order.
+
+    Fails OPEN to the frictionless price: a broken cost model must not stop the
+    book from trading. That is deliberate but it is also a laundering risk — a
+    silent fallback here would quietly restore the very gross-return behavior
+    this exists to end — so the fallback logs at WARNING and the returned
+    breakdown says `fully_modeled: False` rather than reporting a clean zero.
+    """
+    from app.quant.execution_costs import apply_cost_to_fill, estimate_cost_bps
+
+    try:
+        adv, vol = _ticker_liquidity(ticker)
+        cost = estimate_cost_bps(
+            order_value=order_value,
+            quantity=order_value / reference_price if reference_price else 0.0,
+            adv_value=adv,
+            daily_volatility=vol,
+        )
+        if cost.get("warning"):
+            logger.info("[paper] %s: %s", ticker, cost["warning"])
+        return apply_cost_to_fill(reference_price, side, cost["total_bps"]), cost
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[paper] %s: execution cost model failed (%s) — filling at the "
+            "reference price, so this trade is recorded GROSS", ticker, e,
+        )
+        return reference_price, {
+            "total_bps": 0.0, "spread_bps": 0.0, "impact_bps": 0.0,
+            "commission_bps": 0.0, "commission_cash": 0.0,
+            "spread_source": "error", "warning": str(e), "fully_modeled": False,
+        }
+
+
 def _get_current_price(ticker: str) -> tuple[float | None, float | None]:
     """Get latest price and its age in hours.
 
@@ -525,12 +594,23 @@ async def buy(
             max_concentration_pct * 100,
         )
 
+    # Execution costs: the fill happens WORSE than the reference price. Before
+    # 2026-07-26 every fill landed at exactly `current_price` with fees=0, so
+    # every performance number this service produced was gross of all friction
+    # — the failure mode that reversed FinMem's reported +23% to -22% under
+    # controlled re-evaluation (arXiv:2603.27539).
+    reference_price = current_price
+    fill_price, cost = _apply_execution_cost(ticker, current_price, "BUY", amount)
+    current_price = fill_price
+
     qty = amount / current_price
     logger.info(
-        "[TRACE][BUY] final qty=%.4f amount=%.2f price=%.4f for %s",
+        "[TRACE][BUY] final qty=%.4f amount=%.2f price=%.4f (ref=%.4f, cost=%.2fbps) for %s",
         qty,
         amount,
         current_price,
+        reference_price,
+        cost["total_bps"],
         ticker,
     )
 
@@ -617,8 +697,9 @@ async def buy(
                 db.execute(
                     """
                     INSERT INTO trade_fills
-                      (fill_id, order_id, bot_id, ticker, side, fill_qty, fill_price, fill_value, filled_at, cycle_id)
-                    VALUES (%s, %s, %s, %s, 'BUY', %s, %s, %s, %s, %s)
+                      (fill_id, order_id, bot_id, ticker, side, fill_qty, fill_price,
+                       fill_value, fees, decision_price, filled_at, cycle_id)
+                    VALUES (%s, %s, %s, %s, 'BUY', %s, %s, %s, %s, %s, %s, %s)
                 """,
                     [
                         fill_id,
@@ -628,6 +709,11 @@ async def buy(
                         qty,
                         current_price,
                         amount,
+                        # The cash value of the friction, so realized
+                        # implementation shortfall is measurable from the ledger
+                        # alone rather than recomputed from a model later.
+                        round(amount * cost["total_bps"] / 10_000.0, 6),
+                        reference_price,
                         now,
                         cycle_id,
                     ],
@@ -752,10 +838,20 @@ async def sell(
                 "price_age_hours": round(price_age_hours, 1),
             }
 
+    # Execution costs — a SELL fills BELOW the reference price. Symmetric with
+    # the BUY path; see _apply_execution_cost.
+    reference_price = current_price
+    _sell_fill, sell_cost = _apply_execution_cost(
+        ticker, current_price, "SELL", current_price * qty_to_sell,
+    )
+    current_price = _sell_fill
+
     logger.info(
-        "[TRACE][SELL] qty_to_sell=%.4f price=%.4f for %s",
+        "[TRACE][SELL] qty_to_sell=%.4f price=%.4f (ref=%.4f, cost=%.2fbps) for %s",
         qty_to_sell,
         current_price,
+        reference_price,
+        sell_cost["total_bps"],
         ticker,
     )
     # Calculate proceeds
@@ -914,8 +1010,9 @@ async def sell(
                 db.execute(
                     """
                     INSERT INTO trade_fills
-                      (fill_id, order_id, bot_id, ticker, side, fill_qty, fill_price, fill_value, filled_at, cycle_id)
-                    VALUES (%s, %s, %s, %s, 'SELL', %s, %s, %s, %s, %s)
+                      (fill_id, order_id, bot_id, ticker, side, fill_qty, fill_price,
+                       fill_value, fees, decision_price, filled_at, cycle_id)
+                    VALUES (%s, %s, %s, %s, 'SELL', %s, %s, %s, %s, %s, %s, %s)
                 """,
                     [
                         sell_fill_id,
@@ -925,6 +1022,8 @@ async def sell(
                         qty_to_sell,
                         current_price,
                         proceeds,
+                        round(proceeds * sell_cost["total_bps"] / 10_000.0, 6),
+                        reference_price,
                         now,
                         cycle_id,
                     ],

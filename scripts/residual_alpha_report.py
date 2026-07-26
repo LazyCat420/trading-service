@@ -24,6 +24,32 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def fetch_adv(tickers: set[str]) -> dict[str, float]:
+    """Average daily dollar volume per ticker, for the cost model's liquidity
+    tiers. Missing tickers are simply absent from the result — the caller
+    charges the conservative default rather than assuming a cheap fill."""
+    if not tickers:
+        return {}
+    from app.db.connection import get_db
+
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT ticker, avg(close * volume) AS adv
+                FROM price_history
+                WHERE ticker = ANY(%s) AND date > current_date - 90
+                  AND close > 0 AND volume > 0
+                GROUP BY ticker
+                """,
+                [list(tickers)],
+            ).fetchall()
+        return {r[0]: float(r[1]) for r in rows if r[1]}
+    except Exception as e:  # noqa: BLE001
+        print(f"  (ADV lookup failed: {e} — falling back to the default spread)")
+        return {}
+
+
 def fetch_decisions(since: str, horizon: int) -> list[dict]:
     """Every desk with a resolvable forward return, scored from price_history.
 
@@ -110,6 +136,15 @@ def main() -> int:
                     help="Score ONLY decisions that can change the book. 69%% of "
                          "desks are policy-blocked SELLs or no-op HOLDs.")
     ap.add_argument("--json", dest="json_out")
+    ap.add_argument("--cost-bps", type=float, default=None,
+                    help="Round-trip execution cost in basis points charged to "
+                         "the PIPELINE only. Omit to estimate per-ticker from "
+                         "ADV liquidity tiers; pass 0 for the old gross "
+                         "numbers. Every figure this script printed before "
+                         "2026-07-26 was gross.")
+    ap.add_argument("--no-costs", action="store_true",
+                    help="Report gross, pre-2026-07-26 behavior. The negative "
+                         "control: --no-costs must reproduce the old numbers.")
     args = ap.parse_args()
 
     from app.quant import residual_alpha
@@ -139,10 +174,57 @@ def main() -> int:
     # earns; the pipeline has to clear THIS, not zero.
     naive = sum(d["move_pct"] for d in decisions) / len(decisions)
     signed = [(-d["move_pct"] if d["action"] == "SELL" else d["move_pct"]) for d in decisions]
-    taken = sum(signed) / len(signed)
+    gross = sum(signed) / len(signed)
+
+    # ── EXECUTION COSTS ──
+    #
+    # Charged to the PIPELINE only, and that asymmetry is deliberate, not a
+    # thumb on the scale: the always-long baseline is a buy-and-hold null that
+    # does not trade over the window, while the pipeline opens and closes a
+    # position per decision. Charging both equally would flatter the pipeline by
+    # cancelling the very cost that distinguishes trading from holding.
+    #
+    # A HOLD is not charged either — it moves no shares.
+    cost_bps_by_decision: list[float] = []
+    if args.no_costs:
+        cost_bps_by_decision = [0.0] * len(decisions)
+        cost_note = "GROSS — no execution costs (pre-2026-07-26 behavior)"
+    elif args.cost_bps is not None:
+        cost_bps_by_decision = [
+            (0.0 if d["action"] == "HOLD" else args.cost_bps) for d in decisions
+        ]
+        cost_note = f"flat {args.cost_bps:.1f}bps round trip on directional decisions"
+    else:
+        from app.quant.execution_costs import half_spread_bps_from_adv
+        advs = fetch_adv({d["ticker"] for d in decisions})
+        for d in decisions:
+            if d["action"] == "HOLD":
+                cost_bps_by_decision.append(0.0)
+                continue
+            half = half_spread_bps_from_adv(advs.get(d["ticker"]))
+            if half is None:
+                from app.quant.execution_costs import DEFAULT_HALF_SPREAD_BPS
+                half = DEFAULT_HALF_SPREAD_BPS
+            # Round trip = in and out, each paying the half-spread.
+            cost_bps_by_decision.append(2.0 * half)
+        modeled = sum(1 for t in {d["ticker"] for d in decisions} if advs.get(t))
+        cost_note = (
+            f"per-ticker ADV liquidity tiers "
+            f"({modeled}/{len({d['ticker'] for d in decisions})} tickers with known ADV)"
+        )
+
+    avg_cost_bps = sum(cost_bps_by_decision) / len(cost_bps_by_decision)
+    net_signed = [s - (c / 100.0) for s, c in zip(signed, cost_bps_by_decision)]
+    taken = sum(net_signed) / len(net_signed)
+
     print(f"BASELINE  always-long over the same desks : {naive:+.2f}%")
-    print(f"PIPELINE  return signed to actions taken  : {taken:+.2f}%")
+    print(f"PIPELINE  gross return signed to actions  : {gross:+.2f}%")
+    print(f"          execution costs                 : {-avg_cost_bps / 100.0:+.2f}%"
+          f"   ({cost_note})")
+    print(f"PIPELINE  NET of execution costs          : {taken:+.2f}%")
     print(f"          difference vs the null          : {taken - naive:+.2f}%\n")
+    if not args.no_costs and (gross - naive) > 0 >= (taken - naive):
+        print("  ⚠ COSTS FLIP THE SIGN: this edge exists only gross of execution.\n")
 
     report = residual_alpha.attribute_returns(decisions, horizon=args.horizon)
     print(residual_alpha.summarize(report))

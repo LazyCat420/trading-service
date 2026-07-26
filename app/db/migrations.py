@@ -3589,6 +3589,32 @@ def _fix_eth_cagr_data(conn):
         except Exception:
             pass
 
+    # ── trade_fills.decision_price (2026-07-26) ──
+    #
+    # The reference price the decision was made at, before execution costs. With
+    # `fill_price` (post-cost) alongside it, realized implementation shortfall
+    # (Perold 1988) becomes measurable directly from the ledger:
+    #
+    #     IS = (fill_price - decision_price) / decision_price, signed by side
+    #
+    # Until 2026-07-26 the two were identical by construction — paper_trader
+    # filled at exactly the reference price with fees=0 — so every performance
+    # number was gross of all friction. NULL on historical rows means "filled
+    # frictionlessly", which is the truth about them, and is deliberately not
+    # backfilled with a modeled estimate.
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE trade_fills "
+                "ADD COLUMN IF NOT EXISTS decision_price DOUBLE PRECISION"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── decision_outcomes.skill_versions (2026-07-25) ──
     #
     # Which skill doc governed the decision this row scores.
