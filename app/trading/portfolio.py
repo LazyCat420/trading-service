@@ -27,13 +27,20 @@ logger = logging.getLogger(__name__)
 
 
 def _get_default_bot_id() -> str:
-    """Resolve the active bot_id dynamically."""
-    try:
-        from app.services.bot_manager import get_active_bot_id
+    """Resolve the active bot_id dynamically.
 
-        return get_active_bot_id()
-    except Exception:
-        return settings.BOT_ID
+    Delegates to THE single resolver (2026-07-25 audit) rather than repeating
+    the get_active_bot_id/settings.BOT_ID dance a fourth time. Kept as a named
+    function because several call sites read `bot_id or _get_default_bot_id()`.
+
+    The import MUST stay function-local: app.trading.paper_trader imports this
+    module, and app.tools.portfolio_tools imports paper_trader at module level,
+    so a top-level import here would close the cycle
+    portfolio -> portfolio_tools -> paper_trader -> portfolio.
+    """
+    from app.tools.portfolio_tools import resolve_bot_id
+
+    return resolve_bot_id()
 
 
 def _safe_float(val, fallback=None):

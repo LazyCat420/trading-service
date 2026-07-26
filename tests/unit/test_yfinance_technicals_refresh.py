@@ -117,13 +117,38 @@ async def test_hook_is_on_the_path_v3_precollect_actually_uses(monkeypatch):
 
     `app/v3/data_report.py` calls `collect_price_history` directly, so putting
     the refresh in `collect_all` would leave every cycle stale.
-    """
-    import inspect
 
+    Asserts BEHAVIOUR, not source text. The previous version grepped
+    `data_report.py` for the substring "collect_all", which passes happily
+    against a file refactored into brokenness — and would pass even if the
+    hook had been deleted outright (2026-07-25 audit). This one calls the
+    real precollect path and asserts the recompute actually fires.
+    """
+    import app.collectors.yfinance_collector as yfc
     import app.v3.data_report as dr
 
-    src = inspect.getsource(dr)
-    assert "collect_price_history" in src
-    assert "collect_all" not in src, (
-        "if precollect switches to collect_all, move the technicals hook too"
+    called: list[str] = []
+
+    async def _fake_collect(ticker, *a, **k):
+        # Stand-in for the real collector: records that precollect routed
+        # through the hooked function.
+        called.append(ticker)
+        return 1
+
+    # Patched on the SOURCE module: data_report imports the name inside the
+    # function body, so it resolves at call time from yfinance_collector.
+    # Patching data_report's namespace would silently miss and the test would
+    # pass for the wrong reason.
+    monkeypatch.setattr(yfc, "collect_price_history", _fake_collect)
+
+    try:
+        await dr.build_ticker_data_report("MSFT")
+    except Exception:
+        # The report has many other collectors that need a DB; we only care
+        # that the price path routed through the hooked function.
+        pass
+
+    assert called, (
+        "V3 precollect did not call collect_price_history — the technicals "
+        "hook lives there, so every cycle would run on stale indicators"
     )

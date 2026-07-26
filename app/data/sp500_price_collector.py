@@ -12,6 +12,9 @@ async def collect_sp500_prices(period: str = "6mo"):
     """
     logger.info(f"Batch downloading S&P 500 prices for period: {period}...")
 
+    count = 0
+    written_tickers: set[str] = set()
+
     with get_db() as db:
         rows = db.execute(
             "SELECT ticker FROM ticker_metadata WHERE sp500 = TRUE"
@@ -118,16 +121,55 @@ async def collect_sp500_prices(period: str = "6mo"):
                     volume = EXCLUDED.volume
             """
             # Execute individually as our PooledCursor doesn't expose executemany directly
-            count = 0
             for item in inserts:
                 try:
                     db.execute(query, item)
                     count += 1
+                    written_tickers.add(item[0])
                 except Exception as e:
                     pass
 
             logger.info(f"Successfully collected and saved {count} price records.")
-            return {"total": count}
-        else:
-            logger.warning("No price data collected.")
-            return {"total": 0}
+
+    # Technicals are a pure function of price_history, so every writer of that
+    # table owes it a refresh. This loop runs daily over ~503 tickers from
+    # boot_service._sp500_daily_refresh_loop and had NO refresh — the same
+    # shape as the bug that served a 1963 RSI for CVX, on the writer whose
+    # cadence best matches the original "5 of 503 fresh" symptom (2026-07-25
+    # audit). Done outside the `get_db()` block so the connection is released
+    # before the recompute, which opens its own.
+    if written_tickers:
+        await _refresh_technicals_bulk(sorted(written_tickers))
+
+    return {"total": count}
+
+
+async def _refresh_technicals_bulk(tickers: list[str]) -> None:
+    """Recompute derived indicators for every ticker whose prices just changed.
+
+    Mirrors `yfinance_collector._refresh_technicals`, but batched: this
+    collector writes hundreds of tickers in one pass, so the per-ticker hook
+    used on the single-ticker path does not fit.
+
+    Fail-open per ticker AND in aggregate — stale technicals are bad, but a
+    failure here must never cost us the price rows we just collected.
+    """
+    import asyncio
+
+    from app.processors.technical_processor import compute_technicals
+
+    ok = 0
+    failed = 0
+    for ticker in tickers:
+        try:
+            await asyncio.to_thread(compute_technicals, ticker)
+            ok += 1
+        except Exception as e:
+            failed += 1
+            logger.warning(
+                "[sp500] %s: technicals refresh failed (non-fatal): %s", ticker, e
+            )
+    logger.info(
+        "[sp500] technicals refreshed for %d/%d tickers (%d failed)",
+        ok, len(tickers), failed,
+    )

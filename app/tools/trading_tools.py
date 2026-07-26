@@ -3,7 +3,7 @@ import logging
 from app.tools.registry import registry, PermissionLevel
 from app.trading.paper_trader import buy, sell
 from app.trading.watchlist import add_ticker, remove_ticker
-from app.config import settings
+from app.tools.portfolio_tools import resolve_bot_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +37,11 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
     # Ensure uppercase
     ticker = ticker.upper().strip()
 
-    # Use the dynamically resolved active bot_id (not settings.BOT_ID)
-    try:
-        from app.services.bot_manager import get_active_bot_id
-
-        bot_id = get_active_bot_id()
-    except Exception:
-        bot_id = settings.BOT_ID
+    # THE single resolver (2026-07-25 audit). This inlined get_active_bot_id()
+    # with an `except: settings.BOT_ID` fallback — behaviourally identical, but a
+    # fourth copy of the resolution rule in a WRITE tool that places real orders.
+    # A future change to bot resolution must not have to find this one.
+    bot_id = resolve_bot_id()
 
     try:
         result = await buy(bot_id, ticker, size_pct)
@@ -76,13 +74,8 @@ async def sell_stock(ticker: str) -> str:
     """Execute a paper sell order (closes the entire position)."""
     logger.info("[TradingTools] Executing sell order for %s", ticker)
     ticker = ticker.upper().strip()
-    # Use the dynamically resolved active bot_id (not settings.BOT_ID)
-    try:
-        from app.services.bot_manager import get_active_bot_id
-
-        bot_id = get_active_bot_id()
-    except Exception:
-        bot_id = settings.BOT_ID
+    # THE single resolver — see buy_stock above.
+    bot_id = resolve_bot_id()
 
     try:
         result = await sell(bot_id, ticker)

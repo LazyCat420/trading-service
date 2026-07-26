@@ -3552,3 +3552,39 @@ def _fix_eth_cagr_data(conn):
     # can exclude them, and so the distinction is expressible if it is ever
     # needed.
     _safe_add_column(conn, "cycle_schedules", "job_type", "TEXT DEFAULT 'user'")
+
+    # ── V3 guardrail firings (2026-07-25) ──
+    # The table only ever came into existence lazily, on the first firing, via
+    # telemetry._ensure_guardrail_table(). That made an empty result ambiguous
+    # between "no guardrail fired" and "the table did not exist yet" — the very
+    # ambiguity the 2026-07-25 audit walked into when it concluded from an empty
+    # grep that coerce_unshortable_sell had never run (it had; the backstop was
+    # load-bearing). A counter that might simply be absent cannot be used to
+    # argue a guardrail is unnecessary, so the table now exists from deploy.
+    #
+    # The DDL below is deliberately byte-identical to _ensure_guardrail_table()'s
+    # (same column types, same index name). The lazy CREATE stays as
+    # belt-and-braces for any path reaching telemetry before migrations run;
+    # if these two ever diverge, whichever runs first silently wins.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS v3_guardrail_firings (
+                    id SERIAL PRIMARY KEY,
+                    guardrail TEXT NOT NULL,
+                    cycle_id TEXT,
+                    ticker TEXT,
+                    detail JSONB,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v3_guardrail_name
+                ON v3_guardrail_firings (guardrail, created_at)
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

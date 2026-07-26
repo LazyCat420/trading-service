@@ -144,7 +144,11 @@ def get_position_context(ticker: str, bot_id: str = "") -> dict:
 async def get_portfolio_state_tool(**_extra) -> str:
     from app.trading.paper_trader import get_portfolio
 
-    bot_id = settings.BOT_ID
+    # Was a bare `settings.BOT_ID` — the exact fallback resolve_bot_id() exists
+    # to forbid, reproduced in the file that documents the ban. It reported the
+    # portfolio of 'lazy-trader-v4' (zero positions) instead of the active bot,
+    # so every agent asking for portfolio state was told the book was empty.
+    bot_id = resolve_bot_id()
     portfolio = get_portfolio(bot_id)
 
     total_position_value = 0.0
