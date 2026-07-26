@@ -105,10 +105,17 @@ async def test_confidence_threshold_gating():
          patch("app.trading.paper_trader.buy", new_callable=AsyncMock) as mock_buy, \
          patch("app.trading.paper_trader.sell", new_callable=AsyncMock) as mock_sell:
 
-        # 1. Test exactly at threshold (65%) -> Should execute trade
+        # Read the live floor rather than hardcoding it. This test is about the
+        # BOUNDARY behaviour — at the floor trades, one below does not — and
+        # pinning the literal 65 made it fail for the wrong reason when the floor
+        # was re-fitted to 70 on measured evidence (2026-07-26).
+        from app.services.parameter_store import get_param
+        floor = get_param("ANALYSIS_CONFIDENCE_THRESHOLD")
+
+        # 1. Exactly at the threshold -> should execute
         mock_run_pipeline.return_value = {
             "action": "BUY",
-            "confidence": 65,
+            "confidence": floor,
             "rationale": "Confidence at threshold",
             "estimate": {}
         }
@@ -119,10 +126,10 @@ async def test_confidence_threshold_gating():
         mock_buy.reset_mock()
         mock_sell.reset_mock()
 
-        # 2. Test below threshold (64%) -> Should block trade
+        # 2. One below the threshold -> should block
         mock_run_pipeline.return_value = {
             "action": "BUY",
-            "confidence": 64,
+            "confidence": floor - 1,
             "rationale": "Confidence below threshold",
             "estimate": {}
         }

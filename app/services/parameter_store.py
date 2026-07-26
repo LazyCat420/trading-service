@@ -77,8 +77,27 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
         description="Max fraction of portfolio value in one ticker (BUYs scaled down).",
     ),
     # Decision gating
+    #
+    # 65 -> 70 on 2026-07-26, and this is the only parameter change in this repo
+    # backed by a measured, out-of-sample-stable effect. Over 828 resolved BUYs:
+    #
+    #   confidence < 70 : n=130  mean -1.91%   -4.78% vs the always-long null
+    #   confidence >= 70: n=698  mean +3.76%   +0.89% vs the null
+    #
+    # NW t=-5.49, bootstrap p=0.000, and it holds in BOTH chronological halves
+    # independently (t=-3.55, -5.46) — the check that distinguishes a real effect
+    # from a curve fit. 68/70/72 all deliver +0.87..0.90%; 70 is the middle of
+    # that plateau, chosen so the value is not fitted to either edge. 75 collapses
+    # the effect (+0.22%) by blocking 47% of decisions.
+    #
+    # NOTE the direction of the finding: the system cannot reliably pick winners
+    # ("high confidence beats the null" is t=1.21, p=0.215, NOT significant). It
+    # can reliably identify its own bad decisions. The gain comes from REMOVING
+    # trades, so the ceiling of this effect is the null itself.
+    #
+    # Re-fit with scripts/calibration_report.py as outcomes accrue.
     "ANALYSIS_CONFIDENCE_THRESHOLD": ParamSpec(
-        default=65, min_value=50, max_value=90, direction=RISK_DOWN, kind="int",
+        default=70, min_value=50, max_value=90, direction=RISK_DOWN, kind="int",
         description="Minimum decision confidence required to trade.",
     ),
     "DATA_QUALITY_FLOOR": ParamSpec(

@@ -51,9 +51,17 @@ def test_registry_defaults_inside_their_own_bounds():
 
 def test_defaults_match_previous_hardcoded_values():
     # Parity guard: an empty store must reproduce pre-store behavior exactly.
+    #
+    # ONE deliberate exception: ANALYSIS_CONFIDENCE_THRESHOLD moved 65 -> 70 on
+    # 2026-07-26 on measured evidence (BUYs below 70 underperform the always-long
+    # null by -4.78%, n=130, NW t=-5.49, bootstrap p=0.000, stable across both
+    # chronological halves). Parity with the old hardcoded value is no longer the
+    # goal for this parameter; it is asserted at its fitted value in
+    # tests/unit/test_calibration_and_integrity.py, which also carries the
+    # derivation. Every OTHER default must still match.
     assert ps.PARAMETER_REGISTRY["MAX_POSITION_SIZE_PCT"].default == 0.10
     assert ps.PARAMETER_REGISTRY["MAX_CONCENTRATION_PCT"].default == 0.25
-    assert ps.PARAMETER_REGISTRY["ANALYSIS_CONFIDENCE_THRESHOLD"].default == 65
+    assert ps.PARAMETER_REGISTRY["ANALYSIS_CONFIDENCE_THRESHOLD"].default == 70
     assert ps.PARAMETER_REGISTRY["DATA_QUALITY_FLOOR"].default == 40
     assert ps.PARAMETER_REGISTRY["MAX_PORTFOLIO_DRAWDOWN_PCT"].default == 0.25
     assert ps.PARAMETER_REGISTRY["ATR_STOP_MULTIPLIER"].default == 2.0
@@ -72,7 +80,11 @@ def test_db_failure_falls_back_to_default(monkeypatch):
 
     monkeypatch.setattr(ps, "get_db", _boom)
     assert ps.get_param("MAX_POSITION_SIZE_PCT") == 0.10
-    assert ps.get_param("ANALYSIS_CONFIDENCE_THRESHOLD") == 65
+    # Reads the registry rather than a literal: this test is about FAIL-OPEN
+    # behaviour, not about any particular threshold, and hardcoding the number
+    # made it fail for the wrong reason when the floor was re-fitted (2026-07-26).
+    assert ps.get_param("ANALYSIS_CONFIDENCE_THRESHOLD") == \
+        ps.PARAMETER_REGISTRY["ANALYSIS_CONFIDENCE_THRESHOLD"].default
 
 
 def test_empty_table_returns_default(monkeypatch):

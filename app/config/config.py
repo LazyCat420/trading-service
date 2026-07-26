@@ -137,7 +137,11 @@ class Settings(BaseSettings):
     # portfolio value falls this far below its recorded peak (0.25 = 25%).
     # SELLs are never blocked. 0 disables the breaker.
     MAX_PORTFOLIO_DRAWDOWN_PCT: float = 0.25
-    ANALYSIS_CONFIDENCE_THRESHOLD: int = 65  # minimum confidence (0-100) to execute trades
+    # 65 -> 70 (2026-07-26): BUYs below 70 underperform the always-long null by
+    # -4.78% (n=130, NW t=-5.49, bootstrap p=0.000, stable across both
+    # chronological halves). See parameter_store.py for the full derivation and
+    # scripts/calibration_report.py to re-fit.
+    ANALYSIS_CONFIDENCE_THRESHOLD: int = 70  # minimum confidence (0-100) to execute trades
     MAX_POSITION_SIZE_PCT: float = 0.10  # hard cap on a single trade's cash fraction (agent sizing is clamped to this)
 
     # ── World Simulator ──
