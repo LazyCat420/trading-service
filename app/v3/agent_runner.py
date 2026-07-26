@@ -39,6 +39,42 @@ _PLAYBOOK_TTL_SEC = 3600.0
 
 _REQUESTED_MAX_TOKENS = 8192
 
+# The content-bearing fields of each research artifact — what a desk actually
+# reads. An artifact that kept NONE of these has collapsed and is a failed run
+# regardless of which required keys survived (2026-07-26 audit). Deliberately
+# EXCLUDES routing/enum fields like desk_note.triage_recommendation, which is
+# schema-required but absent in 65% of healthy production desk_notes.
+_SUBSTANTIVE_FIELDS: dict[str, tuple[str, ...]] = {
+    "desk_note": ("summary", "key_findings"),
+    "fundamental_report": ("summary", "pillars"),
+    "quant_report": ("summary", "risk_metrics"),
+    "delta_report": ("summary",),
+}
+
+
+def _artifact_collapsed(artifact_type: str, artifact: dict) -> bool:
+    """True when a research artifact kept NONE of its content-bearing fields.
+
+    Empty string, empty dict/list, and None all count as absent — a summary of
+    "" is no more use to the desk than a missing key. Unknown artifact types
+    are never treated as collapsed, so this can only ever narrow behaviour.
+
+    Replayed over 2263 stored production artifacts: fires on 3-7% per type
+    (all genuine wrong-schema emissions), versus the 65% that would have
+    tripped a naive any-missing-required-field gate.
+    """
+    substantive = _SUBSTANTIVE_FIELDS.get(artifact_type, ())
+    if not substantive or not isinstance(artifact, dict):
+        return False
+    for field in substantive:
+        value = artifact.get(field)
+        if isinstance(value, (dict, list)):
+            if value:
+                return False
+        elif str(value or "").strip():
+            return False
+    return True
+
 
 def _safe_max_tokens(
     *,
@@ -264,6 +300,7 @@ async def run_v3_agent(
     include_debate_context: bool = False,
     custom_instructions: str = "",
     parent_agent: str = "",
+    is_retry: bool = False,
 ) -> PhaseOutcome:
     """Run a V3 agent against the SharedDesk.
 
@@ -282,6 +319,11 @@ async def run_v3_agent(
         emit: Event emitter callback.
         timeout_seconds: Hard timeout for the entire agent run.
         include_debate_context: If True, include debate artifacts in context.
+        is_retry: True when the circuit breaker is re-running this phase after
+            a failure. A malformed ANALYST artifact returns AGENT_ERROR on the
+            first attempt (to earn the retry) but degrades to DATA_GAP on the
+            retry, so a model that reliably emits the wrong shape does not
+            trip the breaker and abort the whole desk.
 
     Returns:
         PhaseOutcome indicating success or failure type.
@@ -773,6 +815,35 @@ async def run_v3_agent(
             if not str(artifact.get("reasoning") or "").strip():
                 artifact.pop("reasoning", None)
 
+        # Flattened-inner-object salvage (2026-07-26 audit): the fundamental
+        # analyst emitted ONLY its nested `near_term_read` body at the top
+        # level — {direction, matters_this_week, why} — which parses as clean
+        # JSON, so the unparseable-repair pass above never fired. It then
+        # scored 36/dead_end (JPM, cycle-v3-1785038939) and was appended as
+        # SUCCESS anyway, and the Board went on to a confident HOLD citing
+        # data_quality 95 over an empty fundamental desk. Re-nest it so the
+        # research is kept; the envelope is still missing its required fields,
+        # so the branch below decides the outcome — this only stops us from
+        # throwing away the one field the debate actually reads.
+        if (
+            artifact_type == "fundamental_report"
+            and isinstance(artifact, dict)
+            and "near_term_read" not in artifact
+            and "direction" in artifact
+            and not any(k in artifact for k in ("summary", "pillars", "thesis_direction"))
+        ):
+            inner = {
+                k: artifact.pop(k)
+                for k in ("direction", "matters_this_week", "why")
+                if k in artifact
+            }
+            artifact["near_term_read"] = inner
+            logger.warning(
+                "[V3Runner] %s: re-nested a flattened near_term_read for %s "
+                "(keys=%s) — envelope still incomplete",
+                agent_name, desk.ticker, sorted(inner),
+            )
+
         # Validate the artifact
         errors = validate_artifact(artifact_type, artifact)
         if artifact_type == "trade_decision" and isinstance(artifact, dict) and not artifact.get("signal_weights"):
@@ -799,12 +870,61 @@ async def run_v3_agent(
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
                 return PhaseOutcome.AGENT_ERROR
-            logger.warning(
-                "[V3Runner] %s artifact validation warnings for %s: %s",
-                agent_name, desk.ticker, errors,
-            )
-            # Non-fatal for analyst artifacts — we still append, but log the issues
-            artifact["_validation_warnings"] = errors
+
+            # ANALYST artifacts (2026-07-26 audit): the branch above was scoped
+            # to decision artifacts only, so a fundamental_report missing ALL
+            # FOUR required fields fell through here, got its warnings stapled
+            # on, and was appended as SUCCESS. Nothing retried, and the desk
+            # read an empty fundamental input as a real one — the Board issued
+            # a confident HOLD at data_quality 95 over it.
+            #
+            # The gate is TOTAL COLLAPSE, not any missing required field. Those
+            # are very different populations in production: `summary` is absent
+            # in 23-55 of ~740 artifacts per type (3-7%), while desk_note's
+            # `triage_recommendation` is absent in 530 of 810 (65%) — routine,
+            # survivable, and routed around. Hard-failing on any single missing
+            # field would have converted the majority of junior-analyst runs
+            # into retries and desk aborts: a far worse regression than the bug.
+            # An artifact that kept NO substantive field is the JPM signature.
+            #
+            # And NOT at the cost of the desk: should_abort() kills the whole
+            # ticker once retries are exhausted, so returning AGENT_ERROR twice
+            # would turn a degraded desk into no desk at all — strictly worse
+            # than the bug. The retry therefore degrades to DATA_GAP, which is
+            # non-fatal, still flows to the debate, and is already the signal
+            # downstream desks use to discount an input.
+            if missing_required and _artifact_collapsed(artifact_type, artifact):
+                outcome = (
+                    PhaseOutcome.DATA_GAP if is_retry else PhaseOutcome.AGENT_ERROR
+                )
+                logger.error(
+                    "[V3Runner] %s analyst artifact for %s is missing required "
+                    "fields %s — returning %s (retry=%s)",
+                    agent_name, desk.ticker, missing_required, outcome.value, is_retry,
+                )
+                emit(
+                    "analyzing",
+                    f"v3_{agent_name}_fail_{desk.ticker}",
+                    f"❌ {desk.ticker}: V3 {agent_name} — analyst artifact "
+                    f"missing required fields {missing_required}",
+                    status="error",
+                )
+                _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
+                                  outcome.value,
+                                  sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
+                # On the retry we keep going so the salvaged research still
+                # reaches the desk — but tagged, never as a clean SUCCESS.
+                if outcome is PhaseOutcome.AGENT_ERROR:
+                    return outcome
+                artifact["_validation_warnings"] = errors
+                artifact["_degraded"] = True
+            else:
+                logger.warning(
+                    "[V3Runner] %s artifact validation warnings for %s: %s",
+                    agent_name, desk.ticker, errors,
+                )
+                # Non-fatal for analyst artifacts — we still append, but log the issues
+                artifact["_validation_warnings"] = errors
 
         # Type-specific coercion (2026-07-21 audit): regime enum literals,
         # out-of-range factors, and null dynamic_trigger values all reached
@@ -976,13 +1096,18 @@ async def run_v3_agent(
             artifact_size_bytes = len(json.dumps(artifact, default=str))
         except Exception:
             artifact_size_bytes = 0
-        _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
-                          sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
-                          artifact_size_bytes=artifact_size_bytes)
+        # A degraded artifact already recorded its own AGENT_ERROR/DATA_GAP row
+        # above; recording SUCCESS here too would put both in v3_agent_telemetry
+        # and make the failure invisible to the exact query that found this bug.
+        degraded = bool(artifact.get("_degraded"))
+        if not degraded:
+            _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
+                              sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                              artifact_size_bytes=artifact_size_bytes)
 
         # Classify outcome
         data_gaps = artifact.get("data_gaps", [])
-        if data_gaps and len(data_gaps) > 2:
+        if degraded or (data_gaps and len(data_gaps) > 2):
             return PhaseOutcome.DATA_GAP
         return PhaseOutcome.SUCCESS
 

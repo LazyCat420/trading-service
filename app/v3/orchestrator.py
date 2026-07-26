@@ -2092,6 +2092,7 @@ async def _run_agent_with_circuit_breaker(
                     timeout_seconds=timeout,
                     custom_instructions=custom_instructions,
                     parent_agent=parent_agent,
+                    is_retry=True,
                 )
 
     return outcome
