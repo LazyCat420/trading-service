@@ -54,6 +54,25 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
     tracked as "no meaningful move" claims (see module docstring).
     """
     recorded = 0
+
+    # Which skill docs governed this cycle's decisions. Captured ONCE per
+    # cycle, before the row loop, so every ticker in the cycle carries the same
+    # snapshot — the docs did not change mid-cycle, and re-reading per row would
+    # invite a TTL refresh to split one cycle across two versions.
+    #
+    # Serialized here rather than passed as a dict: psycopg adapts dict -> hstore
+    # by default, not JSONB, which fails on a JSONB column.
+    skill_versions = None
+    try:
+        import json as _json
+
+        from app.autoresearch.skill_loader import active_skill_versions
+
+        snapshot = active_skill_versions()
+        skill_versions = _json.dumps(snapshot) if snapshot else None
+    except Exception as e:  # noqa: BLE001 — provenance, never blocks recording
+        logger.debug("[OUTCOME] skill version snapshot failed: %s", e)
+
     try:
         with get_db() as db:
             rows = db.execute(
@@ -96,10 +115,12 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 outcome_id = f"do-{uuid.uuid4().hex[:12]}"
                 db.execute(
                     """INSERT INTO decision_outcomes
-                    (id, cycle_id, ticker, action, confidence, entry_price, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (id, cycle_id, ticker, action, confidence, entry_price,
+                     created_at, skill_versions)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                     [outcome_id, cycle_id, ticker, action, confidence,
-                     round(entry_price, 4), datetime.now(timezone.utc)],
+                     round(entry_price, 4), datetime.now(timezone.utc),
+                     skill_versions],
                 )
                 recorded += 1
 

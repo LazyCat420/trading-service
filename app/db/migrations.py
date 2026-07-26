@@ -3588,3 +3588,34 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── decision_outcomes.skill_versions (2026-07-25) ──
+    #
+    # Which skill doc governed the decision this row scores.
+    #
+    # Without this the SkillOpt loop is UNFALSIFIABLE, and measurably so: as of
+    # 2026-07-25 `agent_skills` carried 145 versions and `decision_outcomes`
+    # 2028 resolved rows, and the number of rows joining the two was ZERO. The
+    # `cycle_id` on agent_skills is the cycle that PRODUCED an edit, not the
+    # cycles that edit later governed, so it cannot answer "did version 20 trade
+    # better than version 19" — the only question that justifies the loop's cost.
+    #
+    # JSONB of {agent_name: version} rather than one column per agent: the
+    # target-agent roster changes, and a decision is governed by the whole
+    # fleet's docs at once.
+    #
+    # NULL means "we do not know" — rows written before this column existed are
+    # deliberately not backfilled to some assumed version. The 2026-07-25 audit's
+    # standing rule: missing must never be defaulted into a confident value.
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE decision_outcomes "
+                "ADD COLUMN IF NOT EXISTS skill_versions JSONB"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

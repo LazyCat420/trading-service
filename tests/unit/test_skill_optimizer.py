@@ -184,7 +184,11 @@ def test_llm_skip_action_means_no_write():
 
 def test_accepted_edit_archives_and_saves():
     proposal = {"action": "REPLACE", "rationale": "better", "updated_skill": GOOD_SKILL}
+    # _decisions_governed is pinned so this test exercises the ACCEPT path only.
+    # Left unmocked it queries the real DB and the maturity gate (added
+    # 2026-07-25) short-circuits before any of the logic under test runs.
     with patch.object(so, "_load_skill", return_value=("old doc", 2)), \
+         patch.object(so, "_decisions_governed", return_value=None), \
          patch.object(so, "_call_optimizer_llm", new=AsyncMock(return_value=proposal)), \
          patch.object(so, "_save_skill") as save:
         out = _run(so._optimize_one_agent("v3_bull_agent", "role", REFLECTION, "cyc-1", 0.55))

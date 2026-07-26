@@ -61,6 +61,22 @@ MAX_SKILL_CHARS = 1800
 # 1520 is not worth throwing away.
 TARGET_SKILL_CHARS = 1500
 
+# How many RESOLVED decisions a version must govern before it may be replaced.
+#
+# Without this the loop is unfalsifiable by construction: measured 2026-07-25,
+# the board agent took 20 versions in ~5 days while outcomes need a 7-day
+# horizon to resolve, so **every version was replaced before a single one of its
+# trades matured**. No amount of instrumentation can evaluate a version that
+# governed n=0 resolved decisions. Editing once per cycle guarantees churn;
+# editing once per N resolved decisions is the minimum that makes the question
+# askable at all.
+#
+# 25 is a deliberate compromise: at ~7 decisions/cycle it is roughly 3-4 cycles
+# plus the 7-day resolve lag, so a version lives ~1-2 weeks. Still far too few
+# for statistical power on a ~1% effect — see the module docstring — but enough
+# to catch a version that is grossly worse, which is the realistic goal.
+MIN_DECISIONS_BEFORE_REEDIT = 25
+
 # A candidate must differ from the current doc by more than cosmetics. The old
 # near-noop check compared WHOLE-DOC similarity at a 0.95 threshold; real edits
 # landed at 0.84-0.94 and sailed through, including a version whose only change
@@ -135,7 +151,10 @@ async def propose_and_validate_skill_edits(
     if baseline is None:
         return {"skipped": "cold_start", "min_rows": MIN_RESOLVED_ROWS}
 
-    summary: dict = {"baseline": round(baseline, 4), "updated": [], "rejected": 0, "skipped": 0}
+    summary: dict = {
+        "baseline": round(baseline, 4), "updated": [], "rejected": 0,
+        "skipped": 0, "immature": 0,
+    }
     t0 = time.monotonic()
 
     for agent_name, role in TARGET_AGENTS.items():
@@ -154,6 +173,11 @@ async def propose_and_validate_skill_edits(
                 summary["updated"].append(agent_name)
             elif outcome == "rejected":
                 summary["rejected"] += 1
+            elif outcome == "immature":
+                # Counted separately from "skipped": a held version is the
+                # system working as designed, not a proposal that failed. Rolled
+                # into `skipped` it would look like the loop had stalled.
+                summary["immature"] += 1
             else:
                 summary["skipped"] += 1
         except Exception as e:  # noqa: BLE001 — one agent's failure must not stop the rest
@@ -202,6 +226,53 @@ def _compute_baseline_score() -> float | None:
         num += conf * weights.get(outcome, 0.0)
         den += conf
     return (num / den) if den > 0 else None
+
+
+def _decisions_governed(agent_name: str, version: int) -> int | None:
+    """How many RESOLVED decisions ran under this agent's current version.
+
+    Returns None when the question cannot be answered — no version yet, or the
+    `skill_versions` column is absent (a deployment older than the 2026-07-25
+    migration). None means "unknown" and lets the edit proceed; returning 0
+    would freeze every agent forever on any deployment where the stamp is
+    missing, which is a far worse failure than one extra edit.
+
+    Rows written before the column existed carry NULL and are deliberately not
+    counted: they were governed by *some* version we did not record, and
+    assuming it was this one would manufacture a sample that never existed.
+    """
+    if not version:
+        return None
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT count(*) FROM decision_outcomes "
+                "WHERE resolved_at IS NOT NULL "
+                "AND skill_versions IS NOT NULL "
+                "AND (skill_versions ->> %s)::int = %s",
+                [agent_name, int(version)],
+            ).fetchone()
+            governed = int(row[0]) if row else 0
+            if governed:
+                return governed
+
+            # Zero stamped rows is ambiguous, and getting this wrong freezes the
+            # whole fleet. It means EITHER "this version is brand new" (hold it,
+            # correct) OR "this version predates the stamp" (its sample is
+            # unknowable, and holding on that basis would block every agent for
+            # weeks after deploy — every live version on 2026-07-25 predated the
+            # column). Distinguish by asking whether the stamp is flowing AT ALL.
+            stamped = db.execute(
+                "SELECT 1 FROM decision_outcomes "
+                "WHERE skill_versions IS NOT NULL LIMIT 1"
+            ).fetchone()
+        if not stamped:
+            return None  # attribution has not started — unknown, not zero
+        return 0
+    except Exception as e:  # noqa: BLE001
+        # Most likely the column does not exist yet. Unknown, not zero.
+        logger.debug("[SkillOpt] governed-count unavailable for %s: %s", agent_name, e)
+        return None
 
 
 def _bullets(text: str) -> list[str]:
@@ -376,8 +447,19 @@ async def _optimize_one_agent(
     cycle_id: str,
     baseline: float,
 ) -> str:
-    """Returns 'updated' | 'rejected' | 'skipped'."""
+    """Returns 'updated' | 'rejected' | 'skipped' | 'immature'."""
     current_text, current_version = _load_skill(agent_name)
+
+    # Let the current version accumulate a measurable sample before replacing
+    # it. Skipping here also saves the LLM call, which is the point: a proposal
+    # that cannot be evaluated is not worth paying for.
+    governed = _decisions_governed(agent_name, current_version)
+    if governed is not None and governed < MIN_DECISIONS_BEFORE_REEDIT:
+        logger.info(
+            "[SkillOpt] %s v%d held: %d/%d resolved decisions so far",
+            agent_name, current_version, governed, MIN_DECISIONS_BEFORE_REEDIT,
+        )
+        return "immature"
 
     prompt = _build_optimizer_prompt(agent_name, role, current_text, reflection)
     proposal = await _call_optimizer_llm(agent_name, prompt)
