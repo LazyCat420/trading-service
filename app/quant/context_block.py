@@ -14,18 +14,91 @@ empty block, never a pipeline error.
 from __future__ import annotations
 
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
 # Below this many tickers there is no portfolio to diversify against.
 _MIN_PORTFOLIO = 2
 
+# Per-component wall-clock budget, in seconds.
+#
+# THE TRAP THIS EXISTS TO CLOSE (2026-07-25): every component below is
+# fail-open individually, but they all ran under ONE outer timeout in the
+# orchestrator. Adding the ~32s HMM shadow therefore blew the budget for the
+# whole block and silently dropped GARCH, HRP *and* the sizing bracket —
+# none of which had anything to do with the new code. All three desks in
+# cycle-v3-1784960316 logged "quant math precompute failed (non-fatal): "
+# with an EMPTY message (that is how asyncio.TimeoutError stringifies).
+#
+# Raising the outer timeout 25s -> 60s made that less likely; it did not make
+# it impossible. Fail-open composition is not free: a slow item silently
+# removes the fast ones already in the block. A per-component deadline means
+# the block degrades to "the HMM line is missing" rather than "everything is
+# missing", which is the difference between a visible gap and a silent one.
+_COMPONENT_BUDGET_SEC = 45.0
 
-def build_quant_math_block(ticker: str, bot_id: str = "") -> str:
+
+def _with_deadline(fn, *, seconds: float, label: str, ticker: str):
+    """Run `fn` on a worker thread and give up waiting after `seconds`.
+
+    Returns None on timeout. The worker is NOT killed — Python cannot safely
+    interrupt arbitrary CPU-bound code — so the thread is left as a daemon to
+    finish and be discarded. That is acceptable here precisely because every
+    component is pure computation over already-fetched data with no side
+    effects: the cost of an abandoned fit is wasted CPU, not a corrupt write.
+
+    What this buys is the thing the outer timeout could not: ONE slow
+    component yields its own slot instead of consuming the whole block's.
+    """
+    import concurrent.futures as _f
+
+    pool = _f.ThreadPoolExecutor(max_workers=1, thread_name_prefix="quantblk")
+    try:
+        future = pool.submit(fn)
+        try:
+            return future.result(timeout=seconds)
+        except _f.TimeoutError:
+            logger.warning(
+                "[QuantMathBlock] %s: %s exceeded its %.1fs slot — that "
+                "section is MISSING; the rest of the block survived",
+                ticker, label, seconds,
+            )
+            return None
+    finally:
+        # Do not block on an overrunning worker.
+        pool.shutdown(wait=False)
+
+
+def _budget_exhausted(started: float, label: str, ticker: str) -> bool:
+    """True when the block has spent its budget. Named so the log says which
+    component was skipped, rather than leaving an empty exception message."""
+    spent = time.monotonic() - started
+    if spent < _COMPONENT_BUDGET_SEC:
+        return False
+    logger.warning(
+        "[QuantMathBlock] %s: budget spent (%.1fs) before %s — that section is "
+        "MISSING from this desk; the earlier sections survived",
+        ticker, spent, label,
+    )
+    return True
+
+
+def build_quant_math_block(
+    ticker: str, bot_id: str = "", cycle_id: str | None = None,
+) -> str:
     """Code-computed GARCH + HRP/covariance + strategy-health lines for the
-    ticker being analyzed. Returns "" when nothing could be computed."""
+    ticker being analyzed. Returns "" when nothing could be computed.
+
+    `cycle_id` scopes the HMM regime cache to this cycle. Without it the cache
+    falls back to calendar-date keying, so the first cycle of the day's fit is
+    served to every later cycle (2026-07-25 audit).
+    """
     ticker = ticker.strip().upper()
     parts: list[str] = []
+    # Components are ordered cheapest-first below, so if the budget does run
+    # out it is the expensive tail that is lost, not the whole block.
+    _started = time.monotonic()
 
     # ── GARCH(1,1) forward vol ──
     try:
@@ -143,26 +216,38 @@ def build_quant_math_block(ticker: str, bot_id: str = "") -> str:
     # A price-only regime posterior that is emitted EVERY cycle, unlike the
     # regime engine's forward_call (scoreable in 7 of 130 desks). Shadow only:
     # it never overrides the Regime Engine. See app/quant/regime_hmm.py.
-    try:
-        from app.quant.regime_hmm import build_hmm_context_line
+    # The ~32s first-call cost makes this the component most likely to eat the
+    # block's whole budget, so it is the one that must yield first.
+    if not _budget_exhausted(_started, "HMM regime shadow", ticker):
+        try:
+            from app.quant.regime_hmm import build_hmm_context_line
 
-        hmm_line = build_hmm_context_line()
-        if hmm_line:
-            parts.append(hmm_line)
-    except Exception as e:
-        logger.debug("[QuantMathBlock] %s: HMM shadow failed (non-fatal): %s", ticker, e)
+            # Hard deadline on the CALL, not merely a check before it: a
+            # pre-call budget check cannot stop a component that starts just
+            # under budget and then hangs. Without this the outer timeout is
+            # still the only backstop, and it takes the neighbours with it.
+            hmm_line = _with_deadline(
+                lambda: build_hmm_context_line(cycle_id=cycle_id),
+                seconds=max(1.0, _COMPONENT_BUDGET_SEC - (time.monotonic() - _started)),
+                label="HMM regime shadow", ticker=ticker,
+            )
+            if hmm_line:
+                parts.append(hmm_line)
+        except Exception as e:
+            logger.debug("[QuantMathBlock] %s: HMM shadow failed (non-fatal): %s", ticker, e)
 
     # ── Sizing bracket (2026-07-25) ──
     # Appended as its own block rather than another bullet: sizing needs the
     # units stated and the binding constraint named, which is exactly what a
     # one-line bullet loses. See app/quant/sizing_bracket.py for why.
     bracket = ""
-    try:
-        from app.quant.sizing_bracket import build_sizing_bracket
+    if not _budget_exhausted(_started, "sizing bracket", ticker):
+        try:
+            from app.quant.sizing_bracket import build_sizing_bracket
 
-        bracket = build_sizing_bracket(ticker, bot_id)
-    except Exception as e:
-        logger.debug("[QuantMathBlock] %s: sizing bracket failed: %s", ticker, e)
+            bracket = build_sizing_bracket(ticker, bot_id) or ""
+        except Exception as e:
+            logger.debug("[QuantMathBlock] %s: sizing bracket failed: %s", ticker, e)
 
     if not parts and not bracket:
         return ""

@@ -67,6 +67,13 @@ MARKET_PROXY = "SPY"
 # Below this many usable observations a per-ticker factor is noise, not a value.
 MIN_OBSERVATIONS = 40
 
+# Reversal is the one factor whose own window (21 sessions) is shorter than
+# MIN_OBSERVATIONS, so it gets its own floor: ~80% of its window. Applying
+# MIN_OBSERVATIONS would reject every valid observation, but the old
+# `min(REVERSAL_SESSIONS, MIN_OBSERVATIONS) // 2` evaluated to 10 — half a
+# window, ranked against names carrying a full year.
+REVERSAL_MIN_SESSIONS = int(REVERSAL_SESSIONS * 0.8)
+
 # A cross-section thinner than this cannot produce a meaningful z-score.
 MIN_CROSS_SECTION = 5
 
@@ -125,7 +132,7 @@ def _z_score(raw: dict[str, float]) -> dict[str, float]:
 
     Uses a population std (ddof=0): this is the full cross-section we care
     about, not a sample from a larger one. A degenerate cross-section (every
-    value identical) yields all-zero scores rather than a divide-by-zero.
+    value identical) yields NO factor — see below.
     """
     clean = {k: float(v) for k, v in raw.items()
              if v is not None and np.isfinite(v)}
@@ -135,7 +142,16 @@ def _z_score(raw: dict[str, float]) -> dict[str, float]:
     mu = float(vals.mean())
     sd = float(vals.std(ddof=0))
     if sd <= 0:
-        return {k: 0.0 for k in clean}
+        # No dispersion means there is no ranking to express, so there is no
+        # factor. This used to return all-zeros, which is the ONE thing this
+        # module's docstring forbids: a zero z-score reads as "perfectly
+        # average" — a fabricated measurement rather than an absent one, and
+        # the context block renders it to the board as real (2026-07-25 audit).
+        logger.debug(
+            "[Factors] degenerate cross-section (n=%d, sd=0) — emitting no "
+            "factor rather than a zero-filled one", len(clean),
+        )
+        return {}
     return {
         k: float(np.clip((v - mu) / sd, -Z_CLIP, Z_CLIP))
         for k, v in clean.items()
@@ -225,7 +241,12 @@ def short_term_reversal(panel: pd.DataFrame) -> dict[str, float]:
     out: dict[str, float] = {}
     for ticker in panel.columns:
         series = panel[ticker].dropna().tail(REVERSAL_SESSIONS + 1)
-        if len(series) < min(REVERSAL_SESSIONS, MIN_OBSERVATIONS) // 2:
+        # Most of its OWN window, not MIN_OBSERVATIONS. Reversal is a 1-month
+        # measure, so the 40-session floor the other factors use would reject
+        # every valid observation; but the previous floor evaluated to 10
+        # (`min(21, 40) // 2`), which let an 11-row ticker be z-scored against
+        # names with 250 rows in the same cross-section (2026-07-25 audit).
+        if len(series) < REVERSAL_MIN_SESSIONS:
             continue
         start_px = float(series.iloc[0])
         end_px = float(series.iloc[-1])

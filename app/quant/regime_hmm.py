@@ -301,20 +301,35 @@ def classify_regime(
     }
 
 
-# ── Per-run cache ─────────────────────────────────────────────────────────
+# ── Per-cycle cache ───────────────────────────────────────────────────────
 # A fit costs ~32s and the answer is market-wide, so every ticker in a wave
-# would otherwise pay it again for an identical result. Keyed by the as_of
-# date (None -> today) and guarded by a threading.Lock because
-# build_quant_math_block is invoked from asyncio.to_thread, i.e. concurrently
-# across tickers. Tickers 2..N block on the lock and then read the cache
-# rather than starting their own fit.
+# would otherwise pay it again for an identical result. Guarded by a
+# threading.Lock because build_quant_math_block is invoked from
+# asyncio.to_thread, i.e. concurrently across tickers. Tickers 2..N block on
+# the lock and then read the cache rather than starting their own fit.
+#
+# Keyed by CYCLE, not by calendar date (2026-07-25 audit). It was date-keyed
+# while every document describing it — including this module's own docstring —
+# claimed per-cycle. The pipeline runs ~8-9 cycles a day, so the first cycle's
+# fit was served to all the rest. Two consequences, both real: an afternoon
+# cycle read the morning's posterior with nothing marking it stale, and a
+# *cached failure* suppressed the HMM block for every remaining cycle that day.
+# `app/v3/regime_cache.py` was already cycle-keyed; this now matches it.
 _CACHE: dict[str, dict] = {}
 _CACHE_LOCK = threading.Lock()
 _CACHE_MAX = 4
 
 
-def _cached_classification(as_of: date | None = None) -> dict:
-    key = str(as_of or date.today())
+def _cache_key(cycle_id: str | None, as_of: date | None) -> str:
+    """Cycle id when we have one, else the date. A caller with no cycle_id
+    (a script, an ad-hoc report) still gets caching, just coarser."""
+    return f"cycle:{cycle_id}" if cycle_id else f"date:{as_of or date.today()}"
+
+
+def _cached_classification(
+    as_of: date | None = None, cycle_id: str | None = None,
+) -> dict:
+    key = _cache_key(cycle_id, as_of)
     cached = _CACHE.get(key)
     if cached is not None:
         return cached
@@ -328,9 +343,15 @@ def _cached_classification(as_of: date | None = None) -> dict:
         # Cache failures too — a failing fit costs the same ~32s as a
         # successful one, and retrying it per ticker is the exact stall this
         # cache exists to prevent. The block just renders nothing.
+        #
+        # A TTL was tried here and reverted: it reintroduced the per-ticker
+        # refit for exactly the expensive case the cache exists for. The
+        # sticky-failure problem this was meant to solve is already solved by
+        # keying on the CYCLE — a failure now expires when the cycle ends,
+        # instead of blinding the block for the rest of the calendar day.
         _CACHE[key] = result
         if len(_CACHE) > _CACHE_MAX:
-            for stale in sorted(_CACHE)[:-_CACHE_MAX]:
+            for stale in list(_CACHE)[:-_CACHE_MAX]:
                 _CACHE.pop(stale, None)
         return result
 
@@ -341,7 +362,9 @@ def reset_cache() -> None:
         _CACHE.clear()
 
 
-def build_hmm_context_line(as_of: date | None = None) -> str:
+def build_hmm_context_line(
+    as_of: date | None = None, cycle_id: str | None = None,
+) -> str:
     """One-paragraph context block for the desk. Empty string on any failure.
 
     Explicitly framed to the reading agent as a *statistical shadow*, not an
@@ -358,10 +381,12 @@ def build_hmm_context_line(as_of: date | None = None) -> str:
 
     The result is MARKET-WIDE and identical for every ticker in a cycle, so
     computing it per ticker was always waste — the same reasoning that made
-    `app/v3/regime_cache.py` cache the LLM regime engine per cycle.
+    `app/v3/regime_cache.py` cache the LLM regime engine per cycle. Pass the
+    `cycle_id` so the cache actually scopes to the cycle; without one it falls
+    back to date-keying, which is what it did everywhere before 2026-07-25.
     """
     try:
-        r = _cached_classification(as_of)
+        r = _cached_classification(as_of, cycle_id=cycle_id)
     except Exception as e:
         logger.debug("[RegimeHMM] context line failed (non-fatal): %s", e)
         return ""
@@ -370,9 +395,15 @@ def build_hmm_context_line(as_of: date | None = None) -> str:
 
     probs = ", ".join(f"{k} {v:.0%}" for k, v in r["state_probabilities"].items())
     stats = r["state_stats"][r["regime"]]
+    # State the observation date. It was computed and then dropped, so the
+    # agent could not tell a fit made this cycle from one made hours ago —
+    # the same blind spot that let a 71-day-old RSI read as current. The
+    # technicals block already warns like this; this one now does too.
+    as_of_txt = f", data through {r['as_of']}" if r.get("as_of") else ""
     return (
         f"- HMM regime shadow ({r['n_states']}-state Gaussian HMM on {r['ticker']} "
-        f"daily returns, n={r['observations']}, selected by {r['selected_by']}): "
+        f"daily returns, n={r['observations']}, selected by {r['selected_by']}"
+        f"{as_of_txt}): "
         f"**{r['regime']}** at {r['confidence']:.0f}% posterior [{probs}]. "
         f"This state historically runs {stats['annualized_vol_pct']:.1f}% annualized vol "
         f"with an expected duration of {stats['expected_duration_days']} days. "
