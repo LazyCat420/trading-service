@@ -65,7 +65,48 @@ reports believed was already fixed.
 
 ---
 
+## The skill loop was churning, not learning (`0f6266b`)
+
+Asked "are the agent skill docs actually being improved, or just replaced?" —
+measured against the live `agent_skills` table, the answer was **replaced**:
+
+- **137 of 145 versions are `REPLACE`.** No `SKIP` was ever stored, despite the
+  prompt saying "SKIP is the correct default".
+- **6 of 7 accepted edits scored exactly `+0.0150`** — the scorer's maximum —
+  and **all 66 rejections scored exactly `-0.0050`**. Two values, so it ranked
+  nothing.
+- One accepted version's *only* change was renaming a bullet with a
+  byte-identical body.
+- Fed a genuine edit and deliberate keyword soup, it scored **the soup higher**.
+
+Three causes: `MAX_SKILL_CHARS` was 4000 while the prompt said 1500 (unenforced
+limit → 1146→1812 char bloat); the near-noop check compared *whole-doc*
+similarity at 0.95 while real edits ran 0.84–0.94, so it never fired; and the
+scorer rewarded surface features any rewrite satisfies. Now: bullet-level
+comparison with labels stripped, structural rejection separate from scoring,
+proportional credit with bloat/repetition penalties. **Real history re-judged:
+7/7 → 1/7 accepted.**
+
+> ⚠ **Honest limit:** this scores whether a doc is better *written*, not whether
+> it makes better *trades*. `decision_outcomes` has 2028 resolved rows but **no
+> `agent_name` column**, so per-agent accuracy is unattributable without a schema
+> change. The docstring now says so instead of implying otherwise.
+
 ## Traps (will bite again)
+
+- **A limit the code does not enforce is a suggestion.** `MAX_SKILL_CHARS=4000`
+  vs a prompt saying 1500 is why the docs bloated for 20 versions with nothing
+  objecting. Quote the constant in the prompt; never hardcode the number twice.
+- **Whole-doc similarity cannot detect a rename.** Renaming one bullet in eight
+  barely moves the ratio. Compare at the unit a human would call "a change" —
+  here, bullet bodies with the label stripped.
+- **Tightening a limit can FREEZE what is already over it.** Dropping the ceiling
+  to 1800 would have trapped the 5 live docs above target forever: every
+  candidate near their size gets rejected, so they can never shrink. Any
+  tightening needs an explicit path back under the line.
+- **A gate that emits two values is not a gate.** If every accept scores the max
+  and every reject the same min, it is a coin, not a filter. Check the
+  *distribution* of a scorer's outputs before trusting it.
 
 - **⚠ A HEALTHY HTTP ENDPOINT IS NOT A HEALTHY CONTAINER.** `4517ba1` was a
   hotfix for a bug *this wave introduced*, caught minutes after deploy by
