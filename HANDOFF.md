@@ -92,7 +92,51 @@ proportional credit with bloat/repetition penalties. **Real history re-judged:
 > `agent_name` column**, so per-agent accuracy is unattributable without a schema
 > change. The docstring now says so instead of implying otherwise.
 
+## Making the skill loop falsifiable (`8d12235`)
+
+Follow-up to the gate fix, from the obvious next question: *how do we know the
+skill edits produce better trading?* Answer as of this morning: **you couldn't**,
+and the reason was structural, not a missing report.
+
+- `agent_skills` had 145 versions, `decision_outcomes` 2028 resolved rows, and
+  **0 rows joined the two**. `agent_skills.cycle_id` is the cycle that *produced*
+  an edit, not the cycles it later governed.
+- The board took **20 versions in ~5 days** against a **7-day resolve horizon**,
+  so every version was replaced before one of its trades matured. n=0 per
+  version, permanently.
+
+Now shipped: `decision_outcomes.skill_versions` (JSONB, stamped from the same
+cache entry the prompt was built from), a **25-resolved-decision maturity gate**
+before a version may be replaced, and
+[`scripts/skill_version_scorecard.py`](scripts/skill_version_scorecard.py) —
+per-version win rate and avg P&L with Wilson intervals against the always-long
+baseline.
+
+> ⚠ **This makes the loop falsifiable, not proven.** A version will govern ~25-60
+> decisions; detecting a ~1% edge needs hundreds, and this repo's own
+> residual-alpha work found none at n=106 (t=-0.904). Expect "not
+> distinguishable" for months. The value is being able to say the loop **isn't
+> hurting** — and having grounds to switch it off if it never shows anything.
+> A real answer needs an **A/B**: two bots, different versions, same tickers,
+> same cycles. Not built.
+
 ## Traps (will bite again)
+
+- **Zero and unknown are different, and confusing them freezes the fleet.** Zero
+  stamped rows means EITHER "brand new version" (hold it) OR "predates the stamp"
+  (unknowable). Every live version on 2026-07-25 was the second kind, so treating
+  zero as zero would have held all seven agents for weeks after deploy.
+  `_decisions_governed` distinguishes them by asking whether the stamp is flowing
+  at all, and returns `None` — edits proceed — when it is not. Same rule as the
+  provenance work: **missing must never be defaulted into a confident value.**
+- **Record the version SERVED, not the newest one.** The optimizer can accept a
+  new version mid-cycle while a process serves the cached older one for up to the
+  TTL. Reading "current version" from the DB at record time would attribute
+  trades to a doc that never ran. `active_skill_version()` reads the same cache
+  entry the prompt was built from.
+- **An edit cadence faster than the measurement horizon is unfalsifiable by
+  construction.** No instrumentation rescues n=0. If something is edited once per
+  cycle and evaluated on a 7-day lag, the edit rate is the bug.
 
 - **A limit the code does not enforce is a suggestion.** `MAX_SKILL_CHARS=4000`
   vs a prompt saying 1500 is why the docs bloated for 20 versions with nothing
