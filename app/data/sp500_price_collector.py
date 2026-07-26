@@ -5,6 +5,12 @@ from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
+# Bounds on the bulk technicals pass. See _refresh_technicals_bulk for why
+# these exist: an unbounded pass over ~503 tickers pinned CPU and tripped
+# Docker's 10s healthcheck on the 2026-07-25 deploy.
+_PER_TICKER_TIMEOUT_SEC = 20.0
+_BULK_REFRESH_MAX_SEC = 240.0
+
 
 async def collect_sp500_prices(period: str = "6mo"):
     """
@@ -153,23 +159,52 @@ async def _refresh_technicals_bulk(tickers: list[str]) -> None:
 
     Fail-open per ticker AND in aggregate — stale technicals are bad, but a
     failure here must never cost us the price rows we just collected.
+
+    THROTTLED, and that is load-bearing. The first deploy of this function ran
+    ~503 recomputes back-to-back during boot, pinned CPU at ~86% and made
+    Docker's 10s healthcheck time out three times running — the container went
+    UNHEALTHY while the HTTP endpoint itself was answering in 0.02s. Each
+    recompute is pandas/ta work on up to 500 rows; individually ~0.1s warm, but
+    with no gap between them the event loop never gets a turn.
+
+    So: a per-ticker timeout (one pathological ticker cannot wedge the run), a
+    sleep(0) yield between tickers, and a wall-clock ceiling on the whole pass.
+    Leftovers are picked up by the next run rather than blocking boot — the
+    single-ticker hook in yfinance_collector already keeps cycle tickers fresh,
+    so this bulk pass is a backstop, not the critical path.
     """
     import asyncio
 
     from app.processors.technical_processor import compute_technicals
 
+    started = asyncio.get_event_loop().time()
     ok = 0
     failed = 0
-    for ticker in tickers:
+    skipped = 0
+    for idx, ticker in enumerate(tickers):
+        if asyncio.get_event_loop().time() - started > _BULK_REFRESH_MAX_SEC:
+            skipped = len(tickers) - idx
+            logger.warning(
+                "[sp500] technicals refresh hit its %.0fs ceiling — %d ticker(s) "
+                "left for the next run (prices are already saved)",
+                _BULK_REFRESH_MAX_SEC, skipped,
+            )
+            break
         try:
-            await asyncio.to_thread(compute_technicals, ticker)
+            await asyncio.wait_for(
+                asyncio.to_thread(compute_technicals, ticker),
+                timeout=_PER_TICKER_TIMEOUT_SEC,
+            )
             ok += 1
         except Exception as e:
             failed += 1
             logger.warning(
                 "[sp500] %s: technicals refresh failed (non-fatal): %s", ticker, e
             )
+        # Hand the event loop back between tickers so health checks, the API
+        # and the scheduler still get served during a long pass.
+        await asyncio.sleep(0)
     logger.info(
-        "[sp500] technicals refreshed for %d/%d tickers (%d failed)",
-        ok, len(tickers), failed,
+        "[sp500] technicals refreshed for %d/%d tickers (%d failed, %d deferred)",
+        ok, len(tickers), failed, skipped,
     )

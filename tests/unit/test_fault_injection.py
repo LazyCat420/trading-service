@@ -227,3 +227,83 @@ def test_fresh_technicals_may_claim_authority():
         block = tb.build_technical_baseline_block("CVX")
     assert "VERIFIED" in block
     assert "STALE" not in block
+
+
+# ── The bulk technicals pass must not starve the event loop ─────────
+#
+# Found in production on 2026-07-25: the first deploy of
+# `_refresh_technicals_bulk` ran ~503 recomputes back-to-back during boot,
+# pinned CPU at ~86%, and made Docker's 10s healthcheck time out three times
+# — the container went UNHEALTHY while /health itself answered in 0.02s.
+
+@pytest.mark.asyncio
+async def test_bulk_technicals_yields_to_the_event_loop():
+    """A long pass must not block other coroutines (the healthcheck is one)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from app.data import sp500_price_collector as sp
+
+    ticks = [f"T{i}" for i in range(40)]
+    served = 0
+
+    async def _heartbeat():
+        # Stands in for the healthcheck: counts how often it gets a turn.
+        nonlocal served
+        for _ in range(20):
+            served += 1
+            await asyncio.sleep(0)
+
+    with patch.object(sp, "compute_technicals", lambda t: None, create=True):
+        with patch("app.processors.technical_processor.compute_technicals", lambda t: None):
+            await asyncio.gather(sp._refresh_technicals_bulk(ticks), _heartbeat())
+
+    assert served == 20, (
+        f"the heartbeat only got {served}/20 turns — the bulk pass is starving "
+        "the event loop, which is what made the container go unhealthy"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bulk_technicals_stops_at_its_ceiling():
+    """A slow pass defers the tail rather than blocking boot indefinitely."""
+    import asyncio
+    from unittest.mock import patch
+
+    from app.data import sp500_price_collector as sp
+
+    calls = []
+
+    def _slowish(ticker):
+        calls.append(ticker)
+
+    with patch("app.processors.technical_processor.compute_technicals", _slowish):
+        with patch.object(sp, "_BULK_REFRESH_MAX_SEC", -1.0):  # already expired
+            await sp._refresh_technicals_bulk([f"T{i}" for i in range(10)])
+
+    assert calls == [], "the ceiling did not stop the pass"
+
+
+@pytest.mark.asyncio
+async def test_one_pathological_ticker_cannot_wedge_the_pass():
+    """A per-ticker timeout means one bad ticker costs its slot, not the run."""
+    import asyncio
+    from unittest.mock import patch
+
+    from app.data import sp500_price_collector as sp
+
+    done = []
+
+    def _one_hangs(ticker):
+        if ticker == "HANG":
+            import time as _t
+            _t.sleep(30)
+        done.append(ticker)
+
+    with patch("app.processors.technical_processor.compute_technicals", _one_hangs):
+        with patch.object(sp, "_PER_TICKER_TIMEOUT_SEC", 0.2):
+            await sp._refresh_technicals_bulk(["A", "HANG", "B"])
+
+    assert "A" in done and "B" in done, (
+        f"a hung ticker took its neighbours with it: {done}"
+    )
