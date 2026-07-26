@@ -120,7 +120,67 @@ baseline.
 > A real answer needs an **A/B**: two bots, different versions, same tickers,
 > same cycles. Not built.
 
+## Execution costs and multiple-testing correction (`22dba38`, `601602d`)
+
+From "how do we get to PhD-level ground truth?" Researched the literature, then
+audited this repo against [Chen et al. 2026](https://arxiv.org/html/2603.27539v1),
+which defines five minimum standards for LLM financial multi-agent systems and
+finds **no surveyed system meets all five**. This repo met none of the two that
+matter most.
+
+**Every performance number this service ever produced was GROSS.** Two queries:
+
+```
+fees_nonzero | 0 | of | 44      -- every fill, zero fees
+fill_price   = current_price    -- paper_trader, exactly
+```
+
+That paper re-evaluated FinMem's published **+23% and got -22%** once costs were
+applied. Sign reversal from costs alone.
+
+**Restated headline** (`--executable-only`, since 05-01):
+
+| | |
+|---|---|
+| BASELINE always-long | **+4.46%** |
+| PIPELINE gross | +3.52% (−0.94% vs null) |
+| PIPELINE net of ADV-tier costs | +3.49% (**−0.97%** vs null) |
+
+Costs are small because all 24 tickers are liquid large caps, and the sweep is
+monotonic — at 10/25/50/100bps the gap widens to −1.00/−1.09/−1.25/−1.56%.
+**Costs never rescue the pipeline; they only widen the gap.**
+
+**The DSR changed a verdict.** `reversal` was the closest any factor came to
+surviving — Sharpe 0.33, bootstrap CI excluding zero, IS/OOS retention 1.64 —
+and the trial correction kills it: **DSR 0.9295 against a 0.95 bar, purely
+because 4 factors were run on the same data.**
+
 ## Traps (will bite again)
+
+- **⚠ A CORRECT IMPLEMENTATION OF THE WRONG ESTIMATOR.** Corwin-Schultz was built
+  first and it is *correct* — on synthetic data with a known 50bp half-spread it
+  returns 50.0bp exactly. But at realistic 1.5% daily vol it returns 29.9bp, and
+  against the live book it gave **~30bp for AAPL, whose true half-spread is under
+  1bp — a 60x overcharge** that would have killed every strategy on contact. Unit
+  tests all passed. Only checking the output against a known real-world value
+  caught it. *Validate an estimator against reality, not only against its own
+  formula.*
+- **The sign of a cost model is the most dangerous line in it.** Inverted, costs
+  become an alpha source and every strategy looks better the more it trades. The
+  pinning test is "a flat round trip must lose money".
+- **Charge costs to the strategy, not to the benchmark.** The always-long null
+  does not trade over the window; the pipeline opens and closes per decision.
+  Charging both equally cancels the very cost that distinguishes trading from
+  holding — and flatters the pipeline.
+- **Sharpe must be PER OBSERVATION inside PSR/DSR.** The (n−1) term assumes the
+  Sharpe and the sample share a footing; annualizing first overstates
+  significance by √252.
+- **A `NEVER` verdict carries no `min_track_record` key** — `factor_backtest`
+  crashed with `KeyError` on its first real run. Found by RUNNING it, not reading
+  it. A negative edge needs no sample size, because none rescues it.
+- **Best-of-N on pure noise reaches an annualized Sharpe of 3.31**, and the PSR
+  passes it at 0.9995. Only the DSR catches it. Any Sharpe reported here without
+  a trial count is uninterpretable.
 
 - **Zero and unknown are different, and confusing them freezes the fleet.** Zero
   stamped rows means EITHER "brand new version" (hold it) OR "predates the stamp"
