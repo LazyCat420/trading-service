@@ -1,205 +1,150 @@
-# HANDOFF — Quant factor wave: price factors, statistical gates, residual alpha, HMM regime shadow (2026-07-25)
+# HANDOFF — Report audit, the bugs it found, and an adversarial test suite (2026-07-25)
 
-Shipped `6a527d1` + `scripts/agent_scorecard.py` default fix. Previous wave's
-handoff archived to [`docs/HANDOFF_agent_audit_2026-07-24.md`](docs/HANDOFF_agent_audit_2026-07-24.md).
+Shipped `ea0721e` · `304ecbe` · `2309aef` · `3b4d533`. Previous wave's handoff
+archived to [`docs/HANDOFF_quant_factor_wave_2026-07-25.md`](docs/HANDOFF_quant_factor_wave_2026-07-25.md).
+Full audit: [`../.agents/AUDIT-report-verification-and-fixes-2026-07-25.md`](../.agents/AUDIT-report-verification-and-fixes-2026-07-25.md).
 
 ---
 
 ## What this wave was
 
-A plan arrived proposing a graph-engineering rewrite (11-node DAG runtime,
-YAML graph specs), seven Fama-French factor nodes, an HMM regime engine, and
-an RL allocation overlay. **Four ideas survived verification against the live
-DB; three were cut.** The cuts matter as much as the builds:
+Verify the four 2026-07-25 reports against the actual code, fix what was broken,
+then build a test type this repo never had: **feed the checkers bad data and see
+whether they actually fire.**
 
-| Proposed | Verdict | Why |
-|---|---|---|
-| Graph runtime (nodes/edges/YAML) | **CUT** | `orchestrator.py` already is one — scoped per-node failure (`_run_agent_with_circuit_breaker`), fan-in state (`SharedDesk`), phase gating (`DeskPhase`), budgets, telemetry, run artifacts. Rebuilding it generically costs weeks and ships zero alpha. |
-| Value / profitability / investment / size factors | **CUT** | `fundamentals` = 4,782 rows, 737 tickers, **76 distinct snapshot dates, earliest 2026-05-06**. A current-snapshot table, not a panel. Backfilling today's book values across history is look-ahead bias. Earliest honest start ~2028. |
-| RL regime overlay | **CUT** | 3 states × ~2-3 regime transitions in any available test window. A learned policy is indistinguishable from a lucky one at that n — and the *existing* decision layer already trails buy-and-hold. |
-| Momentum / low-vol / beta / reversal factors | **BUILT** | Price-derived. `price_history` = 15.1M rows, 2,744 tickers, back to 1962, 2,072 with ≥10y. |
-| Newey-West / bootstrap / IS-OOS gates | **BUILT** | Every return series here is built from *overlapping* windows. |
-| Residual-alpha gate | **BUILT** | Directly answers the open question: alpha, or beta? |
-| HMM regimes | **BUILT — as a shadow** | Not a replacement. See below. |
+**The reports were honest.** All 12 cited commit hashes resolve with matching
+messages, and most claims verified. Every gap below is something they did not
+know, not something they misrepresented — including their own retractions, which
+were accurate.
 
 ---
 
-## THE HEADLINE MEASUREMENT
+## THE HEADLINE
 
-```
-scripts/residual_alpha_report.py --since 2026-05-01 --executable-only
-153 consequential desks, +7-session horizon
+**The decision-integrity fix shipped with a crash in the code that reads its own
+sentinel.**
 
-BASELINE  always-long over the same desks : +2.14%
-PIPELINE  return signed to actions taken  : +1.53%
-          difference vs the null          : -0.62%
-
-Residual alpha: -0.53% per decision (t=-0.904, gate 2.5) — NOT distinguishable from zero.
-  raw mean +1.12% = +1.65% explained by factor exposure + -0.53% residual.
-  n=106, R²=0.4001, NW lag=6
-    momentum   loading +1.976 (t=3.194)
-    low_vol    loading +0.665 (t=1.198)
-    beta       loading -2.884 (t=-2.486)
-    reversal   loading +0.425 (t=0.681)
+```python
+>>> {'action': None}.get('action', 'HOLD').upper()
+AttributeError: 'NoneType' object has no attribute 'upper'
+>>> {}.get('action', 'HOLD').upper()      # contrast: missing key is fine
+'HOLD'
 ```
 
-**The pipeline's return is explained by its factor exposure.** This is the
-first time that is sayable with a t-stat rather than an anecdote. Note the
-*negative* beta loading alongside a positive raw return — the book leans
-toward low-beta names and still trails always-long, so this is not the simple
-"it just bought high-beta in a rising tape" story; the momentum loading
-(+1.98, t=3.19) is doing most of the explaining.
+The wave added `{"action": None}` to mark a degraded board. A dict default only
+fires on a **missing** key, not a null value. So the desk *engineered to record a
+degrade* was the one that crashed and got swallowed by
+`gather(return_exceptions=True)`.
 
-This is a **null result, not a broken script** — the report says so in its own
-output so the next reader doesn't file it as a bug.
-
-**Caveats, stated up front:** n=106 after factor-exposure joins. The window is
-91-up/48-down, a rising tape that flatters always-long. R²=0.40 means 60% of
-variance is still unexplained. This is one measurement, not a verdict on the
-pipeline.
+**Why it shipped, and this is the transferable lesson:** the sentinel was tested
+in `test_decision_provenance.py` ("is it written?") and the gate in
+`test_policy_gates.py` ("does it gate a string?"). **Two correct tests in two
+files that never meet do not test the path between them.** The repo said so
+itself — *"the degraded-sentinel path has only ever been unit-tested."*
 
 ---
 
-## The four modules
+## What the NEW TESTS found that reading the code did not
 
-### `app/quant/factors.py`
-Momentum 12-1, low-vol, beta, short-term reversal → **cross-sectional
-z-scores** (a factor value for one ticker in isolation is meaningless).
+This is the part worth internalising. The audit found bugs by reading; the
+fault-injection suite found five more by feeding garbage in — including one the
+reports believed was already fixed.
 
-- The **12-1 skip month is load-bearing**: the recent month carries short-term
-  reversal, the *opposite* sign to momentum. 12-0 reliably destroys the effect.
-- `low_vol` and `reversal` are **sign-flipped** so a high score always means
-  the desirable end. Returning raw vol would invert every downstream ranking.
-- **SPY is an input to beta, never a member of the ranked cross-section.**
-- A cross-section under `MIN_CROSS_SECTION` (5) yields **no factor at all**,
-  never zero-fill. A zero-filled factor reads as "perfectly average" and is a
-  fabrication.
+| Bug | Severity |
+|---|---|
+| **NaN confidence passed every gate.** Every comparison against NaN is `False`, so `confidence < floor` read as "cleared the floor" — the low-confidence gate silently inverted | **P0** |
+| **A garbage action produced the label `EXECUTE_3.14`** — an order authorized by unparseable input | **P0** |
+| A non-string action (`3.14`, `True`) crashed the gate; the first fix only handled `None` | P1 |
+| **The fail-open composition bug was never actually fixed** (below) | P1 |
+| `_z_score` zero-filled a degenerate cross-section — fabricating "perfectly average", the one thing its own docstring forbids | P2 |
 
-### `app/quant/stat_gates.py`
-Newey-West t-stat, stationary bootstrap CI, chronological IS/OOS degradation.
-
-- Every return series here is built from **overlapping** forward windows, so
-  consecutive observations are mechanically correlated and the naive t-stat
-  overstates significance by ~√overlap. NW lag is floored at the horizon.
-- Bootstrap is **Politis-Romano stationary** (geometric blocks, wrapping). A
-  fixed-block bootstrap severs dependence at every boundary and silently
-  narrows the interval on exactly the autocorrelated data we care about.
-- **`INSUFFICIENT_DATA` is a distinct verdict from `FAIL`.** "Couldn't check"
-  must never read as "checked and fine" — that is the laundering failure mode
-  in one enum.
-- Guards a real trap: two negative Sharpes divide to a *positive* retention
-  ratio, so `is_oos_degradation` returns `retention=None` when IS Sharpe ≤ 0.
-
-### `app/quant/residual_alpha.py` + `scripts/residual_alpha_report.py`
-OLS with Newey-West standard errors. Exposures computed **as of the decision
-date** from that date's cross-section (using today's exposures for a two-
-month-old decision would be look-ahead). Returns are **signed to the action
-taken** — a SELL before a fall is a positive return.
-
-**Reports only. It never gates a trade** — a residual-alpha estimate over a
-few hundred decisions in one rising tape is a diagnostic, not a risk control.
-
-### `app/quant/regime_hmm.py`
-2/3-state Gaussian HMM on SPY daily returns, BIC-selected.
-
-**Why a shadow and not a replacement:** `v3_regime_engine` is the
-best-calibrated agent in the pipeline (+7.65 edge, 85.7% hit, Brier 0.146) —
-but on **n=7 of 130 desks**, because 94% of its output carries no falsifiable
-claim. That 85.7% cannot be distinguished from seven lucky draws. The HMM
-emits a posterior **every day, unconditionally, from prices alone**, which
-makes it the measurable baseline the agent must beat. It is injected as
-context explicitly framed as "NOT a directive", never overrides the Regime
-Engine, and never gates a trade.
-
-- **Baum-Welch runs in LOG SPACE.** Naive forward-backward underflows to nan
-  within ~200 daily observations; log-space + logsumexp is the only version
-  that survives a 2-year window. There is a regression test on 2,000 obs.
-- **Deterministic quantile init.** EM is only locally optimal — a random start
-  would tell a different regime story every cycle.
-- **States ordered by volatility ascending** → CALM / TRANSITIONAL / STRESSED
-  mean the same thing every run.
-
-Live output on 2026-07-25 (n=547, 3-state by BIC): TRANSITIONAL @ 50%
-posterior; STRESSED state carries 77% annualized vol and -0.81% mean daily
-return — economically sensible.
+> ⚠ **The NaN one is the most dangerous thing in this wave.** The audit's own
+> traps section warns "sanitize NaN where values are consumed, not only where
+> fetched" — and the gate consumed it unsanitized. No amount of code reading
+> found it; one parametrized test did immediately.
 
 ---
 
-## Traps found (will bite again)
+## Traps (will bite again)
 
-- **⚠ THE ONE THAT ACTUALLY BROKE PRODUCTION: a slow context block fails open
-  and takes its NEIGHBOURS with it.** `build_quant_math_block` runs once per
-  *ticker* under a single timeout. The HMM shadow costs **~32s** (two
-  Baum-Welch fits), so at the old 25s budget the whole block timed out on
-  every ticker — silently dropping **GARCH, HRP and the sizing bracket** as
-  well, none of which had anything to do with the new code. Verified in
-  `cycle-v3-1784960316`: all three desks logged
-  `quant math precompute failed (non-fatal): ` with an **empty message**
-  (that is how `asyncio.TimeoutError` stringifies) and no
-  `quant_math_context` on any desk. Fixed `b44b994`: per-cycle cache
-  (36.9s → 0.2s, ~185×), timeout 25s → 60s, and `TimeoutError` is now caught
-  separately and names what went missing.
-  **Two lessons.** (1) *A standalone timing check does not prove a component
-  fits its budget* — mine passed because nothing else was competing. Measure
-  inside the real caller. (2) *Fail-open composition is not free*: adding a
-  slow item to a shared block silently removes the fast ones already in it.
-- **`np.float64` survives `round()`** and then breaks `json.dumps` when the
-  desk artifact serializes. Cast `float()` *inside* the round, not around it.
-  Caught only by serializing the real output, not by the unit tests.
-- **`agent_scorecard.py --source outcomes` caps at n=40 and `--since` cannot
-  widen it.** The limiter is neither the date nor the resolver: **2,023
-  outcomes are resolved but only 65 JOIN to a `shared_desk` row**, so every
-  `--since` from 05-01 to 07-01 returns the identical 65. That sample also
-  reports a *negative* always-long baseline where the 856-desk price sample
-  reports +2.16%. **Fixed: `--source price` is now the DEFAULT** and the
-  outcomes path prints the resolved-vs-joinable gap. **The desk-join gap
-  itself is still an open bug.**
-- **HOLDs-never-resolve is NOT a bug** — I called it one and was wrong. All 78
-  unresolved HOLD rows were created 2026-07-20..07-25, inside the 7-day
-  window; **zero** are older. HOLD tracking was switched on recently and the
-  resolver handles it correctly. *Check row ages before calling a `0 resolved`
-  count a defect.*
-- **`pipeline_state` can be read stale.** A query right after triggering a
-  cycle returns the *previous* run's `done`, which reads as "the cycle
-  finished instantly". Key progress queries on the actual `cycle_id`.
-- `shared_desk`'s column is **`phase`**, not `desk_phase`. `positions` uses
-  **`qty`**, not `quantity`.
-- Container still has **no sklearn / hmmlearn / arch** — all of this is
-  hand-rolled numpy/scipy.
-- New tests take ~3 min: the 10k-resample bootstrap runs a Python loop per
-  resample. Acceptable for a gate that runs offline; do not put it on the
-  cycle's hot path.
+- **⚠ A DOCUMENTED LESSON IS NOT AN IMPLEMENTED FIX.** The last HANDOFF describes
+  the fail-open composition trap at length and states the rule — *"fail-open
+  composition is not free"*. But the fix it shipped (timeout 25s → 60s, cache the
+  HMM) only made it **less likely**. Every component still ran under ONE outer
+  timeout, so any slow one still evicted GARCH, HRP and the sizing bracket. A
+  chaos test that hangs a component proved the block still died whole. Each
+  component now has its own deadline, enforced **on the call**, not merely checked
+  before it — a pre-call budget check cannot stop something that starts just under
+  budget and then hangs.
+- **A cache keyed by the wrong thing is worse than no cache.** The HMM cache was
+  keyed by **calendar date** while every document describing it — including its
+  own docstring, which claimed parity with `regime_cache.py` — said per-cycle. At
+  ~8-9 cycles/day the first cycle's fit served all the rest, and a cached failure
+  blinded the block until midnight.
+- **A failure TTL was tried on that cache and REVERTED.** It reintroduced the
+  per-ticker refit for exactly the expensive case the cache exists to prevent, and
+  `test_hmm_failures_are_cached_too` was right to fail. *When a test contradicts
+  your change, establish which is wrong before touching either.* Cycle-keying
+  already solves the sticky-failure problem.
+- **`assert block` tests the environment, not the property.** The composition test
+  first asserted the block was non-empty — which passes or fails on whether a DB
+  is reachable. It now compares the block *with* a hung component against the same
+  block *without* one. Baseline comparison, not truthiness.
+- **Patch at the SOURCE module.** `context_block` and `data_report` both import
+  their collaborators **inside the function body**, so patching the importer's
+  namespace silently misses and the test passes for the wrong reason. Bit me twice.
+- **`app/data/` is gitignored but `app/data/sp500_price_collector.py` is TRACKED**
+  and shipped (`COPY app/`). `git add` refuses it; `git add -f` is correct here.
+  A fix to that file will otherwise never deploy.
+- **The permissive default was the root cause, twice.** `board_reasoned` as the
+  fallback for unstamped artifacts meant the Triage/JA hardcoded `HOLD@0` writers
+  — where no agent ran at all — were scored as real board opinions. Fail-closed
+  now (`unattributed`).
+- **"Degraded" and "not scoreable" are DIFFERENT questions.** A deliberate skip is
+  a correct outcome, not a pipeline failure. Conflating them relabels healthy
+  skips across the dashboard, memory store and `policy_action`.
 
 ---
 
 ## Verification
 
-- **24/24** new unit tests pass (`tests/unit/test_quant_factor_wave.py`).
-- **22/22** related existing tests still pass (sizing bracket, context-block
-  fail-open, buy sizing) — no regression from the `context_block.py` edit.
-- Factors + HMM verified on **real DB data**, not just fixtures: KO/JPM rank
-  highest on low-vol, AMD highest on beta and momentum — economically sensible.
-- `build_quant_math_block('UNH', 'test_bot')` renders both new lines in the
-  **deployed image**, alongside the existing GARCH/HRP/sizing-bracket content.
-- Deployed to NAS (145s), container healthy, all four modules import.
+- **1244 passed**, 2 failed, 15 skipped. Both failures are pre-existing
+  (`test_parameter_tools.py`, `test_tool_whitelists.py`) — **verified by
+  `git stash`**, they fail identically with every change removed.
+- +64 tests over the 1180 baseline, **zero new failures**.
+- DB backed up before deploy: `/tmp/trading_bot-20260725-173614.dump` (955M) on
+  the NAS, with row counts recorded (shared_desk 1198, trade_results 605,
+  technicals 1293339, price_history 15137444).
+- No cycle was in flight at deploy time (`/api/v1/bot/cycle_running` → false).
+
+---
+
+## ⚠ One live behavior change
+
+`portfolio_tools.py:147` used a bare `settings.BOT_ID`, so `get_portfolio_state`
+reported **`lazy-trader-v4`'s empty book** instead of the active bot's. Every
+agent asking for portfolio state was told it held nothing. Fixing it is the point,
+but **agents will now see real holdings where they previously saw none** — watch
+the first cycle's sizing and held-flag behaviour.
 
 ---
 
 ## Open / next
 
-1. **The override matrix is the cheapest win available.** Board overriding
-   fundamental = **-2.38 edge, 18% hit (n=34)**; overriding quant = -1.56;
-   overriding debate = -0.52 at 25% hit. *Every* override is negative except
-   the synthesizer's (+5.65, 88%, n=12). That is a tunable gate needing no new
-   machinery — but n is small, so instrument before acting.
-2. **Make `forward_call` mandatory on the regime engine** so the pipeline's
-   best agent becomes gradeable on all 130 desks instead of 7. Then compare it
-   head-to-head against the HMM shadow over the same days.
-3. **Fix the `decision_outcomes` → `shared_desk` join gap** (2,023 resolved,
-   65 joinable).
-4. **Distribution-collapse canary** — flag any agent field whose distinct-count
-   collapses or whose top value exceeds 70%. Would have caught the fabricated
-   RSIs, the 3/4/5% sizing habit, and the missing-`final_decision` bug, all
-   found by hand months apart.
-5. Keep collecting `fundamentals` snapshots — the fundamental factors unlock
-   for free once the panel is deep enough.
+1. **Run the Tier 2 agentic tests against the deployed container**
+   (`ADVERSARIAL_AGENTIC=1`). They are written and gated but **have not been run** —
+   they need prism/vLLM. This is the highest-value next step because they test the
+   *harness*, not just this code, including whether agents actually call tools.
+2. **Force one degraded cycle with `trade=False`** to exercise the sentinel path
+   end to end on real data. Still never done; it is what let the P0 ship.
+3. **Calibrate `_COMPONENT_BUDGET_SEC` (45.0)** against real container timings —
+   it is currently a reasoned guess sitting under the 60s outer timeout.
+4. **Check `v3_guardrail_firings` is non-empty** after a live cycle, and that
+   `triage_tier` separates delta from full-panel.
+5. **`v3_agent_telemetry` has the identical missing-migration problem** —
+   lazily created, absent from both `migrations.py` and `schema_pg.sql`.
+6. **The fifth bot_id resolver** in `bot_manager.py` has different semantics (a
+   `"default"` sentinel). Merging it is an ownership decision, not a rename.
+7. **The sp500 technicals refresh is sequential** over ~503 tickers. The batched
+   `executemany` inside `compute_technicals` is fast; the loop around it is not.
+   Unmeasured at real scale.
