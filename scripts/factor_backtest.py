@@ -193,8 +193,13 @@ def main() -> int:
     print("  acquired names are absent, which biases long-side returns UPWARD.")
     print("  A FAIL here is a real kill. A PASS is 'not yet falsified', not 'proven'.\n")
 
+    factor_names = ("momentum", "low_vol", "beta", "reversal")
+    # Trials run against this same price history. A floor, not the true count —
+    # every prior sweep on the same data also belongs here.
+    n_trials = len(factor_names)
+
     results = {}
-    for name in ("momentum", "low_vol", "beta", "reversal"):
+    for name in factor_names:
         rets, stamps = run_factor(panel, name, args.rebalance)
         if rets.size < 40:
             print(f"{name:<10} INSUFFICIENT ({rets.size} periods)")
@@ -210,10 +215,37 @@ def main() -> int:
         print(f"           NW t={nw.get('t_stat')} (lag {nw.get('lag')}) pass={nw.get('passes')}"
               f" | boot CI=[{bs.get('ci_low')}, {bs.get('ci_high')}] p={bs.get('p_value')} pass={bs.get('passes')}"
               f" | IS/OOS {io.get('is_sharpe')}->{io.get('oos_sharpe')} ret={io.get('retention')} pass={io.get('passes')}")
+
+        # Multiple-testing correction. The Sharpe printed above is the winner of
+        # however many factors were run against this same price history, and
+        # selection alone inflates it — best-of-100 pure-noise series reaches an
+        # annualized Sharpe of ~3.3 (see tests/unit/test_multiple_testing_gates).
+        # n_trials counts the factors in THIS sweep, which is a floor: every
+        # earlier sweep on the same data belongs in that count too, so the real
+        # deflation is stronger than what is shown here.
+        from app.quant.stat_gates import (
+            deflated_sharpe_ratio, min_track_record_length,
+        )
+        dsr = deflated_sharpe_ratio(rets, n_trials=n_trials)
+        trl = min_track_record_length(rets)
+        if dsr.get("verdict") != "INSUFFICIENT_DATA":
+            # `NEVER` carries no min_track_record: a negative edge cannot be
+            # rescued by more data, and printing a required sample size would
+            # imply otherwise.
+            if trl.get("verdict") == "NEVER":
+                trl_note = " | track record: NEVER (edge is negative)"
+            elif "min_track_record" in trl:
+                trl_note = f" | need {trl['min_track_record']} obs, have {trl['n']}"
+            else:
+                trl_note = ""
+            print(f"           DSR={dsr['dsr']} vs luck-implied Sharpe "
+                  f"{dsr['expected_max_sharpe_from_luck']} over {n_trials} trials "
+                  f"→ {dsr['verdict']}{trl_note}")
         results[name] = {"n": int(rets.size), "verdict": g["verdict"],
                          "mean_pct": round(float(rets.mean()), 4),
                          "annualized_pct": round(float(ann), 2),
-                         "sharpe": round(float(sharpe), 3), "gate": g}
+                         "sharpe": round(float(sharpe), 3), "gate": g,
+                         "deflated_sharpe": dsr, "min_track_record": trl}
 
     passed = [k for k, v in results.items() if v.get("verdict") == "PASS"]
     print("\n" + "=" * 78)

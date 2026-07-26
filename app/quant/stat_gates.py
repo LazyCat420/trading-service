@@ -199,6 +199,203 @@ def _sharpe(returns: np.ndarray, periods_per_year: int = TRADING_DAYS_YEAR) -> f
     return float(np.mean(returns) / sd * math.sqrt(periods_per_year))
 
 
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF. math.erf avoids a scipy dependency — the container
+    has numpy/scipy but this module is deliberately importable without them."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def probabilistic_sharpe_ratio(
+    returns: np.ndarray | list[float],
+    benchmark_sr: float = 0.0,
+    periods_per_year: int = TRADING_DAYS_YEAR,
+) -> dict:
+    """P(true Sharpe > benchmark), correcting for skew, kurtosis and sample size.
+
+    Bailey & Lopez de Prado (2012). A plain Sharpe ratio assumes normal returns
+    and says nothing about how confident it is. Trading returns are neither
+    normal nor plentiful: negative skew with fat tails is the classic
+    "picking up pennies" profile, and it makes a Sharpe look better than the
+    strategy deserves.
+
+        PSR = Phi( (SR - SR*) * sqrt(n-1) / sqrt(1 - g3*SR + (g4-1)/4 * SR^2) )
+
+    where g3 is skewness and g4 is kurtosis (non-excess). Note the signs: for a
+    POSITIVE Sharpe, negative skew (g3 < 0) INFLATES the denominator and lowers
+    the PSR, which is the correction doing its job.
+
+    Returns a structured verdict — INSUFFICIENT_DATA is distinct from a low
+    probability, because "could not check" must never read as "checked and bad".
+    """
+    arr = np.asarray(list(returns), dtype=float)
+    arr = arr[np.isfinite(arr)]
+    n = arr.size
+    if n < MIN_OBSERVATIONS:
+        return {"verdict": "INSUFFICIENT_DATA", "n": int(n),
+                "reason": f"need >= {MIN_OBSERVATIONS} observations, got {n}"}
+
+    sd = float(np.std(arr, ddof=1))
+    if sd <= 0:
+        return {"verdict": "INSUFFICIENT_DATA", "n": int(n),
+                "reason": "zero variance"}
+
+    # SR here is PER-OBSERVATION, not annualized: the PSR formula's n-1 term
+    # assumes the Sharpe and the sample are on the same footing. Annualizing
+    # first would overstate significance by sqrt(periods_per_year).
+    sr = float(np.mean(arr) / sd)
+    m3 = float(np.mean(((arr - np.mean(arr)) / sd) ** 3))
+    m4 = float(np.mean(((arr - np.mean(arr)) / sd) ** 4))
+
+    denom_sq = 1.0 - m3 * sr + ((m4 - 1.0) / 4.0) * sr * sr
+    if denom_sq <= 0:
+        return {"verdict": "INSUFFICIENT_DATA", "n": int(n),
+                "reason": "degenerate higher moments"}
+
+    psr = _norm_cdf((sr - benchmark_sr) * math.sqrt(n - 1) / math.sqrt(denom_sq))
+    return {
+        "verdict": "PASS" if psr >= 0.95 else "FAIL",
+        "psr": round(psr, 4),
+        "sharpe_per_obs": round(sr, 4),
+        "sharpe_annualized": round(sr * math.sqrt(periods_per_year), 4),
+        "skew": round(m3, 4),
+        "kurtosis": round(m4, 4),
+        "n": int(n),
+    }
+
+
+def deflated_sharpe_ratio(
+    returns: np.ndarray | list[float],
+    n_trials: int,
+    trial_sharpe_variance: float | None = None,
+    periods_per_year: int = TRADING_DAYS_YEAR,
+) -> dict:
+    """PSR against the Sharpe the BEST OF N TRIALS would reach by luck alone.
+
+    Bailey & Lopez de Prado (2014). This is the correction this repo most needs
+    and has never applied. Momentum, low-vol, beta, reversal, several sizing
+    rules, HMM regimes and many agent configurations have all been tested
+    against the same price history. The best of those is selected for reporting,
+    and selection alone inflates the winner's Sharpe — even if every candidate
+    is worthless.
+
+    The expected maximum of N independent standard normals is approximately
+
+        E[max] ~ (1-g)*Phi^-1(1 - 1/N) + g*Phi^-1(1 - 1/(N*e))     [g = Euler-Mascheroni]
+
+    scaled by the spread of Sharpes across trials. That becomes the benchmark
+    the observed Sharpe must beat.
+
+    `trial_sharpe_variance` is the variance of Sharpe ratios ACROSS the trials
+    run. When unknown, the observed series' own variance is used as a proxy —
+    which is conservative in the wrong direction (it usually understates the
+    spread and so understates the deflation), and the returned dict says so.
+    """
+    arr = np.asarray(list(returns), dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size < MIN_OBSERVATIONS:
+        return {"verdict": "INSUFFICIENT_DATA", "n": int(arr.size),
+                "reason": f"need >= {MIN_OBSERVATIONS} observations"}
+    if n_trials < 1:
+        return {"verdict": "INSUFFICIENT_DATA", "reason": "n_trials must be >= 1"}
+
+    estimated_variance = trial_sharpe_variance is None
+    if estimated_variance:
+        sd = float(np.std(arr, ddof=1))
+        # Variance of the Sharpe ESTIMATOR under the null, the standard
+        # approximation: Var(SR_hat) ~ 1/(n-1) for per-observation Sharpe.
+        trial_sharpe_variance = 1.0 / max(1, arr.size - 1)
+
+    if n_trials == 1:
+        expected_max_sr = 0.0
+    else:
+        euler = 0.5772156649015329
+        # Phi^-1 via the inverse-erf relation, again to avoid scipy.
+        def _ppf(p: float) -> float:
+            # Acklam's rational approximation is overkill here; bisection on the
+            # CDF is exact enough and obviously correct, which matters more.
+            lo, hi = -10.0, 10.0
+            for _ in range(200):
+                mid = (lo + hi) / 2.0
+                if _norm_cdf(mid) < p:
+                    lo = mid
+                else:
+                    hi = mid
+            return (lo + hi) / 2.0
+
+        q1 = _ppf(1.0 - 1.0 / n_trials)
+        q2 = _ppf(1.0 - 1.0 / (n_trials * math.e))
+        expected_max_sr = math.sqrt(trial_sharpe_variance) * (
+            (1.0 - euler) * q1 + euler * q2
+        )
+
+    result = probabilistic_sharpe_ratio(arr, benchmark_sr=expected_max_sr,
+                                        periods_per_year=periods_per_year)
+    if result.get("verdict") == "INSUFFICIENT_DATA":
+        return result
+    return {
+        "verdict": "PASS" if result["psr"] >= 0.95 else "FAIL",
+        "dsr": result["psr"],
+        "expected_max_sharpe_from_luck": round(expected_max_sr, 4),
+        "observed_sharpe_per_obs": result["sharpe_per_obs"],
+        "n_trials": int(n_trials),
+        "n": result["n"],
+        "trial_variance_estimated": estimated_variance,
+    }
+
+
+def min_track_record_length(
+    returns: np.ndarray | list[float],
+    benchmark_sr: float = 0.0,
+    confidence: float = 0.95,
+) -> dict:
+    """How many observations are needed before a Sharpe beats the benchmark.
+
+    Bailey & Lopez de Prado. Answers "is this track record long enough to mean
+    anything", which is usually the honest response to a promising backtest on
+    a few months of data.
+
+        MinTRL = 1 + (1 - g3*SR + (g4-1)/4 * SR^2) * (Z_conf / (SR - SR*))^2
+    """
+    arr = np.asarray(list(returns), dtype=float)
+    arr = arr[np.isfinite(arr)]
+    n = arr.size
+    if n < 3:
+        return {"verdict": "INSUFFICIENT_DATA", "reason": "need >= 3 observations"}
+    sd = float(np.std(arr, ddof=1))
+    if sd <= 0:
+        return {"verdict": "INSUFFICIENT_DATA", "reason": "zero variance"}
+
+    sr = float(np.mean(arr) / sd)
+    if sr <= benchmark_sr:
+        return {"verdict": "NEVER", "n": int(n), "sharpe_per_obs": round(sr, 4),
+                "reason": "observed Sharpe does not exceed the benchmark; no "
+                          "sample size makes a negative edge significant"}
+
+    m3 = float(np.mean(((arr - np.mean(arr)) / sd) ** 3))
+    m4 = float(np.mean(((arr - np.mean(arr)) / sd) ** 4))
+
+    # Z for the confidence level, via the same bisection used above.
+    lo, hi = -10.0, 10.0
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if _norm_cdf(mid) < confidence:
+            lo = mid
+        else:
+            hi = mid
+    z = (lo + hi) / 2.0
+
+    required = 1.0 + (1.0 - m3 * sr + ((m4 - 1.0) / 4.0) * sr * sr) * (
+        z / (sr - benchmark_sr)
+    ) ** 2
+    return {
+        "verdict": "PASS" if n >= required else "FAIL",
+        "min_track_record": int(math.ceil(required)),
+        "n": int(n),
+        "shortfall": max(0, int(math.ceil(required)) - int(n)),
+        "sharpe_per_obs": round(sr, 4),
+    }
+
+
 def is_oos_degradation(
     returns: np.ndarray | list[float],
     is_fraction: float = 0.7,
