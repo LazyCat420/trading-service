@@ -155,7 +155,69 @@ surviving — Sharpe 0.33, bootstrap CI excluding zero, IS/OOS retention 1.64 �
 and the trial correction kills it: **DSR 0.9295 against a 0.95 bar, purely
 because 4 factors were run on the same data.**
 
+## The one finding worth acting on (`c949c57`, `2b55da0`)
+
+After a session of null results, one asymmetry survives every gate: **the system
+cannot reliably pick winners, but it CAN reliably identify its own bad
+decisions — and it was trading them anyway.**
+
+828 resolved BUYs, scored against real forward prices:
+
+| Confidence | n | mean | vs always-long null |
+|---|---|---|---|
+| **< 70** | **130** | **−1.91%** | **−4.78%** |
+| ≥ 70 | 698 | +3.76% | +0.89% |
+
+```
+Newey-West   t = -5.49  (gate 2.5)              PASS
+Bootstrap    p = 0.000, CI [-6.36, -3.16]       PASS
+Chronological halves: t = -3.55 AND t = -5.46   holds in BOTH
+IS/OOS: -5.86 -> -10.00                          persists
+```
+
+`ANALYSIS_CONFIDENCE_THRESHOLD` **65 → 70**. The old floor blocked 1.9% of BUYs
+and let 115–135 losers through. 68/70/72 all deliver +0.87–0.90%; **70 is the
+middle of that plateau**, so the value is not fitted to either edge. 75 collapses
+the effect (+0.22%) by blocking 47%.
+
+> [!IMPORTANT]
+> **The positive side does NOT hold.** "High confidence beats the null" is
+> **t = 1.21, p = 0.215 — not significant.** The gain comes from *removing*
+> losers, not from picking winners, so the ceiling of this effect is the null
+> itself. This narrows the −0.97% gap to buy-and-hold; it does not close it.
+
+**The equity curve now exists.** `portfolio_snapshots.realized_pnl` /
+`unrealized_pnl` were NULL in all 25 rows. Live book verified: realized
+**+$2,702.34**, unrealized **−$35.92**, total **$102,666.42** — both identities
+hold (`total_value == cash + equity`, `unrealized == equity − cost_basis`). True
+return since inception, **+2.67%**, computable for the first time.
+
+Re-fit with [`scripts/calibration_report.py`](scripts/calibration_report.py) as
+outcomes accrue — it prints the live floor next to the fitted one.
+
 ## Traps (will bite again)
+
+- **⚠ THE DSR IS THE WRONG TOOL FOR A NEGATIVE FINDING, and it reports FAIL.**
+  Deflated Sharpe tests for a *positive* edge inflated by trial selection; the
+  confidence-floor effect is strongly *negative* (Sharpe −0.38), so DSR "fails" it
+  while the chronological split and IS/OOS both pass. Written into the code, the
+  report and the plan so nobody later finds the FAIL and reverses the threshold
+  without reading why.
+- **`backup-master` is a 2026-05-27 snapshot, NOT pending work** — master has 961
+  commits it lacks. "Merge all branches" would be destructive. `fix/*` branches
+  are already fully contained in master (0 unique commits each).
+- **There is no `main` branch in trading-service** — the default is `master`.
+- **A hardcoded threshold in a test breaks for the wrong reason.** Three tests
+  pinned the literal `65`; they are about fail-open and boundary behaviour, not
+  about the number. They read the registry now. The parity guard keeps asserting
+  every *other* default and documents the one deliberate exception.
+- **Mock-shape tests can pass vacuously.** The malformed-action tests assert
+  `captured` is non-empty *first* — a wrong patch target would otherwise make
+  them green while testing nothing.
+- **Three bot_ids split one book.** `test_bot` is the only active one (28 fills, 7
+  positions); `cycle-backend` holds 1 stranded position and `lazy-trader-v4` is
+  the dead default from the resolver bug. Left as-is — merging books is a data
+  decision, not a refactor.
 
 - **⚠ A CORRECT IMPLEMENTATION OF THE WRONG ESTIMATOR.** Corwin-Schultz was built
   first and it is *correct* — on synthetic data with a known 50bp half-spread it
