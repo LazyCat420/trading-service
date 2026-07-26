@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from datetime import datetime, timezone
@@ -163,7 +164,7 @@ async def run_v3_pipeline(
         # bracket as well — a degrade that logs an EMPTY exception message and
         # is otherwise invisible. Budget the first-call cost explicitly.
         quant_math = await asyncio.wait_for(
-            asyncio.to_thread(build_quant_math_block, ticker, bot_id),
+            asyncio.to_thread(build_quant_math_block, ticker, bot_id, cycle_id),
             timeout=60,
         )
         if quant_math:
@@ -383,7 +384,12 @@ async def run_v3_pipeline(
                 "action": "HOLD",
                 "confidence": 0,
                 "reasoning": f"Skipped by Triage Gate (Age: {int(hours_old)}h, News: {news_count}). No new catalysts.",
-                "persona_used": "Triage Gate"
+                "persona_used": "Triage Gate",
+                # 2026-07-25: this HOLD is a pure age/news-count heuristic that
+                # runs BEFORE any agent. Unstamped, it inherited board_reasoned
+                # and the scorecard counted it as a real board opinion — a HOLD
+                # nobody reasoned about, scored as evidence about the board.
+                "decision_provenance": DecisionProvenance.TRIAGE_SKIP.value,
             })
             # NOTE: Do NOT advance phase here. The only valid transitions from
             # INIT are RESEARCH_DONE and ABORTED. A glance-skipped ticker never
@@ -429,7 +435,7 @@ async def run_v3_pipeline(
             if not escalate:
                 d_action = str(delta.get("action") or "HOLD").upper()
                 d_conf = int(delta.get("confidence") or 0)
-                desk.append_artifact("final_decision", {
+                _delta_decision = {
                     "summary": delta.get("summary", f"Delta re-look: {verdict or 'REAFFIRM'}"),
                     "action": d_action,
                     "confidence": d_conf,
@@ -441,7 +447,23 @@ async def run_v3_pipeline(
                     "exit_style": delta.get("exit_style"),
                     "dynamic_trigger": delta.get("dynamic_trigger"),
                     "position_size_pct": delta.get("position_size_pct"),
-                })
+                    # An agent DID decide this one. Stamped explicitly because
+                    # this path bypasses agent_runner (where the board's own
+                    # stamp is applied), and an unstamped decision is treated
+                    # as unattributed — which would silently drop the
+                    # pipeline's highest-volume route out of every accuracy
+                    # measurement.
+                    "decision_provenance": DecisionProvenance.BOARD_REASONED.value,
+                }
+                # The delta tier used to write this artifact and return before
+                # Layer 6, so the no-shorting guard and EVERY policy gate were
+                # skipped on the pipeline's highest-volume route. Apply the same
+                # guard the full panel applies (2026-07-25 audit).
+                from app.v3.agent_runner import guard_unshortable_sell
+                _delta_decision = guard_unshortable_sell(
+                    _delta_decision, desk=desk, bot_id=bot_id,
+                )
+                desk.append_artifact("final_decision", _delta_decision)
                 emit(
                     "analyzing", f"v3_delta_done_{ticker}",
                     f"⚡ {ticker}: Delta {verdict or 'REAFFIRM'} → {d_action}@{d_conf}% "
@@ -476,6 +498,29 @@ async def run_v3_pipeline(
                 result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
                 result["triage_tier"] = "v3_delta"
                 result["escalated"] = False
+                # Layer 6 lives at the end of the full-panel flow, which this
+                # early return skips. Without this, `policy_action` is unset and
+                # pipeline_service's enforcement branches (which key off it)
+                # cannot match — so a delta BUY skipped the low-confidence,
+                # missing-regime and strategy-health CUT gates entirely, and was
+                # sized without the consensus/data-quality haircuts.
+                policy_action = _apply_policy_gates(desk)
+                result["policy_action"] = policy_action
+                try:
+                    _persist_policy_action(cycle_id, ticker, policy_action)
+                except Exception as pe:
+                    logger.warning("[V3] %s: delta policy_action persist failed (non-fatal): %s", ticker, pe)
+                if policy_action.startswith("HOLD_") and d_action in ("BUY", "SELL"):
+                    logger.warning(
+                        "[V3] %s: delta %s @ %d%% BLOCKED by policy gate → %s",
+                        ticker, d_action, d_conf, policy_action,
+                    )
+                    emit(
+                        "analyzing", f"v3_policy_blocked_{ticker}",
+                        f"🚫 {ticker}: {d_action} @ {d_conf}% BLOCKED by policy gate "
+                        f"→ {policy_action}",
+                        status="warning",
+                    )
                 return result
 
             # Material change (or no usable delta) → fall through to the full panel.
@@ -632,6 +677,10 @@ async def run_v3_pipeline(
                         f"cycle. JA summary: {(event.get('content') or {}).get('summary', '')[:300]}"
                     ),
                     "persona_used": "junior_analyst_triage",
+                    # 2026-07-25: the JA recommended a SKIP; no board reasoned
+                    # about an action. Unstamped, this HOLD@0 was credited to
+                    # the board and scored as a genuine decision.
+                    "decision_provenance": DecisionProvenance.TRIAGE_SKIP.value,
                 })
                 emit("analyzing", f"v3_ja_triage_{ticker}",
                      f"🚦 {ticker}: JA triage → SKIP (no new catalysts)", status="ok")
@@ -1147,6 +1196,15 @@ async def run_v3_pipeline(
                             "[V3] %s: contradiction gate capped confidence %s -> 60 (%s)",
                             ticker, _conf, _gate.get("sentiment_by_source"),
                         )
+                        # 2026-07-25 audit: this cap rewrites a live decision
+                        # but left its evidence only in the artifact, so the
+                        # question "how often does the contradiction gate bind,
+                        # and is 60 the right cap?" had no queryable answer.
+                        _record_gate(
+                            desk, "contradiction_confidence_cap",
+                            uncapped=_conf, capped_to=60,
+                            sentiment_by_source=_gate.get("sentiment_by_source"),
+                        )
                 except Exception as gate_err:
                     logger.warning("[V3] %s: contradiction gate failed (non-fatal): %s", ticker, gate_err)
                 if not trade_decision.get("regime"):
@@ -1551,8 +1609,10 @@ async def run_v3_pipeline(
     try:
         from app.services.memory.store import MemoryStore
         decision = desk.trade_decision or desk.final_decision or {}
-        action = decision.get("action", "HOLD")
-        confidence = decision.get("confidence", 0)
+        # A degraded desk has action=None; recording "None @ 0%" as an episodic
+        # memory teaches the memory system a decision that was never made.
+        action = (decision.get("action") or "HOLD") if not _is_degraded_decision(decision) else "DEGRADED"
+        confidence = decision.get("confidence") or 0
         reasoning = decision.get("reasoning", "")
         MemoryStore().add_episodic_observation({
             "cycle_id": cycle_id,
@@ -1691,17 +1751,142 @@ def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> No
         logger.warning("[V3] mongo policy_action mirror failed (non-fatal): %s", me)
 
 
+# "Not scoreable" and "degraded" are DIFFERENT questions, and conflating them
+# was a bug in the first draft of this fix. A Triage-Gate skip is not
+# scoreable (no agent decided) but it is a deliberate, correct outcome —
+# labelling it DEGRADED would relabel healthy skips as pipeline failures in
+# the memory store, the dashboard and policy_action. Only these provenances
+# mean "the pipeline tried to decide and failed".
+_DEGRADED_PROVENANCE = frozenset({
+    DecisionProvenance.BOARD_DEGRADED_FALLBACK.value,
+    DecisionProvenance.TIMEOUT_ABORT.value,
+})
+
+
+def _safe_confidence(value: object) -> float:
+    """A confidence that cannot be read is ZERO, never a pass.
+
+    NaN is the one that bites: it survives a NOT NULL check and every
+    comparison against it is False, so `confidence < floor` reads as "cleared
+    the floor" — a low-confidence gate silently inverted by a bad float. The
+    audit's own traps section names this ("sanitize NaN where values are
+    consumed, not only where fetched"); the gate consumed it unsanitized.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    if math.isnan(value) or math.isinf(value):
+        return 0.0
+    return float(value)
+
+
+def _is_degraded_decision(decision: dict) -> bool:
+    """True when this artifact records a FAILURE to decide.
+
+    Two independent tells, because either alone has been wrong before: an
+    explicitly degraded provenance, or a null action (the sentinel shape).
+    A degraded decision must never be scored, executed, or rendered as though
+    an agent chose it. Deliberate skips are NOT degrades — see
+    `_DEGRADED_PROVENANCE`.
+    """
+    if not isinstance(decision, dict):
+        return False
+    prov = decision.get("decision_provenance")
+    if isinstance(prov, str) and prov in _DEGRADED_PROVENANCE:
+        return True
+    return "action" in decision and decision.get("action") is None
+
+
+def _record_gate(desk: SharedDesk, label: str, **detail: Any) -> str:
+    """Record an enforcing policy-gate firing, then return its label unchanged.
+
+    2026-07-25 audit: `record_guardrail_firing` had exactly two callers, both in
+    artifact_validators — so the only guardrail with rows in the table was an
+    observational SHADOW flag, while every gate that actually blocks a trade
+    counted nothing. The enforcement was invisible and therefore untunable.
+
+    Returning the label keeps each gate a one-line `return`, so counting can
+    never alter control flow — the failure mode that would turn telemetry into
+    a trading bug. Fail-open twice over: `record_guardrail_firing` swallows its
+    own errors, and the import is wrapped too, because `_apply_policy_gates`
+    runs in unit tests with no DB at all.
+
+    Named `_record_gate`, not `_gate`: `_persist_trade_verdict` already binds a
+    local `_gate` (the contradiction shadow), which would shadow this helper at
+    the one other site that needs it.
+    """
+    try:
+        from app.v3.telemetry import record_guardrail_firing
+
+        # triage_tier separates the two callers of _apply_policy_gates (the
+        # full panel and the delta re-look). Without it both tiers pool into
+        # one count and "how often does the delta path block?" is unanswerable.
+        record_guardrail_firing(
+            label,
+            ticker=desk.ticker,
+            cycle_id=desk.cycle_id,
+            detail={
+                "gate": "policy",
+                "triage_tier": desk.cycle_metadata.get("triage_tier"),
+                **detail,
+            },
+        )
+    except Exception as e:  # never let telemetry break an enforcing gate
+        logger.warning("[V3] policy gate telemetry failed (non-fatal): %s", e)
+    return label
+
+
 def _apply_policy_gates(desk: SharedDesk) -> str:
     """Apply explicit orchestration policy gates to the final decision.
 
     The returned policy action is ENFORCED by pipeline_service before trade
     execution (a *_POLICY_BLOCKED_* result never trades) — it is not advisory.
+
+    Every blocking return is routed through `_record_gate` so the firing is
+    counted. `HOLD_NO_SIGNAL` and `EXECUTE_*` are deliberately NOT counted —
+    see their comments below.
     """
     decision = desk.trade_decision or desk.final_decision or {}
     board = desk.final_decision or {}
-    action = decision.get("action", "HOLD").upper()
-    confidence = decision.get("confidence", 0)
+    # Coerced through str() and defaulted on blank, NOT `.get(..., "HOLD")`:
+    #   - the degraded sentinel writes the key PRESENT with value None, so the
+    #     dict default never fires and `.upper()` raised AttributeError on
+    #     exactly the desk engineered to record a degrade;
+    #   - a non-string action (a float, a bool from a malformed artifact) also
+    #     has no .upper(), and crashing here loses the whole ticker;
+    #   - a whitespace-only action used to produce the label "EXECUTE_", which
+    #     is an order authorized by unparseable input.
+    # Anything unreadable resolves to HOLD: the safe direction.
+    action = str(decision.get("action") or "").strip().upper() or "HOLD"
+    confidence = _safe_confidence(decision.get("confidence"))
 
+    # The tail of this function returns f"EXECUTE_{action}", so an unrecognized
+    # action would interpolate straight into the label the executor reads
+    # ("EXECUTE_3.14", "EXECUTE_TRUE"). Only three actions exist; anything else
+    # is a malformed artifact, and the safe reading of a malformed decision is
+    # that no decision was made.
+    if action not in ("BUY", "SELL", "HOLD"):
+        logger.warning(
+            "[V3] %s: unrecognized action %r in decision artifact — gating as "
+            "unparseable rather than executing it", desk.ticker,
+            decision.get("action"),
+        )
+        return _record_gate(
+            desk, "HOLD_UNPARSEABLE_ACTION", raw_action=repr(decision.get("action")),
+        )
+
+    # An explicit degrade is not a no-signal HOLD — it is the absence of a
+    # decision. Both block the trade, but they must stay distinguishable
+    # downstream (the dashboard label and the scorecard read this string).
+    if _is_degraded_decision(decision):
+        return _record_gate(
+            desk, "HOLD_DEGRADED_NO_DECISION",
+            provenance=decision.get("decision_provenance"),
+        )
+
+    # NOT recorded as a guardrail firing, deliberately: a genuine no-signal HOLD
+    # is a normal decision the desk is entitled to reach, not a safety gate
+    # rewriting one. Counting it would swamp the table with routine outcomes and
+    # make the real firing rate unreadable. Do not "fix" this omission.
     if action == "HOLD":
         return "HOLD_NO_SIGNAL"
 
@@ -1731,7 +1916,7 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
             except Exception:
                 held = None  # truly unknown — executor guard stays the backstop
         if held is False:
-            return "HOLD_NO_POSITION"
+            return _record_gate(desk, "HOLD_NO_POSITION", action=action)
 
     # Dynamic confidence floor (plan 3.1): the board may RAISE the bar for
     # this specific decision, never lower the firm-wide threshold.
@@ -1742,10 +1927,14 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     if isinstance(board_floor, (int, float)) and not isinstance(board_floor, bool):
         floor = max(floor, board_floor)
     if confidence < floor:
-        return "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+        return _record_gate(
+            desk, "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE",
+            action=action, confidence=confidence, floor=floor,
+            board_floor=board_floor,
+        )
 
     if not desk.has_artifact("regime_classification"):
-        return "HOLD_POLICY_BLOCKED_MISSING_REGIME"
+        return _record_gate(desk, "HOLD_POLICY_BLOCKED_MISSING_REGIME", action=action)
 
     # Strategy health (Ruuj ch.5): "has the model degraded" is checked
     # separately from "is it losing money". A decision-critical agent whose
@@ -1761,7 +1950,10 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
                     "[V3] %s: BUY blocked — strategy health CUT (driver=%s: %s)",
                     desk.ticker, health.get("driver"), health.get("reason"),
                 )
-                return "HOLD_POLICY_BLOCKED_DEGRADED_MODEL"
+                return _record_gate(
+                    desk, "HOLD_POLICY_BLOCKED_DEGRADED_MODEL",
+                    driver=health.get("driver"), reason=health.get("reason"),
+                )
         except Exception as health_err:
             logger.warning("[V3] %s: strategy health check failed (fail-open): %s", desk.ticker, health_err)
 
@@ -1770,7 +1962,10 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     conviction = board.get("conviction_vector") or {}
     data_quality = conviction.get("data_quality") if isinstance(conviction, dict) else None
     if isinstance(data_quality, (int, float)) and not isinstance(data_quality, bool) and data_quality < _get_param("DATA_QUALITY_FLOOR"):
-        return "HOLD_POLICY_BLOCKED_DATA_QUALITY"
+        return _record_gate(
+            desk, "HOLD_POLICY_BLOCKED_DATA_QUALITY",
+            action=action, data_quality=data_quality,
+        )
 
     tournament = getattr(desk, "tournament_result", None) or {}
 
@@ -1787,7 +1982,7 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
                 desk.ticker, justification[:300],
             )
         else:
-            return "HOLD_POLICY_BLOCKED_JURY_VETO"
+            return _record_gate(desk, "HOLD_POLICY_BLOCKED_JURY_VETO", action=action)
 
     # A solo juror veto is a standing risk flag: the board may trade through
     # it ONLY with explicit mitigation — a defined stop-loss, a dynamic
@@ -1799,8 +1994,15 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
         has_trigger = bool(mitigation.get("dynamic_trigger"))
         has_size = isinstance(mitigation.get("position_size_pct"), (int, float))
         if not (has_stop and has_trigger and has_size):
-            return "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK"
+            return _record_gate(
+                desk, "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK",
+                action=action, has_stop=has_stop,
+                has_trigger=has_trigger, has_size=has_size,
+                veto_overridden=veto_overridden,
+            )
 
+    # NOT recorded: reaching here means no guardrail fired. Counting the clean
+    # path would make the table a decision log rather than a firing log.
     return f"EXECUTE_{action}"
 
 
@@ -2199,8 +2401,14 @@ def _build_v1_compatible_result(
     # Extract final decision — prefer trade_decision (Layer 5) over
     # final_decision (Layer 4) when the decision agent is enabled
     decision = desk.trade_decision or desk.final_decision or {}
-    action = decision.get("action", "HOLD")
-    confidence = decision.get("confidence", 0)
+    # Never let a degraded desk hand downstream a plausible "HOLD": the whole
+    # point of the sentinel is that no agent decided. HOLD blocks the trade the
+    # same way, but it is a claim; DEGRADED is the absence of one.
+    if _is_degraded_decision(decision):
+        action = "DEGRADED"
+    else:
+        action = decision.get("action") or "HOLD"
+    confidence = decision.get("confidence") or 0
 
     if confidence is None or confidence == 0:
         logger.warning(

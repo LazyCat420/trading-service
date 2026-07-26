@@ -25,14 +25,21 @@ def _desk() -> SharedDesk:
 
 
 class TestProvenanceStamping:
-    def test_decision_artifacts_are_always_stamped(self):
+    def test_unstamped_decision_is_unattributed_not_reasoned(self):
         """A caller that forgets provenance still cannot produce an unmarked
-        decision — that is the whole point of stamping in append_artifact."""
+        decision — but it must not be CREDITED either.
+
+        This assertion was inverted until 2026-07-25: the default was
+        board_reasoned, so forgetting to stamp was indistinguishable from an
+        agent deciding. That fail-open default on the one anti-laundering
+        field is what let two hardcoded triage HOLDs into the accuracy
+        numbers. Absence of a claim is not a claim.
+        """
         desk = _desk()
         desk.append_artifact("final_decision", {"summary": "s", "action": "BUY"})
         assert (
             desk.final_decision["decision_provenance"]
-            == DecisionProvenance.BOARD_REASONED.value
+            == DecisionProvenance.UNATTRIBUTED.value
         )
 
     def test_trade_decision_is_stamped_too(self):
@@ -40,7 +47,14 @@ class TestProvenanceStamping:
         desk.append_artifact("trade_decision", {"summary": "s", "action": "HOLD"})
         assert (
             desk.trade_decision["decision_provenance"]
-            == DecisionProvenance.BOARD_REASONED.value
+            == DecisionProvenance.UNATTRIBUTED.value
+        )
+
+    def test_unattributed_is_not_scoreable(self):
+        """The point of the honest default: it stays out of accuracy figures."""
+        assert (
+            DecisionProvenance.UNATTRIBUTED.value
+            not in DecisionProvenance.scoreable()
         )
 
     def test_explicit_provenance_is_preserved(self):
@@ -83,14 +97,84 @@ class TestProvenanceStamping:
         assert "decision_provenance" not in desk.quant_report
 
     def test_only_board_reasoned_is_scoreable(self):
+        """Enumerated exhaustively on purpose: a new member added to the enum
+        must not be able to drift into the scoreable set unnoticed."""
         scoreable = DecisionProvenance.scoreable()
-        assert DecisionProvenance.BOARD_REASONED.value in scoreable
+        assert scoreable == {DecisionProvenance.BOARD_REASONED.value}
         for p in (
             DecisionProvenance.BOARD_DEGRADED_FALLBACK,
             DecisionProvenance.COERCED_UNSHORTABLE,
             DecisionProvenance.TIMEOUT_ABORT,
+            DecisionProvenance.NO_TRADE_GATE_SKIP,
+            DecisionProvenance.TRIAGE_SKIP,
+            DecisionProvenance.UNATTRIBUTED,
         ):
             assert p.value not in scoreable
+
+
+class TestTriageSkipsAreNotBoardOpinions:
+    """2026-07-25: the Triage Gate glance-skip and the JA triage SKIP both
+    wrote a hardcoded HOLD@0 with no provenance. The old permissive default
+    stamped them board_reasoned, so the scorecard scored a heuristic that ran
+    BEFORE any agent as though the board had reasoned to a HOLD.
+    """
+
+    def test_triage_skip_is_not_scoreable(self):
+        assert (
+            DecisionProvenance.TRIAGE_SKIP.value
+            not in DecisionProvenance.scoreable()
+        )
+
+    def test_triage_skip_survives_stamping(self):
+        """An explicit triage stamp must not be rewritten by append_artifact."""
+        desk = _desk()
+        desk.append_artifact("final_decision", {
+            "action": "HOLD", "confidence": 0,
+            "persona_used": "Triage Gate",
+            "decision_provenance": DecisionProvenance.TRIAGE_SKIP.value,
+        })
+        assert (
+            desk.final_decision["decision_provenance"]
+            == DecisionProvenance.TRIAGE_SKIP.value
+        )
+
+    def test_triage_skip_is_excluded_by_the_scorecard_rule(self):
+        desk = {"final_decision": {"decision_provenance": "triage_skip"}}
+        assert _resolve_provenance(desk) == "triage_skip"
+
+    def test_triage_skip_is_a_skip_not_a_degrade(self):
+        """A deliberate skip is a correct outcome, not a pipeline failure.
+
+        If this flips, a healthy glance-skip renders as action=DEGRADED, the
+        memory store learns an outcome_label of DEGRADED, and the policy gate
+        returns HOLD_DEGRADED_NO_DECISION — on the cheapest, highest-volume
+        route in the pipeline.
+        """
+        from app.v3.orchestrator import _is_degraded_decision
+
+        assert not _is_degraded_decision({
+            "action": "HOLD", "confidence": 0,
+            "decision_provenance": DecisionProvenance.TRIAGE_SKIP.value,
+        })
+
+    def test_board_degraded_is_still_a_degrade(self):
+        from app.v3.orchestrator import _is_degraded_decision
+
+        assert _is_degraded_decision({
+            "action": None,
+            "decision_provenance": DecisionProvenance.BOARD_DEGRADED_FALLBACK.value,
+        })
+
+    def test_triage_skip_hold_still_gates_as_no_signal(self):
+        from app.v3.orchestrator import _apply_policy_gates
+
+        desk = _desk()
+        desk.append_artifact("final_decision", {
+            "action": "HOLD", "confidence": 0,
+            "persona_used": "Triage Gate",
+            "decision_provenance": DecisionProvenance.TRIAGE_SKIP.value,
+        })
+        assert _apply_policy_gates(desk) == "HOLD_NO_SIGNAL"
 
 
 def _resolve_provenance(desk: dict) -> str | None:

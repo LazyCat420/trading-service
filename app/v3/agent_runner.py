@@ -20,7 +20,7 @@ import logging
 import time
 from typing import Any
 
-from app.v3.shared_desk import SharedDesk, PhaseOutcome
+from app.v3.shared_desk import SharedDesk, PhaseOutcome, DecisionProvenance
 # NOTE: the live turn budget is get_agent_budget_turns (tool_whitelists), not
 # guardrails.get_budget_for_role — that one only serves the non-V3 prism path.
 from app.v3.guardrails import (
@@ -81,6 +81,53 @@ def _safe_max_tokens(
             agent_name, e, _REQUESTED_MAX_TOKENS,
         )
         return _REQUESTED_MAX_TOKENS
+
+
+def guard_unshortable_sell(artifact: dict, *, desk: Any, bot_id: str = "") -> dict:
+    """Coerce a SELL the bot cannot place, on ANY path that decides.
+
+    Extracted from run_v3_agent so the delta (energy-saver) tier can reuse it.
+    The delta tier wrote `final_decision` directly and returned before Layer 6,
+    so this guard — and every policy gate — was skipped on the highest-volume
+    route in the pipeline (2026-07-25 audit).
+
+    A MISSING `held` key is NOT treated as "not held": that would coerce real
+    exits on any cycle whose portfolio lookup failed. Only an affirmative
+    `held is False`, re-confirmed against the live book, suppresses a SELL.
+    """
+    if not isinstance(artifact, dict):
+        return artifact
+    if str(artifact.get("action") or "").upper() != "SELL":
+        return artifact
+    if desk.cycle_metadata.get("held") is not False:
+        return artifact
+
+    # Re-check against the live book before suppressing an exit. `held` is
+    # computed once at desk build; when bot_id resolution was broken it read
+    # False for EVERY ticker, including ones the desk genuinely owned
+    # (2026-07-24). Coercing on that stale flag alone would have converted real
+    # exits into HOLDs — the one failure mode of this guard that costs money.
+    really_held = None
+    try:
+        from app.tools.portfolio_tools import get_position_context
+        really_held = bool(get_position_context(desk.ticker, bot_id).get("held"))
+    except Exception as pos_err:  # noqa: BLE001
+        logger.warning(
+            "[V3Runner] %s: live position re-check failed (%s) — leaving the "
+            "SELL intact rather than risk suppressing a real exit",
+            desk.ticker, pos_err,
+        )
+    if really_held is False:
+        from app.v3.artifact_validators import coerce_unshortable_sell
+        return coerce_unshortable_sell(
+            artifact, held=False, ticker=desk.ticker, cycle_id=desk.cycle_id,
+        )
+    if really_held:
+        logger.error(
+            "[V3Runner] %s: desk metadata said held=False but the bot DOES "
+            "hold it — SELL preserved; bot_id resolution is wrong", desk.ticker,
+        )
+    return artifact
 
 
 def _get_tool_playbook_tips(agent_name: str, limit: int = 3) -> str:
@@ -771,38 +818,7 @@ async def run_v3_agent(
         # (a MISSING `held` key is not treated as "not held" — that would coerce
         # real exits on any cycle whose portfolio lookup failed).
         if artifact_type in ("final_decision", "trade_decision"):
-            _held = desk.cycle_metadata.get("held")
-            if _held is False and str(artifact.get("action") or "").upper() == "SELL":
-                # Re-check against the live book before suppressing an exit.
-                # `held` is computed once at desk build; when bot_id resolution
-                # was broken it read False for EVERY ticker, including ones the
-                # desk genuinely owned (2026-07-24). Coercing on that stale flag
-                # alone would have converted real exits into HOLDs — the one
-                # failure mode of this guard that costs money.
-                _really_held = None
-                try:
-                    from app.tools.portfolio_tools import get_position_context
-                    _really_held = bool(
-                        get_position_context(desk.ticker, bot_id).get("held")
-                    )
-                except Exception as _pos_err:  # noqa: BLE001
-                    logger.warning(
-                        "[V3Runner] %s: live position re-check failed (%s) — "
-                        "leaving the SELL intact rather than risk suppressing a "
-                        "real exit", desk.ticker, _pos_err,
-                    )
-                if _really_held is False:
-                    from app.v3.artifact_validators import coerce_unshortable_sell
-                    artifact = coerce_unshortable_sell(
-                        artifact, held=False,
-                        ticker=desk.ticker, cycle_id=desk.cycle_id,
-                    )
-                elif _really_held:
-                    logger.error(
-                        "[V3Runner] %s: desk metadata said held=False but the bot "
-                        "DOES hold it — SELL preserved; bot_id resolution is wrong",
-                        desk.ticker,
-                    )
+            artifact = guard_unshortable_sell(artifact, desk=desk, bot_id=bot_id)
 
         # SHADOW (2026-07-25): mark the one board override measured to lose
         # money — board turning bearish over a fundamental desk that reported
@@ -827,6 +843,19 @@ async def run_v3_agent(
                     "[V3Runner] %s: override shadow flag failed (non-fatal): %s",
                     desk.ticker, _shadow_err,
                 )
+
+        # 2026-07-25: provenance is ASSERTED here, at the one call site that
+        # knows an agent actually ran and produced this artifact. It used to be
+        # inferred by append_artifact's default, which credited every unstamped
+        # decision — including two hardcoded triage HOLDs — as board-reasoned.
+        # Moving the claim to where the evidence is means the default can be
+        # honest (unattributed) without demoting real board output. Only fills
+        # a blank: the validators above (unshortable-SELL coercion) already set
+        # the field, and their marker must win.
+        if artifact_type in ("final_decision", "trade_decision") and not artifact.get(
+            "decision_provenance"
+        ):
+            artifact["decision_provenance"] = DecisionProvenance.BOARD_REASONED.value
 
         # Append to SharedDesk
         desk.append_artifact(artifact_type, artifact)

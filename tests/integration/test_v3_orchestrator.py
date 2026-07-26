@@ -57,6 +57,11 @@ class TestV1CompatibleResult:
             "reasoning": "Strong fundamentals and momentum.",
             "persona_used": "warren_buffett",
             "regime": "DEEP_DISCOUNT",
+            # Simulates real board output, which agent_runner stamps at the
+            # append call site (2026-07-25). Unstamped it would be
+            # `unattributed` — correct for a forgetful caller, wrong as a
+            # stand-in for a board that genuinely decided.
+            "decision_provenance": "board_reasoned",
         })
 
         result = _build_v1_compatible_result(desk, elapsed_s=5.0)
@@ -87,6 +92,7 @@ class TestV1CompatibleResult:
             "action": "SELL",
             "confidence": 65,
             "reasoning": "Overvalued.",
+            "decision_provenance": "board_reasoned",  # real board output
         })
         result = _build_v1_compatible_result(desk)
         assert result["c_result"]["action"] == "SELL"

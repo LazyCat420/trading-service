@@ -61,6 +61,23 @@ class DecisionProvenance(str, Enum):
     NO_TRADE_GATE_SKIP = "no_trade_gate_skip"            # unheld + unanimously bearish → debate skipped
     COERCED_UNSHORTABLE = "coerced_unshortable"          # SELL on an unheld ticker rewritten to HOLD
     TIMEOUT_ABORT = "timeout_abort"                      # phase timed out; desk aborted
+    # 2026-07-25: the two triage writers (Triage Gate glance-skip and JA
+    # triage SKIP) wrote a hardcoded HOLD@0 with no provenance and were
+    # therefore stamped board_reasoned by the old permissive default — so the
+    # scorecard counted them as real board opinions, though NO agent ran. Kept
+    # distinct from NO_TRADE_GATE_SKIP deliberately: that gate fires AFTER the
+    # research tier on an unheld + unanimously bearish desk, whereas this is a
+    # pre-agent age/news-count heuristic. Different cause, different fix
+    # (TRIAGE_GLANCE_HOURS vs. the no-trade gate) — collapsing them would make
+    # "why did we not decide?" unanswerable from the field that exists to
+    # answer it. One member covers both writers because `persona_used` already
+    # separates them.
+    TRIAGE_SKIP = "triage_skip"                          # triage heuristic skipped it; no agent ran
+    # The honest answer when nothing claimed the decision. This is the
+    # append_artifact default: an unstamped decision artifact is NOT evidence
+    # an agent decided, and saying so out loud is what stops the next fallback
+    # path from laundering itself into the accuracy numbers.
+    UNATTRIBUTED = "unattributed"                        # nobody claimed it; not an agent decision
 
     @classmethod
     def scoreable(cls) -> frozenset[str]:
@@ -172,8 +189,18 @@ class SharedDesk:
         # Every decision artifact says where its action came from. Stamped
         # HERE rather than at the ~6 call sites so a future fallback path
         # cannot produce an unmarked decision by forgetting to set it.
-        # A caller that already set provenance (a degrade/coercion path) wins;
-        # anything else reaching this point is a real agent decision.
+        # A caller that already set provenance (a degrade/coercion path) wins.
+        #
+        # 2026-07-25: this default used to be BOARD_REASONED — fail-OPEN on
+        # the single field whose whole purpose is to stop laundering. Any path
+        # that forgot to stamp was automatically credited with "an agent
+        # decided this", which is exactly how two hardcoded HOLD@0 triage
+        # writers were scored as real board opinions. The default is now
+        # UNATTRIBUTED: absence of a claim is not a claim. board_reasoned is
+        # asserted only where an agent is KNOWN to have produced the artifact
+        # (agent_runner's append call site, and the delta tier which bypasses
+        # it), so a new fallback path can no longer inherit credibility by
+        # omission.
         if artifact_type in _DECISION_ARTIFACT_TYPES:
             existing = artifact.get("decision_provenance")
             if existing not in _VALID_PROVENANCE:
@@ -182,14 +209,14 @@ class SharedDesk:
                         "[SharedDesk] %s/%s: unknown decision_provenance %r on %s "
                         "— recording as %s",
                         self.cycle_id, self.ticker, existing, artifact_type,
-                        DecisionProvenance.BOARD_REASONED.value,
+                        DecisionProvenance.UNATTRIBUTED.value,
                     )
                 # A coercion may have run before the artifact reached the desk
                 # (validators run in agent_runner), so honour its marker.
                 artifact["decision_provenance"] = (
                     DecisionProvenance.COERCED_UNSHORTABLE.value
                     if artifact.get("_coerced_from")
-                    else DecisionProvenance.BOARD_REASONED.value
+                    else DecisionProvenance.UNATTRIBUTED.value
                 )
 
         # Harvest optional free-form tags the agent put in its JSON (the
