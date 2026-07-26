@@ -23,7 +23,23 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
     try:
         from app.db.connection import get_db
 
-        action = verdict.get("action", "HOLD")
+        # Reject an unparseable action AT THE WRITE, not only at the policy gate.
+        # Three rows reached this table with actions no consumer understands:
+        # two `NEUTRAL` and one literal `BUY|SELL|HOLD` (the model echoing the
+        # schema's enum instead of choosing from it). Every downstream reader
+        # tests `action IN ('BUY','SELL')`, so these rows are silently invisible
+        # to execution and silently COUNTED by accuracy queries — laundering a
+        # parse failure into a decision. Storing HOLD is honest: no executable
+        # action was expressed, and the original is preserved in the reasoning.
+        _raw_action = verdict.get("action", "HOLD")
+        action = str(_raw_action or "HOLD").strip().upper()
+        if action not in ("BUY", "SELL", "HOLD"):
+            logger.warning(
+                "[TradeResultSaver] %s/%s: unparseable action %r — storing HOLD "
+                "rather than a value no consumer understands",
+                cycle_id, ticker, _raw_action,
+            )
+            action = "HOLD"
         confidence = int(verdict.get("confidence", 0))
         reasoning = verdict.get("reasoning", "")
         signal_weights = verdict.get("signal_weights", {})

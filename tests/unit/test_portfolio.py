@@ -118,14 +118,35 @@ def test_take_snapshot(mock_get_db, mock_get_current_state, mock_db):
 def test_get_equity_curve(mock_get_db, mock_db):
     mock_get_db.return_value.__enter__.return_value = mock_db
     now = "2023-10-01T00:00:00Z"
+    # (total_value, cash_balance, snapshot_ts, realized_pnl, unrealized_pnl).
+    # The P&L columns joined the SELECT on 2026-07-26 — they were in the schema
+    # and never written, so the equity curve could not be decomposed into
+    # "trades we closed" vs "marks that moved".
     mock_db.execute.return_value.fetchall.return_value = [
-        (1000.0, 500.0, now)
+        (1000.0, 500.0, now, 42.0, -7.5)
     ]
-    
+
     curve = get_equity_curve("bot1")
-    
+
     assert len(curve) == 1
     assert curve[0]["total_value"] == 1000.0
+    assert curve[0]["realized_pnl"] == 42.0
+    assert curve[0]["unrealized_pnl"] == -7.5
+
+
+@patch("app.trading.portfolio.get_db")
+def test_get_equity_curve_reports_missing_pnl_as_none(mock_get_db, mock_db):
+    """Rows written before 2026-07-26 carry NULL. Surfacing that as 0.0 would
+    claim the book made nothing, when the truth is nobody recorded it."""
+    mock_get_db.return_value.__enter__.return_value = mock_db
+    mock_db.execute.return_value.fetchall.return_value = [
+        (1000.0, 500.0, "2023-10-01T00:00:00Z", None, None)
+    ]
+
+    curve = get_equity_curve("bot1")
+
+    assert curve[0]["realized_pnl"] is None
+    assert curve[0]["unrealized_pnl"] is None
 
 @patch("app.trading.portfolio.get_current_state")
 @patch("app.services.bot_manager.get_bot_starting_cash", return_value=10000.0)

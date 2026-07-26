@@ -193,11 +193,24 @@ def get_current_state(bot_id: str = "") -> dict:
         bid,
     )
 
+    # Unrealized P&L: mark-to-market on open positions. Computed here because
+    # `equity` already carries the sanity-checked current prices, so recomputing
+    # it downstream would risk using a different price than total_value did and
+    # produce a book that does not add up.
+    cost_basis = sum(
+        p["qty"] * p["avg_entry_price"] for p in positions if p.get("avg_entry_price")
+    )
+    unrealized_pnl = equity - cost_basis
+
     return {
         "bot_id": bid,
         "cash": cash,
         "total_value": total_value,
         "total_pnl": total_pnl,
+        "realized_pnl": total_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "cost_basis": cost_basis,
+        "equity": equity,
         "positions": positions,
         "position_count": len(positions),
         "updated_at": utc_iso(updated_at),
@@ -258,7 +271,8 @@ def get_equity_curve(bot_id: str = "", days: int = 30) -> list[dict]:
     days = max(1, min(int(days), 365))
     with get_db() as db:
         rows = db.execute(
-            "SELECT total_value, cash_balance, snapshot_ts "
+            "SELECT total_value, cash_balance, snapshot_ts, "
+            "       realized_pnl, unrealized_pnl "
             "FROM portfolio_snapshots WHERE bot_id = %s "
             f"AND snapshot_ts >= CURRENT_TIMESTAMP - INTERVAL '{days} days' "
             "ORDER BY snapshot_ts ASC",
@@ -269,6 +283,11 @@ def get_equity_curve(bot_id: str = "", days: int = 30) -> list[dict]:
             "total_value": _safe_float(r[0], fallback=0.0),
             "cash": _safe_float(r[1], fallback=0.0),
             "timestamp": utc_iso(r[2]),
+            # NULL on rows written before 2026-07-26 and deliberately surfaced as
+            # None rather than 0.0: a zero would claim the book made nothing,
+            # when the truth is that nobody recorded it.
+            "realized_pnl": _safe_float(r[3]) if r[3] is not None else None,
+            "unrealized_pnl": _safe_float(r[4]) if r[4] is not None else None,
         }
         for r in rows
     ]
@@ -282,16 +301,28 @@ def take_snapshot(bot_id: str = "") -> dict:
     snap_id = str(uuid.uuid4())
     try:
         with get_db() as db:
+            # realized/unrealized P&L were in the schema and never written — all
+            # 25 rows carried NULL, so the equity curve (the only true bottom
+            # line) could not be decomposed into "trades we closed" versus "marks
+            # that moved". A column that exists and is never populated reads as a
+            # measurement rather than a gap (2026-07-26 audit).
             db.execute(
                 "INSERT INTO portfolio_snapshots "
-                "(id, bot_id, snapshot_ts, cash_balance, total_value) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                [snap_id, bid, now, state["cash"], state["total_value"]],
+                "(id, bot_id, snapshot_ts, cash_balance, total_value, "
+                " realized_pnl, unrealized_pnl) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                [
+                    snap_id, bid, now, state["cash"], state["total_value"],
+                    round(state.get("realized_pnl") or 0.0, 4),
+                    round(state.get("unrealized_pnl") or 0.0, 4),
+                ],
             )
         logger.info(
-            "snapshot: %s total_value=%.2f",
+            "snapshot: %s total_value=%.2f realized=%.2f unrealized=%.2f",
             bid,
             state["total_value"],
+            state.get("realized_pnl") or 0.0,
+            state.get("unrealized_pnl") or 0.0,
         )
     except Exception as e:
         logger.error("snapshot failed: %s", e)
