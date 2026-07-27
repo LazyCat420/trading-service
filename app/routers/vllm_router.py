@@ -102,6 +102,21 @@ class SetActiveRequest(BaseModel):
     bot_id: str
 
 
+class ImportPositionModel(BaseModel):
+    ticker: str
+    quantity: float
+    cost_per_share: float
+    opened_at: Optional[str] = None
+    stop_loss_pct: Optional[float] = None
+
+
+class ImportPortfolioRequest(BaseModel):
+    positions: list[ImportPositionModel] = []
+    cash: float = 0.0
+    mode: str = "replace"  # replace | merge
+    set_starting_cash: bool = True
+
+
 class TriggerCreate(BaseModel):
     bot_id: str
     ticker: str
@@ -483,6 +498,24 @@ def bot_reset_profile(bot_id: str):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/v1/bot/profiles/{bot_id}/import")
+def bot_import_positions(bot_id: str, req: ImportPortfolioRequest):
+    """Seed a profile with holdings imported from a brokerage export."""
+    try:
+        return bot_manager.import_positions(
+            bot_id=bot_id,
+            positions=[p.model_dump() for p in req.positions],
+            cash=req.cash,
+            mode=req.mode,
+            set_starting_cash=req.set_starting_cash,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Error importing positions for %s", bot_id)
         raise HTTPException(status_code=500, detail=str(e))
 
 

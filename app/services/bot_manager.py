@@ -413,6 +413,210 @@ def reset_bot_profile(bot_id: str) -> dict:
     }
 
 
+_IMPORT_TABLES = (
+    "positions",
+    "orders",
+    "trade_fills",
+    "position_lots",
+    "lot_closures",
+    "portfolio_snapshots",
+)
+
+
+def import_positions(
+    bot_id: str,
+    positions: list[dict],
+    cash: float,
+    mode: str = "replace",
+    set_starting_cash: bool = True,
+) -> dict:
+    """Seed a profile with real holdings brought in from a brokerage export.
+
+    Each imported holding becomes a full ledger entry, not just a `positions`
+    row: a synthetic BUY fill (source='import') plus one open lot marked
+    `is_legacy`. Without the lot, the first SELL has nothing to close against
+    and lot-level realized P&L is wrong for the life of the profile.
+
+    Entry price is the REAL cost basis the user paid. That keeps P&L honest at
+    the cost of making stops relative to a price from years ago, which cuts
+    both ways: a long-held winner's stop sits far below the market, and a
+    long-held loser is already through its stop the moment it lands. Imported
+    positions therefore get exit_style='reanalyze_on_breach' so the background
+    monitor hands a breach to the agent instead of liquidating an underwater
+    holding the user just brought in.
+
+    starting_cash is set to cash + total cost basis: the capital actually put
+    in, so equity-vs-starting_cash reads as true lifetime return. total_pnl
+    and total_trades are deliberately left alone — an import is not a trade
+    the bot made, and the scorecard must not count it as one.
+    """
+    if mode not in ("replace", "merge"):
+        raise ValueError("mode must be 'replace' or 'merge'")
+    if is_cycle_running():
+        raise ValueError(
+            "Cannot import positions while a pipeline cycle is running. "
+            "Stop the cycle first."
+        )
+
+    now = datetime.now(timezone.utc)
+    total_cost = sum(
+        float(p["quantity"]) * float(p["cost_per_share"]) for p in positions
+    )
+
+    with get_db() as db:
+        row = db.execute(
+            "SELECT starting_cash FROM bots WHERE bot_id = %s", [bot_id]
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Bot profile '{bot_id}' does not exist")
+
+        with db.transaction():
+            if mode == "replace":
+                for table in _IMPORT_TABLES:
+                    try:
+                        db.execute(f"DELETE FROM {table} WHERE bot_id = %s", [bot_id])
+                    except Exception as e:
+                        logger.warning("import: clearing %s for %s: %s", table, bot_id, e)
+
+            imported, merged = [], []
+            for p in positions:
+                ticker = str(p["ticker"]).strip().upper()
+                qty = float(p["quantity"])
+                price = float(p["cost_per_share"])
+                if qty <= 0 or price <= 0:
+                    raise ValueError(f"{ticker}: quantity and cost basis must be positive")
+
+                opened_at = _parse_opened_at(p.get("opened_at")) or now
+                stop_pct = p.get("stop_loss_pct")
+                stop_pct = float(stop_pct) if stop_pct else _default_stop_pct(ticker)
+
+                existing = db.execute(
+                    "SELECT id, qty, avg_entry_price FROM positions "
+                    "WHERE bot_id = %s AND ticker = %s",
+                    [bot_id, ticker],
+                ).fetchone()
+
+                if existing:
+                    old_id, old_qty, old_price = existing
+                    new_qty = float(old_qty) + qty
+                    new_avg = (
+                        float(old_qty) * float(old_price) + qty * price
+                    ) / new_qty
+                    db.execute(
+                        "UPDATE positions SET qty = %s, avg_entry_price = %s WHERE id = %s",
+                        [new_qty, round(new_avg, 6), old_id],
+                    )
+                    merged.append(ticker)
+                else:
+                    db.execute(
+                        """
+                        INSERT INTO positions
+                          (id, bot_id, ticker, qty, avg_entry_price, stop_loss_pct,
+                           stop_source, exit_style, opened_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'imported',
+                                'reanalyze_on_breach', %s)
+                        """,
+                        [
+                            str(uuid.uuid4()), bot_id, ticker, qty, price,
+                            stop_pct, opened_at,
+                        ],
+                    )
+                    imported.append(ticker)
+
+                # Ledger: synthetic BUY fill + the open lot it created.
+                order_id = str(uuid.uuid4())
+                fill_id = str(uuid.uuid4())
+                db.execute(
+                    """
+                    INSERT INTO orders
+                      (id, bot_id, ticker, side, qty, price, signal, created_at, filled_at)
+                    VALUES (%s, %s, %s, 'BUY', %s, %s, 'import', %s, %s)
+                    """,
+                    [order_id, bot_id, ticker, qty, price, opened_at, opened_at],
+                )
+                db.execute(
+                    """
+                    INSERT INTO trade_fills
+                      (fill_id, order_id, bot_id, ticker, side, fill_qty, fill_price,
+                       fill_value, fees, filled_at, source)
+                    VALUES (%s, %s, %s, %s, 'BUY', %s, %s, %s, 0.0, %s, 'import')
+                    """,
+                    [
+                        fill_id, order_id, bot_id, ticker, qty, price,
+                        round(qty * price, 2), opened_at,
+                    ],
+                )
+                db.execute(
+                    """
+                    INSERT INTO position_lots
+                      (lot_id, bot_id, ticker, fill_id, opened_at, original_qty,
+                       remaining_qty, entry_price, status, is_legacy)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'open', TRUE)
+                    """,
+                    [
+                        str(uuid.uuid4()), bot_id, ticker, fill_id, opened_at,
+                        qty, qty, price,
+                    ],
+                )
+
+            if set_starting_cash:
+                db.execute(
+                    "UPDATE bots SET cash_balance = %s, starting_cash = %s, status = 'idle' "
+                    "WHERE bot_id = %s",
+                    [cash, round(cash + total_cost, 2), bot_id],
+                )
+            else:
+                db.execute(
+                    "UPDATE bots SET cash_balance = %s, status = 'idle' WHERE bot_id = %s",
+                    [cash, bot_id],
+                )
+
+    logger.info(
+        "[BOT_MANAGER] Imported %d positions (%d merged) into '%s' — "
+        "cost basis $%.2f, cash $%.2f, mode=%s",
+        len(imported) + len(merged), len(merged), bot_id, total_cost, cash, mode,
+    )
+    return {
+        "bot_id": bot_id,
+        "imported": True,
+        "mode": mode,
+        "positions_created": len(imported),
+        "positions_merged": len(merged),
+        "tickers": imported + merged,
+        "cost_basis": round(total_cost, 2),
+        "cash": cash,
+        "starting_cash": round(cash + total_cost, 2) if set_starting_cash else None,
+    }
+
+
+def _default_stop_pct(ticker: str) -> float:
+    """Asset-class default stop for an imported holding.
+
+    Deliberately NOT the ATR-derived stop paper_trader computes at buy time:
+    that formula is `ATR * k / entry_price`, and an entry price from years ago
+    makes it meaningless — a 10x winner would get a sub-1% stop.
+    """
+    from app.trading.paper_trader import _STOP_BOUNDS
+
+    try:
+        from app.config.config_tickers import classify_asset
+
+        return _STOP_BOUNDS[classify_asset(ticker)][2]
+    except Exception:
+        return _STOP_BOUNDS["stock"][2]
+
+
+def _parse_opened_at(raw) -> datetime | None:
+    """Accept an ISO date/datetime string from the import payload."""
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def delete_bot_profile(bot_id: str) -> dict:
     """Delete a bot profile and ALL its trading data.
 
