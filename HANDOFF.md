@@ -1,156 +1,189 @@
-# HANDOFF — The self-healing loop now grades patches instead of debating them (2026-07-27)
+# HANDOFF — A broken tool is not an absence of information (2026-07-27)
 
-Shipped `cd7f606`, deployed to `synology` 2026-07-27 09:14Z. Previous wave's
-handoff archived to [`docs/HANDOFF_report_audit_2026-07-25.md`](docs/HANDOFF_report_audit_2026-07-25.md).
+Shipped `a4c763e` · `2bceb70` · `e5ad40b`, plus lazycat-sdk `a201770`.
+**NOT DEPLOYED — deliberately.** See [Deploy](#deploy) below.
 
----
+The CORAL wave's handoff (shipped `cd7f606`, deployed 09:14Z) is archived to
+[`docs/HANDOFF_coral_repair_loop_2026-07-27.md`](docs/HANDOFF_coral_repair_loop_2026-07-27.md);
+that work is unaffected by this one.
 
-## What is live right now
-
-The hourly self-healing watchdog no longer proposes patches. It resolves a cycle
-failure to a symbol, writes one row to `evolution_repair_queue`, and stops.
-Repair happens on a **host checkout** via `scripts/evo_runner.py`, which
-proposes on both vLLM boxes, applies each candidate in a throwaway git worktree,
-and **scores it by running the tests**. A candidate that fixes a red test
-without regressing the baseline gets a branch. Nothing merges, nothing deploys.
-
-The split is forced, not stylistic: the trading-service image has **no `.git`,
-no `git` binary, and no `pytest`**. Nothing inside the container can verify a
-patch, which is why the old loop could not either.
-
-### Why the old loop was replaced
-
-It was a proposer/critic/judge council modelled on
-[CORAL](https://github.com/Human-Agent-Society/CORAL) that had dropped the part
-of CORAL that carries the weight — a grader that scores every candidate.
-Measured over its entire history (`pending_evolution_fixes`, 96 rows):
-
-| | |
-|---|---|
-| debates that produced a usable fix | **0 of 57** |
-| rejected for literal mid-statement truncation | 33 |
-| rejected on prism 500s (dead `vllm_client.py` path, May) | 14 |
-| repair targets larger than the 4,000-char view the proposer got | **27 of 30** |
-| targets too large to re-emit in a 4096-token completion at all | **11 of 30** |
-| cost per proposer call, measured | ~20 min, 47k input tokens |
-
-The judge saw `proposed_fix[:3000]` and *never saw the original file*, so it
-could not detect deletion: two of three judges scored one candidate 90 and 100
-for "issue resolution" while it deleted nine functions including
-`yfinance_collector.collect_all`.
-
-### The new module — `app/cognition/evolution/coral/`
-
-| file | what it does |
-|---|---|
-| `grader.py` | `ScoreBundle` from pytest: compiles → public API preserved → repro passes → suite no worse than a **captured baseline** |
-| `repro.py` | the negative control; a test is discarded unless it **fails on unmodified HEAD** |
-| `patcher.py` | unified diffs through a ladder of `git apply` strategies |
-| `worktree.py` | one disposable worktree per candidate |
-| `loop.py` | both boxes propose in parallel, ranked by score. **No judge.** |
-| `attempts.py` | commit-keyed attempts, leaderboard, plateau stop |
-
-Score ladder (`types.py`): `0.00` did not apply / does not compile · `0.25`
-repro still fails · `0.60` repro passes but something regressed or a public
-symbol was deleted · `1.00` green.
-
-### Verified end to end
-
-Run against a genuinely red test
-(`test_parameter_tools.py::test_whitelists_grant_write_to_pm_and_board_only`):
-**both islands independently scored 1.00** on a two-file patch —
-`1448 passed / 1 failed` against a baseline of 2 failures. Branch
-`evo/fundamental_analyst-80e6d46c` exists **locally, unpushed** (see Open items).
+Full audit with every measurement:
+[`../.agents/AUDIT-data-collection-cycle-v3-1785137616.md`](../.agents/AUDIT-data-collection-cycle-v3-1785137616.md).
 
 ---
 
-## How to run it
+## What this wave was
 
-```bash
-python scripts/evo_runner.py --list          # what the container queued
-python scripts/evo_runner.py --once          # drain one job
-python scripts/evo_runner.py --drain         # until empty
-python scripts/evo_runner.py --baseline      # re-characterise the suite
-python scripts/evo_runner.py --leaderboard app/collectors/yfinance_collector.py
+Audit the data collection behind `cycle-v3-1785137616` (SBUX STT AGNC ASC BOOT
+NDAQ AMZN, 22m39s, **7/7 HOLD**) and fix what it found. CORAL was explicitly out
+of scope.
 
-# ad-hoc, skipping the queue
-python scripts/evo_runner.py --path-only --path app/v3/agents/fundamental_analyst.py \
-  --context app/v3/agents/quant_analyst.py \
-  --repro-test "tests/unit/test_x.py::test_y" --no-push
+---
+
+## THE HEADLINE
+
+**Three independent degradations were live, and the cycle recorded `SUCCESS` on
+every phase for every ticker.**
+
+DuckDuckGo had begun refusing our egress IP. Probed from inside the container:
+
+```
+lite.duckduckgo.com   ConnectTimeout  15.2s
+html.duckduckgo.com   ConnectTimeout  15.0s
+finnhub.io            200  0.2s          ← egress is fine
 ```
 
----
+`lazy_web_search` had exactly one backend, so the junior analyst's only research
+tool failed 8/8. Then STT's own desk note recorded the consequence:
 
-## Open items
+```json
+"data_gaps": ["DataGap: ... catalysts for STT (web search timeout)"],
+"triage_recommendation": "QUANT_ONLY",
+"_quality_flag": "good", "_quality_score": 81,
+"_failure_patterns": ["FALLBACK_OUTPUT"]
+```
 
-1. **`evo/fundamental_analyst-80e6d46c` is unpushed and needs a human call.**
-   The patch adds `get_parameters` back to the fundamental and quant analyst
-   whitelists. It goes green — but it *reverts a deliberate removal*: both files
-   carried a comment saying `get_parameters` was dropped on 2026-07-25 for zero
-   calls in 60 days. So either that removal was wrong, or
-   `test_whitelists_grant_write_to_pm_and_board_only` is a stale expectation and
-   the **test** should change. The loop cannot decide this and correctly refused
-   to touch `tests/` (see Gotchas). Decide, then push or `git branch -D` it.
+The orchestrator honoured that triage and skipped the Fundamental Analyst. STT
+and NDAQ each got a 526-byte stub with all five pillars `"Not analyzed"`, on the
+stated grounds that no qualitative catalysts existed. **NDAQ then produced the
+cycle's only BUY.** The quality scorer rated that artifact 81/"good" while it
+carried its own `FALLBACK_OUTPUT` flag.
 
-2. **`tests/unit/test_tool_whitelists.py::test_quant_analyst_has_calculator_tools`**
-   is the other pre-existing baseline failure. Same shape, not investigated.
-
-3. **`debate.py` (926 lines) and `deployer.py` are now unreferenced** by the
-   watchdog but still on disk, and the Auto-Research panel still reads
-   `pending_evolution_fixes`. That table is a graveyard: 88 of its 96 rows are
-   from May, and every `scraper_issue` row plus the `FAILED_REQUIRES_HUMAN`
-   status was written by code that no longer exists in the repo. Either point
-   the panel at `evolution_attempts` or add a date window — as it stands the UI
-   presents May fossils as a live queue.
-
-4. **The queue has no drain schedule.** `evo_runner.py` is manual. If you want it
-   automatic it needs a cron/systemd unit *on the workstation*, not the NAS.
+`research_degraded()` now refuses a shortening triage when the analyst's tools
+failed. It can only ever *add* work, and fails open on a probe error.
 
 ---
 
-## Gotchas
+## What measuring found that reading would not have
 
-- **The grader compares against a captured baseline, not against all-green.**
-  This repo has two known failing tests; a rule demanding zero failures would
-  reject every patch forever. Baselines are cached per HEAD sha under
-  `.evo-worktrees/baselines/` — `--baseline` refreshes.
+Three of the fixes changed shape once run against real data. This is the part
+worth keeping.
 
-- **`tests/` is deny-listed in `repair_scope.py` on purpose.** A fixer that can
-  edit the test can pass by rewriting the assertion. This is why item 1 above is
-  a human decision and not something the loop can resolve.
+**The new search was wrong on its first live run.** It worked — and returned a
+**2012** Starbucks earnings-call transcript for "Q3 earnings catalyst", plus a
+March article for STT. Both providers serve the archive for present-tense
+queries. That is the *same* disease as the news table (ASC's "Recent News" ran
+to 2024-07-24), and I would have shipped it into the fix for it. Results are now
+newest-first with `age_days`, a 30-day window that widens rather than returning
+nothing.
 
-- **No reproduction test means nothing can score above 0.25**, by design. A loop
-  graded only on "the suite still passes" rewards an empty diff.
+**The price bug was not the one I scoped.** "Widen the refresh past the 509
+S&P names" was wrong. A live fetch showed `fetch_price_history` returning **250
+rows with a stale tip**: yfinance serves the latest session as NaN OHLC with a
+real Volume — Friday 07-24 was still NaN on Monday, for SBUX as much as for ASC.
+`fetch_ohlcv_dataframe` drops such a bar and should. The 509 look fresh only
+because the S&P post-close loop catches the bar while it is briefly complete.
+The real defect was that **a partial success suppressed the fallback**: the
+function returned on `count > 0`, and 250 is > 0. Compounding it, the Polygon
+price fallback was gated on `POLYGON_API_KEY`, which is **empty** on the live
+container — the key lives in `MASSIVE_API_KEY`, which is what the news rotator
+had always read. Polygon served news all along while the price path skipped it.
 
-- **Qwen3-class models bill reasoning to the output budget.** Before
-  `vllm_direct.py` disabled thinking for this task, every jetson proposal spent
-  all 4096 tokens inside `<think>` and returned `content: ""` — scored 0.00 for
-  "empty response" when the model had reasoned fine and never got to write.
+Verified live: ASC, BOOT and AGNC each moved `2026-07-23 → 2026-07-24`,
+`source='polygon'`.
 
-- **`llm.chat(endpoint_override=...)` in `prism_agent_caller.py` is still
-  silently dropped** (so are `history`, `tools`, `images`). Anything that thinks
-  it is choosing a box through `llm.chat` is not. The repair loop sidesteps this
-  by calling `/v1/chat/completions` directly; other callers have not been
-  audited.
-
-- **Unmapped `evo_*` / unknown agent names resolve to
-  `CUSTOM_SYSTEM_JANITOR_AGENT`** via `resolve_agent_id`'s fallback. That is how
-  three "roles" became one persona. Check `resolve_agent_id(name)` before
-  assuming a new agent name routes anywhere.
-
-- **A bug that spans two files needs `--context`.** A single-file diff can never
-  make a control pass that requires both; the loop will honestly grind at 0.25.
-  It parks a target after 6 graded attempts (`PLATEAU_ATTEMPTS`).
+**The AI anti-pattern was rewritten from samples, not guesses.** Phrase patterns
+caught 28 of 60 rows. Sampling the misses found "physical AI", "top 10 AI
+stocks", "Agentic Voice AI leader", "574% AI cloud revenue" — twelve for twelve
+about the technology, none about C3.ai. So "AI" now inverts the burden: assumed
+jargon unless something explicitly names the company.
 
 ---
 
-## Where the reasoning lives
+## Ticker mis-attribution, measured
 
-- CORAL upstream: https://github.com/Human-Agent-Society/CORAL — the parts taken
-  (grader, worktrees, attempts leaderboard, pivot-on-plateau, islands) and the
-  part deliberately not taken (agent runtimes) are documented in
-  `app/cognition/evolution/coral/__init__.py`.
-- Every module docstring in `coral/` states what it replaces and the measurement
-  that justified replacing it.
-- `tests/unit/test_coral_repair.py` — 33 tests, the score ladder and the two
-  checks a syntax check cannot make (empty diff, deleted public symbol).
+Rows stored over 7 days / rows whose TITLE contains the symbol:
+
+| ticker | rows | title mentions | after the fix (60 sampled) |
+|---|---:|---:|---|
+| GOOGL | 800 | 93 | 1 survives (~the legit 12%) |
+| **FCF** | **634** | **0** | **0** |
+| AI | 452 | 205 | 5 |
+| RH | 326 | 14 | **0** |
+| BLSH | 127 | 0 | 0 |
+| SBUX *(control)* | — | — | **2/2 kept** |
+
+The extractor was handed raw HTML; Google News bodies carry base64 redirects and
+uppercase runs mined out of them validate as real symbols. Sanitising happens at
+the single `_detect_tickers_in_text` chokepoint — **not** the four call sites,
+which any new collector could bypass.
+
+The fan-out cap iterated a **set**, so which five rows survived was arbitrary: an
+article about State Street's ETF was stored under `JPMpD/J/K/L` and `STT`, with
+STT surviving on luck. `rank_tickers_for_fanout` now orders requested ticker →
+headline mention → common stock → ETF → preferred/warrant. Nothing is dropped;
+only the order changes.
+
+End-to-end: the WSJ Naver story that logged
+`['NVDA','035420.KS','GOOGL','000660.KS']` now yields `['035420.KS','NVDA']`.
+
+---
+
+## Traps for whoever is next
+
+- **Google News RSS links are not followable.** A plain GET returns a 581 KB JS
+  interstitial still on `news.google.com`. Those results carry an empty `url` on
+  purpose — do not "fix" it by emitting the redirect, or `scrape_url` will burn
+  a call on every one. Bing News RSS puts the real URL in a query param.
+- **Bing's HTML endpoint is not usable** and is deliberately absent. A browser UA
+  gets a JS shell; a text-browser UA gets navigational hits (starbucks.com,
+  "Menu") behind `ck/a` wrappers that do not resolve.
+- **`elapsed_ms = 0` still means "not measurable"**, not a 0 ms call. The SDK now
+  times prism-internal tools from the `calling` event; if that event is missing
+  it reports 0 rather than fabricating a duration.
+- **`_is_missing_recent_session` fails CLOSED.** An unreachable DB must not make
+  every ticker look stale and set off fallback fetches fleet-wide.
+- **The old `test_precollect_outcomes` re-implemented the production rule inside
+  the test file**, so it could not observe the `_ok`-after-deadline bug at all.
+  The rule now lives in `classify_collector_outcome` and the test drives that.
+  Watch for this shape elsewhere.
+- **`fetch_price_history` counts now accumulate.** A fallback returning 0 must
+  not erase yfinance's rows — callers read 0 as a total outage and
+  `_EXPECT_TRUTHY` turns it into a manufactured collector error.
+
+---
+
+## Deploy
+
+**Nothing here is deployed.** The working tree carried the CORAL session's
+uncommitted work while this was being written, and the Dockerfile does
+`COPY app/ ./app/` from the working tree — deploying would have shipped
+half-finished code. Only my own files were committed.
+
+That has since resolved: CORAL committed and pushed (`cd7f606`, `51036c8`) and
+deployed at 09:14Z, and **the tree is now clean at `e5ad40b`**. A deploy now
+would ship a coherent committed state. It was left to the operator by explicit
+choice, not oversight.
+
+`deploy.sh` also tars `../lazycat-sdk` to the NAS, so **the SDK timing fix
+(`a201770`) ships with the next trading-service deploy** — no separate step.
+
+**After deploying, run one cycle on the same seven tickers and check:**
+
+1. `agent_tool_telemetry` — `lazy_web_search` failures should drop from 8/8, and
+   failure rows should carry a non-zero `elapsed_ms`.
+2. `news_articles` — no new `FCF`/`RH`/`BLSH` rows
+   (`SELECT ticker, count(*) ... WHERE collected_at > <cycle start>`).
+3. `pipeline_events` — `_late` warnings where `_ok` used to appear.
+4. `data_source_status.last_success` should move off 2026-06-24.
+5. `price_history` — non-S&P tickers reaching the latest session, `source='polygon'`.
+
+---
+
+## Still open
+
+- **`cycle_audit_log` has written nothing since 2026-07-25** — zero rows for this
+  cycle. Not diagnosed.
+- `put_call_ratio` is SPY-only with 6 rows ever, and 07-25 duplicates 07-24's
+  value to 16 decimal places — a weekend stale-fill stored as an observation.
+- `insider_trades` covers 14 micro-caps (openinsider is a firehose, not a
+  targeted feed). `build_alt_data_block` stays silent rather than fabricating.
+- `social_posts` engagement counts are all null, so the block always reads
+  "0 total engagements".
+- `market_snapshots` appears abandoned — 819 rows, none written this cycle.
+- The `congress_trades` future-dated row (2026-12-26) is **guarded at read**, not
+  deleted.
+- **Two pre-existing test failures** — `test_parameter_tools` and
+  `test_tool_whitelists` — predate this work; confirmed against a clean stash.
+
+1540 unit tests pass in trading-service, 112 in lazycat-sdk.
