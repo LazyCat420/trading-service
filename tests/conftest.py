@@ -201,3 +201,25 @@ def mock_prism_agent(respx_mock):
         )
     )
     return respx_mock
+
+
+@pytest.fixture(autouse=True)
+def _policy_gate_price_history_probe(monkeypatch, request):
+    """Assume test tickers HAVE price history unless a test says otherwise.
+
+    `_apply_policy_gates` gained a HOLD_NO_PRICE_DATA check before EXECUTE
+    (2026-07-27) for the ASIC case: zero price_history rows, full panel run,
+    BUY at 68 confidence. The probe is a real DB query, and fixture tickers
+    ("TEST", "ASIC", "MP", ...) genuinely have no rows — so without this stub
+    every policy-gate assertion in the suite comes back HOLD_NO_PRICE_DATA and
+    stops testing what it means to test.
+
+    Autouse so no existing test had to change. Tests that exercise the gate
+    itself opt out by patching `has_price_history` directly, which wins
+    because it is applied later.
+    """
+    try:
+        import app.quant.technical_baseline as _tb
+    except Exception:  # noqa: BLE001 — module may be unavailable in some envs
+        return
+    monkeypatch.setattr(_tb, "has_price_history", lambda _t: True, raising=False)

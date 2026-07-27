@@ -30,7 +30,117 @@ logger = logging.getLogger(__name__)
 
 # A baseline older than this is reported WITH its age rather than silently
 # presented as current — several tickers lag the daily refresh by days.
-_STALE_AFTER_DAYS = 5
+#
+# Kept in TRADING days, not calendar days. Measured 2026-07-27
+# (scripts/simulate_freshness_thresholds.py): a Monday reading of "3 days old"
+# is a normal weekend, while a Wednesday reading of "3 days old" is a real
+# outage — one calendar threshold cannot tell those apart, and the original
+# calendar-day version silently called Friday's close "2 days stale" every
+# Sunday.
+_STALE_AFTER_DAYS = 3
+
+# Per-indicator horizons, in TRADING days: (fresh_through, useless_beyond).
+#
+# The defect this replaces: ONE boolean `stale` served consumers with wildly
+# different tolerances. SMA-200 barely moves in a week; a stochastic is a
+# different number by the next session; a close used for sizing is stale in
+# hours. Stamping one header over all of them was wrong in both directions at
+# once — too loose for entry timing, far too strict for trend.
+#
+# Sized against the desk's realized ~45-day holding period
+# (decision_outcomes, n=2,034): a 2-day-old daily bar is a CORRECT input for a
+# 45-day hold, so nothing here should shout about it.
+_HORIZONS: dict[str, tuple[int, int]] = {
+    "trend": (30, 90),     # SMA-50/200, price-vs-trend — long memory
+    "momentum": (3, 10),   # RSI, MACD, stochastics — decay fast
+    "band": (3, 10),       # Bollinger position, ATR
+    "price": (1, 3),       # last close — sizing and entry
+}
+
+_FIELD_CLASS: dict[str, str] = {
+    "close": "price",
+    "rsi": "momentum",
+    "atr": "band",
+    "sma_50": "trend",
+    "sma_200": "trend",
+    "sma_200_status": "trend",
+    "bollinger_position": "band",
+    "volume_trend": "momentum",
+}
+
+
+def _freshness(age_trading_days: int | None, cls: str) -> tuple[float, str]:
+    """(multiplier, label) for an indicator class at a given trading-day age.
+
+    Graded, not binary — the quantity is continuous, so a cliff would be
+    arbitrary wherever it landed. Mirrors `_freshness_multiplier` in
+    autoresearch/auditors/data_audit.py (1.0 decaying to 0.3); that function
+    already had the right shape and was used in exactly one place.
+    """
+    if age_trading_days is None:
+        return 0.3, "age unknown"
+    fresh, floor = _HORIZONS.get(cls, (3, 10))
+    if age_trading_days <= fresh:
+        return 1.0, "current"
+    if age_trading_days >= floor:
+        return 0.3, f"{age_trading_days}d old — STALE, treat as indicative only"
+    span = floor - fresh
+    mult = 1.0 - 0.7 * (age_trading_days - fresh) / span
+    return mult, f"{age_trading_days}d old — ageing"
+
+
+def has_price_history(ticker: str) -> bool:
+    """True when `ticker` has at least one price_history row.
+
+    The policy gate's probe. Deliberately the cheapest possible question —
+    "is there any data at all" — because it backs a categorical gate, not a
+    quality judgement.
+
+    RAISES on any DB failure rather than returning False, and that distinction
+    is the whole point: an unreachable or empty database answers "no rows" for
+    EVERY ticker, so a probe that swallowed its errors would block all trading
+    the moment Postgres hiccupped. The caller catches and fails open, so the
+    only thing that blocks a trade here is a successful query proving the
+    ticker genuinely has no price history.
+    """
+    from app.db.connection import get_db
+
+    ticker = (ticker or "").strip().upper()
+    if not ticker:
+        return False
+    with get_db() as db:
+        row = db.execute(
+            "SELECT 1 FROM price_history WHERE ticker = %s LIMIT 1", [ticker]
+        ).fetchone()
+    return row is not None
+
+
+def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
+    """Sessions strictly after `latest` up to `as_of`, from the data itself.
+
+    Per-market, not global: `000660.KS` legitimately posts a Monday bar while
+    US tickers are still on Friday's close (Seoul opens first), so a single US
+    calendar would label every foreign ticker stale on a Friday and fresh on a
+    Sunday. Counting sessions THIS ticker's own exchange actually produced
+    sidesteps holiday tables entirely — a day the market was shut has no row.
+    """
+    from app.db.connection import get_db
+
+    try:
+        with get_db() as db:
+            row = db.execute(
+                """
+                SELECT COUNT(DISTINCT date) FROM price_history
+                WHERE ticker = %s AND date > %s AND date <= %s
+                """,
+                [ticker, latest, as_of],
+            ).fetchone()
+        # Sessions this ticker recorded after its own newest indicator row.
+        # 0 means the baseline IS the newest bar we hold.
+        return int(row[0]) if row else None
+    except Exception as e:  # noqa: BLE001 — grounding must never block a cycle
+        logger.warning("[TechnicalBaseline] %s trading-day age failed: %s", ticker, e)
+        return None
 
 # Fields we can verify deterministically. Anything not listed here stays the
 # model's to judge.
@@ -182,7 +292,13 @@ def compute_technical_baseline(ticker: str) -> dict:
         try:
             age = (date.today() - tech["date"]).days
             baseline["age_days"] = age
-            baseline["stale"] = age > _STALE_AFTER_DAYS
+            # Trading-day age is the one the horizons are expressed in;
+            # calendar age is kept only for the human-readable date line.
+            trd = _trading_day_age(ticker, date.today(), tech["date"])
+            baseline["age_trading_days"] = trd
+            # `stale` retained for existing consumers (apply_corrections reads
+            # it), now keyed off trading days so a weekend stops counting.
+            baseline["stale"] = (trd or 0) > _STALE_AFTER_DAYS
         except Exception:
             baseline["stale"] = False
 
@@ -193,52 +309,97 @@ def compute_technical_baseline(ticker: str) -> dict:
 
 
 def build_technical_baseline_block(ticker: str) -> str:
-    """The injectable briefing section, or "" when nothing is verified."""
+    """The injectable briefing section.
+
+    Never returns "" for a ticker with no data — see the NO DATA branch. A
+    silent empty block is how ASIC and ARCVF reached the board with zero
+    price history and nothing in the prompt saying so (2026-07-26).
+    """
     b = compute_technical_baseline(ticker)
     if not b:
-        return ""
+        # ABSENCE MUST BE LOUDER THAN STALENESS. The old code returned ""
+        # here, so the one case where the agent knew least produced the least
+        # warning — and the caller only logged on success, so it was invisible
+        # in the logs too.
+        return (
+            "TECHNICAL BASELINE: **NONE ON FILE** — this ticker has no stored "
+            "indicator row, so there is no verified RSI, SMA, ATR or Bollinger "
+            "level to anchor on. Do NOT state technical levels as fact and do "
+            "NOT infer them from the price alone; say so explicitly in "
+            "data_gaps and let that missing evidence lower your confidence."
+        )
 
-    # The header is conditional on freshness. A stale baseline used to sit
-    # under "these are the authoritative values; do NOT estimate around them"
-    # — which is a false statement about a 71-day-old RSI, and it is the model
-    # that pays for it. Measured 2026-07-25: only 5 of 503 tickers are fresher
-    # than 3 days, so the stale branch is the COMMON case, not the exception.
+    trd = b.get("age_trading_days")
+
+    # Header stays CONDITIONAL, then PER-INDICATOR labels underneath.
+    #
+    # Two failures constrain this text from opposite sides:
+    #  - CVX was served a 1963-12-26 RSI under "these are the authoritative
+    #    values" (test_stale_technicals_are_labelled_stale). A stale block must
+    #    never claim authority ANYWHERE in its text — not even conditionally,
+    #    because the model reads the sentence, not the flag.
+    #  - The 2026-07-26 board was told a 2-day-old close was authoritative
+    #    because one flag covered every line. Hence the per-line tags: a
+    #    2-trading-day-old SMA-200 really is current; a stochastic is not.
     if b.get("stale"):
         lines = [
             "STORED TECHNICAL BASELINE (computed from stored daily data — "
-            "STALE, see the date below. Prefer a live tool call if you have "
-            "one; otherwise treat these as the best available anchor and say "
-            "so, rather than inventing different numbers):"
+            "STALE overall, see the date below. Each line also carries its own "
+            "freshness. Prefer a live tool call if you have one; otherwise "
+            "treat these as the best available anchor and say so in data_gaps, "
+            "rather than inventing different numbers):"
         ]
         lines.append(
-            f"  ⚠ STALE: latest stored session is {b['as_of']} "
-            f"({b.get('age_days')} days old) — treat levels as indicative and "
-            f"say so in data_gaps."
+            f"  ⚠ STALE: latest stored session is {b['as_of']}"
+            + (f" ({trd} trading day(s) ago)" if trd is not None
+               else f" ({b.get('age_days')} days old)")
+            + " — treat levels as indicative."
         )
     else:
         lines = [
-            "VERIFIED TECHNICAL BASELINE (computed from stored daily data — "
-            "these are the authoritative values; do NOT restate them from "
-            "memory or estimate around them):"
+            "VERIFIED TECHNICAL BASELINE (computed from stored daily data. "
+            "Lines tagged `current` are the authoritative values — do NOT "
+            "restate them from memory or estimate around them. Lines tagged "
+            "`ageing` decay faster than the rest and should be treated as "
+            "indicative, with the gap noted in data_gaps):"
         ]
-        lines.append(f"  as of {b['as_of']}")
+        lines.append(
+            f"  as of {b['as_of']}"
+            + (f" ({trd} trading day(s) ago)" if trd is not None else "")
+        )
+
+    def _tag(field: str) -> str:
+        cls = _FIELD_CLASS.get(field)
+        if cls is None:
+            return ""
+        _mult, label = _freshness(trd, cls)
+        return f"   [{cls}: {label}]"
 
     if "close" in b:
-        lines.append(f"  - close: {b['close']}")
+        lines.append(f"  - close: {b['close']}{_tag('close')}")
     if "rsi" in b:
-        lines.append(f"  - RSI-14: {b['rsi']}")
+        lines.append(f"  - RSI-14: {b['rsi']}{_tag('rsi')}")
     if "atr" in b:
-        lines.append(f"  - ATR-14: {b['atr']}")
+        lines.append(f"  - ATR-14: {b['atr']}{_tag('atr')}")
     if "sma_200_status" in b:
-        lines.append(f"  - price vs SMA-200 ({b.get('sma_200')}): {b['sma_200_status']}")
+        lines.append(
+            f"  - price vs SMA-200 ({b.get('sma_200')}): "
+            f"{b['sma_200_status']}{_tag('sma_200_status')}"
+        )
     if "sma_50" in b:
-        lines.append(f"  - SMA-50: {b['sma_50']}")
+        lines.append(f"  - SMA-50: {b['sma_50']}{_tag('sma_50')}")
     if "bollinger_position" in b:
         note = b.get("bollinger_note")
         detail = note if note else f"{b['bollinger_pct']:.0%} of the band"
-        lines.append(f"  - Bollinger position: {b['bollinger_position']} ({detail})")
+        lines.append(
+            f"  - Bollinger position: {b['bollinger_position']} "
+            f"({detail}){_tag('bollinger_position')}"
+        )
     if "volume_trend" in b:
-        lines.append(f"  - volume trend (5d vs prior 15d): {b['volume_trend']}")
+        lines.append(
+            f"  - volume trend (5d vs prior 15d): "
+            f"{b['volume_trend']}{_tag('volume_trend')}"
+        )
     if "support" in b:
         lines.append(f"  - stored support: {b['support']}")
     if "resistance" in b:

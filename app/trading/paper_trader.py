@@ -140,8 +140,24 @@ def normalize_exit_style(exit_style: str | None) -> str:
     return style if style in EXIT_STYLES else DEFAULT_EXIT_STYLE
 
 
-# Fix #3: Maximum age for price data before we refuse to trade
+# Fix #3: Maximum age for price data before we refuse to trade.
+#
+# 96h is deliberately generous and stays as the REFUSAL boundary: it has to
+# clear a normal weekend (Friday close -> Monday open is ~65h) plus a long
+# holiday weekend, or the desk would stop trading every Monday. Tightening
+# this is not the fix for stale fills — it would just refuse legitimate trades.
 MAX_PRICE_AGE_HOURS = 96
+
+# ...but a fill priced off a bar that old is still worth flagging. 2026-07-26:
+# COF filled at $202.89 against decision_price $202.84, which was the 07-24
+# cached close — a ~48h-old bar, well inside the 96h limit, so nothing warned.
+# The bar was correct data (the market was shut), yet the fill was not a live
+# quote and the trade record could not tell the difference.
+#
+# So: refuse above 96h, WARN and stamp the fill above this. Purely
+# observational — it changes no control flow, it makes the provenance of the
+# fill price legible after the fact.
+STALE_FILL_WARN_HOURS = 24
 
 
 def _check_drawdown_breaker(bot_id: str, portfolio_value: float) -> dict | None:
@@ -486,6 +502,14 @@ async def buy(
                 f"(max {MAX_PRICE_AGE_HOURS}h). Refusing stale trade.",
                 "price_age_hours": round(price_age_hours, 1),
             }
+        if price_age_hours is not None and price_age_hours > STALE_FILL_WARN_HOURS:
+            # Not a refusal — see STALE_FILL_WARN_HOURS. This makes "the fill
+            # was priced off a cached bar, not a live quote" visible in the
+            # logs, which it was not when COF filled off a 48h-old close.
+            logger.warning(
+                "[TRACE][BUY] %s: filling against a %.0fh-old bar — this is a "
+                "cached close, NOT a live quote", ticker, price_age_hours,
+            )
 
     # Calculate position size
     if current_price <= 0:
@@ -837,6 +861,11 @@ async def sell(
                 f"(max {MAX_PRICE_AGE_HOURS}h). Refusing stale trade.",
                 "price_age_hours": round(price_age_hours, 1),
             }
+        if price_age_hours is not None and price_age_hours > STALE_FILL_WARN_HOURS:
+            logger.warning(
+                "[TRACE][SELL] %s: filling against a %.0fh-old bar — this is a "
+                "cached close, NOT a live quote", ticker, price_age_hours,
+            )
 
     # Execution costs — a SELL fills BELOW the reference price. Symmetric with
     # the BUY path; see _apply_execution_cost.

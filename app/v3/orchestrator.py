@@ -198,8 +198,54 @@ async def run_v3_pipeline(
             desk.cycle_metadata["technical_baseline_context"] = tech_block
             logger.info("[V3] %s: verified technical baseline injected (%d chars)",
                         ticker, len(tech_block))
+        else:
+            # Only reachable if the block builder itself returns "" — it no
+            # longer does for a missing ticker (it emits an explicit NONE ON
+            # FILE section). Logged at WARNING because a silent empty baseline
+            # is exactly how ASIC reached the board with no data and no
+            # complaint anywhere in the logs.
+            logger.warning(
+                "[V3] %s: technical baseline came back EMPTY — the desk has no "
+                "verified indicator anchor for this ticker", ticker,
+            )
     except Exception as e:
         logger.warning("[V3] %s: technical baseline failed (non-fatal): %s", ticker, e)
+
+    # Staleness SHADOW (2026-07-27). Deliberately observational, not a gate.
+    # After the collection + refresh-coverage fixes the active watchlist
+    # measures 0 tickers blocked by every candidate staleness rule on every
+    # simulated session (scripts/simulate_freshness_thresholds.py), so a hard
+    # gate here would be dead weight that can only fire on a regression — and
+    # a threshold guessed today, against one clean week, is exactly the
+    # unfalsifiable edit this investigation kept running into. Record what a
+    # gate WOULD have blocked; promote it only when the distribution earns it.
+    try:
+        from app.quant.technical_baseline import compute_technical_baseline
+
+        _b = await asyncio.wait_for(
+            asyncio.to_thread(compute_technical_baseline, ticker), timeout=10,
+        )
+        _trd = (_b or {}).get("age_trading_days")
+        if isinstance(_trd, int) and _trd > 3:
+            from app.v3.telemetry import record_guardrail_firing
+
+            record_guardrail_firing(
+                "SHADOW_STALE_PRICE_DATA",
+                ticker=ticker,
+                cycle_id=cycle_id or "",
+                detail={
+                    "age_trading_days": _trd,
+                    "as_of": str((_b or {}).get("as_of")),
+                    "shadow": True,
+                    "would_block": True,
+                },
+            )
+            logger.info(
+                "[V3] %s: SHADOW stale-data flag — baseline is %d trading day(s) "
+                "old (observational, trade NOT blocked)", ticker, _trd,
+            )
+    except Exception as e:  # noqa: BLE001 — a shadow must never affect a cycle
+        logger.debug("[V3] %s: staleness shadow skipped: %s", ticker, e)
 
     # Alternative data (2026-07-23 collector wave): insider cluster buys +
     # social chatter, precomputed for the research analysts — same rationale
@@ -2000,6 +2046,42 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
                 has_trigger=has_trigger, has_size=has_size,
                 veto_overridden=veto_overridden,
             )
+
+    # LAST gate before execution, deliberately. No price history at all is not
+    # a stale-data judgement call — it is the absence of the input every
+    # technical claim in the artifact rests on. 2026-07-26
+    # (cycle-v3-1785107795): ASIC and ARCVF had ZERO price_history rows, yet
+    # both ran the full panel and ASIC reached BUY at 68 confidence. Its own
+    # risk_flags said "Missing technical indicators (RSI/SMA)" and the number
+    # did not move — the model can SEE the hole and still price around it.
+    # Only the confidence floor stopped that order, by luck of the number.
+    #
+    # Categorical, so a gate is the right instrument: "zero rows" has no
+    # tunable threshold to get wrong, unlike staleness (graded, and it rides
+    # in the prompt instead — see build_technical_baseline_block).
+    #
+    # Ordered LAST rather than early because the probe needs a database, and a
+    # DB that is absent or empty answers "no rows" for every ticker. Placed up
+    # front it out-ranked every specific gate — a degraded-model block, a jury
+    # veto, an unheld SELL would all have been relabelled HOLD_NO_PRICE_DATA,
+    # which is both a worse diagnosis and a silent loss of the real reason.
+    # Here it can only convert a would-be EXECUTE into a block, never mask
+    # another gate's verdict.
+    #
+    # Fails OPEN on a probe error: this catches a missing ticker, not a
+    # Postgres hiccup.
+    try:
+        from app.quant.technical_baseline import has_price_history
+
+        if not has_price_history(desk.ticker):
+            return _record_gate(
+                desk, "HOLD_NO_PRICE_DATA", action=action, confidence=confidence,
+            )
+    except Exception as ph_err:  # noqa: BLE001 — never block on a probe failure
+        logger.warning(
+            "[V3] %s: price-history probe failed (fail-open): %s",
+            desk.ticker, ph_err,
+        )
 
     # NOT recorded: reaching here means no guardrail fired. Counting the clean
     # path would make the table a decision log rather than a firing log.

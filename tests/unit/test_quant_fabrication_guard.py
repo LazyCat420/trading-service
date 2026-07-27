@@ -109,12 +109,25 @@ class TestFailsafe:
     def test_non_dict_artifact_is_a_noop(self, fresh_baseline):
         assert tb.reconcile_risk_metrics(None, "MP") == {}
 
-    def test_db_failure_degrades_to_empty(self, monkeypatch):
+    def test_db_failure_degrades_loudly(self, monkeypatch):
+        """A DB failure must yield NO verified values — and must SAY so.
+
+        Updated 2026-07-27: this previously asserted the block was "".
+        Returning an empty string is how ASIC reached the board with zero
+        price history and nothing in the prompt or the logs mentioning it —
+        the ticker the agent knew least about produced the least warning.
+        The degrade is unchanged (no fabricated numbers); it is now explicit.
+        """
         def boom(*a, **k):
             raise RuntimeError("db down")
         monkeypatch.setattr(tb, "_fetch_technicals", boom)
         assert tb.compute_technical_baseline("MP") == {}
-        assert tb.build_technical_baseline_block("MP") == ""
+
+        block = tb.build_technical_baseline_block("MP")
+        assert "NONE ON FILE" in block
+        # Critically: it must not invent or imply any level.
+        for token in ("RSI-14:", "SMA-50:", "ATR-14:", "Bollinger position:"):
+            assert token not in block
 
     def test_nan_never_reaches_a_metric(self, monkeypatch):
         monkeypatch.setattr(tb, "_fetch_technicals", lambda t: {
