@@ -48,6 +48,24 @@ CANDIDATE_THRESHOLDS = (60, 65, 68, 70, 72, 75, 78)
 
 
 def fetch(action: str) -> list[tuple[int, float]]:
+    """Resolved outcomes for `action`, EXCLUDING pipeline failures.
+
+    `decision_outcomes` carries 366 rows that are not decisions at all: 363
+    with confidence=0, and rows whose own lesson_stored reads "PIPELINE
+    FAILURE (EMPTY_SIGNAL): Thesis returned confidence=0 with 0 claims" or
+    "Failed to parse thesis. Invalid JSON format". The outcome tracker scored
+    them as trades anyway.
+
+    They are NOT a random sample — measured 2026-07-27, they win 55.1% at
+    -5.61% mean versus 61.1% / +1.94% for real decisions — and they all land
+    at confidence 0, i.e. inside the lowest band. Including them manufactures
+    a huge fake "low confidence loses money" effect that has nothing to do
+    with calibration: it is the pipeline's crash rate, mislabelled.
+
+    Concretely, before this filter the SELL 0-59 band read n=392 mean -5.55%
+    and the whole SELL sweep was dominated by it. A floor "justified" by that
+    band would be gating on parse failures, not on confidence.
+    """
     with get_db() as db:
         rows = db.execute(
             """
@@ -57,6 +75,9 @@ def fetch(action: str) -> list[tuple[int, float]]:
               AND action = %s
               AND pnl_pct IS NOT NULL
               AND confidence IS NOT NULL
+              AND confidence > 0
+              AND COALESCE(lesson_stored, '') NOT LIKE '%%PIPELINE FAILURE%%'
+              AND COALESCE(lesson_stored, '') NOT LIKE '%%Failed to parse%%'
             ORDER BY created_at
             """,
             [action],
