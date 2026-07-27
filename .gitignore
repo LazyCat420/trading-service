@@ -53,3 +53,6 @@ Thumbs.db
 .vscode/
 backups/
 scripts/test_v3_agent.py
+
+# CORAL repair loop: throwaway worktrees + cached test baselines
+.evo-worktrees/

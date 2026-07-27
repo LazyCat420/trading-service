@@ -317,6 +317,76 @@ def run_migrations(conn):
         except Exception:
             pass
 
+    # ── CORAL repair loop: queue (written in-container) + attempts (host) ──
+    # Split because the image ships without .git/git/pytest, so the container
+    # can only observe a failure — grading happens on a host checkout.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS evolution_repair_queue (
+                    id              TEXT PRIMARY KEY,
+                    cycle_id        TEXT,
+                    error_message   TEXT NOT NULL,
+                    traceback_text  TEXT,
+                    target_path     TEXT,
+                    target_symbol   TEXT,
+                    status          TEXT DEFAULT 'queued',
+                    attempts        INTEGER DEFAULT 0,
+                    last_error      TEXT,
+                    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    claimed_at      TIMESTAMPTZ,
+                    finished_at     TIMESTAMPTZ
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_repair_queue_status "
+                "ON evolution_repair_queue(status, created_at)"
+            )
+            # A pytest node id that already fails because of this bug. Preferred
+            # over a generated reproduction test when one exists.
+            cur.execute(
+                "ALTER TABLE evolution_repair_queue "
+                "ADD COLUMN IF NOT EXISTS repro_test TEXT"
+            )
+            # One open job per symbol: the watchdog fires hourly and would
+            # otherwise queue the same traceback until the queue is all one bug.
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_repair_queue_open_target "
+                "ON evolution_repair_queue(target_path, target_symbol) "
+                "WHERE status IN ('queued', 'running')"
+            )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS evolution_attempts (
+                    id              TEXT PRIMARY KEY,
+                    job_id          TEXT NOT NULL,
+                    target_path     TEXT NOT NULL,
+                    target_symbol   TEXT,
+                    island          TEXT,
+                    model           TEXT,
+                    diff            TEXT,
+                    rationale       TEXT,
+                    score           DOUBLE PRECISION NOT NULL,
+                    bundle          JSONB,
+                    commit_hash     TEXT,
+                    branch          TEXT,
+                    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_attempts_target "
+                "ON evolution_attempts(target_path, score DESC)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_attempts_job "
+                "ON evolution_attempts(job_id, created_at)"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── Pending Approvals ──
     try:
         with conn.cursor() as cur:

@@ -667,10 +667,13 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register background stop-loss: %s", e
                 )
 
-            # ── Self-healing watchdog (hourly, diagnose-only by default) ──
+            # ── Self-healing watchdog (hourly, observe-and-queue) ──
             # Previously this existed as a script nothing ever called: no
             # scheduler wiring, no importer. Engineering failures sat in
             # pipeline_state.error until a human noticed.
+            # It now costs a couple of queries per hour rather than nine
+            # multi-minute LLM calls: the sweep records the failure and the
+            # host-side runner does the repair, where the tests can run.
             try:
                 scheduler.add_job(
                     SchedulerService._run_self_healing,
@@ -682,8 +685,8 @@ class SchedulerService:
                     max_instances=1,   # a repair pass must never overlap itself
                 )
                 logger.info(
-                    "[SCHEDULER] Registered self-healing watchdog (interval: 1h, mode=%s)",
-                    os.getenv("SELF_HEAL_MODE", "diagnose"),
+                    "[SCHEDULER] Registered self-healing watchdog "
+                    "(interval: 1h, observe-and-queue)"
                 )
             except Exception as e:
                 logger.warning(
@@ -1101,9 +1104,10 @@ class SchedulerService:
     async def _run_self_healing():
         """Hourly engineering-failure diagnosis.
 
-        Defaults to diagnose-only (SELF_HEAL_MODE): the debate council proposes a
-        patch and it is persisted for review, but nothing is written to disk and
-        nothing is ever committed, pushed, or redeployed.
+        Observes only: resolves the failure to a symbol and writes a row to
+        evolution_repair_queue. No LLM call, no patch, nothing written to disk.
+        Repair happens in scripts/evo_runner.py on a host checkout, because
+        proving a patch means running the tests and this image has no pytest.
 
         Calls heal_once(), NOT run_healing_cycle() — the latter is the standalone
         entrypoint and shuts the service down when it finishes.
@@ -1118,10 +1122,7 @@ class SchedulerService:
                 _sys.path.insert(0, _scripts)
             from self_healing_watchdog import heal_once
 
-            logger.info(
-                "[SCHEDULER] Self-healing sweep starting (mode=%s)",
-                os.getenv("SELF_HEAL_MODE", "diagnose"),
-            )
+            logger.info("[SCHEDULER] Self-healing sweep starting (observe-and-queue)")
             await heal_once()
         except Exception as e:
             logger.error("[SCHEDULER] Self-healing sweep failed: %s", e)

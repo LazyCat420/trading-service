@@ -2,26 +2,33 @@
 """
 Self-Healing Watchdog Engine
 ============================
-Diagnoses trading-cycle failures with the Evolution Debate Council and, when
-explicitly authorised, applies the resulting patch.
+Detects a trading-cycle failure, resolves it to a symbol, and queues it for
+repair. It does not propose a patch, and it has no autonomy level to configure,
+because it has nothing to be autonomous *with*.
 
-Two hard limits govern what this can do:
+WHY THE WATCHDOG NO LONGER FIXES ANYTHING
+-----------------------------------------
+Repair means editing code and proving the edit works. Proving it means running
+the tests. The trading-service image has no ``.git``, no ``git`` binary, and no
+``pytest`` — so a patch produced here could never be verified by anything
+stronger than a syntax check, and that is exactly what used to happen.
 
-1. MODE (``SELF_HEAL_MODE``, default ``diagnose``). In ``diagnose`` the council
-   runs and its proposed fix is persisted for review, but nothing is written to
-   disk. ``apply`` additionally writes the patch to disk, under probation.
+It cost, measured: ~20 minutes and 47k input tokens per proposer call, three
+calls a round, three rounds, hourly. It returned, measured: 57 rejections out of
+57 debates, 33 of them because a 4096-token completion was asked to re-emit a
+file it had been shown 4,000 characters of.
 
-   Neither mode commits, pushes, or redeploys. That used to happen on every run:
-   LLM-authored code could reach production behind nothing but a ``py_compile``
-   check, and ``git add -A`` swept in any unrelated uncommitted work.
+So this half observes, and ``scripts/evo_runner.py`` — on a host checkout, where
+git and pytest exist — proposes, applies in a throwaway worktree, and *scores by
+running the suite*. Only a patch that fixes a reproduction test without
+regressing the baseline gets a branch, and a branch is where automation stops.
 
-2. SCOPE (``repair_scope.is_patchable``). Patches may only touch trading-cycle
-   source. The repair machinery, DB schema, config, deploy scripts, and tests
-   are off-limits regardless of mode.
+SCOPE (``repair_scope.is_patchable``) still applies before anything is queued:
+only trading-cycle source is repairable. The repair machinery, DB schema,
+config, deploy scripts, and tests are off-limits.
 
-Recovery does not depend on redeploying: accepted fixes are re-applied on boot
-from ``stable_harnesses``, and ``check_probation_fixes`` rolls back any that
-degrade.
+Probation and rollback (``check_probation_fixes``) remain for fixes the old
+loop already wrote to disk.
 """
 
 import sys
@@ -38,8 +45,6 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.db.connection import get_db
-from app.cognition.evolution.debate import EvolutionDebateCouncil
-from app.cognition.evolution.deployer import deploy_fix_to_disk
 from app.cognition.evolution.rollback_monitor import check_probation_fixes
 from app.cognition.evolution.target_map import list_available_targets, resolve_target
 from app.cognition.evolution.repair_scope import is_patchable
@@ -49,26 +54,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("self_healing_watchdog")
-
-# ── Autonomy level ────────────────────────────────────────────────────────────
-# There is deliberately NO mode that redeploys the container. Patches land on
-# disk and are re-applied on boot from `stable_harnesses`; probation checks roll
-# them back if they degrade. Rebuilding and shipping the service stays human.
-MODE_DIAGNOSE = "diagnose"   # propose only — nothing written to disk
-MODE_APPLY = "apply"         # write the patch to disk, under probation + rollback
-_VALID_MODES = (MODE_DIAGNOSE, MODE_APPLY)
-
-
-def get_heal_mode() -> str:
-    """Resolve the autonomy level. Anything unrecognised degrades to diagnose."""
-    raw = (os.getenv("SELF_HEAL_MODE") or MODE_DIAGNOSE).strip().lower()
-    if raw not in _VALID_MODES:
-        logger.warning(
-            "SELF_HEAL_MODE=%r is not one of %s — defaulting to %s.",
-            raw, _VALID_MODES, MODE_DIAGNOSE,
-        )
-        return MODE_DIAGNOSE
-    return raw
 
 NAS_HOST = "10.0.0.16"
 NAS_PORT = "5188"
@@ -251,48 +236,6 @@ def has_consecutive_failures(target_type: str, target_name: str) -> bool:
             return True
     return False
 
-def get_historical_fixes_context(target_name: str) -> str:
-    """Parse verified_fixes_history.md for previous attempts on target_name."""
-    path = "reports/verified_fixes_history.md"
-    if not os.path.exists(path):
-        return ""
-    
-    context_lines = []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        
-        # Scan table rows for target_name references
-        for line in lines:
-            if target_name in line and "|" in line:
-                parts = [p.strip() for p in line.split("|")]
-                if len(parts) >= 7:
-                    ref = parts[1]
-                    status = parts[3]
-                    failed = parts[5]
-                    fixed = parts[6]
-                    context_lines.append(
-                        f"- Reference: {ref}\n"
-                        f"  Status: {status}\n"
-                        f"  Failed Attempts: {failed}\n"
-                        f"  What Worked: {fixed}\n"
-                    )
-    except Exception as e:
-        logger.warning(f"Failed to parse history ledger: {e}")
-        
-    if context_lines:
-        return "\n── HISTORICAL REGRESSION LEDGER (Do NOT repeat failed attempts) ──\n" + "\n".join(context_lines)
-    return ""
-
-def run_syntax_check(file_path: str) -> bool:
-    """Compile the Python file to ensure it has no syntax errors."""
-    try:
-        subprocess.run([sys.executable, "-m", "py_compile", file_path], check=True, capture_output=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Syntax compile check failed for {file_path}:\n{e.stderr.decode('utf-8')}")
-        return False
-
 # NOTE: push_git_changes() and deploy_container_nas() were removed deliberately.
 #
 # The watchdog used to `git add -A` (sweeping in any unrelated uncommitted work),
@@ -305,35 +248,6 @@ def run_syntax_check(file_path: str) -> bool:
 # degrade, so recovery never required a redeploy in the first place. Building and
 # shipping an image is a human action — do not reintroduce it here.
 
-
-def run_smoke_test(ticker: str = "AAPL") -> bool:
-    """Execute the cycle smoke test script to verify pipeline sanity."""
-    try:
-        logger.info(f"Running single-ticker smoke test for {ticker}...")
-        res = subprocess.run(
-            ["python", "scripts/smoke_test_cycle.py", ticker, "--timeout", "900"],
-            capture_output=True, text=True
-        )
-        logger.info(f"Smoke test stdout:\n{res.stdout}")
-        return res.returncode == 0
-    except Exception as e:
-        logger.error(f"Failed to run smoke test: {e}")
-        return False
-
-def trigger_cycle_resume():
-    """Send system command to database to resume the active cycle."""
-    try:
-        with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO system_commands (id, command_type, payload, status, created_at)
-                VALUES (%s, 'RESUME_INTERRUPTED', '{}', 'pending', CURRENT_TIMESTAMP)
-                """,
-                [f"cmd-resume-{int(datetime.now().timestamp())}"]
-            )
-        logger.info("Successfully queued RESUME_INTERRUPTED system command to DB.")
-    except Exception as e:
-        logger.error(f"Failed to queue resume command: {e}")
 
 def write_healing_report(cycle_id: str, target_name: str, patch_id: str, success: bool, msg: str):
     """Write the details of the healing event into reports and ledgers."""
@@ -374,8 +288,6 @@ async def heal_once():
     the standalone entrypoint tears the service down in a `finally`, which would
     kill the live DB pool and scheduler if invoked from inside the running app.
     """
-    mode = get_heal_mode()
-    logger.info("Self-healing mode: %s", mode)
     logger.info("=" * 60)
     logger.info("INSPECTING PROBATIONARY FIXES")
     logger.info("=" * 60)
@@ -487,110 +399,60 @@ async def heal_once():
         )
         return
 
-    # ── 3. Generate Patch via Debate Council ──
-    logger.info("Triggering Evolution Debate Council...")
-        
-    # Pull historical fixes context for this target name
-    history_context = get_historical_fixes_context(target_name)
-    issue_desc = f"EXCEPTION / ERROR DETAIL:\n{error_msg}\n\nTRACEBACK:\n{traceback_text or 'Not available'}"
-    if history_context:
-        issue_desc += f"\n\n{history_context}"
-        logger.info("Injected historical regression memory context into the debate coordinator prompt.")
+    # ── 3. Hand off to the CORAL repair runner ──
+    # The container does no LLM work and proposes no patch, because it cannot
+    # grade one: the image ships source without .git, without the git binary,
+    # and without pytest, so nothing in here can run a test or verify a diff.
+    # What it did instead was run a 9-call debate whose output nobody could
+    # check — measured at ~20 minutes and 47k input tokens per proposer call,
+    # hourly, for proposals that were rejected 57 times out of 57.
+    #
+    # So it records the failure and stops. `scripts/evo_runner.py`, running on a
+    # host checkout, proposes against both vLLM boxes, applies each candidate in
+    # a throwaway worktree, and scores it by running the tests.
+    from app.cognition.evolution.coral.attempts import enqueue_job
 
-    council = EvolutionDebateCouncil()
-    debate_res = await council.run_debate(
-        cycle_id=cycle_id,
-        target_type=target_type,
-        target_name=target_name,
-        issue_description=issue_desc
-    )
-
-    if not debate_res or debate_res.get("status") != "pending":
-        logger.error(f"Debate Council rejected proposed patches or failed. Status: {debate_res.get('status') if debate_res else 'None'}")
-        return
-
-    fix_id = debate_res["fix_id"]
-
-    # ── 3b. Scope gate: trading-cycle source only ──
-    # Checked after the council proposes and before anything touches disk,
-    # so an out-of-scope proposal is recorded and refused rather than applied.
     target_rel = target_info.get("relative_path", "")
     allowed, scope_reason = is_patchable(target_rel)
     if not allowed:
         logger.critical(
-            "⛔ REFUSING PATCH: %s is outside the self-healing scope (%s). "
-            "Fix %s left pending for human review.",
-            target_rel, scope_reason, fix_id,
+            "\u26d4 NOT QUEUED: %s is outside the self-healing scope (%s).",
+            target_rel, scope_reason,
         )
-        with get_db() as db:
-            db.execute(
-                "UPDATE pending_evolution_fixes SET status = 'rejected', "
-                "failure_reason = %s WHERE id = %s",
-                [f"Out of self-healing scope: {scope_reason}", fix_id],
-            )
         write_healing_report(
-            cycle_id, target_name, fix_id, False,
-            f"Patch refused — {target_rel} is outside the trading-cycle "
-            f"repair scope ({scope_reason}). Needs a human.",
+            cycle_id, target_name, "-", False,
+            f"Failure in {target_rel} is outside the trading-cycle repair scope "
+            f"({scope_reason}). Needs a human.",
         )
         return
 
-    # ── 4. Apply Patch to Disk (mode-gated) ──
-    if mode == MODE_DIAGNOSE:
+    evidence = target_info.get("evidence")
+    job_id = enqueue_job(
+        cycle_id=cycle_id,
+        error_message=error_msg or "",
+        traceback_text=traceback_text or "",
+        target_path=target_rel,
+        target_symbol=getattr(evidence, "name", None) or target_name,
+    )
+
+    if job_id is None:
         logger.info(
-            "🔍 SELF_HEAL_MODE=diagnose — fix %s proposed for %s and left "
-            "pending. Nothing written to disk. Set SELF_HEAL_MODE=apply to "
-            "let the watchdog apply it.",
-            fix_id, target_rel,
-        )
-        write_healing_report(
-            cycle_id, target_name, fix_id, True,
-            "Diagnosed and proposed a patch (diagnose mode — not applied).",
+            "[SELF-HEAL] %s::%s already has an open repair job \u2014 not re-queued.",
+            target_rel, target_name,
         )
         return
 
-    logger.info(f"Approved fix ID: {fix_id}. Applying patch locally...")
-    deploy_res = deploy_fix_to_disk(fix_id)
-    if "error" in deploy_res:
-        logger.error(f"Deployment to local disk failed: {deploy_res['error']}")
-        return
-    logger.info(f"Patch deployed locally. Backup saved at {deploy_res.get('backup_path')}")
-
-    # ── 4b. Syntax Compile Check ──
-    file_path = deploy_res.get("file_path")
-    if file_path and file_path.endswith(".py"):
-        if not run_syntax_check(file_path):
-            logger.error("🔴 Syntax compile check FAILED for the proposed patch. Rolling back to backup immediately.")
-            from app.cognition.evolution.deployer import rollback_fix
-            rollback_fix(fix_id)
-            with get_db() as db:
-                db.execute(
-                    "UPDATE pending_evolution_fixes SET status = 'rejected', failure_reason = %s WHERE id = %s",
-                    ["SyntaxError: Proposed patch failed syntax compile check", fix_id]
-                )
-            return
-        logger.info("🟢 Syntax compile check passed for the proposed patch.")
-
-    # ── 5. Verification & Resume ──
-    # No git push and no container rebuild: the patch is live on disk for
-    # this process, will be re-applied on boot from `stable_harnesses` if it
-    # proves out, and `check_probation_fixes` rolls it back if it degrades.
-    # Shipping a new container image remains a human decision.
-    smoke_pass = run_smoke_test(ticker="AAPL")
-    if smoke_pass:
-        logger.info("🟢 Smoke test passed! Resuming cycle...")
-        trigger_cycle_resume()
-        write_healing_report(
-            cycle_id, target_name, fix_id, True,
-            "Debate-approved patch applied to trading-cycle source and verified "
-            "via smoke test. On probation; not committed or deployed."
-        )
-    else:
-        logger.error("🔴 Smoke test FAILED after applying the fix. The fix will remain in probation or rollback on next check.")
-        write_healing_report(
-            cycle_id, target_name, fix_id, False,
-            "Patch applied but post-deploy smoke test failed. Fix remains in probation."
-        )
+    logger.info(
+        "[SELF-HEAL] Queued repair job %s for %s::%s. Drain it on a host "
+        "checkout with:  python scripts/evo_runner.py --once",
+        job_id[:8], target_rel, target_name,
+    )
+    write_healing_report(
+        cycle_id, target_name, job_id, True,
+        f"Failure diagnosed and queued for graded repair (job {job_id[:8]}). "
+        f"No patch is proposed in-container; the host runner proposes, tests, "
+        f"and opens a branch only if the tests pass.",
+    )
 
 
 async def run_healing_cycle():
