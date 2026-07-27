@@ -82,6 +82,36 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
     from app.validation.schema import PriceHistorySchema
     import pandera.errors
 
+    # Drop incomplete bars BEFORE validating. yfinance routinely returns the
+    # most recent session with NaN OHLC and a non-null Volume — an in-progress
+    # or not-yet-settled bar. PriceHistorySchema's columns are non-nullable, so
+    # that single row used to reject the whole frame: measured 2026-07-26, all
+    # 12 tickers in the cycle failed with "non-nullable series 'Open' contains
+    # null values" on exactly one bad row out of 125, discarding 124 good ones
+    # and leaving every agent on cached prices. Salvaging the complete rows is
+    # strictly better than keeping none of them — a partial frame is still an
+    # upsert, and the dropped bar arrives complete on the next collection.
+    #
+    # Note the incremental-fetch trap: the NaN is in the NEWEST bar, so a
+    # narrower `period` does not avoid it. Salvage is what fixes this, not a
+    # smaller window.
+    _ohlc = ["Open", "High", "Low", "Close"]
+    _before = len(df)
+    df = df.dropna(subset=[c for c in _ohlc if c in df.columns])
+    _dropped = _before - len(df)
+    if _dropped:
+        logger.warning(
+            "[yfinance] %s: dropped %d incomplete bar(s) of %d (NaN OHLC — "
+            "usually the in-progress session); keeping %d",
+            ticker, _dropped, _before, len(df),
+        )
+    if df.empty:
+        logger.error(
+            "[yfinance] %s: every bar was incomplete — no usable price rows", ticker
+        )
+        await _refresh_technicals(ticker)
+        return 0
+
     try:
         df = PriceHistorySchema.validate(df)
     except pandera.errors.SchemaError as e:

@@ -55,6 +55,58 @@ async def test_collect_price_history_success(mock_ticker, mock_db):
 
 @pytest.mark.asyncio
 @patch("app.collectors.yfinance_collector.yf.Ticker")
+async def test_collect_price_history_salvages_frame_with_one_nan_bar(mock_ticker, mock_db):
+    """One incomplete bar must not discard the complete ones.
+
+    Reproduces the 2026-07-26 outage shape exactly: yfinance returns the newest
+    session with NaN OHLC and a non-null Volume. Before the salvage this frame
+    failed PriceHistorySchema ("non-nullable series 'Open' contains null
+    values") and returned 0, so all 12 tickers in that cycle fell back to
+    cached prices while reporting success.
+    """
+    df = pd.DataFrame({
+        "Open": [100.0, 101.0, float("nan")],
+        "High": [105.0, 106.0, float("nan")],
+        "Low": [95.0, 96.0, float("nan")],
+        "Close": [102.0, 103.0, float("nan")],
+        "Volume": [1000, 2000, 2582031],
+    }, index=pd.to_datetime(["2023-01-01", "2023-01-02", "2023-01-03"]))
+
+    mock_ticker_inst = MagicMock()
+    mock_ticker_inst.history.return_value = df
+    mock_ticker.return_value = mock_ticker_inst
+
+    count = await collect_price_history("AAPL")
+
+    # The two complete bars are kept; only the incomplete one is dropped.
+    assert count == 2
+    mock_db.executemany.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("app.collectors.yfinance_collector.yf.Ticker")
+async def test_collect_price_history_all_bars_incomplete(mock_ticker, mock_db):
+    """Salvage must not manufacture success when nothing is usable."""
+    df = pd.DataFrame({
+        "Open": [float("nan")],
+        "High": [float("nan")],
+        "Low": [float("nan")],
+        "Close": [float("nan")],
+        "Volume": [123],
+    }, index=pd.to_datetime(["2023-01-03"]))
+
+    mock_ticker_inst = MagicMock()
+    mock_ticker_inst.history.return_value = df
+    mock_ticker.return_value = mock_ticker_inst
+
+    count = await collect_price_history("AAPL")
+
+    assert count == 0
+    mock_db.executemany.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.collectors.yfinance_collector.yf.Ticker")
 async def test_collect_price_history_empty(mock_ticker):
     mock_ticker_inst = MagicMock()
     mock_ticker_inst.history.return_value = pd.DataFrame()

@@ -9,6 +9,21 @@ from app.utils.text_utils import format_db_section
 
 logger = logging.getLogger(__name__)
 
+# Collectors that signal failure by RETURN VALUE rather than by raising:
+# collect_price_history returns 0 rows, collect_fundamentals returns False, and
+# data_rotator catches every provider error and returns 0 too. Nothing on that
+# path ever raises, so "did not raise" is not evidence of success for them.
+# 2026-07-26 (cycle-v3-1785107795): all 12 tickers lost every price provider
+# and the cycle still recorded collector_ok=49, collector_error=0,
+# collector_failures=[] — a total data outage reported as a clean cycle.
+#
+# Deliberately NOT extended to the news/social collectors: a quiet news day
+# legitimately returns 0 articles, and counting that as an error would recreate
+# the false-alarm problem that made these counters permissive in the first
+# place (see collector_stats' note on timeouts).
+_EXPECT_TRUTHY = {"yfinance_price", "yfinance_fund"}
+
+
 async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str | None = None) -> str:
     """Collect core stock datasets in parallel and format them into a markdown report."""
     ticker = ticker.upper().strip()
@@ -33,6 +48,14 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         _emit(f"precollect_{name}_start", f"Scraping {name}...", "running")
         try:
             res = await coroutine
+            if name in _EXPECT_TRUTHY and not res:
+                _outcomes[name] = "error"
+                logger.warning(
+                    "[V3][precollect] %s/%s returned no data (%r) — recording as "
+                    "error, not ok", ticker, name, res,
+                )
+                _emit(f"precollect_{name}_err", f"{name} returned no data", "error")
+                return res
             _outcomes[name] = "ok"
             _emit(f"precollect_{name}_ok", f"Finished {name}", "ok")
             return res
