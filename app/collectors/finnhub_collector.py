@@ -2,7 +2,8 @@
 Finnhub Collector — Fetches news, analyst targets, earnings calendar.
 
 Pure data collector. No LLM calls. No processing.
-Writes to: news_articles, fundamentals (analyst price targets only)
+Writes to: news_articles (via news_collector proxy), fundamentals
+(target_price, recom_score, earnings_date — merged into today's row).
 Requires: FINNHUB_API_KEY in .env (free tier = 60 calls/min)
 """
 
@@ -42,11 +43,34 @@ async def collect_news(ticker: str, days_back: int = 7) -> int:
         return 0
 
 
+def _merge_into_fundamentals(ticker: str, fields: dict) -> None:
+    """Upsert a partial field set into today's fundamentals row.
+
+    COALESCE keeps whatever another source already wrote and only fills
+    the gaps — these collectors supply fields (targets, recs, earnings
+    dates) the primary yfinance/finviz writers may have missed.
+    """
+    cols = list(fields.keys())
+    updates = ", ".join(
+        f"{c} = COALESCE(EXCLUDED.{c}, fundamentals.{c})" for c in cols
+    )
+    today = datetime.date.today()
+    with get_db() as db:
+        db.execute(
+            f"""
+            INSERT INTO fundamentals (ticker, snapshot_date, source, {', '.join(cols)})
+            VALUES (%s, %s, 'finnhub', {', '.join(['%s'] * len(cols))})
+            ON CONFLICT (ticker, snapshot_date) DO UPDATE SET {updates}
+            """,
+            [ticker.upper(), today] + [fields[c] for c in cols],
+        )
+
+
 async def collect_analyst_targets(ticker: str) -> bool:
     """
-    Fetch analyst price targets from Finnhub.
-    These supplement the yfinance fundamentals with additional data points.
-    Returns True if data was written.
+    Fetch analyst price targets from Finnhub and persist the mean target
+    into today's fundamentals row (fills the gap when yfinance/finviz
+    didn't supply one).
     """
     try:
         client = _get_client()
@@ -58,8 +82,9 @@ async def collect_analyst_targets(ticker: str) -> bool:
             logger.info(f"[finnhub] No analyst targets for {ticker}")
             return False
 
+        _merge_into_fundamentals(ticker, {"target_price": target.get("targetMean")})
         logger.info(
-            f"[finnhub] {ticker}: analyst targets — "
+            f"[finnhub] {ticker}: analyst targets written — "
             f"high={target.get('targetHigh')}, "
             f"low={target.get('targetLow')}, "
             f"mean={target.get('targetMean')}"
@@ -88,6 +113,17 @@ async def collect_earnings_calendar(ticker: str) -> list[dict]:
 
         events = earnings.get("earningsCalendar", [])
         if events:
+            # Persist the next earnings date into today's fundamentals row
+            # (events come newest-last; take the soonest upcoming date).
+            dates = sorted(e["date"] for e in events if e.get("date"))
+            if dates:
+                try:
+                    _merge_into_fundamentals(
+                        ticker,
+                        {"earnings_date": datetime.date.fromisoformat(dates[0])},
+                    )
+                except Exception as we:
+                    logger.info(f"[finnhub] earnings date write failed for {ticker}: {we}")
             logger.info(f"[finnhub] {ticker}: {len(events)} upcoming earnings events")
         else:
             logger.info(f"[finnhub] {ticker}: no upcoming earnings")
@@ -110,6 +146,22 @@ async def collect_recommendation_trends(ticker: str) -> list[dict]:
 
         if trends:
             latest = trends[0]
+            # Persist as a finviz-style 1-5 score (1 = strong buy): weighted
+            # mean over the analyst counts of the latest monthly snapshot.
+            counts = [
+                (1, latest.get("strongBuy") or 0),
+                (2, latest.get("buy") or 0),
+                (3, latest.get("hold") or 0),
+                (4, latest.get("sell") or 0),
+                (5, latest.get("strongSell") or 0),
+            ]
+            total = sum(n for _, n in counts)
+            if total:
+                score = sum(w * n for w, n in counts) / total
+                try:
+                    _merge_into_fundamentals(ticker, {"recom_score": round(score, 2)})
+                except Exception as we:
+                    logger.info(f"[finnhub] recom write failed for {ticker}: {we}")
             logger.info(
                 f"[finnhub] {ticker}: recommendations — "
                 f"buy={latest.get('buy')}, hold={latest.get('hold')}, "

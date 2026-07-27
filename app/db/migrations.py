@@ -437,6 +437,52 @@ def run_migrations(conn):
         except Exception:
             pass
 
+    # ── Finviz-parity fundamentals extension (2026-07-27) ──
+    # ~36 new columns (dividends, ownership %, analyst targets/recs, earnings
+    # date, EPS/sales growth windows, margins, float/shares, short ratio).
+    # Guarded by the presence of `recom_score`: if it already exists this whole
+    # block (including the NON-idempotent debt_to_equity normalization) is
+    # skipped. The normalization converts yfinance/finnhub percent-style D/E
+    # (AAPL 79.5) to ratios (0.795) so the column has ONE unit; running it
+    # twice would corrupt the data, hence the sentinel.
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'fundamentals' AND column_name = 'recom_score'"
+            )
+            if cur.fetchone() is None:
+                for col in [
+                    "dividend_yield", "dividend_ttm", "payout_ratio",
+                    "price_to_cash", "price_to_fcf", "ev_to_sales",
+                    "lt_debt_to_equity", "quick_ratio", "eps_ttm", "eps_next_q",
+                    "eps_growth_this_y", "eps_growth_next_y",
+                    "eps_growth_next_5y", "eps_growth_past_5y",
+                    "sales_growth_past_5y", "eps_growth_qoq",
+                    "sales_growth_qoq", "eps_surprise", "sales_surprise",
+                    "insider_own_pct", "insider_trans_pct", "inst_own_pct",
+                    "inst_trans_pct", "roic", "gross_margin", "oper_margin",
+                    "shares_outstanding", "shares_float", "short_ratio",
+                    "short_interest", "recom_score", "target_price",
+                ]:
+                    cur.execute(
+                        f"ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION"
+                    )
+                cur.execute("ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS earnings_date DATE")
+                cur.execute("ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS ipo_date DATE")
+                cur.execute("ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS optionable BOOLEAN")
+                cur.execute("ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS shortable BOOLEAN")
+                cur.execute(
+                    "UPDATE fundamentals SET debt_to_equity = debt_to_equity/100.0 "
+                    "WHERE source IN ('yfinance', 'finnhub') AND debt_to_equity IS NOT NULL"
+                )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── One-time fix: ETH price collision + CAGR garbage position ──
     # The ticker "ETH" was misclassified as crypto, causing snapshots to use
     # the Ethereum crypto price (~$1,800) instead of the ETF price (~$23).

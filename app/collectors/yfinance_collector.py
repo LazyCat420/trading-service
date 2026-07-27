@@ -296,7 +296,9 @@ async def collect_fundamentals_finnhub(ticker: str) -> bool:
                     None,
                     None,
                     None,
-                    metric.get("debtEquityTTM"),
+                    # percent-style like yfinance — column convention is ratio
+                    (metric.get("debtEquityTTM") / 100.0
+                     if metric.get("debtEquityTTM") is not None else None),
                     metric.get("currentRatioAnnual"),
                     beta,
                     metric.get("52WeekHigh"),
@@ -320,41 +322,77 @@ async def collect_fundamentals(ticker: str) -> bool:
     info = await fetch_fundamentals_dict(ticker)
     if info and info.get("marketCap"):
         today = datetime.date.today()
+
+        # Unit seams in yfinance .info (checked against yfinance 1.2.0):
+        # debtToEquity is a PERCENT (AAPL 79.5) — the column convention is
+        # RATIO, so divide. dividendYield is a PERCENT since the 0.2.x line
+        # (AAPL 0.32 = 0.32%) — column convention is FRACTION, so divide.
+        # Every other percent-like field already arrives as a fraction.
+        de = info.get("debtToEquity")
+        de = de / 100.0 if de is not None else None
+        dy = info.get("dividendYield")
+        dy = dy / 100.0 if dy is not None else None
+        earnings_ts = info.get("earningsTimestamp")
+        earnings_date = (
+            datetime.date.fromtimestamp(earnings_ts) if earnings_ts else None
+        )
+
+        fields = {
+            "market_cap": info.get("marketCap"),
+            "pe_ratio": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+            "peg_ratio": info.get("pegRatio") or info.get("trailingPegRatio"),
+            "price_to_book": info.get("priceToBook"),
+            "price_to_sales": info.get("priceToSalesTrailing12Months"),
+            "ev_to_ebitda": info.get("enterpriseToEbitda"),
+            "profit_margin": info.get("profitMargins"),
+            "roe": info.get("returnOnEquity"),
+            "roa": info.get("returnOnAssets"),
+            "revenue": info.get("totalRevenue"),
+            "revenue_growth": info.get("revenueGrowth"),
+            "net_income": info.get("netIncomeToCommon"),
+            "debt_to_equity": de,
+            "current_ratio": info.get("currentRatio"),
+            "beta": info.get("beta"),
+            "week_52_high": info.get("fiftyTwoWeekHigh"),
+            "week_52_low": info.get("fiftyTwoWeekLow"),
+            "short_float_pct": info.get("shortPercentOfFloat"),
+            # extension (2026-07-27)
+            "dividend_yield": dy,
+            "dividend_ttm": info.get("trailingAnnualDividendRate"),
+            "payout_ratio": info.get("payoutRatio"),
+            "ev_to_sales": info.get("enterpriseToRevenue"),
+            "quick_ratio": info.get("quickRatio"),
+            "eps_ttm": info.get("trailingEps"),
+            # NOTE: yfinance's earningsGrowth is the latest QUARTER's growth,
+            # NOT finviz's "EPS this Y" fiscal-year estimate (XOM: +60% vs
+            # -43% — different concepts). eps_growth_this_y is finviz-only.
+            "eps_growth_qoq": info.get("earningsQuarterlyGrowth"),
+            "sales_growth_qoq": info.get("revenueGrowth"),
+            "gross_margin": info.get("grossMargins"),
+            "oper_margin": info.get("operatingMargins"),
+            "insider_own_pct": info.get("heldPercentInsiders"),
+            "inst_own_pct": info.get("heldPercentInstitutions"),
+            "shares_outstanding": info.get("sharesOutstanding"),
+            "shares_float": info.get("floatShares"),
+            "short_ratio": info.get("shortRatio"),
+            "short_interest": info.get("sharesShort"),
+            "recom_score": info.get("recommendationMean"),
+            "target_price": info.get("targetMeanPrice"),
+            "earnings_date": earnings_date,
+        }
+        cols = list(fields.keys())
+        updates = ", ".join(
+            f"{c} = COALESCE(EXCLUDED.{c}, fundamentals.{c})" for c in cols
+        )
         with get_db() as db:
             db.execute(
-                """
-                INSERT INTO fundamentals (
-                    ticker, snapshot_date, source, market_cap, pe_ratio, forward_pe, peg_ratio,
-                    price_to_book, price_to_sales, ev_to_ebitda, profit_margin,
-                    roe, roa, revenue, revenue_growth, net_income,
-                    debt_to_equity, current_ratio, beta,
-                    week_52_high, week_52_low, short_float_pct
-                ) VALUES (%s, %s, 'yfinance', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, snapshot_date) DO NOTHING
-            """,
-                [
-                    ticker,
-                    today,
-                    info.get("marketCap"),
-                    info.get("trailingPE"),
-                    info.get("forwardPE"),
-                    info.get("pegRatio"),
-                    info.get("priceToBook"),
-                    info.get("priceToSalesTrailing12Months"),
-                    info.get("enterpriseToEbitda"),
-                    info.get("profitMargins"),
-                    info.get("returnOnEquity"),
-                    info.get("returnOnAssets"),
-                    info.get("totalRevenue"),
-                    info.get("revenueGrowth"),
-                    info.get("netIncomeToCommon"),
-                    info.get("debtToEquity"),
-                    info.get("currentRatio"),
-                    info.get("beta"),
-                    info.get("fiftyTwoWeekHigh"),
-                    info.get("fiftyTwoWeekLow"),
-                    info.get("shortPercentOfFloat"),
-                ],
+                f"""
+                INSERT INTO fundamentals (ticker, snapshot_date, source, {', '.join(cols)})
+                VALUES (%s, %s, 'yfinance', {', '.join(['%s'] * len(cols))})
+                ON CONFLICT (ticker, snapshot_date) DO UPDATE SET {updates}
+                """,
+                [ticker, today] + [fields[c] for c in cols],
             )
         logger.info(
             f"[yfinance] {ticker}: fundamentals written (mkt_cap={info.get('marketCap')})"

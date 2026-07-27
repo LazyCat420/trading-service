@@ -778,9 +778,29 @@ class SchedulerService:
                     misfire_grace_time=3600,
                     coalesce=True,
                 )
-                logger.info("[SCHEDULER] Registered nightly fundamentals refresh (2:30 AM PT, 40 stalest)")
+                logger.info("[SCHEDULER] Registered nightly fundamentals refresh (2:30 AM PT, 250 stalest of screener universe)")
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register fundamentals refresh: %s", e)
+
+            # Nightly finviz supplement (3:15 AM PT — deliberately AFTER the
+            # yfinance refresh so finviz's values win the same-day COALESCE
+            # merge). Fills the finviz-only fields (ROIC, EPS estimates,
+            # insider/inst transactions, surprises, IPO date) the API
+            # providers don't carry. Small batch: finviz is a scrape with a
+            # 2s courtesy delay and an aggressive rate limiter on their side.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_finviz_supplement,
+                    trigger=CronTrigger(hour=3, minute=15,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="finviz_supplement",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered nightly finviz supplement (3:15 AM PT, 60 stalest)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register finviz supplement: %s", e)
 
             # Nightly stale-first PRICE refresh for the watchlist tickers that
             # BootService._sp500_daily_refresh_loop does not cover (2026-07-26:
@@ -1175,12 +1195,16 @@ class SchedulerService:
             logger.error("[SCHEDULER] Smart-money lead injection failed: %s", e)
 
     @staticmethod
-    async def _run_fundamentals_refresh(batch: int = 40):
-        """Refresh the stalest active-watchlist fundamentals (provider-rotated).
+    async def _run_fundamentals_refresh(batch: int = 250):
+        """Refresh the stalest fundamentals across the screener universe.
 
-        Fundamentals previously refreshed ONLY when a ticker was analyzed in a
-        cycle (5-8/cycle), so 653/727 tickers sat >14 days stale. 40/night
-        covers the whole active watchlist in under a week.
+        Was 40/night over the active watchlist only — which left the market-map
+        screener's universe (ticker_metadata, ~1,011 tickers) with a median
+        fundamentals age of 51 days (measured 2026-07-27). Now: active
+        watchlist ∪ ticker_metadata stocks/ETFs, stale-first, 250/night →
+        the full universe cycles in ~4 nights and then just tracks. Rows
+        already fresh (≤2 days) are excluded so a converged universe costs
+        almost nothing.
         """
         try:
             from app.collectors.data_rotator import fetch_fundamentals
@@ -1189,12 +1213,19 @@ class SchedulerService:
             with get_db() as db:
                 rows = db.execute(
                     """
-                    SELECT w.ticker, MAX(f.snapshot_date) AS last_snap
-                    FROM watchlist w
-                    LEFT JOIN fundamentals f ON f.ticker = w.ticker
-                    WHERE w.status = 'active'
-                    GROUP BY w.ticker
-                    ORDER BY last_snap ASC NULLS FIRST
+                    WITH universe AS (
+                        SELECT ticker FROM watchlist WHERE status = 'active'
+                        UNION
+                        SELECT ticker FROM ticker_metadata
+                        WHERE COALESCE(asset_class, 'stock') IN ('stock', 'etf')
+                    )
+                    SELECT u.ticker, MAX(f.snapshot_date) AS last_snap
+                    FROM universe u
+                    LEFT JOIN fundamentals f ON f.ticker = u.ticker
+                    GROUP BY u.ticker
+                    HAVING MAX(f.snapshot_date) IS NULL
+                        OR MAX(f.snapshot_date) < CURRENT_DATE - 2
+                    ORDER BY MAX(f.snapshot_date) ASC NULLS FIRST
                     LIMIT %s
                     """,
                     [batch],
@@ -1209,6 +1240,49 @@ class SchedulerService:
             logger.info("[SCHEDULER] Fundamentals refresh: %d/%d tickers updated", done, len(rows))
         except Exception as e:
             logger.error("[SCHEDULER] Fundamentals refresh failed: %s", e)
+
+    @staticmethod
+    async def _run_finviz_supplement(batch: int = 60):
+        """Scrape finviz snapshots for tickers missing finviz-only fields.
+
+        Targets the screener universe's price-fresh population, preferring
+        tickers whose latest fundamentals row has no ROIC / EPS-estimate
+        data yet, then the stalest. 60/night at ~2s per request is ~2 min
+        of polite scraping; the whole fresh universe cycles in ~10 nights.
+        """
+        try:
+            from app.collectors.finviz_scraper import collect_fundamentals as collect_finviz
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT m.ticker,
+                           (SELECT MAX(f.snapshot_date) FROM fundamentals f
+                             WHERE f.ticker = m.ticker AND f.roic IS NOT NULL) AS last_fv
+                    FROM ticker_metadata m
+                    WHERE COALESCE(m.asset_class, 'stock') = 'stock'
+                      AND EXISTS (
+                          SELECT 1 FROM price_history p
+                          WHERE p.ticker = m.ticker
+                            AND p.date > CURRENT_DATE - 7
+                            AND p.source != 'world_simulator'
+                      )
+                    ORDER BY last_fv ASC NULLS FIRST
+                    LIMIT %s
+                    """,
+                    [batch],
+                ).fetchall()
+            done = 0
+            for (ticker, _last) in rows:
+                try:
+                    if await collect_finviz(ticker):
+                        done += 1
+                except Exception as te:
+                    logger.warning("[SCHEDULER] finviz supplement %s failed: %s", ticker, te)
+            logger.info("[SCHEDULER] Finviz supplement: %d/%d tickers scraped", done, len(rows))
+        except Exception as e:
+            logger.error("[SCHEDULER] Finviz supplement failed: %s", e)
 
     @staticmethod
     async def _run_watchlist_price_refresh(batch: int = 40):
