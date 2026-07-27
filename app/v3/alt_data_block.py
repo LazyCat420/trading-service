@@ -69,6 +69,41 @@ def build_alt_data_block(ticker: str) -> str:
     except Exception as e:
         logger.debug("[AltDataBlock] %s: social query failed (non-fatal): %s", ticker, e)
 
+    # Congress disclosures. 30k rows and by far the deepest alt-data set we
+    # hold, but it was the one domain with no reader on the per-ticker path —
+    # it reached ticker SELECTION via _inject_smart_money_leads and then
+    # vanished before the desk ever reasoned about it.
+    #
+    # trade_date <= CURRENT_DATE because the table carries future-dated rows
+    # (max was 2026-12-26 on 2026-07-27, open since the 07-23 audit); without
+    # the guard a bad row would present as the most recent disclosure.
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT transaction_type, COUNT(*), MAX(trade_date), MAX(politician)
+                FROM congress_trades
+                WHERE ticker = %s
+                  AND trade_date >= CURRENT_DATE - INTERVAL '90 days'
+                  AND trade_date <= CURRENT_DATE
+                GROUP BY transaction_type
+                ORDER BY COUNT(*) DESC
+                """,
+                [ticker],
+            ).fetchall()
+        if rows:
+            detail = ", ".join(
+                f"{r[1]}× {r[0] or 'unknown'} (latest {r[2]}, e.g. {r[3]})"
+                for r in rows[:3]
+            )
+            parts.append(
+                f"- Congressional disclosures (90d): {detail}. Disclosure lags "
+                f"the trade by up to 45 days — treat as slow confirmation, "
+                f"never as a timing signal."
+            )
+    except Exception as e:
+        logger.debug("[AltDataBlock] %s: congress query failed (non-fatal): %s", ticker, e)
+
     if not parts:
         return ""
     return "## ALTERNATIVE DATA (code-computed — verify, don't re-fetch)\n" + "\n".join(parts)

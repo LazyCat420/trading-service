@@ -16,9 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 def _get_key() -> str:
-    key = settings.POLYGON_API_KEY
+    """Polygon credential, under either of the two names we store it as.
+
+    The news rotator has always read `POLYGON_API_KEY or MASSIVE_API_KEY`
+    (news_api_rotator.build_providers_from_settings), but the price path read
+    only the first. On the live container POLYGON_API_KEY is EMPTY and
+    MASSIVE_API_KEY is set — so Polygon served news happily while the Polygon
+    PRICE fallback was unreachable for every ticker, which is precisely the
+    fallback needed when yfinance withholds the latest session.
+    """
+    key = settings.POLYGON_API_KEY or settings.MASSIVE_API_KEY
     if not key:
-        raise ValueError("POLYGON_API_KEY not set in .env")
+        raise ValueError("Neither POLYGON_API_KEY nor MASSIVE_API_KEY set in .env")
     return key
 
 

@@ -17,48 +17,106 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _is_missing_recent_session(ticker: str) -> bool:
+    """True when this ticker's newest stored bar lags its market peers.
+
+    yfinance serves the latest session as NaN OHLC with a real Volume, and
+    `fetch_ohlcv_dataframe` correctly drops that bar — but the NaN is not
+    always transient. Probed 2026-07-27 (a Monday): Friday 2026-07-24 came
+    back NaN for both ASC and SBUX, three days after that session closed.
+
+    SBUX still holds a 07-24 row because the S&P 500 post-close loop caught
+    the bar during the short window it was complete. Everything outside that
+    loop misses the window and then can never recover the bar from yfinance,
+    which is why 509 tickers sat on 07-24 while 71 were frozen at 07-23 —
+    including AGNC, ASC and BOOT, three of the seven analysed in
+    cycle-v3-1785137616.
+
+    The fallback providers were unreachable in that state: `fetch_price_history`
+    returned as soon as yfinance produced ANY rows, and it produced 250. A
+    partial success must not suppress the provider that can fill the gap.
+
+    Fails CLOSED (returns False) on any probe error — an unreachable DB must
+    not make every ticker look stale and trigger fallback fetches fleet-wide.
+    """
+    try:
+        from datetime import date
+
+        from app.db.connection import get_db
+        from app.quant.technical_baseline import _trading_day_age
+
+        with get_db() as db:
+            row = db.execute(
+                "SELECT MAX(date) FROM price_history WHERE ticker = %s", [ticker]
+            ).fetchone()
+        latest = row[0] if row else None
+        if latest is None:
+            return False  # no rows at all — nothing to compare, let step 1 decide
+        age = _trading_day_age(ticker, date.today(), latest)
+        return bool(age and age >= 1)
+    except Exception as e:
+        logger.debug("[rotator] %s: session-gap probe failed (%s) — assuming current",
+                     ticker, e)
+        return False
+
+
 async def fetch_price_history(ticker: str, days_back: int = 365) -> int:
     """Try to fetch price history, falling back across providers until successful."""
     period = "1y" if days_back <= 365 else "5y"
 
     # 1. Try yfinance
     logger.debug(f"[rotator] Fetching price history for {ticker} via yfinance...")
+    count = 0
     try:
         count = await yfinance_collector.collect_price_history(ticker, period=period)
-        if count > 0:
+        if count > 0 and not _is_missing_recent_session(ticker):
             return count
+        if count > 0:
+            logger.info(
+                "[rotator] %s: yfinance returned %d rows but the newest session is "
+                "still missing — continuing to the fallback providers",
+                ticker, count,
+            )
     except Exception as e:
         logger.warning(f"[rotator] yfinance raised error for {ticker} prices: {e}")
+
+    # Rows yfinance already wrote. A fallback that adds nothing must not erase
+    # them from the return value — callers read 0 as "total outage" and
+    # _EXPECT_TRUTHY turns that into a collector error.
+    yf_count = count
 
     # 2. Fallback to FMP (only if API key is configured)
     if settings.FMP_API_KEY:
         logger.warning(
-            f"[rotator] yfinance failed for {ticker} prices. Falling back to FMP..."
+            f"[rotator] yfinance incomplete for {ticker} prices. Falling back to FMP..."
         )
         try:
-            count = await fmp_collector.collect_price_history(ticker, days_back=days_back)
-            if count > 0:
-                return count
+            fmp_count = await fmp_collector.collect_price_history(ticker, days_back=days_back)
+            if fmp_count > 0 and not _is_missing_recent_session(ticker):
+                return yf_count + fmp_count
+            count = yf_count + fmp_count
         except Exception as e:
             logger.warning(f"[rotator] FMP raised error for {ticker} prices: {e}")
     else:
         logger.debug("[rotator] FMP_API_KEY not set, skipping FMP fallback for %s", ticker)
 
-    # 3. Fallback to Polygon (only if API key is configured)
-    if settings.POLYGON_API_KEY:
+    # 3. Fallback to Polygon (only if a key is configured under EITHER name —
+    # the live container carries it as MASSIVE_API_KEY, so gating on
+    # POLYGON_API_KEY alone disabled this fallback everywhere).
+    if settings.POLYGON_API_KEY or settings.MASSIVE_API_KEY:
         logger.warning(
             f"[rotator] FMP failed for {ticker} prices. Falling back to Polygon..."
         )
-        count = 0
         try:
-            count = await polygon_collector.collect_price_history(
+            count = max(count, yf_count) + await polygon_collector.collect_price_history(
                 ticker, days_back=days_back
             )
         except Exception as e:
             logger.warning(f"[rotator] Polygon raised error for {ticker} prices: {e}")
+            count = max(count, yf_count)
     else:
-        logger.debug("[rotator] POLYGON_API_KEY not set, skipping Polygon fallback for %s", ticker)
-        count = 0
+        logger.debug("[rotator] No Polygon key (POLYGON_API_KEY/MASSIVE_API_KEY), skipping Polygon fallback for %s", ticker)
+        count = max(count, yf_count)
 
     if count == 0:
         logger.error(

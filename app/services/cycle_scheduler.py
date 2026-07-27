@@ -1379,9 +1379,40 @@ class SchedulerService:
             from app.collectors.stocktwits_collector import collect_for_ticker
             from app.db.connection import get_db
 
+            # Target what the desk actually reasons about, stalest first.
+            #
+            # The old query was `... WHERE status='active' LIMIT 15` — no
+            # ORDER BY, so Postgres returned the same arbitrary 15 of 45 active
+            # names every night and the remaining 30 were never collected at
+            # all. Measured 2026-07-27: social_posts held exactly 16 distinct
+            # tickers over 7 days.
+            #
+            # Worse, the watchlist is the wrong population. Six of the seven
+            # tickers in cycle-v3-1785137616 (SBUX, STT, AGNC, ASC, BOOT, AMZN)
+            # were not on the watchlist in any status, so build_alt_data_block
+            # returned "" for all seven — the collector ran, stored rows, and
+            # none of them belonged to a ticker under analysis.
+            #
+            # Union recently-analysed tickers with the active watchlist and
+            # order by the age of what we already hold, so the sweep rotates
+            # instead of re-collecting one fixed set.
             with get_db() as db:
                 rows = db.execute(
-                    "SELECT ticker FROM watchlist WHERE status = 'active' LIMIT 15"
+                    """
+                    WITH targets AS (
+                        SELECT DISTINCT ticker FROM watchlist WHERE status = 'active'
+                        UNION
+                        SELECT DISTINCT ticker FROM trade_results
+                        WHERE created_at > NOW() - INTERVAL '14 days'
+                          AND ticker IS NOT NULL
+                    )
+                    SELECT t.ticker
+                    FROM targets t
+                    LEFT JOIN social_posts s ON s.ticker = t.ticker
+                    GROUP BY t.ticker
+                    ORDER BY MAX(s.posted_at) ASC NULLS FIRST
+                    LIMIT 15
+                    """
                 ).fetchall()
             total = 0
             for (ticker,) in rows:
