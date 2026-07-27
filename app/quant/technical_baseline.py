@@ -89,8 +89,25 @@ def _freshness(age_trading_days: int | None, cls: str) -> tuple[float, str]:
     return mult, f"{age_trading_days}d old — ageing"
 
 
+# Minimum bars before a ticker is considered analysable at all.
+#
+# 14, because RSI-14 and ATR-14 are the shortest-window indicators the desk
+# quotes, and a shorter series cannot produce even one of them. Anything below
+# this is not "thin data" — it is a ticker with no computable technicals, on
+# which every level in the artifact would be invented.
+#
+# Deliberately NOT 200 (SMA-200's window): plenty of real, recently-listed
+# equities have 3 months of history and are perfectly tradeable. The graded
+# freshness block already tells the agent which indicators it does and does
+# not have; this gate only catches the case where there is nothing at all.
+#
+# Sized off SKHYV (2026-07-27): 2 rows, a full agent panel, a decision. The
+# original "at least one row" test let that through.
+MIN_TRADEABLE_BARS = 14
+
+
 def has_price_history(ticker: str) -> bool:
-    """True when `ticker` has at least one price_history row.
+    """True when `ticker` has enough price history to compute any indicator.
 
     The policy gate's probe. Deliberately the cheapest possible question —
     "is there any data at all" — because it backs a categorical gate, not a
@@ -110,9 +127,11 @@ def has_price_history(ticker: str) -> bool:
         return False
     with get_db() as db:
         row = db.execute(
-            "SELECT 1 FROM price_history WHERE ticker = %s LIMIT 1", [ticker]
+            "SELECT COUNT(*) FROM (SELECT 1 FROM price_history WHERE ticker = %s "
+            "LIMIT %s) s",
+            [ticker, MIN_TRADEABLE_BARS],
         ).fetchone()
-    return row is not None
+    return bool(row) and row[0] >= MIN_TRADEABLE_BARS
 
 
 def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:

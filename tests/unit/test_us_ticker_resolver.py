@@ -90,10 +90,20 @@ class TestIsUsTradeable:
 class TestResolveToUsTicker:
     """Test the synchronous ADR resolution (hard-coded map only)."""
 
-    def test_sk_hynix_resolves(self):
-        """The original bug: 000660.KS should resolve to SKHYV."""
-        result = resolve_to_us_ticker("000660.KS")
-        assert result == "SKHYV"
+    def test_sk_hynix_is_dropped_not_redirected(self):
+        """Updated 2026-07-27. This originally asserted 000660.KS -> SKHYV.
+
+        SKHYV is a real SK Hynix ADR with a matching name, but it trades ~1
+        bar/month against the KRX line's ~20. In cycle-v3-1785128960 the
+        rewrite handed the desk a ticker with 2 price rows, on which a full
+        agent panel ran and produced a HOLD @ 54. Resolving to an untradeable
+        symbol is worse than not resolving: a dropped ticker is visible in the
+        logs, a redirected one is not.
+
+        Verified with scripts/audit_adr_map.py. Re-add only if a liquid,
+        name-verified SK Hynix listing appears.
+        """
+        assert resolve_to_us_ticker("000660.KS") is None
 
     def test_sony_resolves(self):
         result = resolve_to_us_ticker("6758.T")
@@ -125,8 +135,7 @@ class TestResolveToUsTicker:
         assert result is None
 
     def test_case_insensitive(self):
-        result = resolve_to_us_ticker("000660.ks")
-        assert result == "SKHYV"
+        assert resolve_to_us_ticker("6758.t") == "SONY"
 
 
 class TestResolveTickersBatch:
@@ -134,14 +143,14 @@ class TestResolveTickersBatch:
 
     def test_mixed_batch(self):
         """Should pass US tickers through, resolve known foreign, drop unknown foreign."""
-        input_tickers = ["NVDA", "000660.KS", "AAPL", "6758.T", "999999.KS"]
+        input_tickers = ["NVDA", "2330.TW", "AAPL", "6758.T", "999999.KS"]
         result = resolve_tickers_batch(input_tickers)
         assert "NVDA" in result
         assert "AAPL" in result
-        assert "SKHYV" in result  # 000660.KS → SKHYV
+        assert "TSM" in result    # 2330.TW → TSM
         assert "SONY" in result   # 6758.T → SONY
         assert "999999.KS" not in result  # dropped (foreign format, no known ADR)
-        assert "000660.KS" not in result   # resolved, not passed through
+        assert "2330.TW" not in result    # resolved, not passed through
 
     def test_all_us_tickers(self):
         """All US tickers should pass through unchanged."""
@@ -151,9 +160,9 @@ class TestResolveTickersBatch:
 
     def test_all_foreign_with_known_mapping(self):
         """All foreign with known ADR mappings should resolve."""
-        input_tickers = ["000660.KS", "6758.T", "9988.HK"]
+        input_tickers = ["2330.TW", "6758.T", "9988.HK"]
         result = resolve_tickers_batch(input_tickers)
-        assert result == ["SKHYV", "SONY", "BABA"]
+        assert result == ["TSM", "SONY", "BABA"]
 
     def test_empty_list(self):
         result = resolve_tickers_batch([])
@@ -169,10 +178,22 @@ class TestResolveTickersBatch:
 class TestKnownADRMap:
     """Validate the integrity of the hard-coded ADR map."""
 
-    def test_map_has_sk_hynix(self):
-        """The original motivating case must be in the map."""
-        assert "000660.KS" in KNOWN_ADR_MAP
-        assert KNOWN_ADR_MAP["000660.KS"] == "SKHYV"
+    def test_map_carries_the_liquid_cross_listings(self):
+        """Updated 2026-07-27 — was `test_map_has_sk_hynix`.
+
+        The map's job is not "contain every foreign ticker" but "redirect only
+        where the destination is the same company AND actually trades". Four
+        entries failed that on live data and were removed; these are the
+        anchors that pass. See scripts/audit_adr_map.py.
+        """
+        for foreign, us in (("6758.T", "SONY"), ("2330.TW", "TSM"),
+                            ("9988.HK", "BABA"), ("ASML.AS", "ASML")):
+            assert KNOWN_ADR_MAP.get(foreign) == us
+
+    def test_audited_bad_destinations_stay_out(self):
+        """Guards against a well-meaning re-add of a dead or mismatched ADR."""
+        for dead in ("SKHYV", "NPSNY", "MRAAY", "KRMAY", "KYOEY"):
+            assert dead not in KNOWN_ADR_MAP.values()
 
     def test_us_values_have_no_dots(self):
         """All US ticker values should be plain alphanumeric (no dots)."""

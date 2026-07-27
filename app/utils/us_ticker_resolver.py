@@ -22,18 +22,45 @@ logger = logging.getLogger(__name__)
 # ── Layer 1: Hard-coded ADR / cross-listing map ──────────────────────
 # Top foreign tickers → their US-listed equivalents.
 # Updated manually for the most traded ADRs. This is the fastest lookup.
+#
+# ⚠ A WRONG ENTRY HERE IS WORSE THAN A MISSING ONE. The rewrite is silent:
+# the cycle requests 000660.KS and everything downstream — collection,
+# analysis, the decision, the trade — happens against the substitute. Audited
+# 2026-07-27 against live yfinance data, four entries were broken:
+#
+#   000660.KS -> SKHYV   SK Hynix's ADR is real (NASDAQ, name matches) but
+#                        trades 1 bar/month. The KRX line has 20. Substituting
+#                        turned a liquid ticker into an untradeable one, and
+#                        the cycle still produced a full analysis on 2 rows.
+#   035420.KS -> NPSNY   NAVER (Korea) -> NASPERS LTD (South Africa).
+#                        WRONG COMPANY.
+#   2454.TW   -> MRAAY   MediaTek (Taiwan) -> MURATA MANUFACTURING (Japan).
+#                        WRONG COMPANY.
+#   035720.KS -> KRMAY   Kakao -> dead symbol, 0 bars, 404s on quote lookup.
+#   6861.T    -> KYOEY   Keyence -> dead symbol, 0 bars. Replaced with KYCCF,
+#                        which name-verifies and trades.
+#
+# All four now removed or corrected. Removed foreign tickers fall through to
+# resolve_to_us_ticker_async's yfinance search, and if that finds nothing the
+# ticker is dropped with a warning — which is the honest outcome. Some
+# companies simply have no liquid US listing.
+#
+# Before adding an entry, run: scripts/audit_adr_map.py
+# It checks BOTH that the destination trades AND that the company name
+# matches the source. Liquidity alone is not enough: KKOYF looked like a fine
+# Kakao replacement at 20 bars/month and is actually Kesko Oyj, a Finnish
+# grocer.
 KNOWN_ADR_MAP: dict[str, str] = {
     # ── Korean stocks (.KS = KRX, .KQ = KOSDAQ) ──
-    "000660.KS": "SKHYV",   # SK Hynix → NASDAQ ADR (IPO'd 2026-07-10)
     "005930.KS": "SSNLF",   # Samsung Electronics → OTC
     "005935.KS": "SSNLF",   # Samsung Electronics (preferred) → OTC
-    "035420.KS": "NPSNY",   # NAVER → OTC
-    "035720.KS": "KRMAY",   # Kakao → OTC
     # ── Japanese stocks (.T = Tokyo) ──
     "6758.T": "SONY",       # Sony → NYSE
     "7203.T": "TM",         # Toyota → NYSE
     "7267.T": "HMC",        # Honda → NYSE
-    "6861.T": "KYOEY",      # Keyence → OTC
+    "6861.T": "KYCCF",      # Keyence → OTC. Was KYOEY: 0 bars in a month
+                            # (dead symbol). KYCCF is name-verified
+                            # ("Keyence Corp.") and trades ~20 bars/month.
     "9984.T": "SFTBY",      # SoftBank Group → OTC
     "6501.T": "HTHIY",      # Hitachi → OTC
     "8306.T": "MUFG",       # Mitsubishi UFJ → NYSE
@@ -48,7 +75,8 @@ KNOWN_ADR_MAP: dict[str, str] = {
     # ── Taiwanese stocks (.TW = TWSE) ──
     "2330.TW": "TSM",       # TSMC → NYSE
     "2317.TW": "HNHPF",     # Hon Hai (Foxconn) → OTC
-    "2454.TW": "MRAAY",     # MediaTek → OTC
+    # 2454.TW (MediaTek) removed: mapped to MRAAY, which is MURATA
+    # MANUFACTURING — a different company. See WRONG_COMPANY note below.
     # ── European stocks (.L = London, .DE = Frankfurt, .PA = Paris) ──
     "ASML.AS": "ASML",      # ASML → NASDAQ
     "SAP.DE": "SAP",        # SAP → NYSE
