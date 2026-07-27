@@ -127,8 +127,18 @@ def test_governed_count_returns_none_when_the_column_is_missing():
 def test_maturity_threshold_exceeds_a_single_cycle():
     """The whole point: at ~7 decisions/cycle, a threshold at or below that
     permits one edit per cycle and reproduces the 20-versions-in-5-days churn
-    that made every version unmeasurable."""
-    assert S.MIN_DECISIONS_BEFORE_REEDIT > 7
+    that made every version unmeasurable.
+
+    The threshold moved to scorecard.MATURITY_N when the gate stopped being a
+    raw sample count. It also went UP: bootstrapping 1500 real resolved
+    decisions put the 95% noise band at ±0.207 for n=25, so the old threshold
+    sat inside its own noise and a comparison there decides nothing.
+    """
+    from app.autoresearch.scorecard import MATURITY_N, REGRESSION_MARGIN
+
+    assert MATURITY_N > 7
+    assert MATURITY_N >= S._SUPERSEDED_MIN_DECISIONS_BEFORE_REEDIT
+    assert 0 < REGRESSION_MARGIN < 0.2
 
 
 def test_immature_is_counted_separately_from_skipped():
@@ -149,9 +159,16 @@ def test_an_immature_version_is_held():
     import asyncio
     from unittest.mock import AsyncMock
 
+    from app.autoresearch.scorecard import VERDICT_IMMATURE, VersionScorecard
+
+    immature = VersionScorecard(
+        agent_name="v3_bull_agent", version=4, n_governed=3,
+        verdict=VERDICT_IMMATURE, detail="3/100 resolved decisions",
+    )
     called = AsyncMock()
     with patch.object(S, "_load_skill", return_value=("old doc", 4)), \
          patch.object(S, "_decisions_governed", return_value=3), \
+         patch.object(S, "regression_verdict", return_value=immature), \
          patch.object(S, "_call_optimizer_llm", new=called):
         out = asyncio.run(
             S._optimize_one_agent("v3_bull_agent", "role", {}, "cyc-1", 0.55)
@@ -166,10 +183,19 @@ def test_a_mature_version_is_eligible_again():
     import asyncio
     from unittest.mock import AsyncMock
 
+    from app.autoresearch.scorecard import (
+        MATURITY_N, VERDICT_HEALTHY, VersionScorecard,
+    )
+
+    healthy = VersionScorecard(
+        agent_name="v3_bull_agent", version=4, combined=0.6,
+        n_governed=MATURITY_N, verdict=VERDICT_HEALTHY,
+    )
     proposal = {"action": "REPLACE", "rationale": "x",
                 "updated_skill": "- **New**: Always veto entries below a 1.2 to 1 reward ratio."}
     with patch.object(S, "_load_skill", return_value=("- **Old**: Always cap size at 5%.", 4)), \
-         patch.object(S, "_decisions_governed", return_value=S.MIN_DECISIONS_BEFORE_REEDIT), \
+         patch.object(S, "_decisions_governed", return_value=MATURITY_N), \
+         patch.object(S, "regression_verdict", return_value=healthy), \
          patch.object(S, "_call_optimizer_llm", new=AsyncMock(return_value=proposal)), \
          patch.object(S, "_save_skill"):
         out = asyncio.run(

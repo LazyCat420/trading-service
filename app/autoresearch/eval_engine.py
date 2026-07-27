@@ -110,9 +110,89 @@ def evaluate_trace(trace: TraceRecord) -> Dict[str, Any]:
 ENGINEERING_BUCKETS = frozenset({"over_research", "bad_arguments", "loop_drift"})
 MARKET_BUCKETS = frozenset({"hold_bias"})
 
+# A tool that was UNREACHABLE is not an agent that used it badly.
+#
+# `classify_failure` used to send anything whose tool result contained "error"
+# to `bad_arguments`, so a dead provider was recorded as the agent passing wrong
+# arguments. Sampled over 21 days of real traces, 86 of ~103 such failures were
+# transport: 40 × "Failed to reach trading-service … operation was aborted",
+# 36 × `lazy_web_search` "Search failed" (the DuckDuckGo egress refusal), plus
+# bridge timeouts, expired MCP sessions and 403s. Only ~17 were genuinely the
+# agent's doing — a wrong kwarg, an invented skill name, a violated precondition.
+#
+# That mislabelling is why the fundamental analyst's day-to-day eval failure
+# rate has a ±0.53 band: it was tracking provider health, not skill. Anything
+# scoring an AGENT on its failures has to exclude this class, or the first
+# outage rolls back every skill version at once.
+INFRA_BUCKETS = frozenset({"tool_unavailable"})
+
 ERROR_CLASS_ENGINEERING = "engineering"
 ERROR_CLASS_MARKET = "market"
+ERROR_CLASS_INFRA = "infra"
 ERROR_CLASS_UNCLASSIFIED = "unclassified"
+
+# Substrings that identify a transport/provider failure in a tool result.
+# Written from the sampled traces above rather than from imagination; each entry
+# has at least one real occurrence behind it.
+_INFRA_MARKERS: tuple[str, ...] = (
+    "failed to reach",              # bridge unreachable
+    "operation was aborted",        # bridge abort
+    "bridge timeout",
+    "timed out",
+    "timeout",
+    "search failed",                # every provider in the rotation refused
+    "connection refused",
+    "econnrefused",
+    "connect timeout",
+    "connecttimeout",
+    "invalid or expired session",   # MCP session died under us
+    "mcp tool call failed",         # MCP transport, not tool semantics
+    "service unavailable",
+    "bad gateway",
+    "too many requests",
+    "http 429",
+    "http 500", "http 502", "http 503", "http 504",
+    "http 403",                     # provider refusing our egress
+)
+
+# Substrings that identify a genuine agent mistake. Checked BEFORE the infra
+# markers, because an agent-side message can quote a transport word ("timeout"
+# as an argument name) and the agent signal is the rarer, more valuable one.
+_AGENT_ERROR_MARKERS: tuple[str, ...] = (
+    "unexpected keyword",           # whiteboard_write(bad_kwarg=…)
+    "is required",                  # "At least one of 'query' or 'domain' is required."
+    "not found. use",               # invented a skill name; tool told it how to look
+    "need at least",                # precondition the agent should have checked
+    "need >=",
+    "missing required",
+    "invalid argument",
+    # Malformed input the agent constructed. These are deliberately narrow: a
+    # bare "invalid" would swallow "Invalid or expired session", which is the
+    # MCP transport dying and is checked below as infra.
+    "invalid ticker",
+    "invalid symbol",
+    "format error",
+    "invalid format",
+)
+
+
+def classify_tool_failure(tool_result_summary: str | None) -> str | None:
+    """``"infra"`` | ``"agent"`` | ``None`` (cannot tell) for a failed tool call.
+
+    ``None`` is a real answer and callers must treat it as such: a failure this
+    cannot attribute is excluded from any per-agent score rather than guessed
+    at. Silently defaulting either way corrupts the thing the score is for —
+    call it infra and a bad skill hides behind it; call it agent and an outage
+    rolls back a good one.
+    """
+    if not tool_result_summary:
+        return None
+    text = str(tool_result_summary).lower()
+    if any(m in text for m in _AGENT_ERROR_MARKERS):
+        return "agent"
+    if any(m in text for m in _INFRA_MARKERS):
+        return "infra"
+    return None
 
 
 def classify_error_class(bucket: str | None) -> str | None:
@@ -123,6 +203,8 @@ def classify_error_class(bucket: str | None) -> str | None:
     """
     if bucket is None:
         return None
+    if bucket in INFRA_BUCKETS:
+        return ERROR_CLASS_INFRA
     if bucket in ENGINEERING_BUCKETS:
         return ERROR_CLASS_ENGINEERING
     if bucket in MARKET_BUCKETS:
@@ -145,7 +227,17 @@ def classify_failure(trace: TraceRecord, score: Dict[str, Any]) -> str | None:
 
     tool_summary = str(trace.tool_result_summary or "").lower()
     if "error" in tool_summary or "invalid" in tool_summary:
-        return "bad_arguments"
+        # Split the failure by who caused it. Everything used to land in
+        # `bad_arguments`, which blamed the agent for every dead provider.
+        attribution = classify_tool_failure(trace.tool_result_summary)
+        if attribution == "infra":
+            return "tool_unavailable"
+        if attribution == "agent":
+            return "bad_arguments"
+        # Cannot tell — do not manufacture an attribution. `wrong_tool_selected`
+        # is already the repo's catch-all and is in neither the engineering nor
+        # the market set, so nothing automated acts on it.
+        return "wrong_tool_selected"
 
     if (trace.loop_step or 0) > 12:
         return "loop_drift"

@@ -3,16 +3,23 @@ SkillOpt — post-cycle skill mutation for the V3 agent fleet.
 
 After each autoresearch reflection, propose one bounded edit per target agent's
 persistent "skill doc" (a short markdown block that skill_loader prepends to
-that agent's system prompt), validate it against a heuristic score gate, and
-persist accepted versions to agent_skills. Rejected candidates are logged to
-rejected_skill_edits. Modeled on microsoft/SkillOpt's propose→validate→commit
-loop, adapted to this repo:
+that agent's system prompt) and persist accepted versions to agent_skills.
+Rejected candidates are logged to rejected_skill_edits. Modeled on
+microsoft/SkillOpt's propose→validate→commit loop, adapted to this repo.
 
-- Baseline signal = confidence-weighted outcome score over the most recent
-  resolved directional decision_outcomes rows (WIN=1, FLAT=0.5, LOSS=0).
-- Validation is HEURISTIC (content-quality checks + score gate), not a true
-  replay — re-running the V3 pipeline on history is far too expensive. The
-  acceptance bar (+0.5%) is deliberately low while the heuristic matures.
+WHAT DECIDES WHETHER A VERSION SURVIVES
+---------------------------------------
+The version already serving, judged on the decisions it actually governed —
+see `scorecard.py`. Before any proposal is paid for, the current version is
+scored against its predecessor over resolved `decision_outcomes` rows stamped
+with it, and the pass either proceeds, holds, or **reverts**.
+
+It used to be the prose heuristics below, which could not have worked:
+`_simulate_score_with_skill` returns `baseline + delta` and the gate compared
+`simulated - baseline`, so the realized-outcome term cancelled exactly and every
+accept/reject came down to "contains a digit"-class checks. Those checks survive
+as a pre-filter on obvious junk, which is what they are good at.
+
 - MUST NOT invoke the V3 orchestrator: guardrails' _active_v3_sessions
   recursion guard would trip (and a nested pipeline inside autoresearch would
   be a disaster anyway). This module only calls llm.chat() for the edit
@@ -28,6 +35,9 @@ import re
 import time
 
 from app.db.connection import get_db
+from app.autoresearch.scorecard import (
+    VERDICT_CONTAMINATED, VERDICT_HEALTHY, VERDICT_REGRESSED, regression_verdict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,21 +71,17 @@ MAX_SKILL_CHARS = 1800
 # 1520 is not worth throwing away.
 TARGET_SKILL_CHARS = 1500
 
-# How many RESOLVED decisions a version must govern before it may be replaced.
+# Superseded by scorecard.MATURITY_N (100). Kept only as the documented reason
+# the maturity idea exists at all.
 #
-# Without this the loop is unfalsifiable by construction: measured 2026-07-25,
-# the board agent took 20 versions in ~5 days while outcomes need a 7-day
-# horizon to resolve, so **every version was replaced before a single one of its
-# trades matured**. No amount of instrumentation can evaluate a version that
-# governed n=0 resolved decisions. Editing once per cycle guarantees churn;
-# editing once per N resolved decisions is the minimum that makes the question
-# askable at all.
-#
-# 25 is a deliberate compromise: at ~7 decisions/cycle it is roughly 3-4 cycles
-# plus the 7-day resolve lag, so a version lives ~1-2 weeks. Still far too few
-# for statistical power on a ~1% effect — see the module docstring — but enough
-# to catch a version that is grossly worse, which is the realistic goal.
-MIN_DECISIONS_BEFORE_REEDIT = 25
+# The 2026-07-25 audit found the board agent taking 20 versions in ~5 days while
+# outcomes need 7 days to resolve, so every version was replaced before a single
+# one of its trades matured, and it set this to 25 to stop the churn. That was
+# right about the disease and wrong about the dose: bootstrapping 1500 real
+# resolved decisions showed two IDENTICAL versions differ by ±0.207 at n=25, so
+# a gate there fires at random. n=100 (±0.104) is the first threshold at which
+# the comparison means anything.
+_SUPERSEDED_MIN_DECISIONS_BEFORE_REEDIT = 25
 
 # A candidate must differ from the current doc by more than cosmetics. The old
 # near-noop check compared WHOLE-DOC similarity at a 0.95 threshold; real edits
@@ -153,7 +159,7 @@ async def propose_and_validate_skill_edits(
 
     summary: dict = {
         "baseline": round(baseline, 4), "updated": [], "rejected": 0,
-        "skipped": 0, "immature": 0,
+        "skipped": 0, "immature": 0, "rolled_back": [], "contaminated": 0,
     }
     t0 = time.monotonic()
 
@@ -178,6 +184,12 @@ async def propose_and_validate_skill_edits(
                 # system working as designed, not a proposal that failed. Rolled
                 # into `skipped` it would look like the loop had stalled.
                 summary["immature"] += 1
+            elif outcome == "rolled_back":
+                # The loop's only destructive action, and the one worth seeing
+                # at a glance: a version measured worse than what it replaced.
+                summary["rolled_back"].append(agent_name)
+            elif outcome == "contaminated":
+                summary["contaminated"] += 1
             else:
                 summary["skipped"] += 1
         except Exception as e:  # noqa: BLE001 — one agent's failure must not stop the rest
@@ -450,16 +462,42 @@ async def _optimize_one_agent(
     """Returns 'updated' | 'rejected' | 'skipped' | 'immature'."""
     current_text, current_version = _load_skill(agent_name)
 
-    # Let the current version accumulate a measurable sample before replacing
-    # it. Skipping here also saves the LLM call, which is the point: a proposal
-    # that cannot be evaluated is not worth paying for.
-    governed = _decisions_governed(agent_name, current_version)
-    if governed is not None and governed < MIN_DECISIONS_BEFORE_REEDIT:
+    # ── Measured gate: did the CURRENT version help, hurt, or is it unknown? ──
+    # This replaces a raw sample count. The count could only ever say "enough
+    # rows exist"; the scorecard says whether those rows mean anything and what
+    # they mean. Its verdicts are terminal in both directions:
+    #
+    #   CONTAMINATED  the window's tools were broken, so its decisions say
+    #                 nothing about the doc — neither promote nor revert on it
+    #   IMMATURE      too few resolved decisions for the ±0.10 noise band
+    #   REGRESSED     measurably worse than its predecessor → revert
+    #   HEALTHY       proceed to propose the next edit
+    #
+    # `_decisions_governed` is still consulted first for the one thing the
+    # scorecard cannot express: whether version stamping is running at all. On a
+    # deployment predating the stamp it returns None, and freezing the whole
+    # fleet on missing telemetry is a worse failure than one extra edit.
+    if _decisions_governed(agent_name, current_version) is None:
         logger.info(
-            "[SkillOpt] %s v%d held: %d/%d resolved decisions so far",
-            agent_name, current_version, governed, MIN_DECISIONS_BEFORE_REEDIT,
+            "[SkillOpt] %s: version stamping unavailable — proceeding unmeasured",
+            agent_name,
         )
-        return "immature"
+    else:
+        card = regression_verdict(agent_name, current_version)
+        logger.info("[SkillOpt] %s", card.summary())
+
+        if card.verdict == VERDICT_REGRESSED:
+            if _rollback_skill(agent_name, current_version, cycle_id, card.detail):
+                return "rolled_back"
+            return "immature"  # predecessor unavailable; hold rather than churn
+
+        if card.verdict == VERDICT_CONTAMINATED:
+            logger.info("[SkillOpt] %s held: %s", agent_name, card.detail)
+            return "contaminated"
+
+        if card.verdict != VERDICT_HEALTHY:
+            logger.info("[SkillOpt] %s held: %s", agent_name, card.detail)
+            return "immature"
 
     prompt = _build_optimizer_prompt(agent_name, role, current_text, reflection)
     proposal = await _call_optimizer_llm(agent_name, prompt)
@@ -516,17 +554,29 @@ async def _optimize_one_agent(
         logger.info("[SkillOpt] %s rejected: %s", agent_name, reject_reason)
         return "rejected"
 
-    # ── Heuristic score gate ──
-    simulated = _simulate_score_with_skill(candidate, current_text, baseline, reflection)
-    score_delta = simulated - baseline
-    if score_delta <= MIN_SCORE_DELTA:
+    # ── Prose pre-filter (NOT a quality gate) ──
+    # This was the promotion gate. It could not be: `_simulate_score_with_skill`
+    # returns `baseline + delta`, and the gate compared `simulated - baseline`,
+    # so the realized-outcome baseline **cancelled exactly** and 100% of every
+    # accept/reject came from "contains a digit"-class heuristics. The realized
+    # question is now asked above, by the scorecard, against decisions the
+    # version actually governed.
+    #
+    # The heuristics are kept because they are genuinely good at what they are:
+    # catching a rewrite that is vaguer or flabbier than what it replaces. That
+    # is a pre-filter on obvious junk, and it is labelled as one.
+    prose_delta = _simulate_score_with_skill(
+        candidate, current_text, baseline, reflection
+    ) - baseline
+    if prose_delta <= MIN_SCORE_DELTA:
         _log_rejection(
             agent_name, cand_hash, cycle_id,
-            f"score_gate (delta {score_delta:+.4f} <= {MIN_SCORE_DELTA})",
-            score_delta, rationale,
+            f"prose_prefilter (delta {prose_delta:+.4f} <= {MIN_SCORE_DELTA})",
+            prose_delta, rationale,
         )
         logger.info(
-            "[SkillOpt] %s rejected by score gate (delta %+.4f)", agent_name, score_delta
+            "[SkillOpt] %s rejected by prose pre-filter (delta %+.4f)",
+            agent_name, prose_delta,
         )
         return "rejected"
 
@@ -535,14 +585,14 @@ async def _optimize_one_agent(
         skill_text=candidate,
         skill_hash=cand_hash,
         cycle_id=cycle_id,
-        score=simulated,
+        score=prose_delta,
         action=action,
         rationale=rationale,
         new_version=current_version + 1,
     )
     logger.info(
-        "[SkillOpt] %s updated to v%d (%s, delta %+.4f): %.80s…",
-        agent_name, current_version + 1, action, score_delta, rationale,
+        "[SkillOpt] %s updated to v%d (%s, prose %+.4f): %.80s…",
+        agent_name, current_version + 1, action, prose_delta, rationale,
     )
     return "updated"
 
@@ -670,6 +720,66 @@ def _save_skill(
             [agent_name, new_version, skill_text, skill_hash, cycle_id,
              round(float(score), 4), action, rationale],
         )
+
+
+def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
+                    reason: str) -> bool:
+    """Revert to the predecessor by APPENDING it as a new version.
+
+    Append-only on purpose. Reactivating the old row would make
+    `decision_outcomes.skill_versions` ambiguous — two disjoint periods stamped
+    with the same version number, silently pooled into one sample by every
+    query in scorecard.py. A fresh version number keeps each period its own
+    population, which is the whole basis for comparing them.
+
+    The reverted edit is also recorded as a dead end, so the optimizer is not
+    handed the same idea again next cycle.
+    """
+    with get_db() as db:
+        prev = db.execute(
+            "SELECT skill_text, skill_hash FROM agent_skills "
+            "WHERE agent_name = %s AND version = %s",
+            [agent_name, int(from_version) - 1],
+        ).fetchone()
+        if not prev or not prev[0]:
+            logger.warning(
+                "[SkillOpt] %s v%d regressed but v%d is unavailable — cannot roll back",
+                agent_name, from_version, from_version - 1,
+            )
+            return False
+        bad = db.execute(
+            "SELECT skill_hash, rationale FROM agent_skills "
+            "WHERE agent_name = %s AND version = %s",
+            [agent_name, int(from_version)],
+        ).fetchone()
+
+    _save_skill(
+        agent_name=agent_name,
+        skill_text=prev[0],
+        skill_hash=prev[1],
+        cycle_id=cycle_id,
+        score=0.0,
+        action="ROLLBACK",
+        rationale=f"reverted v{from_version} to v{from_version - 1}: {reason}"[:500],
+        new_version=int(from_version) + 1,
+    )
+    if bad:
+        _log_rejection(
+            agent_name, bad[0] or "", cycle_id,
+            f"rolled_back_v{from_version}", None,
+            f"measured regression: {reason}"[:500],
+        )
+    try:
+        from app.autoresearch.skill_loader import invalidate_skill_cache
+        invalidate_skill_cache(agent_name)
+    except Exception as e:  # noqa: BLE001 — TTL backstops a missed invalidation
+        logger.debug("[SkillOpt] cache invalidation after rollback failed: %s", e)
+
+    logger.warning(
+        "[SkillOpt] %s ROLLED BACK v%d -> v%d (served as v%d): %s",
+        agent_name, from_version, from_version - 1, from_version + 1, reason,
+    )
+    return True
 
 
 def _log_rejection(
