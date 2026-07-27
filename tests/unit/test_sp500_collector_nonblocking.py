@@ -140,3 +140,59 @@ async def test_rows_are_still_written(db_ctx):
     # written_tickers must cross the thread boundary or technicals go stale.
     bulk.assert_called_once()
     assert set(bulk.call_args.args[0]) == {"AAA", "BBB"}
+
+
+# ── The snapshot path must not read the in-progress bar ──────────────
+#
+# cycle-v3-1785128960: 7 of 8 tickers stored analysis_price=0.00 while
+# price_history held good closes. build_market_snapshot does df.iloc[-1] on
+# the frame fetch_ohlcv_dataframe returns; that last row was the NaN
+# in-progress session, so `float(latest["Close"]) or None` collapsed to None.
+# collect_price_history had already learned to salvage, but this SECOND
+# consumer of the same frame had not — hence the fix lives in the fetcher.
+
+@pytest.mark.asyncio
+async def test_fetch_ohlcv_drops_the_incomplete_bar():
+    """The frame's LAST ROW must be a real session, for every consumer."""
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    raw = pd.DataFrame(
+        {
+            "Open": [100.0, 101.0, float("nan")],
+            "High": [105.0, 106.0, float("nan")],
+            "Low": [95.0, 96.0, float("nan")],
+            "Close": [102.0, 103.0, float("nan")],
+            "Volume": [1000, 2000, 2582031],
+        },
+        index=pd.to_datetime(["2026-07-22", "2026-07-23", "2026-07-24"]),
+    )
+
+    inst = MagicMock()
+    inst.history.return_value = raw
+    with patch("app.collectors.yfinance_collector.yf.Ticker", return_value=inst):
+        from app.collectors.yfinance_collector import fetch_ohlcv_dataframe
+
+        df = await fetch_ohlcv_dataframe("BLK", period="30d")
+
+    assert len(df) == 2
+    # The exact operation build_market_snapshot performs.
+    assert float(df.iloc[-1]["Close"]) == 103.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_ohlcv_returns_none_when_every_bar_is_incomplete():
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    raw = pd.DataFrame(
+        {"Open": [float("nan")], "High": [float("nan")], "Low": [float("nan")],
+         "Close": [float("nan")], "Volume": [123]},
+        index=pd.to_datetime(["2026-07-24"]),
+    )
+    inst = MagicMock()
+    inst.history.return_value = raw
+    with patch("app.collectors.yfinance_collector.yf.Ticker", return_value=inst):
+        from app.collectors.yfinance_collector import fetch_ohlcv_dataframe
+
+        assert await fetch_ohlcv_dataframe("BLK", period="30d") is None

@@ -183,6 +183,56 @@ class TestStaleFillWarning:
         assert age > pt.STALE_FILL_WARN_HOURS
 
 
+class TestTradingDayAgeUsesPeers:
+    """Age must be counted from MARKET PEERS, never from the ticker itself.
+
+    Found in production 2026-07-27 while auditing cycle-v3-1785128960: SWBI's
+    newest bar was 07-23 while 510 other tickers had a 07-24 bar — it had
+    genuinely missed a session. The original self-referential query asked "how
+    many SWBI rows are newer than SWBI's newest row?", which is 0 by
+    construction, so the stale ticker was labelled `current`. The blind spot
+    hit exactly the 15-of-45 active names most likely to BE stale.
+    """
+
+    def _capture_sql(self, ticker):
+        seen = {}
+
+        def _exec(sql, params=None):
+            seen["sql"] = " ".join(sql.split())
+            seen["params"] = params
+            cur = MagicMock()
+            cur.fetchone.return_value = (2,)
+            return cur
+
+        db = MagicMock()
+        db.execute.side_effect = _exec
+        ctx = MagicMock()
+        ctx.__enter__.return_value = db
+
+        with patch("app.db.connection.get_db", return_value=ctx):
+            tb._trading_day_age(ticker, date(2026, 7, 27), date(2026, 7, 23))
+        return seen
+
+    def test_us_ticker_does_not_filter_on_itself(self):
+        seen = self._capture_sql("SWBI")
+        assert "ticker = %s" not in seen["sql"], (
+            "counting the ticker's OWN rows always yields 0 for a stale ticker"
+        )
+        assert "NOT LIKE" in seen["sql"], "US peers are the unsuffixed tickers"
+
+    def test_foreign_ticker_counts_only_its_own_exchange(self):
+        """A Seoul holiday must not make a US ticker look stale, and vice
+        versa — 000660.KS legitimately posts a Monday bar before US open."""
+        seen = self._capture_sql("000660.KS")
+        assert "LIKE" in seen["sql"] and "NOT LIKE" not in seen["sql"]
+        assert seen["params"]["pat"] == "%.KS"
+
+    def test_db_failure_returns_none_not_zero(self):
+        """None means 'age unknown' and scores 0.3; 0 would mean 'current'."""
+        with patch("app.db.connection.get_db", side_effect=RuntimeError("db")):
+            assert tb._trading_day_age("X", date(2026, 7, 27), date(2026, 7, 23)) is None
+
+
 def test_every_horizon_class_is_reachable_from_a_field():
     """A horizon nothing maps to is dead config.
 

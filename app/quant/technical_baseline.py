@@ -121,26 +121,44 @@ def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
     Per-market, not global: `000660.KS` legitimately posts a Monday bar while
     US tickers are still on Friday's close (Seoul opens first), so a single US
     calendar would label every foreign ticker stale on a Friday and fresh on a
-    Sunday. Counting sessions THIS ticker's own exchange actually produced
-    sidesteps holiday tables entirely — a day the market was shut has no row.
+    Sunday. Counting real sessions sidesteps holiday tables entirely — a day
+    the market was shut has no row.
+
+    Counted from the ticker's MARKET PEERS, never from its own rows. Measured
+    2026-07-27: SWBI's newest bar was 07-23 while 510 other tickers had a
+    07-24 bar, i.e. it had genuinely missed a session — but a self-referential
+    count asked "how many SWBI rows are newer than SWBI's newest row?", which
+    is 0 by construction, and reported the stale ticker as `current`. The
+    blind spot hit exactly the tickers most likely to be stale (15 of 45
+    active names), which is the worst possible population to be blind to.
+
+    Peers are the tickers sharing this one's exchange suffix (`.KS`, `.L`, or
+    "" for US), so a Seoul holiday still cannot make a US ticker look stale.
     """
     from app.db.connection import get_db
+
+    # "000660.KS" -> ".KS"; "AAPL" -> "". Cheap proxy for the exchange, and
+    # good enough: the only thing it must do is stop US and non-US calendars
+    # contaminating each other.
+    suffix = f".{ticker.rsplit('.', 1)[1]}" if "." in ticker else ""
+    peer_filter = (
+        "ticker LIKE %(pat)s" if suffix else "ticker NOT LIKE '%%.%%'"
+    )
 
     try:
         with get_db() as db:
             row = db.execute(
-                """
+                f"""
                 SELECT COUNT(DISTINCT date) FROM price_history
-                WHERE ticker = %s AND date > %s AND date <= %s
+                WHERE {peer_filter} AND date > %(latest)s AND date <= %(as_of)s
                 """,
-                [ticker, latest, as_of],
+                {"pat": f"%{suffix}", "latest": latest, "as_of": as_of},
             ).fetchone()
-        # Sessions this ticker recorded after its own newest indicator row.
-        # 0 means the baseline IS the newest bar we hold.
         return int(row[0]) if row else None
     except Exception as e:  # noqa: BLE001 — grounding must never block a cycle
         logger.warning("[TechnicalBaseline] %s trading-day age failed: %s", ticker, e)
         return None
+
 
 # Fields we can verify deterministically. Anything not listed here stays the
 # model's to judge.

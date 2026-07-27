@@ -49,12 +49,42 @@ def _is_blocked_ticker(ticker: str) -> bool:
 
 
 async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
-    """Fetch OHLCV history as a DataFrame without writing to DB."""
+    """Fetch OHLCV history as a DataFrame without writing to DB.
+
+    Incomplete bars are dropped HERE, at the shared fetcher, so every consumer
+    gets a frame whose LAST ROW is a real session.
+
+    yfinance returns the in-progress session with NaN OHLC and a non-null
+    Volume. `collect_price_history` learned to salvage around that (7e8932a),
+    but `market_data.build_market_snapshot` — a different consumer of this same
+    function — does `df.iloc[-1]` and takes the NaN row, so
+    `float(latest["Close"]) or None` collapsed to None. Measured in
+    cycle-v3-1785128960: 7 of 8 tickers stored `analysis_price = 0.00` while
+    price_history held perfectly good closes. Those snapshots feed the
+    Freshness Gate's next-cycle delta, so a zero baseline silently corrupts the
+    comparison rather than failing loudly.
+
+    Fixing the fetcher rather than each caller: any future consumer of this
+    frame would otherwise inherit the same trap.
+    """
     stock = yf.Ticker(ticker)
     try:
         df = await asyncio.to_thread(stock.history, period=period, auto_adjust=True)
         if df is None or df.empty:
             logger.info(f"[yfinance] No price data for {ticker}")
+            return None
+
+        ohlc = [c for c in ("Open", "High", "Low", "Close") if c in df.columns]
+        if ohlc:
+            before = len(df)
+            df = df.dropna(subset=ohlc)
+            if len(df) < before:
+                logger.debug(
+                    "[yfinance] %s: dropped %d incomplete bar(s) at fetch",
+                    ticker, before - len(df),
+                )
+        if df.empty:
+            logger.info(f"[yfinance] No complete bars for {ticker}")
             return None
         return df
     except Exception as e:
