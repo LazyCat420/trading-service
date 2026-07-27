@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from app.v3.shared_desk import SharedDesk, DeskPhase, PhaseOutcome, DecisionProvenance
-from app.v3.guardrails import CircuitBreaker
+from app.v3.guardrails import CircuitBreaker, research_degraded
 from app.services.adaptive_concurrency import concurrency_controller
 from app.v3.telemetry import persist_telemetry
 from app.v3.agent_runner import run_v3_agent
@@ -707,6 +707,29 @@ async def run_v3_pipeline(
             # JA is the first real intelligence gate (plan 2.2): honor its
             # triage_recommendation. Anything unrecognized behaves as FULL.
             triage = str((event.get("content") or {}).get("triage_recommendation") or "FULL").upper()
+
+            # A triage that shortens the pipeline is only valid if the analyst
+            # could actually see. When its tools failed, "no catalysts found"
+            # is a statement about our plumbing, not about the company — so
+            # downgrade to FULL rather than bank the saving. FULL is unaffected;
+            # this can only ever ADD work.
+            if triage in ("SKIP", "QUANT_ONLY"):
+                _why = research_degraded(cycle_id, ticker, event.get("content") or {})
+                if _why:
+                    logger.warning(
+                        "[V3] %s: JA triage %s OVERRIDDEN to FULL — research was "
+                        "degraded (%s).", ticker, triage, _why,
+                    )
+                    emit("analyzing", f"v3_triage_degraded_{ticker}",
+                         f"⚠️ {ticker}: triage {triage} overridden → FULL "
+                         f"(degraded research: {_why})", status="warning")
+                    desk.append_artifact("degradation_note", {
+                        "stage": "junior_analyst_triage",
+                        "requested_triage": triage,
+                        "applied_triage": "FULL",
+                        "reason": _why,
+                    })
+                    triage = "FULL"
 
             if triage == "SKIP":
                 logger.info("[V3] %s: JA triage says SKIP — ending pipeline (no catalysts).", ticker)

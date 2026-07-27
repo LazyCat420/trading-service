@@ -31,6 +31,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# How far back a "latest news" fetch may reach. 90 days is generous for a
+# thesis-driven desk (a quarter of coverage) while excluding the archive.
+POLYGON_NEWS_MAX_AGE_DAYS = 90
+
 # Timeout for all provider requests
 _TIMEOUT = 20.0
 
@@ -283,10 +287,19 @@ async def _fetch_polygon(
     if not api_key:
         return []
 
+    # Date floor. Without published_utc.gte, "newest 10" for a thinly-covered
+    # name is whatever Polygon last indexed — which can be years old, and it
+    # lands with today's collected_at. In cycle-v3-1785137616 that put a
+    # 2024-07-24 article into ASC's top-15 "Recent News" and a 2025-07-14 one
+    # into BOOT's, because neither had 15 newer articles to push them out.
+    # A quiet ticker must read as quiet, not as stale news dressed as current.
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc)
+             - timedelta(days=POLYGON_NEWS_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
     url = (
         f"https://api.polygon.io/v2/reference/news"
         f"?ticker={ticker.upper()}&limit={limit}&sort=published_utc"
-        f"&order=desc&apiKey={api_key}"
+        f"&order=desc&published_utc.gte={since}&apiKey={api_key}"
     )
     resp = await client.get(url)
     if resp.status_code != 200:

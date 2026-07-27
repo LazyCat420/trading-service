@@ -144,17 +144,55 @@ async def get_finnhub_news(ticker: str) -> str:
     async with rate_limiter.acquire("finnhub"):
         await collect_finnhub_news(ticker)
 
+    # Recency floor. This query had none, so for a thinly-covered ticker
+    # "ORDER BY published_at DESC LIMIT 15" simply reached further back until
+    # it found 15 rows: in cycle-v3-1785137616 ASC's list ran to 2024-07-24 and
+    # BOOT's to 2025-07-14, both presented to the agents under the heading
+    # "Recent News & Sentiment" with nothing marking their age. Three of seven
+    # tickers debated on news containing no item from the last 24 hours.
+    #
+    # Widen rather than return nothing (a quiet small-cap still deserves
+    # context), but say plainly how old the window had to get.
     with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT id, title, publisher, published_at, COALESCE(llm_summary, summary)
-            FROM news_articles WHERE ticker = %s ORDER BY published_at DESC LIMIT 15
-        """,
-            [ticker],
-        ).fetchall()
+        def _fetch(days: int):
+            return db.execute(
+                """
+                SELECT id, title, publisher, published_at,
+                       COALESCE(llm_summary, summary)
+                FROM news_articles
+                WHERE ticker = %s
+                  AND published_at > NOW() - make_interval(days => %s)
+                ORDER BY published_at DESC LIMIT 15
+                """,
+                [ticker, days],
+            ).fetchall()
+
+        window_days = 14
+        rows = _fetch(window_days)
+        if len(rows) < 3:
+            window_days = 90
+            rows = _fetch(window_days)
 
     if not rows:
-        return "No recent news found."
+        return (
+            f"No news published for {ticker} in the last {window_days} days. "
+            "Treat this as an ABSENCE of coverage, not as neutral sentiment — "
+            "do not infer a catalyst either way."
+        )
+
+    freshest = max(r[3] for r in rows if r[3]) if any(r[3] for r in rows) else None
+    staleness_note = ""
+    if freshest is not None:
+        from datetime import datetime, timezone
+        _now = datetime.now(timezone.utc)
+        _f = freshest if freshest.tzinfo else freshest.replace(tzinfo=timezone.utc)
+        age_days = (_now - _f).days
+        if age_days >= 3:
+            staleness_note = (
+                f"\n\n⚠️ COLD NEWS: the most recent article for {ticker} is "
+                f"{age_days} days old (window searched: {window_days}d). "
+                f"There is no fresh catalyst here.\n"
+            )
 
     # Grounded facts instead of raw scrape text where available. Measured on
     # the live DB, llm_summary was empty for 100% of recent articles, so the
@@ -184,7 +222,7 @@ async def get_finnhub_news(ticker: str) -> str:
             body = body[:400] + "…"
         display_rows.append((title, publisher, published_at, body))
 
-    return format_db_section(
+    return staleness_note + format_db_section(
         "Recent News", display_rows, ["Title", "Publisher", "Date", "Key Facts"]
     )
 

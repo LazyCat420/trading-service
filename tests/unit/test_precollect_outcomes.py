@@ -11,47 +11,24 @@ was therefore indistinguishable from a clean run in the one table an operator
 reads to decide whether a cycle can be trusted.
 """
 
-import asyncio
-
 import pytest
 
 from app.v3 import data_report
 
 
-def _outcomes_for(results: dict[str, object]) -> dict[str, str]:
-    """Run `run_with_telemetry` over canned collector results.
+def _outcomes_for(results: dict[str, object], deadline_passed: bool = False) -> dict[str, str]:
+    """Classify canned collector results through the PRODUCTION rule.
 
-    Rebuilds the closure the same way build_ticker_data_report does rather
-    than importing a private helper, so the test breaks if the wrapper's
-    contract changes.
+    This used to re-implement `run_with_telemetry`'s decision logic inline,
+    which meant the test asserted against a copy and could not observe a change
+    to the real wrapper — it kept passing while the wrapper emitted `_ok` for
+    collectors that had blown the deadline. The rule now lives in one
+    module-level function and the test drives that.
     """
-    captured: dict[str, str] = {}
-
-    # Mirror of the production wrapper's decision rule, exercised through the
-    # real module constant so a change to _EXPECT_TRUTHY is caught here.
-    expect_truthy = data_report._EXPECT_TRUTHY
-
-    async def run(name: str, value: object) -> object:
-        async def _coro():
-            return value
-
-        try:
-            res = await _coro()
-            if name in expect_truthy and not res:
-                captured[name] = "error"
-                return res
-            captured[name] = "ok"
-            return res
-        except Exception:
-            captured[name] = "error"
-            return None
-
-    async def _drive():
-        for name, value in results.items():
-            await run(name, value)
-
-    asyncio.run(_drive())
-    return captured
+    return {
+        name: data_report.classify_collector_outcome(name, value, deadline_passed)[0]
+        for name, value in results.items()
+    }
 
 
 def test_zero_price_rows_is_an_error_not_ok():
@@ -80,3 +57,40 @@ def test_zero_articles_is_not_an_error():
 
 def test_expect_truthy_covers_exactly_the_return_value_collectors():
     assert data_report._EXPECT_TRUTHY == {"yfinance_price", "yfinance_fund"}
+
+
+# ── Post-deadline stragglers ────────────────────────────────────────────────
+# cycle-v3-1785137616: multi_api_news timed out on 6 of 7 tickers and youtube
+# on 5 of 7, yet the event stream carried `_ok` for all 7 of each. SBUX's
+# `multi_api_news_ok` landed at 07:39:30 — 117s past the 90s deadline, long
+# after the report had gone to the agents.
+
+def test_collector_finishing_after_the_deadline_is_late_not_ok():
+    outcomes = _outcomes_for({"multi_api_news": 12}, deadline_passed=True)
+    assert outcomes["multi_api_news"] == "late"
+
+
+def test_late_completion_emits_a_warning_not_an_ok_event():
+    """The event a dashboard reads must not say success for unused data."""
+    _, step, status, detail = data_report.classify_collector_outcome(
+        "multi_api_news", 12, deadline_passed=True
+    )
+    assert step == "late"
+    assert status == "warning"
+    assert "AFTER the deadline" in detail
+
+
+def test_on_time_completion_still_emits_ok():
+    _, step, status, _ = data_report.classify_collector_outcome(
+        "multi_api_news", 12, deadline_passed=False
+    )
+    assert (step, status) == ("ok", "ok")
+
+
+def test_no_data_outranks_late():
+    """A collector that returned nothing is an error whenever it finished —
+    'late' must not launder an empty price frame into a softer status."""
+    outcome, step, status, _ = data_report.classify_collector_outcome(
+        "yfinance_price", 0, deadline_passed=True
+    )
+    assert (outcome, step, status) == ("error", "err", "error")

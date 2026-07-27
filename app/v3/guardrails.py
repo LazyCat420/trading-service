@@ -109,6 +109,69 @@ def get_budget_for_role(role: str) -> V3AgentBudget:
 _MAX_SUMMARY_CHARS = 2000
 
 
+# Phrases an agent uses when it is reporting a BROKEN TOOL rather than a
+# genuine absence of information. Matched against its own data_gaps strings.
+_TOOL_FAILURE_PHRASES = (
+    "search timeout", "web search timeout", "search failed", "search unavailable",
+    "tool failed", "tool error", "timed out", "timeout", "unavailable",
+    "could not retrieve", "unable to retrieve", "no response from",
+    "connection", "rate limit",
+)
+
+
+def research_degraded(cycle_id: str, ticker: str, artifact: dict | None) -> str | None:
+    """Why this ticker's research is untrustworthy, or None if it is sound.
+
+    The Junior Analyst's triage decides whether the Fundamental Analyst runs at
+    all. In cycle-v3-1785137616 that gate fired on a lie: DuckDuckGo was
+    refusing our egress IP, lazy_web_search failed 8/8, and the analyst wrote
+    "no qualitative catalysts found" — which the orchestrator read as a fact
+    about the company rather than a fact about the tooling. STT and NDAQ each
+    got a 526-byte stub with all five pillars "Not analyzed", and NDAQ went on
+    to produce the cycle's only BUY.
+
+    "I could not look" and "I looked and found nothing" are different claims,
+    and only the second one justifies skipping work.
+
+    Two independent signals, because neither alone is sufficient:
+      * agent_tool_telemetry — hard evidence, independent of what the model
+        chose to admit. Authoritative but only covers instrumented calls.
+      * the artifact's own data_gaps / _failure_patterns — catches degradation
+        the telemetry missed, at the cost of trusting self-reporting.
+    """
+    artifact = artifact or {}
+
+    for gap in artifact.get("data_gaps") or []:
+        low = str(gap).lower()
+        if any(p in low for p in _TOOL_FAILURE_PHRASES):
+            return f"analyst reported a tool failure: {str(gap)[:160]}"
+
+    if "FALLBACK_OUTPUT" in (artifact.get("_failure_patterns") or []):
+        return "analyst artifact was a fallback output"
+
+    # Fail OPEN on a probe error: an unreachable DB would otherwise force the
+    # full panel on every ticker forever.
+    try:
+        from app.db.connection import get_db
+        with get_db() as db:
+            row = db.execute(
+                """
+                SELECT tool_name, count(*)
+                FROM agent_tool_telemetry
+                WHERE cycle_id = %s AND ticker = %s AND NOT success
+                GROUP BY tool_name ORDER BY count(*) DESC LIMIT 1
+                """,
+                [cycle_id, ticker],
+            ).fetchone()
+        if row and row[1]:
+            return f"{row[1]} failed {row[0]} call(s) this cycle"
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug("[V3][triage] degradation probe failed for %s (fail-open): %s",
+                     ticker, e)
+
+    return None
+
+
 def compress_artifact_for_downstream(artifact: dict) -> str:
     """Compress an artifact to just its summary for downstream agents.
 

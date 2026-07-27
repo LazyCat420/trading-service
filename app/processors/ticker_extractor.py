@@ -575,6 +575,77 @@ COMMON_WORD_ANTI_PATTERNS: dict[str, list[str]] = {
         r"(?i)\b(?:TV|video|online|digital|print|display|banner|pop.?up|targeted|political)\s+ad\b",
         r"(?i)\bad\s+(?:campaign|revenue|spend|spending|network|blocker|tech|targeting|budget|industry|market|placement)\b",
     ],
+    # ── Finance/econ jargon that is ALSO a listed symbol ──────────────────
+    # The original table guarded consumer-tech abbreviations only, which left
+    # the vocabulary of the actual corpus wide open. Measured over 7 days on
+    # the live news_articles table (2026-07-27):
+    #   FCF   634 rows, 0 whose title contains "FCF"   -> free cash flow
+    #   AI    452 rows                                  -> artificial intelligence
+    # Inspected FCF samples: "First US LNG Shipment to China", "Uber's Africa
+    # EV Pilot", "China memory chipmaker CXMT". None concern First
+    # Commonwealth Financial. These are real symbols, so registry validation
+    # waves them through — only usage context can separate them.
+    "FCF": [
+        r"(?i)\bfree\s+cash\s+flow\b",
+        r"(?i)\bFCF\s+(?:margin|yield|growth|conversion|generation|per\s+share|multiple)",
+        r"(?i)\b(?:levered|unlevered|adjusted|normalized)\s+FCF\b",
+        # "grew FCF 12%", "FCF of $2.1B", "FCF rose" — the abbreviation used as
+        # a financial quantity rather than as a company name.
+        r"(?i)\bFCF\s+(?:of|was|were|grew|rose|fell|climbed|declined|up|down|at|to|by|[0-9$])",
+        r"(?i)\b(?:grew|raised|boosted|improved|generated|reported)\s+FCF\b",
+    ],
+    "AI": [
+        r"(?i)\bartificial\s+intelligence\b",
+        r"(?i)\bAI\s+(?:model|models|chip|chips|data\s?cent|infrastructure|boom|race|startup|startups|tool|tools|agent|agents|assistant|capabilities|workload|workloads|server|servers|spending|capex|bubble|adoption|company|companies|revenue|feature|features|software|hardware|research|safety|regulation)\b",
+        r"(?i)\b(?:generative|gen|conversational|enterprise|edge|frontier)\s+AI\b",
+        r"(?i)\bAI-(?:powered|driven|native|first|enabled|related)\b",
+    ],
+    "AGI": [r"(?i)\bartificial\s+general\s+intelligence\b", r"(?i)\bAGI\b(?!\s*\()"],
+    "EPS": [
+        r"(?i)\bearnings\s+per\s+share\b",
+        r"(?i)\bEPS\s+(?:of|was|were|came|beat|miss|growth|estimate|guidance|rose|fell|[0-9$])",
+        r"(?i)\b(?:adjusted|diluted|GAAP|non-GAAP|reported)\s+EPS\b",
+    ],
+    "CEO": [r"(?i)\bchief\s+executive\b", r"(?i)\bCEO\s+[A-Z]"],
+    "IPO": [
+        r"(?i)\binitial\s+public\s+offering\b",
+        r"(?i)\bIPO\s+(?:market|debut|pric|filing|window|proceeds|valuation)",
+        r"(?i)\b(?:the|its|an|planned|upcoming)\s+IPO\b",
+    ],
+    "GDP": [
+        r"(?i)\bgross\s+domestic\s+product\b",
+        r"(?i)\bGDP\s+(?:growth|data|report|forecast|grew|rose|fell|expanded|contracted|[0-9])",
+    ],
+    "CPI": [
+        r"(?i)\bconsumer\s+price\s+index\b",
+        r"(?i)\bCPI\s+(?:data|report|print|reading|rose|fell|came|[0-9])",
+    ],
+    "ETF": [r"(?i)\bexchange.traded\s+fund\b", r"(?i)\bETF\s+(?:market|flows|inflows|outflows|launch)\b"],
+    "INR": [r"(?i)\bIndian\s+rupee\b", r"(?i)\bINR\s?[0-9]", r"(?i)\brupees?\b"],
+    "BOM": [r"(?i)\bBOM:\s?[0-9]", r"(?i)\bBombay\s+Stock\s+Exchange\b"],
+    "SBI": [r"(?i)\bState\s+Bank\s+of\s+India\b"],
+    # "T" (AT&T) and "C" (Citigroup) are single letters; they are handled by
+    # the length/cashtag rules rather than phrase patterns, since a
+    # single-letter anti-pattern would match constantly.
+}
+
+
+# Symbols whose everyday meaning so dominates financial prose that listing
+# every idiom is hopeless — the burden is inverted, and the symbol is assumed
+# to be jargon unless something explicitly names the COMPANY.
+#
+# "AI" is the case that forced this. It produced 452 rows in 7 days; sampling
+# the ones the phrase patterns missed found "physical AI", "top 10 AI stocks",
+# "Agentic Voice AI leader", "574% AI cloud revenue", "drafted with the help
+# of AI" — twelve for twelve about the technology, none about C3.ai. Chasing
+# that with more regexes is the losing side of the trade.
+_REQUIRE_EXPLICIT_COMPANY: dict[str, list[str]] = {
+    "AI": [
+        r"\$AI\b",                                   # cashtag
+        r"(?i)\bC3\.?\s?ai\b",                       # the company's own name
+        r"(?i)\bAI\s+(?:stock|shares|inc\b|corp\b)", # "AI stock rose"
+        r"(?i)\((?:NYSE|NASDAQ):\s*AI\)",            # exchange-qualified
+    ],
 }
 
 
@@ -585,6 +656,14 @@ def _check_anti_patterns(sym: str, full_text: str) -> float:
     The penalty fires only when ALL occurrences of the symbol match anti-patterns
     and NONE appear in financial contexts.
     """
+    evidence = _REQUIRE_EXPLICIT_COMPANY.get(sym)
+    if evidence is not None:
+        if re.search(rf"\b{re.escape(sym)}\b", full_text) is None:
+            return 0.0
+        if any(re.search(p, full_text) for p in evidence):
+            return 0.0
+        return -0.40
+
     patterns = COMMON_WORD_ANTI_PATTERNS.get(sym)
     if not patterns:
         return 0.0

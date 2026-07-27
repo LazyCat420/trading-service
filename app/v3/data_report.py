@@ -24,6 +24,32 @@ logger = logging.getLogger(__name__)
 _EXPECT_TRUTHY = {"yfinance_price", "yfinance_fund"}
 
 
+def classify_collector_outcome(
+    name: str, result: Any, deadline_passed: bool,
+) -> tuple[str, str, str, str]:
+    """One collector's result -> (outcome, event suffix, event status, detail).
+
+    Module-level and pure so the emitted event and the recorded outcome have a
+    SINGLE definition that tests can drive directly. The previous test for this
+    rule re-implemented the wrapper's logic in the test file, so the two could
+    (and did) drift — the repo's own lesson that two correct tests in two files
+    never test the path between them.
+
+    The `late` case exists because stragglers are deliberately not cancelled:
+    they keep running past the deadline to warm the next cycle. Before this,
+    they emitted a plain `_ok` on completion, so cycle-v3-1785137616 recorded
+    `multi_api_news_ok` for SBUX 117s after the 90s deadline — success, for
+    data that reached no agent.
+    """
+    if name in _EXPECT_TRUTHY and not result:
+        return "error", "err", "error", "{name} returned no data"
+    if deadline_passed:
+        return ("late", "late", "warning",
+                "{name} finished AFTER the deadline — not in this cycle's "
+                "report (data warms the next cycle)")
+    return "ok", "ok", "ok", "Finished {name}"
+
+
 async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str | None = None) -> str:
     """Collect core stock datasets in parallel and format them into a markdown report."""
     ticker = ticker.upper().strip()
@@ -42,22 +68,29 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     # Per-collector outcome tracking — feeds the one-line pre-collect summary
     # log and the cycle_run_summaries collector_* counters (which read 0
     # forever because nothing ever recorded them).
-    _outcomes: dict[str, str] = {}   # name -> ok|error (pending names = timed out)
+    _outcomes: dict[str, str] = {}   # name -> ok|error|late (pending = timed out)
+    # Flipped once the pre-collect deadline passes. Stragglers are deliberately
+    # NOT cancelled (their data warms the next cycle), but they keep running
+    # inside run_with_telemetry and used to emit a plain `_ok` on completion —
+    # so cycle-v3-1785137616 recorded `multi_api_news_ok` for SBUX at 07:39:30,
+    # 117s AFTER the 90s deadline and long after the report went to the agents.
+    # A reader of the event stream saw success for data no agent ever saw.
+    _deadline_passed = {"v": False}
 
     async def run_with_telemetry(name: str, coroutine: Any):
         _emit(f"precollect_{name}_start", f"Scraping {name}...", "running")
         try:
             res = await coroutine
-            if name in _EXPECT_TRUTHY and not res:
-                _outcomes[name] = "error"
+            outcome, step, status, detail = classify_collector_outcome(
+                name, res, _deadline_passed["v"]
+            )
+            _outcomes[name] = outcome
+            if outcome == "error":
                 logger.warning(
                     "[V3][precollect] %s/%s returned no data (%r) — recording as "
                     "error, not ok", ticker, name, res,
                 )
-                _emit(f"precollect_{name}_err", f"{name} returned no data", "error")
-                return res
-            _outcomes[name] = "ok"
-            _emit(f"precollect_{name}_ok", f"Finished {name}", "ok")
+            _emit(f"precollect_{name}_{step}", detail.format(name=name), status)
             return res
         except asyncio.CancelledError:
             raise
@@ -165,6 +198,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     from app.config import settings as _settings
     _precollect_budget = float(getattr(_settings, "PRECOLLECT_TIMEOUT_SECONDS", 90))
     done, pending = await asyncio.wait(task_map.keys(), timeout=_precollect_budget)
+    _deadline_passed["v"] = True
     timed_out = sorted(task_map[t] for t in pending)
     # Don't cancel the stragglers — the report proceeds without them, but they
     # keep collecting in the background and land in the DB for the NEXT cycle

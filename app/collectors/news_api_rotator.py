@@ -148,7 +148,9 @@ def build_providers_from_settings() -> list[ProviderConfig]:
 # ---------------------------------------------------------------------------
 
 
-async def _persist_articles(articles: list[NewsArticle]) -> int:
+async def _persist_articles(
+    articles: list[NewsArticle], requested_tickers: list[str] | None = None,
+) -> int:
     """Write articles to DB with ticker tagging and deduplication.
 
     Uses the same pattern as news_collector.py:
@@ -161,6 +163,7 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
         _detect_tickers_in_text,
         _get_article_id,
         _scrape_article_body_via_service,
+        rank_tickers_for_fanout,
     )
 
     with get_db() as db:
@@ -192,10 +195,16 @@ async def _persist_articles(articles: list[NewsArticle]) -> int:
 
             # Use tickers from API if provided, otherwise detect from full text
             if article.tickers:
-                detected = set(article.tickers)
+                detected = rank_tickers_for_fanout(
+                    article.tickers, requested_tickers, article.title
+                )
             else:
                 full_text = f"{article.title} {summary}"
-                detected = await _detect_tickers_in_text(full_text)
+                detected = rank_tickers_for_fanout(
+                    await _detect_tickers_in_text(full_text),
+                    requested_tickers,
+                    article.title,
+                )
 
             base_id = hashlib.md5(
                 f"{article.title}{article.published_at.isoformat()}".encode()
@@ -453,7 +462,7 @@ class NewsApiRotator:
 
         # Persist to DB
         if persist and all_articles:
-            count = await _persist_articles(all_articles)
+            count = await _persist_articles(all_articles, self.tickers)
             logger.info("[rotator] Persisted %d new articles from API providers", count)
             return count
 

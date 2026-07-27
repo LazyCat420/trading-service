@@ -257,9 +257,43 @@ def _extract_text_from_html(html: str, max_chars: int = 15000) -> str:
         return text[:max_chars]
 
 
+_BASE64ISH_RE = re.compile(r"\b[A-Za-z0-9_-]{24,}\b")
+_URL_RE = re.compile(r"https?://\S+|\bwww\.\S+")
+
+
+def sanitize_for_ticker_extraction(text: str) -> str:
+    """Strip markup, URLs and base64 blobs before symbol detection.
+
+    Google News RSS stores its body as
+    ``<ol><li><a href="https://news.google.com/rss/articles/CBMihAF...">``.
+    Handed that raw, the extractor mined uppercase runs out of the base64
+    redirect and the hostname, then validated them against the registry — and
+    since they ARE real symbols, they passed. Over 7 days that produced 800
+    GOOGL rows (93 with GOOGL in the title), 326 RH rows (14), and 127 BLSH
+    rows (0). Every Google News item in cycle-v3-1785137616 extracted the same
+    phantom pair ['GOOGL', 'RH'].
+
+    Measured on the live row for that Fox Business recall story: 898 raw chars
+    containing both the base64 and the hostname reduce to 131 chars of prose
+    containing neither.
+
+    Applied at this chokepoint rather than at the four call sites so no
+    collector can reintroduce the raw-HTML path.
+    """
+    if not text:
+        return ""
+    if "<" in text and ">" in text:
+        text = _extract_text_from_html(text, max_chars=100_000)
+    # get_text() drops href ATTRIBUTES, but a bare URL pasted into prose
+    # survives it — and a tracking URL is a rich source of phantom symbols.
+    text = _URL_RE.sub(" ", text)
+    text = _BASE64ISH_RE.sub(" ", text)
+    return text
+
+
 async def _detect_tickers_in_text(text: str) -> set[str]:
     """Detect stock tickers mentioned in article text."""
-    symbols = await get_ticker_symbols(text)
+    symbols = await get_ticker_symbols(sanitize_for_ticker_extraction(text))
     return set(symbols)
 
 
@@ -399,6 +433,53 @@ def _get_article_id(title: str, ticker: str | None) -> str:
     """Generate a deterministic SHA256 hash ID for cross-source deduplication."""
     norm = _normalize_title(title)
     return hashlib.sha256(f"{norm}_{ticker or 'NONE'}".encode()).hexdigest()
+
+
+_PREFERRED_SHARE_RE = re.compile(r"^[A-Z]{1,5}(p[A-Z]|[.-](?:PR)?[A-Z]|\.WS|\.U|\.WT)$")
+_COMMON_ETFS = frozenset({
+    "SPY", "QQQ", "QQQM", "IWM", "DIA", "VOO", "VTI", "XLF", "XLE", "XLK",
+    "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC", "XRT", "DIVB",
+    "SPHD", "DWAS", "PSCH", "GLD", "SLV", "TLT", "HYG", "LQD", "EEM", "EFA",
+})
+
+
+def rank_tickers_for_fanout(
+    detected, requested=None, title: str = "",
+) -> list[str]:
+    """Order an article's tickers so the cap keeps the ones that matter.
+
+    ``url_fanout_exceeded`` stops at NEWS_URL_FANOUT_CAP (5) rows per URL. That
+    cap is correct, but the caller iterated a *set* — arbitrary order — so
+    which five survived was effectively random, and providers hand us every
+    related instrument. Observed in cycle-v3-1785137616:
+
+        fool.com/...which-financial-etf-is-better-state-street-s-xlf...
+            -> stored under JPMpD, JPMpJ, JPMpK, JPMpL, STT
+
+    Four of five slots went to JPMorgan preferred classes on an article about
+    State Street, and STT held the last slot only by luck of iteration order.
+    An AGNC dividend release burned four slots on AGNCL/M/P/Z.
+
+    Priority: the ticker we asked for, then anything named in the headline,
+    then ordinary common stock, then ETFs, then preferred shares and warrants.
+    Nothing is dropped — this only decides who gets the slots first.
+    """
+    requested_set = {t.upper() for t in (requested or [])}
+    title_upper = (title or "").upper()
+
+    def rank(sym: str) -> tuple[int, str]:
+        s = sym.upper()
+        if s in requested_set:
+            return (0, s)
+        if _PREFERRED_SHARE_RE.match(s):
+            return (4, s)
+        if s in _COMMON_ETFS:
+            return (3, s)
+        if re.search(rf"\b{re.escape(s)}\b", title_upper):
+            return (1, s)
+        return (2, s)
+
+    return sorted({t.upper() for t in detected if t}, key=rank)
 
 
 def url_fanout_exceeded(db, url: str | None, cap: int | None = None) -> bool:
