@@ -1,189 +1,172 @@
-# HANDOFF — A broken tool is not an absence of information (2026-07-27)
+# HANDOFF — The skill loop now scores decisions instead of prose (2026-07-27)
 
-Shipped `a4c763e` · `2bceb70` · `e5ad40b`, plus lazycat-sdk `a201770`.
-**NOT DEPLOYED — deliberately.** See [Deploy](#deploy) below.
+Shipped `68a65a9`, **deployed** to `synology` 2026-07-27 20:22Z, container
+healthy. This deploy also shipped the two waves that were sitting committed but
+undeployed — the data-collection audit (`a4c763e` · `2bceb70` · `e5ad40b`, plus
+lazycat-sdk `a201770`) and the CORAL repair loop (`cd7f606` · `51036c8`).
 
-The CORAL wave's handoff (shipped `cd7f606`, deployed 09:14Z) is archived to
-[`docs/HANDOFF_coral_repair_loop_2026-07-27.md`](docs/HANDOFF_coral_repair_loop_2026-07-27.md);
-that work is unaffected by this one.
+Previous handoffs archived:
+[`docs/HANDOFF_data_collection_audit_2026-07-27.md`](docs/HANDOFF_data_collection_audit_2026-07-27.md) ·
+[`docs/HANDOFF_coral_repair_loop_2026-07-27.md`](docs/HANDOFF_coral_repair_loop_2026-07-27.md).
 
-Full audit with every measurement:
-[`../.agents/AUDIT-data-collection-cycle-v3-1785137616.md`](../.agents/AUDIT-data-collection-cycle-v3-1785137616.md).
+**⚠ The data-collection wave's post-deploy checklist is now live and unrun** —
+see [Verify next cycle](#verify-next-cycle).
 
 ---
 
 ## What this wave was
 
-Audit the data collection behind `cycle-v3-1785137616` (SBUX STT AGNC ASC BOOT
-NDAQ AMZN, 22m39s, **7/7 HOLD**) and fix what it found. CORAL was explicitly out
-of scope.
+Autoresearch is not broken the way the evolution council was. It runs, outcomes
+close cleanly (zero decisions unresolved past the 7-day window), and directives,
+skills and `tool_playbook` all reach live agents. One link was broken: **the
+thing deciding whether a skill edit survived was measuring prose.**
+
+`_simulate_score_with_skill` returns `baseline + delta`, and the gate compared
+`simulated - baseline` — so the realized-outcome term **cancelled exactly**.
+Every accept and reject came from "contains a digit"-class heuristics. 66 of 70
+recorded rejections scored the identical delta `-0.0050`.
+
+Meanwhile `decision_outcomes.skill_versions` had been stamping every agent's
+active version onto every decision since 07-25, and **nothing read it**.
 
 ---
 
-## THE HEADLINE
+## Every threshold here is measured, not chosen
 
-**Three independent degradations were live, and the cycle recorded `SUCCESS` on
-every phase for every ticker.**
+This is the part worth keeping. Three numbers changed the design.
 
-DuckDuckGo had begun refusing our egress IP. Probed from inside the container:
+**1. n=25 was inside its own noise.** Bootstrapping 1500 real resolved decisions,
+20k resamples:
+
+| samples | 95% noise band between two IDENTICAL versions |
+|---|---|
+| n=25 (the old `MIN_DECISIONS_BEFORE_REEDIT`) | **±0.207** |
+| n=50 | ±0.148 |
+| n=100 | **±0.104** |
+
+The 07-25 audit was right that churn made the loop unfalsifiable, and wrong
+about the dose. Maturity is now **n=100**, margin **±0.104**. A version lives
+~2-3 weeks. That is the price of a falsifiable loop.
+
+**2. The obvious second tier does not exist.** Eval scores as a fast *quality*
+signal fails on contact: excluding infra, agent-attributable eval failures run
+at 0.5-1.3% — about **13 events in three weeks fleet-wide**. It cannot rank
+anything. But the same data separates cleanly on a different question — share of
+runs that never completed: median 1-4%, worst normal day 18%, and **100%** the
+day DuckDuckGo began refusing our egress. So it became an **admissibility
+filter**, not a score.
+
+**3. 83% of "agent failures" were infra.** `classify_failure` sent anything whose
+tool result contained "error" to `bad_arguments`. Sampled over 21 days, 86 of
+~103 were transport — 40 × "Failed to reach trading-service", 36 ×
+`lazy_web_search` "Search failed". Only ~17 were the agent's doing. That is why
+the fundamental analyst's day-to-day failure band was ±0.53: it was tracking
+provider uptime, not skill.
+
+---
+
+## What is live
+
+- **`app/autoresearch/scorecard.py`** — `build_scorecard(agent, version)` and
+  `regression_verdict(...)`. Verdicts: `UNCOVERED`, `IMMATURE`, `CONTAMINATED`,
+  `HEALTHY`, `REGRESSED`.
+- **`skill_optimizer` gate swapped.** Before any proposal is paid for, the
+  serving version is scored against its predecessor. `REGRESSED` → revert.
+  `CONTAMINATED` → hold. The prose heuristics survive, correctly labelled, as a
+  pre-filter on obvious junk (`prose_prefilter` in `rejected_skill_edits`).
+- **Rollback appends** the predecessor as a *new* version. Reactivating the old
+  row would stamp two disjoint periods with the same number and every scorecard
+  query would silently pool them. The reverted edit is dead-ended.
+- **HOLD is scored** — as its own component, never folded into win rate. It is
+  45% of decisions and was excluded from the old baseline entirely.
+- **`scripts/skill_scorecard.py`** — `[--agent X] [--history] [--json]`.
 
 ```
-lite.duckduckgo.com   ConnectTimeout  15.2s
-html.duckduckgo.com   ConnectTimeout  15.0s
-finnhub.io            200  0.2s          ← egress is fine
+maturity bar: n=100 resolved decisions   regression margin: ±0.104 (95% noise band)
+
+   agent                      ver      n   score     dir    hold  incompl  verdict
+.. v3_junior_analyst           24      0       —       —       —       7%  IMMATURE
+.. v3_fundamental_analyst      19      0       —       —       —       1%  IMMATURE
 ```
 
-`lazy_web_search` had exactly one backend, so the junior analyst's only research
-tool failed 8/8. Then STT's own desk note recorded the consequence:
-
-```json
-"data_gaps": ["DataGap: ... catalysts for STT (web search timeout)"],
-"triage_recommendation": "QUANT_ONLY",
-"_quality_flag": "good", "_quality_score": 81,
-"_failure_patterns": ["FALLBACK_OUTPUT"]
-```
-
-The orchestrator honoured that triage and skipped the Fundamental Analyst. STT
-and NDAQ each got a 526-byte stub with all five pillars `"Not analyzed"`, on the
-stated grounds that no qualitative catalysts existed. **NDAQ then produced the
-cycle's only BUY.** The quality scorer rated that artifact 81/"good" while it
-carried its own `FALLBACK_OUTPUT` flag.
-
-`research_degraded()` now refuses a shortening triage when the analyst's tools
-failed. It can only ever *add* work, and fails open on a probe error.
-
 ---
 
-## What measuring found that reading would not have
+## Verify next cycle
 
-Three of the fixes changed shape once run against real data. This is the part
-worth keeping.
+**From this wave** — nothing can be confirmed live yet, and that is expected:
+version stamping began 07-25 and needs the 7-day resolve lag, so the first
+non-zero `n` lands **~2026-08-01**. Until then every agent reads `IMMATURE 0/100`,
+which is the correct answer.
 
-**The new search was wrong on its first live run.** It worked — and returned a
-**2012** Starbucks earnings-call transcript for "Q3 earnings catalyst", plus a
-March article for STT. Both providers serve the archive for present-tense
-queries. That is the *same* disease as the news table (ASC's "Recent News" ran
-to 2024-07-24), and I would have shipped it into the fix for it. Results are now
-newest-first with `age_days`, a 30-day window that widens rather than returning
-nothing.
+1. `python scripts/skill_scorecard.py` — `n` should leave 0 in early August.
+2. `failure_buckets` — new rows should start carrying `tool_unavailable` /
+   `error_class='infra'`. If *every* new row is infra, the agent markers are too
+   narrow; if none are, too wide.
+3. SkillOpt log lines should read `held: … resolved decisions` rather than
+   `rejected by score gate`.
 
-**The price bug was not the one I scoped.** "Widen the refresh past the 509
-S&P names" was wrong. A live fetch showed `fetch_price_history` returning **250
-rows with a stale tip**: yfinance serves the latest session as NaN OHLC with a
-real Volume — Friday 07-24 was still NaN on Monday, for SBUX as much as for ASC.
-`fetch_ohlcv_dataframe` drops such a bar and should. The 509 look fresh only
-because the S&P post-close loop catches the bar while it is briefly complete.
-The real defect was that **a partial success suppressed the fallback**: the
-function returned on `count > 0`, and 250 is > 0. Compounding it, the Polygon
-price fallback was gated on `POLYGON_API_KEY`, which is **empty** on the live
-container — the key lives in `MASSIVE_API_KEY`, which is what the news rotator
-had always read. Polygon served news all along while the price path skipped it.
+**Carried over from the data-collection wave — now deployed and still unrun.**
+Run one cycle on SBUX STT AGNC ASC BOOT NDAQ AMZN and check:
 
-Verified live: ASC, BOOT and AGNC each moved `2026-07-23 → 2026-07-24`,
-`source='polygon'`.
-
-**The AI anti-pattern was rewritten from samples, not guesses.** Phrase patterns
-caught 28 of 60 rows. Sampling the misses found "physical AI", "top 10 AI
-stocks", "Agentic Voice AI leader", "574% AI cloud revenue" — twelve for twelve
-about the technology, none about C3.ai. So "AI" now inverts the burden: assumed
-jargon unless something explicitly names the company.
-
----
-
-## Ticker mis-attribution, measured
-
-Rows stored over 7 days / rows whose TITLE contains the symbol:
-
-| ticker | rows | title mentions | after the fix (60 sampled) |
-|---|---:|---:|---|
-| GOOGL | 800 | 93 | 1 survives (~the legit 12%) |
-| **FCF** | **634** | **0** | **0** |
-| AI | 452 | 205 | 5 |
-| RH | 326 | 14 | **0** |
-| BLSH | 127 | 0 | 0 |
-| SBUX *(control)* | — | — | **2/2 kept** |
-
-The extractor was handed raw HTML; Google News bodies carry base64 redirects and
-uppercase runs mined out of them validate as real symbols. Sanitising happens at
-the single `_detect_tickers_in_text` chokepoint — **not** the four call sites,
-which any new collector could bypass.
-
-The fan-out cap iterated a **set**, so which five rows survived was arbitrary: an
-article about State Street's ETF was stored under `JPMpD/J/K/L` and `STT`, with
-STT surviving on luck. `rank_tickers_for_fanout` now orders requested ticker →
-headline mention → common stock → ETF → preferred/warrant. Nothing is dropped;
-only the order changes.
-
-End-to-end: the WSJ Naver story that logged
-`['NVDA','035420.KS','GOOGL','000660.KS']` now yields `['035420.KS','NVDA']`.
-
----
-
-## Traps for whoever is next
-
-- **Google News RSS links are not followable.** A plain GET returns a 581 KB JS
-  interstitial still on `news.google.com`. Those results carry an empty `url` on
-  purpose — do not "fix" it by emitting the redirect, or `scrape_url` will burn
-  a call on every one. Bing News RSS puts the real URL in a query param.
-- **Bing's HTML endpoint is not usable** and is deliberately absent. A browser UA
-  gets a JS shell; a text-browser UA gets navigational hits (starbucks.com,
-  "Menu") behind `ck/a` wrappers that do not resolve.
-- **`elapsed_ms = 0` still means "not measurable"**, not a 0 ms call. The SDK now
-  times prism-internal tools from the `calling` event; if that event is missing
-  it reports 0 rather than fabricating a duration.
-- **`_is_missing_recent_session` fails CLOSED.** An unreachable DB must not make
-  every ticker look stale and set off fallback fetches fleet-wide.
-- **The old `test_precollect_outcomes` re-implemented the production rule inside
-  the test file**, so it could not observe the `_ok`-after-deadline bug at all.
-  The rule now lives in `classify_collector_outcome` and the test drives that.
-  Watch for this shape elsewhere.
-- **`fetch_price_history` counts now accumulate.** A fallback returning 0 must
-  not erase yfinance's rows — callers read 0 as a total outage and
-  `_EXPECT_TRUTHY` turns it into a manufactured collector error.
-
----
-
-## Deploy
-
-**Nothing here is deployed.** The working tree carried the CORAL session's
-uncommitted work while this was being written, and the Dockerfile does
-`COPY app/ ./app/` from the working tree — deploying would have shipped
-half-finished code. Only my own files were committed.
-
-That has since resolved: CORAL committed and pushed (`cd7f606`, `51036c8`) and
-deployed at 09:14Z, and **the tree is now clean at `e5ad40b`**. A deploy now
-would ship a coherent committed state. It was left to the operator by explicit
-choice, not oversight.
-
-`deploy.sh` also tars `../lazycat-sdk` to the NAS, so **the SDK timing fix
-(`a201770`) ships with the next trading-service deploy** — no separate step.
-
-**After deploying, run one cycle on the same seven tickers and check:**
-
-1. `agent_tool_telemetry` — `lazy_web_search` failures should drop from 8/8, and
-   failure rows should carry a non-zero `elapsed_ms`.
-2. `news_articles` — no new `FCF`/`RH`/`BLSH` rows
-   (`SELECT ticker, count(*) ... WHERE collected_at > <cycle start>`).
+1. `agent_tool_telemetry` — `lazy_web_search` failures drop from 8/8; failure
+   rows carry non-zero `elapsed_ms`.
+2. `news_articles` — no new `FCF`/`RH`/`BLSH` rows.
 3. `pipeline_events` — `_late` warnings where `_ok` used to appear.
-4. `data_source_status.last_success` should move off 2026-06-24.
+4. `data_source_status.last_success` moves off 2026-06-24.
 5. `price_history` — non-S&P tickers reaching the latest session, `source='polygon'`.
+
+---
+
+## Gotchas
+
+- **`IMMATURE` and `UNCOVERED` are answers, not errors.** The previous gate
+  always had an opinion and none of them were grounded. A loop that says "I
+  cannot judge this yet" is the improvement.
+- **`CONTAMINATED` is checked before maturity, deliberately.** A window whose
+  tools were broken is inadmissible however many decisions it governed; ordering
+  it after maturity would let it mature into a verdict it must never reach.
+- **"Cannot tell" stays uncounted.** `classify_tool_failure` returns `None` for
+  unrecognised failures rather than guessing. Call it infra and a bad skill hides
+  behind it; call it agent and an outage reverts a good one.
+- **Historical `failure_buckets` rows keep their original (wrong) labels.**
+  Rewriting an audit log to match new code makes past measurements
+  unreproducible. Anything before 2026-07-27 misattributes infra as
+  `bad_arguments` — do not trust it for attribution.
+- **Nothing consumes `error_class` yet.** When something does, it must gate on
+  `ERROR_CLASS_ENGINEERING` and exclude `ERROR_CLASS_INFRA`, or a dead provider
+  will queue CORAL repair jobs.
+- **n=100 detects gross regressions only.** ±0.104 on a ~1% effect is not
+  statistical power. This is a regression detector, not an optimizer, and the
+  code says so.
+- **`_SUPERSEDED_MIN_DECISIONS_BEFORE_REEDIT`** is retained only to carry the
+  reasoning. Nothing reads it.
 
 ---
 
 ## Still open
 
-- **`cycle_audit_log` has written nothing since 2026-07-25** — zero rows for this
-  cycle. Not diagnosed.
-- `put_call_ratio` is SPY-only with 6 rows ever, and 07-25 duplicates 07-24's
-  value to 16 decimal places — a weekend stale-fill stored as an observation.
-- `insider_trades` covers 14 micro-caps (openinsider is a firehose, not a
-  targeted feed). `build_alt_data_block` stays silent rather than fabricating.
-- `social_posts` engagement counts are all null, so the block always reads
-  "0 total engagements".
+**From this wave**
+- Only 3 of 7 agents (fundamental, junior, quant) generate enough traces for the
+  contamination filter; board/bull/bear/regime rely on the lagging tier alone.
+- `eval_scores` and `failure_buckets` remain a closed loop otherwise — read only
+  by autoresearch. The contamination filter is the first outside consumer.
+- `cycle_directives` live ~3.8h before expiring (185 of 189 expired, 4 active).
+  Not investigated — check whether any expire before a cycle reads them.
+- The Auto-Research panel still reads `pending_evolution_fixes`, a graveyard: 88
+  of 96 rows are May fossils written by code no longer in the repo.
+
+**Carried over, still unaddressed**
+- **`cycle_audit_log` has written nothing since 2026-07-25.** Not diagnosed.
+- `put_call_ratio` is SPY-only, 6 rows ever; 07-25 duplicates 07-24 to 16 decimal
+  places — a weekend stale-fill stored as an observation.
+- `insider_trades` covers 14 micro-caps only.
+- `social_posts` engagement counts are all null.
 - `market_snapshots` appears abandoned — 819 rows, none written this cycle.
-- The `congress_trades` future-dated row (2026-12-26) is **guarded at read**, not
+- The `congress_trades` future-dated row (2026-12-26) is guarded at read, not
   deleted.
 - **Two pre-existing test failures** — `test_parameter_tools` and
-  `test_tool_whitelists` — predate this work; confirmed against a clean stash.
+  `test_tool_whitelists` — predate all of this. The CORAL loop produced a green
+  branch for them (`evo/fundamental_analyst-80e6d46c`, local, unpushed) that
+  reverts a *deliberate* 07-25 removal; it needs a human call, not a merge.
 
-1540 unit tests pass in trading-service, 112 in lazycat-sdk.
+1576 unit tests pass (the 2 above unchanged).
