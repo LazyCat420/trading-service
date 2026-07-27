@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import pandas as pd
 import yfinance as yf
@@ -140,7 +141,14 @@ async def compute_market_regime():
 
     tickers = ["^VIX", "^TNX", "DX-Y.NYB", "SPY"]
     try:
-        data = yf.download(tickers, period="1mo", progress=False)["Close"]
+        # Off the event loop — same class of bug as the S&P 500 bulk collector
+        # (2026-07-27): synchronous network I/O inside an async function that
+        # boot_service awaits, so the HTTP server sharing the loop stops
+        # answering /health. Only 4 tickers here, so the stall is shorter than
+        # the ~45s bulk one, but it lands in the same startup window.
+        data = (await asyncio.to_thread(
+            yf.download, tickers, period="1mo", progress=False
+        ))["Close"]
         if data.empty:
             return
 

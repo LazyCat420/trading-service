@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import pandas as pd
 import yfinance as yf
@@ -43,10 +44,26 @@ async def collect_sp500_prices(period: str = "6mo"):
             logger.info(f"Downloading prices for batch {i // chunk_size + 1}...")
 
             try:
+                # OFF THE EVENT LOOP. yf.download is synchronous network I/O
+                # (~7s per 100-ticker chunk), and `collect_sp500_prices` is an
+                # async function called from a background task — so six
+                # sequential chunks blocked the loop for ~45s straight. The
+                # HTTP server shares that loop, so /health stopped answering
+                # and Docker marked the container UNHEALTHY on every deploy
+                # (measured 2026-07-27: ~2 min unhealthy, CPU only 23% — it
+                # was never CPU-bound, the loop simply never got a turn).
+                #
+                # asyncio.to_thread, not a shorter timeout on the healthcheck:
+                # the healthcheck was telling the truth. The service really
+                # was unable to serve requests.
                 # We use group_by='ticker' to get a clean MultiIndex
-                data = yf.download(
-                    chunk, period=period, group_by="ticker", progress=False
+                data = await asyncio.to_thread(
+                    yf.download, chunk, period=period, group_by="ticker",
+                    progress=False,
                 )
+                # Yield between chunks so anything else queued on the loop
+                # (health probe, in-flight request) runs before the next one.
+                await asyncio.sleep(0)
 
                 # yf.download returns different structures depending on if 1 or multiple tickers are provided
                 if len(chunk) == 1:
@@ -126,14 +143,25 @@ async def collect_sp500_prices(period: str = "6mo"):
                     close = EXCLUDED.close,
                     volume = EXCLUDED.volume
             """
-            # Execute individually as our PooledCursor doesn't expose executemany directly
-            for item in inserts:
-                try:
-                    db.execute(query, item)
-                    count += 1
-                    written_tickers.add(item[0])
-                except Exception as e:
-                    pass
+            # Execute individually as our PooledCursor doesn't expose executemany
+            # directly. ~2,000 synchronous round-trips, so this runs in a
+            # worker thread for the same reason the download does — on the
+            # event loop it was the second half of the deploy-time stall.
+            def _insert_all() -> tuple[int, set]:
+                written: set = set()
+                inserted = 0
+                for item in inserts:
+                    try:
+                        db.execute(query, item)
+                        inserted += 1
+                        written.add(item[0])
+                    except Exception:
+                        pass
+                return inserted, written
+
+            _inserted, _written = await asyncio.to_thread(_insert_all)
+            count += _inserted
+            written_tickers.update(_written)
 
             logger.info(f"Successfully collected and saved {count} price records.")
 
