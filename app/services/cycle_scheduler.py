@@ -779,6 +779,25 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register fundamentals refresh: %s", e)
 
+            # Nightly stale-first PRICE refresh for the watchlist tickers that
+            # BootService._sp500_daily_refresh_loop does not cover (2026-07-26:
+            # 17 of 45 active tickers were 4-63 days stale because non-S&P-500
+            # names have no scheduled writer). 2:00 AM PT — before the
+            # fundamentals job, since technicals are derived from these rows.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_watchlist_price_refresh,
+                    trigger=CronTrigger(hour=2, minute=0,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="watchlist_price_refresh",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered nightly watchlist price refresh (2:00 AM PT, 40 stalest)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register watchlist price refresh: %s", e)
+
             # ── Formerly-orphaned collectors (2026-07-23): these five modules
             # existed with zero callers, so put_call_ratio / insider_trades /
             # economic_calendar / social_posts sat at 0 rows while agents
@@ -1189,6 +1208,72 @@ class SchedulerService:
             logger.info("[SCHEDULER] Fundamentals refresh: %d/%d tickers updated", done, len(rows))
         except Exception as e:
             logger.error("[SCHEDULER] Fundamentals refresh failed: %s", e)
+
+    @staticmethod
+    async def _run_watchlist_price_refresh(batch: int = 40):
+        """Refresh the stalest watchlist prices that no other job covers.
+
+        `price_history` is really two populations. BootService's
+        _sp500_daily_refresh_loop tops up the ~509 S&P 500 tickers after every
+        close, and they measure p90 = 0 trading days old. EVERYTHING ELSE has
+        no scheduled writer at all — non-S&P-500 tickers only get rows when a
+        cycle happens to analyze them, which is 5-8 tickers a run.
+
+        Measured 2026-07-24 (scripts/simulate_freshness_thresholds.py): 2,211
+        of 2,237 non-S&P-500 tickers were frozen at 2026-07-17, and 17 of the
+        45 ACTIVE watchlist tickers had drifted 4-63 days stale — including
+        ASIC, which had reached a 68-confidence BUY on a desk with no price
+        history whatsoever.
+
+        Deliberately scoped to the watchlist, not the whole table: the ~2,200
+        dormant tickers are a backfill population nothing trades from, and
+        sweeping them nightly would burn the yfinance budget to keep data
+        fresh for tickers no cycle will read. Stale-first ordering means the
+        active list converges in a couple of nights and then just tracks.
+        """
+        try:
+            from app.collectors.data_rotator import fetch_price_history
+            from app.db.connection import get_db
+
+            with get_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT w.ticker, MAX(p.date) AS last_bar
+                    FROM watchlist w
+                    LEFT JOIN price_history p ON p.ticker = w.ticker
+                    WHERE w.status IN ('active', 'paused')
+                    GROUP BY w.ticker
+                    ORDER BY last_bar ASC NULLS FIRST
+                    LIMIT %s
+                    """,
+                    [batch],
+                ).fetchall()
+
+            done = 0
+            no_data: list[str] = []
+            for (ticker, _last) in rows:
+                try:
+                    # fetch_price_history returns a row count and swallows
+                    # provider errors, so 0 is the failure signal — the same
+                    # return-value-not-exception shape that let a total outage
+                    # report as a clean cycle on 2026-07-26.
+                    if await fetch_price_history(ticker):
+                        done += 1
+                    else:
+                        no_data.append(ticker)
+                except Exception as te:
+                    no_data.append(ticker)
+                    logger.warning(
+                        "[SCHEDULER] price refresh %s failed: %s", ticker, te
+                    )
+
+            logger.info(
+                "[SCHEDULER] Watchlist price refresh: %d/%d tickers updated%s",
+                done, len(rows),
+                f" — no data for {','.join(no_data)}" if no_data else "",
+            )
+        except Exception as e:
+            logger.error("[SCHEDULER] Watchlist price refresh failed: %s", e)
 
     @staticmethod
     async def _run_youtube_prewarm(batch: int = 10):
