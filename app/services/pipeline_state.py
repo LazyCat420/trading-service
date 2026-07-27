@@ -25,11 +25,13 @@ class PipelineStateDB:
                         singleton_id, status, cycle_id, started_at, finished_at,
                         tickers, progress, error, phase, agent_locale,
                         collect_flag, analyze_flag, trade_flag, requested_pipeline_version,
+                        effective_pipeline_version, execution_mode,
                         updated_at
                     ) VALUES (
                         %s, %s, %s, %s, %s,
                         %s::jsonb, %s, %s, %s, %s,
                         %s, %s, %s, %s,
+                        %s, %s,
                         CURRENT_TIMESTAMP
                     )
                 ON CONFLICT (singleton_id) DO UPDATE SET
@@ -46,6 +48,8 @@ class PipelineStateDB:
                     analyze_flag = EXCLUDED.analyze_flag,
                     trade_flag = EXCLUDED.trade_flag,
                     requested_pipeline_version = EXCLUDED.requested_pipeline_version,
+                    effective_pipeline_version = EXCLUDED.effective_pipeline_version,
+                    execution_mode = EXCLUDED.execution_mode,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                     [
@@ -63,6 +67,8 @@ class PipelineStateDB:
                         state.get("analyze_flag"),
                         state.get("trade_flag"),
                         state.get("requested_pipeline_version"),
+                        state.get("effective_pipeline_version"),
+                        state.get("execution_mode"),
                     ],
                 )
         except Exception as e:

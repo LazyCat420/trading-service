@@ -340,6 +340,16 @@ class PipelineService:
             "analyze_flag": bool(kwargs.get("analyze", True)),
             "trade_flag": bool(kwargs.get("trade", True)),
             "requested_pipeline_version": str(kwargs.get("pipeline_version", "v3")),
+            # Same fossil problem, one column over. `effective_pipeline_version`
+            # and `execution_mode` also had no writer, so cycle-v3-1785137616 —
+            # a V3 cycle by every other measure — reported
+            # effective_pipeline_version='v1' and
+            # execution_mode='v2_disabled_fallback_to_v1', values left behind by
+            # a V2-era code path that no longer exists. Anyone triaging from
+            # /status would have started by chasing a fallback that never
+            # happened.
+            "effective_pipeline_version": str(kwargs.get("pipeline_version", "v3")),
+            "execution_mode": "v3_agentic",
         })
         cls.save_state()
         cls._stop_requested = False

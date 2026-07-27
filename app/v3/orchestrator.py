@@ -1208,12 +1208,23 @@ async def run_v3_pipeline(
                 logger.warning("[V3] %s: tournament scoring failed: %s", ticker, score_err)
                 tournament_quality = -1
 
+            # Size the artifact like every other agent does. Left unset it
+            # defaulted to 0, so the single most expensive stage in the cycle
+            # (245-305s per ticker in cycle-v3-1785137616, ~30% of per-ticker
+            # wall clock) was the one row that could not be checked for
+            # "expensive AND empty" — the exact question its own cost invites.
+            try:
+                _t_bytes = len(json.dumps(tournament_result, default=str))
+            except Exception:
+                _t_bytes = 0
+
             desk.record_agent_telemetry({
                 "agent_name": "v3_tournament_debate",
                 "ticker": ticker,
                 "elapsed_ms": int((time.monotonic() - t_tournament) * 1000),
                 "loops_used": 1,
                 "token_usage": int(tournament_result.get("total_tokens", 0) or 0),
+                "artifact_size_bytes": _t_bytes,
                 "outcome": "SUCCESS",
                 "phase": desk.phase.value,
                 "quality_score": tournament_quality,
