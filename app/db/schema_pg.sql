@@ -1136,6 +1136,21 @@ CREATE TABLE IF NOT EXISTS ticker_metadata (
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ETF metadata (yfinance; expense_ratio_pct is a PERCENT, yield/returns FRACTIONS)
+CREATE TABLE IF NOT EXISTS etf_metadata (
+    ticker            TEXT PRIMARY KEY,
+    category          TEXT,
+    fund_family       TEXT,
+    total_assets      DOUBLE PRECISION,
+    expense_ratio_pct DOUBLE PRECISION,
+    dividend_yield    DOUBLE PRECISION,
+    ret_3y            DOUBLE PRECISION,
+    ret_5y            DOUBLE PRECISION,
+    nav_price         DOUBLE PRECISION,
+    beta_3y           DOUBLE PRECISION,
+    collected_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS ticker_correlations (
     ticker_a    TEXT,
     ticker_b    TEXT,

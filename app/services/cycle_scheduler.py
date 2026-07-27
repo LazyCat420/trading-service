@@ -802,6 +802,24 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register finviz supplement: %s", e)
 
+            # Nightly ETF metadata refresh (4:00 AM PT) — category, sponsor,
+            # AUM, expense ratio, returns for the screener's ETF tab. The ETF
+            # universe is small (~50), so a full nightly sweep is cheap.
+            try:
+                from app.collectors.etf_collector import collect_all_etfs
+                scheduler.add_job(
+                    collect_all_etfs,
+                    trigger=CronTrigger(hour=4, minute=0,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="etf_metadata_refresh",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered nightly ETF metadata refresh (4:00 AM PT)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register ETF metadata refresh: %s", e)
+
             # Nightly stale-first PRICE refresh for the watchlist tickers that
             # BootService._sp500_daily_refresh_loop does not cover (2026-07-26:
             # 17 of 45 active tickers were 4-63 days stale because non-S&P-500
@@ -1313,11 +1331,18 @@ class SchedulerService:
             with get_db() as db:
                 rows = db.execute(
                     """
-                    SELECT w.ticker, MAX(p.date) AS last_bar
-                    FROM watchlist w
-                    LEFT JOIN price_history p ON p.ticker = w.ticker
-                    WHERE w.status IN ('active', 'paused')
-                    GROUP BY w.ticker
+                    WITH universe AS (
+                        SELECT ticker FROM watchlist WHERE status IN ('active', 'paused')
+                        UNION
+                        -- ETFs have no other scheduled price writer (not S&P500,
+                        -- rarely watchlisted) — without this the screener's ETF
+                        -- rows go stale and its fresh-prices gate hides them all
+                        SELECT ticker FROM ticker_metadata WHERE asset_class = 'etf'
+                    )
+                    SELECT u.ticker, MAX(p.date) AS last_bar
+                    FROM universe u
+                    LEFT JOIN price_history p ON p.ticker = u.ticker
+                    GROUP BY u.ticker
                     ORDER BY last_bar ASC NULLS FIRST
                     LIMIT %s
                     """,

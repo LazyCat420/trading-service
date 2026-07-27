@@ -483,6 +483,31 @@ def run_migrations(conn):
         except Exception:
             pass
 
+    # ── ETF metadata table (2026-07-27, screener ETF tab) ──
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS etf_metadata (
+                    ticker            TEXT PRIMARY KEY,
+                    category          TEXT,
+                    fund_family       TEXT,
+                    total_assets      DOUBLE PRECISION,
+                    expense_ratio_pct DOUBLE PRECISION,
+                    dividend_yield    DOUBLE PRECISION,
+                    ret_3y            DOUBLE PRECISION,
+                    ret_5y            DOUBLE PRECISION,
+                    nav_price         DOUBLE PRECISION,
+                    beta_3y           DOUBLE PRECISION,
+                    collected_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── One-time fix: ETH price collision + CAGR garbage position ──
     # The ticker "ETH" was misclassified as crypto, causing snapshots to use
     # the Ethereum crypto price (~$1,800) instead of the ETF price (~$23).
