@@ -47,6 +47,46 @@ def _classify(action: str, pnl_pct: float) -> str:
     return "FLAT"
 
 
+def _is_unscoreable(confidence, result: dict) -> bool:
+    """True when this artifact records a FAILURE to decide, not a decision.
+
+    Three independent tells, because each alone has been wrong before:
+
+    1. `confidence == 0` — the sentinel every degraded path writes. Real scores
+       bottom out at 15 in the recorded history, so 0 is unambiguous. Checked
+       first because it catches artifacts whose text has been lost.
+    2. The orchestrator's own `_is_degraded_decision` — degraded provenance or
+       a null action. Reused rather than reimplemented so the two definitions
+       cannot drift; a decision the policy gate refuses to execute is exactly
+       a decision the scorer must refuse to grade.
+    3. The failure text itself, for rows whose provenance was never stamped.
+
+    Deliberately NOT keyed on low confidence generally: a confident-but-wrong
+    call is real signal and the calibration depends on keeping it.
+    """
+    if confidence is None:
+        return True
+    try:
+        if float(confidence) == 0.0:
+            return True
+    except (TypeError, ValueError):
+        return True
+
+    if not isinstance(result, dict):
+        return True
+
+    try:
+        from app.v3.orchestrator import _is_degraded_decision
+
+        if _is_degraded_decision(result):
+            return True
+    except Exception:  # noqa: BLE001 — never block recording on an import
+        pass
+
+    thesis = str(result.get("thesis_summary") or result.get("reasoning") or "")
+    return "PIPELINE FAILURE" in thesis or "Failed to parse thesis" in thesis
+
+
 def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
     """
     After a cycle completes, read analysis_results for that cycle and insert
@@ -54,6 +94,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
     tracked as "no meaningful move" claims (see module docstring).
     """
     recorded = 0
+    skipped_degraded = 0
 
     # Which skill docs governed this cycle's decisions. Captured ONCE per
     # cycle, before the row loop, so every ticker in the cycle carries the same
@@ -100,6 +141,35 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
 
                 action = result.get("action", "HOLD")
 
+                # A pipeline failure is not a decision, and must never be
+                # scored as a trade. 2026-07-27: 363 of 2,215 rows here were
+                # confidence=0 artifacts — 145 whose thesis text reads
+                # "PIPELINE FAILURE (EMPTY_SIGNAL): Thesis returned
+                # confidence=0 with 0 claims" and 198 "Failed to parse thesis.
+                # Invalid JSON format" — recorded, resolved against price, and
+                # labelled WIN/LOSS like any real call.
+                #
+                # They are not a random sample: they win 55.1% at -5.61% mean
+                # versus 61.1% / +1.94% for real decisions, and they all land
+                # at confidence 0. So they poison every consumer that reads
+                # this table — SkillOpt's baseline, the scorecard, and the
+                # confidence calibration, where they manufactured a fake
+                # "low confidence loses money" band that was really the crash
+                # rate wearing a calibration costume (see calibration_report's
+                # fetch()).
+                #
+                # Confidence is a clean discriminator here: the distribution
+                # jumps 0 -> 15 with nothing in between, so 0 is a sentinel
+                # rather than a real (if dismal) score.
+                if _is_unscoreable(confidence, result):
+                    logger.info(
+                        "[OUTCOME] Skipping %s — degraded artifact, not a "
+                        "decision (confidence=%s, provenance=%s)",
+                        ticker, confidence, result.get("decision_provenance"),
+                    )
+                    skipped_degraded += 1
+                    continue
+
                 if entry_price is None:
                     logger.debug("[OUTCOME] Skipping %s — no price_history available", ticker)
                     continue
@@ -124,8 +194,17 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 )
                 recorded += 1
 
-        if recorded > 0:
-            logger.info("[OUTCOME] Recorded %d decision outcomes for cycle %s", recorded, cycle_id[:12])
+        if recorded > 0 or skipped_degraded:
+            # Report the skip count rather than silently dropping rows: a
+            # cycle where most artifacts were degraded looks identical to a
+            # quiet cycle if only `recorded` is logged, and that is precisely
+            # the failure this filter exists to surface.
+            logger.info(
+                "[OUTCOME] Recorded %d decision outcomes for cycle %s%s",
+                recorded, cycle_id[:12],
+                f" ({skipped_degraded} degraded artifact(s) skipped)"
+                if skipped_degraded else "",
+            )
     except Exception as e:
         logger.error("[OUTCOME] Failed to record decisions: %s", e)
 
