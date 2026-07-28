@@ -54,6 +54,9 @@ class CollectRequest(BaseModel):
     offset: int = Field(default=0, ge=0)  # skip first N results (youtube search paging)
     from_date: str | None = None
     sort: str | None = None
+    # Raw YouTube results-filter param (the &sp= value). Wins over `sort` when
+    # both are set. Pattern keeps it to URL-safe filter tokens only.
+    sp: str | None = Field(default=None, pattern=r"^[A-Za-z0-9%=_-]{1,64}$")
     time_filter: str | None = None
     days_back: int | None = None
     require_transcript: bool = True

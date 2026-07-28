@@ -125,6 +125,7 @@ class YouTubeCollector:
         require_transcript: bool = True,
         sort: str | None = None,
         offset: int = 0,
+        sp: str | None = None,
     ) -> list[YouTubeVideo]:
         """Search YouTube for videos matching a query and extract transcripts.
 
@@ -133,7 +134,7 @@ class YouTubeCollector:
         so the flat search still enumerates offset+max_results entries).
         """
         videos_data = await asyncio.to_thread(
-            self._search_youtube, query, offset + max_results, sort, not require_transcript
+            self._search_youtube, query, offset + max_results, sort, not require_transcript, sp
         )
         if offset:
             videos_data = videos_data[offset:]
@@ -164,10 +165,11 @@ class YouTubeCollector:
         require_transcript: bool = True,
         sort: str | None = None,
         offset: int = 0,
+        sp: str | None = None,
     ):
         """Yield YouTube videos matching a query in real-time (offset: see search())."""
         videos_data = await asyncio.to_thread(
-            self._search_youtube, query, offset + max_results, sort, not require_transcript
+            self._search_youtube, query, offset + max_results, sort, not require_transcript, sp
         )
         if offset:
             videos_data = videos_data[offset:]
@@ -386,19 +388,29 @@ class YouTubeCollector:
             logger.error(f"[youtube] yt-dlp error for {channel}: {e}")
             return []
 
-    def _search_youtube(self, query: str, max_results: int, sort: str | None = None, use_ddg_first: bool = False) -> list[dict]:
+    def _search_youtube(self, query: str, max_results: int, sort: str | None = None, use_ddg_first: bool = False, sp: str | None = None) -> list[dict]:
         """Use yt-dlp to find videos matching a query with DuckDuckGo fallback."""
         if use_ddg_first:
             videos = self._search_duckduckgo(query, max_results)
             if videos:
                 return videos
-        
+
         videos = []
         import urllib.parse
-        
-        if sort == "relevance":
+
+        if sp:
+            # Raw YouTube results-filter param wins over sort.
+            encoded_query = urllib.parse.quote(query)
+            target = f"https://www.youtube.com/results?search_query={encoded_query}&sp={sp}"
+            playlist_end_arg = f"--playlist-end={max_results}"
+        elif sort == "relevance":
             target = f"ytsearch{max_results}:{query}"
             playlist_end_arg = None
+        elif sort == "views":
+            # View-count sort, type:video (sp=CAMSAhAB)
+            encoded_query = urllib.parse.quote(query)
+            target = f"https://www.youtube.com/results?search_query={encoded_query}&sp=CAMSAhAB"
+            playlist_end_arg = f"--playlist-end={max_results}"
         else:
             # Default to date sorting (upload date) using YouTube results filter parameter sp=CAI%3D
             encoded_query = urllib.parse.quote(query)

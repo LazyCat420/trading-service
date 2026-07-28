@@ -153,6 +153,7 @@ async def _collect_youtube(req: CollectRequest) -> CollectResponse:
             require_transcript=req.require_transcript,
             sort=req.sort,
             offset=req.offset,
+            sp=req.sp,
         )
     else:
         return CollectResponse(
@@ -493,6 +494,7 @@ async def _collect_youtube_stream(req: CollectRequest) -> StreamingResponse:
                     require_transcript=req.require_transcript,
                     sort=req.sort,
                     offset=req.offset,
+                    sp=req.sp,
                 ):
                     logger.info(f"[collect] Yielding search result video {video.video_id} for query '{req.query}'")
                     yield json.dumps(_serialize_video(video)) + "\n"
