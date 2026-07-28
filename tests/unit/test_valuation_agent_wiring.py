@@ -254,3 +254,74 @@ class TestTheOptimizerCannotReachTheDoctrine:
 
         src = inspect.getsource(skill_optimizer)
         assert "DELIBERATELY ABSENT" in src
+
+
+class TestAlternativeDataReachesTheDecidingDesks:
+    """2026-07-28: `get_congress_trades` was never called in 30 days by any
+    agent, and the alt-data BLOCK carrying that same evidence went to only two
+    of ten agents. The data is not missing — 30,483 congress rows across 508
+    tickers active in the last 90 days — it simply never reached the desks that
+    size and authorise the trade.
+
+    Fixed as a block rather than by nudging the tool, because six of ten agents
+    average loops_used = 1.00: they emit their JSON on the first pass and never
+    take a tool turn, so a whitelist entry cannot reach them. A block always
+    can.
+    """
+
+    def test_the_deciding_agents_receive_alt_data(self):
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner)
+        guard = re.search(
+            r"if agent_name in \(([^)]*?)\):\s*\n\s*alt_data = ", src, re.S)
+        assert guard, "the alt_data injection guard moved or was removed"
+        recipients = guard.group(1)
+        for agent in ("v3_board_of_directors", "v3_decision_synthesizer",
+                      "v3_quant_analyst", "v3_valuation_analyst"):
+            assert f'"{agent}"' in recipients, f"{agent} cannot see alt data"
+
+    def test_the_research_analysts_keep_it(self):
+        """Widening must not drop the two agents that already had it."""
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner)
+        guard = re.search(
+            r"if agent_name in \(([^)]*?)\):\s*\n\s*alt_data = ", src, re.S)
+        recipients = guard.group(1)
+        assert '"v3_junior_analyst"' in recipients
+        assert '"v3_fundamental_analyst"' in recipients
+
+
+class TestToolInstructionsAreNotHedgedIntoSilence:
+    """Measured over 30 days on the ONE agent that actually loops (5.94 turns):
+
+        get_institutional_holdings  "(are top funds adding or cutting?)"  310 calls
+        get_finnhub_news            "(7-day catalysts)"                   258 calls
+        get_reddit_trending_stocks  "only if retail buzz is plausibly..."   0 calls
+
+    Same prompt, same step, same whitelist. Under a stated 7-turn budget plus
+    "TRACE one lead depth-first", every hedge resolves to no.
+    """
+
+    def test_reddit_is_not_gated_behind_a_plausibility_hedge(self):
+        from app.v3.agents.junior_analyst import SYSTEM_PROMPT
+
+        assert "only if retail buzz is plausibly a factor" not in SYSTEM_PROMPT
+        assert "get_reddit_trending_stocks" in SYSTEM_PROMPT
+
+    def test_absence_of_chatter_is_reportable_evidence(self):
+        """'No meaningful retail chatter' on a moving tape is information. If
+        the only reportable outcome is a positive finding, the cheapest
+        compliant action is to skip the call."""
+        from app.v3.agents.junior_analyst import SYSTEM_PROMPT
+
+        assert "no meaningful retail chatter" in SYSTEM_PROMPT.lower()
+
+    def test_market_data_stays_hedged_on_purpose(self):
+        """NOT every hedge is a bug. The Pre-Collected Data Report already
+        carries price/volume, so calling get_market_data is usually waste —
+        this one is correctly conditional and must stay that way."""
+        from app.v3.agents.junior_analyst import SYSTEM_PROMPT
+
+        assert "`get_market_data` ONLY if" in SYSTEM_PROMPT

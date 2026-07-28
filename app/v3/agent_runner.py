@@ -511,9 +511,28 @@ async def run_v3_agent(
             if opinion:
                 dynamic_sections.append((_KEEP + 40, opinion))
 
-        # Alternative data (insider clusters / social chatter) — scoped to the
-        # research analysts who weigh positioning evidence.
-        if agent_name in ("v3_junior_analyst", "v3_fundamental_analyst"):
+        # Alternative data — insider cluster buys, congressional disclosures,
+        # social chatter.
+        #
+        # 2026-07-28: this went to two agents, and `get_congress_trades` was
+        # never called in 30 days by anyone. The data is not missing — 30,483
+        # congress rows across 508 tickers active in the last 90 days, and the
+        # block renders for roughly half the tickers sampled. It simply never
+        # reached the desks that size and authorise the trade.
+        #
+        # Widened rather than left to the tool, because six of ten agents
+        # average loops_used = 1.00 — they emit their JSON on the first pass and
+        # never take a tool turn, so a whitelist entry cannot reach them. A
+        # block always can. Same reasoning that turned fundamentals from zero
+        # numeric fields into 23 reconciled ones.
+        if agent_name in (
+            "v3_junior_analyst",
+            "v3_fundamental_analyst",
+            "v3_quant_analyst",
+            "v3_valuation_analyst",
+            "v3_board_of_directors",
+            "v3_decision_synthesizer",
+        ):
             alt_data = desk.cycle_metadata.get("alt_data_context", "")
             if alt_data:
                 dynamic_sections.append((_KEEP, alt_data))
