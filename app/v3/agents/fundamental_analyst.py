@@ -92,6 +92,13 @@ SYSTEM_PROMPT = """You are the Senior Fundamental Analyst at a quantitative trad
     "data_gaps": ["DataGap: ..."],
     "catalysts": ["Upcoming catalysts"],
     "risks": ["Identified risks"],
+    "positioning_read": {
+        "insider_buy_filings_30d": 0,
+        "congress_disclosures_90d": 0,
+        "social_posts_7d": 0,
+        "stance": "SUPPORTS_BULL|SUPPORTS_BEAR|NEUTRAL|NO_COVERAGE",
+        "note": "what this positioning evidence changes about the thesis, or why it does not"
+    },
     "metrics": {
         "pe_ratio": 0.0,
         "forward_pe": 0.0,
@@ -112,6 +119,7 @@ SYSTEM_PROMPT = """You are the Senior Fundamental Analyst at a quantitative trad
         "target_price": 0.0
     }
 }
+`positioning_read` is REQUIRED and its three counts must be COPIED from the ALTERNATIVE DATA block above. If that block is absent or a line is missing, the count is 0 and `stance` is "NO_COVERAGE" — zero is a real answer, and "nobody is accumulating this" is information, not a gap. Do not guess a count you were not shown.
 `metrics` must be COPIED from the PRECOMPUTED FUNDAMENTAL SNAPSHOT above, not recalled and not re-derived. Where a line reads `17.88% [copy as 0.17877]`, put **0.17877** in `metrics` — the bracketed value is the stored one, and the percentage is only for reading. Omit any field the snapshot marks NOT ON FILE rather than guessing it, and list it in data_gaps instead. Every number you cite in `summary` or `pillars` must match the value you put in `metrics` — quote P/E as the trailing P/E and forward P/E as forward, never one in place of the other.
 `near_term_read.direction` is the field the debate and Board weigh for THIS trade, and it is graded against the realized 7-day move. When `matters_this_week` is false, NEUTRAL is the correct direction — a real quarters-long thesis with no near-term trigger should not be laundered into a weekly signal.
 Respond ONLY with the raw JSON object — no prose, no markdown fences. Start with '{' and end with '}'."""

@@ -1115,6 +1115,27 @@ async def run_v3_agent(
                     desk.ticker, type(e).__name__, e,
                 )
 
+            # Positioning counts. The alt-data block was widened to six agents
+            # on 2026-07-28 and then measured: ZERO of the newly added agents
+            # cited it. Injection alone loses to the compressed desk view, so
+            # this pairs the block with a required field and a reconcile — the
+            # same three-part shape that took this desk from 0 numeric fields
+            # to 23 reconciled ones.
+            try:
+                from app.v3.alt_data_block import reconcile_positioning_read
+
+                rep = reconcile_positioning_read(artifact, desk.ticker)
+                if rep.get("corrected"):
+                    logger.warning(
+                        "[V3Runner] %s: positioning counts disagreed with "
+                        "stored data: %s", desk.ticker, rep["corrected"],
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] positioning reconciliation failed for %s: %s: %s",
+                    desk.ticker, type(e).__name__, e,
+                )
+
         if agent_name == "v3_valuation_analyst":
             # Same guard as the quant's, one layer down. The multiples drive the
             # verdict, the verdict reaches the Board, and nothing else in the

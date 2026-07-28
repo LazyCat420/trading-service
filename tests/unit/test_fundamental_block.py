@@ -195,3 +195,107 @@ class TestTheUnitsAreUnambiguous:
         from app.v3.agents.fundamental_analyst import SYSTEM_PROMPT
 
         assert "copy as" in SYSTEM_PROMPT
+
+
+class TestPositioningIsConsumedNotJustInjected:
+    """The alt-data block was widened from 2 agents to 6 on 2026-07-28 and then
+    MEASURED across a full cycle: zero of the newly-added agents cited it.
+    Injection alone loses to a 7,962-char compressed desk view.
+
+    What worked for fundamentals was three things together — block, REQUIRED
+    schema field, reconcile pass — which took this desk from 0 numeric fields
+    to 23 reconciled ones. This is the same shape for positioning evidence
+    (30,483 congress rows, insider_trades, social_posts).
+    """
+
+    def test_invented_counts_are_corrected(self):
+        from app.v3.alt_data_block import reconcile_positioning_read
+
+        art = {"positioning_read": {
+            "insider_buy_filings_30d": 3, "congress_disclosures_90d": 99,
+            "social_posts_7d": 10, "stance": "SUPPORTS_BEAR"}}
+        with patch("app.v3.alt_data_block.compute_positioning_facts",
+                   return_value={"insider_buy_filings_30d": 0,
+                                 "congress_disclosures_90d": 6,
+                                 "social_posts_7d": 203}):
+            rep = reconcile_positioning_read(art, "NVDA")
+
+        assert art["positioning_read"]["congress_disclosures_90d"] == 6
+        assert art["_model_reported_positioning"]["congress_disclosures_90d"] == 99
+        assert rep["corrected"]["social_posts_7d"]["verified"] == 203
+
+    def test_the_agents_judgment_is_never_touched(self):
+        """A module that counts filings has no opinion on what they mean."""
+        from app.v3.alt_data_block import reconcile_positioning_read
+
+        art = {"positioning_read": {
+            "congress_disclosures_90d": 99, "stance": "SUPPORTS_BEAR",
+            "note": "congress has been selling into strength"}}
+        with patch("app.v3.alt_data_block.compute_positioning_facts",
+                   return_value={"insider_buy_filings_30d": 0,
+                                 "congress_disclosures_90d": 6,
+                                 "social_posts_7d": 0}):
+            reconcile_positioning_read(art, "NVDA")
+
+        assert art["positioning_read"]["stance"] == "SUPPORTS_BEAR"
+        assert art["positioning_read"]["note"] == (
+            "congress has been selling into strength")
+
+    def test_counts_are_matched_exactly_not_by_tolerance(self):
+        """These are integer counts of filings — 6 and 7 are different facts,
+        not a rounding difference. A relative tolerance would let a wrong count
+        through on any ticker with enough coverage."""
+        from app.v3.alt_data_block import reconcile_positioning_read
+
+        art = {"positioning_read": {"congress_disclosures_90d": 7}}
+        with patch("app.v3.alt_data_block.compute_positioning_facts",
+                   return_value={"insider_buy_filings_30d": 0,
+                                 "congress_disclosures_90d": 6,
+                                 "social_posts_7d": 0}):
+            reconcile_positioning_read(art, "X")
+
+        assert art["positioning_read"]["congress_disclosures_90d"] == 6
+
+    def test_zero_coverage_is_an_answer_not_a_gap(self):
+        """'Nobody is positioned here' is information. Treating absence as a
+        gap would teach the agent to read silence as unknown."""
+        from app.v3.alt_data_block import compute_positioning_facts
+
+        with patch("app.v3.alt_data_block.get_db", side_effect=RuntimeError):
+            facts = compute_positioning_facts("NOPE")
+
+        assert facts == {"insider_buy_filings_30d": 0,
+                         "congress_disclosures_90d": 0, "social_posts_7d": 0}
+
+    def test_a_missing_block_does_not_raise_in_the_runner(self):
+        from app.v3.alt_data_block import reconcile_positioning_read
+
+        assert reconcile_positioning_read({"summary": "x"}, "X") == {}
+        assert reconcile_positioning_read({}, "X") == {}
+
+    def test_the_prompt_requires_it_and_allows_zero(self):
+        from app.v3.agents.fundamental_analyst import SYSTEM_PROMPT
+
+        assert "positioning_read" in SYSTEM_PROMPT
+        assert "REQUIRED" in SYSTEM_PROMPT
+        assert "NO_COVERAGE" in SYSTEM_PROMPT
+
+    def test_it_is_rendered_onto_the_desk(self):
+        """Rendered or it reaches nobody — the point of the required field is
+        that the evidence travels past the desk that read it."""
+        from app.v3.shared_desk import SharedDesk
+
+        desk = SharedDesk()
+        desk.fundamental_report = {
+            "summary": "s", "confidence": 60,
+            "positioning_read": {"congress_disclosures_90d": 6,
+                                 "social_posts_7d": 203,
+                                 "stance": "SUPPORTS_BEAR",
+                                 "note": "congress selling"},
+        }
+
+        ctx = desk.get_compressed_context()
+
+        assert "Positioning (SUPPORTS_BEAR)" in ctx
+        assert "congress_disclosures_90d=6" in ctx
+        assert "congress selling" in ctx

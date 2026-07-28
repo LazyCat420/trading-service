@@ -157,3 +157,116 @@ def alt_macro_lines() -> list[str]:
         logger.debug("[AltDataBlock] calendar lines failed (non-fatal): %s", e)
 
     return lines
+
+
+# ── The consumption half (2026-07-28) ────────────────────────────────────────
+#
+# The block above was widened from 2 agents to 6 and then MEASURED: zero of the
+# newly-added agents cited it. Injection alone is not enough — optional context
+# loses to a 7,962-char compressed desk view every time.
+#
+# What worked for fundamentals was three things together, not one: the block,
+# a REQUIRED schema field, and a reconcile pass that overwrites and counts
+# disagreement. That took the fundamental desk from 0 numeric fields to 23
+# reconciled ones. This is the same shape for positioning evidence.
+#
+# The counts below are the verifiable half. The agent's READ of them
+# (bullish/bearish/neutral) is judgment and is never touched — the same
+# boundary every other reconcile pass holds.
+
+VERIFIED_POSITIONING_FIELDS = (
+    "insider_buy_filings_30d",
+    "congress_disclosures_90d",
+    "social_posts_7d",
+)
+
+
+def compute_positioning_facts(ticker: str) -> dict:
+    """The countable facts behind the alt-data block, as a dict.
+
+    Same queries as `build_alt_data_block`, returning numbers instead of prose
+    so an artifact claim can be checked against them. Absent evidence is 0, not
+    None: "no congressional disclosures" is a fact about the world, whereas a
+    missing multiple is a gap in ours.
+    """
+    ticker = (ticker or "").strip().upper()
+    facts = {f: 0 for f in VERIFIED_POSITIONING_FIELDS}
+    if not ticker:
+        return facts
+
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM insider_trades WHERE ticker = %s "
+                "AND trade_type = 'P' "
+                "AND trade_date >= CURRENT_DATE - INTERVAL '30 days'",
+                [ticker],
+            ).fetchone()
+            facts["insider_buy_filings_30d"] = int(row[0]) if row else 0
+    except Exception as e:
+        logger.debug("[AltData] %s: insider facts failed: %s", ticker, e)
+
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM congress_trades WHERE ticker = %s "
+                "AND trade_date >= CURRENT_DATE - INTERVAL '90 days' "
+                "AND trade_date <= CURRENT_DATE",
+                [ticker],
+            ).fetchone()
+            facts["congress_disclosures_90d"] = int(row[0]) if row else 0
+    except Exception as e:
+        logger.debug("[AltData] %s: congress facts failed: %s", ticker, e)
+
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM social_posts WHERE ticker = %s "
+                "AND posted_at >= NOW() - INTERVAL '7 days'",
+                [ticker],
+            ).fetchone()
+            facts["social_posts_7d"] = int(row[0]) if row else 0
+    except Exception as e:
+        logger.debug("[AltData] %s: social facts failed: %s", ticker, e)
+
+    return facts
+
+
+def reconcile_positioning_read(artifact: dict, ticker: str) -> dict:
+    """Overwrite the counts inside `positioning_read`; keep the model's read.
+
+    Exact-match, not tolerance-based: these are integer counts of filings, so
+    "6" and "7" are different facts, not a rounding difference.
+
+    `stance` and `note` are the agent's judgment and are NEVER touched — a
+    module that counts filings has no opinion on what they mean.
+    """
+    if not isinstance(artifact, dict):
+        return {}
+    block = artifact.get("positioning_read")
+    if not isinstance(block, dict):
+        return {}
+
+    facts = compute_positioning_facts(ticker)
+    corrected: dict = {}
+    original: dict = {}
+
+    for field in VERIFIED_POSITIONING_FIELDS:
+        verified = facts.get(field)
+        if verified is None:
+            continue
+        stated = block.get(field)
+        try:
+            stated_i = int(stated)
+        except (TypeError, ValueError):
+            stated_i = None
+        if stated_i != verified:
+            if stated_i is not None:
+                corrected[field] = {"model": stated_i, "verified": verified}
+                original[field] = stated_i
+            block[field] = verified
+
+    if original:
+        artifact["_model_reported_positioning"] = original
+
+    return {"corrected": corrected, "facts": facts}

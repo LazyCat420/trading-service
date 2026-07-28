@@ -175,6 +175,37 @@ FUNDAMENTAL_REPORT_SCHEMA: dict = {
             "items": {"type": "string"},
             "description": "Specific risks identified from fundamental analysis",
         },
+        "positioning_read": {
+            "type": "object",
+            "description": (
+                "Who is actually positioned in this name, read off the "
+                "ALTERNATIVE DATA block. Added 2026-07-28 after the block was "
+                "widened from 2 agents to 6 and MEASURED: zero of the newly "
+                "added agents cited it. Injection alone loses to a 7,962-char "
+                "desk view; a REQUIRED field is what gets filled. Counts are "
+                "overwritten from stored data (30,483 congress rows, "
+                "insider_trades, social_posts); `stance` and `note` are your "
+                "judgment and are never touched. Zero is a real answer — "
+                "'nobody is positioned here' is information."
+            ),
+            "properties": {
+                "insider_buy_filings_30d": {"type": "integer"},
+                "congress_disclosures_90d": {"type": "integer"},
+                "social_posts_7d": {"type": "integer"},
+                "stance": {
+                    "type": "string",
+                    "enum": ["SUPPORTS_BULL", "SUPPORTS_BEAR", "NEUTRAL",
+                             "NO_COVERAGE"],
+                },
+                "note": {
+                    "type": "string",
+                    "description": (
+                        "One line: what this positioning evidence changes about "
+                        "the thesis, or why it does not change it."
+                    ),
+                },
+            },
+        },
         "metrics": {
             "type": "object",
             "description": (

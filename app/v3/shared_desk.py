@@ -401,6 +401,22 @@ class SharedDesk:
             # robust" against "RSI 78.0, Stochastic 98.9", and the measured
             # consequence was that overrides leaned on oscillators (+27.1pp
             # stochastic) and away from fundamentals (-21.2pp eps).
+            # Positioning: rendered or it reaches nobody. The whole point of
+            # the required field is that the evidence travels past the desk
+            # that read it.
+            pos = self.fundamental_report.get("positioning_read") or {}
+            if isinstance(pos, dict) and pos:
+                counts = ", ".join(
+                    f"{k}={v}" for k, v in pos.items()
+                    if isinstance(v, int) and not isinstance(v, bool)
+                )
+                stance = pos.get("stance")
+                note = pos.get("note")
+                if counts or stance:
+                    text += f"\n**Positioning ({stance or '?'}):** {counts}"
+                    if note:
+                        text += f" — {note}"
+
             fmetrics = self.fundamental_report.get("metrics") or {}
             if fmetrics:
                 rendered = ", ".join(
