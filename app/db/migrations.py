@@ -3832,3 +3832,37 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── decision_outcomes.overridden_from (2026-07-28) ──
+    #
+    # The action the BOARD authorised, when the decision synthesizer changed it.
+    #
+    # Execution reads `trade_decision or final_decision`, so the synthesizer has
+    # the final say — and it exercises it: over 7 days it downgraded 21 of 41
+    # Board BUYs to HOLD, a 51% veto rate. That veto is the single largest
+    # filter on trade flow in the pipeline and NOTHING measured it, because the
+    # outcome row records only the surviving action. A HOLD the whole desk
+    # agreed on and a HOLD that overruled a Board BUY are the same row.
+    #
+    # With this column the question becomes a query: group resolved HOLDs by
+    # overridden_from and compare the counterfactual long-side move against the
+    # BUYs that survived. That is the only way to learn whether the veto adds
+    # or destroys alpha — the confidence floor of 70 has that evidence
+    # (conf <70: n=130, mean -1.91%; >=70: n=698, mean +3.76%), the veto has
+    # none.
+    #
+    # NULL means "not overridden", which is the common case and the honest
+    # default: rows written before this column existed are not backfilled to a
+    # guess.
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE decision_outcomes "
+                "ADD COLUMN IF NOT EXISTS overridden_from TEXT"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

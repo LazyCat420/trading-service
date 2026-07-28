@@ -182,15 +182,40 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 if existing:
                     continue
 
+                # What the BOARD authorised, when the synthesizer changed it.
+                # Execution reads `trade_decision or final_decision`, so the
+                # synthesizer wins — and over 7 days it downgraded 21 of 41
+                # Board BUYs to HOLD. Without this, a HOLD the desk agreed on
+                # and a HOLD that overruled a Board BUY are the same row, and
+                # the largest filter on trade flow stays unmeasurable.
+                #
+                # Read from shared_desk rather than analysis_results, which
+                # carries only the surviving action. Failure is non-fatal: an
+                # unlabelled row is a gap, a missing row is a lost outcome.
+                overridden_from = None
+                try:
+                    desk_row = db.execute(
+                        "SELECT desk_data->'final_decision'->>'action' "
+                        "FROM shared_desk WHERE cycle_id = %s AND ticker = %s "
+                        "LIMIT 1",
+                        [cycle_id, ticker],
+                    ).fetchone()
+                    board_action = desk_row[0] if desk_row else None
+                    if board_action and board_action != action:
+                        overridden_from = board_action
+                except Exception as e:  # noqa: BLE001 — provenance, never blocks
+                    logger.debug("[OUTCOME] %s: override lookup failed: %s",
+                                 ticker, e)
+
                 outcome_id = f"do-{uuid.uuid4().hex[:12]}"
                 db.execute(
                     """INSERT INTO decision_outcomes
                     (id, cycle_id, ticker, action, confidence, entry_price,
-                     created_at, skill_versions)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                     created_at, skill_versions, overridden_from)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     [outcome_id, cycle_id, ticker, action, confidence,
                      round(entry_price, 4), datetime.now(timezone.utc),
-                     skill_versions],
+                     skill_versions, overridden_from],
                 )
                 recorded += 1
 
@@ -336,3 +361,79 @@ def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float
     except Exception as e:
         logger.error("[OUTCOME] Exit resolution failed for %s: %s", ticker, e)
     return resolved
+
+
+def override_scorecard(days: int = 30) -> dict:
+    """Did the synthesizer's veto add or destroy alpha?
+
+    Execution reads `trade_decision or final_decision`, so when the decision
+    synthesizer disagrees with the Board it wins. Measured over 7 days it
+    downgraded 21 of 41 Board BUYs to HOLD — a 51% veto rate on the pipeline's
+    entire trade flow, with no evidence behind it. The confidence floor of 70
+    earned its place with numbers (conf <70: n=130, mean -1.91%; >=70: n=698,
+    mean +3.76%); the veto sitting in FRONT of that floor had none, because
+    `decision_outcomes` recorded only the surviving action.
+
+    A HOLD carries the long-side move regardless of direction (see
+    resolve_pending_outcomes), so an overridden BUY's pnl_pct IS the
+    counterfactual: what the declined trade would have returned.
+
+    Compare `overridden_buys.mean_pnl` against `kept_buys.mean_pnl`. If the
+    overrides are systematically WORSE than the BUYs that survived, the veto is
+    finding something real; if they are better, it is costing money.
+    """
+    out: dict = {"days": days, "note": None}
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT
+                    CASE
+                        WHEN action = 'BUY' AND overridden_from IS NULL
+                            THEN 'kept_buys'
+                        WHEN action = 'HOLD' AND overridden_from = 'BUY'
+                            THEN 'overridden_buys'
+                        ELSE 'other'
+                    END AS bucket,
+                    count(*),
+                    count(pnl_pct),
+                    avg(pnl_pct)
+                FROM decision_outcomes
+                WHERE created_at > now() - (%s || ' days')::interval
+                GROUP BY 1
+                """,
+                [str(days)],
+            ).fetchall()
+        for bucket, n, scored, mean in rows:
+            if bucket == "other":
+                continue
+            out[bucket] = {
+                "n": n,
+                "scored": scored,
+                "mean_pnl": round(float(mean), 3) if mean is not None else None,
+            }
+    except Exception as e:
+        logger.warning("[OUTCOME] override scorecard failed: %s", e)
+        return out
+
+    kept = out.get("kept_buys", {})
+    over = out.get("overridden_buys", {})
+    # State the verdict only when both sides have enough resolved rows to
+    # support one. A 4-row mean is noise, and printing it next to a 900-row
+    # mean invites reading it as a finding — the failure this whole audit has
+    # been about.
+    if (kept.get("scored") or 0) >= 20 and (over.get("scored") or 0) >= 20:
+        delta = (over["mean_pnl"] or 0) - (kept["mean_pnl"] or 0)
+        out["veto_edge_pct"] = round(delta, 3)
+        out["verdict"] = (
+            "the veto AVOIDED worse-than-average trades"
+            if delta < 0 else
+            "the veto DECLINED better-than-average trades"
+        )
+    else:
+        out["note"] = (
+            f"not enough resolved rows for a verdict "
+            f"(kept={kept.get('scored', 0)}, overridden={over.get('scored', 0)}; "
+            f"need 20 each)"
+        )
+    return out
