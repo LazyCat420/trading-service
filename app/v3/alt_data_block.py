@@ -268,5 +268,23 @@ def reconcile_positioning_read(artifact: dict, ticker: str) -> dict:
 
     if original:
         artifact["_model_reported_positioning"] = original
+        # The stance was reasoned from the numbers we just replaced, so it is
+        # now downstream of a fact the agent did not have. Seen on the first
+        # live run: AAPL reported congress_disclosures_90d = 0 against a true
+        # 8, and concluded "NO_COVERAGE" — the count was corrected and the
+        # conclusion built on it was not.
+        #
+        # We do NOT rewrite the stance: judgment is the agent's job and this
+        # module counts filings. What it can do is stop the stale conclusion
+        # travelling as though it were founded, so the desk render and any
+        # downstream reader can discount it.
+        block["stance_is_stale"] = True
+        block["stance_stale_reason"] = (
+            "derived from counts that were corrected: "
+            + ", ".join(
+                f"{f} stated {v}, actual {facts.get(f)}"
+                for f, v in original.items()
+            )
+        )
 
     return {"corrected": corrected, "facts": facts}

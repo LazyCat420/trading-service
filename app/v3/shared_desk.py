@@ -413,9 +413,14 @@ class SharedDesk:
                 stance = pos.get("stance")
                 note = pos.get("note")
                 if counts or stance:
+                    stale = (" — STANCE IS STALE, it was reasoned from counts "
+                             "that have since been corrected; weigh the counts, "
+                             "not the label"
+                             if pos.get("stance_is_stale") else "")
                     text += f"\n**Positioning ({stance or '?'}):** {counts}"
                     if note:
                         text += f" — {note}"
+                    text += stale
 
             fmetrics = self.fundamental_report.get("metrics") or {}
             if fmetrics:

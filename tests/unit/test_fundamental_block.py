@@ -299,3 +299,75 @@ class TestPositioningIsConsumedNotJustInjected:
         assert "Positioning (SUPPORTS_BEAR)" in ctx
         assert "congress_disclosures_90d=6" in ctx
         assert "congress selling" in ctx
+
+
+class TestACorrectedCountLeavesAStaleStance:
+    """Seen on the first live run of positioning_read: AAPL reported
+    `congress_disclosures_90d: 0` against a true 8, and concluded
+    "NO_COVERAGE". The reconcile fixed the count. The conclusion built on it
+    survived, and would have travelled downstream as though founded.
+
+    We do NOT rewrite the stance — judgment is the agent's job and this module
+    counts filings. What it can do is stop the stale conclusion travelling
+    unmarked.
+    """
+
+    def test_the_stance_is_flagged_when_its_inputs_changed(self):
+        from app.v3.alt_data_block import reconcile_positioning_read
+
+        art = {"positioning_read": {
+            "congress_disclosures_90d": 0, "stance": "NO_COVERAGE"}}
+        with patch("app.v3.alt_data_block.compute_positioning_facts",
+                   return_value={"insider_buy_filings_30d": 0,
+                                 "congress_disclosures_90d": 8,
+                                 "social_posts_7d": 0}):
+            reconcile_positioning_read(art, "AAPL")
+
+        assert art["positioning_read"]["stance_is_stale"] is True
+        assert "stated 0, actual 8" in art["positioning_read"]["stance_stale_reason"]
+
+    def test_the_stance_itself_is_still_not_rewritten(self):
+        """The boundary holds: we mark it, we do not replace it."""
+        from app.v3.alt_data_block import reconcile_positioning_read
+
+        art = {"positioning_read": {
+            "congress_disclosures_90d": 0, "stance": "NO_COVERAGE"}}
+        with patch("app.v3.alt_data_block.compute_positioning_facts",
+                   return_value={"insider_buy_filings_30d": 0,
+                                 "congress_disclosures_90d": 8,
+                                 "social_posts_7d": 0}):
+            reconcile_positioning_read(art, "AAPL")
+
+        assert art["positioning_read"]["stance"] == "NO_COVERAGE"
+
+    def test_an_accurate_read_is_not_flagged(self):
+        """A false stale-flag on every artifact would make the real ones
+        invisible."""
+        from app.v3.alt_data_block import reconcile_positioning_read
+
+        art = {"positioning_read": {
+            "insider_buy_filings_30d": 0, "congress_disclosures_90d": 8,
+            "social_posts_7d": 0, "stance": "SUPPORTS_BEAR"}}
+        with patch("app.v3.alt_data_block.compute_positioning_facts",
+                   return_value={"insider_buy_filings_30d": 0,
+                                 "congress_disclosures_90d": 8,
+                                 "social_posts_7d": 0}):
+            reconcile_positioning_read(art, "AAPL")
+
+        assert "stance_is_stale" not in art["positioning_read"]
+
+    def test_the_desk_render_carries_the_warning(self):
+        from app.v3.shared_desk import SharedDesk
+
+        desk = SharedDesk()
+        desk.fundamental_report = {
+            "summary": "s", "confidence": 60,
+            "positioning_read": {"congress_disclosures_90d": 8,
+                                 "stance": "NO_COVERAGE",
+                                 "stance_is_stale": True},
+        }
+
+        ctx = desk.get_compressed_context()
+
+        assert "STANCE IS STALE" in ctx
+        assert "weigh the counts, not the label" in ctx
