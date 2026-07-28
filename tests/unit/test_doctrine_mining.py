@@ -48,11 +48,26 @@ class TestEvidenceRanking:
 
         assert clusters[0]["n_mentions"] == 9
 
-    def test_the_support_floor_is_at_least_three_videos(self):
-        """A heuristic stated once in passing is an aside, and auto-captions
-        carry no speaker labels — a single-video 'rule' is as likely to be a
-        caller's remark as the host's method."""
-        assert mine.MIN_DISTINCT_VIDEOS >= 3
+    def test_a_rule_must_appear_in_more_than_one_recording(self):
+        """A heuristic stated once in passing is an aside, not a method.
+
+        The floor was 3 and is now 2, measured: 244 rules spread over 84
+        videos are mostly SINGLETONS — each video analyses a different company
+        rather than restating a shared canon — and a 3-video floor yielded a
+        ONE-rule doctrine. 3 was sized for the caller-heavy daily livestreams;
+        this corpus is per-company analysis, and --promote's human gate is the
+        real backstop against a misattributed rule."""
+        assert mine.MIN_DISTINCT_VIDEOS >= 2
+
+    def test_support_is_deduped_by_recording_not_video_id(self):
+        """20 titles in the 869-video index appear more than once — YouTube
+        re-posts. The first draft promoted a rule scoring 2 distinct videos on
+        two BYTE-IDENTICAL quotes from two uploads of the same Microsoft
+        earnings video: one observation counted twice, in the field that is
+        BOTH the ranking signal and the evidence floor."""
+        assert mine._norm_title("Martin Shkreli Analyzes Microsoft Earnings (Excel Valuation Of Stock)") \
+            == mine._norm_title("martin shkreli analyzes microsoft earnings  excel valuation of stock!")
+        assert mine._norm_title("Analyzes Intel") != mine._norm_title("Analyzes AMD")
 
 
 class TestTheValuationGate:
@@ -68,13 +83,38 @@ class TestTheValuationGate:
         hits = sum(1 for t in mine.VALUATION_TERMS if t in text.lower())
         assert hits >= mine.MIN_TERM_HITS
 
-    def test_a_single_mention_is_not_enough(self):
-        """One stray 'valuation' in three hours of chat is not a valuation
-        discussion — and the gate decides whether the extract stage is
-        thousands of LLM calls or tens of thousands."""
-        text = "we talked about valuation for a second then moved on to sports"
-        hits = sum(1 for t in mine.VALUATION_TERMS if t in text.lower())
-        assert hits < mine.MIN_TERM_HITS
+    def test_the_gate_is_a_junk_screen_not_a_precision_filter(self):
+        """Deliberately loose, and the looseness is the correction.
+
+        Gating at VIDEO level passed ~100% (every long stream says "cash flow"
+        somewhere). Gating at CHUNK level on 3 distinct terms passed 2% and
+        extracted ZERO rules. Neither number was measured before it shipped.
+
+        The scoping mistake underneath: the filter was built to make a
+        23,000-chunk corpus affordable, but the corpus that matters is 328
+        deep-dive chunks, which cost minutes to run in full. There is nothing
+        to save, so the regex only skips chunks with no financial content and
+        the extractor — explicitly authorized to return [] — makes the call."""
+        assert mine.MIN_TERM_HITS == 1
+
+        chatter = ("so anyway there is a prison with dogs uh that you get to "
+                   "have and there are cats yeah I see V is doing well")
+        assert not mine._is_valuation_chunk(chatter)
+
+        # Real analysis must pass on a SINGLE spoken term — the vocabulary is
+        # captions, not textbooks.
+        assert mine._is_valuation_chunk(
+            "product was down year-over-year services was up margins are "
+            "really good cost control is really good too")
+
+    def test_the_vocabulary_matches_speech_not_textbooks(self):
+        """Measured across 328 deep-dive chunks: `cash flow` 112, `enterprise
+        value` 35, while `wacc`, `ebitda`, `intrinsic value` and `p/e` have
+        ZERO occurrences. A term list built from written finance filters out
+        the corpus it was meant to find."""
+        for spoken in ("margin", "earnings", "revenue growth", "guidance",
+                       "cash flow", "buyback"):
+            assert spoken in mine.VALUATION_TERMS
 
 
 class TestSalvage:
