@@ -249,6 +249,41 @@ async def run_v3_pipeline(
         logger.warning("[V3] %s: valuation math precompute failed (non-fatal): "
                        "%s (%s)", ticker, e, type(e).__name__)
 
+    # Precomputed fundamental snapshot (2026-07-28). The third of the same
+    # family. The fidelity audit found the fundamental analyst emitted no
+    # numeric fields at all across 163 artifacts, so nothing reconciled it and
+    # the ratios in its prose went unchecked — 4 of 7 stated P/Es were wrong.
+    # It also gives the deciding desks fundamentals as NUMBERS: they previously
+    # arrived as prose while technicals arrived as reconciled figures, which is
+    # why the synthesizer's overrides leaned on oscillators (stochastic
+    # +27.1pp) and away from fundamentals (eps -21.2pp).
+    #
+    # 10s: a single indexed row read, no model fit and no filing scan.
+    try:
+        from app.quant.fundamental_block import build_fundamental_block
+        fund_block = await asyncio.wait_for(
+            asyncio.to_thread(build_fundamental_block, ticker),
+            timeout=10,
+        )
+        if fund_block:
+            desk.cycle_metadata["fundamental_context"] = fund_block
+            logger.info("[V3] %s: precomputed fundamental snapshot injected "
+                        "(%d chars)", ticker, len(fund_block))
+        else:
+            logger.warning(
+                "[V3] %s: fundamental block came back EMPTY — the desk has no "
+                "verified ratios for this ticker", ticker,
+            )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[V3] %s: fundamental snapshot precompute TIMED OUT after 10s — "
+            "margins, returns, leverage and growth are MISSING from this desk",
+            ticker,
+        )
+    except Exception as e:
+        logger.warning("[V3] %s: fundamental snapshot precompute failed "
+                       "(non-fatal): %s (%s)", ticker, e, type(e).__name__)
+
     # Recorded third-party opinion cards (2026-07-27). Unlike every other
     # block built here this one returns "" when there is no coverage, and that
     # is correct: a ticker nobody happened to discuss is not a gap in evidence,

@@ -133,6 +133,56 @@ class TestTheArtifactReachesDownstream:
 
         assert "no D&A on file" in desk.get_compressed_context()
 
+    def test_the_corrected_figure_reaches_the_board(self):
+        """The reconcile fixes `valuation_metrics` but must not rewrite prose.
+        In the 07-28 cycle every figure that reached a final rationale was the
+        model's ORIGINAL — PYPL quoted 1.1% against a computed 0.77% and became
+        a live BUY. The correction has to be rendered or the guard only cleans
+        the field nobody downstream reads."""
+        desk = SharedDesk()
+        desk.valuation_report = {
+            "verdict": "UNDERVALUED", "confidence": 65,
+            "summary": "The market prices in just 1.1% NOPAT growth.",
+            "price_implied_assumption": "1.1%/yr",
+            "valuation_metrics": {"implied_growth_pct": 0.77},
+            "_model_reported_valuation": {"implied_growth_pct": 1.1},
+        }
+
+        ctx = desk.get_compressed_context()
+
+        assert "0.77" in ctx
+        assert "implied_growth_pct" in ctx
+        assert "Corrected figures" in ctx
+
+    def test_an_unapplied_correction_says_it_was_not_applied(self):
+        """On a stale snapshot the correction is withheld from the metrics and
+        parked under _unreconciled_valuation. Rendering that as though it had
+        been applied would misreport which number is authoritative."""
+        desk = SharedDesk()
+        desk.valuation_report = {
+            "verdict": "FAIR", "confidence": 50, "summary": "s",
+            "valuation_metrics": {"ev_to_ebit": 12.0},
+            "_unreconciled_valuation": {
+                "ev_to_ebit": {"model": 12.0, "verified": 18.4}
+            },
+        }
+
+        ctx = desk.get_compressed_context()
+
+        assert "18.4" in ctx
+        assert "NOT applied" in ctx
+
+    def test_a_clean_report_renders_no_corrections_block(self):
+        """A model that reported nothing wrong must not get a corrections
+        heading — an empty guard block reads as a finding."""
+        desk = SharedDesk()
+        desk.valuation_report = {
+            "verdict": "FAIR", "confidence": 50, "summary": "s",
+            "valuation_metrics": {"ev_to_ebit": 18.4},
+        }
+
+        assert "Corrected figures" not in desk.get_compressed_context()
+
     def test_it_is_counted_as_a_research_artifact(self):
         desk = SharedDesk()
         desk.valuation_report = {"verdict": "FAIR"}

@@ -448,7 +448,12 @@ async def run_v3_agent(
         # Injected because telemetry shows they rarely make the tool calls the
         # prompt asks for (quant avg 1.6 loops, board 1.0) — the math must
         # already be on their desk, not behind a tool call.
-        if agent_name in ("v3_quant_analyst", "v3_board_of_directors"):
+        # 2026-07-28: the synthesizer joined this list. It issues the FINAL
+        # action — it downgraded 21 of 41 Board BUYs to HOLD — and it was the
+        # least-informed agent on the desk, deciding from summarised prose
+        # while every block the reconcile passes enforce went to other agents.
+        if agent_name in ("v3_quant_analyst", "v3_board_of_directors",
+                          "v3_decision_synthesizer"):
             quant_math = desk.cycle_metadata.get("quant_math_context", "")
             if quant_math:
                 dynamic_sections.append((_KEEP, quant_math))
@@ -462,12 +467,32 @@ async def run_v3_agent(
             if book_brief:
                 dynamic_sections.append((_KEEP, book_brief))
 
+        # Precomputed fundamental ratios — scoped to the desk that judges the
+        # business, and to the two agents that decide. Never shed, same reason
+        # as the technical baseline.
+        #
+        # 2026-07-28: the fundamental analyst had NO numeric fields to
+        # reconcile, and fundamentals reached the deciders as prose while
+        # technicals reached them as numbers. Measured over 41 Board BUYs, the
+        # synthesizer's overrides cited oscillators more (stochastic +27.1pp)
+        # and fundamentals less (eps -21.2pp, margin -16.9pp) — it was weighing
+        # three decimals against an adjective.
+        if agent_name in (
+            "v3_fundamental_analyst",
+            "v3_board_of_directors",
+            "v3_decision_synthesizer",
+        ):
+            fundamental = desk.cycle_metadata.get("fundamental_context", "")
+            if fundamental:
+                dynamic_sections.append((_KEEP, fundamental))
+
         # Precomputed valuation math — scoped to the desk that judges price and
         # the board that sizes the trade. Never shed, for the same reason as the
         # technical baseline: these are the numbers the reconciliation pass will
         # enforce on the artifact anyway, so dropping them from the prompt only
         # guarantees a disagreement to correct afterwards.
-        if agent_name in ("v3_valuation_analyst", "v3_board_of_directors"):
+        if agent_name in ("v3_valuation_analyst", "v3_board_of_directors",
+                          "v3_decision_synthesizer"):
             valuation = desk.cycle_metadata.get("valuation_context", "")
             if valuation:
                 dynamic_sections.append((_KEEP, valuation))
@@ -1037,6 +1062,37 @@ async def run_v3_agent(
             except Exception as e:
                 logger.warning(
                     "[V3Runner] risk_metrics reconciliation failed for %s: %s: %s",
+                    desk.ticker, type(e).__name__, e,
+                )
+
+        if agent_name == "v3_fundamental_analyst":
+            # The third of the same guard. Until 2026-07-28 this desk emitted no
+            # numeric fields at all, so there was nothing to reconcile and the
+            # ratios quoted in its prose were never checked against the row they
+            # came from: 4 of 7 stated P/Es were wrong in one cycle, CARS by 83%
+            # (it quoted the FORWARD P/E as the trailing one — the failure is
+            # mislabelling as often as invention, and both look identical
+            # downstream).
+            try:
+                from app.quant.fundamental_block import (
+                    reconcile_fundamental_metrics,
+                )
+
+                report = reconcile_fundamental_metrics(
+                    artifact, desk.ticker, model_used_tools=loops_used > 1
+                )
+                if report.get("corrected"):
+                    logger.warning(
+                        "[V3Runner] %s: fundamental metrics disagreed with "
+                        "stored data (%sapplied, snapshot %s): %s",
+                        desk.ticker,
+                        "" if report.get("applied") else "NOT ",
+                        report.get("as_of", "?"),
+                        report["corrected"],
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] fundamental reconciliation failed for %s: %s: %s",
                     desk.ticker, type(e).__name__, e,
                 )
 

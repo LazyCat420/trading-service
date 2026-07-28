@@ -395,6 +395,44 @@ class SharedDesk:
                 f"## Fundamental Analysis\n"
                 f"**Direction: {direction} @ {conf}% confidence**\n{summary}"
             )
+            # Rendered for the same reason the quant's risk_metrics are: this
+            # is what carries the fundamental side as NUMBERS into the debate
+            # and the Board. Without it the desk offered "fundamentals remain
+            # robust" against "RSI 78.0, Stochastic 98.9", and the measured
+            # consequence was that overrides leaned on oscillators (+27.1pp
+            # stochastic) and away from fundamentals (-21.2pp eps).
+            fmetrics = self.fundamental_report.get("metrics") or {}
+            if fmetrics:
+                rendered = ", ".join(
+                    f"{k}={v}" for k, v in fmetrics.items() if v is not None
+                )
+                if rendered:
+                    text += f"\n**Fundamental metrics (verified):** {rendered}"
+            corrections = (
+                self.fundamental_report.get("_model_reported_fundamentals")
+                or self.fundamental_report.get("_unreconciled_fundamentals")
+                or {}
+            )
+            if isinstance(corrections, dict) and corrections:
+                applied = "_model_reported_fundamentals" in self.fundamental_report
+                lines = []
+                for field, was in corrections.items():
+                    if isinstance(was, dict):
+                        model_val, now = was.get("model"), was.get("verified")
+                    else:
+                        model_val, now = was, fmetrics.get(field)
+                    if now is None:
+                        continue
+                    lines.append(
+                        f"- {field}: text may say {model_val} — verified {now}"
+                    )
+                if lines:
+                    text += (
+                        "\n**Corrected figures — the prose above may quote the "
+                        f"model's original"
+                        f"{'' if applied else ' (NOT applied: stale snapshot)'}:**\n"
+                        + "\n".join(lines)
+                    )
             if data_gaps:
                 text += "\n**Data Gaps:**\n" + "\n".join(
                     f"- DataGap: {g}" for g in data_gaps[:3]
@@ -458,6 +496,43 @@ class SharedDesk:
             changes = self.valuation_report.get("what_would_change_my_mind")
             if changes:
                 text += f"\n**Would change the call:** {changes}"
+            # The reconcile pass replaces bad numbers in `valuation_metrics`,
+            # but the model also embeds them in `summary` and
+            # `price_implied_assumption` — free text this module must not
+            # rewrite, because judgment is the agent's job. In the 07-28 cycle
+            # every figure that reached a final rationale was the model's
+            # ORIGINAL, not the corrected one: PYPL quoted 1.1% implied growth
+            # against a computed 0.77% and became a live BUY. Suppressing the
+            # number in the field nobody reads downstream while leaving it in
+            # the prose everybody does is not a guard. Naming both here lets
+            # the Board see the disagreement without this module pretending to
+            # an opinion about the thesis.
+            corrections = (
+                self.valuation_report.get("_model_reported_valuation")
+                or self.valuation_report.get("_unreconciled_valuation")
+                or {}
+            )
+            if isinstance(corrections, dict) and corrections:
+                applied = "_model_reported_valuation" in self.valuation_report
+                lines = []
+                for field, was in corrections.items():
+                    # _unreconciled_valuation nests {"model":..,"verified":..};
+                    # _model_reported_valuation stores the scalar the model gave.
+                    if isinstance(was, dict):
+                        model_val = was.get("model")
+                        now = was.get("verified")
+                    else:
+                        model_val = was
+                        now = (metrics or {}).get(field)
+                    if now is None:
+                        continue
+                    lines.append(f"- {field}: text may say {model_val} — computed {now}")
+                if lines:
+                    text += (
+                        "\n**Corrected figures — the prose above may quote the "
+                        f"model's original{'' if applied else ' (NOT applied: stale snapshot)'}:**\n"
+                        + "\n".join(lines)
+                    )
             gaps = self.valuation_report.get("data_gaps") or []
             if gaps:
                 text += "\n**Data Gaps:**\n" + "\n".join(

@@ -175,6 +175,44 @@ FUNDAMENTAL_REPORT_SCHEMA: dict = {
             "items": {"type": "string"},
             "description": "Specific risks identified from fundamental analysis",
         },
+        "metrics": {
+            "type": "object",
+            "description": (
+                "The ratios this thesis rests on, copied from the PRECOMPUTED "
+                "FUNDAMENTAL SNAPSHOT. Added 2026-07-28: this desk emitted NO "
+                "numeric fields at all across 163 artifacts, so nothing could "
+                "reconcile it and the figures quoted in its prose went "
+                "unchecked — 4 of 7 stated P/Es were wrong (CARS 4.83 vs 27.99, "
+                "which is the FORWARD P/E mislabelled as trailing). Values are "
+                "overwritten from stored data and the originals preserved under "
+                "_model_reported_fundamentals."
+            ),
+            "properties": {
+                "pe_ratio": {"type": "number"},
+                "forward_pe": {"type": "number"},
+                "peg_ratio": {"type": "number"},
+                "price_to_book": {"type": "number"},
+                "price_to_sales": {"type": "number"},
+                "profit_margin": {"type": "number"},
+                "oper_margin": {"type": "number"},
+                "gross_margin": {"type": "number"},
+                "roe": {"type": "number"},
+                "roa": {"type": "number"},
+                "roic": {"type": "number"},
+                "debt_to_equity": {"type": "number"},
+                "current_ratio": {"type": "number"},
+                "quick_ratio": {"type": "number"},
+                "revenue_growth": {"type": "number"},
+                "eps_growth_qoq": {"type": "number"},
+                "sales_growth_qoq": {"type": "number"},
+                "short_float_pct": {"type": "number"},
+                "inst_own_pct": {"type": "number"},
+                "recom_score": {"type": "number"},
+                "target_price": {"type": "number"},
+                "dividend_yield": {"type": "number"},
+                "beta": {"type": "number"},
+            },
+        },
     },
 }
 

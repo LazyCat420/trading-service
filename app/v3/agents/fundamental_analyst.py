@@ -91,8 +91,28 @@ SYSTEM_PROMPT = """You are the Senior Fundamental Analyst at a quantitative trad
     "confidence": 0-100,
     "data_gaps": ["DataGap: ..."],
     "catalysts": ["Upcoming catalysts"],
-    "risks": ["Identified risks"]
+    "risks": ["Identified risks"],
+    "metrics": {
+        "pe_ratio": 0.0,
+        "forward_pe": 0.0,
+        "peg_ratio": 0.0,
+        "price_to_book": 0.0,
+        "profit_margin": 0.0,
+        "oper_margin": 0.0,
+        "gross_margin": 0.0,
+        "roe": 0.0,
+        "roa": 0.0,
+        "debt_to_equity": 0.0,
+        "current_ratio": 0.0,
+        "revenue_growth": 0.0,
+        "eps_growth_qoq": 0.0,
+        "short_float_pct": 0.0,
+        "inst_own_pct": 0.0,
+        "recom_score": 0.0,
+        "target_price": 0.0
+    }
 }
+`metrics` must be COPIED from the PRECOMPUTED FUNDAMENTAL SNAPSHOT above, not recalled and not re-derived. Omit any field the snapshot marks NOT ON FILE rather than guessing it, and list it in data_gaps instead. Every number you cite in `summary` or `pillars` must match the value you put in `metrics` — quote P/E as the trailing P/E and forward P/E as forward, never one in place of the other.
 `near_term_read.direction` is the field the debate and Board weigh for THIS trade, and it is graded against the realized 7-day move. When `matters_this_week` is false, NEUTRAL is the correct direction — a real quarters-long thesis with no near-term trigger should not be laundered into a weekly signal.
 Respond ONLY with the raw JSON object — no prose, no markdown fences. Start with '{' and end with '}'."""
 
