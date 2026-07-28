@@ -203,6 +203,56 @@ def _fetch_ttm(ticker: str) -> dict:
         vals = [q.get(field) for q in quarters]
         if all(v is not None for v in vals):
             out[field] = sum(vals)
+
+    # ── Window validity (2026-07-28) ──
+    # The four newest rows are not necessarily a twelve-month span. SMCI's
+    # stored quarters run 10,243 / 12,682 / 5,017 / 5,756 ($M revenue) — a
+    # 12.7B quarter beside a 5.0B one, i.e. restated or shifted fiscal
+    # boundaries. Summing those yields a TTM matching no real 12-month period,
+    # which is how SMCI produced an EV/EBIT BELOW its EV/EBITDA (structurally
+    # impossible: EBIT <= EBITDA always).
+    try:
+        newest = quarters[0]["period_end"]
+        oldest = quarters[-1]["period_end"]
+        span = (newest - oldest).days
+        out["_span_days"] = span
+        # Four quarters span ~273 days end-to-end (3 gaps x ~91), so the
+        # twelve-month window is span + one quarter. Accept 245-425 to allow
+        # 52/53-week retail calendars and ordinary filing jitter.
+        out["_span_ok"] = 245 <= span <= 425
+        gaps = [
+            (quarters[i]["period_end"] - quarters[i + 1]["period_end"]).days
+            for i in range(len(quarters) - 1)
+        ]
+        out["_max_gap_days"] = max(gaps) if gaps else None
+        out["_gaps_ok"] = all(45 <= g <= 130 for g in gaps) if gaps else False
+    except Exception as e:
+        logger.debug("[ValuationBlock] %s: TTM window check failed: %s",
+                     ticker, e)
+        out["_span_ok"] = None
+        out["_gaps_ok"] = None
+
+    # ── Earnings quality (2026-07-28) ──
+    # A single loss quarter collapses the TTM denominator without making it
+    # negative, so a `> 0` gate cannot see it. GM: 1459 + 2926 + (-3647) + 1076
+    # = 1814, giving EV/EBIT 103.4x on a company the vendor prices at 11.9x
+    # EV/EBITDA. Arithmetically right, economically meaningless — and it fed
+    # the reverse DCF, which produced 36.7% implied growth and a verdict the
+    # synthesizer quoted verbatim.
+    #
+    # Measured: 151 of 447 tickers (34%) carry >=1 negative EBIT quarter in the
+    # TTM window; 17 are depressed severely enough to distort the multiple.
+    ebit_q = [q.get("operating_income") for q in quarters]
+    if all(v is not None for v in ebit_q):
+        out["_ebit_negative_quarters"] = sum(1 for v in ebit_q if v < 0)
+        best = max(ebit_q)
+        total = sum(ebit_q)
+        # Compare against 4x the best quarter — an un-depressed run-rate. Below
+        # 35% of that, the sum is dominated by a one-off rather than by the
+        # earnings power the multiple is meant to describe.
+        out["_ebit_depressed"] = bool(
+            best > 0 and total > 0 and total < 0.35 * best * 4
+        )
     return out
 
 
@@ -435,6 +485,21 @@ def compute_valuation_baseline(ticker: str) -> dict:
         cash = bs.get("cash")
         debt = bs.get("total_debt")
 
+        # ── Reporting-currency mismatch (2026-07-28) ──
+        # `fundamentals.market_cap` is quoted in USD by the collectors, but
+        # `financial_history` stores filings in the REPORTING currency. TSM's
+        # market cap sits BELOW its own TTM revenue and implies a 56.1% EBIT
+        # margin; the real defect is USD over TWD. ASML fails the same way.
+        #
+        # The check itself is deferred until after EV/EBIT is computed, because
+        # the only independent control is the vendor's separately-scraped
+        # ev_to_ebitda. `price_to_sales` cannot serve: it is derived from the
+        # same market_cap and revenue columns this module uses, so it agrees
+        # with our arithmetic by construction (a first attempt compared the two
+        # and TSM sailed through at ratio 1.00 — a negative control that
+        # controls for nothing).
+        _currency_mismatch = None
+
         # ── Enterprise value ──
         if market_cap is None:
             _mark("enterprise_value", "no market cap on file")
@@ -472,16 +537,104 @@ def compute_valuation_baseline(ticker: str) -> dict:
                       + " — null in at least one of the 4 quarters")
 
         # ── EV/EBIT (NOT EBITDA — see the module docstring) ──
-        if ev is not None and ebit is not None and ebit > 0:
+        # The gate was `ebit > 0` with nothing between "negative" and "healthy"
+        # (2026-07-28). That is a two-value test on a continuous quantity: GM's
+        # TTM EBIT is POSITIVE (+$1.81B) but crushed by one loss quarter, so it
+        # passed clean and emitted 103.4x with no data_gap and no warning. The
+        # universe check found 11.1% of tickers (32 of 286 with a vendor figure)
+        # producing a structurally impossible or wildly distorted multiple.
+        # ── The vendor cross-check, run as an ASSERTION (2026-07-28) ──
+        # This comparison existed as a one-off hand check on two mega-caps
+        # (COST 1.24x, GE 1.23x) and was generalised to the universe from
+        # there. Run automatically over the 286 tickers carrying both figures,
+        # it fails on 32: 11 structurally impossible (<1.0) and 21 distorted
+        # (>3.0), median 1.34.
+        #
+        # EV/EBIT is EV/EBITDA without the D&A add-back, so ours must ALWAYS be
+        # the larger. Below 1.0 is not a bad estimate, it is proof the inputs
+        # disagree about units or periods — TSM lands at 0.036 (USD market cap
+        # over TWD filings). This is the negative control the module never had.
+        _provisional_ev_ebit = (
+            ev / ebit if (ev is not None and ebit is not None and ebit > 0)
+            else None
+        )
+        _vendor_eve = fund.get("ev_to_ebitda")
+        if (_provisional_ev_ebit is not None
+                and _vendor_eve is not None and _vendor_eve > 0):
+            _wedge = _provisional_ev_ebit / _vendor_eve
+            b["vendor_ev_to_ebitda"] = _vendor_eve
+            b["ev_ebit_vendor_ratio"] = _wedge
+            if _wedge < 1.0:
+                _currency_mismatch = (
+                    f"our EV/EBIT ({_provisional_ev_ebit:.2f}) is BELOW the "
+                    f"vendor's EV/EBITDA ({_vendor_eve:.2f}) at {_wedge:.3f}x. "
+                    f"EBIT can never exceed EBITDA, so this is not a valuation "
+                    f"disagreement — the inputs disagree about reporting "
+                    f"currency or period."
+                )
+
+        _ebit_bad = None
+        if _currency_mismatch:
+            # Checked FIRST: a unit error invalidates every ratio that mixes
+            # market cap with filings, and reporting a depressed-denominator
+            # reason for TSM would name the wrong defect.
+            _ebit_bad = _currency_mismatch
+        elif ttm.get("_ebit_negative_quarters"):
+            _ebit_bad = (
+                f"{ttm['_ebit_negative_quarters']} of the 4 TTM quarters had "
+                f"negative operating income, so the summed denominator "
+                f"describes a one-off, not earnings power"
+            )
+        elif ttm.get("_ebit_depressed"):
+            _ebit_bad = (
+                "TTM operating income is far below 4x the best quarter in the "
+                "window — the multiple is inflated by a depressed denominator"
+            )
+        elif ttm.get("_span_ok") is False or ttm.get("_gaps_ok") is False:
+            _ebit_bad = (
+                f"the 4 stored quarters span {ttm.get('_span_days')} days "
+                f"(max gap {ttm.get('_max_gap_days')}), so they are not a "
+                f"twelve-month window — likely restated or shifted fiscal "
+                f"boundaries"
+            )
+        elif b.get("ev_ebit_vendor_ratio") is not None and (
+            b["ev_ebit_vendor_ratio"] > 3.0
+        ):
+            # Above 3x the vendor's EV/EBITDA the D&A wedge cannot explain the
+            # gap (measured median 1.34, clean mega-caps 1.24). Something has
+            # crushed the denominator that the per-quarter checks above did not
+            # name — a restatement, a stub period, a one-off charge spread
+            # across quarters. The number is withheld and the ratio reported,
+            # because "we cannot explain this" is the honest output.
+            _ebit_bad = (
+                f"our EV/EBIT is {b['ev_ebit_vendor_ratio']:.1f}x the vendor's "
+                f"EV/EBITDA ({b.get('vendor_ev_to_ebitda'):.2f}) — far beyond "
+                f"the D&A wedge (median 1.34x), so the TTM denominator is "
+                f"distorted by something the quarter-level checks did not catch"
+            )
+
+        if ev is not None and ebit is not None and ebit > 0 and not _ebit_bad:
             b["ev_to_ebit"] = ev / ebit
             b["ebit_ttm"] = ebit
         elif ev is not None and ebit is not None and ebit <= 0:
             b["ebit_ttm"] = ebit
             _mark("ev_to_ebit", "TTM operating income is negative — the multiple "
                                 "is not meaningful")
+        elif ev is not None and ebit is not None and _ebit_bad:
+            # The EBIT is still reported: it is a real figure and the desk may
+            # want it. Only the RATIO is withheld, because that is the number
+            # that reads as a valuation and would be wrong.
+            b["ebit_ttm"] = ebit
+            _mark("ev_to_ebit", f"NOT MEANINGFUL — {_ebit_bad}")
 
         # ── EV/Sales ──
-        if ev is not None and rev_ttm is not None and rev_ttm > 0:
+        # Also mixes market cap with filings, so it carries the same unit risk.
+        # It is not subject to the EBIT checks: revenue has no loss quarters and
+        # a depressed EBIT says nothing about the sales line.
+        if _currency_mismatch:
+            b["revenue_ttm"] = rev_ttm
+            _mark("ev_to_sales", f"NOT MEANINGFUL — {_currency_mismatch}")
+        elif ev is not None and rev_ttm is not None and rev_ttm > 0:
             b["ev_to_sales"] = ev / rev_ttm
             b["revenue_ttm"] = rev_ttm
 
@@ -546,15 +699,26 @@ def compute_valuation_baseline(ticker: str) -> dict:
         b["discount_rate_pct"] = r * 100.0
         b["terminal_growth_pct"] = _TERMINAL_GROWTH * 100.0
 
+        # The DCF falls back to NOPAT = EBIT x (1 - tax), so a denominator bad
+        # enough to void EV/EBIT is bad enough to void the implied growth rate
+        # built on the same figure — and this one is worse, because it reads as
+        # a forward-looking claim rather than a ratio. GM's 103x multiple became
+        # "the market is pricing in 36.7% NOPAT growth", which the synthesizer
+        # then quoted verbatim as its reason to override a BUY.
         flow, flow_label, flow_caveat = _dcf_flow(fcf_ttm, ebit)
-        b["dcf_flow_basis"] = flow_label
-        if flow_caveat:
-            b["dcf_flow_caveat"] = flow_caveat
-        implied, reason = _implied_growth(ev, flow, r)
-        if implied is not None:
-            b["implied_growth_pct"] = implied
+        _flow_is_nopat = flow_label.startswith("NOPAT")
+        if _flow_is_nopat and _ebit_bad:
+            b["dcf_flow_basis"] = flow_label
+            _mark("implied_growth_pct", f"NOT MEANINGFUL — {_ebit_bad}")
         else:
-            _mark("implied_growth_pct", reason or "not computable")
+            b["dcf_flow_basis"] = flow_label
+            if flow_caveat:
+                b["dcf_flow_caveat"] = flow_caveat
+            implied, reason = _implied_growth(ev, flow, r)
+            if implied is not None:
+                b["implied_growth_pct"] = implied
+            else:
+                _mark("implied_growth_pct", reason or "not computable")
 
         # ── Vendor cross-checks. Never silently pick a winner. ──
         for ours, theirs, label in (("ev_to_sales", "ev_to_sales", "EV/Sales"),

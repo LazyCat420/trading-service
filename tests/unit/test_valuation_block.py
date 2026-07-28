@@ -54,9 +54,19 @@ def _balance(**overrides) -> dict:
 
 
 def _quarter(rev=25_300_000_000.0, oi=5_600_000_000.0, ni=4_100_000_000.0,
-             eps=1.55, fcf=3_775_000_000.0, end=None) -> dict:
+             eps=1.55, fcf=3_775_000_000.0, end=None, ago=0) -> dict:
+    """One quarterly row.
+
+    `ago` is the quarter index back from today, so a list comprehension
+    produces a REAL twelve-month window. It used to default every row to
+    `date.today()`, which made all four rows the same period — a zero-day span
+    that no filing calendar produces. That was invisible until the 2026-07-28
+    window check started refusing exactly that shape, and the fixture, not the
+    check, was what had to change: a test whose data could not exist cannot
+    tell you whether the code is right.
+    """
     return {
-        "period_end": end or date.today(),
+        "period_end": end or (date.today() - timedelta(days=91 * ago)),
         "revenue": rev, "operating_income": oi, "net_income": ni,
         "eps": eps, "free_cash_flow": fcf,
     }
@@ -76,7 +86,7 @@ def desk(monkeypatch):
     state = {
         "fundamentals": _fundamentals(),
         "balance": _balance(),
-        "quarterly": [_quarter() for _ in range(4)],
+        "quarterly": [_quarter(ago=i) for i in range(4)],
         "annual": [
             _annual(101_200_000_000.0, 15_100_000_000.0, 6.20, 0),
             _annual(94_000_000_000.0, 14_200_000_000.0, 5.70, 1),
@@ -144,7 +154,7 @@ class TestMissingDataIsNeverZero:
     def test_three_quarters_does_not_become_a_ttm(self, desk):
         """A 3-of-4 sum is a 25% understatement wearing the costume of a real
         number — it would flow into EV/EBIT looking exactly like a multiple."""
-        desk["quarterly"] = [_quarter() for _ in range(3)]
+        desk["quarterly"] = [_quarter(ago=i) for i in range(3)]
 
         b = vb.compute_valuation_baseline("AAPL")
 
@@ -156,7 +166,7 @@ class TestMissingDataIsNeverZero:
     def test_one_null_quarter_drops_only_that_field(self, desk):
         """Fail per-field, not per-block: one null FCF must not also destroy
         revenue and EBIT, which are perfectly good in all four rows."""
-        desk["quarterly"][2] = _quarter(fcf=None)
+        desk["quarterly"][2] = _quarter(fcf=None, ago=2)
 
         b = vb.compute_valuation_baseline("AAPL")
 
@@ -197,7 +207,7 @@ class TestMissingDataIsNeverZero:
         assert b["not_computable"]["enterprise_value"] == "no market cap on file"
 
     def test_negative_ebit_leverage_is_not_meaningful(self, desk):
-        desk["quarterly"] = [_quarter(oi=-800_000_000.0) for _ in range(4)]
+        desk["quarterly"] = [_quarter(oi=-800_000_000.0, ago=i) for i in range(4)]
 
         b = vb.compute_valuation_baseline("AAPL")
 
@@ -208,7 +218,7 @@ class TestMissingDataIsNeverZero:
     def test_negative_fcf_yield_is_printed_not_suppressed(self, desk):
         """A suppressed negative yield reads as 'no data' when it is in fact
         the single most important fact about the company."""
-        desk["quarterly"] = [_quarter(fcf=-900_000_000.0) for _ in range(4)]
+        desk["quarterly"] = [_quarter(fcf=-900_000_000.0, ago=i) for i in range(4)]
 
         b = vb.compute_valuation_baseline("AAPL")
         block = vb.build_valuation_block("AAPL")
@@ -289,7 +299,7 @@ class TestCagrEndpointsAreChosenByData:
         growth, not revenue or EPS. Leading with a mismatched series is how
         'the price implies 17% and the company grew 7%' gets asserted when the
         two numbers measure different things."""
-        desk["quarterly"] = [_quarter(fcf=None) for _ in range(4)]
+        desk["quarterly"] = [_quarter(fcf=None, ago=i) for i in range(4)]
 
         block = vb.build_valuation_block("AAPL")
 
@@ -399,7 +409,7 @@ class TestReverseDcf:
 
     def test_assumptions_are_printed_even_when_unsolvable(self, desk):
         """No EBIT and no FCF: nothing left to discount."""
-        desk["quarterly"] = [_quarter(fcf=None, oi=None) for _ in range(4)]
+        desk["quarterly"] = [_quarter(fcf=None, oi=None, ago=i) for i in range(4)]
 
         block = vb.build_valuation_block("AAPL")
 
@@ -430,7 +440,7 @@ class TestDcfFlowFallback:
         assert "21% tax" in label
 
     def test_the_fallback_announces_it_is_not_cash(self, desk):
-        desk["quarterly"] = [_quarter(fcf=None) for _ in range(4)]
+        desk["quarterly"] = [_quarter(fcf=None, ago=i) for i in range(4)]
 
         b = vb.compute_valuation_baseline("AAPL")
         block = vb.build_valuation_block("AAPL")
