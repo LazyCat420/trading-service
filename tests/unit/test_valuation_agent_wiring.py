@@ -325,3 +325,56 @@ class TestToolInstructionsAreNotHedgedIntoSilence:
         from app.v3.agents.junior_analyst import SYSTEM_PROMPT
 
         assert "`get_market_data` ONLY if" in SYSTEM_PROMPT
+
+
+class TestPromptsDoNotHardcodeAFixedToolOpening:
+    """2026-07-28, measured across 7 tickers in two cycles: the junior analyst
+    opened with `get_finnhub_news` + `get_institutional_holdings` +
+    `whiteboard_write` on 7 of 7, and the fundamental analyst used an IDENTICAL
+    six-tool set on every ticker. Only the 4th/5th slot ever varied.
+
+    Cause: the prompts named specific tools inside a numbered step
+    ("FETCH core metrics (both, always)"), so the opening was deterministic and
+    50-75% of the turn budget was spent before any ticker-specific choice. A
+    newly-added tool has no slot to occupy — it is never reached, not rejected.
+    That is why removing the hedge on get_reddit_trending_stocks alone changed
+    nothing.
+    """
+
+    def test_fundamental_no_longer_mandates_a_fixed_pair(self):
+        from app.v3.agents.fundamental_analyst import SYSTEM_PROMPT
+
+        assert "(both, always)" not in SYSTEM_PROMPT
+        assert "largest gap" in SYSTEM_PROMPT
+
+    def test_fundamental_points_at_the_block_not_the_tool(self):
+        """`get_finviz_fundamentals` returns what `fundamental_context` already
+        carries, reconciled. A tool named in a prompt outlives the block that
+        replaced it and keeps consuming turns."""
+        from app.v3.agents.fundamental_analyst import SYSTEM_PROMPT
+
+        assert "PRECOMPUTED FUNDAMENTAL SNAPSHOT" in SYSTEM_PROMPT
+        assert "Do NOT spend a turn on `get_finviz_fundamentals`" in SYSTEM_PROMPT
+
+    def test_junior_selects_by_evidence_gap(self):
+        from app.v3.agents.junior_analyst import SYSTEM_PROMPT
+
+        assert "RECON the LARGEST GAP first" in SYSTEM_PROMPT
+        assert "RECON the gaps only:" not in SYSTEM_PROMPT
+
+    def test_junior_names_the_measured_failure_mode(self):
+        """The instruction carries its own evidence, so a future edit that
+        reintroduces a fixed opening has to argue with the measurement."""
+        from app.v3.agents.junior_analyst import SYSTEM_PROMPT
+
+        assert "identical pair every single time" in SYSTEM_PROMPT
+
+    def test_the_quant_prompt_is_deliberately_untouched(self):
+        """The quant already says FETCH ONLY WHAT IS MISSING, runs at 1.08
+        loops, and scores the HIGHEST quality of the four research desks
+        (82.2). Rewriting it to encourage more calls would undo the
+        invented-RSI fix that put its numbers in the prompt."""
+        from app.v3.agents.quant_analyst import SYSTEM_PROMPT
+
+        assert "FETCH ONLY WHAT IS MISSING" in SYSTEM_PROMPT
+        assert "you do NOT need `get_technical_indicators`" in SYSTEM_PROMPT
