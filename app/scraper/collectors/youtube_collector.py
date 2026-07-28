@@ -133,8 +133,13 @@ class YouTubeCollector:
         and re-send videos the caller already has (yt-dlp search has no cursor,
         so the flat search still enumerates offset+max_results entries).
         """
+        # DDG-first is a speed shortcut for transcript-less callers, but DDG
+        # cannot honor an ordering: a caller that explicitly asked for
+        # relevance/views (or a raw sp filter) must hit YouTube itself, with
+        # DDG only as the empty-result fallback.
+        use_ddg_first = (not require_transcript) and not sp and sort not in ("relevance", "views")
         videos_data = await asyncio.to_thread(
-            self._search_youtube, query, offset + max_results, sort, not require_transcript, sp
+            self._search_youtube, query, offset + max_results, sort, use_ddg_first, sp
         )
         if offset:
             videos_data = videos_data[offset:]
@@ -168,8 +173,13 @@ class YouTubeCollector:
         sp: str | None = None,
     ):
         """Yield YouTube videos matching a query in real-time (offset: see search())."""
+        # DDG-first is a speed shortcut for transcript-less callers, but DDG
+        # cannot honor an ordering: a caller that explicitly asked for
+        # relevance/views (or a raw sp filter) must hit YouTube itself, with
+        # DDG only as the empty-result fallback.
+        use_ddg_first = (not require_transcript) and not sp and sort not in ("relevance", "views")
         videos_data = await asyncio.to_thread(
-            self._search_youtube, query, offset + max_results, sort, not require_transcript, sp
+            self._search_youtube, query, offset + max_results, sort, use_ddg_first, sp
         )
         if offset:
             videos_data = videos_data[offset:]
