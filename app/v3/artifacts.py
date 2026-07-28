@@ -752,12 +752,134 @@ DELTA_REPORT_SCHEMA: dict = {
     },
 }
 
+VALUATION_REPORT_SCHEMA: dict = {
+    "type": "object",
+    "required": ["summary", "valuation_metrics", "verdict", "confidence"],
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": (
+                "2-3 paragraph valuation analysis: what the price asserts, "
+                "what the business has delivered, and the gap between them"
+            ),
+        },
+        "valuation_metrics": {
+            "type": "object",
+            "description": (
+                "Computed multiples. Reconciled against app/quant/"
+                "valuation_block.py after the run — a field here that "
+                "disagrees with the stored computation is overwritten and the "
+                "model's original preserved under _model_reported_valuation."
+            ),
+            "properties": {
+                "enterprise_value": {
+                    "type": "number",
+                    "description": "Market cap + total debt - cash",
+                },
+                "ev_to_ebit": {
+                    "type": "number",
+                    "description": (
+                        "EV / TTM operating income. NOT EV/EBITDA — no D&A is "
+                        "stored in this system, so this is a HIGHER multiple "
+                        "than an EBITDA multiple would be"
+                    ),
+                },
+                "ev_to_sales": {"type": "number", "description": "EV / TTM revenue"},
+                "fcf_yield_pct": {
+                    "type": "number",
+                    "description": "TTM free cash flow / market cap, percent",
+                },
+                "ev_to_fcf": {"type": "number", "description": "EV / TTM FCF"},
+                "pe_ratio": {"type": "number", "description": "Price / earnings"},
+                "peg": {
+                    "type": "number",
+                    "description": "P/E divided by 5y EPS growth in PERCENT",
+                },
+                "net_debt_to_ebit": {
+                    "type": "number",
+                    "description": "(Total debt - cash) / TTM operating income",
+                },
+                "revenue_cagr_pct": {
+                    "type": "number",
+                    "description": "Realized annual revenue CAGR, percent",
+                },
+                "ebit_cagr_pct": {
+                    "type": "number",
+                    "description": (
+                        "Realized annual operating-income CAGR, percent. This "
+                        "is the like-for-like comparison for implied_growth_pct "
+                        "whenever the reverse DCF ran on NOPAT"
+                    ),
+                },
+                "fcf_cagr_pct": {
+                    "type": "number",
+                    "description": "Realized annual free-cash-flow CAGR, percent",
+                },
+                "eps_cagr_pct": {
+                    "type": "number",
+                    "description": "Realized annual EPS CAGR, percent",
+                },
+                "implied_growth_pct": {
+                    "type": "number",
+                    "description": (
+                        "Reverse DCF: the flow growth rate the current "
+                        "enterprise value implies over 10 years"
+                    ),
+                },
+            },
+        },
+        "verdict": {
+            "type": "string",
+            "enum": ["OVERVALUED", "FAIR", "UNDERVALUED", "NOT_ASSESSABLE"],
+            "description": (
+                "NOT_ASSESSABLE when the valuation block reported NONE ON "
+                "FILE — distinct from FAIR, which is a judgement"
+            ),
+        },
+        "price_implied_assumption": {
+            "type": "string",
+            "description": "What the market is asserting, in one sentence with the number",
+        },
+        "fair_value_estimate": {"type": "number"},
+        "fair_value_basis": {
+            "type": "string",
+            "description": (
+                "The multiple AND what it was applied to, e.g. '14x EV/EBIT "
+                "on TTM operating income of $11.2B'"
+            ),
+        },
+        "bear_case_value": {"type": "number"},
+        "bull_case_value": {"type": "number"},
+        "margin_of_safety_pct": {
+            "type": "number",
+            "description": "Gap between current price and fair_value_estimate",
+        },
+        "what_would_change_my_mind": {
+            "type": "string",
+            "description": "A falsifiable THRESHOLD, not a mood",
+        },
+        "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+        "doctrine_rules_applied": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Doctrine rule ids that actually drove the verdict. This is "
+                "the ONLY signal that makes the doctrine's contribution "
+                "measurable against decision_outcomes — an empty list across "
+                "every ticker means the doctrine is in the prompt but unused"
+            ),
+        },
+        "data_gaps": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
 
 # ── Schema lookup ────────────────────────────────────────────────────────
 ARTIFACT_SCHEMAS: dict[str, dict] = {
     "desk_note": DESK_NOTE_SCHEMA,
     "fundamental_report": FUNDAMENTAL_REPORT_SCHEMA,
     "quant_report": QUANT_REPORT_SCHEMA,
+    "valuation_report": VALUATION_REPORT_SCHEMA,
     "bull_argument": BULL_ARGUMENT_SCHEMA,
     "bear_rebuttal": BEAR_REBUTTAL_SCHEMA,
     "bull_defense": BULL_DEFENSE_SCHEMA,

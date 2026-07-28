@@ -100,6 +100,7 @@ _VALID_ARTIFACT_TYPES = frozenset({
     "desk_note",
     "fundamental_report",
     "quant_report",
+    "valuation_report",
     "bull_argument",
     "bear_rebuttal",
     "bull_defense",
@@ -141,6 +142,7 @@ class SharedDesk:
     desk_note: dict | None = None           # Junior Analyst output
     fundamental_report: dict | None = None  # Fundamental Analyst output
     quant_report: dict | None = None        # Quant/Risk Analyst output
+    valuation_report: dict | None = None    # Valuation Analyst output
     bull_argument: dict | None = None       # Bull Agent output
     bear_rebuttal: dict | None = None       # Bear Agent output
     bull_defense: dict | None = None        # Bull Agent final defense
@@ -293,7 +295,8 @@ class SharedDesk:
     def get_research_artifacts(self) -> dict[str, dict]:
         """Return all research layer artifacts (non-None)."""
         result = {}
-        for name in ("desk_note", "fundamental_report", "quant_report"):
+        for name in ("desk_note", "fundamental_report", "quant_report",
+                     "valuation_report"):
             val = getattr(self, name, None)
             if val is not None:
                 result[name] = val
@@ -417,6 +420,48 @@ class SharedDesk:
             if open_questions:
                 text += "\n**Open questions the Quant could not resolve:**\n" + "\n".join(
                     f"- {q}" for q in open_questions[:5]
+                )
+            sections.append(text)
+
+        if self.valuation_report:
+            # Rendered here or it reaches nobody. The Board and the debate read
+            # the desk through this compressed view, not the raw artifact — a
+            # valuation_report that is computed, reconciled and then never
+            # rendered is work nothing downstream can see.
+            verdict = self.valuation_report.get("verdict", "?")
+            conf = self.valuation_report.get("confidence", 0)
+            summary = self.valuation_report.get("summary", "")
+            text = (
+                f"## Valuation\n**Verdict: {verdict} @ {conf}% confidence**\n"
+                f"{summary}"
+            )
+            implied = self.valuation_report.get("price_implied_assumption")
+            if implied:
+                text += f"\n**Price implies:** {implied}"
+            metrics = self.valuation_report.get("valuation_metrics") or {}
+            if metrics:
+                # ev_to_ebit is spelled out: an unlabelled multiple next to a
+                # vendor EV/EBITDA elsewhere on the desk invites the Board to
+                # compare two different quantities.
+                rendered = ", ".join(
+                    f"{k}={v}" for k, v in metrics.items() if v is not None
+                )
+                if rendered:
+                    text += (f"\n**Multiples (EBIT-based, no D&A on file):** "
+                             f"{rendered}")
+            fair = self.valuation_report.get("fair_value_estimate")
+            basis = self.valuation_report.get("fair_value_basis")
+            if fair is not None:
+                text += f"\n**Fair value:** {fair}"
+                if basis:
+                    text += f" ({basis})"
+            changes = self.valuation_report.get("what_would_change_my_mind")
+            if changes:
+                text += f"\n**Would change the call:** {changes}"
+            gaps = self.valuation_report.get("data_gaps") or []
+            if gaps:
+                text += "\n**Data Gaps:**\n" + "\n".join(
+                    f"- DataGap: {g}" for g in gaps[:3]
                 )
             sections.append(text)
 
@@ -576,6 +621,7 @@ class SharedDesk:
             "desk_note": self.desk_note,
             "fundamental_report": self.fundamental_report,
             "quant_report": self.quant_report,
+            "valuation_report": self.valuation_report,
             "bull_argument": self.bull_argument,
             "bear_rebuttal": self.bear_rebuttal,
             "bull_defense": self.bull_defense,
@@ -603,6 +649,7 @@ class SharedDesk:
         desk.desk_note = data.get("desk_note")
         desk.fundamental_report = data.get("fundamental_report")
         desk.quant_report = data.get("quant_report")
+        desk.valuation_report = data.get("valuation_report")
         desk.bull_argument = data.get("bull_argument")
         desk.bear_rebuttal = data.get("bear_rebuttal")
         desk.bull_defense = data.get("bull_defense")

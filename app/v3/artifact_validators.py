@@ -223,6 +223,72 @@ def validate_fundamental_report_artifact(artifact: dict) -> dict:
     return artifact
 
 
+_VALUATION_VERDICTS = {"OVERVALUED", "FAIR", "UNDERVALUED", "NOT_ASSESSABLE"}
+
+
+def validate_valuation_report_artifact(artifact: dict) -> dict:
+    """Normalize the valuation verdict and drop non-numeric metrics.
+
+    Two failures this closes, both learned next door on fundamental_report:
+
+    1. Live artifacts emit the schema placeholder verbatim — 5 fundamental
+       reports shipped `"BULLISH|BEARISH|NEUTRAL"` as a literal, which every
+       consumer then read as an unmatched string. `verdict` gets the same
+       treatment, but coerces to NOT_ASSESSABLE rather than FAIR: an
+       unparseable verdict is an ABSENT judgement, and calling it FAIR would
+       manufacture a neutral opinion the agent never expressed.
+
+    2. A non-numeric metric must be DROPPED, never zeroed. A zero EV/EBIT
+       reads downstream as an extraordinarily cheap company; an absent one
+       reads as absent. The reconcile pass fills whatever it can verify
+       afterwards, so dropping loses nothing that was real.
+    """
+    if not isinstance(artifact, dict):
+        return artifact
+
+    verdict = str(artifact.get("verdict", "")).strip().upper()
+    if verdict and verdict not in _VALUATION_VERDICTS:
+        _note(artifact, f"verdict {artifact.get('verdict')!r} → NOT_ASSESSABLE")
+        artifact["verdict"] = "NOT_ASSESSABLE"
+    elif verdict:
+        artifact["verdict"] = verdict
+
+    metrics = artifact.get("valuation_metrics")
+    if isinstance(metrics, dict):
+        for key in list(metrics):
+            val = metrics[key]
+            if isinstance(val, bool):
+                dropped = True
+            else:
+                try:
+                    num = float(val)
+                    # NaN and inf survive float() and compare false against
+                    # every threshold — they must not reach the Board.
+                    dropped = num != num or num in (float("inf"), float("-inf"))
+                except (TypeError, ValueError):
+                    dropped = True
+            if dropped:
+                _note(artifact, f"valuation_metrics.{key}={val!r} not numeric — dropped")
+                metrics.pop(key, None)
+        if not metrics:
+            # An empty dict claims "we computed nothing", which is true, but a
+            # present-and-empty key reads as a successful computation of
+            # nothing. Reconcile repopulates it if there is anything to say.
+            artifact.pop("valuation_metrics", None)
+    elif metrics is not None:
+        artifact.pop("valuation_metrics", None)
+
+    rules = artifact.get("doctrine_rules_applied")
+    if isinstance(rules, list):
+        artifact["doctrine_rules_applied"] = [
+            str(r).strip() for r in rules if str(r).strip()
+        ]
+    elif rules is not None:
+        artifact.pop("doctrine_rules_applied", None)
+
+    return artifact
+
+
 def validate_trade_decision_artifact(artifact: dict) -> dict:
     """Make dynamic_trigger actually evaluable (value=None never fires)."""
     if not isinstance(artifact, dict):
@@ -432,6 +498,7 @@ _VALIDATORS = {
     "regime_classification": validate_regime_artifact,
     "desk_note": validate_desk_note_artifact,
     "fundamental_report": validate_fundamental_report_artifact,
+    "valuation_report": validate_valuation_report_artifact,
     "trade_decision": validate_trade_decision_artifact,
     # The board's final_decision carries the same dynamic_trigger shape.
     "final_decision": validate_trade_decision_artifact,

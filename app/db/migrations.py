@@ -3682,6 +3682,52 @@ def _fix_eth_cagr_data(conn):
         except Exception:
             pass
 
+    # ── shkreli_opinions (2026-07-27) ──
+    # Per-company opinion cards distilled from YouTube analysis transcripts by
+    # scripts/mine_shkreli_doctrine.py --opinions, read at desk build by
+    # app/v3/opinion_block.py.
+    #
+    # Deliberately NOT stored in `youtube_transcripts`: that table feeds
+    # per-ticker retrieval in web_search.py and mention-trend counts in
+    # pipeline_service.py, and hundreds of commentary transcripts would show up
+    # in both as if they were news.
+    #
+    # `recorded_on` is NOT NULL by intent. An opinion whose date is unknown
+    # cannot be safely injected — the whole risk of this feature is a 2024 view
+    # on a stock being read as a 2026 one, and a NULL date would render as a
+    # confident undated claim. No date, no row.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS shkreli_opinions (
+                    id              BIGSERIAL PRIMARY KEY,
+                    ticker          TEXT NOT NULL,
+                    video_id        TEXT NOT NULL,
+                    recorded_on     DATE NOT NULL,
+                    company_name    TEXT,
+                    stance          TEXT,
+                    thesis          TEXT,
+                    valuation_view  TEXT,
+                    likes           TEXT,
+                    dislikes        TEXT,
+                    price_context   TEXT,
+                    source_title    TEXT,
+                    confidence      INTEGER,
+                    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (ticker, video_id)
+                );
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_shkreli_opinions_ticker
+                ON shkreli_opinions (ticker, recorded_on DESC);
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── cycle_schedules.job_type (2026-07-25) ──
     # Distinguishes agent-created schedules from system jobs. Nothing writes
     # 'system' today: the ~26 APScheduler jobs (market_open_cycle, stop-loss

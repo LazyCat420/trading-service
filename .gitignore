@@ -31,6 +31,9 @@ cycle_run.log
 
 # ─── Data / Runtime Artifacts ────────────────────────────────
 scratch/
+# `scratch/` does NOT match `.scratch/` — the leading dot makes it a different
+# name. scripts/mine_shkreli_doctrine.py writes multi-GB transcript dumps there.
+.scratch/
 logs/
 logs_local/
 data/

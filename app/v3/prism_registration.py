@@ -23,6 +23,7 @@ _V3_AGENT_MODULES = [
     "app.v3.agents.junior_analyst",
     "app.v3.agents.fundamental_analyst",
     "app.v3.agents.quant_analyst",
+    "app.v3.agents.valuation_analyst",
     "app.v3.agents.regime_engine",
     "app.v3.agents.portfolio_manager",
     "app.v3.agents.decision_agent",

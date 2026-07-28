@@ -52,6 +52,22 @@ TARGET_AGENTS: dict[str, str] = {
     "v3_bear_agent": "Bear advocate: builds the strongest evidence-based short/avoid case in the debate.",
     "v3_regime_engine": "Regime classifier: maps macro conditions to a market regime and its playbook.",
     "v3_board_of_directors": "Board: final risk-weighted vote on the trade after the debate.",
+    # v3_valuation_analyst is DELIBERATELY ABSENT, and the omission is the
+    # design — do not "fix" it by adding a line here.
+    #
+    # That agent's method is a pinned doctrine file (app/v3/doctrine/) rather
+    # than an agent_skills row, because it is a SOURCE DOCUMENT: distilled from
+    # a specific corpus, meant to be evaluated as authored. This optimizer
+    # issues REPLACE actions and rolls back on outcome scores — the right
+    # behaviour for a learned skill, and the wrong one here. The board's doc
+    # travelled 1146 -> 1812 chars across 20 accepted rewrites in five days;
+    # the same treatment applied to a mined doctrine would leave nobody able to
+    # say which sentences came from the corpus and which from a gradient walk.
+    #
+    # The separation is structural, not merely conventional: this module only
+    # ever writes agent_skills.skill_text, so it cannot reach a file in the
+    # repo. Adding the key here would not move the doctrine under its control —
+    # it would create an EMPTY second skill doc that gets prepended alongside.
 }
 
 # Acceptance gate: simulated score must beat baseline by this much.

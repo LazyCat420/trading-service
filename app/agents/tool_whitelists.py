@@ -330,6 +330,12 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     # 14 (from 12) on 2026-07-21: the portfolio-math wave added GARCH +
     # HRP/covariance calls to the quant's documented loop.
     "v3_quant_analyst": 14,
+    # 6: the documented loop has ONE mandatory tool call (screener_query for
+    # sector comps, which doctrine rule 7 depends on) plus a whiteboard
+    # annotate, and everything else it needs is already precomputed into the
+    # prompt by app/quant/valuation_block.py. Budget for the gap-fill calls
+    # (finviz/earnings/filings) and the artifact turn, not for exploration.
+    "v3_valuation_analyst": 6,
     "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bull_defense": 3,        # No tools — pure reasoning

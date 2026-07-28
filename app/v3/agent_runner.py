@@ -462,6 +462,30 @@ async def run_v3_agent(
             if book_brief:
                 dynamic_sections.append((_KEEP, book_brief))
 
+        # Precomputed valuation math — scoped to the desk that judges price and
+        # the board that sizes the trade. Never shed, for the same reason as the
+        # technical baseline: these are the numbers the reconciliation pass will
+        # enforce on the artifact anyway, so dropping them from the prompt only
+        # guarantees a disagreement to correct afterwards.
+        if agent_name in ("v3_valuation_analyst", "v3_board_of_directors"):
+            valuation = desk.cycle_metadata.get("valuation_context", "")
+            if valuation:
+                dynamic_sections.append((_KEEP, valuation))
+
+        # Opinion cards go ONLY to the valuation desk, never to the Board.
+        # The Board sizes and authorises the trade; handing it a named
+        # investor's opinion invites deference to a personality instead of to
+        # the desk's own evidence, and the Board makes ~1.0 tool calls so it
+        # cannot check anything it is told. The valuation analyst is the one
+        # agent holding the computed multiples to weigh it against.
+        #
+        # Shed-eligible (not _KEEP), unlike the valuation block: if the prompt
+        # must be trimmed, an opinion is exactly what should go first.
+        if agent_name == "v3_valuation_analyst":
+            opinion = desk.cycle_metadata.get("opinion_context", "")
+            if opinion:
+                dynamic_sections.append((_KEEP + 40, opinion))
+
         # Alternative data (insider clusters / social chatter) — scoped to the
         # research analysts who weigh positioning evidence.
         if agent_name in ("v3_junior_analyst", "v3_fundamental_analyst"):
@@ -1013,6 +1037,34 @@ async def run_v3_agent(
             except Exception as e:
                 logger.warning(
                     "[V3Runner] risk_metrics reconciliation failed for %s: %s: %s",
+                    desk.ticker, type(e).__name__, e,
+                )
+
+        if agent_name == "v3_valuation_analyst":
+            # Same guard as the quant's, one layer down. The multiples drive the
+            # verdict, the verdict reaches the Board, and nothing else in the
+            # pipeline can tell a computed EV/EBIT from a plausible one — so the
+            # verifiable fields are replaced with values computed from stored
+            # filings and the model's originals kept, which is what makes the
+            # fabrication RATE measurable rather than merely suppressed.
+            try:
+                from app.quant.valuation_block import reconcile_valuation_metrics
+
+                report = reconcile_valuation_metrics(
+                    artifact, desk.ticker, model_used_tools=loops_used > 1
+                )
+                if report.get("corrected"):
+                    logger.warning(
+                        "[V3Runner] %s: valuation_metrics disagreed with computed "
+                        "values (%sapplied, snapshot %s): %s",
+                        desk.ticker,
+                        "" if report.get("applied") else "NOT ",
+                        report.get("as_of", "?"),
+                        report["corrected"],
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] valuation reconciliation failed for %s: %s: %s",
                     desk.ticker, type(e).__name__, e,
                 )
             try:

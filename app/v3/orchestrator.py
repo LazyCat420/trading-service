@@ -211,6 +211,62 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: technical baseline failed (non-fatal): %s", ticker, e)
 
+    # Precomputed valuation math (2026-07-27). Same shape and same reasoning as
+    # the technical baseline above, one layer down: before this the pipeline had
+    # NO valuation math at all — no DCF, no computed EV/EBITDA — so an agent
+    # asked whether a name was overvalued had nothing to anchor on but the
+    # price, which is how the 171/305 invented-RSI failure started.
+    #
+    # 15s, not 60s: this is five PK-prefixed index reads with no model fit in
+    # it. The 60s above exists for the HMM's Baum-Welch pass and would only
+    # delay the desk here.
+    try:
+        from app.quant.valuation_block import build_valuation_block
+        val_block = await asyncio.wait_for(
+            asyncio.to_thread(build_valuation_block, ticker),
+            timeout=15,
+        )
+        if val_block:
+            desk.cycle_metadata["valuation_context"] = val_block
+            logger.info("[V3] %s: precomputed valuation math injected (%d chars)",
+                        ticker, len(val_block))
+        else:
+            # Unreachable unless the builder regresses — it emits an explicit
+            # NONE ON FILE section for a ticker with no fundamentals row rather
+            # than "". Logged loudly for the ASIC reason: a silent empty block
+            # is indistinguishable from a healthy one downstream.
+            logger.warning(
+                "[V3] %s: valuation block came back EMPTY — the desk has no "
+                "verified multiple or implied growth rate for this ticker", ticker,
+            )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[V3] %s: valuation math precompute TIMED OUT after 15s — enterprise "
+            "value, multiples and the reverse DCF are all MISSING from this desk",
+            ticker,
+        )
+    except Exception as e:
+        logger.warning("[V3] %s: valuation math precompute failed (non-fatal): "
+                       "%s (%s)", ticker, e, type(e).__name__)
+
+    # Recorded third-party opinion cards (2026-07-27). Unlike every other
+    # block built here this one returns "" when there is no coverage, and that
+    # is correct: a ticker nobody happened to discuss is not a gap in evidence,
+    # and announcing the absence on every desk would teach the agent to read
+    # one commentator's silence as information.
+    try:
+        from app.v3.opinion_block import build_opinion_block
+        opinion_block = await asyncio.wait_for(
+            asyncio.to_thread(build_opinion_block, ticker),
+            timeout=10,
+        )
+        if opinion_block:
+            desk.cycle_metadata["opinion_context"] = opinion_block
+            logger.info("[V3] %s: recorded opinion cards injected (%d chars)",
+                        ticker, len(opinion_block))
+    except Exception as e:
+        logger.warning("[V3] %s: opinion block failed (non-fatal): %s", ticker, e)
+
     # Staleness SHADOW (2026-07-27). Deliberately observational, not a gate.
     # After the collection + refresh-coverage fixes the active watchlist
     # measures 0 tickers blocked by every candidate staleness rule on every
@@ -587,6 +643,7 @@ async def run_v3_pipeline(
     # ═══════════════════════════════════════════════════════════════════
     from app.v3.agents import regime_engine
     from app.v3.agents import junior_analyst, fundamental_analyst, quant_analyst
+    from app.v3.agents import valuation_analyst
     from app.v3.agents import bull_agent, bear_agent, debate_judge
     from app.v3.agents import decision_agent
     from app.config.config_cognition import cognition_settings as _cog_settings
@@ -601,6 +658,7 @@ async def run_v3_pipeline(
         "junior_analyst": 0,
         "fundamental_analyst": 0,
         "quant_analyst": 0,
+        "valuation_analyst": 0,
         "bull_argument": 0,
         "bear_rebuttal": 0,
         "debate_judge": 0,
@@ -776,6 +834,20 @@ async def run_v3_pipeline(
             elif not fa_skipped:
                 _queue_agent("fundamental_analyst", fundamental_analyst, parent="junior_analyst")
                 _queue_agent("quant_analyst", quant_analyst, parent="junior_analyst")
+                # Queued HERE, with FA and QA, and deliberately NOT added to the
+                # _queue_debate_phase() gate below. The scheduler is FIFO
+                # (_queue_agent appends, the loop pops index 0), so a task queued
+                # now necessarily runs before bull/bear, which can only be
+                # appended later by _queue_debate_phase. That buys the ordering
+                # without buying the deadlock: a third term in an AND-gate would
+                # need a matching synthetic artifact in every skip path, and the
+                # two that already exist for fa_skipped are the evidence of how
+                # easily one gets missed.
+                #
+                # Not queued on the QUANT_ONLY / regime-skip-FA paths: valuation
+                # IS fundamental analysis, so it follows FA's fate rather than
+                # outliving it.
+                _queue_agent("valuation_analyst", valuation_analyst, parent="junior_analyst")
 
         elif sec in ("fundamental_report", "quant_report"):
             # Check if research tier is fully complete
@@ -1517,6 +1589,24 @@ async def run_v3_pipeline(
                         author_agent="v3_quant_analyst"
                     )
 
+            elif name == "valuation_analyst":
+                outcome = await _run_agent_with_circuit_breaker(
+                    desk=desk, agent_module=module, phase_name="valuation_analyst",
+                    breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
+                    custom_instructions=query, parent_agent=parent
+                )
+                # NO _check_abort. Every other research branch aborts the desk on
+                # failure because the debate cannot proceed without it; this one
+                # is non-blocking by design, so a failed valuation must leave the
+                # cycle running with one fewer opinion rather than killing it.
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.valuation_report:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="valuation_report",
+                        content=desk.valuation_report,
+                        author_agent="v3_valuation_analyst"
+                    )
+
             elif name == "bull_argument":
                 outcome = await _run_agent_with_circuit_breaker(
                     desk=desk, agent_module=module, phase_name="bull_argument",
@@ -2221,6 +2311,7 @@ _SECTION_TO_AGENT = {
     "desk_note": "junior_analyst",
     "fundamental_report": "fundamental_analyst",
     "quant_report": "quant_analyst",
+    "valuation_report": "valuation_analyst",
     "bull_argument": "bull_agent",
     "bear_rebuttal": "bear_agent",
     "tournament_result": "tournament_debate",
