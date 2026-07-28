@@ -107,7 +107,13 @@ def _numeric_fields(blob: dict) -> set[str]:
 # ignored. These are the multiples that also exist as structured fields, so a
 # mismatch between prose and field is checkable.
 _PROSE_CLAIMS = {
-    "pe_ratio": re.compile(r"\bP/E[^0-9\-]{0,14}([0-9]+\.?[0-9]*)", re.I),
+    # `(?<!forward )` matters: the first version flagged SMCI for "a forward
+    # P/E of 8.59" against a trailing pe_ratio of 14.97 — the analyst had
+    # labelled it correctly and the AUDIT was wrong. A checker that reports
+    # correct work as a defect gets switched off, so it must be at least as
+    # careful as the thing it audits.
+    "pe_ratio": re.compile(
+        r"(?<!forward )(?<!Forward )\bP/E[^0-9\-]{0,14}([0-9]+\.?[0-9]*)", re.I),
     "ev_to_ebit": re.compile(r"\bEV/EBIT[^0-9\-]{0,14}([0-9]+\.?[0-9]*)", re.I),
     "rsi": re.compile(r"\bRSI(?:-14)?[^0-9\-]{0,14}([0-9]+\.?[0-9]*)", re.I),
 }
