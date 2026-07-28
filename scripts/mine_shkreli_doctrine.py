@@ -75,6 +75,13 @@ DRAFT = Path(__file__).resolve().parents[1] / "reports" / "doctrine" / \
     "shkreli_valuation.draft.yaml"
 DOCTRINE = Path(__file__).resolve().parents[1] / "app" / "v3" / "doctrine" / \
     "shkreli_valuation.md"
+# The hand-written structural half. Kept in parts/ so the loader's *.md glob
+# does not serve it as a doctrine in its own right, and so --merge is
+# IDEMPOTENT: promote always renders base + mined into DOCTRINE rather than
+# appending to whatever DOCTRINE happens to contain, which would compound the
+# mined section on every run.
+DOCTRINE_BASE = Path(__file__).resolve().parents[1] / "app" / "v3" / \
+    "doctrine" / "parts" / "valuation_base.md"
 
 # A livestream is long. This is a second-line guard against shorts, premieres
 # and trailers that also live under /streams.
@@ -763,7 +770,7 @@ def _write_draft(clusters: list[dict], *, n_videos: int, n_candidates: int,
 # Stage 4 — promote
 # ══════════════════════════════════════════════════════════════════════
 
-def stage_promote() -> None:
+def stage_promote(merge: bool = False) -> None:
     """Render reviewed rules into the shipping doctrine.
 
     Refuses while anything is UNREVIEWED. The human gate is enforced here, in
@@ -797,22 +804,66 @@ def stage_promote() -> None:
     keep.sort(key=lambda r: -int(r.get("n_distinct_videos") or 0))
 
     verdicts = Counter(str(r.get("reviewer", "")).upper() for r in rules)
-    out = [
-        "# Valuation doctrine",
+    src = data.get("source", {})
+
+    out: list[str] = ["# Valuation doctrine", ""]
+    if merge:
+        # MERGE, not replace. The two halves do different jobs and neither is
+        # sufficient: the hand-written rules are the method SKELETON (sequence
+        # a valuation, make the verdict falsifiable) and are generic by design;
+        # the mined rules are SPECIFIC and evidenced but sparse, because most
+        # surface in only one recording. Shipping the mined set alone would
+        # trade twelve structural moves for three observations.
+        #
+        # The provenance stays visible per-rule rather than being blended away:
+        # a reader must be able to tell which sentences came from a corpus and
+        # which were written by hand, or the evidence counts mean nothing.
+        base = ""
+        try:
+            base = DOCTRINE_BASE.read_text(encoding="utf-8").strip()
+            base = base[base.index("\n\n", base.index("> "))+2:] \
+                if base.startswith("#") and "> " in base else base
+        except Exception as e:  # noqa: BLE001
+            logger.error("REFUSING: base doctrine unreadable at %s (%s)",
+                         DOCTRINE_BASE, e)
+            return
+        # The base half needs its own label in the OUTPUT. Its source file
+        # header is stripped (it explains the parts/ layout, which is noise in
+        # a prompt), and without a replacement the merged doctrine marks the
+        # mined section but leaves the hand-written one anonymous — so a reader
+        # cannot tell which sentences carry evidence counts and which are
+        # somebody's opinion about good practice.
+        out += [
+            "# Structural rules (hand-written)",
+            "",
+            "> The method skeleton — how to sequence a valuation and what makes "
+            "a verdict falsifiable. Generic by design, and carrying NO corpus "
+            "evidence behind it.",
+            "",
+            base.strip(), "", "---", "",
+        ]
+
+    out += [
+        f"# Mined rules ({len(keep)})",
         "",
-        f"> Mined from {data.get('source', {}).get('channels')} on "
-        f"{data.get('source', {}).get('mined_at')} by "
-        f"scripts/mine_shkreli_doctrine.py, then reviewed by hand.",
-        f"> Review outcome: {dict(verdicts)}. Rules are ordered by the number of "
-        f"DISTINCT videos supporting them.",
-        "> Audit trail with source quotes: reports/doctrine/shkreli_valuation.draft.yaml",
+        f"> Distilled from {src.get('videos_with_rules')} per-company analysis "
+        f"videos on {src.get('mined_at')} by scripts/mine_shkreli_doctrine.py, "
+        f"then reviewed by hand. Review outcome: {dict(verdicts)}.",
+        f"> {src.get('candidate_rules')} candidate rules clustered to "
+        f"{src.get('clusters')}; only those appearing in "
+        f"{src.get('min_distinct_videos')}+ DISTINCT recordings survived.",
+        "> Ordered by evidence weight. Most were INFERRED from how he works "
+        "through a company, not stated outright — he rarely narrates his "
+        "method. Audit trail with source quotes and video links: "
+        "reports/doctrine/shkreli_valuation.draft.yaml",
         "",
     ]
+    offset = 12 if merge else 0
     for i, r in enumerate(keep, 1):
         out += [
-            f"## {i}. {r.get('metric') or 'rule'}",
+            f"## M{i}. {r.get('metric') or 'rule'}",
             str(r.get("rule", "")).strip(),
-            f"*(stated across {r.get('n_distinct_videos')} videos)*",
+            f"*(observed across {r.get('n_distinct_videos')} distinct recordings)*",
             "",
         ]
     text = "\n".join(out)
@@ -1060,6 +1111,8 @@ def main() -> None:
     ap.add_argument("--extract", action="store_true")
     ap.add_argument("--reduce", action="store_true")
     ap.add_argument("--promote", action="store_true")
+    ap.add_argument("--merge", action="store_true",
+                    help="promote base + mined together (default replaces)")
     ap.add_argument("--opinions", action="store_true",
                     help="distil per-company opinion cards into shkreli_opinions")
     ap.add_argument("--analysis-only", action="store_true",
@@ -1077,7 +1130,7 @@ def main() -> None:
     elif args.reduce:
         stage_reduce()
     elif args.promote:
-        stage_promote()
+        stage_promote(args.merge)
     elif args.opinions:
         stage_opinions(args.limit)
     else:

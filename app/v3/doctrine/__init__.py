@@ -33,11 +33,16 @@ logger = logging.getLogger(__name__)
 _DIR = Path(__file__).parent
 
 # Doctrine rides the SYSTEM half of the prompt on every ticker of every cycle,
-# so its size is a per-run tax, not a one-off. The ceiling is enforced rather
-# than documented, because MAX_SKILL_CHARS taught the lesson next door: a limit
-# the code does not check is a suggestion, and skill docs grew straight through
-# theirs until the write path started rejecting them.
-MAX_DOCTRINE_CHARS = 6000
+# so its size is a per-run tax, not a one-off. It is byte-stable between
+# promotes, so vLLM prefix caching serves it after the first call of a cycle —
+# which is what makes ~2250 tokens affordable here.
+#
+# Raised from 6000 when the doctrine became base + mined rather than one
+# hand-written file. The ceiling is ENFORCED rather than documented, because
+# MAX_SKILL_CHARS taught the lesson next door: a limit the code does not check
+# is a suggestion, and skill docs grew straight through theirs until the write
+# path started rejecting them.
+MAX_DOCTRINE_CHARS = 9000
 
 
 @lru_cache(maxsize=8)
@@ -68,4 +73,7 @@ def load_doctrine(name: str) -> str:
 
 def available() -> list[str]:
     """Doctrine names on disk. Used by tests and the promote step."""
+    # Top level only. parts/ holds the hand-written half that --promote merges
+    # into the shipped file; serving it as a doctrine in its own right would
+    # mean an agent could load the skeleton without the mined rules.
     return sorted(p.stem for p in _DIR.glob("*.md"))

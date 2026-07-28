@@ -93,19 +93,35 @@ class TestTheDoctrineIsActionable:
             f"doctrine cites metrics nothing emits: {metric_like - allowed}"
         )
 
-    def test_it_declares_itself_a_placeholder_until_mined(self, text):
-        """The current file is hand-written, and saying so is load-bearing: it
-        must not be read (or cited downstream) as a distillation of anyone's
-        public commentary until the mine has actually run."""
-        assert "PLACEHOLDER" in text
+    def test_the_two_halves_are_labelled_separately(self, text):
+        """The doctrine is base + mined, and the reader must be able to tell
+        them apart. The hand-written half carries NO corpus evidence; the mined
+        half carries recording counts. Blending them makes the counts
+        meaningless and invites the generic rules to be over-trusted."""
+        assert "hand-written" in text
+        assert "Mined rules" in text
 
-    def test_every_rule_is_numbered_for_doctrine_rules_applied(self, text):
+    def test_the_mined_half_says_the_rules_were_inferred(self, text):
+        """235 of 244 mined rules were reconstructed from how he works through
+        a company, not stated outright. A reader who takes them for direct
+        quotes will over-trust them."""
+        assert "INFERRED" in text
+
+    def test_every_rule_is_addressable_for_doctrine_rules_applied(self, text):
         """`doctrine_rules_applied` reports rule IDS. If the rules are not
         addressable the field cannot be filled, and the doctrine's contribution
-        becomes unmeasurable — the skill-gate failure repeated."""
-        headings = re.findall(r"^## (\d+)\.", text, re.M)
-        assert len(headings) >= 8
-        assert headings == [str(i) for i in range(1, len(headings) + 1)]
+        becomes unmeasurable — the skill-gate failure repeated.
+
+        Two namespaces on purpose: `N.` for hand-written structure, `MN.` for
+        mined, so an artifact citing a rule also reveals which KIND of rule
+        drove the verdict."""
+        structural = re.findall(r"^## (\d+)\.", text, re.M)
+        mined = re.findall(r"^## M(\d+)\.", text, re.M)
+
+        assert len(structural) >= 8
+        assert structural == [str(i) for i in range(1, len(structural) + 1)]
+        assert mined, "no mined rules in the shipped doctrine"
+        assert mined == [str(i) for i in range(1, len(mined) + 1)]
 
 
 class TestTheAgentModule:

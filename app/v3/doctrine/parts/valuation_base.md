@@ -1,8 +1,15 @@
-# Valuation doctrine
-
 # Structural rules (hand-written)
 
-> The method skeleton — how to sequence a valuation and what makes a verdict falsifiable. Generic by design, and carrying NO corpus evidence behind it.
+> The METHOD skeleton: how to sequence a valuation and what makes a verdict
+> falsifiable. Hand-written 2026-07-27, deliberately generic — these are the
+> moves any disciplined valuation makes, and they exist so the mined rules
+> below have something to attach to.
+>
+> This file is a PART, not the shipped doctrine. `scripts/mine_shkreli_doctrine.py
+> --promote --merge` renders it plus the reviewed mined rules into
+> `app/v3/doctrine/shkreli_valuation.md`, which is what the agent loads. Editing
+> the shipped file directly will be overwritten by the next promote; edit this
+> instead.
 
 Every rule below names a metric the PRECOMPUTED VALUATION MATH block actually
 emits. A rule that asks for a number nothing computes is a rule that cannot
@@ -79,43 +86,3 @@ assumptions.
 EV/EBIT on TTM operating income of $11.2B" — so the estimate can be checked and
 disagreed with. A fair value with no stated basis is an opinion wearing a
 decimal point.
-
----
-
-# Mined rules (8)
-
-> Distilled from 253 per-company analysis videos on 2026-07-28 by scripts/mine_shkreli_doctrine.py, then reviewed by hand. Review outcome: {'EDITED': 4, 'APPROVED': 4, 'REJECTED': 2}.
-> 679 candidate rules clustered to 493; only those appearing in 2+ DISTINCT recordings survived.
-> Ordered by evidence weight. Most were INFERRED from how he works through a company, not stated outright — he rarely narrates his method. Audit trail with source quotes and video links: reports/doctrine/shkreli_valuation.draft.yaml
-
-## M1. valuation_to_asset_ratio
-Avoid paying a market capitalisation far above what the company's assets and projected free cash flows are actually worth — state the gap in dollars, not as a feeling.
-*(observed across 18 distinct recordings)*
-
-## M2. revenue_growth_vs_opex_growth
-Favor companies where the revenue growth rate exceeds the growth rate of operating expenses (S&M and G&A) to ensure operating leverage.
-*(observed across 5 distinct recordings)*
-
-## M3. revenue_growth_rate
-Avoid software companies with revenue growth decelerating toward single digits, as valuation multiples will compress toward 2-3x sales.
-*(observed across 3 distinct recordings)*
-
-## M4. earnings_guidance_divergence
-Treat a quarterly earnings beat that is NOT matched by a commensurate raise to full-year guidance as a negative signal, not a neutral one.
-*(observed across 2 distinct recordings)*
-
-## M5. revenue_growth_relative_to_base_size
-Evaluate revenue growth significance by weighting the percentage growth rate against the absolute magnitude of the existing revenue base.
-*(observed across 2 distinct recordings)*
-
-## M6. recurring_revenue_growth_rate
-Exclude non-recurring revenue from growth projections — project the core business, not the one-off.
-*(observed across 2 distinct recordings)*
-
-## M7. exclusivity_duration_years
-For pharma and biotech, discount cash flows beyond the remaining period of product exclusivity — a patent cliff is a scheduled revenue loss, not a risk.
-*(observed across 2 distinct recordings)*
-
-## M8. revenue_per_store
-Favor companies demonstrating increasing revenue per store regardless of low store growth rates.
-*(observed across 2 distinct recordings)*

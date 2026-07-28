@@ -298,6 +298,92 @@ class TestOpinionCardSafety:
         assert "price_history" in src
 
 
+class TestTheMerge:
+    """The shipped doctrine is base + mined. Neither half is sufficient: the
+    hand-written rules are the method skeleton and are generic by design; the
+    mined rules are specific and evidenced but sparse, because most surface in
+    only one recording."""
+
+    @pytest.fixture
+    def merged(self, tmp_path, monkeypatch):
+        base = tmp_path / "base.md"
+        base.write_text(
+            "# Structural rules (hand-written)\n\n"
+            "> preamble that should be stripped\n\n"
+            "## 1. Solve for the expectation first\n"
+            "Read implied_growth_pct before forming a view.\n"
+        )
+        draft = tmp_path / "draft.yaml"
+        draft.write_text(
+            "source:\n  channels: [test]\n  mined_at: 2026-07-28\n"
+            "  videos_with_rules: 114\n  candidate_rules: 244\n"
+            "  clusters: 197\n  min_distinct_videos: 2\nrules:\n"
+            '  - id: rule_01\n    rule: "Avoid paying above liquidation value."\n'
+            '    metric: "market_cap_to_fcf"\n    n_mentions: 5\n'
+            "    n_distinct_videos: 4\n    reviewer: APPROVED\n"
+        )
+        out = tmp_path / "doctrine.md"
+        monkeypatch.setattr(mine, "DOCTRINE_BASE", base)
+        monkeypatch.setattr(mine, "DRAFT", draft)
+        monkeypatch.setattr(mine, "DOCTRINE", out)
+        return out
+
+    def test_merge_keeps_both_halves(self, merged):
+        mine.stage_promote(merge=True)
+        text = merged.read_text()
+
+        assert "Solve for the expectation first" in text   # hand-written
+        assert "Avoid paying above liquidation value" in text  # mined
+
+    def test_merge_is_idempotent(self, merged):
+        """Promote renders base + mined into the output rather than appending
+        to it. Appending would compound the mined section on every run, and
+        the doctrine would silently double until the size ceiling caught it —
+        far from the cause."""
+        mine.stage_promote(merge=True)
+        first = merged.read_text()
+        mine.stage_promote(merge=True)
+
+        assert merged.read_text() == first
+        assert first.count("Avoid paying above liquidation value") == 1
+
+    def test_provenance_stays_visible_per_rule(self, merged):
+        """A reader must be able to tell which sentences came from a corpus
+        and which were written by hand, or the evidence counts mean nothing."""
+        mine.stage_promote(merge=True)
+        text = merged.read_text()
+
+        assert "Mined rules" in text
+        assert "hand-written" in text
+        assert "4 distinct recordings" in text
+
+    def test_it_says_the_rules_were_inferred_not_stated(self, merged):
+        """235 of 244 mined rules were reconstructed from behaviour. A reader
+        who assumes they are direct quotes will over-trust them."""
+        mine.stage_promote(merge=True)
+
+        assert "INFERRED" in merged.read_text()
+
+    def test_without_merge_the_base_is_absent(self, merged):
+        mine.stage_promote(merge=False)
+        text = merged.read_text()
+
+        assert "Solve for the expectation first" not in text
+        assert "Avoid paying above liquidation value" in text
+
+    def test_an_unreadable_base_refuses_rather_than_shipping_half(
+            self, merged, monkeypatch, caplog):
+        """Silently shipping only the mined half would drop twelve structural
+        rules with nothing in the output saying so."""
+        monkeypatch.setattr(mine, "DOCTRINE_BASE",
+                            merged.parent / "does_not_exist.md")
+
+        mine.stage_promote(merge=True)
+
+        assert not merged.exists()
+        assert "REFUSING" in caplog.text
+
+
 class TestCorpusConfiguration:
     def test_it_targets_the_streams_tab(self):
         """The shared collector hardcodes /videos, and for @realmartinshkreli
