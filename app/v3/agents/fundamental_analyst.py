@@ -112,7 +112,7 @@ SYSTEM_PROMPT = """You are the Senior Fundamental Analyst at a quantitative trad
         "target_price": 0.0
     }
 }
-`metrics` must be COPIED from the PRECOMPUTED FUNDAMENTAL SNAPSHOT above, not recalled and not re-derived. Omit any field the snapshot marks NOT ON FILE rather than guessing it, and list it in data_gaps instead. Every number you cite in `summary` or `pillars` must match the value you put in `metrics` — quote P/E as the trailing P/E and forward P/E as forward, never one in place of the other.
+`metrics` must be COPIED from the PRECOMPUTED FUNDAMENTAL SNAPSHOT above, not recalled and not re-derived. Where a line reads `17.88% [copy as 0.17877]`, put **0.17877** in `metrics` — the bracketed value is the stored one, and the percentage is only for reading. Omit any field the snapshot marks NOT ON FILE rather than guessing it, and list it in data_gaps instead. Every number you cite in `summary` or `pillars` must match the value you put in `metrics` — quote P/E as the trailing P/E and forward P/E as forward, never one in place of the other.
 `near_term_read.direction` is the field the debate and Board weigh for THIS trade, and it is graded against the realized 7-day move. When `matters_this_week` is false, NEUTRAL is the correct direction — a real quarters-long thesis with no near-term trigger should not be laundered into a weekly signal.
 Respond ONLY with the raw JSON object — no prose, no markdown fences. Start with '{' and end with '}'."""
 

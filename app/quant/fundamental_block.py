@@ -114,13 +114,30 @@ _AS_PCT = {
 
 
 def _pct(v: float | None) -> str:
+    """Human-readable percentage AND the raw stored value, always both.
+
+    Measured on the first live cycle (2026-07-28, SMCI): this printed "ROE
+    17.88%" while `fundamentals.roe` stores 0.17877, and the model copied
+    17.88 into `metrics.roe` exactly as instructed. The reconcile then
+    "corrected" 8 of 8 fields at a ratio of precisely 100.0.
+
+    Decisions were never wrong — the reconcile overwrote every one — but the
+    fabrication RATE was destroyed, which is the whole point of preserving
+    originals. Eight guaranteed false positives per ticker would have buried
+    any real invention, and a guard whose signal is all noise is worse than
+    no guard because it looks like coverage.
+
+    A rendering that forces the reader to infer the unit is the defect. Naming
+    both removes the inference.
+    """
     if v is None:
         return "NOT ON FILE"
     # Vendors disagree on whether a margin is 0.0416 or 4.16. Values inside
     # [-1.5, 1.5] are treated as fractions; anything larger is already a
     # percentage. The ambiguous band is narrow and the alternative — picking one
     # convention and being wrong for half the sources — is worse.
-    return f"{v * 100:.2f}%" if -1.5 <= v <= 1.5 else f"{v:.2f}%"
+    shown = v * 100 if -1.5 <= v <= 1.5 else v
+    return f"{shown:.2f}% [copy as {v:g}]"
 
 
 def _num(v: float | None, digits: int = 2) -> str:

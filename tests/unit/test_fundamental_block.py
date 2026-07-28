@@ -147,3 +147,51 @@ class TestTheContract:
         for field in VERIFIED_NUMERIC_FIELDS:
             present = _baseline().get(field) is not None
             assert (field in out) or present, f"{field} neither shown nor named"
+
+
+class TestTheUnitsAreUnambiguous:
+    """First live cycle (2026-07-28, SMCI): the block printed "ROE 17.88%"
+    while `fundamentals.roe` stores 0.17877, and the model copied 17.88 exactly
+    as instructed. The reconcile then "corrected" 8 of 8 fields at a ratio of
+    precisely 100.0.
+
+    Decisions were never wrong — every value was overwritten — but the
+    fabrication RATE was destroyed, and that rate is the entire reason
+    originals are preserved. Eight guaranteed false positives per ticker would
+    bury any real invention.
+    """
+
+    def test_percentage_lines_state_the_value_to_copy(self):
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(roe=0.17877)):
+            out = build_fundamental_block("TEST")
+
+        assert "17.88%" in out          # readable
+        assert "copy as 0.17877" in out  # unambiguous
+
+    def test_the_copied_value_reconciles_clean(self):
+        """The whole point: a model that follows the instruction must produce
+        ZERO corrections, so a correction means something real."""
+        art = {"metrics": {"roe": 0.17877}}
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(roe=0.17877)):
+            rep = reconcile_fundamental_metrics(art, "TEST")
+
+        assert rep["corrected"] == {}
+
+    def test_the_percentage_form_is_still_caught(self):
+        """And a model that copies the display value is still corrected —
+        the guard must not be loosened to paper over the ambiguity."""
+        art = {"metrics": {"roe": 17.88}}
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(roe=0.17877)):
+            reconcile_fundamental_metrics(art, "TEST")
+
+        assert art["metrics"]["roe"] == 0.17877
+
+    def test_the_prompt_names_the_bracket_convention(self):
+        """A convention the block uses and the prompt never mentions is a
+        convention the model cannot follow."""
+        from app.v3.agents.fundamental_analyst import SYSTEM_PROMPT
+
+        assert "copy as" in SYSTEM_PROMPT
