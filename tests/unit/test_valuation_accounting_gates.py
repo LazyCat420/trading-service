@@ -185,3 +185,32 @@ class TestTheReverseDcfInheritsTheGate:
         b = _run(_quarters([2500.0] * 4))
 
         assert b.get("implied_growth_pct") is not None
+
+
+class TestEveryEbitDerivedRatioFailsTogether:
+    def test_leverage_inherits_the_gate(self):
+        """net_debt/EBIT divides by the SAME distorted denominator. GM emitted
+        60.84x off the loss-quarter EBIT, which reads as an insolvency warning
+        rather than an artifact. Fixing the multiple while leaving this one
+        would move the wrong number rather than remove it."""
+        b = _run(
+            _quarters([1459.0, 2926.0, -3647.0, 1076.0]),
+            balance={"period_end": "2026-06-30", "total_equity": 1.0,
+                     "cash": 100.0, "total_debt": 50_000.0},
+        )
+
+        assert b.get("net_debt_to_ebit") is None
+        assert "NOT MEANINGFUL" in b["not_computable"]["net_debt_to_ebit"]
+
+    def test_a_healthy_ticker_keeps_all_three(self):
+        """The gate must not become a blanket refusal — 239 of 286 tickers
+        still get a full set."""
+        b = _run(
+            _quarters([2500.0] * 4),
+            balance={"period_end": "2026-06-30", "total_equity": 1.0,
+                     "cash": 100.0, "total_debt": 5_000.0},
+        )
+
+        assert b.get("ev_to_ebit") is not None
+        assert b.get("net_debt_to_ebit") is not None
+        assert b.get("implied_growth_pct") is not None

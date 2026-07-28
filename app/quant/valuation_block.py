@@ -652,12 +652,18 @@ def compute_valuation_baseline(ticker: str) -> dict:
                 _mark("ev_to_fcf", "TTM free cash flow is negative")
 
         # ── Leverage ──
+        # Divides by the SAME TTM EBIT, so it inherits the same distortion:
+        # GM emitted "net debt / EBIT 60.84x" off the loss-quarter denominator,
+        # which reads as an insolvency warning rather than an artifact. Withheld
+        # for the same reasons and with the same stated cause.
         if b.get("net_debt") is not None and ebit is not None:
-            if ebit > 0:
+            if ebit > 0 and not _ebit_bad:
                 b["net_debt_to_ebit"] = b["net_debt"] / ebit
-            else:
+            elif ebit <= 0:
                 _mark("net_debt_to_ebit", "EBIT negative — leverage multiple not "
                                           "meaningful")
+            else:
+                _mark("net_debt_to_ebit", f"NOT MEANINGFUL — {_ebit_bad}")
 
         # ── P/E and PEG ──
         # UNITS: percent-like fundamentals columns are stored as FRACTIONS
