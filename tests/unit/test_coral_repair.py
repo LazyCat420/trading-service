@@ -296,3 +296,43 @@ def test_repro_tests_reaching_live_dependencies_are_rejected(snippet, expected):
 def test_a_hermetic_repro_test_is_accepted():
     code = "def test_x():\n    from app.util import f\n    assert f(None) == 0\n"
     assert _forbidden_calls(code) == []
+
+
+class TestAKilledRunnerDoesNotOrphanTheJob:
+    """Measured 2026-07-28: a runner killed mid-job left the row at
+    `status='running', attempts=1, finished_at=NULL`, and the NEXT invocation
+    printed "queue is empty" — the claim only looked at `status='queued'`, so
+    the job was invisible forever.
+
+    The host runner is a manually-launched process, so being killed is the
+    NORMAL case rather than an edge one, and a queue that silently drops work
+    on it is worse than no queue at all.
+    """
+
+    def test_the_claim_considers_stale_running_rows(self):
+        import inspect
+
+        from app.cognition.evolution.coral import attempts
+
+        src = inspect.getsource(attempts.claim_next_job)
+        assert "status = 'queued'" in src
+        assert "status = 'running'" in src
+        assert "finished_at IS NULL" in src
+        assert "claimed_at <" in src
+
+    def test_the_threshold_is_generous_enough_not_to_double_run(self):
+        """Reclaiming a job that is merely SLOW would run two graders against
+        one target. Hours, not minutes."""
+        from app.cognition.evolution.coral.attempts import _STALE_CLAIM_HOURS
+
+        assert _STALE_CLAIM_HOURS >= 2
+
+    def test_attempts_still_increments_across_reclaims(self):
+        """Otherwise a job that reliably kills its runner loops forever instead
+        of hitting PLATEAU_ATTEMPTS and getting parked for a human."""
+        import inspect
+
+        from app.cognition.evolution.coral import attempts
+
+        src = inspect.getsource(attempts.claim_next_job)
+        assert "attempts = attempts + 1" in src

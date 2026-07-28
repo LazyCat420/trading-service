@@ -70,8 +70,27 @@ def enqueue_job(
     return job_id
 
 
+# A claim older than this with no `finished_at` is assumed dead. Sized against
+# the work: a repair proposes on two boxes and runs pytest, which is minutes,
+# not hours — but generously, because reclaiming a job that is merely slow would
+# run two graders against one target.
+_STALE_CLAIM_HOURS = 3
+
+
 def claim_next_job() -> RepairJob | None:
-    """Atomically take the oldest queued job. Returns None when the queue is empty."""
+    """Atomically take the oldest queued job. Returns None when the queue is empty.
+
+    Also reclaims stale `running` rows. Measured 2026-07-28: a runner killed
+    mid-job left `status='running', attempts=1, finished_at=NULL` and the next
+    invocation reported "queue is empty" — the job was invisible forever
+    because the claim only looked at `status='queued'`. The host runner is a
+    manually-launched process, so being killed is the NORMAL case, not an edge
+    one, and a queue that silently drops work on it is worse than no queue.
+
+    `attempts` still increments across reclaims, so a job that repeatedly kills
+    its runner hits PLATEAU_ATTEMPTS and gets parked for a human rather than
+    looping forever.
+    """
     with get_db() as db:
         row = db.execute(
             """
@@ -80,13 +99,17 @@ def claim_next_job() -> RepairJob | None:
             WHERE id = (
                 SELECT id FROM evolution_repair_queue
                 WHERE status = 'queued'
+                   OR (status = 'running'
+                       AND finished_at IS NULL
+                       AND claimed_at < now() - (%s || ' hours')::interval)
                 ORDER BY created_at
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
             RETURNING id, cycle_id, error_message, traceback_text,
                       target_path, target_symbol, status, attempts, repro_test
-            """
+            """,
+            [str(_STALE_CLAIM_HOURS)],
         ).fetchone()
     if not row:
         return None
