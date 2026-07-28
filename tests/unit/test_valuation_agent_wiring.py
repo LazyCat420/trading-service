@@ -199,16 +199,45 @@ class TestReconcileIsWiredIntoTheRunner:
         assert "reconcile_valuation_metrics" in src
 
     def test_the_block_is_injected_for_the_agent_and_the_board(self):
-        """The Board sizes the trade and should see the multiples too."""
+        """The Board sizes the trade and should see the multiples too.
+
+        Matched by MEMBERSHIP, not against the exact tuple literal: the first
+        version of this test pinned `("v3_valuation_analyst",
+        "v3_board_of_directors")` verbatim and failed the moment the
+        synthesizer was added to the same guard on 2026-07-28 — a passing test
+        that breaks on a correct widening tests the spelling, not the wiring.
+        """
         from app.v3 import agent_runner
 
         src = inspect.getsource(agent_runner)
         inject = re.search(
-            r'if agent_name in \("v3_valuation_analyst", '
-            r'"v3_board_of_directors"\):(.*?)\n\n', src, re.S,
+            r"if agent_name in \(([^)]*?)\):\s*\n\s*valuation = ", src, re.S,
         )
-        assert inject
-        assert "valuation_context" in inject.group(1)
+        assert inject, "the valuation_context injection guard moved or was removed"
+        recipients = inject.group(1)
+        assert '"v3_valuation_analyst"' in recipients
+        assert '"v3_board_of_directors"' in recipients
+
+    def test_the_synthesizer_sees_the_verified_blocks(self):
+        """It issues the FINAL action — it downgraded 21 of 41 Board BUYs to
+        HOLD — and until 2026-07-28 it received none of the blocks the
+        reconcile passes enforce, deciding from summarised prose while every
+        verified number went to other agents. Measured consequence: its
+        overrides leaned on oscillators (stochastic +27.1pp) and away from
+        fundamentals (eps -21.2pp)."""
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner)
+        for block in ("valuation_context", "quant_math_context",
+                      "fundamental_context"):
+            guard = re.search(
+                r"if agent_name in \(([^)]*?)\):\s*\n\s*\w+ = "
+                r"desk\.cycle_metadata\.get\(\"" + block + r"\"", src, re.S,
+            )
+            assert guard, f"{block} injection guard not found"
+            assert '"v3_decision_synthesizer"' in guard.group(1), (
+                f"the synthesizer does not receive {block}"
+            )
 
 
 class TestTheOptimizerCannotReachTheDoctrine:

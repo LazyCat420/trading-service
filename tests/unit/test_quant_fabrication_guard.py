@@ -171,3 +171,81 @@ class TestPromptContract:
         does not spend produced a 16% compliance rate."""
         from app.v3.agents.quant_analyst import SYSTEM_PROMPT
         assert "do not spend a turn on `whiteboard_write`" in SYSTEM_PROMPT
+
+
+class TestTheUnguardedFields:
+    """2026-07-28 fidelity audit: risk_metrics carried six numeric fields while
+    VERIFIED_NUMERIC_FIELDS listed two, so four went unchecked in ~136 reports
+    each. The worst was max_drawdown_est, which appeared in NO injected block —
+    the model had nothing to copy, so it copied the PROMPT."""
+
+    def test_max_drawdown_is_computed_not_left_to_the_model(self, monkeypatch):
+        import numpy as np
+
+        monkeypatch.setattr(tb, "_fetch_technicals", lambda t: {
+            "date": "2026-07-28", "rsi_14": 50.0, "atr_14": 1.0,
+            "bb_upper": None, "bb_lower": None, "sma_50": None,
+            "sma_200": None, "support": None, "resistance": None,
+        })
+        monkeypatch.setattr(tb, "_fetch_price_and_volume", lambda t: (100.0, None))
+        # -30% then partial recovery: peak-to-trough is 30%.
+        rets = np.concatenate([
+            np.full(40, 0.0), np.full(1, -0.30), np.full(40, 0.001),
+        ])
+        monkeypatch.setattr(
+            "app.quant.returns.load_close_returns", lambda t, n=500: rets
+        )
+
+        b = tb.compute_technical_baseline("X")
+
+        assert b["max_drawdown_est"] == pytest.approx(30.0, abs=0.5)
+
+    def test_the_prompt_placeholder_is_corrected(self, monkeypatch):
+        """`max_drawdown_est: 12.5` was the literal value in the prompt's JSON
+        example and recurred 15 times across different tickers, with 0.0 seven
+        more. An anchor, not a measurement."""
+        monkeypatch.setattr(tb, "compute_technical_baseline", lambda t: {
+            "as_of": "2026-07-28", "stale": False, "age_days": 0,
+            "max_drawdown_est": 52.92,
+        })
+        art = {"risk_metrics": {"max_drawdown_est": 12.5}}
+
+        rep = tb.reconcile_risk_metrics(art, "PYPL")
+
+        assert art["risk_metrics"]["max_drawdown_est"] == 52.92
+        assert art["_model_reported_metrics"]["max_drawdown_est"] == 12.5
+        assert rep["corrected"]["max_drawdown_est"]["model"] == 12.5
+
+    def test_percentage_fields_use_a_relative_tolerance(self, monkeypatch):
+        """The 1.0 ABSOLUTE tolerance is right for RSI and meaningless for
+        vol_prediction_premium, whose entire observed range is [-0.38, 1.43] —
+        1.0 absolute accepts any value at all."""
+        monkeypatch.setattr(tb, "compute_technical_baseline", lambda t: {
+            "as_of": "2026-07-28", "stale": False, "age_days": 0,
+            "vol_prediction_premium": -0.34,
+        })
+        art = {"risk_metrics": {"vol_prediction_premium": 0.50}}
+
+        tb.reconcile_risk_metrics(art, "X")
+
+        assert art["risk_metrics"]["vol_prediction_premium"] == -0.34
+
+    def test_a_faithfully_copied_garch_value_is_left_alone(self, monkeypatch):
+        """predicted_vol_annualized_pct matched the block 127/127 — the guard
+        must lock that in, not manufacture corrections."""
+        monkeypatch.setattr(tb, "compute_technical_baseline", lambda t: {
+            "as_of": "2026-07-28", "stale": False, "age_days": 0,
+            "predicted_vol_annualized_pct": 40.53,
+        })
+        art = {"risk_metrics": {"predicted_vol_annualized_pct": 40.53}}
+
+        rep = tb.reconcile_risk_metrics(art, "PYPL")
+
+        assert rep["corrected"] == {}
+        assert "_model_reported_metrics" not in art
+
+    def test_diversification_ratio_is_not_claimed_as_verified(self):
+        """It is a property of the portfolio AND the candidate, so it cannot be
+        recomputed from a ticker alone. Listing it would read as 'verified' in
+        the audit while checking nothing."""
+        assert "diversification_ratio" not in tb.VERIFIED_NUMERIC_FIELDS

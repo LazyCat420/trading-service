@@ -96,7 +96,7 @@ If the baseline is marked STALE, say so in data_gaps and treat levels as indicat
         "sma_200_status": "ABOVE",
         "bollinger_position": "MIDDLE",
         "volume_trend": "INCREASING",
-        "max_drawdown_est": 12.5,
+        "max_drawdown_est": 0.0,
         "diversification_ratio": 1.42
     },
     "thesis_direction": "BULLISH|BEARISH|NEUTRAL",
@@ -112,6 +112,7 @@ If the baseline is marked STALE, say so in data_gaps and treat levels as indicat
     ]
 }
 Populate `overlays` with the actual support/resistance zones and trendlines you found (use real price levels from your analysis; ISO dates for trendline x0/x1). At least the key support and resistance zones are required.
+Every number in `risk_metrics` must be COPIED from the VERIFIED TECHNICAL BASELINE or the PRECOMPUTED QUANT MATH block — including `max_drawdown_est`, which the baseline now states as a realized trailing-year figure. The numbers in the JSON template above are FORMAT EXAMPLES, not defaults: do not carry one through to your answer.
 Respond ONLY with the raw JSON object — no prose, no markdown fences. Start with '{' and end with '}'."""
 
 ARTIFACT_TYPE = "quant_report"

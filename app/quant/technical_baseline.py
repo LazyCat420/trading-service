@@ -181,8 +181,37 @@ def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
 
 # Fields we can verify deterministically. Anything not listed here stays the
 # model's to judge.
-VERIFIED_NUMERIC_FIELDS = ("rsi", "atr")
+#
+# 2026-07-28: this was ("rsi", "atr") while risk_metrics carried six numeric
+# fields, so four went unchecked in ~136 reports each. Three of them ARE
+# published in the precomputed quant-math block and are copied faithfully
+# (predicted_vol_annualized_pct matched 127/127) — listing them here locks that
+# in rather than leaving it to hold by luck. The fourth, max_drawdown_est, was
+# in no block at all and is now computed in compute_technical_baseline.
+#
+# diversification_ratio is deliberately NOT here: it is a property of the
+# portfolio and the candidate together, so it cannot be recomputed from a
+# ticker alone. Listing it would add a field the baseline never resolves, which
+# reads as "verified" in the audit while checking nothing.
+VERIFIED_NUMERIC_FIELDS = (
+    "rsi",
+    "atr",
+    "max_drawdown_est",
+    "predicted_vol_annualized_pct",
+    "vol_prediction_premium",
+)
 VERIFIED_ENUM_FIELDS = ("sma_200_status", "bollinger_position", "volume_trend")
+
+# The 1.0 absolute tolerance is right for RSI (0-100) and ATR, and wrong for
+# everything else: max_drawdown_est spans 0-75 and vol_prediction_premium lives
+# in [-0.38, 1.43], where 1.0 absolute accepts any value at all. These use a
+# RELATIVE tolerance instead, the same 2% the valuation and fundamental passes
+# use.
+_RELATIVE_TOLERANCE_FIELDS = {
+    "max_drawdown_est": 0.05,
+    "predicted_vol_annualized_pct": 0.02,
+    "vol_prediction_premium": 0.05,
+}
 
 
 def _finite(val) -> float | None:
@@ -326,6 +355,52 @@ def compute_technical_baseline(ticker: str) -> dict:
                     "UPPER" if pos >= 0.8 else "LOWER" if pos <= 0.2 else "MIDDLE"
                 )
 
+        # Realized max drawdown over the trailing year (2026-07-28 fidelity
+        # audit). `max_drawdown_est` appeared in 136 quant reports and in NO
+        # injected block — the model had nothing to copy, so it copied the
+        # PROMPT: the literal placeholder 12.5 recurred 15 times across
+        # different tickers and 0.0 seven times. An anchor, not a measurement.
+        try:
+            from app.quant.returns import load_close_returns
+
+            rets = load_close_returns(ticker, 252)
+            if rets is not None and getattr(rets, "size", 0) >= 30:
+                import numpy as _np
+
+                curve = _np.cumprod(1.0 + rets)
+                peak = _np.maximum.accumulate(curve)
+                dd = float(_np.min(curve / peak) - 1.0) * 100.0
+                mdd = _finite(abs(dd))
+                if mdd is not None:
+                    baseline["max_drawdown_est"] = round(mdd, 2)
+        except Exception as e:
+            logger.debug("[TechnicalBaseline] %s: max drawdown failed "
+                         "(non-fatal): %s", ticker, e)
+
+        # GARCH vol, recomputed here so the reconcile has something to compare
+        # against. These are published in the quant-math block and copied
+        # faithfully today (predicted_vol_annualized_pct matched 127/127) — but
+        # "correct because the model happened to copy it" is not a guarantee,
+        # and the audit could only report them as UNGUARDED. Same fit, same
+        # inputs, so a mismatch means the artifact drifted from the block.
+        try:
+            from app.quant.garch import garch_forecast
+            from app.quant.returns import load_close_returns
+
+            g_rets = load_close_returns(ticker, 500)
+            if g_rets is not None and getattr(g_rets, "size", 0):
+                g = garch_forecast(g_rets)
+                if "error" not in g:
+                    pv = _finite(g.get("predicted_vol_annualized_pct"))
+                    pp = _finite(g.get("prediction_premium"))
+                    if pv is not None:
+                        baseline["predicted_vol_annualized_pct"] = pv
+                    if pp is not None:
+                        baseline["vol_prediction_premium"] = pp
+        except Exception as e:
+            logger.debug("[TechnicalBaseline] %s: GARCH baseline failed "
+                         "(non-fatal): %s", ticker, e)
+
         try:
             age = (date.today() - tech["date"]).days
             baseline["age_days"] = age
@@ -437,6 +512,17 @@ def build_technical_baseline_block(ticker: str) -> str:
             f"  - volume trend (5d vs prior 15d): "
             f"{b['volume_trend']}{_tag('volume_trend')}"
         )
+    if "max_drawdown_est" in b:
+        lines.append(
+            f"  - max drawdown, realized trailing 252d: "
+            f"{b['max_drawdown_est']:.2f}%   [risk: computed this cycle]"
+        )
+    if "predicted_vol_annualized_pct" in b:
+        lines.append(
+            f"  - GARCH predicted vol: "
+            f"{b['predicted_vol_annualized_pct']:.2f}% annualized "
+            f"(prediction premium {b.get('vol_prediction_premium', 0):+.2f})"
+        )
     if "support" in b:
         lines.append(f"  - stored support: {b['support']}")
     if "resistance" in b:
@@ -495,9 +581,19 @@ def reconcile_risk_metrics(
             stated_f = float(stated)
         except (TypeError, ValueError):
             stated_f = None
-        # 1.0 absolute tolerance: rounding and a one-session lag are fine,
-        # a different number is not.
-        if stated_f is None or abs(stated_f - verified) > 1.0:
+        # 1.0 absolute tolerance for RSI/ATR: rounding and a one-session lag are
+        # fine, a different number is not. Percentage and ratio fields use a
+        # relative tolerance — 1.0 absolute would accept literally any
+        # vol_prediction_premium, whose whole observed range is [-0.38, 1.43].
+        rel = _RELATIVE_TOLERANCE_FIELDS.get(field)
+        if rel is not None:
+            disagrees = (
+                stated_f is None
+                or abs(stated_f - verified) / max(abs(verified), 1e-9) > rel
+            )
+        else:
+            disagrees = stated_f is None or abs(stated_f - verified) > 1.0
+        if disagrees:
             if stated_f is not None:
                 corrected[field] = {"model": stated_f, "verified": verified}
                 original[field] = stated_f
