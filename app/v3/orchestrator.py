@@ -2141,6 +2141,57 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     if not desk.has_artifact("regime_classification"):
         return _record_gate(desk, "HOLD_POLICY_BLOCKED_MISSING_REGIME", action=action)
 
+    # Stop/target sanity against the last close (2026-07-28 fidelity audit).
+    # `stop_loss`, `take_profit` and `position_size_pct` are emitted by BOTH the
+    # Board and the synthesizer and NOTHING checked any of them — they were the
+    # largest unguarded surface left, and they size real orders.
+    #
+    # Measured over 14 days: 3 of 358 decisions carried an implausible level,
+    # including LMT with a stop of $0.92 and a target of $1.25 against a $581
+    # close. That is not a bad trade, it is a decimal error, and executing it
+    # would either never stop out or liquidate instantly.
+    #
+    # The band is deliberately wide (0.3x-1.5x of close for a stop, 0.7x-3.0x
+    # for a target). It is a DECIMAL-ERROR detector, not a strategy opinion: a
+    # tight stop and an ambitious target are both legitimate and must pass.
+    _levels = {
+        "stop_loss": (0.3, 1.5),
+        "take_profit": (0.7, 3.0),
+    }
+    _last_close = None
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as _db:
+            _row = _db.execute(
+                "SELECT close FROM price_history WHERE ticker = %s "
+                "ORDER BY date DESC LIMIT 1", [desk.ticker],
+            ).fetchone()
+        _last_close = float(_row[0]) if _row and _row[0] else None
+    except Exception as _e:  # noqa: BLE001 — a price lookup must never block
+        logger.debug("[V3] %s: stop/target sanity lookup failed: %s",
+                     desk.ticker, _e)
+
+    if _last_close and _last_close > 0:
+        for _field, (_lo, _hi) in _levels.items():
+            _v = decision.get(_field)
+            if not isinstance(_v, (int, float)) or isinstance(_v, bool):
+                continue
+            if _v <= 0 or not (_last_close * _lo <= _v <= _last_close * _hi):
+                # Dropped, not clamped. A clamped level is a number the desk
+                # never chose, presented as though it had — and the Board's
+                # exit logic would then act on our arithmetic, not its thesis.
+                decision[_field] = None
+                _record_gate(
+                    desk, "DROPPED_IMPLAUSIBLE_LEVEL", action=action,
+                    field=_field, value=_v, last_close=round(_last_close, 2),
+                )
+                logger.warning(
+                    "[V3] %s: %s=%s is implausible against a %.2f close — "
+                    "dropped (band %.1fx-%.1fx)",
+                    desk.ticker, _field, _v, _last_close, _lo, _hi,
+                )
+
     # Strategy health (Ruuj ch.5): "has the model degraded" is checked
     # separately from "is it losing money". A decision-critical agent whose
     # telemetry quality collapses must not keep OPENING positions — SELLs
