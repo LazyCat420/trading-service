@@ -2021,14 +2021,54 @@ async def run_v3_pipeline(
     return result
 
 def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> None:
-    """Record the enforced policy label on the trade row (PG + Mongo mirror)."""
+    """Record the enforced policy label on the trade row (PG + Mongo mirror).
+
+    A 0-rowcount UPDATE is REPORTED, not swallowed (2026-07-29 harness audit).
+    This is a blind UPDATE: `save_trade_result` is the only INSERT, it runs from
+    `_persist_trade_verdict` alone, and that is gated on
+    `has_artifact("trade_decision")`. The delta and glance triage tiers publish
+    only `final_decision`, so no row exists to update — the statement matched 0
+    rows and returned silently.
+
+    Measured over 2026-07-24..29, the window where the column is fully deployed:
+
+        tier=v3_deep    analysed=136  trade_row=131  policy=131
+        tier=v3_delta   analysed= 15  trade_row=  0  policy=  0
+        tier=v3_glance  analysed=  5  trade_row=  0  policy=  0
+
+    ~13% of analysed tickers computed an enforced policy label that was written
+    nowhere, so every funnel query silently under-counted and the delta tier was
+    unmeasurable. The enforcement itself was never affected: pipeline_service
+    reads `policy_action` off the in-memory result dict, not the DB.
+
+    Logged rather than repaired here on purpose. Inserting a synthetic row from
+    this function would invent a trade record for a path that never produced a
+    trade decision, and a Triage-Gate skip is a legitimate non-decision, not a
+    degrade (see the _DEGRADED_PROVENANCE note below). The correct fix is at the
+    call site, and it needs its own verification; this makes the hole VISIBLE so
+    it cannot silently regrow.
+    """
     from app.db.connection import get_db
 
     with get_db() as db:
-        db.execute(
+        cur = db.execute(
             "UPDATE trade_results SET policy_action = %s WHERE cycle_id = %s AND ticker = %s",
             [policy_action, cycle_id, ticker],
         )
+        # PooledCursor returns `self` from execute() and defines neither
+        # `rowcount` nor a `__getattr__` proxy, so it must be read off the
+        # wrapped driver cursor. Verified: `getattr(cur, "rowcount", -1)` on the
+        # wrapper alone always yields the -1 default, and this check would
+        # silently never fire — the exact failure class it exists to catch.
+        # -1 means "driver could not report"; only 0 is a real miss.
+        rowcount = getattr(getattr(cur, "_cursor", None), "rowcount", -1)
+        if rowcount == 0:
+            logger.warning(
+                "[V3] %s: policy_action=%s matched NO trade_results row "
+                "(cycle=%s) — this decision is invisible to every funnel query. "
+                "Expected for triage tiers that never publish a trade_decision.",
+                ticker, policy_action, cycle_id,
+            )
     try:
         from app.db import mongo_store
         if mongo_store.writes_mongo("trade_results"):

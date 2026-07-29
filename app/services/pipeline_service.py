@@ -1278,6 +1278,38 @@ class PipelineService:
                     logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
                     return None
 
+                # Pre-flight: a ticker with no price history cannot support a
+                # single technical claim, and the full panel costs ~200s and
+                # ~220k tokens before HOLD_NO_PRICE_DATA (the LAST policy gate)
+                # rejects it. Measured 2026-07-26: LUCK ran the whole panel to
+                # PM_DONE and produced a decision at confidence 48 with ZERO
+                # price_history rows; MSBT reached INIT with zero rows too.
+                #
+                # This is the SAME probe the policy gate uses, moved to the
+                # front. It does not replace that gate — the gate stays, because
+                # this check cannot see a ticker whose rows vanish mid-cycle,
+                # and because paths that skip this loop still need it.
+                #
+                # Fails OPEN on any probe error, matching the gate's own
+                # contract: has_price_history RAISES on DB failure precisely so
+                # an unreachable Postgres cannot answer "no rows" for every
+                # ticker and halt all analysis.
+                try:
+                    from app.quant.technical_baseline import has_price_history
+
+                    if not has_price_history(ticker_name):
+                        logger.warning(
+                            "[PipelineService] %s: SKIPPED before analysis — no "
+                            "usable price history. Every technical claim would "
+                            "rest on nothing.", ticker_name,
+                        )
+                        return None
+                except Exception as ph_err:  # noqa: BLE001 — never block on a probe
+                    logger.debug(
+                        "[PipelineService] %s: price-history pre-flight failed "
+                        "(fail-open): %s", ticker_name, ph_err,
+                    )
+
                 agent_locale = cls._state.get("agent_locale", "default")
                 prism_overrides = cls._state.get("prism_overrides", {})
                 # bot_id was NEVER passed (2026-07-24 audit). run_v3_pipeline
