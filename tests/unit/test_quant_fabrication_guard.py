@@ -317,3 +317,46 @@ class TestTheSignalsPostCarriesEvidenceOrNothing:
 
         assert "posted from your artifact automatically" in SYSTEM_PROMPT
         assert "risk_metrics" in SYSTEM_PROMPT
+
+
+class TestQuantPersistenceRunsOnlyForTheQuant:
+    """The real cause of the `{'confidence': 65}` whiteboard stub, found in the
+    container logs on 2026-07-29 — NOT by reading the code, which I misread
+    three times first.
+
+    `_persist_quant_chart` and `_persist_quant_signals` read `risk_metrics` and
+    `overlays`, which only the quant artifact carries. But the calls sat
+    OUTSIDE any agent_name guard, so they ran after EVERY agent. The warning
+    "carried no evidence fields (only ['confidence'])" fires two lines after
+    "Appended valuation_report" — it was the VALUATION analyst's artifact being
+    posted into the QUANT's `signals` section, under the quant's name.
+
+    So the stub was never the quant being lazy. It was another agent's artifact
+    in the quant's slot. 53 of 326 quant-authored writes.
+    """
+
+    def test_the_persistence_is_scoped_to_the_quant(self):
+        import inspect
+
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner.run_v3_agent)
+        # The call must be inside a quant guard, not at the shared tail.
+        idx = src.index("_persist_quant_signals(")
+        preceding = src[:idx]
+        guard = preceding.rindex('if agent_name == "v3_quant_analyst"')
+        between = preceding[guard:]
+        # Nothing may re-scope to a different agent between the guard and the call.
+        assert 'if agent_name == "v3_valuation_analyst"' not in between
+        assert 'if agent_name == "v3_fundamental_analyst"' not in between
+
+    def test_both_quant_only_persisters_are_inside_the_guard(self):
+        import inspect
+
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner.run_v3_agent)
+        guard = src.rindex('if agent_name == "v3_quant_analyst"')
+        tail = src[guard:]
+        assert "_persist_quant_chart(" in tail
+        assert "_persist_quant_signals(" in tail

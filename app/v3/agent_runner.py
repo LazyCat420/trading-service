@@ -1187,6 +1187,22 @@ async def run_v3_agent(
                     "[V3Runner] valuation reconciliation failed for %s: %s: %s",
                     desk.ticker, type(e).__name__, e,
                 )
+        # QUANT-ONLY persistence. These two read `risk_metrics` and `overlays`,
+        # which only the quant artifact has — but they sat OUTSIDE any
+        # agent_name guard and therefore ran after EVERY agent.
+        #
+        # Measured 2026-07-29 from the container logs: the "carried no evidence
+        # fields (only ['confidence'])" warning fires on the VALUATION analyst,
+        # not the quant, and lands two lines after "Appended valuation_report".
+        # The valuation artifact has no risk_metrics, so the extraction
+        # correctly collapsed to `confidence` — and before the stub guard
+        # existed, that is what wrote `{'confidence': 65}` into the quant's
+        # `signals` section under the quant's name. 53 of 326 such writes.
+        #
+        # So the stub was never the quant being lazy: it was another agent's
+        # artifact posted to the quant's section. The guard stopped the bad
+        # write; this stops the wrong CALLER.
+        if agent_name == "v3_quant_analyst":
             try:
                 await _persist_quant_chart(desk.ticker, artifact)
             except Exception as e:
