@@ -168,9 +168,20 @@ class TestPromptContract:
 
     def test_prompt_no_longer_asks_for_the_whiteboard_write(self):
         """It is posted from the artifact in code — asking for a turn the agent
-        does not spend produced a 16% compliance rate."""
-        from app.v3.agents.quant_analyst import SYSTEM_PROMPT
-        assert "do not spend a turn on `whiteboard_write`" in SYSTEM_PROMPT
+        does not spend produced a 16% compliance rate.
+
+        STRENGTHENED 2026-07-29. This asserted the prompt SAID "do not spend a
+        turn on `whiteboard_write`", and the agent kept calling it anyway: 53
+        of 326 quant writes were sub-60-character stubs, one literally
+        `{'confidence': 65}`. Telling a model not to use a tool it still holds
+        is not a removal — measured twice on this desk, first with
+        get_finviz_fundamentals and again here. The tool is now out of the
+        whitelist and its name is out of the prompt, so the assertion flips
+        from "the prompt discourages it" to "the tool is not reachable".
+        """
+        from app.v3.agents.quant_analyst import SYSTEM_PROMPT, TOOL_WHITELIST
+        assert "whiteboard_write" not in TOOL_WHITELIST
+        assert "`whiteboard_write`" not in SYSTEM_PROMPT
 
 
 class TestTheUnguardedFields:
@@ -249,3 +260,60 @@ class TestTheUnguardedFields:
         recomputed from a ticker alone. Listing it would read as 'verified' in
         the audit while checking nothing."""
         assert "diversification_ratio" not in tb.VERIFIED_NUMERIC_FIELDS
+
+
+class TestTheSignalsPostCarriesEvidenceOrNothing:
+    """Measured 2026-07-29: 53 of 326 quant whiteboard writes (16%) were under
+    60 characters, one of them literally `{'confidence': 65}`. The quant is the
+    ONLY agent that does this — junior, fundamental, board, valuation,
+    tournament and regime are all at 0/326.
+
+    `signals` is the section teammates are told to annotate ("read a teammate's
+    section — desk_note or signals"), so a stub occupies the slot and LOOKS
+    like data while giving the fundamental analyst nothing to agree or disagree
+    with. The collaboration silently loses its substrate.
+
+    A missing section reads as "the quant had nothing". An empty one reads as
+    "the quant said almost nothing". Only the first is true.
+    """
+
+    def test_a_self_report_only_payload_is_not_posted(self):
+        import inspect
+
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner._persist_quant_signals)
+        assert "_SELF_REPORT" in src
+        assert '"confidence", "thesis_direction"' in src
+        # It must SKIP, not post a stub.
+        assert "not posting a stub" in src
+
+    def test_evidence_fields_still_post(self):
+        """The guard must not suppress a real signals payload — that would
+        reintroduce the 9-of-56 miss rate this auto-post exists to fix."""
+        import inspect
+
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner._persist_quant_signals)
+        # The skip is gated on the set DIFFERENCE, so any evidence field
+        # (rsi, atr, volatility_regime, stop_loss_suggestion, ...) posts.
+        assert "set(content) - _SELF_REPORT" in src
+
+    def test_the_prompt_does_not_name_a_tool_the_agent_lacks(self):
+        """The prompt told this agent "do not spend a turn on
+        `whiteboard_write`" while the tool was still whitelisted — and it kept
+        calling it. Naming a tool the agent no longer holds is the same trap
+        one step further: a live instruction pointing at a dead end."""
+        from app.v3.agents.quant_analyst import SYSTEM_PROMPT, TOOL_WHITELIST
+
+        assert "whiteboard_write" not in TOOL_WHITELIST
+        assert "`whiteboard_write`" not in SYSTEM_PROMPT
+
+    def test_the_prompt_says_how_to_post_instead(self):
+        """Removing the tool without saying what replaces it would leave the
+        agent unable to reach the desk at all."""
+        from app.v3.agents.quant_analyst import SYSTEM_PROMPT
+
+        assert "posted from your artifact automatically" in SYSTEM_PROMPT
+        assert "risk_metrics" in SYSTEM_PROMPT

@@ -60,7 +60,13 @@ TOOL_WHITELIST = [
     # get_portfolio_covariance KEPT: step 5 still names it as the escape hatch
     # for what the block does NOT answer (correlation structure, alternative
     # universes), and it returns a matrix, not the single weight the block has.
-    "whiteboard_write",
+    # whiteboard_write dropped 2026-07-29: the prompt has told this agent
+    # "do not spend a turn on `whiteboard_write`" since the `signals` section
+    # started being posted automatically from the artifact
+    # (_persist_quant_signals). Telling a model not to use a tool it still
+    # holds does not stop it — measured twice on this desk now, first with
+    # get_finviz_fundamentals and again here. Removing the grant is what stops
+    # the call; the auto-post covers the legitimate case.
     "whiteboard_read",
     "whiteboard_annotate",
     # Zero calls in 60d but the uncertainty rule names it ("At most one
@@ -93,7 +99,7 @@ If the baseline is marked STALE, say so in data_gaps and treat levels as indicat
 5. PORTFOLIO CONTEXT — the precomputed block's HRP target weight IS your sizing baseline for a BULLISH thesis: a candidate highly correlated with the book gets a LOW hrp weight — that is covariance talking, reflect it in hrp_weight_suggestion and position_sizing_note instead of flat percent-of-cash sizing. The weight itself is given — use `get_portfolio_covariance` only for what the block doesn't answer (e.g. correlation structure, alternative universes). Skip for SELL/NEUTRAL theses on unheld names.
 6. `run_equation`/`run_backtest` an existing library equation when one fits; `save_equation` ONCE if you derived a genuinely new/refined formula. Equation dfs also carry gk_vol (Garman-Klass vol) and mom_21d/63d/126d/252d momentum columns.
 7. `whiteboard_annotate` — the one desk interaction worth a turn: take the Fundamental's "risk_flags" (or the Junior's "desk_note") entry_id and post ONE line, AGREE or DISPUTE plus the level or indicator behind it. Pass author="v3_quant_analyst". A contradiction nobody wrote down never gets confronted, and you are the only desk holding the levels.
-   (Your "signals" whiteboard section is posted from your artifact automatically — do not spend a turn on `whiteboard_write`.)
+   (Your "signals" whiteboard section is posted from your artifact automatically — there is no whiteboard-write tool in your kit and none is needed. It is built from your `risk_metrics`, `stop_loss_suggestion`, `hrp_weight_suggestion` and `position_sizing_note`, so filling those fields properly IS how you post to the desk. If they are thin, nothing is posted — teammates annotate that section, and a section with only your confidence in it gives them nothing to agree or disagree with.)
 8. Emit the JSON. Its `overlays` field is MANDATORY — put every support/resistance zone and trendline you identified there (see OUTPUT). The desk renders those on the ticker chart automatically.
 
 ## RULES

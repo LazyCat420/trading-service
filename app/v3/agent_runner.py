@@ -278,6 +278,30 @@ async def _persist_quant_signals(desk: Any, cycle_id: str, artifact: dict) -> No
     if not content:
         return
 
+    # `confidence` and `thesis_direction` alone are not signals — they are the
+    # agent's opinion of itself with none of the evidence behind it. Measured
+    # 2026-07-29: 53 of 326 quant whiteboard writes (16%) were under 60 chars,
+    # and one was literally `{'confidence': 65}`. The quant is the ONLY agent
+    # that does this; every other author is at 0/326.
+    #
+    # That stub is worse than no post: `signals` is the section teammates are
+    # told to annotate ("read a teammate's section — desk_note or signals"), so
+    # an 18-character entry occupies the slot and looks like data while giving
+    # the fundamental analyst nothing to agree or disagree with. The
+    # collaboration silently loses its substrate.
+    #
+    # Skipping leaves the section absent, which is legible: a missing section
+    # reads as "the quant had nothing", an empty one reads as "the quant said
+    # almost nothing", and only the first is true.
+    _SELF_REPORT = {"confidence", "thesis_direction"}
+    if not (set(content) - _SELF_REPORT):
+        logger.warning(
+            "[V3Runner] %s: quant signals carried no evidence fields "
+            "(only %s) — not posting a stub to the whiteboard",
+            desk.ticker, sorted(content),
+        )
+        return
+
     from app.agents.whiteboard import whiteboard
 
     await whiteboard.write_section(
