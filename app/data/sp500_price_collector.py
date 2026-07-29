@@ -23,8 +23,29 @@ async def collect_sp500_prices(period: str = "6mo"):
     written_tickers: set[str] = set()
 
     with get_db() as db:
+        # UNION with the watchlist (2026-07-29 harness audit). The daily refresh
+        # covered sp500 only, but the cycle ANALYSES the watchlist — and 127 of
+        # 199 watchlist tickers sit outside the S&P 500, 60 of them carrying
+        # prices older than 7 days. So the set the bot reasons about was not the
+        # set it kept fresh.
+        #
+        # Two measured consequences: LUCK ran a full ~200s panel and emitted a
+        # decision at confidence 48 with ZERO price_history rows, and the
+        # "collapse" from 2642 to 509 distinct tickers was really the one-off
+        # backfill (a stock) draining down to the daily refresh set (a flow).
+        # 509 was always exactly the sp500 count.
+        #
+        # Held positions are included unconditionally: marking a position to
+        # market is not optional, and a ticker can leave the watchlist while
+        # still being owned.
         rows = db.execute(
-            "SELECT ticker FROM ticker_metadata WHERE sp500 = TRUE"
+            """
+            SELECT ticker FROM ticker_metadata WHERE sp500 = TRUE
+            UNION
+            SELECT ticker FROM watchlist
+            UNION
+            SELECT ticker FROM positions
+            """
         ).fetchall()
         if not rows:
             logger.error(
@@ -32,7 +53,16 @@ async def collect_sp500_prices(period: str = "6mo"):
             )
             return {"total": 0}
 
-        tickers = [row[0] for row in rows]
+        # Normalised and de-duplicated: the three sources disagree on case and
+        # whitespace, and a duplicate ticker costs a whole redundant yfinance
+        # slot in the 100-wide batch.
+        tickers = sorted({
+            (row[0] or "").strip().upper() for row in rows if (row[0] or "").strip()
+        })
+        logger.info(
+            "[sp500-refresh] Refreshing %d tickers (sp500 + watchlist + positions)",
+            len(tickers),
+        )
 
         # yfinance batch download is faster but can be fragile. We'll do a robust batch.
         # We download in chunks of 100 to avoid URL too long or memory spikes.

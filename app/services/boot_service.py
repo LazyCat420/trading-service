@@ -503,13 +503,17 @@ class BootService:
 
     @classmethod
     async def _sp500_daily_refresh_loop(cls):
-        """Recurring background task: keep the full S&P 500 price_history fresh.
+        """Recurring background task: keep the ANALYSED universe's prices fresh.
 
         _startup_sp500_seed only ever runs once (when price_history is empty
         at boot). After that, only the active trading cycle's small watchlist
-        writes new rows, so most of the S&P 500 universe silently goes stale.
-        This loop tops up ALL sp500 tickers once after boot, then again daily
-        after market close.
+        writes new rows, so most of the universe silently goes stale.
+        This loop tops up once after boot, then again daily after market close.
+
+        Despite the name, `collect_sp500_prices` refreshes sp500 UNION watchlist
+        UNION positions (2026-07-29): the cycle analyses the watchlist, and 127
+        of 199 watchlist tickers are not in the S&P 500. Keeping only the index
+        fresh meant the bot reasoned about a different set than it maintained.
         """
         from app.db.connection import get_db
         from app.services.market_calendar import MarketCalendar
@@ -521,10 +525,28 @@ class BootService:
                 today_count = db.execute(
                     "SELECT COUNT(*) FROM price_history WHERE date = CURRENT_DATE"
                 ).fetchone()[0]
-            if today_count < 400:
+            # Threshold is derived from the actual refresh set, not a literal.
+            # It was a hardcoded 400 against an sp500-only universe; now that the
+            # set is sp500 UNION watchlist UNION positions (~636), a stale run
+            # covering only the index would clear a fixed 400 and look healthy.
+            # 75% catches a materially incomplete day without firing on the
+            # handful of tickers yfinance always misses.
+            with get_db() as db:
+                expected = db.execute(
+                    """
+                    SELECT COUNT(*) FROM (
+                        SELECT ticker FROM ticker_metadata WHERE sp500 = TRUE
+                        UNION SELECT ticker FROM watchlist
+                        UNION SELECT ticker FROM positions
+                    ) u
+                    """
+                ).fetchone()[0]
+            threshold = int((expected or 500) * 0.75)
+            if today_count < threshold:
                 logger.info(
-                    "[sp500-refresh] Only %d price_history rows for today — running immediate top-up",
-                    today_count,
+                    "[sp500-refresh] Only %d price_history rows for today "
+                    "(expected ~%d, threshold %d) — running immediate top-up",
+                    today_count, expected, threshold,
                 )
                 await cls._sp500_full_refresh(period="5d")
         except Exception as e:
