@@ -172,6 +172,54 @@ def _merge_v3_module_whitelists() -> None:
 _merge_v3_module_whitelists()
 
 
+def _resolve_tool_names(agent_name: str, *, caller: str) -> list[str]:
+    """Resolve an agent's tool-name list. THE single source of that answer.
+
+    Extracted 2026-07-29. ``get_agent_tools`` and ``get_agent_enabled_tool_names``
+    each carried their own copy of this cascade — persona store first, then the
+    static dict, then empty-for-unknown. Two copies of one lookup is the defect
+    class that has recurred most often in this codebase (a fix lands on one of
+    N carriers), and the module docstring above already records that the
+    hand-maintained whitelist copies "disagreed for 7 of the 9 agents".
+
+    The order is load-bearing and unchanged:
+
+    1. The Agent Studio persona store, so a UI edit takes effect without a
+       deploy. Only an ACTIVE persona with a non-empty ``allowed_tools`` wins;
+       a persona that exists but grants nothing falls through rather than
+       silently disarming the agent.
+    2. ``AGENT_TOOL_WHITELISTS``. Present-but-empty is a real answer here —
+       ``[]`` means "no tools" (v3_bull_defense was such an entry) and must not
+       be confused with absent.
+    3. Unknown agent -> ``[]`` plus an error log. NEVER the full registry: that
+       fallback existed once, and since the registry now spans other apps'
+       tools a typo'd agent name handed out every foreign tool in the system.
+    """
+    from app.db.agent_persona_store import _load_store
+
+    try:
+        store = _load_store()
+        for p in store.values():
+            if (p.get("role") == agent_name or p.get("name") == agent_name) and p.get("is_active", True):
+                if p.get("allowed_tools"):
+                    return list(p["allowed_tools"])
+                break
+    except Exception as e:
+        logger.warning("[ToolWhitelist] Persona-store lookup failed for %s (%s) — "
+                       "falling back to the static whitelist", agent_name, e)
+
+    if agent_name in AGENT_TOOL_WHITELISTS:
+        return list(AGENT_TOOL_WHITELISTS[agent_name])
+
+    logger.error(
+        "[ToolWhitelist] Agent '%s' has no whitelist entry and no persona-store "
+        "tools — resolving to ZERO tools (caller=%s). Add it to "
+        "AGENT_TOOL_WHITELISTS (or the Agent Studio persona store) if it needs any.",
+        agent_name, caller,
+    )
+    return []
+
+
 def get_agent_tools(agent_name: str, domain_blocklist: list[str] | None = None) -> Optional[list[dict]]:
     """Resolve tool schemas for a given agent from the whitelist.
 
@@ -187,32 +235,13 @@ def get_agent_tools(agent_name: str, domain_blocklist: list[str] | None = None) 
         (with an error log) for an unknown agent — never the full registry.
     """
     from app.tools.registry import registry
-    from app.db.agent_persona_store import _load_store
 
-    tool_names = None
-    
-    # 1. Try to get allowed_tools from the dynamic persona store (Agent Studio UI)
-    try:
-        store = _load_store()
-        for p in store.values():
-            if (p.get("role") == agent_name or p.get("name") == agent_name) and p.get("is_active", True):
-                if p.get("allowed_tools"):
-                    tool_names = p.get("allowed_tools")
-                break
-    except Exception as e:
-        logger.warning(f"[ToolWhitelist] Failed to load dynamic tools for {agent_name}: {e}")
-
-    # 2. Fallback to hardcoded whitelist
-    if tool_names is None:
-        if agent_name in AGENT_TOOL_WHITELISTS:
-            tool_names = AGENT_TOOL_WHITELISTS[agent_name]
-        else:
-            logger.error(
-                f"[ToolWhitelist] Agent '{agent_name}' has no whitelist entry and no "
-                f"persona-store tools — running with ZERO tools. Add it to "
-                f"AGENT_TOOL_WHITELISTS (or the Agent Studio persona store) if it needs any."
-            )
-            return []
+    tool_names = _resolve_tool_names(agent_name, caller="get_agent_tools")
+    if not tool_names:
+        # Empty resolves to no schemas either way — an unknown agent and an
+        # agent whose whitelist is deliberately [] both get zero tools. Short-
+        # circuiting here just skips a pointless registry round-trip.
+        return []
 
     schemas = registry.get_schemas_by_names(tool_names)
 
@@ -260,34 +289,10 @@ def get_agent_enabled_tool_names(agent_name: str) -> list[str]:
         A list of tool name strings. If the agent has no whitelist, returns
         [] (plus meta-tools for non-v3 agents) — never the full registry.
     """
-    from app.db.agent_persona_store import _load_store
-    
-    base_names = None
-    
-    try:
-        store = _load_store()
-        for p in store.values():
-            if (p.get("role") == agent_name or p.get("name") == agent_name) and p.get("is_active", True):
-                if p.get("allowed_tools"):
-                    base_names = list(p.get("allowed_tools"))
-                break
-    except Exception as e:
-        logger.warning(f"[ToolWhitelist] Failed to load dynamic enabledTools for {agent_name}: {e}")
-
-    if base_names is None:
-        if agent_name in AGENT_TOOL_WHITELISTS:
-            base_names = list(AGENT_TOOL_WHITELISTS[agent_name])
-        else:
-            # No whitelist → ZERO tools, same contract as get_agent_tools.
-            # The registry now spans other apps' tools (html-notes,
-            # treesearch), so an all-registry fallback would hand a typo'd
-            # agent name every foreign tool in the system.
-            logger.error(
-                f"[ToolWhitelist] Agent '{agent_name}' has no whitelist entry and no "
-                f"persona-store tools — enabledTools will be EMPTY (plus meta-tools "
-                f"for non-v3 agents). Add it to AGENT_TOOL_WHITELISTS if it needs any."
-            )
-            base_names = []
+    # Same resolution as get_agent_tools, by construction rather than by two
+    # copies staying in step — see _resolve_tool_names.
+    base_names = _resolve_tool_names(
+        agent_name, caller="get_agent_enabled_tool_names")
 
     # V3 agents get ONLY their strict whitelists — no dynamic discovery.
     # discover_and_enable_tools caused agents to pull in 766 tools and

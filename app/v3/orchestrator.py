@@ -2138,7 +2138,18 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
 
     # Dynamic confidence floor (plan 3.1): the board may RAISE the bar for
     # this specific decision, never lower the firm-wide threshold.
-    # pipeline_service still enforces the base threshold as belt-and-braces.
+    #
+    # pipeline_service:1376 enforces the base threshold a SECOND time. That
+    # looks like a redundant carrier and was a candidate for collapsing in the
+    # 2026-07-29 simplification pass. It was measured and KEPT: the second check
+    # sits in an `elif` after the policy-gate branch, so it only runs when this
+    # function did not produce a policy_action at all — and 5 of 35 executable
+    # decisions since 07-23 arrived with policy_action NULL (all on 07-23
+    # itself, while the column was being deployed). Two of those five were
+    # sub-floor BUYs (GOOG 64, C 60) that only the second check would have
+    # caught. It is a fail-safe for paths that skip these gates, not a duplicate
+    # answer to the same question. Do not remove it without re-running that
+    # query and finding zero.
     from app.services.parameter_store import get_param as _get_param
     floor = _get_param("ANALYSIS_CONFIDENCE_THRESHOLD")
     board_floor = board.get("confidence_floor")

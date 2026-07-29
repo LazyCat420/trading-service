@@ -175,3 +175,91 @@ def test_graph_learn_purged_from_whitelists():
         assert "graph_learn" not in tool_list, (
             f"graph_learn is back in '{agent}' but has no registered implementation"
         )
+
+
+# ── One resolver, not two (2026-07-29) ──────────────────────────────────────
+#
+# get_agent_tools() and get_agent_enabled_tool_names() each carried their own
+# copy of the persona-store -> static-dict -> empty cascade. Two copies of one
+# lookup is the failure class that recurs most in this codebase: a fix lands on
+# one carrier and the other drifts. The module docstring already records that
+# the hand-maintained whitelist copies "disagreed for 7 of the 9 agents".
+#
+# They now share _resolve_tool_names(). These tests pin the property that
+# matters -- the two entry points cannot disagree -- rather than the internals.
+
+def test_both_entry_points_share_one_resolver():
+    """Neither function may re-implement the cascade."""
+    import inspect
+    from app.agents import tool_whitelists as tw
+
+    for fn in (tw.get_agent_tools, tw.get_agent_enabled_tool_names):
+        src = inspect.getsource(fn)
+        assert "_resolve_tool_names" in src, (
+            f"{fn.__name__} no longer delegates to _resolve_tool_names — the "
+            "cascade has been duplicated again"
+        )
+        assert "_load_store" not in src, (
+            f"{fn.__name__} reads the persona store directly; that lookup "
+            "belongs to _resolve_tool_names alone"
+        )
+
+
+def test_enabled_names_are_a_superset_of_resolved_names():
+    """enabledTools = resolved whitelist (+ meta-tools for non-v3 agents).
+
+    If the two ever resolve different BASE sets, an agent's Prism payload and
+    its schema list disagree — which is exactly the drift this collapse exists
+    to prevent.
+    """
+    from app.agents.tool_whitelists import (
+        AGENT_TOOL_WHITELISTS, _resolve_tool_names, get_agent_enabled_tool_names,
+    )
+
+    for agent in AGENT_TOOL_WHITELISTS:
+        base = set(_resolve_tool_names(agent, caller="test"))
+        enabled = set(get_agent_enabled_tool_names(agent))
+        assert base <= enabled, (
+            f"{agent}: enabledTools dropped {sorted(base - enabled)} from the "
+            "resolved whitelist"
+        )
+        if agent.startswith("v3_"):
+            # V3 agents get NO dynamic discovery: discover_and_enable_tools once
+            # pulled in 766 tools and blew the 262k context limit.
+            assert enabled == base, (
+                f"{agent} is a v3 agent but gained {sorted(enabled - base)}"
+            )
+
+
+def test_unknown_agent_resolves_to_zero_tools_never_the_registry():
+    """The fallback that must never come back.
+
+    get_agent_tools used to return None for an unknown agent, and
+    debate_coordinator expanded None to the entire registry — so a typo'd agent
+    name silently ran with every tool. The registry now spans other apps'
+    tools, which would make that leak cross-application.
+    """
+    from app.agents.tool_whitelists import (
+        _resolve_tool_names, get_agent_tools, get_agent_enabled_tool_names,
+    )
+
+    assert _resolve_tool_names("definitely_not_an_agent", caller="test") == []
+    assert get_agent_tools("definitely_not_an_agent") == []
+    # Non-v3 unknown agents still get meta-tools, but nothing from the registry.
+    assert len(get_agent_enabled_tool_names("definitely_not_an_agent")) < 10
+
+
+def test_present_but_empty_whitelist_is_not_treated_as_unknown():
+    """`[]` is a real answer meaning "no tools", distinct from "no entry".
+
+    Conflating them is how the None-means-everything bug happened in the first
+    place.
+    """
+    from app.agents import tool_whitelists as tw
+
+    tw.AGENT_TOOL_WHITELISTS["__test_empty_agent__"] = []
+    try:
+        assert tw._resolve_tool_names("__test_empty_agent__", caller="test") == []
+        assert tw.get_agent_tools("__test_empty_agent__") == []
+    finally:
+        del tw.AGENT_TOOL_WHITELISTS["__test_empty_agent__"]
