@@ -44,12 +44,11 @@ class CognitionSettings(BaseSettings):
     # Specific Feature Flags for Dev 2
     ENABLE_LLM_CLAIM_ENRICHMENT: bool = True
 
-    # V3 Family Office Architecture (Baron Funds Model)
-    V3_FAMILY_OFFICE_ENABLED: bool = False  # Feature flag — enables CIO-driven dynamic debate
-    V3_MAX_CIO_LOOPS: int = 3               # Hard-stop guardrail — max debate rounds
-    V3_PM_TIMEOUT_SECONDS: int = 120        # Per-PM analysis timeout
-    V3_WORKER_TIMEOUT_SECONDS: int = 60     # Per-worker data fetch timeout
-    V3_ABSTAIN_ON_MAX_LOOPS: bool = True    # ABSTAIN vs forced decision on max loops
+    # V3 Family Office Architecture (Baron Funds Model) — REMOVED 2026-07-29.
+    # Five settings for a CIO-driven debate that was never built: the flag was
+    # False and all five had ZERO readers anywhere in app/. A config entry with
+    # no reader is worse than dead code — it reads as a working feature you
+    # could switch on, and someone eventually tries.
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

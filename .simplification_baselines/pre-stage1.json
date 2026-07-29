@@ -1,0 +1,107 @@
+{
+  "behavioural": {
+    "action_distribution": {
+      "BUY": 7,
+      "HOLD": 86
+    },
+    "agent_seconds": {
+      "contradiction_shadow": {
+        "avg_s": 0.0,
+        "n": 98
+      },
+      "v3_board_of_directors": {
+        "avg_s": 96.6,
+        "n": 93
+      },
+      "v3_decision_synthesizer": {
+        "avg_s": 76.5,
+        "n": 93
+      },
+      "v3_delta_analyst": {
+        "avg_s": 36.0,
+        "n": 13
+      },
+      "v3_fundamental_analyst": {
+        "avg_s": 77.0,
+        "n": 107
+      },
+      "v3_junior_analyst": {
+        "avg_s": 84.9,
+        "n": 116
+      },
+      "v3_quant_analyst": {
+        "avg_s": 59.2,
+        "n": 110
+      },
+      "v3_regime_engine": {
+        "avg_s": 4.5,
+        "n": 98
+      },
+      "v3_tournament_debate": {
+        "avg_s": 185.9,
+        "n": 74
+      },
+      "v3_valuation_analyst": {
+        "avg_s": 48.1,
+        "n": 61
+      }
+    },
+    "artifact_presence_pct": {
+      "artifact_tags": 95.5,
+      "cycle_metadata": 100.0,
+      "debate_judge": 84.8,
+      "delta_report": 11.6,
+      "desk_note": 86.6,
+      "final_decision": 97.3,
+      "fundamental_report": 85.7,
+      "phase_outcomes": 85.7,
+      "quant_report": 85.7,
+      "regime_classification": 86.6,
+      "tournament_result": 84.8,
+      "trade_decision": 83.0,
+      "valuation_report": 39.3
+    },
+    "board_confidence_at_or_above_floor": {
+      "n_ge_70": 15,
+      "n_total": 109
+    },
+    "board_confidence_bands": {
+      "0": 5,
+      "45": 1,
+      "55": 29,
+      "60": 25,
+      "65": 34,
+      "75": 4,
+      "80": 1,
+      "85": 10
+    },
+    "desks_sampled": 112,
+    "guardrail_firings_total": 19,
+    "policy_action_distribution": {
+      "EXECUTE_BUY": 2,
+      "HOLD_NO_SIGNAL": 86,
+      "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE": 5
+    },
+    "provenance_distribution": {
+      "board_reasoned": 89,
+      "coerced_unshortable": 4
+    },
+    "sum_avg_seconds_per_ticker": 668.7,
+    "window_from": "2026-07-26"
+  },
+  "captured_at": "2026-07-29T03:10:56.135410+00:00",
+  "git_head": "73e9f06",
+  "label": "pre-stage1",
+  "structural": {
+    "app_loc": 102647,
+    "app_py_files": 418,
+    "crossrepo_diverged": 33,
+    "crossrepo_identical": 23,
+    "crossrepo_total": 56,
+    "debate_coordinator.py": 1504,
+    "orchestrator_if": 159,
+    "orchestrator_loc": 2984,
+    "orchestrator_try": 58,
+    "tournament.py": 1262
+  }
+}

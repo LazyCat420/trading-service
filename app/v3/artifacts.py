@@ -466,6 +466,17 @@ BEAR_REBUTTAL_SCHEMA: dict = {
     },
 }
 
+#: RETIRED 2026-07-29 — no producer. The three-turn linear debate
+#: (bull_argument -> bear_rebuttal -> bull_defense) was superseded by the
+#: tournament; only the first two survive, as the tournament's exception
+#: fallback. Nothing has queued a bull-defense turn since.
+#:
+#: Measured before retiring: 1,310 desks carry the key, 112 with real content,
+#: all of them June. July: 0. The schema is KEPT rather than deleted because
+#: those 112 desks are still replayed through ``validate_artifact`` and
+#: ``from_dict``; deleting it would make historical desks unreadable to answer
+#: a question nobody asked. It is retired, not shredded — see the retirement
+#: note on ``pending_evolution_fixes`` for the same reasoning.
 BULL_DEFENSE_SCHEMA: dict = {
     "type": "object",
     "required": ["summary", "defense_points", "concessions", "final_confidence"],

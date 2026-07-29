@@ -336,20 +336,18 @@ class Settings(BaseSettings):
     ARCHIVE_TTL_DAYS: int = 30  # archived summaries kept for 30d
     MAX_ANALYSES_PER_RECORD: int = 5  # multi-angle re-analysis cap per record
 
-    # ── Re-Analysis ──
-    REANALYSIS_ENABLED: bool = False  # gate: disabled until Phase 3 verified
-    REANALYSIS_SLOT_PCT: float = 0.60  # % of analysis slots for re-analysis
-    FRESH_DATA_SLOT_PCT: float = 0.40  # % of slots for fresh data analysis
+    # ── Re-Analysis ── REMOVED 2026-07-29: flag False, all three settings had
+    # ZERO readers in app/. "Disabled until Phase 3 verified" was written in a
+    # phase plan that never reached Phase 3.
 
     # ── Strategy Ranking ──
     MIN_TRADES_BEFORE_BENCH: int = 10  # need N trades before benching
     WIN_RATE_BENCH_THRESHOLD: float = 0.40  # bench prompts below 40% win rate
     WIN_RATE_BONUS_THRESHOLD: float = 0.55  # bonus confidence for >55% win rate
 
-    # ── Meta-Agent ──
-    META_AGENT_ENABLED: bool = False  # gate: disabled until Phase 6 verified
-    META_AGENT_INTERVAL_HOURS: int = 6  # how often the meta-agent runs
-    MAX_ACTIVE_GENERATED_PROMPTS: int = 20  # cap on active generated lenses
+    # ── Meta-Agent ── REMOVED 2026-07-29: flag False, all three settings had
+    # ZERO readers in app/. Same shape as Re-Analysis above — a phase gate for
+    # a phase that never shipped.
 
     # ── P&L Evaluation Intervals ──
     TRADE_EVAL_INTERVALS_DAYS: list[int] = [1, 3, 7, 14]

@@ -110,10 +110,11 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
     ],
     "ticker_validator": [],
-    # ── V3 pipeline agents without a module in app/v3/agents/ ──
-    # Bull-defense runs harness-side only; like bull/bear it argues purely
-    # from the SharedDesk (see AGENT_BUDGET_OVERRIDES: "No tools").
-    "v3_bull_defense": [],
+    # "v3_bull_defense" removed 2026-07-29: no caller ever queued it. The
+    # three-turn linear debate lost its third turn when the tournament took
+    # over; bull_argument/bear_rebuttal survive as the tournament's fallback,
+    # bull_defense does not. Historical artifacts stay readable (see
+    # BULL_DEFENSE_SCHEMA) — this only drops the grant for an agent that runs.
     # ── Tournament Debate Agents ──
     "tournament_pitch": [
         # Core data
@@ -338,7 +339,7 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "v3_valuation_analyst": 6,
     "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
-    "v3_bull_defense": 3,        # No tools — pure reasoning
+    # "v3_bull_defense" removed 2026-07-29 with its whitelist entry — no caller.
     "v3_debate_judge": 3,        # No tools — pure reasoning
     "v3_regime_engine": 5,
     "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk
