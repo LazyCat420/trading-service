@@ -1208,8 +1208,25 @@ async def run_tournament_debate(
              "catalyst_window": p.get("catalyst_window")}
             for p in pitches
         ],
+        # `direction` and `filter_bypassed` are persisted deliberately (2026-07-29
+        # harness audit). The live dicts carry both, but this projection dropped
+        # them, so every stored survivor read back as direction="?" — which made
+        # the tournament's bull/bear skew unauditable from the DB. The verdict
+        # could only be reconstructed by re-deriving the winner's persona from
+        # the free-text `summary`, and `filter_bypassed` (advanced WITHOUT
+        # clearing the backtest gate) was invisible entirely, so a bypassed
+        # bracket looked identical to a backtested one.
+        #
+        # backtest_pnl keeps its `or 0` coalesce because downstream comparisons
+        # and f"{x:.2f}" formatting crash on None; the None-vs-0 distinction is
+        # carried by `backtest_verified` instead, so "unbacktestable" stays
+        # distinguishable from "backtested flat".
         "survivors": [
-            {"persona": s.get("persona"), "claim": s.get("claim"), "backtest_pnl": s.get("backtest_pnl") or 0}
+            {"persona": s.get("persona"), "claim": s.get("claim"),
+             "backtest_pnl": s.get("backtest_pnl") or 0,
+             "backtest_verified": s.get("backtest_pnl") is not None,
+             "filter_bypassed": bool(s.get("filter_bypassed")),
+             "direction": s.get("direction")}
             for s in survivors
         ],
         "h2h": {
