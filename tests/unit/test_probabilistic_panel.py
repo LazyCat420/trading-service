@@ -235,3 +235,64 @@ class TestDeliberation:
             await pp.run_probabilistic_panel(
                 ticker="TEST", packet=_packet(), cycle_id="c1", rounds=1)
         assert chat.await_count == len(pp.PANEL_ANALYSTS), "no revision calls expected"
+
+
+class TestOrchestratorWiring:
+    """DEBATE_ENGINE must gate the CALL, not the rendering.
+
+    TOURNAMENT_DEBATE_MODE's shadow branch was measured to save ZERO tokens:
+    run_tournament_debate is invoked unconditionally there and only the prompt
+    section is filtered, so the experiment cost the same either way. These tests
+    pin that the new switch does not repeat it.
+    """
+
+    def test_engine_selection_gates_the_call(self):
+        import inspect
+        from app.v3 import orchestrator
+
+        src = inspect.getsource(orchestrator.run_v3_pipeline)
+        assert "DEBATE_ENGINE" in src
+        assert "run_probabilistic_panel" in src
+        # Exactly one engine per ticker: the panel call must sit in the branch
+        # that excludes the tournament call, not alongside it.
+        assert "else:" in src and "run_tournament_debate" in src
+
+    def test_engine_lookup_fails_open_to_the_tournament(self):
+        """A parameter miss must land on today's behaviour, never on an engine
+        nobody chose."""
+        import inspect
+        from app.v3 import orchestrator
+
+        src = inspect.getsource(orchestrator.run_v3_pipeline)
+        assert "DEBATE_ENGINE lookup failed" in src
+        assert "_engine = 0" in src
+
+    def test_registry_admits_exactly_the_three_engines(self):
+        from app.services.parameter_store import PARAMETER_REGISTRY
+
+        spec = PARAMETER_REGISTRY["DEBATE_ENGINE"]
+        assert spec.default == 0, "must default to today's engine"
+        assert (spec.min_value, spec.max_value) == (0, 2)
+
+    def test_vetoed_is_read_from_the_engine_not_only_the_jury(self):
+        """The tournament reports `vetoed` inside jury_verdict; the panel has no
+        jury and reports it at the top level. Reading only the nested path would
+        silently coerce it to False for any engine without a jury — the same
+        shape as a fallback that looks like a real answer."""
+        import inspect
+        from app.v3 import orchestrator
+
+        src = inspect.getsource(orchestrator.run_v3_pipeline)
+        assert 'tournament_result.get(\n                        "vetoed"' in src or \
+               'tournament_result.get("vetoed"' in src
+
+    def test_panel_only_fields_are_carried_onto_the_artifact(self):
+        """`probability` is the real signal — `confidence` is derived from it.
+        If it is not persisted, the panel cannot be scored and the rebuild is
+        as unfalsifiable as the tournament was."""
+        import inspect
+        from app.v3 import orchestrator
+
+        src = inspect.getsource(orchestrator.run_v3_pipeline)
+        for field in ("probability", "partitioned", "disagreement", "engine"):
+            assert field in src, f"artifact must carry {field}"

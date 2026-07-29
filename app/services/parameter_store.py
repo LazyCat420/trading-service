@@ -202,6 +202,31 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
                     "(debate still runs, still writes its artifact and still "
                     "vetoes, but no longer informs the Board's decision).",
     ),
+    # Debate engine selection.
+    #
+    # 0 = tournament (today), 1 = probabilistic panel, 2 = panel with shared
+    # evidence (the rho=1.0 control that shows whether information asymmetry is
+    # doing the work rather than plain ensembling).
+    #
+    # This gates the CALL, not the rendering. TOURNAMENT_DEBATE_MODE's shadow
+    # branch was measured to save ZERO tokens because run_tournament_debate is
+    # invoked unconditionally and only the prompt section is filtered — so the
+    # experiment cost the same either way. Only one engine runs per ticker here.
+    #
+    # Why a rebuild rather than deletion: the tournament's one stated
+    # justification was the jury veto, measured to have blocked ZERO decisions
+    # ever (docs/JURY_VETO_SCORECARD_2026-07-29.md). And scored for the first
+    # time against price_history (scripts/score_panel.py, n=98 since 07-01) the
+    # tournament lands at Brier 0.3090 — worse than a constant 0.5 (0.2500) and
+    # far worse than the base rate (0.2266), with resolution 0.0165.
+    #
+    # Default stays 0 until the panel is scored on live rows.
+    "DEBATE_ENGINE": ParamSpec(
+        default=0, min_value=0, max_value=2, direction=RISK_NEUTRAL, kind="int",
+        tier=TIER_BOARD,
+        description="0=tournament, 1=probabilistic panel, 2=panel with shared "
+                    "evidence (asymmetry-off control). Gates which engine RUNS.",
+    ),
     # Equation Lab
     "EQUATION_LAB_MAX_PER_RUN": ParamSpec(
         default=2, min_value=1, max_value=6, direction=RISK_NEUTRAL, kind="int",

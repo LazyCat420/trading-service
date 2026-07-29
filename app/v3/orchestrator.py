@@ -1205,13 +1205,48 @@ async def run_v3_pipeline(
                 claims=[],
             )
 
-            tournament_result = await run_tournament_debate(
-                ticker=ticker,
-                packet=packet,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                position_context=None,
-            )
+            # DEBATE_ENGINE gates the CALL, not the rendering. The older
+            # TOURNAMENT_DEBATE_MODE shadow branch was measured to save ZERO
+            # tokens — run_tournament_debate is invoked unconditionally there
+            # and only the prompt section is filtered — so the experiment cost
+            # the same either way. Exactly one engine runs per ticker.
+            #
+            # Fail-open to the tournament: a parameter miss must land on today's
+            # behaviour, never on an engine nobody chose.
+            try:
+                from app.services.parameter_store import get_param as _get_engine
+                _engine = int(_get_engine("DEBATE_ENGINE"))
+            except Exception as _e:  # noqa: BLE001
+                logger.warning("[V3] DEBATE_ENGINE lookup failed (%s) — tournament", _e)
+                _engine = 0
+
+            if _engine in (1, 2):
+                from app.cognition.debate.probabilistic_panel import (
+                    run_probabilistic_panel,
+                )
+                tournament_result = await run_probabilistic_panel(
+                    ticker=ticker,
+                    packet=packet,
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                    shared_evidence=(_engine == 2),
+                )
+                logger.info(
+                    "[V3] %s: panel P=%.2f spread=%.2f partitioned=%s (%d/%d analysts)",
+                    ticker, tournament_result.get("probability", 0.5),
+                    tournament_result.get("disagreement", 0.0),
+                    tournament_result.get("partitioned"),
+                    tournament_result.get("analysts_responded", 0),
+                    tournament_result.get("analysts_expected", 0),
+                )
+            else:
+                tournament_result = await run_tournament_debate(
+                    ticker=ticker,
+                    packet=packet,
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                    position_context=None,
+                )
 
             desk.append_artifact("tournament_result", {
                 "summary": tournament_result.get("rationale", "Tournament complete"),
@@ -1225,9 +1260,36 @@ async def run_v3_pipeline(
                 # board only ever saw the one-line rationale.
                 "h2h": tournament_result.get("h2h", {}),
                 "jury_verdict": tournament_result.get("jury_verdict", {}),
-                "vetoed": tournament_result.get("jury_verdict", {}).get("vetoed", False),
+                # Read the engine's own `vetoed` first. The tournament reports it
+                # inside jury_verdict; the panel has no jury and reports it at the
+                # top level, and reading only the nested path would silently drop
+                # it to False for any engine that does not have a jury.
+                "vetoed": bool(
+                    tournament_result.get(
+                        "vetoed",
+                        (tournament_result.get("jury_verdict") or {}).get("vetoed", False),
+                    )
+                ),
                 "risk_flags": tournament_result.get("risk_flags", []),
                 "total_tokens": tournament_result.get("total_tokens", 0),
+                # ── probabilistic panel fields (absent for the tournament) ──
+                # `probability` is the real signal; `confidence` above is derived
+                # from it for backward compatibility. `partitioned` records
+                # whether the run actually held information asymmetry — a run
+                # where the partition collapsed is N agents reading one packet,
+                # and scripts/score_panel.py voids it rather than averaging it in.
+                **({"engine": tournament_result["engine"]}
+                   if tournament_result.get("engine") else {}),
+                **({"probability": tournament_result["probability"]}
+                   if tournament_result.get("probability") is not None else {}),
+                **({"disagreement": tournament_result.get("disagreement", 0.0),
+                    "partitioned": tournament_result.get("partitioned"),
+                    "partition_fallbacks": tournament_result.get("partition_fallbacks", {}),
+                    "shared_evidence_control": tournament_result.get("shared_evidence_control", False),
+                    "views": tournament_result.get("views", []),
+                    "analysts_responded": tournament_result.get("analysts_responded", 0),
+                    "degraded": tournament_result.get("degraded", False)}
+                   if tournament_result.get("engine") == "probabilistic_panel" else {}),
                 # Stamped so a later analysis can split realized P&L into
                 # cycles where the verdict reached the Board and cycles where
                 # it did not. Without this field the shadow experiment is
