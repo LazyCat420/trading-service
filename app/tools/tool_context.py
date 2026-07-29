@@ -27,6 +27,12 @@ _cycle_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _agent_name_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "tool_agent_name", default=None
 )
+# The ticker under analysis. Added 2026-07-29: `tool_usage_stats.ticker` has a
+# column but every row was NULL, and a per-ticker pipeline always knows which
+# ticker a tool call belongs to — it was simply never carried to the tool layer.
+_ticker_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "tool_ticker", default=None
+)
 
 # Prism forwards its conversation UUID where a trading cycle id belongs;
 # never treat one as a cycle.
@@ -49,17 +55,34 @@ def normalize_agent_name(name: str | None) -> str | None:
     return n.lower() if n.isupper() else n
 
 
-def set_tool_context(agent_name: str | None = None, cycle_id: str | None = None) -> None:
+def set_tool_context(
+    agent_name: str | None = None,
+    cycle_id: str | None = None,
+    ticker: str | None = None,
+) -> None:
     """Record who is executing tools right now (per-async-task)."""
     if agent_name:
         _agent_name_var.set(normalize_agent_name(agent_name))
     if cycle_id and not _UUID_RE.match(cycle_id):
         _cycle_id_var.set(cycle_id)
+    if ticker and ticker.strip():
+        _ticker_var.set(ticker.strip().upper())
 
 
 def clear_tool_context() -> None:
     _agent_name_var.set(None)
     _cycle_id_var.set(None)
+    _ticker_var.set(None)
+
+
+def current_ticker() -> str | None:
+    """The ticker under analysis, or None.
+
+    Returns None rather than a sentinel: unlike agent/cycle, a wrong ticker is
+    not merely bad telemetry — `get_sec_filings` resolves its subject from this,
+    and inventing one would research the wrong company.
+    """
+    return _ticker_var.get()
 
 
 def _running_pipeline_cycle_id() -> str | None:
