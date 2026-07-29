@@ -826,6 +826,35 @@ async def run_v3_pipeline(
                         "reason": _why,
                     })
                     triage = "FULL"
+                    # `fa_skipped` MUST be cleared, or this override queues
+                    # NOTHING (2026-07-29). The branch chain below is
+                    # SKIP / (QUANT_ONLY and not fa_skipped) / (not fa_skipped)
+                    # — so when the Regime Engine already set fa_skipped=True,
+                    # an override to FULL matches no branch at all and the
+                    # pipeline dead-ends here: no FA, no QA, no valuation, no
+                    # debate, no board. The comment above says this "can only
+                    # ever ADD work"; without this line it silently removed all
+                    # of it.
+                    #
+                    # Observed on ORCL (cycle-v3-1785304312): the JA published
+                    # desk_note, this override fired, and the ticker then ran
+                    # 215s to "HOLD @ 0%, persona: unknown" with NO shared_desk
+                    # row and NO trade_results row. 5 such tickers since 07-28
+                    # (AMID, GM, WMT, JPM, ORCL) — 0% before that, 15% on 07-29.
+                    #
+                    # Clearing it is the conservative direction: FA was skipped
+                    # on a recommendation made when research was degraded, and
+                    # the whole point of the override is to distrust that
+                    # recommendation. _queue_agent dedupes on pending tasks and
+                    # MAX_RUNS_PER_AGENT caps re-runs, so re-queueing an
+                    # already-queued QA is a no-op.
+                    if fa_skipped:
+                        logger.warning(
+                            "[V3] %s: clearing fa_skipped — FA was skipped upstream "
+                            "but research was degraded, so the FULL override must "
+                            "re-queue it rather than queue nothing.", ticker,
+                        )
+                        fa_skipped = False
 
             if triage == "SKIP":
                 logger.info("[V3] %s: JA triage says SKIP — ending pipeline (no catalysts).", ticker)
@@ -1895,6 +1924,47 @@ async def run_v3_pipeline(
             save_desk(desk)
     except ValueError as e:
         logger.error("[V3] %s: Pipeline failed before reaching PM_DONE. Status: %s. Error: %s", ticker, desk.phase, e)
+        # PERSIST ANYWAY (2026-07-29). `save_desk` used to live only inside the
+        # try, so an illegal phase transition lost the entire desk: no
+        # shared_desk row, and therefore no trade_results row either, because
+        # _persist_trade_verdict is gated on has_artifact("trade_decision").
+        #
+        # The ticker still consumed the full pipeline budget. ORCL
+        # (cycle-v3-1785304312) burned 215s and vanished; 5 tickers since 07-28
+        # (AMID, GM, WMT, JPM, ORCL), 0% before that and 15% on 07-29 — an
+        # invisible and RISING failure rate, which is the worst combination.
+        #
+        # A desk that died mid-pipeline is exactly the desk worth keeping: it
+        # is the only record of where the pipeline stopped. Stamped so it can
+        # never be mistaken for a reasoned HOLD — the degraded sentinel already
+        # means "the pipeline tried to decide and failed", which is precisely
+        # what happened here.
+        try:
+            desk.cycle_metadata["pipeline_incomplete"] = {
+                "terminal_phase": str(desk.phase),
+                "error": str(e),
+                "had_final_decision": desk.has_artifact("final_decision"),
+            }
+            if not desk.has_artifact("final_decision"):
+                desk.append_artifact("final_decision", {
+                    "action": None,
+                    "confidence": 0,
+                    "reasoning": (
+                        f"Pipeline ended at {desk.phase} without producing a "
+                        f"decision: {e}"
+                    ),
+                    "decision_provenance": DecisionProvenance.BOARD_DEGRADED_FALLBACK.value,
+                })
+            save_desk(desk)
+            logger.warning(
+                "[V3] %s: persisted the incomplete desk at phase=%s so the "
+                "failure is countable rather than invisible.", ticker, desk.phase,
+            )
+        except Exception as persist_err:  # noqa: BLE001 — never mask the original
+            logger.error(
+                "[V3] %s: could not persist the incomplete desk: %s",
+                ticker, persist_err,
+            )
     try:
         from app.services.memory.store import MemoryStore
         decision = desk.trade_decision or desk.final_decision or {}
