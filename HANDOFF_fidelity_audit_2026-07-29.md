@@ -105,6 +105,12 @@ reclaims stale claims after 3h. **Confirmed alive** — it ran a full graded cyc
 (attempts 12 → 16) and correctly refused to push, capping at 0.25 because its
 own generated repro test passes on unmodified code.
 
+> **Reviewed 2026-07-29:** that cap is the negative control *working*.
+> `coral/repro.py:131-139` runs each generated test on unmodified code and
+> raises `ReproUnavailable` when it passes, so the test is discarded and the
+> bundle is capped rather than a bad control being trusted. The open item is
+> the generator's yield, not a missing gate — see "Still open" item 4.
+
 ---
 
 ## Removals
@@ -149,22 +155,92 @@ Revisit at n≈150.
 
 ## Still open (ranked)
 
+> **Reviewed 2026-07-29** against the code. Four of the seven items below were
+> wrong or stale; corrections are inline. Two are now closed. The review's own
+> lesson repeats this document's: items 4 and 6 were written from reading, and
+> both dissolved on inspection.
+
 1. **The Board holds 64% of the time** (312 HOLD / 134 BUY / 38 SELL). Biggest
    remaining lever on trade flow, entirely unexamined. I spent this session on
    the synthesizer's 24% veto — the smaller effect.
-2. **Flip `TOURNAMENT_DEBATE_MODE=1`** and let it run ~2 weeks. The 31% saving
-   is *available*, not *taken*. Nothing is measured until you flip it.
-3. **`pending_review.py` is byte-identical in trading-client**, and the UI
-   calls the CLIENT copy. Only the service copy was retired, so the dashboard
-   still shows those rows as pending.
-4. **CORAL cannot certify a fix** — its repro generator produces tests that
-   pass on unmodified code. That is the next real target for the loop.
+
+   **Review:** state the population before treating this as a regression.
+   `docs/DECISION_INTEGRITY_PLAN.md:31-42` measures 209 HOLD / 101 BUY / 90
+   SELL (52%) on `trade_results` and says explicitly *do not fix the HOLD rate*.
+   Between the two windows SELL fell 90 → 38 (22.5% → 7.9%) while the total
+   grew — and `coerce_unshortable_sell` (shipped ~07-25) rewrites unheld SELLs
+   to HOLD, 167 of 176 (95%). Moving ~52 SELLs carries 52% → ~64% on its own.
+   The first test is a pre-coercion histogram; if it lands near 52% the delta
+   is a rename, not behaviour, and there is no lever here. Decompose before
+   changing anything: the raw `action` column collapses genuine no-signal
+   HOLDs, coerced SELLs, confidence-floor blocks, synthesizer vetoes and
+   degrade/triage fallbacks into one number.
+
+2. ~~**Flip `TOURNAMENT_DEBATE_MODE=1`** and let it run ~2 weeks. The 31% saving
+   is *available*, not *taken*.~~ **Corrected.** Shadow mode saves **zero**
+   tokens. `run_tournament_debate` is called unconditionally
+   (`orchestrator.py:1199`); shadow only filters the section out of the Board's
+   context (`shared_desk.py:590`) and the whiteboard summary
+   (`whiteboard.py:281`). The debate still runs and still costs its 239k
+   tokens / 191s per ticker. Flipping the flag measures whether the *verdict*
+   is worth anything; the 31% is realized only by not running it. Superseded:
+   the tournament is being rebuilt (probabilistic panel, judged on Brier
+   against a self-consistency baseline).
+
+3. ~~**`pending_review.py` is byte-identical in trading-client**~~ **CLOSED
+   2026-07-29** (`trading-client@780edde`). It was worse than stated: the files
+   had already diverged (165 vs 228 lines) and the client's `approve_fix` /
+   `reject_fix` still issued live `UPDATE`s against the 96 rows the service
+   copy preserves as evidence. Also closed a hole the retirement missed —
+   `POST /fixes/{id}/deploy` skips approval entirely and reaches
+   `deploy_fix_to_disk()`, whose status gate admits `pending` (exactly what the
+   3 stranded rows are) and ends in a write to a source file. Refused at the
+   write (`trading-service@b9b35d5`). Note no React component imports
+   `getPendingFixes` — the stale rows were served by the endpoint, not rendered
+   by a panel.
+
+4. ~~**CORAL cannot certify a fix** — its repro generator produces tests that
+   pass on unmodified code.~~ **Corrected — the control already exists.**
+   `app/cognition/evolution/coral/repro.py:131-139` runs the generated test on
+   unmodified code and raises `ReproUnavailable` with, verbatim, "generated
+   test PASSES on unmodified code — it does not reproduce the failure, so it
+   cannot certify a fix". Sibling guards cover `rc == 5` (collected nothing)
+   and hangs; `grader.py:270-271` caps the bundle when `repro_test is None`.
+   What this session observed — a run capping at 0.25 — was the gate **working
+   and rejecting a bad test**, not a missing check. The real open item is the
+   generator's *yield*: too few attempts produce a usable control. That is a
+   prompt/model-quality problem, not a missing gate.
+
 5. **Inference staleness beyond positioning.** `positioning_read` now flags a
    stance built on corrected counts; the quant regime read, valuation verdict
    and fundamental thesis all sit on reconciled numbers and none flag it.
-6. **`v3_bull_defense` has an empty whitelist**, which grants the FULL catalog.
-   Pre-existing, verified on a clean tree.
-7. `consensus_strength` floor at n≈150.
+
+   **Review: confirmed, and the shape is precise.** All three reconcilers set
+   `_model_reported_*` / `_unreconciled_*` and append a `data_gaps` note
+   (`technical_baseline.py:615`, `valuation_block.py:985`,
+   `fundamental_block.py:351`), but none marks the *conclusion* stale the way
+   `reconcile_positioning_read` sets `stance_is_stale` +
+   `stance_stale_reason` (`alt_data_block.py:281-289`, rendered
+   `shared_desk.py:434`). Note these files already use `stale` for a different
+   thing — input snapshot age — so the new flags need distinct names.
+   Smallest consistent fix: `{quant,valuation,fundamental}_is_stale` +
+   `_stale_reason`, set in the `if original:` branch each reconcile already has.
+
+6. ~~**`v3_bull_defense` has an empty whitelist**, which grants the FULL
+   catalog.~~ **Struck — not a hazard.** The empty list is deliberate
+   (`tool_whitelists.py:116`, budget note at `:341` "No tools — pure
+   reasoning") and correctly closed at both call sites. `get_agent_tools`
+   distinguishes present-but-empty from absent, so `[]` yields `[]`; an
+   *unknown* agent also gets `[]` plus an error log, never the registry. In the
+   V3 path it is moot: `agent_runner.py:102` only calls `get_agent_tools` when
+   the whitelist is truthy, and the prompt builder emits "You have NO external
+   tools." The fail-open this item feared was real once — the function used to
+   return `None` and `debate_coordinator` expanded that to the full registry —
+   and was already fixed, with the reasoning preserved at
+   `tool_whitelists.py:25-29`.
+
+7. `consensus_strength` floor at n≈150. **(unchanged — correctly refused at
+   t=1.17, n=56)**
 
 ## Do NOT change
 
