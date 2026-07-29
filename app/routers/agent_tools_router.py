@@ -84,7 +84,13 @@ async def execute_tool(
     # cycle/agent. lazy-tool forwards x-agent / x-conversation-id — the latter
     # is often a Prism conversation UUID, which set_tool_context ignores; the
     # live pipeline singleton then supplies the actual cycle id.
-    set_tool_context(agent_name=payload.agent_name, cycle_id=payload.cycle_id)
+    set_tool_context(
+        agent_name=payload.agent_name,
+        cycle_id=payload.cycle_id,
+        # Carried so tools can resolve their own subject and so the telemetry
+        # row is attributable — `tool_usage_stats.ticker` was NULL on every row.
+        ticker=payload.ticker,
+    )
 
     tool_call = {
         "id": "call_lazy_tool_bridge",

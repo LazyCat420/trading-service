@@ -60,20 +60,53 @@ def _db_telemetry_callback(
     execution_ms: int,
     error_message: str | None,
 ) -> None:
-    """Log a tool usage event to PostgreSQL (fire-and-forget)."""
+    """Log a tool usage event to PostgreSQL (fire-and-forget).
+
+    Attribution comes from the tool CONTEXT when the caller does not supply it
+    (2026-07-29). Measured over 7 days: all 2,066 rows carried
+    agent_name='unknown', and ticker/cycle_id were not written at all — the
+    INSERT simply omitted both columns. So "which agent researches, and how
+    much?" was unanswerable, which is the question you have to answer before
+    you can rebalance research spend.
+
+    The SDK invokes this callback with five positional args and drops ticker
+    and cycle_id on the way (lazycat/tool_registry.py:848), even though its own
+    _log_usage accepts them — so they cannot arrive through the signature and
+    must be read from the contextvars the router populates.
+    """
     try:
         from datetime import datetime, timezone
         from app.db.connection import get_db
-        
-        agent_name = agent_name or "unknown"
+        from app.tools.tool_context import (
+            current_agent_name, current_cycle_id, current_ticker,
+        )
+
+        # Passed value wins; context is the fallback. current_agent_name()
+        # already resolves the AGENT_NAME env var and returns "unknown" last.
+        agent_name = agent_name or current_agent_name()
+        try:
+            cycle_id = current_cycle_id()
+        except Exception:
+            cycle_id = None
+        # current_cycle_id() returns the literal "default_cycle" when it cannot
+        # resolve one. That sentinel is fine for tools that need *a* key, but
+        # storing it here would invent a cycle that never ran and silently pool
+        # unrelated calls under one id. NULL is the honest answer.
+        if cycle_id == "default_cycle":
+            cycle_id = None
+        ticker = current_ticker()
+
         with get_db() as db:
             db.execute(
                 "INSERT INTO tool_usage_stats "
-                "(tool_name, agent_name, success, execution_ms, error_message, service_source, called_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "(tool_name, agent_name, ticker, cycle_id, success, execution_ms, "
+                " error_message, service_source, called_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 [
                     tool_name,
                     agent_name,
+                    ticker,
+                    cycle_id,
                     success,
                     execution_ms,
                     error_message,

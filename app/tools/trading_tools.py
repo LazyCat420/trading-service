@@ -161,19 +161,50 @@ def remove_from_watchlist(ticker: str) -> str:
         "first; prefer get_institutional_holdings when freshness doesn't matter."
     ),
     parameters={
+        # `symbol` is declared so it SURVIVES schema filtering, and `ticker` is
+        # no longer strictly required (2026-07-29). 14 of 47 calls over 7 days —
+        # 30% — failed before reaching this function with
+        #     "Malformed arguments: missing ['ticker']"
+        # The SDK lowercases keys, drops every undeclared one, and only THEN
+        # checks required (lazycat/tool_registry.py:534-551). Agents carrying
+        # the old EDGAR-style schema send action/cik/limit/symbol, all of which
+        # were dropped as undeclared — leaving `ticker` unset and the call
+        # rejected before `**_extra` could ever swallow anything.
+        #
+        # SEC filings are the highest-value primary source in the toolset, so a
+        # 30% rejection rate on a key-name mismatch is expensive. Declaring the
+        # alias and resolving the subject in-function fixes it without loosening
+        # anything: the ticker still has to come from somewhere real.
         "type": "object",
-        "properties": {"ticker": {"type": "string"}},
-        "required": ["ticker"],
+        "properties": {
+            "ticker": {"type": "string", "description": "Ticker symbol, e.g. AAPL."},
+            "symbol": {"type": "string", "description": "Alias for ticker."},
+        },
+        "required": [],
     },
     tier=0,
     source="sec",
 )
-async def get_sec_filings_tool(ticker: str, **_extra) -> str:
+async def get_sec_filings_tool(ticker: str = "", **_extra) -> str:
     # **_extra swallows stray args (action/cik/limit/...) sent by agents that
     # cached the old EDGAR-style schema from lazy-tool — they used to raise
     # TypeError and fail every first call.
     from app.collectors.sec_collector import collect_ticker_institutional
     from app.tools.finance_tools import get_institutional_holdings
+    from app.tools.tool_context import current_ticker
+
+    # Resolution order: explicit arg, declared alias, then the ticker the
+    # pipeline is actually analysing. The context fallback is safe because this
+    # runs inside a per-ticker analysis — but it is LAST, so an agent asking
+    # about a different company is always honoured over it.
+    ticker = (ticker or _extra.get("symbol") or current_ticker() or "").strip().upper()
+    if not ticker:
+        # Fail with the schema, not a stack trace: a bare error just gets
+        # retried verbatim by the model.
+        return json.dumps({
+            "error": "no ticker supplied and none in context",
+            "usage": 'get_sec_filings{"ticker": "AAPL"}',
+        })
 
     try:
         collected = await collect_ticker_institutional(ticker)

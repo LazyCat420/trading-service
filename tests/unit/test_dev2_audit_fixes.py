@@ -40,16 +40,28 @@ def test_tool_registry_log_usage_explicit_called_at(mock_get_db):
     mock_get_db.return_value.__enter__.return_value = mock_db
     
     from app.tools.registry import registry
-    
-    registry._log_usage(
-        tool_name="test_tool",
-        agent_name="test_agent",
-        ticker="AAPL",
-        cycle_id="cycle-123",
-        success=True,
-        execution_ms=100,
-        error_message=None,
-    )
+    from app.tools.tool_context import clear_tool_context, set_tool_context
+
+    # Attribution reaches the row through the CONTEXT, not the call signature.
+    # The SDK's _log_usage accepts ticker/cycle_id but invokes the telemetry
+    # callback with only five positional args (lazycat/tool_registry.py:848),
+    # dropping both on the way — so context is the only channel that survives,
+    # and app/routers/agent_tools_router.py populates it per request. Setting it
+    # here mirrors production rather than testing a path that cannot occur.
+    clear_tool_context()
+    set_tool_context(agent_name="test_agent", cycle_id="cycle-123", ticker="AAPL")
+    try:
+        registry._log_usage(
+            tool_name="test_tool",
+            agent_name="test_agent",
+            ticker="AAPL",
+            cycle_id="cycle-123",
+            success=True,
+            execution_ms=100,
+            error_message=None,
+        )
+    finally:
+        clear_tool_context()
     
     mock_db.execute.assert_called_once()
     args, kwargs = mock_db.execute.call_args
@@ -58,10 +70,24 @@ def test_tool_registry_log_usage_explicit_called_at(mock_get_db):
     
     # Check that called_at is in the columns
     assert "called_at" in sql.lower()
-    # Check that there are 7 placeholders/parameters (including called_at)
-    assert sql.count("%s") == 7
-    assert len(params) == 7
-    
+    # Placeholders must match parameters. Asserted against each other rather
+    # than a literal count: the literal was 7, and it failed the moment the
+    # INSERT legitimately grew to carry ticker and cycle_id (2026-07-29), even
+    # though the property this test exists to protect — an explicit called_at —
+    # was never at risk. Self-consistency still catches the real bug class (a
+    # column added without its parameter, or vice versa).
+    assert sql.count("%s") == len(params)
+
+    # Attribution columns must be WRITTEN, not just present in the schema.
+    # Measured before the fix: all 2,066 rows over 7 days had
+    # agent_name='unknown' with ticker and cycle_id NULL, because the INSERT
+    # omitted both columns entirely — so "which agent researches?" could not
+    # be answered at all.
+    for col in ("agent_name", "ticker", "cycle_id"):
+        assert col in sql.lower(), f"{col} missing from the INSERT"
+    assert "AAPL" in params, "ticker must reach the row"
+    assert "cycle-123" in params, "cycle_id must reach the row"
+
     # Check that the last parameter is a datetime object
     assert isinstance(params[-1], datetime)
 
