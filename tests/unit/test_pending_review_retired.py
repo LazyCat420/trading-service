@@ -157,3 +157,30 @@ def test_mutators_return_instead_of_raising():
     # an error path.
     assert pending_review.approve_fix("nope")["status"] == "archived"
     assert pending_review.reject_fix("nope")["status"] == "archived"
+
+
+# ── The deploy path must refuse too ─────────────────────────────────────────
+#
+# 2026-07-29: retiring approve_fix() was not sufficient. trading-client exposes
+# POST /fixes/{id}/deploy, which skips approval entirely and queues DEPLOY_FIX
+# into system_commands; eval_worker.run_deploy_fix() then calls
+# deploy_fix_to_disk(), whose status gate admits 'pending' — exactly what the 3
+# stranded rows still are. That path ends in a real write to a real source file,
+# so the refusal belongs at the write, not only at the approval.
+
+def test_deploy_to_disk_refuses_a_retired_fix():
+    from app.cognition.evolution import deployer
+
+    # deploy_fix_to_disk selects only 5 columns, in its own order:
+    # (id, target_type, target_name, proposed_fix, status). Status is 'pending'
+    # so the row passes the pre-existing status gate and reaches the refusal.
+    deployer_row = ("fix-may-2026", "prompt", "some_agent", "diff...", "pending")
+    db = _FakeDb([deployer_row])
+    with patch.object(deployer, "get_db", lambda: _fake_get_db(db)):
+        result = deployer.deploy_fix_to_disk("fix-may-2026")
+
+    assert result["archived"] is True
+    assert result["actionable"] is False
+    assert "RETIRED" in result["error"]
+    # Nothing may be written, backed up, or marked deployed.
+    assert not any("UPDATE" in s.upper() for s in db.statements)

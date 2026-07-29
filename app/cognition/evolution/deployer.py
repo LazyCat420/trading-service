@@ -108,6 +108,25 @@ def deploy_fix_to_disk(fix_id: str) -> dict:
         if status not in ("pending", "approved"):
             return {"error": f"Fix status is '{status}', cannot deploy"}
 
+        # 2026-07-29: the retirement made approve_fix() inert, and the module
+        # docstring above reasons that this deployer is therefore unreachable.
+        # It is not. trading-client's POST /fixes/{id}/deploy skips approval
+        # entirely and queues DEPLOY_FIX straight into system_commands, which
+        # eval_worker.run_deploy_fix() hands to this function — and the gate
+        # above admits 'pending', which is exactly what the 3 stranded rows
+        # still are. That path ends in a real write to a real source file.
+        # Refuse it here, at the point of the write, rather than trusting every
+        # caller to know the subsystem is retired.
+        return {
+            "error": (
+                "pending_evolution_fixes is RETIRED (superseded by CORAL); "
+                f"refusing to deploy archived fix {fix_id} to disk."
+            ),
+            "archived": True,
+            "actionable": False,
+            "superseded_by": "CORAL (evolution_repair_queue + evolution_attempts)",
+        }
+
         target_type = row[1]
         target_name = row[2]
         proposed_fix = row[3]

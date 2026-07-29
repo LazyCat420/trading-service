@@ -27,7 +27,13 @@ from app.v3.artifacts import validate_artifact as schema_check
 
 
 def _report(**fields):
-    base = {"summary": "s", "pillars": {}, "thesis_direction": "BULLISH", "confidence": 70}
+    # positioning_read joined the required set 2026-07-29 (artifacts.py) so the
+    # alt-data stance is enforced by the schema rather than by prompt text alone.
+    # A valid minimal report therefore carries it.
+    base = {
+        "summary": "s", "pillars": {}, "thesis_direction": "BULLISH", "confidence": 70,
+        "positioning_read": {"stance": "NEUTRAL"},
+    }
     base.update(fields)
     return base
 
@@ -81,6 +87,31 @@ class TestNearTermRead:
     def test_schema_accepts_the_new_fields(self):
         assert schema_check("fundamental_report", _report(
             horizon="QUARTERS", near_term_read={"direction": "NEUTRAL"})) == []
+
+
+class TestPositioningReadIsRequired:
+    """positioning_read must be enforced by the SCHEMA, not by prompt text.
+
+    Measured 2026-07-28: the alt-data block was injected into six agents and
+    cited by zero. Prompt-level "REQUIRED" lost to a 7,962-char desk view; the
+    fix that moved consumption 0/5 -> 5/5 was a required schema field. It was
+    shipped in the prompt and the field description but never added to the
+    schema's `required` list, so validate_artifact() could not report it
+    missing. This pins the enforcement.
+    """
+
+    def test_missing_positioning_read_is_reported(self):
+        report = _report()
+        del report["positioning_read"]
+        assert "Missing required field: positioning_read" in schema_check(
+            "fundamental_report", report)
+
+    def test_null_positioning_read_is_reported(self):
+        assert "Required field is None: positioning_read" in schema_check(
+            "fundamental_report", _report(positioning_read=None))
+
+    def test_present_positioning_read_passes(self):
+        assert schema_check("fundamental_report", _report()) == []
 
 
 class TestHorizonMatchedScoring:

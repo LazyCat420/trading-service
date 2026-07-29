@@ -88,7 +88,18 @@ DESK_NOTE_SCHEMA: dict = {
 
 FUNDAMENTAL_REPORT_SCHEMA: dict = {
     "type": "object",
-    "required": ["summary", "pillars", "thesis_direction", "confidence"],
+    # positioning_read added 2026-07-29. It was introduced as a "REQUIRED
+    # field" but lived only in the prompt — the exact enforcement the 07-28
+    # measurement found insufficient (injection alone: 0/5 desks cited the
+    # alt-data block; the field's own description below says "a REQUIRED field
+    # is what gets filled"). Listing it here is what makes validate_artifact()
+    # actually report it missing.
+    #
+    # Safe by construction: a missing required field only hard-fails when
+    # _artifact_collapsed() also fires (agent_runner.py:988), and that reads
+    # _SUBSTANTIVE_FIELDS, not this list. Worst case here is a logged warning
+    # plus _validation_warnings on the artifact — never a desk abort.
+    "required": ["summary", "pillars", "thesis_direction", "confidence", "positioning_read"],
     "properties": {
         "summary": {
             "type": "string",
