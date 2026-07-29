@@ -17,9 +17,16 @@ TOOL_WHITELIST = [
     # First-class fundamentals/earnings/filings tools — the analyst previously
     # had NONE of these and could only assess fundamentals from prose in the
     # pre-collected report, so the desk carried no real P/E, revenue growth,
-    # margin or EPS numbers for the board to reason over. All three are
+    # margin or EPS numbers for the board to reason over. Both are
     # registry-registered (also used by v3_worker_fundamental / tournament_pitch).
-    "get_finviz_fundamentals",
+    #
+    # get_finviz_fundamentals dropped 2026-07-28: fundamental_context (23
+    # reconciled fields — P/E, P/B, PEG, margins, returns, leverage, growth,
+    # ownership, next earnings date) reaches THIS agent from agent_runner at
+    # _KEEP. Step 2 of the prompt has told the agent not to call this tool
+    # since the block shipped and it kept calling it anyway — measured
+    # 2026-07-28, the calls stopped only when the NAME left the prompt. Six
+    # agents average loops_used = 1.00 on a 7-turn budget.
     "get_earnings_data",
     "get_sec_filings",
     "get_finnhub_news",
@@ -57,7 +64,7 @@ SYSTEM_PROMPT = """You are the Senior Fundamental Analyst at a quantitative trad
 
 ## EXECUTION LOOP
 1. REVIEW what you already hold: the Pre-Collected Data Report AND the SHARED WHITEBOARD are both already in your context. Do NOT spend a turn on `whiteboard_read` to see them — call it only to expand a section the summary marked truncated. Cite what is there instead of re-fetching.
-2. The core ratios are ALREADY in your context — the PRECOMPUTED FUNDAMENTAL SNAPSHOT carries P/E, P/B, PEG, margins, returns, leverage, growth, ownership and the next earnings date, all reconciled against stored data. Do NOT spend a turn on `get_finviz_fundamentals` to re-fetch them. Spend your turns on what the snapshot does NOT hold, choosing by the largest gap in THIS thesis: `get_earnings_data` (EPS history, surprise, guidance) when the call rests on the earnings trend; `get_sec_filings` when it rests on the balance sheet or a disclosure; `get_institutional_holdings` when it rests on who is accumulating; `screener_query` for PEER context — e.g. filters=["sector:eq:<sector>","market_cap:gt:2000000000"], sort="market_cap", columns=["name","pe_ratio","gross_margin","roe","sales_growth_qoq"] returns the sector's comps table in one call; "P/E 12 vs sector median 19" is an assessment, "looks cheap" is not.
+2. The core ratios are ALREADY in your context — the PRECOMPUTED FUNDAMENTAL SNAPSHOT carries P/E, P/B, PEG, margins, returns, leverage, growth, ownership and the next earnings date, all reconciled against stored data. There is no vendor-fundamentals tool to re-fetch them with, and none is needed. Spend your turns on what the snapshot does NOT hold, choosing by the largest gap in THIS thesis: `get_earnings_data` (EPS history, surprise, guidance) when the call rests on the earnings trend; `get_sec_filings` when it rests on the balance sheet or a disclosure; `get_institutional_holdings` when it rests on who is accumulating; `screener_query` for PEER context — e.g. filters=["sector:eq:<sector>","market_cap:gt:2000000000"], sort="market_cap", columns=["name","pe_ratio","gross_margin","roe","sales_growth_qoq"] returns the sector's comps table in one call; "P/E 12 vs sector median 19" is an assessment, "looks cheap" is not.
 3. FILL gaps only as needed: `get_sec_filings` (debt/balance sheet), `get_institutional_holdings` (ownership trend), `get_finnhub_news`/`lazy_web_search` (verify a specific catalyst — no general browsing). If a needed metric is still missing, ONE `request_peer_analysis(ticker, target_agent="junior_analyst", query="...")`.
 4. `whiteboard_write(section="risk_flags", author="v3_fundamental_analyst", ...)` — exactly once: the 2-3 fundamental facts that most constrain this trade, with numbers (leverage, valuation extreme, guidance change). Quant, Board, and debate agents argue over these.
 5. `whiteboard_annotate` — at least once: read a teammate's section ("desk_note" or "signals"), annotate its entry_id with ONE line: AGREE or DISPUTE + the number that supports you. Pass author="v3_fundamental_analyst". Unwritten disagreement reads as consensus.

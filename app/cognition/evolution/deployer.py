@@ -2,6 +2,14 @@
 Deployment logic for evolutionary fixes.
 Extracts DB resolution and file I/O to a standalone module.
 Now includes pre-deploy backup for rollback safety.
+
+RETIRED: this deployer resolves fixes out of ``pending_evolution_fixes``, which
+was superseded by CORAL (``evolution_repair_queue`` + ``evolution_attempts``).
+Measured 2026-07-28: 96 rows, the last one with status ``deployed`` dated
+2026-06-01 — nothing has shipped through here since. It is reachable only from
+the retired approve/deploy path, whose approval step is now a no-op. Left intact
+rather than deleted so the historical rows remain interpretable. See
+``app/services/logging/pending_review.py`` for the full retirement note.
 """
 
 import hashlib

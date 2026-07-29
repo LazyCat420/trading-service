@@ -57,18 +57,31 @@ def test_no_whitelist_exceeds_cap():
 
 
 def test_quant_analyst_has_calculator_tools():
-    """Quant Analyst agent MUST have access to key calculator tools."""
+    """Quant Analyst agent MUST have the calculator tools nothing precomputes.
+
+    This list has shrunk twice, both times because the answer moved INTO the
+    prompt rather than out of the agent's reach:
+      - calculate_risk_reward, dropped 2026-07-25 (zero calls in 60 days, and
+        nothing in the prompt asked for it).
+      - calculate_hrp_allocation and forecast_volatility_garch, dropped
+        2026-07-28: app/quant/context_block.py computes the GARCH next-day vol
+        forecast and this ticker's HRP target weight in code, and agent_runner
+        injects them as quant_math_context into v3_quant_analyst's prompt. The
+        agent was measured copying that block 127/127 faithfully — it already
+        has the numbers, so the tools were a slower second route to them
+        against a 7-turn budget.
+    What remains is the set with NO precomputed equivalent.
+    """
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
 
     quant_tools = set(AGENT_TOOL_WHITELISTS.get("v3_quant_analyst", []))
     # 2026-07-21 portfolio-math wave: calculate_position_size (flat
-    # cash-percent) was replaced by covariance-aware calculate_hrp_allocation.
+    # cash-percent) was replaced by covariance-aware sizing.
     required = {
         "calculate_stop_loss",
-        "calculate_risk_reward",
-        "calculate_hrp_allocation",
+        # Returns a MATRIX, not the single weight the block carries — step 5 of
+        # the prompt still names it for correlation structure.
         "get_portfolio_covariance",
-        "forecast_volatility_garch",
     }
     missing = required - quant_tools
     assert not missing, f"Quant Analyst agent missing calculator tools: {missing}"

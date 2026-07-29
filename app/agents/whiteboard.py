@@ -269,6 +269,23 @@ class Whiteboard:
 
             rows = sorted(rows, key=lambda r: _section_sort_key(r[1]))
 
+            # Shadow mode: the desk's compressed context is NOT the only way the
+            # debate reaches the Board — the orchestrator also writes
+            # tournament_result to the whiteboard, and this summary is injected
+            # into every agent's prompt. Gating only get_compressed_context
+            # would leave the verdict fully legible here and the experiment
+            # would measure nothing. Execution, storage and the veto are
+            # untouched; this drops the section from the PROMPT only.
+            try:
+                from app.v3.shared_desk import tournament_debate_mode, TOURNAMENT_MODE_SHADOW
+                if tournament_debate_mode() == TOURNAMENT_MODE_SHADOW:
+                    rows = [r for r in rows if r[1] not in ("tournament_result", "debate_judge")]
+            except Exception as mode_err:  # noqa: BLE001 — fail-open to active
+                logger.warning("[Whiteboard] debate-mode gate skipped: %s", mode_err)
+
+            if not rows:
+                return ""
+
             lines = ["\n=== SHARED WHITEBOARD ==="]
 
             for r in rows:

@@ -24,24 +24,34 @@ TOOL_WHITELIST: list[str] = [
     "whiteboard_annotate",
     "whiteboard_summarize",
     "get_portfolio_state",
-    # Read-only data fallbacks (registry-registered). The board was previously
+    # Read-only data fallback (registry-registered). The board was previously
     # 100% dependent on what upstream analysts wrote to the desk and could not
-    # verify or fill a single data gap itself — if the desk was thin (e.g. no
-    # numeric fundamentals), the verdict was grounded on nothing. These let the
-    # board confirm a price/indicator/fundamental when the desk is missing it.
-    # It should still PRIMARILY trust the desk, not re-run analysis.
+    # verify or fill a single data gap itself — if the desk was thin, the
+    # verdict was grounded on nothing. Price is the one gap a block does not
+    # already close, so get_market_data stays.
     "get_market_data",
-    "get_technical_indicators",
-    "get_finviz_fundamentals",
+    # get_technical_indicators and get_finviz_fundamentals dropped 2026-07-28:
+    # superseded by precomputed blocks that agent_runner injects into THIS
+    # agent's prompt unconditionally — technical_baseline_context (RSI-14,
+    # ATR-14, SMA-50/200, Bollinger position) and fundamental_context (23
+    # reconciled fields). Both are appended at _KEEP so they are never shed.
+    # A tool that returns exactly what the prompt already carries still costs
+    # a turn: measured 2026-07-28, get_finviz_fundamentals kept firing after
+    # fundamental_context made it redundant and stopped only when the name
+    # left the prompt. The board averages loops_used = 1.00 against a 7-turn
+    # budget, so a wasted turn is most of its budget.
     # Parameter governance: the board owns the risk envelope — it can read the
     # live limits and propose governed changes (board-tier params included).
     "get_parameters",
     "propose_parameter_change",
-    # Portfolio-level sizing context (2026-07-21): HRP baseline for the final
-    # position_size_pct, and the model-degradation monitor the policy gate
-    # enforces (a CUT status blocks the board's own BUYs — it should be able
-    # to see that coming).
-    "calculate_hrp_allocation",
+    # calculate_hrp_allocation dropped 2026-07-28: the HRP covariance-aware
+    # target weight for this ticker is already in quant_math_context, which
+    # agent_runner injects into this agent's prompt (v3_board_of_directors is
+    # in the guard list) at _KEEP. Same supersession as the two above.
+    #
+    # get_strategy_health KEPT: nothing precomputes it — the model-degradation
+    # monitor the policy gate enforces (a CUT status blocks the board's own
+    # BUYs) reaches the board through this tool alone.
     "get_strategy_health",
 ]
 

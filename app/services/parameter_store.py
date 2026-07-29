@@ -167,6 +167,41 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
         scheduler_job=("watchdesk_evaluation", "minutes"),
         description="Interval between Watch Desk trigger-evaluation passes.",
     ),
+    # Debate
+    #
+    # 0 = active (today's behaviour), 1 = shadow. In shadow mode the tournament
+    # debate STILL RUNS and still writes its tournament_result artifact — the
+    # jury veto, the risk flags and every telemetry row are untouched — but its
+    # WINNER is no longer rendered into the context the Board reads, so it can
+    # no longer move the decision.
+    #
+    # Measured over 14 days, the tournament is the single largest cost centre in
+    # the pipeline: 239,028 tokens and 191s per ticker, 31% of ALL pipeline
+    # spend. What that buys is not measurable in P&L. Splitting resolved
+    # decisions by which side won the debate:
+    #
+    #   bull-won: n=57  mean -0.18%
+    #   bear-won: n=67  mean -0.03%
+    #   difference -0.15%, t = -0.17
+    #
+    # That is indistinguishable from noise. It is NOT a wiring bug — the winner
+    # reaches the Board and visibly moves it (bull-won -> 65% BUY, bear-won ->
+    # 21% BUY). The signal it carries simply has no predictive content.
+    #
+    # The veto is the reason this is a shadow switch and not a deletion: it
+    # fired 12 times in 14 days (HOLD_POLICY_BLOCKED_JURY_VETO) and is evaluated
+    # from the artifact in _apply_policy_gates, downstream of any rendering.
+    # Flipping this parameter must not change that path at all.
+    #
+    # Default stays 0. Flip to 1 to run the experiment, then split realized P&L
+    # on tournament_result.shadow_mode to see whether the 31% bought anything.
+    "TOURNAMENT_DEBATE_MODE": ParamSpec(
+        default=0, min_value=0, max_value=1, direction=RISK_NEUTRAL, kind="int",
+        tier=TIER_BOARD,
+        description="0=active (debate winner reaches the Board), 1=shadow "
+                    "(debate still runs, still writes its artifact and still "
+                    "vetoes, but no longer informs the Board's decision).",
+    ),
     # Equation Lab
     "EQUATION_LAB_MAX_PER_RUN": ParamSpec(
         default=2, min_value=1, max_value=6, direction=RISK_NEUTRAL, kind="int",

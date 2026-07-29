@@ -350,11 +350,19 @@ class TestPromptsDoNotHardcodeAFixedToolOpening:
     def test_fundamental_points_at_the_block_not_the_tool(self):
         """`get_finviz_fundamentals` returns what `fundamental_context` already
         carries, reconciled. A tool named in a prompt outlives the block that
-        replaced it and keeps consuming turns."""
+        replaced it and keeps consuming turns.
+
+        STRENGTHENED 2026-07-28. This used to assert the prompt said "Do NOT
+        spend a turn on `get_finviz_fundamentals`" — and the agent kept calling
+        it anyway. Telling a model not to use a tool it still holds, while
+        still printing the tool's name, is not a removal. The tool is now out
+        of the whitelist and the name is out of the prompt, so the assertion
+        flipped: the block must be cited and the tool name must be ABSENT.
+        """
         from app.v3.agents.fundamental_analyst import SYSTEM_PROMPT
 
         assert "PRECOMPUTED FUNDAMENTAL SNAPSHOT" in SYSTEM_PROMPT
-        assert "Do NOT spend a turn on `get_finviz_fundamentals`" in SYSTEM_PROMPT
+        assert "get_finviz_fundamentals" not in SYSTEM_PROMPT
 
     def test_junior_selects_by_evidence_gap(self):
         from app.v3.agents.junior_analyst import SYSTEM_PROMPT
@@ -369,12 +377,22 @@ class TestPromptsDoNotHardcodeAFixedToolOpening:
 
         assert "identical pair every single time" in SYSTEM_PROMPT
 
-    def test_the_quant_prompt_is_deliberately_untouched(self):
-        """The quant already says FETCH ONLY WHAT IS MISSING, runs at 1.08
-        loops, and scores the HIGHEST quality of the four research desks
-        (82.2). Rewriting it to encourage more calls would undo the
-        invented-RSI fix that put its numbers in the prompt."""
+    def test_the_quant_prompt_still_fetches_only_what_is_missing(self):
+        """The quant runs at 1.08 loops and scores the HIGHEST quality of the
+        four research desks (82.2). Its selectivity instruction must survive —
+        rewriting it to encourage more calls would undo the invented-RSI fix
+        that put its numbers in the prompt.
+
+        RENAMED from _is_deliberately_untouched 2026-07-28. It WAS touched,
+        for the reason above rather than against it: the hedge it asserted
+        ("you do NOT need `get_technical_indicators`") named a tool the agent
+        no longer has, since technical_baseline_context supersedes it and the
+        tool left the whitelist. A prompt that names an unavailable tool costs
+        the agent a failed call out of a 7-turn budget, so the name is gone and
+        the step now points at the baseline block instead.
+        """
         from app.v3.agents.quant_analyst import SYSTEM_PROMPT
 
         assert "FETCH ONLY WHAT IS MISSING" in SYSTEM_PROMPT
-        assert "you do NOT need `get_technical_indicators`" in SYSTEM_PROMPT
+        assert "VERIFIED TECHNICAL BASELINE" in SYSTEM_PROMPT
+        assert "get_technical_indicators" not in SYSTEM_PROMPT

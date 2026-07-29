@@ -18,7 +18,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from app.v3.shared_desk import SharedDesk, DeskPhase, PhaseOutcome, DecisionProvenance
+from app.v3.shared_desk import (
+    SharedDesk, DeskPhase, PhaseOutcome, DecisionProvenance,
+    tournament_debate_mode, TOURNAMENT_MODE_SHADOW,
+)
 from app.v3.guardrails import CircuitBreaker, research_degraded
 from app.services.adaptive_concurrency import concurrency_controller
 from app.v3.telemetry import persist_telemetry
@@ -981,6 +984,10 @@ async def run_v3_pipeline(
                 "skipped": True,
                 "risk_flags": ["debate_skipped_by_regime"],
                 "total_tokens": 0,
+                # No debate ran, so there is no verdict to shadow — but the
+                # field must exist on every artifact or the P&L split silently
+                # drops the skip paths instead of excluding them by `skipped`.
+                "shadow_mode": False,
             })
             desk.append_artifact("debate_judge", {
                 "summary": skip_summary,
@@ -1040,6 +1047,7 @@ async def run_v3_pipeline(
                 "h2h": {}, "jury_verdict": {}, "vetoed": False, "skipped": True,
                 "risk_flags": ["debate_skipped_no_trade_available"],
                 "total_tokens": 0,
+                "shadow_mode": False,  # no debate ran; see the regime skip above
             })
             desk.append_artifact("debate_judge", {
                 "summary": skip_note, "action": "HOLD", "confidence": 0,
@@ -1211,6 +1219,11 @@ async def run_v3_pipeline(
                 "vetoed": tournament_result.get("jury_verdict", {}).get("vetoed", False),
                 "risk_flags": tournament_result.get("risk_flags", []),
                 "total_tokens": tournament_result.get("total_tokens", 0),
+                # Stamped so a later analysis can split realized P&L into
+                # cycles where the verdict reached the Board and cycles where
+                # it did not. Without this field the shadow experiment is
+                # unfalsifiable — the artifact looks identical either way.
+                "shadow_mode": tournament_debate_mode() == TOURNAMENT_MODE_SHADOW,
             })
 
             desk.append_artifact("debate_judge", {

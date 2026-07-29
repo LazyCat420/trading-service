@@ -7,6 +7,16 @@ when autonomously fixing prompts, scrapers, and strategies.
 Now integrates:
   - Target Mapping Engine: resolves issue names → actual file paths + contents
   - Test & Prove Environment: validates proposed fixes before the Judge rules
+
+RETIRED: this is the WRITER for ``pending_evolution_fixes``, the table CORAL
+(``evolution_repair_queue`` + ``evolution_attempts``) replaced. Measured
+2026-07-28: 96 rows total, last ``deployed`` row dated 2026-06-01. No module in
+``app/``, ``scripts/`` or ``cycle_main.py`` imports this council any more, so it
+writes no new rows. The council's judge_score was never comparable across rows —
+that incomparability is exactly what CORAL's ScoreBundle exists to fix (see
+``app/cognition/evolution/coral/attempts.py``). Kept, not deleted, so the 96
+archived rows remain interpretable. Full note in
+``app/services/logging/pending_review.py``.
 """
 
 import ast

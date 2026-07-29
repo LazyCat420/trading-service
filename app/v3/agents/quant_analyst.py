@@ -16,7 +16,15 @@ AGENT_NAME = "v3_quant_analyst"
 # that can save an equation it can never search, run, or backtest is a dead end.
 TOOL_WHITELIST = [
     "get_market_data",
-    "get_technical_indicators",
+    # get_technical_indicators dropped 2026-07-28: technical_baseline_context
+    # (RSI-14, ATR-14, SMA-50/200, Bollinger position, volume trend) is
+    # injected into THIS agent's prompt by agent_runner at _KEEP, reconciled
+    # against the stored `technicals` table — it returns the same quantities
+    # the tool would fetch. Measured 2026-07-28 on the sibling case: a tool
+    # named in a prompt outlives the block that replaced it and keeps burning
+    # turns until the NAME leaves the prompt, so step 2 was rewritten too.
+    # get_polygon_price_history stays: raw bars for swing structure and
+    # trendlines are exactly what the baseline block does NOT carry.
     "get_polygon_price_history",
     # get_options_flow, calculate_risk_reward and get_position_pnl dropped
     # 2026-07-25: ZERO calls in 60 days (scripts/tool_audit.py) AND nothing in
@@ -41,8 +49,17 @@ TOOL_WHITELIST = [
     # answer without asking. Kept anyway: step 5 directs it there for what the
     # block does NOT answer (correlation structure, alternative universes).
     "get_portfolio_covariance",
-    "calculate_hrp_allocation",
-    "forecast_volatility_garch",
+    # calculate_hrp_allocation and forecast_volatility_garch dropped
+    # 2026-07-28: both are computed in code by app/quant/context_block.py and
+    # arrive as quant_math_context in this agent's prompt (the GARCH
+    # next-day vol forecast and the HRP covariance-aware target weight for
+    # this exact ticker). The block was measured copied 127/127 faithfully —
+    # the agent already uses the numbers; the tools only offered a second,
+    # slower route to the same values against a 7-turn budget.
+    #
+    # get_portfolio_covariance KEPT: step 5 still names it as the escape hatch
+    # for what the block does NOT answer (correlation structure, alternative
+    # universes), and it returns a matrix, not the single weight the block has.
     "whiteboard_write",
     "whiteboard_read",
     "whiteboard_annotate",
@@ -71,9 +88,9 @@ If the baseline is marked STALE, say so in data_gaps and treat levels as indicat
 
 ## EXECUTION LOOP
 1. READ the VERIFIED TECHNICAL BASELINE and PRECOMPUTED QUANT MATH already in your context, plus the SHARED WHITEBOARD (also already injected — do not spend a turn re-reading it).
-2. FETCH ONLY WHAT IS MISSING. If the baseline covers RSI/ATR/SMA/Bollinger/volume, you do NOT need `get_technical_indicators` — call it only when a field you need is absent or flagged stale and freshness would change your call. `get_polygon_price_history` for pattern work the baseline can't answer (swing structure, trendlines). If a needed value is missing everywhere → estimate from SPY correlation ("Estimate: SPY ATR $4.50 × β0.65 ≈ $2.93") and mark it as an Estimate. Never treat 'no data' as 'no risk'.
-3. INTERPRET — this is your actual job, and the only part not already computed for you. Read the numbers in regime context rather than by threshold: RSI 71 in a downtrend is breakdown risk, not just "overbought"; ATR vs its 30d average PLUS the GARCH vol_signal sets volatility_regime LOW/NORMAL/HIGH/EXTREME (EXPANSION with a high prediction premium → escalate one notch and widen the suggested stop; CONTRACTION → vol-based fears are fading); Bollinger squeeze or extension; distance from SMA-200; volume confirming or diverging from price; max drawdown ≈ 2×ATR floor; position size from the ATR-derived stop. If the GARCH block is missing, call `forecast_volatility_garch`; if that errors, fall back to ATR alone and say so in data_gaps.
-5. PORTFOLIO CONTEXT — the precomputed block's HRP target weight IS your sizing baseline for a BULLISH thesis: a candidate highly correlated with the book gets a LOW hrp weight — that is covariance talking, reflect it in hrp_weight_suggestion and position_sizing_note instead of flat percent-of-cash sizing. Use `calculate_hrp_allocation`/`get_portfolio_covariance` only for what the block doesn't answer (e.g. correlation structure, alternative universes). Skip for SELL/NEUTRAL theses on unheld names.
+2. FETCH ONLY WHAT IS MISSING. RSI/ATR/SMA/Bollinger/volume come from the VERIFIED TECHNICAL BASELINE in your context — there is no indicator tool to call and none is needed; if a field is absent or flagged stale, say so in data_gaps rather than hunting for it. `get_polygon_price_history` for pattern work the baseline can't answer (swing structure, trendlines). If a needed value is missing everywhere → estimate from SPY correlation ("Estimate: SPY ATR $4.50 × β0.65 ≈ $2.93") and mark it as an Estimate. Never treat 'no data' as 'no risk'.
+3. INTERPRET — this is your actual job, and the only part not already computed for you. Read the numbers in regime context rather than by threshold: RSI 71 in a downtrend is breakdown risk, not just "overbought"; ATR vs its 30d average PLUS the GARCH vol_signal sets volatility_regime LOW/NORMAL/HIGH/EXTREME (EXPANSION with a high prediction premium → escalate one notch and widen the suggested stop; CONTRACTION → vol-based fears are fading); Bollinger squeeze or extension; distance from SMA-200; volume confirming or diverging from price; max drawdown ≈ 2×ATR floor; position size from the ATR-derived stop. If the GARCH line is missing from the PRECOMPUTED QUANT MATH block, fall back to ATR alone and say so in data_gaps — there is no vol-forecast tool to call.
+5. PORTFOLIO CONTEXT — the precomputed block's HRP target weight IS your sizing baseline for a BULLISH thesis: a candidate highly correlated with the book gets a LOW hrp weight — that is covariance talking, reflect it in hrp_weight_suggestion and position_sizing_note instead of flat percent-of-cash sizing. The weight itself is given — use `get_portfolio_covariance` only for what the block doesn't answer (e.g. correlation structure, alternative universes). Skip for SELL/NEUTRAL theses on unheld names.
 6. `run_equation`/`run_backtest` an existing library equation when one fits; `save_equation` ONCE if you derived a genuinely new/refined formula. Equation dfs also carry gk_vol (Garman-Klass vol) and mom_21d/63d/126d/252d momentum columns.
 7. `whiteboard_annotate` — the one desk interaction worth a turn: take the Fundamental's "risk_flags" (or the Junior's "desk_note") entry_id and post ONE line, AGREE or DISPUTE plus the level or indicator behind it. Pass author="v3_quant_analyst". A contradiction nobody wrote down never gets confronted, and you are the only desk holding the levels.
    (Your "signals" whiteboard section is posted from your artifact automatically — do not spend a turn on `whiteboard_write`.)

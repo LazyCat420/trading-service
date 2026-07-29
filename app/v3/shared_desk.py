@@ -18,6 +18,24 @@ from enum import Enum
 from typing import Any
 logger = logging.getLogger(__name__)
 
+TOURNAMENT_MODE_ACTIVE = "active"
+TOURNAMENT_MODE_SHADOW = "shadow"
+
+
+def tournament_debate_mode() -> str:
+    """Resolve TOURNAMENT_DEBATE_MODE to "active" or "shadow".
+
+    Fail-open: the shadow branch REMOVES evidence from the Board, so any
+    failure to read the parameter must land on today's behaviour rather than
+    silently blinding the decision. Only an explicit, honest 1 flips it.
+    """
+    try:
+        from app.services.parameter_store import get_param
+        return TOURNAMENT_MODE_SHADOW if int(get_param("TOURNAMENT_DEBATE_MODE")) == 1 else TOURNAMENT_MODE_ACTIVE
+    except Exception as e:  # noqa: BLE001 — a param miss must never blind the Board
+        logger.warning("[V3] TOURNAMENT_DEBATE_MODE lookup failed (%s) — staying active", e)
+        return TOURNAMENT_MODE_ACTIVE
+
 
 class DeskPhase(str, Enum):
     """Strict phase progression for the V3 pipeline."""
@@ -561,7 +579,17 @@ class SharedDesk:
                 )
             sections.append(text)
 
-        # Debate artifacts (only if requested)
+        # Debate artifacts (only if requested, and only in "active" mode).
+        #
+        # Shadow mode gates RENDERING, not execution: the debate still ran and
+        # tournament_result is still on the desk, so the jury veto in
+        # _apply_policy_gates (which reads desk.tournament_result directly, not
+        # this string) fires identically either way. What shadow removes is the
+        # winner's influence on the Board — measured at t = -0.17 against
+        # realized P&L for 31% of pipeline spend.
+        if include_debate and tournament_debate_mode() == TOURNAMENT_MODE_SHADOW:
+            include_debate = False
+
         if include_debate:
             if self.bull_argument:
                 summary = self.bull_argument.get("summary", "")

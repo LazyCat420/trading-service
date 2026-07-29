@@ -4,6 +4,14 @@ Rollback Monitor — Watches deployed fixes during probation.
 Called by AutoResearch at the end of each cycle. Compares pre-deploy
 vs post-deploy subsystem benchmarks. If metrics degrade across 2+
 probation cycles, auto-rollbacks the fix and records a dead-end.
+
+RETIRED: this monitor reads ``pending_evolution_fixes``, which was superseded by
+CORAL (``evolution_repair_queue`` + ``evolution_attempts``). Measured
+2026-07-28: 96 rows, last ``deployed`` row dated 2026-06-01. The probation query
+below requires ``probation_until > CURRENT_TIMESTAMP``, so with nothing deployed
+for ~2 months it already matches zero rows and this function is a no-op in
+practice. Left in place, unmodified, so the 96 historical rows stay readable.
+See ``app/services/logging/pending_review.py`` for the full retirement note.
 """
 
 import hashlib
