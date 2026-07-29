@@ -64,10 +64,26 @@ PERSONA_EVIDENCE_FILTER: dict[str, list[str]] = {
         "low", "support", "resistance", "trend", "technical", "indicator",
     ],
     "Macro_Sentiment": [
-        "fed_rate", "sector_flow", "news_sentiment", "reddit_score",
-        "interest_rate", "inflation", "gdp", "unemployment", "sentiment",
-        "macro", "catalyst", "industry", "social", "news", "youtube",
-        "congress", "institutional", "insider",
+        "fed_rate", "sector_flow", "reddit_score",
+        "interest_rate", "inflation", "gdp", "unemployment",
+        "macro", "catalyst", "industry", "regime",
+    ],
+    # Added 2026-07-29 for the probabilistic panel's 4th analyst.
+    #
+    # The panel needs four DISJOINT slices; there were only three categories, so
+    # the old tournament's four personas collapsed onto them — Momentum_Quant
+    # and Volatility_Quant both mapped to "Technical" and read the identical
+    # single fact. Four "independent" debaters, three views.
+    #
+    # Positioning is a genuinely separate question from macro: "who owns this
+    # and who is buying" is not "what is the cycle doing". The keywords below
+    # were MOVED out of Macro_Sentiment rather than duplicated — a fact
+    # reachable from two slices is not partitioned, and the whole mechanism is
+    # that each analyst holds evidence the others do not.
+    "Positioning": [
+        "congress", "institutional", "insider", "holdings", "ownership",
+        "positioning", "flow", "short_interest", "options", "social",
+        "news", "news_sentiment", "youtube", "retail",
     ],
 }
 

@@ -354,8 +354,11 @@ def reconcile_fundamental_metrics(
         artifact["_unreconciled_fundamentals"] = corrected
 
     if stale:
+        # [MATERIAL] — see the severity note in technical_baseline.py. A
+        # fundamentals snapshot ages slowly; 45+ days old is worth flagging but
+        # is not the same class of problem as having no row at all.
         artifact.setdefault("data_gaps", []).append(
-            f"Estimate: stored fundamentals snapshot is "
+            f"[MATERIAL] Estimate: stored fundamentals snapshot is "
             f"{baseline.get('age_days')} days old (as of {baseline['as_of']})"
         )
 

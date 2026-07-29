@@ -1169,11 +1169,20 @@ async def run_v3_pipeline(
             # filter_packet_for_persona fell back to the FULL packet for 3 of 4
             # pitch personas — every persona anchored on the same quant thesis
             # and the tournament produced 4 near-identical pitches.
+            # fact_type names are chosen to hit exactly ONE PERSONA_EVIDENCE_FILTER
+            # category each — that mapping is the partition, and a fact reachable
+            # from two categories means two analysts are not independent.
+            #
+            # Widened 2026-07-29 for the probabilistic panel: valuation_report was
+            # never in the packet at all (the debate could not see the valuation
+            # desk), and positioning had no fact of its own, so the 4th analyst
+            # would have shared the macro slice.
             facts = []
             for artifact_name, fact_type in (
                 ("fundamental_report", "fundamental_report"),
+                ("valuation_report", "fundamental_valuation_note"),
                 ("quant_report", "technical_quant_report"),
-                ("desk_note", "news_sentiment_desk_note"),
+                ("desk_note", "positioning_news_desk_note"),
                 ("regime_classification", "macro_regime_note"),
             ):
                 artifact = getattr(desk, artifact_name, None)

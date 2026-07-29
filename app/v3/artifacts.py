@@ -624,6 +624,27 @@ FINAL_DECISION_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            # Added 2026-07-29. The single most consequential field in the
+            # system carried NO description — the policy gate blocks any
+            # BUY/SELL below the floor of 70, and nothing anywhere told the
+            # model what the number was supposed to mean. The only anchor was a
+            # JSON example value that differs per persona (75/80/65).
+            #
+            # Between 07-20 and 07-26 the distribution slid 77.1 -> 61.6 (matched
+            # population, technicals fresh <=3d) and desks clearing the floor
+            # went 84% -> 4%, while the max stayed at 85 — an unanchored scale
+            # drifting under accumulated caveat text, not a cap. The scale
+            # definition lives in _BOARD_COMMON; this mirrors it so the contract
+            # is visible wherever the artifact is.
+            "description": (
+                "Probability (0-100) that THIS decision is the right call over "
+                "the next ~7 sessions. A forecast that gets scored, not a mood. "
+                "80-90 desks agree and the numbers are current; 70-79 the thesis "
+                "holds with ordinary gaps (the normal band for a decision worth "
+                "acting on); 55-69 genuinely mixed; below 55 you cannot tell. "
+                "A gap in a figure the thesis does not rest on is routine and is "
+                "not a reason to drop a band."
+            ),
         },
         "reasoning": {
             "type": "string",

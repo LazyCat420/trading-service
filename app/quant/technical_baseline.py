@@ -434,11 +434,15 @@ def build_technical_baseline_block(ticker: str) -> str:
         # warning — and the caller only logged on success, so it was invisible
         # in the logs too.
         return (
-            "TECHNICAL BASELINE: **NONE ON FILE** — this ticker has no stored "
-            "indicator row, so there is no verified RSI, SMA, ATR or Bollinger "
-            "level to anchor on. Do NOT state technical levels as fact and do "
-            "NOT infer them from the price alone; say so explicitly in "
-            "data_gaps and let that missing evidence lower your confidence."
+            "TECHNICAL BASELINE: **NONE ON FILE** [severity: BLOCKING for any "
+            "technically-driven thesis] — this ticker has no stored indicator "
+            "row, so there is no verified RSI, SMA, ATR or Bollinger level to "
+            "anchor on. Do NOT state technical levels as fact and do NOT infer "
+            "them from the price alone; say so explicitly in data_gaps. If your "
+            "thesis rests on technical levels, this should lower your "
+            "confidence materially. If it rests on fundamentals or a catalyst "
+            "that does not need them, note the gap and proceed on the evidence "
+            "you do have."
         )
 
     trd = b.get("age_trading_days")
@@ -619,9 +623,16 @@ def reconcile_risk_metrics(
         artifact["_unreconciled_metrics"] = corrected
 
     if stale:
+        # Severity-tagged 2026-07-29. Every gap used to read the same to the
+        # Board, and the measurement was stark: desks with ZERO gaps cleared the
+        # confidence floor 73% of the time, desks with ONE OR MORE cleared it 4%
+        # (Fisher p=4.2e-09, OR=62) — while mean confidence was identical either
+        # way. A single routine gap was acting as a trade veto. A baseline a few
+        # days old is MATERIAL (the levels are indicative, not absent); only a
+        # missing baseline is BLOCKING.
         artifact.setdefault("data_gaps", []).append(
-            f"Estimate: stored technical baseline is {baseline.get('age_days')} "
-            f"days old (as of {baseline['as_of']})"
+            f"[MATERIAL] Estimate: stored technical baseline is "
+            f"{baseline.get('age_days')} days old (as of {baseline['as_of']})"
         )
 
     return {

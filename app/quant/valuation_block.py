@@ -748,11 +748,13 @@ def compute_valuation_baseline(ticker: str) -> dict:
 # ──────────────────────────────────────────────────────────────────────
 
 _NO_DATA = (
-    "VALUATION MATH: **NONE ON FILE** — this ticker has no stored fundamentals "
-    "row, so there is no verified enterprise value, multiple, or implied growth "
-    "rate. Do NOT state valuation multiples as fact and do NOT infer them from "
-    "the price; say so explicitly in data_gaps and let that missing evidence "
-    "lower your confidence."
+    "VALUATION MATH: **NONE ON FILE** [severity: BLOCKING for a valuation-led "
+    "thesis] — this ticker has no stored fundamentals row, so there is no "
+    "verified enterprise value, multiple, or implied growth rate. Do NOT state "
+    "valuation multiples as fact and do NOT infer them from the price; say so "
+    "explicitly in data_gaps. If your thesis rests on valuation, this should "
+    "lower your confidence materially. If it rests on technicals, flows or a "
+    "catalyst, note the gap and proceed on the evidence you do have."
 )
 
 
@@ -988,8 +990,9 @@ def reconcile_valuation_metrics(
         artifact["_unreconciled_valuation"] = corrected
 
     if stale:
+        # [MATERIAL] — see the severity note in technical_baseline.py.
         artifact.setdefault("data_gaps", []).append(
-            f"Estimate: stored fundamentals snapshot is "
+            f"[MATERIAL] Estimate: stored fundamentals snapshot is "
             f"{baseline.get('age_days')} days old (as of {baseline['as_of']})"
         )
 

@@ -22,6 +22,37 @@ TOURNAMENT_MODE_ACTIVE = "active"
 TOURNAMENT_MODE_SHADOW = "shadow"
 
 
+#: Severity prefixes a producer may stamp on a data_gaps entry. Introduced
+#: 2026-07-29 because every gap read identically to the Board and the effect was
+#: binary rather than graded: desks with ZERO gaps cleared the confidence floor
+#: 73% of the time, desks with ONE OR MORE cleared it 4% (Fisher p=4.2e-09,
+#: OR=62) — while MEAN confidence was identical either way (61.0 vs 60.9). One
+#: routine gap was worth as much as a missing price history.
+_GAP_SEVERITIES = ("BLOCKING", "MATERIAL", "MINOR")
+
+#: Gaps written by an analyst LLM carry no tag. They are the ordinary kind — a
+#: missing 5-year margin trend, an unquantified regulatory risk — so they render
+#: as MINOR rather than inheriting the weight of a BLOCKING one.
+_DEFAULT_GAP_SEVERITY = "MINOR"
+
+
+def render_data_gap(gap: Any) -> str:
+    """Render one data_gaps entry with an explicit severity for the Board.
+
+    Producers may prefix an entry with ``[BLOCKING]`` / ``[MATERIAL]`` /
+    ``[MINOR]``; anything untagged is MINOR. The tag is surfaced rather than
+    stripped so the Board can weigh gaps instead of counting them — the prompt
+    rubric tells it that a MINOR gap in a figure the thesis does not rest on is
+    routine and should not by itself move a decision below the floor.
+    """
+    text = str(gap).strip()
+    for sev in _GAP_SEVERITIES:
+        prefix = f"[{sev}]"
+        if text.upper().startswith(prefix):
+            return f"{prefix} {text[len(prefix):].strip()}"
+    return f"[{_DEFAULT_GAP_SEVERITY}] {text}"
+
+
 def tournament_debate_mode() -> str:
     """Resolve TOURNAMENT_DEBATE_MODE to "active" or "shadow".
 
@@ -400,7 +431,7 @@ class SharedDesk:
                 )
             if data_gaps:
                 text += "\n**Data Gaps:**\n" + "\n".join(
-                    f"- DataGap: {g}" for g in data_gaps[:3]
+                    f"- DataGap: {render_data_gap(g)}" for g in data_gaps[:3]
                 )
             sections.append(text)
 
@@ -474,7 +505,7 @@ class SharedDesk:
                     )
             if data_gaps:
                 text += "\n**Data Gaps:**\n" + "\n".join(
-                    f"- DataGap: {g}" for g in data_gaps[:3]
+                    f"- DataGap: {render_data_gap(g)}" for g in data_gaps[:3]
                 )
             sections.append(text)
 
@@ -575,7 +606,7 @@ class SharedDesk:
             gaps = self.valuation_report.get("data_gaps") or []
             if gaps:
                 text += "\n**Data Gaps:**\n" + "\n".join(
-                    f"- DataGap: {g}" for g in gaps[:3]
+                    f"- DataGap: {render_data_gap(g)}" for g in gaps[:3]
                 )
             sections.append(text)
 

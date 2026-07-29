@@ -180,7 +180,12 @@ class TestContextCompression:
         ctx = desk.get_compressed_context()
         assert "Apple is doing well" in ctx
         assert "Revenue up 12%" in ctx
-        assert "DataGap: No insider data" in ctx
+        # Gaps carry a severity as of 2026-07-29, and an untagged one (this is
+        # how an analyst LLM writes them) renders MINOR. Before that every gap
+        # read identically to the Board and the effect was binary: desks with
+        # zero gaps cleared the confidence floor 73% of the time, desks with one
+        # or more cleared it 4%.
+        assert "DataGap: [MINOR] No insider data" in ctx
 
     def test_includes_fundamental_report(self):
         desk = SharedDesk(cycle_id="test-cycle", ticker="AAPL")
