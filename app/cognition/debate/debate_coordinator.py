@@ -79,6 +79,13 @@ PERSONA_TEMPERATURES: dict[str, dict[str, float]] = {
 }
 
 
+#: Counts every time the evidence filter fell back to the full packet, keyed by
+#: persona. A caller can read this to find out whether the debate it just ran
+#: was actually held under information asymmetry, or silently degenerated into
+#: N agents reading one packet. Reset per process; this is telemetry, not state.
+PARTITION_FALLBACKS: dict[str, int] = {}
+
+
 def filter_packet_for_persona(
     packet: EvidencePacket, persona_name: str,
 ) -> EvidencePacket:
@@ -87,10 +94,39 @@ def filter_packet_for_persona(
     Each persona only sees facts whose fact_type matches its allowed keywords.
     This prevents cross-persona fact anchoring — Technical can't cite P/E because
     it never saw the data.
+
+    **Why the partition matters, and why its failure is loud (2026-07-29).**
+    Information asymmetry is not a nicety here, it is the mechanism. Given
+    identical inputs, multi-agent debate is a martingale — expected correctness
+    does not improve across rounds — and LLM errors are ~60% correlated, so N
+    agents on one packet produce N correlated opinions and call the agreement
+    consensus. Partitioned evidence is what makes the disagreement informative.
+
+    Both fallbacks below therefore return the FULL packet, which is precisely
+    the state that destroys the mechanism. This has already happened in
+    production: the old ``fact_type`` names matched no Technical or Macro
+    keyword, the filter fell back for **3 of 4** pitch personas, and the
+    tournament produced four near-identical pitches from four "independent"
+    debaters. Nothing failed; a warning was logged and the run looked healthy.
+
+    The fallbacks are KEPT — a blind persona is worse than an over-informed one,
+    and this must never raise inside a debate — but they now record themselves
+    in ``PARTITION_FALLBACKS`` so a caller can assert the partition actually
+    held. A degradation nothing can observe is indistinguishable from success.
     """
     allowed_keys = PERSONA_EVIDENCE_FILTER.get(persona_name)
     if not allowed_keys:
-        return packet  # Unknown persona — pass full packet
+        # Unknown persona. Usually a name mismatch between the caller's persona
+        # labels and PERSONA_EVIDENCE_FILTER's keys — exactly the defect that
+        # forced tournament.py to carry its own PITCH_PERSONA_FILTER map.
+        PARTITION_FALLBACKS[persona_name] = PARTITION_FALLBACKS.get(persona_name, 0) + 1
+        logger.warning(
+            "[DEBATE] No evidence filter defined for persona %r — using the FULL "
+            "packet. This persona is not partitioned; the debate is that much "
+            "closer to N agents reading one packet. Known personas: %s",
+            persona_name, sorted(PERSONA_EVIDENCE_FILTER),
+        )
+        return packet
 
     filtered_facts = [
         f for f in packet.structured_facts
@@ -100,14 +136,35 @@ def filter_packet_for_persona(
     # If filtering removed ALL facts, fall back to full packet so the
     # persona isn't left completely blind (edge case: misclassified fact_types).
     if not filtered_facts and packet.structured_facts:
+        PARTITION_FALLBACKS[persona_name] = PARTITION_FALLBACKS.get(persona_name, 0) + 1
         logger.warning(
-            "[DEBATE] Evidence filter for %s matched 0/%d facts — using full packet",
+            "[DEBATE] Evidence filter for %s matched 0/%d facts — using FULL "
+            "packet. Its keywords %s match no fact_type present (%s), so this "
+            "persona is unpartitioned.",
             persona_name,
             len(packet.structured_facts),
+            sorted(allowed_keys),
+            sorted({f.fact_type for f in packet.structured_facts})[:8],
         )
         return packet
 
     return packet.model_copy(update={"structured_facts": filtered_facts})
+
+
+def partition_report(personas: list[str] | None = None) -> dict:
+    """Summarise whether the evidence partition is actually holding.
+
+    Returns ``{"fallbacks": {...}, "total": N, "partitioned": bool}``. A caller
+    that runs a debate can log or assert on this: ``partitioned=False`` means at
+    least one agent read the full packet and the run's "independent" views are
+    not independent. Intended for the acceptance harness and for any future
+    rebuild, which is worthless if the partition silently self-disables.
+    """
+    fallbacks = dict(PARTITION_FALLBACKS)
+    if personas is not None:
+        fallbacks = {k: v for k, v in fallbacks.items() if k in personas}
+    total = sum(fallbacks.values())
+    return {"fallbacks": fallbacks, "total": total, "partitioned": total == 0}
 
 
 
