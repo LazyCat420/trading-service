@@ -42,6 +42,56 @@ def _safe_import(name, *args, **kwargs):
     return __import__(name, *args, **kwargs)
 
 
+# ── Statistical inference inside the sandbox ─────────────────────────
+# scipy is NOT importable here (see _ALLOWED_IMPORT_ROOTS), so an equation
+# could not compute a normal CDF, a t-stat, or a confidence interval — it had
+# `np` and `pd` and nothing else. The measured consequence: agents reach for
+# the generic escape hatch instead. Over 30 days `run_equation` took 18 calls
+# and `execute_python` took 27 (100% success) across FOUR agents — quant,
+# board, regime engine and decision synthesizer. The demand for computation is
+# real and already expressed; what was missing was the statistics.
+#
+# `app/quant/stat_gates.py` imports only `math` + `numpy`, so every function
+# below is injectable with NO new dependency and no change to the import
+# allow-list or the security surface — they are pure functions over arrays.
+#
+# `deflated_sharpe_ratio` is the one that matters most here: an agent that
+# invents equations is multiple-testing by construction, and the DSR is the
+# correction for exactly that. An equation library without it is a machine for
+# manufacturing overfit Sharpes.
+#
+# Every name added here MUST also be named in the run_equation/save_equation
+# tool descriptions (app/tools/quant_tools.py) — those descriptions say what
+# the sandbox provides, and a helper the description does not mention is a
+# helper no model will ever call. Pinned by
+# tests/unit/test_sandbox_stat_helpers.py.
+from app.quant.stat_gates import (  # noqa: E402
+    deflated_sharpe_ratio,
+    full_gate,
+    is_oos_degradation,
+    min_track_record_length,
+    newey_west_tstat,
+    probabilistic_sharpe_ratio,
+    stationary_bootstrap_ci,
+    suggest_lag,
+)
+from app.quant.stat_gates import _norm_cdf as _norm_cdf_impl  # noqa: E402
+
+_STAT_HELPERS = {
+    "newey_west_tstat": newey_west_tstat,
+    "stationary_bootstrap_ci": stationary_bootstrap_ci,
+    "probabilistic_sharpe_ratio": probabilistic_sharpe_ratio,
+    "deflated_sharpe_ratio": deflated_sharpe_ratio,
+    "min_track_record_length": min_track_record_length,
+    "is_oos_degradation": is_oos_degradation,
+    "full_gate": full_gate,
+    "suggest_lag": suggest_lag,
+    # Exposed without the underscore: an equation needs a normal CDF far more
+    # often than it needs to know this is a private helper upstream.
+    "norm_cdf": _norm_cdf_impl,
+}
+
+
 SAFE_GLOBALS = {
     "__builtins__": {
         # Math/logic
@@ -68,6 +118,7 @@ SAFE_GLOBALS = {
     },
     "np": np,
     "pd": pd,
+    **_STAT_HELPERS,
 }
 
 # Maximum execution time for sandboxed code (seconds)
@@ -276,6 +327,10 @@ def execute_equation(
       - `df`: A pandas DataFrame with price_history + technicals for the ticker
       - `params`: A dict of user-supplied parameters
       - `np`, `pd`: numpy and pandas modules
+      - the statistics helpers in `_STAT_HELPERS` (Newey-West t-stat, stationary
+        bootstrap CI, probabilistic/deflated Sharpe, min track record, OOS
+        degradation, `full_gate`, `norm_cdf`). scipy is deliberately NOT
+        importable, so these are the only route to a distribution or a test.
 
     The code MUST assign its result to a variable called `result`.
 
