@@ -473,6 +473,14 @@ async def run_agent(
                 )
                 raise DoomLoopException(f"Agent {agent_name} exceeded active progress time limit (elapsed: {elapsed_s:.1f}s, turns: {tool_call_count})")
 
+        # Pre-call hook, built here so it closes over this run's ticker — the
+        # value the model keeps losing to bad JSON escaping.
+        from app.v3.tool_repair import make_pre_tool_hook
+
+        _pre_tool_hook = make_pre_tool_hook(
+            ticker=ticker, agent_name=agent_name, cycle_id=cycle_id,
+        )
+
         from app.services.prism_agent_registry import resolve_agent_id
         prism_agent_id = resolve_agent_id(agent_name)
         
@@ -542,6 +550,16 @@ async def run_agent(
                 session=session,
                 max_iterations=max_turns,
                 on_tool_result=_on_tool_result if enable_tools else None,
+                # PRE-call hook (2026-07-30). Repairs a malformed call before it
+                # executes, instead of recording the failure afterwards: the
+                # model routinely emits un-escaped JSON that loses the required
+                # `ticker`, and the pipeline already knows which ticker this
+                # desk is for. 18 rejections over 07-28..07-30, get_sec_filings
+                # at 26.3% failure over 14 days.
+                #
+                # Repairs, never blocks — and fail-closed on an allow-list that
+                # excludes every order and watchlist tool. See app/v3/tool_repair.py.
+                on_tool_call=_pre_tool_hook if enable_tools else None,
                 # Non-interactive pipeline: suppress Qwen <think> blocks (real
                 # prism honors an explicit thinkingEnabled=false per request;
                 # registration-level thinkingDefault is ignored there).
