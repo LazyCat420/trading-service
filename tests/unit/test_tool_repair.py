@@ -297,6 +297,59 @@ def test_the_allow_list_is_a_strict_subset_of_ticker_requiring_tools():
     assert REPAIRABLE_TICKER_TOOLS < requires_ticker
 
 
+# ── Reachability: a hook with no caller is not a feature ─────────────────
+
+
+def _agent_harness_call():
+    """The `AgentHarness(...)` call node inside app/agents/base_agent.py."""
+    import ast
+
+    src = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "app", "agents", "base_agent.py",
+    )
+    with open(src) as fh:
+        tree = ast.parse(fh.read())
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "AgentHarness"):
+            return node
+    raise AssertionError("no AgentHarness(...) call found in base_agent.py")
+
+
+def test_the_pre_hook_is_wired_into_the_harness():
+    """Structural, because the repair is worthless if nothing installs it.
+
+    Mocking all of `run_agent` (prism resolution, registry, session) to reach
+    one kwarg would be brittle enough to get deleted, and the existing suite
+    mocks `run_agent` wholesale, so nothing else exercises this construction.
+    This asserts the one fact that matters: the harness is built with an
+    `on_tool_call`.
+    """
+    kwargs = {kw.arg for kw in _agent_harness_call().keywords}
+
+    assert "on_tool_call" in kwargs, (
+        "base_agent builds AgentHarness without on_tool_call — the pre-hook "
+        "never runs, and app/v3/tool_repair.py is dead code"
+    )
+    assert "on_tool_result" in kwargs, "post-hook wiring regressed"
+
+
+def test_the_sdk_still_accepts_the_pre_hook():
+    """Guards an SDK bump: lazycat-sdk is shared, and this kwarg is load-bearing.
+
+    If a future version drops `on_tool_call`, passing it raises TypeError inside
+    every tool-enabled agent — a total pipeline outage, not a degraded hook.
+    """
+    import inspect
+
+    from lazycat.agent import AgentHarness
+
+    params = inspect.signature(AgentHarness.__init__).parameters
+    assert "on_tool_call" in params
+
+
 # ── Against the real validator, not a model of it ─────────────────────────
 
 
