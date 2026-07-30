@@ -3,8 +3,11 @@
 Continues `HANDOFF_harness_hooks_2026-07-30.md`. Two of its five open items are
 done; the other three are re-ranked below with what I learned about them.
 
-Merged and pushed: `cb35ab3` (item 1), `82067cb` (item 2), `60cb644` (crash cause).
-**Deploy: see "Not yet deployed" at the bottom — this is the one thing left.**
+Merged, pushed and **DEPLOYED** at `9fb797d` (2026-07-30 05:48 UTC) — container
+healthy, new code verified live inside it (allow-list 19 tools, `buy_stock`
+correctly NOT repairable, a repair smoke test injected the ticker end-to-end,
+`on_tool_call` wired). Deployed only after the running cycle drained.
+**Remaining: confirm both features fire on real traffic — see the bottom.**
 
 Suite: **2,186 passed, 20 skipped, 2 failed.** Both failures reproduce on clean
 master (`test_whitelists_grant_write_to_pm_and_board_only` long-standing,
@@ -241,21 +244,26 @@ Note `tool_schemas.json` was copied into the worktree so the allow-list guard
 tests could run; it is gitignored, so it was not committed and disappears with
 the worktree.
 
-## Not yet deployed
+## Deployed — what is still unconfirmed
 
-Everything is merged and pushed; **nothing is deployed.** A cycle was live and
-actively researching (`cycle-v3-1785386906`, LLY, junior analyst mid-flight) and
-deploying restarts the container, which strands every in-flight desk — i.e. it
-manufactures the exact defect item 1 detects. Deploy once
-`/api/v1/bot/cycle_running` reports `false`:
+Deployed at `9fb797d`. The wait was deliberate: a cycle was live and actively
+researching (`cycle-v3-1785386906`, LLY), and restarting the container strands
+every in-flight desk — it manufactures the exact defect item 1 detects. Deployed
+once `/api/v1/bot/cycle_running` returned `false` and that cycle's desk closed at
+`PM_DONE`.
 
-    curl -s http://10.0.0.16:3031/api/v1/bot/cycle_running
-    ./deploy.sh
+**What is verified**: the code is live and correct in the container (imports,
+allow-list size, `buy_stock` excluded, a repair injecting a ticker end-to-end,
+`on_tool_call` present in the harness construction).
 
-Both changes are inert until then: the invariant only records, and the pre-hook
-only runs inside the container's agent loop.
+**What is NOT yet verified**: that either feature fires on *real* agent traffic.
+Both need a cycle to run. `v3_invariant_violations` currently holds **0**
+`TOOL_ARGS_REPAIRED_PRE_FLIGHT` rows — I ran one smoke repair inside the
+container and **deleted that row**, precisely so this count stays honest. A
+synthetic row would have made the verification query below read positive without
+any real traffic.
 
-### First thing to check after deploying
+### The queries that close this out (run after the next cycle)
 
 Both features are new code paths on live traffic, so confirm they FIRE rather
 than assuming silence means health:
