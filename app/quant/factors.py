@@ -46,6 +46,7 @@ import numpy as np
 import pandas as pd
 
 from app.db.connection import get_db
+from app.quant.returns import keep_dominant_source
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def load_price_panel(
     with get_db() as db:
         rows = db.execute(
             f"""
-            SELECT ticker, date, close FROM price_history
+            SELECT ticker, date, close, source FROM price_history
             WHERE ticker IN ({placeholders})
               AND date >= %s AND date <= %s
               AND close IS NOT NULL AND close > 0
@@ -118,7 +119,14 @@ def load_price_panel(
     if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows, columns=["ticker", "date", "close"])
+    df = pd.DataFrame(rows, columns=["ticker", "date", "close", "source"])
+    # One vendor per ticker BEFORE the pivot. `aggfunc="last"` silently picks
+    # whichever vendor's row the sort happens to leave last for a shared date,
+    # so on the 38 dual-source tickers the panel mixed adjusted and raw closes
+    # across dates within a single column — the same undefined collapse
+    # `load_returns_matrix` was fixed for. Per-ticker, because two tickers may
+    # legitimately have different dominant vendors.
+    df = keep_dominant_source(df).drop(columns=["source"])
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
     panel = df.pivot_table(index="date", columns="ticker", values="close", aggfunc="last")
     panel = panel.sort_index()

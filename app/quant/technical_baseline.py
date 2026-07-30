@@ -125,11 +125,18 @@ def has_price_history(ticker: str) -> bool:
     ticker = (ticker or "").strip().upper()
     if not ticker:
         return False
+    from app.quant.returns import dominant_source_sql
+
+    # One vendor, or this counts ROWS where it means BARS. `source` is in the
+    # price_history primary key, so a dual-source ticker posts two rows per
+    # date and clears a "minimum tradeable bars" gate on half the required
+    # history — the gate would pass a ticker that is genuinely too thin.
     with get_db() as db:
         row = db.execute(
-            "SELECT COUNT(*) FROM (SELECT 1 FROM price_history WHERE ticker = %s "
-            "LIMIT %s) s",
-            [ticker, MIN_TRADEABLE_BARS],
+            f"SELECT COUNT(*) FROM (SELECT 1 FROM price_history "
+            f"WHERE ticker = %(ticker)s AND source = ({dominant_source_sql()}) "
+            f"LIMIT %(bars)s) s",
+            {"ticker": ticker, "bars": MIN_TRADEABLE_BARS},
         ).fetchone()
     return bool(row) and row[0] >= MIN_TRADEABLE_BARS
 
@@ -301,12 +308,22 @@ def _fetch_technicals(ticker: str) -> dict | None:
 def _fetch_price_and_volume(ticker: str) -> tuple[float | None, str | None]:
     """Latest close, and a volume trend read from the last 20 sessions."""
     from app.db.connection import get_db
+    from app.quant.returns import dominant_source_sql
 
+    # One vendor, INSIDE the limit. Two bugs otherwise, both on the desk's
+    # spot price: `rows[0]` is non-deterministic on a dual-source ticker
+    # (both vendors carry the same max date, and the vendors disagree by a
+    # mean 20.05%), and the 20-row window spans only ~10 real sessions, so
+    # the volume trend is measured over half the intended period.
     with get_db() as db:
         rows = db.execute(
-            "SELECT close, volume FROM price_history WHERE ticker = %s "
-            "ORDER BY date DESC LIMIT 20",
-            [ticker],
+            f"""
+            SELECT close, volume FROM price_history
+            WHERE ticker = %(ticker)s
+              AND source = ({dominant_source_sql()})
+            ORDER BY date DESC LIMIT 20
+            """,
+            {"ticker": ticker},
         ).fetchall()
     if not rows:
         return None, None

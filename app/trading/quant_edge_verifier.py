@@ -9,23 +9,36 @@ import logging
 import numpy as np
 import pandas as pd
 from app.db.connection import get_db
+from app.quant.returns import dominant_source_sql
 
 logger = logging.getLogger(__name__)
 
 def load_historical_data(ticker: str) -> pd.DataFrame:
     """
     Fetch price history and technical indicators merged on date.
+
+    One vendor only. `source` is part of the price_history primary key, and
+    this query has no LIMIT, so on the 38 dual-source tickers the unfiltered
+    form returned TWO rows for every shared date. That corrupts the frame
+    twice over: the `technicals` merge below fans each duplicated date out
+    again, and `_add_derived_features` then computes returns across a pair of
+    same-date prints, which injects a near-zero return and dilutes variance
+    (measured: CRH annualized vol reads 25.18% mixed vs 32.44% pinned).
+
+    This frame is the `df` handed to `run_equation`, so the corruption landed
+    in the one quant surface agents actually choose to use.
     """
     with get_db() as db:
         prices_df = _cursor_to_df(
             db.execute(
-                """
-                SELECT date, open, high, low, close, volume 
-                FROM price_history 
-                WHERE ticker = %s 
+                f"""
+                SELECT date, open, high, low, close, volume
+                FROM price_history
+                WHERE ticker = %(ticker)s
+                  AND source = ({dominant_source_sql()})
                 ORDER BY date ASC
                 """,
-                [ticker]
+                {"ticker": ticker}
             )
         )
         if prices_df.empty:

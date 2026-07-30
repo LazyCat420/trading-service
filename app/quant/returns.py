@@ -60,6 +60,22 @@ def _dominant_source_sql(alias: str = "price_history") -> str:
     """
 
 
+def dominant_source_sql(alias: str = "price_history") -> str:
+    """Public name for `_dominant_source_sql` — see that function.
+
+    The one-vendor rule is not a property of the evaluation layer; it is a
+    property of `price_history` itself, whose primary key is
+    `(ticker, date, source)`. Any module reading that table needs this filter,
+    so the helper is exported rather than reimplemented. Reimplementing it is
+    how `outcome_tracker` and `challenger` ended up with the same bug twice.
+
+    Callers must use NAMED parameters (`%(ticker)s`) and must place the filter
+    INSIDE any subquery that carries a `LIMIT`, or the limit is applied before
+    de-duplication and the window silently spans half as many dates.
+    """
+    return _dominant_source_sql(alias)
+
+
 def _keep_dominant_source(df: pd.DataFrame) -> pd.DataFrame:
     """Drop every row whose vendor is not the ticker's dominant vendor.
 
@@ -88,6 +104,16 @@ def _keep_dominant_source(df: pd.DataFrame) -> pd.DataFrame:
             dropped,
         )
     return kept.drop(columns=["_keep_source"])
+
+
+def keep_dominant_source(df: pd.DataFrame) -> pd.DataFrame:
+    """Public name for `_keep_dominant_source` — see that function.
+
+    Use this for MULTI-ticker frames, where the single-ticker
+    `dominant_source_sql()` filter does not apply. The frame must carry
+    `ticker` and `source` columns; drop `source` after filtering.
+    """
+    return _keep_dominant_source(df)
 
 
 def load_returns_matrix(

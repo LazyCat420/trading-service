@@ -7,6 +7,7 @@ Pure Python + ta library. No LLM calls. No hallucinations.
 import pandas as pd
 import ta
 from app.db.connection import get_db
+from app.quant.returns import dominant_source_sql
 
 
 import logging
@@ -44,18 +45,35 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
     with get_db() as db:
         # Most recent `period` sessions (inner ORDER BY DESC), then flipped to
         # chronological order for the indicator math.
+        #
+        # 2026-07-30 — the vendor filter is NOT optional here. `source` is part
+        # of the price_history primary key, so on the 38 dual-source tickers
+        # this query returned `period` ROWS spanning roughly half as many DATES
+        # (the LIMIT is applied before any de-duplication), and those rows
+        # alternated between two adjustment conventions: yfinance publishes
+        # dividend/split-adjusted closes, polygon raw. Mean absolute close
+        # difference between them is 20.05%.
+        #
+        # Both halves corrupt an indicator. The short calendar means a "200-day"
+        # SMA covers ~100 sessions. The alternating convention manufactures
+        # jumps that never happened — DRIP reads 133 daily moves over 15%
+        # unfiltered, against 1 once a vendor is pinned — so RSI, ATR and
+        # Bollinger width are computed from fabricated volatility. These rows
+        # feed the `technicals` table, which `technical_baseline.py` injects
+        # into every desk, so the error lands in front of the Board.
         rows = db.execute(
-            """
+            f"""
             SELECT date, open, high, low, close, volume FROM (
                 SELECT date, open, high, low, close, volume
                 FROM price_history
-                WHERE ticker = %s
+                WHERE ticker = %(ticker)s
+                  AND source = ({dominant_source_sql()})
                 ORDER BY date DESC
-                LIMIT %s
+                LIMIT %(period)s
             ) recent
             ORDER BY date ASC
         """,
-            [ticker, period],
+            {"ticker": ticker, "period": period},
         ).fetchall()
 
         if not rows or len(rows) < _MIN_SESSIONS:
@@ -231,10 +249,23 @@ def get_signals(ticker: str) -> str:
             signal = "BULLISH" if macd_h > 0 else "BEARISH"
             lines.append(f"MACD histogram: {macd_h:.4f} ({signal})")
 
-        # Moving averages
+        # Moving averages.
+        #
+        # Same vendor as the indicators above, deliberately: this close is
+        # compared against sma_20/50/200 to emit ABOVE/BELOW, and those were
+        # computed from the dominant-vendor series. Reading the spot price from
+        # the other vendor would compare an adjusted price to a raw moving
+        # average and flip the label on a 20%-mean spread. Without the filter
+        # the row is also simply non-deterministic — both vendors carry the
+        # same max date, so whichever the planner emits first wins.
         close = db.execute(
-            "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-            [ticker],
+            f"""
+            SELECT close FROM price_history
+            WHERE ticker = %(ticker)s
+              AND source = ({dominant_source_sql()})
+            ORDER BY date DESC LIMIT 1
+            """,
+            {"ticker": ticker},
         ).fetchone()
         if close:
             price = close[0]
