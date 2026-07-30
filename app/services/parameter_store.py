@@ -213,19 +213,56 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
     # invoked unconditionally and only the prompt section is filtered — so the
     # experiment cost the same either way. Only one engine runs per ticker here.
     #
-    # Why a rebuild rather than deletion: the tournament's one stated
-    # justification was the jury veto, measured to have blocked ZERO decisions
-    # ever (docs/JURY_VETO_SCORECARD_2026-07-29.md). And scored for the first
-    # time against price_history (scripts/score_panel.py, n=98 since 07-01) the
-    # tournament lands at Brier 0.3090 — worse than a constant 0.5 (0.2500) and
-    # far worse than the base rate (0.2266), with resolution 0.0165.
+    # 3 = NO DEBATE, and it is now the default. The tournament was retired on
+    # measurement 2026-07-29, not on preference. Its cost is certain and large:
+    # 77.7M of 275.9M pipeline tokens (28.2%) over 347 runs, 374 s/ticker.
+    # Against that, every benefit channel was tested and none survived:
     #
-    # Default stays 0 until the panel is scored on live rows.
+    #   * jury veto ......... blocked ZERO decisions, ever
+    #                        (docs/JURY_VETO_SCORECARD_2026-07-29.md)
+    #   * own calibration ... Brier 0.3090 vs base rate 0.2266 and a constant
+    #                        0.5 at 0.2500 — worse than useless as a probability
+    #                        (scripts/score_panel.py, n=98)
+    #   * selection ........ on desks the board traded, tourn-bull vs -bear
+    #                        separates realized P&L by -0.822pp (p=0.34). The
+    #                        FREE quant thesis_direction separates it by
+    #                        -0.771pp (p=0.35) — statistically indistinguishable,
+    #                        at zero marginal cost (n=137, degraded excluded)
+    #   * removal .......... where parameter_store says all the value is, the
+    #                        free signal is 6.5x better: quant-BEARISH desks the
+    #                        board held returned -1.85% (n=14) vs -0.29% (n=29)
+    #                        for tournament-bear
+    #   * incrementality ... within quant=BEARISH, bear vs bull is +0.33pp
+    #                        (p=0.84). It adds nothing where the desk already
+    #                        has a direction
+    #   * redundancy ....... winning_side is strongly dependent on the quant's
+    #                        thesis_direction, chi2=16.63 p<0.0001. It largely
+    #                        re-derives a signal already on the desk
+    #
+    # The earlier "directionally discriminating at p=3.2e-09" result measured
+    # the association between winning_side and the BOARD'S ACTION — i.e. that
+    # the board listens to it — not that it is right. That is the redundancy
+    # channel, not evidence of edge.
+    #
+    # Honest limit: at n=137 this cannot prove the tournament is HARMFUL. It
+    # shows no measurable benefit against a certain, large, measured cost, which
+    # is the standard being applied. Engines 0-2 remain selectable to re-run the
+    # comparison; flip DEBATE_ENGINE back to 0 to restore the old behaviour.
+    #
+    # Engine 3 does NOT synthesize a verdict. Fabricating a winning_side from
+    # the quant would hand the board a derived number dressed as a debate
+    # outcome — the same failure as the 171-of-305 invented RSIs. It appends no
+    # tournament_result and no debate_judge; every consumer is None-safe
+    # (`getattr(desk, "tournament_result", None) or {}` in _apply_policy_gates,
+    # `if tournament:` in shared_desk). Bull/bear/defense are a SEPARATE phase
+    # (_queue_debate_phase) and still run.
     "DEBATE_ENGINE": ParamSpec(
-        default=0, min_value=0, max_value=2, direction=RISK_NEUTRAL, kind="int",
+        default=3, min_value=0, max_value=3, direction=RISK_NEUTRAL, kind="int",
         tier=TIER_BOARD,
         description="0=tournament, 1=probabilistic panel, 2=panel with shared "
-                    "evidence (asymmetry-off control). Gates which engine RUNS.",
+                    "evidence (asymmetry-off control), 3=no debate (default; "
+                    "the tournament did not beat the free quant signal). "
+                    "Gates which engine RUNS.",
     ),
     # Equation Lab
     "EQUATION_LAB_MAX_PER_RUN": ParamSpec(
