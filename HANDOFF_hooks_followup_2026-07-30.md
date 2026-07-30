@@ -72,7 +72,36 @@ a malformed **order** with a guessed ticker. That is not a recovered call, it is
 an invented trade. Allow-list, asserted by test, with `buy_stock` proven to stay
 rejected by the same oracle that proves the others fixed.
 
-**5. The SDK already had the seam.** `AgentHarness` has accepted
+**5. Up to 14.5% of token spend was never recorded.** `persist_telemetry` ran
+once, at the very end of `run_v3_pipeline`, so each agent's cost sat in memory
+until then and a ticker that died first lost its whole cost record. Since
+2026-07-12 (when this telemetry begins — *any* coverage figure spanning that
+boundary averages two populations and reads as a partial outage):
+
+    PM_DONE        429 desks   99.5% have cost rows
+    ABORTED         40 desks    0.0%
+    DEBATE_DONE      9 desks    0.0%
+    RESEARCH_DONE   22 desks    4.5%
+
+71 desks with no cost record at a median 664,627 tokens each is **~47M tokens
+(~14.5%) invisible**, upper bound. Consequence worth carrying: any
+share-of-spend number taken from this table — including the previous handoff's
+"the tournament is 31% of all tokens" — was measured against a denominator
+missing the crashed tickers.
+
+**6. The stall detector had two shapes collapsed into one alarm**, found by
+watching it fire live rather than by re-reading it. NVDA
+(`cycle-observe-1785396275`, 07:28) stalled at `RESEARCH_DONE` but its
+`analysis_results` and 7 telemetry rows were **intact**, and its desk carried a
+`pipeline_incomplete` stamp: *"Invalid transition: RESEARCH_DONE → PM_DONE"*.
+That is the 07-29 ORCL fix working as designed — it turned "the desk vanishes"
+into "the desk persists at a non-terminal phase". The benign shape is therefore
+produced by a **deployed fix** and will recur, so a detector claiming loss over
+it would have been muted. Now carries `work_landed` / `explained` per desk and a
+`lost` count. An *explained* stall with no work still counts as lost: the stamp
+explains the phase, not the missing analysis.
+
+**7. The SDK already had the seam.** `AgentHarness` has accepted
 `on_tool_call` all along; trading-service just never passed one. It also passes
 the **same** `arguments` dict to `execute_tool` afterwards, so an in-place
 mutation is what the tool receives. No SDK change — which matters, because
@@ -89,6 +118,8 @@ lazycat-sdk is shared with html-notes/canvas/music.
 | `PreToolUse` hook (`app/v3/tool_repair.py`) | injects the missing required `ticker`; both production rejection paths confirmed cured against the SDK's own validator |
 | Repairs recorded as `TOOL_ARGS_REPAIRED_PRE_FLIGHT` | a repaired call vanishes from failure telemetry; without this the upstream bad-JSON bug goes invisible |
 | `record_ticker_crash` → `DESK_ABANDONED_MID_PIPELINE` | the crash was log-only; now the exception **type** is persisted (`asyncio.TimeoutError` stringifies to `""`) with the phase it died at |
+| `flush_agent_telemetry` on every `save_desk` | agent cost was written once at the very end, so ABORTED/DEBATE_DONE desks had **0%** coverage vs 99.5% for PM_DONE — up to **~47M tokens, ~14.5% of true spend, invisible** |
+| `DESK_STALLED` separates lost work from a stale phase | the first LIVE firing was the benign shape; collapsing them would have muted the check |
 | Reachability guards on both hooks | nothing exercised the `AgentHarness` construction, so deleting `on_tool_call` would have left `tool_repair.py` as dead code reading as shipped |
 
 Terminal phases are **derived** from `_VALID_TRANSITIONS`, not duplicated, so
@@ -270,16 +301,30 @@ every in-flight desk — it manufactures the exact defect item 1 detects. Deploy
 once `/api/v1/bot/cycle_running` returned `false` and that cycle's desk closed at
 `PM_DONE`.
 
-**What is verified**: the code is live and correct in the container (imports,
-allow-list size, `buy_stock` excluded, a repair injecting a ticker end-to-end,
-`on_tool_call` present in the harness construction).
+**Deployed image is `9fb797d` and is now BEHIND master.** Three later changes are
+merged and pushed but NOT deployed: the agent-cost flush, the stall-shape split,
+and the crash recorder's docstring. Deploy when
+`/api/v1/bot/cycle_running` is `false` — cycles arrive irregularly (gaps of
+1.5–6h are normal, so a quiet 2h is not a fault; verify against `shared_desk`
+before concluding the scheduler broke).
 
-**What is NOT yet verified**: that either feature fires on *real* agent traffic.
-Both need a cycle to run. `v3_invariant_violations` currently holds **0**
-`TOOL_ARGS_REPAIRED_PRE_FLIGHT` rows — I ran one smoke repair inside the
-container and **deleted that row**, precisely so this count stays honest. A
-synthetic row would have made the verification query below read positive without
-any real traffic.
+**What is verified in the deployed image**: imports, allow-list size, `buy_stock`
+excluded, a repair injecting a ticker end-to-end, `on_tool_call` present in the
+harness construction.
+
+**Verified on live traffic (the deployed subset)**: `DESK_STALLED_MID_PIPELINE`
+**fired for real** on NVDA at 07:28 — the first time this class of defect was
+caught automatically rather than by archaeology weeks later. It is also what
+exposed finding 6. Zero missing-ticker tool failures since deploy, but only 8
+tool calls in that window, so the repair hook is **not yet confirmed** on real
+traffic.
+
+**Still unconfirmed**: the pre-tool repair firing on real traffic.
+`v3_invariant_violations` holds **0** `TOOL_ARGS_REPAIRED_PRE_FLIGHT` rows. I ran
+one smoke repair inside the container and **deleted that row**, precisely so this
+count stays honest — a synthetic row would make the query below read positive
+with no real traffic. The 8 post-deploy tool calls are too few to conclude
+anything either way.
 
 ### The queries that close this out (run after the next cycle)
 
