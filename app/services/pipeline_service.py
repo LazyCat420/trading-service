@@ -1700,6 +1700,25 @@ class PipelineService:
             except Exception as ev_err:
                 logger.error(f"[PipelineService] Failed to trigger evaluation: {ev_err}")
 
+            # Cycle-level postconditions (2026-07-29). The per-ticker checks in
+            # the orchestrator catch work that vanished; these catch the slow
+            # failures — universe coverage, tool failure rates, decision drift,
+            # cost without research, attribution decay — each of which ran for
+            # days-to-weeks unnoticed during the harness audit because every
+            # individual cycle still looked fine.
+            #
+            # Records, never raises, and wrapped: an observer must never be the
+            # reason a cycle reports failure.
+            try:
+                from app.v3.invariants import check_cycle_complete
+
+                check_cycle_complete(cycle_id=cycle_id)
+            except Exception as inv_err:  # noqa: BLE001
+                logger.debug(
+                    "[PipelineService] cycle invariants failed (non-fatal): %s",
+                    inv_err,
+                )
+
             cls._state.update({
                 "status": "done",
                 "progress": "V3 cycle complete",
