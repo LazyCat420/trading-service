@@ -116,20 +116,28 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
 
     try:
         with get_db() as db:
+            # The entry price is read through the same one-vendor path as the
+            # exit price below. Reading them independently is what let a vendor
+            # SPREAD become P&L: price_history carries both a yfinance and a
+            # polygon print for ~19% of scored tickers, the two disagree by a
+            # mean 20.05% (ALLY 1.11%, DRIP 718%), and an unfiltered
+            # `ORDER BY date DESC LIMIT 1` picks between them non-
+            # deterministically. See app/quant/returns.py.
             rows = db.execute(
                 """
-                SELECT ar.ticker, ar.confidence,
-                       COALESCE(
-                           (SELECT ph.close FROM price_history ph
-                            WHERE ph.ticker = ar.ticker ORDER BY ph.date DESC LIMIT 1),
-                           NULL
-                       ) AS entry_price,
+                SELECT ar.ticker, ar.confidence, NULL::double precision AS entry_price,
                        ar.result_json
                 FROM analysis_results ar
                 WHERE ar.cycle_id = %s AND ar.confidence IS NOT NULL
                 """,
                 [cycle_id],
             ).fetchall()
+            from app.quant.returns import latest_close
+
+            rows = [
+                (ticker, confidence, latest_close(ticker), result_json)
+                for ticker, confidence, _entry, result_json in rows
+            ]
 
             for ticker, confidence, entry_price, result_json in rows:
                 # Extract action from result_json
@@ -264,11 +272,12 @@ def resolve_pending_outcomes() -> dict:
 
             for outcome_id, ticker, action, entry_price, created_at in pending:
                 try:
-                    # Get current price
-                    price_row = db.execute(
-                        "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                        [ticker],
-                    ).fetchone()
+                    # Same one-vendor path as the entry price, or the P&L is a
+                    # vendor spread rather than a return (see app/quant/returns.py).
+                    from app.quant.returns import latest_close
+
+                    _px = latest_close(ticker)
+                    price_row = (_px,) if _px is not None else None
 
                     if not price_row or price_row[0] is None:
                         logger.debug("[OUTCOME] Cannot resolve %s — no current price for %s", outcome_id, ticker)

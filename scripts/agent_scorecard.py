@@ -66,6 +66,12 @@ AGENTS: list[tuple[str, str]] = [
 
 DEADBAND_PCT = 1.0
 
+# Market benchmark for excess returns. Every completed desk sits inside a
+# ~5-week span, so raw forward moves mostly measure the market, not the
+# decision — and the forward windows OVERLAP heavily inside that span, which is
+# why this script reports an independent-window count rather than a p-value.
+BENCHMARK_TICKER = "SPY"
+
 
 def _stance(artifact: dict) -> int | None:
     """Directional stance in {-1, 0, 1}, or None when the agent makes no
@@ -217,28 +223,31 @@ def fetch_rows_from_prices(since: str, horizon: int = 7) -> list[dict]:
             [since],
         ).fetchall()
 
+        # Forward windows go through app/quant/returns.forward_move_pct: ONE
+        # vendor, one bar per date, and the full window or nothing.
+        #
+        # The previous inline query had no `source` filter, and price_history
+        # keeps `source` in its primary key — so on a dual-source ticker
+        # `LIMIT sessions` returned `sessions` ROWS spanning about half as many
+        # DATES. Measured 2026-07-30 on CRH: the +7-session move read +0.970%
+        # where the truth is -2.358%. A SIGN FLIP, on 146 of 773 completed
+        # desks (19%, 20 of 122 tickers). Every aggregate this script prints
+        # was drawing ~a fifth of its rows from a corrupted window.
+        from app.quant.returns import forward_move_pct
+
         out = []
         for cycle_id, ticker, created_at, desk_data in rows:
             desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
-            prices = db.execute(
-                """
-                SELECT close FROM price_history
-                WHERE ticker = %s AND close IS NOT NULL AND date >= %s
-                ORDER BY date ASC LIMIT %s
-                """,
-                [ticker, created_at.date() if hasattr(created_at, "date") else created_at,
-                 sessions],
-            ).fetchall()
-            if len(prices) < sessions:
-                continue  # window hasn't closed yet
-            try:
-                entry = float(prices[0][0])
-                exit_ = float(prices[-1][0])
-            except (TypeError, ValueError):
-                continue
-            # NaN survives the NOT NULL filter.
-            if not entry or entry != entry or exit_ != exit_:
-                continue
+            start = created_at.date() if hasattr(created_at, "date") else created_at
+            move = forward_move_pct(ticker, start, sessions)
+            if move is None:
+                continue  # window hasn't closed yet, or no clean data
+
+            # Excess over SPY across the SAME window. Raw moves are dominated by
+            # the market: every completed desk sits in a 5-week span, so a
+            # market-wide drift makes every decision look good (or bad)
+            # together and the action mix explains nothing.
+            bench = forward_move_pct(BENCHMARK_TICKER, start, sessions)
 
             decision = desk.get("trade_decision") or desk.get("final_decision") or {}
             out.append({
@@ -246,7 +255,9 @@ def fetch_rows_from_prices(since: str, horizon: int = 7) -> list[dict]:
                 "ticker": ticker,
                 "action": decision.get("action"),
                 "confidence": decision.get("confidence"),
-                "move_pct": (exit_ - entry) / entry * 100.0,
+                "move_pct": move,
+                "excess_pct": None if bench is None else move - bench,
+                "bench_pct": bench,
                 "outcome": None,
                 "created_at": created_at,
                 "desk": desk,
@@ -585,6 +596,41 @@ def main() -> int:
         print(f"BASELINE — always-long over the same desks: {naive:+.2f}% "
               f"(tape: {up} up / {down} down / {len(rows)-up-down} flat). "
               f"Beat THIS, not zero.")
+
+        # Excess over the market, when the benchmark window resolved.
+        matched = [r for r in rows if r.get("excess_pct") is not None]
+        if matched:
+            # Report the raw mean over the SAME matched subset, not over all
+            # rows. The benchmark only resolves for desks old enough to have a
+            # full forward SPY window, which skews earlier — quoting excess
+            # against the all-rows baseline compares two different populations
+            # and inflates the apparent edge.
+            m_raw = sum(r["move_pct"] for r in matched) / len(matched)
+            m_bench = sum(r["bench_pct"] for r in matched) / len(matched)
+            m_exc = sum(r["excess_pct"] for r in matched) / len(matched)
+            print(f"MARKET — on the {len(matched)}/{len(rows)} desks whose "
+                  f"{BENCHMARK_TICKER} window also closed: desks {m_raw:+.2f}% vs "
+                  f"{BENCHMARK_TICKER} {m_bench:+.2f}% = EXCESS {m_exc:+.2f}pp. "
+                  f"(This subset skews earlier than the full sample; its raw "
+                  f"mean is {m_raw:+.2f}% against {naive:+.2f}% overall.)")
+
+        # How many INDEPENDENT observations are really here. Forward windows
+        # inside a short decision span overlap almost completely, and the
+        # tickers are cross-correlated on top of that (PC1 ~47% of variance),
+        # so treating n desks as n samples overstates significance badly.
+        # Measured 2026-07-30: a 10-session comparison over decisions spanning
+        # 06-24..07-10 produced p=0.001 from roughly TWO independent windows.
+        dates = sorted({(r["created_at"].date() if hasattr(r["created_at"], "date")
+                         else r["created_at"]) for r in rows})
+        if dates:
+            span_days = (dates[-1] - dates[0]).days
+            blocks = max(1, int(span_days / max(args.horizon, 1)) + 1)
+            print(f"INDEPENDENCE — decisions span {dates[0]} .. {dates[-1]} "
+                  f"({span_days}d) at a {args.horizon}-session horizon: about "
+                  f"{blocks} NON-OVERLAPPING window(s) behind {len(rows)} rows. "
+                  + ("Treat any p-value here as decorative."
+                     if blocks < 10 else
+                     "Enough separation for cautious inference."))
     print(f"{'='*104}")
     print(f"{'agent':<24} {'n':>4} {'dir':>5} {'dec':>5} {'hit%':>6} {'95% CI':>14} "
           f"{'edge%':>7} {'brier':>6} {'confΔ':>6} {'flat%':>6}")
