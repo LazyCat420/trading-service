@@ -150,12 +150,19 @@ the PM/board leg, after the debate is already paid for. The container log is the
 one place the exception type is recorded; `grep "Ticker .* failed"` on it names
 the culprit and is the cheapest next step.
 
-**What is left**: `check_ticker_complete` still does not run on the exception
-path (it is not in a `finally`), so the four per-ticker invariants stay blind to
-a crashed ticker. Moving it into a `finally` is the remaining change. It is not a
-one-line move — `run_v3_pipeline` is ~2,100 lines of straight-line flow and
-`result` does not exist on the exception path, so the call needs a guard for the
-no-result case rather than an indentation change.
+**Do NOT "fix" the `check_ticker_complete` gap** — I measured it and it is not
+one. Those four per-ticker checks genuinely never run on the crash path, but
+wiring them there emits, for the two real cases:
+
+    desk exists, crashed  ->  PIPELINE_COMPLETE_BUT_NO_DECISION
+    crashed before desk   ->  TICKER_ANALYSED_BUT_NO_DESK
+
+The first is a row whose **name asserts something false** (the pipeline did not
+complete, it died) and the second is strictly weaker than the
+`phase_at_crash="NO_DESK"` + exception type `record_ticker_crash` already writes.
+Two observers are only worth having when they can disagree; these would be
+duplicates reading as corroboration. The reasoning is recorded in
+`record_ticker_crash`'s docstring so it does not get re-litigated.
 
 Beyond observability, nothing yet *recovers* the work: a ticker that dies after
 the debate has been paid for still produces no decision. Whether it should be
@@ -171,12 +178,23 @@ a product call — `BOARD_DEGRADED_FALLBACK` already exists for exactly this sha
 > Muting your own detector with your own fix is the failure mode this whole line
 > of work exists to prevent.
 
-### 2. Audit every remaining live/DB-touching test for the MagicMock trap
+### 2. ~~Audit the rest of the suite for the MagicMock trap~~ — DONE, clean
 
-I fixed the four tests I touched. **I did not audit the rest of the suite.**
-Any test that imports `get_db` and asserts on the result is asserting against a
-mock — and passing. `grep -rln "get_db" tests/` is the starting list; the tell is
-an assertion that would still hold if the query returned nothing.
+Audited all **83** test files touching `get_db`. **The trap was confined to the
+three live tests in `test_cycle_invariants.py`**, all fixed. A verified negative,
+so the suite can be trusted on this axis:
+
+- Two modules override the autouse `patch_get_db` — `test_db_constraints.py` and
+  `test_connection_pool_exhaustion.py`. Both are deliberate and documented, and
+  **neither reaches production**: the first uses the real *test* DB via
+  `patch_real_get_db`, the second mocks `_ensure_pool` so no pool is ever opened.
+- ~20 modules override `mock_db`. That is the intended composition — a locally
+  configured mock, which conftest's autouse patch then installs.
+- Integration tests use `real_db` / `patch_real_get_db` correctly.
+- The heuristic scan's other 19 hits were false positives: they assert on
+  *captured writes* (`cap["sql"]`, `cap["params"]`) or deliberately patch
+  `get_db` to raise, to prove fail-open. Worth knowing before re-running a
+  similar scan.
 
 ### 3. `SubagentStart`/`SubagentStop` + a hook registry
 

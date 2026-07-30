@@ -458,6 +458,20 @@ def record_ticker_crash(*, ticker: str, cycle_id: str, error: BaseException) -> 
     fires at the moment of failure and names the cause, and the cycle-level
     stall check still fires at cycle end as a backstop. Neither mutes the other,
     and the surviving phase is the only record of where the pipeline stopped.
+
+    ALSO deliberately does NOT call `check_ticker_complete` here, though the
+    crash path is the one place those four per-ticker checks never run (they sit
+    in the straight-line flow near the end of `run_v3_pipeline`, so a raise skips
+    them). Measured what it would actually emit, rather than assuming a gap:
+
+        desk exists, crashed  -> PIPELINE_COMPLETE_BUT_NO_DECISION
+        crashed before desk   -> TICKER_ANALYSED_BUT_NO_DESK
+
+    The first is a row whose NAME asserts something false — the pipeline did not
+    complete, it died — and the second is strictly less informative than the
+    `phase_at_crash="NO_DESK"` this function already records alongside the
+    exception type. Both would be duplicates that read as independent
+    corroboration. Two observers are only worth having when they can disagree.
     """
     if not ticker or not cycle_id:
         return []
