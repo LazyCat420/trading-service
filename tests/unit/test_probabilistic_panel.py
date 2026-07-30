@@ -257,22 +257,40 @@ class TestOrchestratorWiring:
         # that excludes the tournament call, not alongside it.
         assert "else:" in src and "run_tournament_debate" in src
 
-    def test_engine_lookup_fails_open_to_the_tournament(self):
-        """A parameter miss must land on today's behaviour, never on an engine
-        nobody chose."""
+    def test_engine_lookup_fails_open_to_the_default_engine(self):
+        """A parameter miss must land on the CHOSEN behaviour.
+
+        Updated 2026-07-29 with the retirement of the tournament (engine 3 is
+        now the default — see the measurement block on DEBATE_ENGINE in
+        app/services/parameter_store.py). This test used to require
+        `_engine = 0`, which was correct while 0 was the default. With the
+        default at 3 that same assertion would require a transient
+        parameter-store hiccup to silently resurrect 28.2% of pipeline spend,
+        so the invariant is "fail open to the default", not "fail open to the
+        tournament".
+        """
         import inspect
         from app.v3 import orchestrator
 
         src = inspect.getsource(orchestrator.run_v3_pipeline)
         assert "DEBATE_ENGINE lookup failed" in src
-        assert "_engine = 0" in src
+        idx = src.find('_get_engine("DEBATE_ENGINE")')
+        assert idx != -1
+        window = src[idx:idx + 400]
+        assert "_engine = 3" in window
+        assert "_engine = 0" not in window
 
-    def test_registry_admits_exactly_the_three_engines(self):
+    def test_registry_admits_exactly_the_four_engines(self):
+        """0=tournament, 1=panel, 2=panel/shared-evidence, 3=no debate.
+
+        Engines 0-2 stay selectable so the comparison can be re-run; 3 is the
+        default because the tournament did not beat the free quant signal.
+        """
         from app.services.parameter_store import PARAMETER_REGISTRY
 
         spec = PARAMETER_REGISTRY["DEBATE_ENGINE"]
-        assert spec.default == 0, "must default to today's engine"
-        assert (spec.min_value, spec.max_value) == (0, 2)
+        assert spec.default == 3, "the tournament must not run by default"
+        assert (spec.min_value, spec.max_value) == (0, 3)
 
     def test_vetoed_is_read_from_the_engine_not_only_the_jury(self):
         """The tournament reports `vetoed` inside jury_verdict; the panel has no
