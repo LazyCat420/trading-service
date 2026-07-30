@@ -53,6 +53,30 @@ def render_data_gap(gap: Any) -> str:
     return f"[{_DEFAULT_GAP_SEVERITY}] {text}"
 
 
+def render_stale_conclusion(artifact: dict | None) -> str:
+    """Render the code-written stale-conclusion flag, or "" if the call stands.
+
+    Set by the reconcile passes via
+    `app/quant/technical_baseline.py:mark_conclusion_stale`. Rendered here or it
+    reaches nobody: the Board and the debate read the desk through this
+    compressed view, not the raw artifact, so a flag that is computed and never
+    rendered is work nothing downstream can see.
+
+    Mirrors the wording of the positioning `stance_is_stale` note below —
+    weigh the corrected numbers, not the label built on the old ones.
+    """
+    if not isinstance(artifact, dict) or not artifact.get("_conclusion_is_stale"):
+        return ""
+    fields = artifact.get("_conclusion_stale_fields") or []
+    reason = artifact.get("_conclusion_stale_reason") or ""
+    which = ", ".join(str(f) for f in fields) or "the conclusion"
+    return (
+        f"\n> ⚠ STALE CONCLUSION — {which} was reasoned from numbers that have "
+        f"since been corrected; weigh the verified metrics above, not the call. "
+        f"({reason})"
+    )
+
+
 def tournament_debate_mode() -> str:
     """Resolve TOURNAMENT_DEBATE_MODE to "active" or "shadow".
 
@@ -443,6 +467,7 @@ class SharedDesk:
             text = (
                 f"## Fundamental Analysis\n"
                 f"**Direction: {direction} @ {conf}% confidence**\n{summary}"
+                f"{render_stale_conclusion(self.fundamental_report)}"
             )
             # Rendered for the same reason the quant's risk_metrics are: this
             # is what carries the fundamental side as NUMBERS into the debate
@@ -517,6 +542,7 @@ class SharedDesk:
             text = (
                 f"## Quantitative / Risk Analysis\n"
                 f"**Direction: {direction} @ {conf}% confidence**\n{summary}"
+                f"{render_stale_conclusion(self.quant_report)}"
             )
             if risk:
                 metrics = ", ".join(
@@ -542,6 +568,7 @@ class SharedDesk:
             text = (
                 f"## Valuation\n**Verdict: {verdict} @ {conf}% confidence**\n"
                 f"{summary}"
+                f"{render_stale_conclusion(self.valuation_report)}"
             )
             implied = self.valuation_report.get("price_implied_assumption")
             if implied:

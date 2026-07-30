@@ -227,6 +227,55 @@ def _finite(val) -> float | None:
     return out if out == out and out not in (float("inf"), float("-inf")) else None
 
 
+def mark_conclusion_stale(
+    artifact: dict,
+    conclusion_fields: list[str],
+    corrections: dict,
+    what: str,
+) -> None:
+    """Flag the conclusions that were reasoned from numbers we just replaced.
+
+    Reconciling a FACT does not reconcile the INFERENCE. Every reconcile pass
+    here corrects the metric and preserves the model's original, but until this
+    the conclusion built on the wrong number kept travelling as though it were
+    founded — a verdict of UNDERVALUED derived from a P/E that has since been
+    overwritten reads to the Board exactly like a verdict derived from the real
+    one.
+
+    `app/v3/alt_data_block.py:269-288` is the reference: it never rewrites the
+    stance, because judgment is the agent's job and a module that counts
+    filings has no opinion on what they mean. Same rule here. What we can do is
+    stop the stale conclusion presenting as sound, so the desk render and every
+    downstream reader can discount it.
+
+    The keys are underscore-prefixed and written ONLY by code. That is the
+    point: a model-authored `assumptions` field is guaranteed-populated and
+    never-verified, which is the failure this module exists to catch (measured:
+    171 of 305 quant reports carried an RSI matching no number on the desk, 148
+    of them from runs that made zero tool calls). Provenance has to come from
+    the verifier, not the claimant.
+    """
+    if not isinstance(artifact, dict) or not corrections:
+        return
+    present = [f for f in conclusion_fields if artifact.get(f) not in (None, "")]
+    if not present:
+        return
+
+    def _was(v):
+        return v.get("model") if isinstance(v, dict) else v
+
+    artifact["_conclusion_is_stale"] = True
+    artifact["_conclusion_stale_fields"] = present
+    # Just the evidence. The prose belongs to the renderer
+    # (`app/v3/shared_desk.py:render_stale_conclusion`) so the two do not each
+    # state the same sentence.
+    artifact["_conclusion_stale_reason"] = f"corrected {what}: " + ", ".join(
+        f"{field} stated {_was(was)}, actual "
+        f"{was.get('verified') if isinstance(was, dict) else '?'}"
+        for field, was in corrections.items()
+    )
+
+
 def _fetch_technicals(ticker: str) -> dict | None:
     from app.db.connection import get_db
 
@@ -618,6 +667,10 @@ def reconcile_risk_metrics(
 
     if original and apply_corrections:
         artifact["_model_reported_metrics"] = original
+        # thesis_direction is the call the corrected risk metrics fed.
+        mark_conclusion_stale(
+            artifact, ["thesis_direction"], corrected, "risk metrics"
+        )
     elif corrected:
         # Not corrected, but the disagreement is still evidence.
         artifact["_unreconciled_metrics"] = corrected
