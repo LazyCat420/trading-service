@@ -33,6 +33,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
+from app.quant.returns import dominant_source_sql, latest_close
 
 logger = logging.getLogger(__name__)
 
@@ -154,14 +155,16 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
             logger.warning("[Challenger] %s: no action produced — not logged", ticker)
             return
 
-        entry_price = None
-        with get_db() as db:
-            row = db.execute(
-                "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                [ticker],
-            ).fetchone()
-            if row:
-                entry_price = row[0]
+        # One vendor, via the audited helper. `source` is in the price_history
+        # primary key, so a bare `ORDER BY date DESC LIMIT 1` is
+        # non-deterministic on the 38 dual-source tickers: both vendors carry
+        # the same max date and whichever the planner emits first wins. Since
+        # the exit price below is read the same way, an entry priced from
+        # yfinance (adjusted) and an exit priced from polygon (raw) turn a
+        # ~20% mean vendor spread into fabricated challenger P&L. This is the
+        # bug `outcome_tracker` was fixed for; the challenger is a second,
+        # independent copy of that tracker and inherited it.
+        entry_price = latest_close(ticker)
 
         _ensure_table()
         agree = bool(champion.get("action")) and champion.get("action") == ch_action
@@ -223,9 +226,18 @@ def resolve_challenger_outcomes() -> int:
             for row_id, ticker, action, entry_price in pending:
                 if not entry_price:
                     continue
+                # Same vendor policy as the entry price above — see the comment
+                # there. Inlined rather than calling `latest_close()` because
+                # this runs inside an open connection for up to 50 pending
+                # rows; the helper would open a nested connection per row.
                 price_row = db.execute(
-                    "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                    [ticker],
+                    f"""
+                    SELECT close FROM price_history
+                    WHERE ticker = %(ticker)s
+                      AND source = ({dominant_source_sql()})
+                    ORDER BY date DESC LIMIT 1
+                    """,
+                    {"ticker": ticker},
                 ).fetchone()
                 if not price_row or price_row[0] is None:
                     continue

@@ -47,6 +47,7 @@ import numpy as np
 from scipy.special import logsumexp
 
 from app.db.connection import get_db
+from app.quant.returns import dominant_source_sql
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +74,22 @@ def load_market_returns(
     end = as_of or date.today()
     start = end - timedelta(days=int(lookback_sessions * 1.6))
     with get_db() as db:
+        # One vendor. Without the filter a dual-source ticker yields two rows
+        # per shared date, and the log-returns below are then taken across a
+        # pair of same-date prints from different adjustment conventions —
+        # which both injects near-zero returns (diluting the variance the HMM
+        # regimes are defined by) and manufactures jumps where the convention
+        # alternates. A volatility-state model is exactly the consumer this
+        # corrupts most.
         rows = db.execute(
-            """
+            f"""
             SELECT date, close FROM price_history
-            WHERE ticker = %s AND date >= %s AND date <= %s
+            WHERE ticker = %(ticker)s AND date >= %(start)s AND date <= %(end)s
               AND close IS NOT NULL AND close > 0
+              AND source = ({dominant_source_sql()})
             ORDER BY date ASC
             """,
-            [ticker.strip().upper(), start, end],
+            {"ticker": ticker.strip().upper(), "start": start, "end": end},
         ).fetchall()
 
     if len(rows) < 2:

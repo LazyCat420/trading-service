@@ -92,8 +92,27 @@ class TestWindowIsTheRecentEnd:
         assert sql.rstrip().endswith("ORDER BY date ASC")
 
     def test_period_is_passed_as_the_limit(self):
+        # Named parameters since 2026-07-30: the vendor filter is a scalar
+        # subquery that binds `%(ticker)s` twice, which positional binding
+        # cannot express. Assert the VALUE reaches the query, not the calling
+        # convention — pinning the convention is what made this test fail on a
+        # change that did not alter the window at all.
         db, _ = _run(_prices(dt.date(2024, 1, 1), 300))
-        assert db.select_params[1] == 500
+        params = db.select_params
+        values = params.values() if isinstance(params, dict) else params
+        assert 500 in values, f"period must be bound as the LIMIT, got {params!r}"
+
+    def test_the_window_pins_one_vendor(self):
+        """`source` is in the price_history PK, so an unfiltered window returns
+        `period` ROWS over ~period/2 DATES on a dual-source ticker, and mixes
+        adjusted with raw closes. Both corrupt every indicator written here."""
+        db, _ = _run(_prices(dt.date(2024, 1, 1), 300))
+        sql = " ".join(db.select_sql.split())
+        assert "source =" in sql, "the indicator window must pin one vendor"
+        # Inside the subquery, or the LIMIT is applied before de-duplication.
+        assert sql.index("source =") < sql.index("LIMIT"), (
+            "the vendor filter must sit INSIDE the LIMIT subquery"
+        )
 
 
 class TestUpsertCanCorrectExistingRows:
