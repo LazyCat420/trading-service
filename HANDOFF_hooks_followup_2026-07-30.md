@@ -301,12 +301,20 @@ every in-flight desk — it manufactures the exact defect item 1 detects. Deploy
 once `/api/v1/bot/cycle_running` returned `false` and that cycle's desk closed at
 `PM_DONE`.
 
-**Deployed image is `9fb797d` and is now BEHIND master.** Three later changes are
-merged and pushed but NOT deployed: the agent-cost flush, the stall-shape split,
-and the crash recorder's docstring. Deploy when
-`/api/v1/bot/cycle_running` is `false` — cycles arrive irregularly (gaps of
-1.5–6h are normal, so a quiet 2h is not a fault; verify against `shared_desk`
-before concluding the scheduler broke).
+**Deployed: `195bf87` at 2026-07-30 07:50 UTC**, container healthy, and all of
+the agent-cost flush, the stall-shape split and the repair hook verified live
+inside it. Deployed twice this session, each time only after
+`/api/v1/bot/cycle_running` returned `false`.
+
+Cycles arrive irregularly — gaps of **1.5–6h are normal**, so a quiet two hours
+is not a fault. Check `shared_desk` before concluding the scheduler broke; I
+spent time chasing that and it was nothing.
+
+A concurrent session also deployed over this one at 07:04. No harm — they build
+from master, so my code was in their image — but **verify what is actually
+running rather than assuming your deploy is the live one**: `docker inspect
+--format '{{.State.StartedAt}}'` plus an `exec` import check settles it in
+seconds.
 
 **What is verified in the deployed image**: imports, allow-list size, `buy_stock`
 excluded, a repair injecting a ticker end-to-end, `on_tool_call` present in the
