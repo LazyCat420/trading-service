@@ -103,6 +103,61 @@ def patch_real_get_db(real_db):
 
 
 @pytest.fixture
+def live_db():
+    """Read-only cursor on the PRODUCTION database, for calibration replays.
+
+    WHY THIS EXISTS
+    ---------------
+    `patch_get_db` below is autouse, so it patches `get_db` for EVERY test in
+    the suite. That means a test which imports `get_db` and queries "the live
+    database" actually queries a MagicMock: `fetchall()` returns `[]` and
+    `fetchone()` returns `None`.
+
+    A live audit built that way cannot fail. It reports "no completed cycles on
+    record" — indistinguishable from a genuinely empty database — which is how
+    the `-k live` checks in test_cycle_invariants.py came to pass their own
+    silence test while measuring nothing. An empty result is not evidence of
+    health; it is the absence of evidence.
+
+    Requesting this fixture overrides the autouse patch (monkeypatch/patch
+    applied later wins) with a REAL connection, so a live test can actually
+    fail. It skips rather than silently degrading when the audit is not
+    enabled — an audit that quietly turns into a no-op is the bug above.
+
+    Read-only is enforced on the SESSION, not by convention: this points at
+    production, and no test is worth a stray UPDATE there.
+    """
+    if not os.environ.get("TRADING_BOT_LIVE_AUDIT"):
+        pytest.skip("live audit — set TRADING_BOT_LIVE_AUDIT=1")
+
+    from contextlib import contextmanager
+
+    import psycopg
+
+    from app.config import settings
+    from app.db.connection import PooledCursor
+
+    try:
+        conn = psycopg.connect(
+            str(settings.DATABASE_URL), autocommit=True, connect_timeout=5
+        )
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"production database unreachable: {e}")
+
+    with conn:
+        conn.execute("SET default_transaction_read_only = on")
+        cursor = PooledCursor(conn)
+
+        @contextmanager
+        def _get_db():
+            yield cursor
+
+        with patch("app.db.connection.get_db", _get_db):
+            yield cursor
+        cursor.close()
+
+
+@pytest.fixture
 def mock_db():
     """Provide a mock PooledCursor that behaves like a real DB cursor."""
     cursor = MagicMock()

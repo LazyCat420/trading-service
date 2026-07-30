@@ -228,6 +228,7 @@ def check_persisted_fields(
 #   board HOLD share 58% -> 100%                 4 days
 #   tool attribution 100% -> 0.6%                ~3 weeks
 #   tournament: 31% of tokens, zero tool calls   never noticed
+#   desks stranded mid-pipeline (HOOD, 6/204)    never noticed
 #
 # THRESHOLDS ARE CALIBRATED AGAINST REAL DATA, not guessed. Each constant below
 # records the observed healthy range it was set against, because a check that
@@ -240,6 +241,13 @@ KIND_TOOL_FAILURE_RATE = "TOOL_FAILURE_RATE_CEILING"
 KIND_DECISION_DRIFT = "DECISION_DISTRIBUTION_DRIFT"
 KIND_AGENT_COST_NO_RESEARCH = "AGENT_BURNS_TOKENS_WITHOUT_RESEARCH"
 KIND_ATTRIBUTION_DECAY = "TELEMETRY_ATTRIBUTION_DECAY"
+KIND_DESK_STALLED = "DESK_STALLED_MID_PIPELINE"
+
+#: A whole cycle's worth of desks can stall at once — a deploy restarts the
+#: container and kills every in-flight desk (see the 3-stall cycle on 07-27).
+#: One violation row per cycle, carrying the roster in `detail`, keeps a bad
+#: deploy from writing hundreds of rows and burying everything else.
+STALL_ROSTER_CAP = 25
 
 #: Healthy tools measured 0-3% failure over 14 days (n>=200 each); the broken
 #: one sat at 27%. 15% separates them with room to spare.
@@ -293,7 +301,8 @@ def check_cycle_complete(*, cycle_id: str) -> list[str]:
     if not cycle_id:
         return violations
     for check in (_check_universe_coverage, _check_tool_failure_rates,
-                  _check_decision_drift, _check_agent_cost, _check_attribution):
+                  _check_decision_drift, _check_agent_cost, _check_attribution,
+                  _check_desks_reached_terminal):
         try:
             violations.extend(check(cycle_id) or [])
         except Exception as e:  # noqa: BLE001
@@ -427,6 +436,88 @@ def _check_agent_cost(cycle_id: str) -> list[str]:
                 agent=name, tokens=int(tok), avg_loops=float(loops or 0),
             ))
     return out
+
+
+def _terminal_phases() -> tuple[frozenset[str], str]:
+    """The phases a finished desk is allowed to sit in, plus the skip phase.
+
+    Derived from the orchestrator's own transition table — a terminal phase is
+    one with nowhere left to go — so adding a phase to `DeskPhase` cannot
+    silently leave this check asserting an out-of-date vocabulary. Falls back to
+    the literals if the import fails, because a check that raises here is a
+    check that reports "no stalls" on every cycle.
+    """
+    try:
+        from app.v3.shared_desk import _VALID_TRANSITIONS, DeskPhase
+
+        terminal = frozenset(
+            p.value for p, nxt in _VALID_TRANSITIONS.items() if not nxt
+        )
+        return (terminal or frozenset({"PM_DONE", "ABORTED"})), DeskPhase.INIT.value
+    except Exception:  # noqa: BLE001
+        return frozenset({"PM_DONE", "ABORTED"}), "INIT"
+
+
+def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
+    """Every desk this cycle built must have reached a terminal phase.
+
+    THE HOLE THIS CLOSES, and why it existed
+    ----------------------------------------
+    `HOOD` on 07-30 wrote a desk, advanced it to `DEBATE_DONE`, and stopped:
+    no `analysis_results` row, no `trade_results` row, the research and debate
+    already paid for and thrown away. **6 of 204 desks over 7 days, in 3 of 48
+    cycles** — and invisible to all seven of the checks that existed, for one
+    reason worth stating plainly:
+
+        `check_ticker_complete` runs at the END of a pipeline these tickers
+        never reached, and every cycle-level check above keys off
+        `analysis_results` — the table whose ABSENCE IS THE SYMPTOM.
+
+    Keying observability off the same table the bug corrupts builds a blind
+    spot exactly the shape of the bug. So this check reads `shared_desk`, the
+    one table a stalled desk is guaranteed to appear in: the desk row is
+    written on the way IN, so it exists precisely when everything downstream
+    does not.
+
+    CALIBRATION (measured, not guessed — 7 days to 2026-07-30)
+    ---------------------------------------------------------
+        PM_DONE        176   terminal, healthy       -> silent
+        INIT            22   triage skip, healthy    -> silent
+        DEBATE_DONE      5   abandoned mid-flight    -> FIRES
+        RESEARCH_DONE    1   abandoned mid-flight    -> FIRES
+
+    `INIT` is NOT a stall: the Triage Gate legitimately declines a ticker
+    before any phase advances, and 22 healthy skips a week would mute this
+    check within days. The distinction is that a stall has *already spent* the
+    research budget — which is what makes it worth an alert.
+    """
+    from app.db.connection import get_db
+
+    terminal, skip_phase = _terminal_phases()
+    allowed = set(terminal) | {skip_phase}
+
+    with get_db() as db:
+        rows = db.execute(
+            """
+            SELECT ticker, phase FROM shared_desk
+            WHERE cycle_id = %s AND phase <> ALL(%s)
+            ORDER BY ticker
+            """,
+            [cycle_id, sorted(allowed)],
+        ).fetchall()
+    if not rows:
+        return []
+
+    stalled = [{"ticker": r[0], "phase": r[1]} for r in rows]
+    return [record_violation(
+        KIND_DESK_STALLED, cycle_id=cycle_id,
+        # One row per cycle: a deploy mid-cycle strands every live desk at once.
+        ticker=(stalled[0]["ticker"] if len(stalled) == 1 else ""),
+        count=len(stalled),
+        stalled=stalled[:STALL_ROSTER_CAP],
+        truncated=max(0, len(stalled) - STALL_ROSTER_CAP),
+        terminal_phases=sorted(terminal),
+    )]
 
 
 def _check_attribution(cycle_id: str) -> list[str]:

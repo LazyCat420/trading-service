@@ -255,39 +255,53 @@ def _recent_summaries(limit=10):
 
 @pytestmark_live
 class TestLiveCyclesUpholdInvariants:
-    def test_recent_completed_cycles_are_self_consistent(self):
+    """Every test here MUST take the `live_db` fixture.
+
+    2026-07-30: these three read `get_db` directly, and conftest's autouse
+    `patch_get_db` meant they were reading a MagicMock — `fetchall()` returned
+    `[]`, so the first test skipped with "no completed cycles on record" while
+    the database held 675 completed cycles, and the other two raised TypeError
+    subscripting `None`. The live audit measured nothing for as long as it
+    existed.
+
+    `live_db` overrides that patch with a real read-only connection, so these
+    can fail. It also skips loudly when the audit is off, instead of degrading
+    into a check that always passes.
+    """
+
+    def test_recent_completed_cycles_are_self_consistent(self, live_db):
         summaries = _recent_summaries()
-        if not summaries:
-            pytest.skip("no completed cycles on record")
+        assert summaries, "no completed cycles on record — this proved nothing"
 
         failures = {
             s["cycle_id"]: violations(s) for s in summaries if violations(s)
         }
         assert not failures, f"invariant violations: {failures}"
 
-    def test_no_live_outcome_is_scored_at_zero_confidence(self):
+    def test_no_live_outcome_is_scored_at_zero_confidence(self, live_db):
         """Pipeline crashes must not re-enter decision_outcomes as trades."""
-        from app.db.connection import get_db
+        total = live_db.execute(
+            "SELECT COUNT(*) FROM decision_outcomes "
+            "WHERE outcome IN ('WIN','LOSS','FLAT')"
+        ).fetchone()[0]
+        assert total, "no scored outcomes at all — this proved nothing"
 
-        with get_db() as db:
-            row = db.execute(
-                "SELECT COUNT(*) FROM decision_outcomes "
-                "WHERE confidence = 0 AND outcome IN ('WIN','LOSS','FLAT')"
-            ).fetchone()
+        row = live_db.execute(
+            "SELECT COUNT(*) FROM decision_outcomes "
+            "WHERE confidence = 0 AND outcome IN ('WIN','LOSS','FLAT')"
+        ).fetchone()
         assert row[0] == 0, f"{row[0]} crash artifact(s) scored as trades"
 
-    def test_no_analysis_price_of_zero_when_prices_exist(self):
+    def test_no_analysis_price_of_zero_when_prices_exist(self, live_db):
         """analysis_price feeds the Freshness Gate's next-cycle delta. A zero
         baseline beside real price_history rows is the NaN-bar bug."""
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            row = db.execute(
-                """
-                SELECT COUNT(*) FROM analysis_results ar
-                WHERE ar.analysis_price = 0
-                  AND ar.created_at > NOW() - INTERVAL '2 days'
-                  AND EXISTS (SELECT 1 FROM price_history p WHERE p.ticker = ar.ticker)
-                """
-            ).fetchone()
+        row = live_db.execute(
+            """
+            SELECT COUNT(*) FILTER (WHERE ar.analysis_price = 0) bad, COUNT(*) n
+            FROM analysis_results ar
+            WHERE ar.created_at > NOW() - INTERVAL '2 days'
+              AND EXISTS (SELECT 1 FROM price_history p WHERE p.ticker = ar.ticker)
+            """
+        ).fetchone()
+        assert row[1], "no recent analysis rows with prices — this proved nothing"
         assert row[0] == 0, f"{row[0]} zero-price snapshot(s) despite stored prices"
