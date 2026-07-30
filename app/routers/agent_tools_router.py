@@ -92,12 +92,43 @@ async def execute_tool(
         ticker=payload.ticker,
     )
 
+    # Repair a malformed call BEFORE the registry validates it.
+    #
+    # app/v3/tool_repair.py was wired only into the LOCAL AgentHarness hook
+    # (base_agent.py `on_tool_call`), which never runs for a V3 pipeline agent:
+    # those execute in prism-service, so their tool calls arrive HERE over HTTP
+    # from lazy-agent-service and go straight to registry.execute_tool_call.
+    # The repair was therefore dead on exactly the path that needed it —
+    # measured 2026-07-30: 16 `get_sec_filings` rejections, every one from
+    # v3_fundamental_analyst with the ticker already known, and ZERO repairs
+    # recorded. Two of them landed AFTER the repair shipped.
+    #
+    # The registry drops undeclared arguments and only then notices a required
+    # field is unset (lazycat/tool_registry.py:535-570) — so the model's
+    # un-escaped JSON loses `ticker`, and the whole turn is spent on an error.
+    # `payload.ticker` is the desk's own subject, which is what the tool wanted.
+    #
+    # Repairs, never blocks; fail-closed on an allow-list that excludes every
+    # order and watchlist tool.
+    _arguments = dict(payload.arguments or {})
+    try:
+        from app.v3.tool_repair import repair_tool_arguments
+
+        repair_tool_arguments(
+            payload.tool_name, _arguments,
+            ticker=payload.ticker or "",
+            agent_name=payload.agent_name or "",
+            cycle_id=payload.cycle_id or "",
+        )
+    except Exception as repair_err:  # noqa: BLE001 — never block a tool call
+        logger.debug("[AgentTools] arg repair skipped (non-fatal): %s", repair_err)
+
     tool_call = {
         "id": "call_lazy_tool_bridge",
         "type": "function",
         "function": {
             "name": payload.tool_name,
-            "arguments": json.dumps(payload.arguments or {}),
+            "arguments": json.dumps(_arguments),
         },
     }
     try:

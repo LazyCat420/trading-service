@@ -1114,28 +1114,32 @@ async def run_v3_pipeline(
             _engine_sel = 3
 
         if _engine_sel == 3:
+            # 3 = NO TOURNAMENT, but the desk still gets an adversarial pass.
+            #
+            # The measurement that retired the tournament (see the DEBATE_ENGINE
+            # block in app/services/parameter_store.py) condemned the 4-persona
+            # pitch/h2h/jury machine at ~30% of pipeline spend. It said NOTHING
+            # about bull/bear/judge, which is a different and far smaller
+            # mechanism — and turning that off too was scope I had not earned.
+            #
+            # Note what the data actually shows: bull/bear have been dormant
+            # since 2026-07-12 regardless, because TOURNAMENT_MODE defaults True
+            # and routes the debate to the tournament, leaving the else-branch
+            # below unreachable. 987 of 1340 desks carry `bull_argument: null`;
+            # the last desk with real bull text is 2026-07-12. So this is a
+            # RESTORATION, not a rollback.
+            #
+            # No skip marker and no explicit Board dispatch here: bull_argument
+            # + bear_rebuttal chain debate_judge, and debate_judge chains the
+            # Board through the same subscriber the tournament used. Adding a
+            # second dispatch would fight the latch.
             logger.info(
-                "[V3] %s: debate disabled (DEBATE_ENGINE=3) — Board decides "
-                "on the research desks alone", ticker,
+                "[V3] %s: tournament disabled (DEBATE_ENGINE=3) — running the "
+                "bull/bear debate instead", ticker,
             )
-            skip_note = (
-                "Debate SKIPPED: the debate engine is disabled. The tournament "
-                "was retired on measurement — its verdict did not beat the "
-                "quant's own thesis_direction on selection or removal, while "
-                "costing ~30% of pipeline spend. Decide from the research "
-                "desks; nothing here stress-tested them."
-            )
-            desk.append_artifact("tournament_result", {
-                "summary": skip_note, "action": "HOLD", "confidence": 0,
-                "winning_side": "skipped", "pitches": [], "survivors": [],
-                "h2h": {}, "jury_verdict": {}, "vetoed": False, "skipped": True,
-                "risk_flags": [], "total_tokens": 0, "shadow_mode": False,
-                "source": "debate_engine_off",
-            })
-            desk.cycle_metadata["debate_skipped_by_engine"] = True
-            if not board_dispatched:
-                board_dispatched = True
-                _queue_agent("board_of_directors", None, parent="quant_analyst")
+            desk.cycle_metadata["tournament_skipped_by_engine"] = True
+            _queue_agent("bull_argument", bull_agent, parent="quant_analyst")
+            _queue_agent("bear_rebuttal", bear_agent, parent="quant_analyst")
             return
 
         if _cog_settings.TOURNAMENT_MODE:
