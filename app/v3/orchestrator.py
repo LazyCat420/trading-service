@@ -1180,6 +1180,47 @@ async def run_v3_pipeline(
             logger.warning("[V3] Process peer requests failed: %s", e)
 
     async def _execute_tournament_debate(parent: str):
+        # Resolve the engine BEFORE emitting anything. The skip has to happen
+        # above the "starting" event or the office UI is left holding a
+        # `running` node that never gets its terminal `ok`.
+        #
+        # Fail-open to the DEFAULT engine, which is now 3 (no debate). This
+        # previously fell back to 0; with the default at 3 that would let a
+        # transient parameter-store hiccup silently resurrect 28.2% of pipeline
+        # spend. A fallback must land on the chosen behaviour, not the most
+        # expensive one.
+        try:
+            from app.services.parameter_store import get_param as _get_engine
+            _engine = int(_get_engine("DEBATE_ENGINE"))
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("[V3] DEBATE_ENGINE lookup failed (%s) — no debate", _e)
+            _engine = 3
+
+        if _engine == 3:
+            # No debate ran. Append NOTHING — not a synthesized verdict. See the
+            # measurement block on DEBATE_ENGINE in app/services/parameter_store.py
+            # for why the tournament was retired and why engine 3 must not
+            # fabricate a winning_side. Consumers are None-safe.
+            logger.info(
+                "[V3] %s: debate skipped (DEBATE_ENGINE=3) — no tournament_result, "
+                "no debate_judge; bull/bear/defense still run", ticker,
+            )
+            # A zero-token SKIPPED row, so "did we actually stop paying for it?"
+            # stays a queryable question. The repo's own lesson: without a
+            # stamped field the experiment is unfalsifiable.
+            desk.record_agent_telemetry({
+                "agent_name": "v3_tournament_debate",
+                "ticker": ticker,
+                "elapsed_ms": 0,
+                "loops_used": 0,
+                "token_usage": 0,
+                "artifact_size_bytes": 0,
+                "outcome": "SKIPPED",
+                "phase": desk.phase.value,
+                "quality_score": -1,
+            })
+            return
+
         emit(
             "analyzing", f"v3_tournament_{ticker}",
             f"🏆 {ticker}: Tournament Debate starting (4-stage pipeline)",
@@ -1234,21 +1275,16 @@ async def run_v3_pipeline(
                 claims=[],
             )
 
+            # `_engine` was resolved at the top of this function, above the
+            # first emit, so engine 3 could return without orphaning a `running`
+            # event. Reaching here means 0, 1 or 2 — exactly one runs per ticker.
+            #
             # DEBATE_ENGINE gates the CALL, not the rendering. The older
             # TOURNAMENT_DEBATE_MODE shadow branch was measured to save ZERO
             # tokens — run_tournament_debate is invoked unconditionally there
             # and only the prompt section is filtered — so the experiment cost
-            # the same either way. Exactly one engine runs per ticker.
-            #
-            # Fail-open to the tournament: a parameter miss must land on today's
-            # behaviour, never on an engine nobody chose.
-            try:
-                from app.services.parameter_store import get_param as _get_engine
-                _engine = int(_get_engine("DEBATE_ENGINE"))
-            except Exception as _e:  # noqa: BLE001
-                logger.warning("[V3] DEBATE_ENGINE lookup failed (%s) — tournament", _e)
-                _engine = 0
-
+            # the same either way. That flag is moot at the default engine (3),
+            # where nothing runs to shadow.
             if _engine in (1, 2):
                 from app.cognition.debate.probabilistic_panel import (
                     run_probabilistic_panel,
