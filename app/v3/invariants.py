@@ -553,6 +553,26 @@ def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
     before any phase advances, and 22 healthy skips a week would mute this
     check within days. The distinction is that a stall has *already spent* the
     research budget — which is what makes it worth an alert.
+
+    TWO SHAPES, and the difference decides whether anyone should care
+    ----------------------------------------------------------------
+    The first live firing (NVDA, `cycle-observe-1785396275`, 2026-07-30 07:28)
+    was not the shape this was calibrated on:
+
+        HOOD  DEBATE_DONE    no analysis_results, no telemetry   work LOST
+        NVDA  RESEARCH_DONE  analysis_results + 7 telemetry rows work LANDED
+
+    NVDA carried a `pipeline_incomplete` stamp reading *"Invalid transition:
+    RESEARCH_DONE → PM_DONE"*. That is the 2026-07-29 ORCL fix behaving exactly
+    as designed — it converted "the desk vanishes" into "the desk persists at a
+    non-terminal phase" — so this shape is a CONSEQUENCE of that fix, and its
+    work is intact. Only the phase is stale.
+
+    Both are worth surfacing, but collapsing them would be fatal to the check:
+    the benign shape is produced by a deployed fix and will therefore recur, and
+    a detector that cries loss when nothing was lost gets muted. So each stalled
+    desk carries `work_landed` and `explained`, and the violation carries a
+    `lost` count — the number that actually warrants attention.
     """
     from app.db.connection import get_db
 
@@ -562,21 +582,33 @@ def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
     with get_db() as db:
         rows = db.execute(
             """
-            SELECT ticker, phase FROM shared_desk
-            WHERE cycle_id = %s AND phase <> ALL(%s)
-            ORDER BY ticker
+            SELECT d.ticker, d.phase,
+                   EXISTS (SELECT 1 FROM analysis_results a
+                           WHERE a.cycle_id = d.cycle_id AND a.ticker = d.ticker) landed,
+                   (d.desk_data #> '{cycle_metadata,pipeline_incomplete}') IS NOT NULL explained
+            FROM shared_desk d
+            WHERE d.cycle_id = %s AND d.phase <> ALL(%s)
+            ORDER BY d.ticker
             """,
             [cycle_id, sorted(allowed)],
         ).fetchall()
     if not rows:
         return []
 
-    stalled = [{"ticker": r[0], "phase": r[1]} for r in rows]
+    stalled = [
+        {"ticker": r[0], "phase": r[1],
+         "work_landed": bool(r[2]), "explained": bool(r[3])}
+        for r in rows
+    ]
+    # The actionable subset: research paid for and nothing to show for it.
+    lost = [s for s in stalled if not s["work_landed"]]
     return [record_violation(
         KIND_DESK_STALLED, cycle_id=cycle_id,
         # One row per cycle: a deploy mid-cycle strands every live desk at once.
         ticker=(stalled[0]["ticker"] if len(stalled) == 1 else ""),
         count=len(stalled),
+        lost=len(lost),
+        lost_tickers=[s["ticker"] for s in lost][:STALL_ROSTER_CAP],
         stalled=stalled[:STALL_ROSTER_CAP],
         truncated=max(0, len(stalled) - STALL_ROSTER_CAP),
         terminal_phases=sorted(terminal),

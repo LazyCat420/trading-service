@@ -52,13 +52,15 @@ class _Result:
 class _FakeDB:
     """Applies the check's own params, so the phase filter is under test.
 
-    `desks` is the full roster as (ticker, phase). `execute` reproduces
+    `desks` holds `(ticker, phase)` or `(ticker, phase, work_landed, explained)`
+    — the two extra columns default to the HOOD shape (work lost, unexplained),
+    which is what this check was calibrated on. `execute` reproduces
     `WHERE cycle_id = %s AND phase <> ALL(%s)` using the params the check
     actually passed — not a hardcoded expectation of them.
     """
 
     def __init__(self, desks, cycle_id="cycle-test-1"):
-        self.desks = desks
+        self.desks = [tuple(d) + (False, False)[len(d) - 2:] for d in desks]
         self.cycle_id = cycle_id
         self.params_seen = None
 
@@ -66,8 +68,8 @@ class _FakeDB:
         self.params_seen = params
         want_cycle, allowed = params[0], set(params[1])
         rows = [
-            (t, p) for t, p in self.desks
-            if want_cycle == self.cycle_id and p not in allowed
+            d for d in self.desks
+            if want_cycle == self.cycle_id and d[1] not in allowed
         ]
         return _Result(sorted(rows))
 
@@ -108,7 +110,55 @@ def test_fires_on_a_desk_abandoned_mid_pipeline(phase, recorded, monkeypatch):
     assert out == [invariants.KIND_DESK_STALLED]
     assert len(recorded) == 1
     assert recorded[0]["count"] == 1
-    assert recorded[0]["stalled"] == [{"ticker": "HOOD", "phase": phase}]
+    assert recorded[0]["lost"] == 1
+    assert recorded[0]["stalled"] == [
+        {"ticker": "HOOD", "phase": phase, "work_landed": False, "explained": False}
+    ]
+
+
+# ── The two shapes must stay distinguishable ─────────────────────────────
+
+
+def test_a_stall_whose_work_landed_is_not_counted_as_lost(recorded, monkeypatch):
+    """The live NVDA firing (2026-07-30 07:28): phase stale, work intact.
+
+    Its desk carried a `pipeline_incomplete` stamp — "Invalid transition:
+    RESEARCH_DONE -> PM_DONE" — which is the ORCL fix behaving as designed. That
+    shape is produced by a DEPLOYED fix, so it recurs; counting it as lost work
+    would make the check cry loss when nothing was lost, and get it muted.
+    """
+    out, _ = _run([("NVDA", "RESEARCH_DONE", True, True)], recorded, monkeypatch)
+
+    assert out == [invariants.KIND_DESK_STALLED], "still worth surfacing"
+    assert recorded[0]["count"] == 1
+    assert recorded[0]["lost"] == 0, "work landed — nothing was lost"
+    assert recorded[0]["lost_tickers"] == []
+    assert recorded[0]["stalled"][0]["work_landed"] is True
+    assert recorded[0]["stalled"][0]["explained"] is True
+
+
+def test_lost_and_landed_are_separated_in_one_cycle(recorded, monkeypatch):
+    """A mixed cycle must name which desks actually lost their work."""
+    out, _ = _run([
+        ("HOOD", "DEBATE_DONE", False, False),    # lost
+        ("NVDA", "RESEARCH_DONE", True, True),    # landed
+        ("CARS", "RESEARCH_DONE", False, True),   # stamped, but nothing landed
+    ], recorded, monkeypatch)
+
+    assert recorded[0]["count"] == 3
+    assert recorded[0]["lost"] == 2
+    assert set(recorded[0]["lost_tickers"]) == {"HOOD", "CARS"}
+
+
+def test_an_explained_stall_with_no_work_is_still_lost(recorded, monkeypatch):
+    """A `pipeline_incomplete` stamp explains the phase, not the missing work.
+
+    Treating "explained" as "fine" would re-hide the HOOD case the moment the
+    ORCL handler starts stamping it.
+    """
+    _run([("HOOD", "DEBATE_DONE", False, True)], recorded, monkeypatch)
+
+    assert recorded[0]["lost"] == 1
 
 
 def test_a_single_stall_names_its_ticker(recorded, monkeypatch):
