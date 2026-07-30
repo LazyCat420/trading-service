@@ -155,6 +155,50 @@ Every consumer was verified against a desk with no `tournament_result`:
 
 ## Next — verify the saving, then decide about Wave 2
 
+### 0. ⚠ The obvious check is CONFOUNDED — read this before measuring anything
+
+**A token drop measured right now does NOT validate this change.** Found while
+setting up the verification, 2026-07-30:
+
+```
+v3_tournament_debate by day     runs  with_tokens  zero   avg_tok   avg_ms
+  2026-07-29                      26           26     0   270,767   187,027
+  2026-07-30                       7            0     7         0       260
+last run WITH tokens ....... 2026-07-29 20:08:59
+```
+
+The tournament **already stopped consuming tokens before this change deployed.**
+Cause: the VLLM endpoint `http://10.0.0.141:8000` is unreachable (HTTP 000), so
+all 8 of today's runs fall back instantly — `winning_side="fallback"`,
+`"Tournament fallback: Insufficient pitches for tournament"`, 0 tokens, 260 ms.
+The other agents still spend normally (fundamental 266k, junior 244k in
+`cycle-v3-1785386906`), so only the tournament's pitch path depends on the dead
+endpoint.
+
+Consequences, stated plainly:
+
+1. **The 638,658 → 446,360 prediction below cannot be tested until VLLM is
+   back.** Today's tokens/ticker already reads 714,900 with the tournament at
+   **0.0%** of spend. Confirming "tournament = 0 tokens" post-deploy would be
+   measuring the outage, not the change — the classic case of a probe that
+   proves nothing because something else already set the context.
+2. **The change is still the right one, and its value is now clearer:** without
+   it, VLLM returning would silently restore ~30% of pipeline spend. With it,
+   the cost stays gone regardless of endpoint health. That is what engine 3
+   buys — not today's drop, which was free and accidental.
+3. **The honest test is deferred.** Re-run the check in §1 only once
+   `curl -sf http://10.0.0.141:8000/v1/models` succeeds AND a cycle has run. If
+   `v3_tournament_debate` then shows a `SKIPPED` row at 0 tokens (rather than a
+   `SUCCESS` fallback row at 0 tokens — note they are distinguishable only by
+   `outcome`), the retirement is doing the work.
+
+The two 0-token states are easy to confuse and mean opposite things:
+
+| `outcome` | `elapsed_ms` | meaning |
+|---|---|---|
+| `SUCCESS` | ~260 | fallback — the engine RAN and failed to reach a model (outage) |
+| `SKIPPED` | 0 | engine 3 — the debate was never invoked (this change) |
+
 ### 1. Confirm the saving. Pre-registered, so it can fail.
 
 Baseline captured from `v3_agent_telemetry` immediately BEFORE the change,
