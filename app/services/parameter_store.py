@@ -260,9 +260,10 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
         default=3, min_value=0, max_value=3, direction=RISK_NEUTRAL, kind="int",
         tier=TIER_BOARD,
         description="0=tournament, 1=probabilistic panel, 2=panel with shared "
-                    "evidence (asymmetry-off control), 3=no debate (default; "
-                    "the tournament did not beat the free quant signal). "
-                    "Gates which engine RUNS.",
+                    "evidence (asymmetry-off control), 3=bull/bear debate, no "
+                    "tournament (default; the tournament did not beat the free "
+                    "quant signal, but bull/bear was never measured and keeps "
+                    "an adversarial pass on the desk). Gates which engine RUNS.",
     ),
     # Equation Lab
     "EQUATION_LAB_MAX_PER_RUN": ParamSpec(
