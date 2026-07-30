@@ -3,10 +3,10 @@
 Continues `HANDOFF_harness_hooks_2026-07-30.md`. Two of its five open items are
 done; the other three are re-ranked below with what I learned about them.
 
-Merged and pushed: `cb35ab3` (item 1), `82067cb` (item 2).
+Merged and pushed: `cb35ab3` (item 1), `82067cb` (item 2), `60cb644` (crash cause).
 **Deploy: see "Not yet deployed" at the bottom — this is the one thing left.**
 
-Suite: **2,161 passed, 20 skipped, 2 failed.** Both failures reproduce on clean
+Suite: **2,186 passed, 20 skipped, 2 failed.** Both failures reproduce on clean
 master (`test_whitelists_grant_write_to_pm_and_board_only` long-standing,
 `test_prism_prompt_injection` needs VLLM 10.0.0.141:8000). Treat as green.
 
@@ -84,6 +84,8 @@ lazycat-sdk is shared with html-notes/canvas/music.
 | `live_db` fixture + guards on every live test | the `-k live` audit went from 2 failed + 1 hollow skip to **16 passed** against production |
 | `PreToolUse` hook (`app/v3/tool_repair.py`) | injects the missing required `ticker`; both production rejection paths confirmed cured against the SDK's own validator |
 | Repairs recorded as `TOOL_ARGS_REPAIRED_PRE_FLIGHT` | a repaired call vanishes from failure telemetry; without this the upstream bad-JSON bug goes invisible |
+| `record_ticker_crash` → `DESK_ABANDONED_MID_PIPELINE` | the crash was log-only; now the exception **type** is persisted (`asyncio.TimeoutError` stringifies to `""`) with the phase it died at |
+| Reachability guards on both hooks | nothing exercised the `AgentHarness` construction, so deleting `on_tool_call` would have left `tool_repair.py` as dead code reading as shipped |
 
 Terminal phases are **derived** from `_VALID_TRANSITIONS`, not duplicated, so
 adding a `DeskPhase` cannot leave the check asserting a stale vocabulary.
@@ -99,10 +101,11 @@ cycle checks passed a silence test and would have missed their motivating defect
   fires. `INIT` is a legitimate triage skip; production ran 22 in a week, so
   firing on them would have made the check 79% false positives in week one and
   muted within days.
-- **Mutation testing**: 9 mutations across both features (INIT no longer
+- **Mutation testing**: 12 mutations across all three changes (INIT no longer
   excluded, always-silent, unregistered, cap removed, `buy_stock` allow-listed,
   allow-list bypassed, overwrite-model-ticker, hook blocks, hook try/except
-  removed). **Every one fails a test.**
+  removed, hook unwired, crash-recorder stamps ABORTED, error_type dropped, crash
+  call site removed). **Every one fails a test.**
 - **Oracle, not re-implementation**: the repair is validated by loading
   `tool_schemas.json` through the registry's own `load_from_json` and asking its
   own `_filter_kwargs_to_schema`/`_schema_params`. It reproduces the exact
@@ -114,8 +117,10 @@ cycle checks passed a silence test and would have missed their motivating defect
 
 ### 1. Fix the stall: an exception escapes `run_v3_pipeline` and nothing stamps the desk
 
-I traced the mechanism; it is not a mystery any more, but I did **not** fix it —
-see the trap at the end of this item, which is why it deserves its own change.
+**Diagnosed, and half-fixed.** `record_ticker_crash` now persists the exception
+type and the phase it died at (`DESK_ABANDONED_MID_PIPELINE`), so the next stall
+arrives with its cause attached instead of requiring container logs. What remains
+is acting on it — the pipeline still loses the desk's work.
 
 The chain, all line numbers current as of `d294560`:
 
@@ -141,17 +146,26 @@ the PM/board leg, after the debate is already paid for. The container log is the
 one place the exception type is recorded; `grep "Ticker .* failed"` on it names
 the culprit and is the cheapest next step.
 
-The fix is a `try/finally` around the per-ticker body that (a) stamps a desk
-which is about to be abandoned, and (b) runs `check_ticker_complete` on the
-exception path too.
+**What is left**: `check_ticker_complete` still does not run on the exception
+path (it is not in a `finally`), so the four per-ticker invariants stay blind to
+a crashed ticker. Moving it into a `finally` is the remaining change. It is not a
+one-line move — `run_v3_pipeline` is ~2,100 lines of straight-line flow and
+`result` does not exist on the exception path, so the call needs a guard for the
+no-result case rather than an indentation change.
 
-> **Trap — do not stamp `ABORTED` and call it done.** `ABORTED` is terminal, so
-> `DESK_STALLED_MID_PIPELINE` would go **silent** and the lost work would become
-> invisible again, this time behind a detector that reports health. Whatever the
-> stamp is, it needs its own violation kind (or must keep the dying phase in
-> `cycle_metadata`, the way the existing `pipeline_incomplete` stamp does) so the
-> rate stays measurable. Muting your own detector with your own fix is the
-> failure mode this whole line of work exists to prevent.
+Beyond observability, nothing yet *recovers* the work: a ticker that dies after
+the debate has been paid for still produces no decision. Whether it should be
+retried, or salvaged into a degraded-provenance HOLD like the ORCL path does, is
+a product call — `BOARD_DEGRADED_FALLBACK` already exists for exactly this shape.
+
+> **Trap I nearly walked into — do not stamp `ABORTED`.** It is the obvious fix
+> and it is wrong. `ABORTED` is terminal, so `DESK_STALLED_MID_PIPELINE` would go
+> **silent** and the lost work would disappear behind a detector reporting
+> health. `record_ticker_crash` therefore writes no `UPDATE` at all (asserted by
+> test; the ABORTED mutation fails it), leaving two independent observers and
+> preserving the dying phase as the only record of where the pipeline stopped.
+> Muting your own detector with your own fix is the failure mode this whole line
+> of work exists to prevent.
 
 ### 2. Audit every remaining live/DB-touching test for the MagicMock trap
 
