@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from app.quant.technical_baseline import _finite
+from app.quant.technical_baseline import _finite, mark_conclusion_stale
 
 logger = logging.getLogger(__name__)
 
@@ -986,6 +986,14 @@ def reconcile_valuation_metrics(
 
     if original and apply_corrections:
         artifact["_model_reported_valuation"] = original
+        # verdict is the whole point of the artifact, and fair_value_estimate
+        # is the number it hangs on — both derive from valuation_metrics.
+        mark_conclusion_stale(
+            artifact,
+            ["verdict", "fair_value_estimate"],
+            corrected,
+            "valuation metrics",
+        )
     elif corrected:
         artifact["_unreconciled_valuation"] = corrected
 

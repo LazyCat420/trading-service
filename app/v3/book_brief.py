@@ -103,21 +103,40 @@ def build_book_brief(ticker: str, bot_id: str = "") -> str:
         logger.debug("[BookBrief] sector tilt failed (non-fatal): %s", e)
 
     # Correlation of the candidate vs the largest holdings.
+    #
+    # Must go through load_returns_matrix, which joins on the DATE index. The
+    # previous form loaded each series independently and correlated them by
+    # array position (`n = min(sizes)` then `[-n:]`), which silently misaligns
+    # the moment two tickers differ in coverage — a ragged listing, a halt, a
+    # missing bar, or a vendor whose window simply ends a day earlier.
+    #
+    # Measured 2026-07-29 over 43 candidate x holding pairs against the live
+    # 9-position book: mean |delta| 0.152, max 0.679, and the bias is
+    # DIRECTIONAL — the positional form understated the correlation in every
+    # single case, i.e. it told the Board a candidate diversified the book when
+    # it concentrated it. For 3 of 5 candidates it also named the wrong holding
+    # as the largest overlap: ASML reported ALLY +0.30 when the true figure was
+    # TSM +0.71 (over the 0.70 "concentrates existing risk" threshold below),
+    # and NVDA reported AXP +0.10 against TSM +0.66. Pairs where both tickers
+    # shared a vendor and a calendar came out identical, which is why this
+    # never looked broken.
     try:
-        import numpy as np
-        from app.quant.returns import load_close_returns
+        from app.quant.returns import load_returns_matrix
 
-        cand = load_close_returns(ticker, 250)
-        if cand.size >= 60:
+        held = [t for t, _, _ in rows[:_MAX_CORR_POSITIONS] if t != ticker]
+        # One query for the whole set; it also applies the 60% coverage filter
+        # and the 5-day ffill cap, so the old `cand.size >= 60` pre-check (a
+        # second round-trip) is subsumed by `ticker in returns.columns`.
+        returns, _dropped = load_returns_matrix([ticker, *held], 250)
+        if ticker in returns.columns:
             corrs = []
-            for t, _, _ in rows[:_MAX_CORR_POSITIONS]:
-                if t == ticker:
+            for t in held:
+                if t not in returns.columns:
                     continue
-                held_r = load_close_returns(t, 250)
-                n = min(cand.size, held_r.size)
-                if n >= 60:
-                    c = float(np.corrcoef(cand[-n:], held_r[-n:])[0, 1])
-                    if not np.isnan(c):
+                pair = returns[[ticker, t]].dropna()
+                if len(pair) >= 60:
+                    c = float(pair[ticker].corr(pair[t]))
+                    if c == c:  # NaN-safe: a zero-variance column yields NaN
                         corrs.append((t, c))
             if corrs:
                 corrs.sort(key=lambda kv: -abs(kv[1]))

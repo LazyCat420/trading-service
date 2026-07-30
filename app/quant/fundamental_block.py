@@ -51,7 +51,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from app.quant.technical_baseline import _finite
+from app.quant.technical_baseline import _finite, mark_conclusion_stale
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +350,14 @@ def reconcile_fundamental_metrics(
 
     if original and apply_corrections:
         artifact["_model_reported_fundamentals"] = original
+        # thesis_direction and near_term_read are both reasoned from the
+        # metrics; positioning_read carries its own stance flag already.
+        mark_conclusion_stale(
+            artifact,
+            ["thesis_direction", "near_term_read"],
+            corrected,
+            "fundamental metrics",
+        )
     elif corrected:
         artifact["_unreconciled_fundamentals"] = corrected
 
