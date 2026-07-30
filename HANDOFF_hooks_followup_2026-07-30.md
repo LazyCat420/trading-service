@@ -112,18 +112,46 @@ cycle checks passed a silence test and would have missed their motivating defect
 
 ## Open work, in priority order
 
-### 1. Why does a single desk die while its siblings finish?
+### 1. Fix the stall: an exception escapes `run_v3_pipeline` and nothing stamps the desk
 
-The detector now tells you *that* it happened; nothing explains *why*. The
-sibling evidence (HOOD stalled, EXLS/CRH completed, same cycle) kills the
-deploy/restart theory. **6 stalls in 7 days is enough signal to catch one live**
-now that `DESK_STALLED_MID_PIPELINE` names the ticker and phase.
+I traced the mechanism; it is not a mystery any more, but I did **not** fix it —
+see the trap at the end of this item, which is why it deserves its own change.
 
-Start here: `DEBATE_DONE → PM_DONE` is the transition that is not happening, so
-the loss is in the PM/board leg, after the debate has been paid for. Look for an
-exception between `advance_phase(DEBATE_DONE)` and the board's persist — the ORCL
-bug had exactly this shape (`save_desk` inside the `try`), and this may be the
-same class in a different phase.
+The chain, all line numbers current as of `d294560`:
+
+1. `pipeline_service.py:1628` — `asyncio.gather(*tasks, return_exceptions=True)`.
+   Deliberate (one bad ticker must not kill the batch), and it is what makes the
+   failure *per-ticker*: siblings complete normally. That explains HOOD stalling
+   while EXLS and CRH finished 12 minutes later in the same cycle.
+2. `pipeline_service.py:1630` — the exception is only **logged** (`exc_info=r`).
+   Nothing persists it, which is why no table names the cause.
+3. `pipeline_service.py:1359` — `save_analysis_result` runs *after*
+   `run_v3_pipeline` returns. So a missing `analysis_results` row is proof the
+   pipeline **raised** rather than returned.
+4. `orchestrator.py:2127` — `check_ticker_complete` sits in the straight-line
+   flow near the end of `run_v3_pipeline`, **not in a `finally`**. An exception
+   before it skips all four per-ticker invariants. This is exactly why HOOD was
+   invisible to them.
+5. `orchestrator.py:1961` — the ORCL fix catches **`ValueError` only**, and it
+   sits at the `PM_DONE` advance (line 1959). A desk stranded at `DEBATE_DONE`
+   never reached line 1952, so broadening that handler alone would not help.
+
+So the throw is between `advance_phase(DEBATE_DONE)` (line 1857) and line 1952 —
+the PM/board leg, after the debate is already paid for. The container log is the
+one place the exception type is recorded; `grep "Ticker .* failed"` on it names
+the culprit and is the cheapest next step.
+
+The fix is a `try/finally` around the per-ticker body that (a) stamps a desk
+which is about to be abandoned, and (b) runs `check_ticker_complete` on the
+exception path too.
+
+> **Trap — do not stamp `ABORTED` and call it done.** `ABORTED` is terminal, so
+> `DESK_STALLED_MID_PIPELINE` would go **silent** and the lost work would become
+> invisible again, this time behind a detector that reports health. Whatever the
+> stamp is, it needs its own violation kind (or must keep the dying phase in
+> `cycle_metadata`, the way the existing `pipeline_incomplete` stamp does) so the
+> rate stays measurable. Muting your own detector with your own fix is the
+> failure mode this whole line of work exists to prevent.
 
 ### 2. Audit every remaining live/DB-touching test for the MagicMock trap
 
