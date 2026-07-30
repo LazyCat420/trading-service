@@ -227,6 +227,20 @@ it deliberately. Do not double-implement.
   the repair is not bookkeeping; it is the only thing keeping the upstream
   bad-JSON bug measurable.
 
+## Loose end (carried forward — still true)
+
+`.claude/worktrees/fidelity-followup` is fully merged but still checked out; it
+was this session's cwd, so it cannot remove itself. There is also a second live
+worktree, `.claude/worktrees/debate-engine-off`, owned by the concurrent session.
+Once both sessions are done:
+
+    git worktree remove --force .claude/worktrees/fidelity-followup
+    git branch -D worktree-fidelity-followup
+
+Note `tool_schemas.json` was copied into the worktree so the allow-list guard
+tests could run; it is gitignored, so it was not committed and disappears with
+the worktree.
+
 ## Not yet deployed
 
 Everything is merged and pushed; **nothing is deployed.** A cycle was live and
