@@ -47,8 +47,9 @@ figure from the last handoff (6 of 204) reproduced exactly. Worth noting: in
 `cycle-v3-1785382116`, HOOD stalled at `DEBATE_DONE` while EXLS and CRH in the
 **same cycle** reached `PM_DONE` twelve minutes later. So this is **not** a
 deploy killing a whole cycle — it is one desk dying while its siblings finish.
-That rules out the most convenient explanation and means the root cause is still
-open (see item 3 below).
+That rules out the most convenient explanation, and it is the clue that led to
+the mechanism: `gather(return_exceptions=True)` isolates a raising ticker. Traced
+in full under open item 1.
 
 **3. `get_sec_filings` is still failing, and the previous handoff's "fixed" row
 is about a different bug.** That table credits a fix for *"142/510 calls (27%)
@@ -90,7 +91,7 @@ lazycat-sdk is shared with html-notes/canvas/music.
 Terminal phases are **derived** from `_VALID_TRANSITIONS`, not duplicated, so
 adding a `DeskPhase` cannot leave the check asserting a stale vocabulary.
 
-### How both were validated
+### How all three were validated
 
 Not "the tests pass" — the previous handoff's own warning was that two of five
 cycle checks passed a silence test and would have missed their motivating defect.
