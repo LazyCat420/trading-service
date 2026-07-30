@@ -89,23 +89,54 @@ share-of-spend number taken from this table — including the previous handoff's
 "the tournament is 31% of all tokens" — was measured against a denominator
 missing the crashed tickers.
 
-**6. The stall detector had two shapes collapsed into one alarm**, found by
-watching it fire live rather than by re-reading it. NVDA
-(`cycle-observe-1785396275`, 07:28) stalled at `RESEARCH_DONE` but its
-`analysis_results` and 7 telemetry rows were **intact**, and its desk carried a
-`pipeline_incomplete` stamp: *"Invalid transition: RESEARCH_DONE → PM_DONE"*.
-That is the 07-29 ORCL fix working as designed — it turned "the desk vanishes"
-into "the desk persists at a non-terminal phase". The benign shape is therefore
-produced by a **deployed fix** and will recur, so a detector claiming loss over
-it would have been muted. Now carries `work_landed` / `explained` per desk and a
-`lost` count. An *explained* stall with no work still counts as lost: the stamp
-explains the phase, not the missing analysis.
+**6. The pre-tool repair shipped onto the WRONG DISPATCH PATH and did nothing.**
+The module, allow-list and tests were all correct; it was wired only into the
+LOCAL `AgentHarness.on_tool_call` in `base_agent.py`, and **that hook never runs
+for a V3 pipeline agent.** V3 agents execute inside prism-service, so their tool
+calls arrive back over HTTP at `POST /agent-tools/execute`
+(`app/routers/agent_tools_router.py`) and go straight to
+`registry.execute_tool_call`. Two dispatch paths; the repair sat on the unused
+one. Measured: **16 `get_sec_filings` rejections, every one from
+`v3_fundamental_analyst` with the ticker already known, and ZERO repairs
+recorded** — two of them landing *after* the repair shipped.
 
-**7. The SDK already had the seam.** `AgentHarness` has accepted
+My verification was the problem, not the code. The reachability test asserted
+`AgentHarness` receives an `on_tool_call`, which is true and irrelevant; and my
+in-container check called `make_pre_tool_hook(...)` **directly**, so it set its
+own context and proved the function works while proving nothing about whether
+anything calls it. That is [[a-probe-that-sets-its-own-context-proves-nothing]],
+which I already had written down. Fixed by a concurrent session in `184758a` —
+repairing in the HTTP bridge before the `tool_call` payload is built, reusing
+`repair_tool_arguments` with the fail-closed allow-list intact.
+
+**Before wiring any tool-layer hook, ask which of the two dispatch paths the
+target agents use, and verify with TELEMETRY: a repair that fires leaves a row.
+Zero rows beside non-zero rejections means it is not on the path.**
+
+**7. The stall detector called a real regression benign, because I flattened two
+different losses into one count.** NVDA (`cycle-observe-1785396275`, 07:28) kept
+its analysis and 7 telemetry rows, so my first refinement reported `lost=0`. The
+cause was a same-day regression (`6a9bd82`): the DEBATE_ENGINE=3 branch skipped
+the `tournament_result` write, **which is the chain trigger that dispatches the
+Board**. Seven agents ran, the Board never did, no decision was produced.
+
+Two mistakes of mine, both now fixed: a `pipeline_incomplete` stamp explains the
+**phase**, not the **outcome** — I read it as "the ORCL fix working as designed"
+and inferred health from a diagnostic; and a desk can lose its *research* or its
+*decision*, which are not the same loss. Now reports `lost_research` and
+`undecided` separately. On replay the NVDA cycle reports `undecided=1`.
+
+**The detector did its job**: it flagged a regression within minutes of that
+regression shipping. My classification of it was the weak link.
+
+**8. The SDK already had the seam.** `AgentHarness` has accepted
 `on_tool_call` all along; trading-service just never passed one. It also passes
 the **same** `arguments` dict to `execute_tool` afterwards, so an in-place
 mutation is what the tool receives. No SDK change — which matters, because
 lazycat-sdk is shared with html-notes/canvas/music.
+
+**Caveat, learned the hard way (finding 6): having the seam is not being on the
+path.** That hook is real and works; V3 agents simply do not go through it.
 
 ---
 
@@ -320,14 +351,24 @@ seconds.
 excluded, a repair injecting a ticker end-to-end, `on_tool_call` present in the
 harness construction.
 
-**Verified on live traffic (the deployed subset)**: `DESK_STALLED_MID_PIPELINE`
-**fired for real** on NVDA at 07:28 — the first time this class of defect was
-caught automatically rather than by archaeology weeks later. It is also what
-exposed finding 6. Zero missing-ticker tool failures since deploy, but only 8
-tool calls in that window, so the repair hook is **not yet confirmed** on real
-traffic.
+**Verified on live traffic:**
 
-**Still unconfirmed**: the pre-tool repair firing on real traffic.
+- `DESK_STALLED_MID_PIPELINE` **fired for real** on NVDA at 07:28, catching a
+  regression within minutes of it shipping — the first time this class of defect
+  was caught automatically rather than by archaeology weeks later.
+- The **agent-cost flush works**, with a clean before/after on live rows:
+
+      after  NVDA  RESEARCH_DONE  5 telemetry rows   (mid-flight!)
+      after  JPM   DEBATE_DONE    9 telemetry rows
+      before HOOD/CARS/EXLS/OWL/UNH, same phases     0 rows each
+
+  Rows existing while a desk is still non-terminal is the proof: the old single
+  end-of-pipeline write could not produce that.
+
+**Repair hook**: was INERT until `184758a` moved it onto the HTTP bridge (finding
+6); deployed by a concurrent session at 08:11 UTC. Still unconfirmed on real
+traffic — 0 repairs recorded, but also 0 malformed calls since that deploy, so
+there has been nothing to repair.
 `v3_invariant_violations` holds **0** `TOOL_ARGS_REPAIRED_PRE_FLIGHT` rows. I ran
 one smoke repair inside the container and **deleted that row**, precisely so this
 count stays honest — a synthetic row would make the query below read positive
