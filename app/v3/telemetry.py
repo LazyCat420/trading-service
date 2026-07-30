@@ -68,15 +68,81 @@ def _ensure_telemetry_table() -> None:
         logger.warning("[V3Telemetry] Failed to ensure table: %s", e)
 
 
-def persist_telemetry(desk: SharedDesk) -> None:
-    """Persist all agent telemetry from a SharedDesk to the DB.
+#: Marks a telemetry entry already written to `v3_agent_telemetry`. Lives INSIDE
+#: the entry dict (like `_recorded_at`) so it round-trips through
+#: `SharedDesk.to_dict`/`from_dict` — a desk reloaded from Postgres therefore
+#: knows what has already been billed and cannot double-write it.
+PERSISTED_FLAG = "_persisted"
 
-    Called once after the pipeline completes. Writes all accumulated
-    telemetry entries from desk.agent_telemetry to PostgreSQL.
+
+def flush_agent_telemetry(desk: SharedDesk) -> int:
+    """Write the agent cost rows not yet written. Returns how many.
+
+    WHY THIS IS NOT JUST `persist_telemetry`
+    ----------------------------------------
+    `persist_telemetry` ran ONCE, at the very end of `run_v3_pipeline`
+    (orchestrator.py). Every agent's cost accumulated in memory on
+    `desk.agent_telemetry` until then — so a ticker that died before that line
+    lost its ENTIRE cost record, despite having already spent the tokens.
+
+    Measured since 2026-07-12 (when this telemetry began; before that the table
+    is empty and any coverage number spanning the boundary is two populations):
+
+        PM_DONE         429 desks    99.5% have cost rows
+        ABORTED          40 desks     0.0%
+        DEBATE_DONE       9 desks     0.0%
+        RESEARCH_DONE    22 desks     4.5%
+
+    71 desks with no cost record at a median 664,627 tokens per completed desk
+    is **up to ~47M tokens, ~14.5% of true spend, invisible** — an upper bound,
+    since a desk that dies mid-flight may have spent less than a full one. It
+    also means any share-of-spend figure computed from this table (e.g. "the
+    tournament is 31% of all tokens") was measured against a denominator missing
+    the crashed tickers.
+
+    Idempotent by construction: entries are marked as written, and the mark is
+    part of the entry, so it survives the desk's own round-trip to Postgres.
     """
+    entries = getattr(desk, "agent_telemetry", None) or []
+    pending = [
+        e for e in entries
+        if isinstance(e, dict) and not e.get(PERSISTED_FLAG)
+    ]
+    if not pending:
+        return 0
+
+    try:
+        _persist_entries(desk, pending)
+    except Exception as e:  # noqa: BLE001 — cost accounting must not break a save
+        logger.warning(
+            "[V3Telemetry] flush failed for %s (%d entries stay pending): %s",
+            getattr(desk, "ticker", "?"), len(pending), e,
+        )
+        return 0
+
+    # Mark only after the write returns, so a failed write is retried by the
+    # next save rather than being recorded as billed and lost.
+    for e in pending:
+        e[PERSISTED_FLAG] = True
+    return len(pending)
+
+
+def persist_telemetry(desk: SharedDesk) -> None:
+    """Flush any remaining agent telemetry at the end of the pipeline.
+
+    Kept as the end-of-pipeline call, but it is now a backstop rather than the
+    only writer: `save_desk` flushes as the desk progresses, so a crash keeps
+    what was already spent. Delegates to `flush_agent_telemetry`, which makes
+    calling both harmless.
+    """
+    flush_agent_telemetry(desk)
+
+
+def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
+    """Insert the given telemetry entries for this desk."""
     _ensure_telemetry_table()
 
-    if not desk.agent_telemetry:
+    if not entries:
         return
 
     from app.db.connection import get_db
@@ -91,7 +157,7 @@ def persist_telemetry(desk: SharedDesk) -> None:
                 "quality_score": entry.get("quality_score", -1),
                 "artifact_size_bytes": entry.get("artifact_size_bytes", 0),
             }
-            for entry in desk.agent_telemetry
+            for entry in entries
         ]
         with get_db() as db:
             for r in _recs:
@@ -124,12 +190,18 @@ def persist_telemetry(desk: SharedDesk) -> None:
             logger.warning("[V3Telemetry] Mongo mirror failed (non-fatal): %s", me)
         logger.info(
             "[V3Telemetry] Persisted %d telemetry entries for %s/%s",
-            len(desk.agent_telemetry),
+            len(_recs),
             desk.cycle_id[:12] if desk.cycle_id else "?",
             desk.ticker,
         )
     except Exception as e:
+        # RE-RAISE. The caller marks entries as written only when this returns,
+        # so swallowing here would mark unwritten rows as billed and lose the
+        # cost record permanently — the very defect this path exists to fix.
+        # `flush_agent_telemetry` catches it, leaving the entries pending for the
+        # next save.
         logger.warning("[V3Telemetry] Failed to persist telemetry: %s", e)
+        raise
 
 
 _GUARDRAIL_TABLE_ENSURED = False

@@ -65,6 +65,25 @@ def save_desk(desk: SharedDesk) -> None:
     _ensure_table()
     from app.db.connection import get_db
 
+    # Flush this desk's agent COST rows before serializing (2026-07-30).
+    #
+    # `persist_telemetry` used to run once, at the very end of the pipeline, so
+    # every agent's spend sat in memory until then and a ticker that died first
+    # lost its whole cost record. Since 2026-07-12, ABORTED and DEBATE_DONE desks
+    # have 0% coverage against 99.5% for PM_DONE — up to ~14.5% of real token
+    # spend invisible. Flushing wherever the desk is saved keeps the desk row and
+    # its cost record in step.
+    #
+    # MUST happen BEFORE `to_dict()`: the flush stamps each written entry, and
+    # that stamp has to be inside `desk_data`, or a desk reloaded from Postgres
+    # would look unwritten and bill itself twice.
+    try:
+        from app.v3.telemetry import flush_agent_telemetry
+
+        flush_agent_telemetry(desk)
+    except Exception as e:  # noqa: BLE001 — never let cost accounting lose a desk
+        logger.debug("[DeskPersistence] telemetry flush skipped (non-fatal): %s", e)
+
     desk_data = json.dumps(desk.to_dict(), default=str)
 
     try:
