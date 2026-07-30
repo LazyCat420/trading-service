@@ -2080,6 +2080,22 @@ async def run_v3_pipeline(
         "agent_telemetry": desk.agent_telemetry,
     })
 
+    # Postconditions (2026-07-29). Placed HERE, after every write this pipeline
+    # is going to make, because the defects it catches are absences — a desk
+    # that was never persisted, a trade row that was never written — and an
+    # absence is only knowable once the writing is finished.
+    #
+    # Records, never raises: an observer that can abort a cycle is a new failure
+    # mode, and these exist to watch failure modes that already ship.
+    try:
+        from app.v3.invariants import check_ticker_complete
+
+        check_ticker_complete(
+            ticker=ticker, cycle_id=cycle_id, desk=desk, result=result,
+        )
+    except Exception as inv_err:  # noqa: BLE001 — never let an observer break a cycle
+        logger.debug("[V3] %s: invariant check failed (non-fatal): %s", ticker, inv_err)
+
     # Inject the actual policy action so upstream callers (like cycle_main) can respect it
     result["policy_action"] = policy_action
 
