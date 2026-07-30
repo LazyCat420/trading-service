@@ -155,11 +155,39 @@ Every consumer was verified against a desk with no `tournament_result`:
 
 ## Next — verify the saving, then decide about Wave 2
 
-1. **Confirm the 28.2% is actually saved.** After one cycle:
-   `select agent_name, outcome, count(*), sum(token_usage) from v3_agent_telemetry
-   where cycle_id = '<new>' group by 1,2` — expect a `v3_tournament_debate /
-   SKIPPED` row at 0 tokens and a cycle total ~28% below the trailing average.
-   If tokens did not drop, the retirement did not take.
+### 1. Confirm the saving. Pre-registered, so it can fail.
+
+Baseline captured from `v3_agent_telemetry` immediately BEFORE the change,
+trailing 10 days (70 cycles, 272 tickers, 173,715,027 tokens):
+
+```
+tournament share ........ 52,305,147 tok = 30.1% of spend
+tokens per ticker ....... 638,658
+PREDICTION after ........ 446,360 per ticker   (-30.1%)
+```
+
+The check, after the first post-deploy cycle:
+
+```sql
+-- expect a SKIPPED row at 0 tokens, and no SUCCESS row for the tournament
+select agent_name, outcome, count(*), sum(token_usage)
+from v3_agent_telemetry where cycle_id = '<new>' group by 1,2 order by 4 desc;
+
+-- expect ~446k, not ~639k
+select round(sum(token_usage)::numeric / count(distinct ticker)) tok_per_ticker
+from v3_agent_telemetry where cycle_id = '<new>';
+```
+
+**Falsification:** if tokens per ticker does not land near 446k, the retirement
+did not take. Check `DEBATE_ENGINE` in the deployed container first — a row in
+`runtime_parameters` beats the registry default, so a stale override would make
+the code change invisible. Verified empty at ship time (`select count(*) from
+runtime_parameters` → 0), so the default governs; but the optimizer can write
+there later, which is exactly how a retired cost comes back without a commit.
+
+Note the two figures quoted in this document, 28.2% and 30.1%, are the same
+quantity over different windows: 28.2% is all-time (77.7M of 275.9M), 30.1% is
+the trailing 10 days. The recent share is the better predictor of the saving.
 2. **Then reconsider whether to build Wave 2 at all** (VaR/ES, Kalman beta,
    ADF-as-gate — scoped in `~/.claude/plans/please-look-at-this-quiet-nebula.md`).
    Those are *selection* improvements, and two independent measurements now say
