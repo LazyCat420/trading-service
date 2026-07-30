@@ -62,6 +62,27 @@ def _db_telemetry_callback(
 ) -> None:
     """Log a tool usage event to PostgreSQL (fire-and-forget).
 
+    THERE ARE TWO TOOL-TELEMETRY TABLES AND THEY ARE NOT REDUNDANT.
+    Checked 2026-07-29 before proposing to retire one; do not re-litigate
+    without re-running this:
+
+      * `tool_usage_stats` (this writer) — TOOL-level reliability.
+        Consumers: app/services/tool_optimizer.py:58 and
+        app/cognition/evolution/reflector.py:176. Both read ONLY tool_name,
+        success, execution_ms and called_at — never agent_name or ticker — and
+        all four of those are correct here.
+
+      * `agent_tool_telemetry` (app/v3/tool_telemetry.py, written by the
+        `_on_tool_result` post-call hook in app/agents/base_agent.py:298) —
+        AGENT-level attribution. It has full attribution because the hook fires
+        inside the agent loop where agent_name and ticker are simply in scope.
+        Use THIS table to ask "which agent researches, and how much".
+
+    So the long-standing agent_name='unknown' here is a phantom for this
+    table's actual consumers: nothing reads that column. Attribution work
+    belongs in agent_tool_telemetry. Retiring either table breaks a live
+    consumer.
+
     Attribution comes from the tool CONTEXT when the caller does not supply it
     (2026-07-29). Measured over 7 days: all 2,066 rows carried
     agent_name='unknown', and ticker/cycle_id were not written at all — the
