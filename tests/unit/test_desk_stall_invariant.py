@@ -52,15 +52,16 @@ class _Result:
 class _FakeDB:
     """Applies the check's own params, so the phase filter is under test.
 
-    `desks` holds `(ticker, phase)` or `(ticker, phase, work_landed, explained)`
-    — the two extra columns default to the HOOD shape (work lost, unexplained),
+    `desks` holds `(ticker, phase)` or
+    `(ticker, phase, work_landed, decided, explained)` — the extra columns
+    default to the HOOD shape (research lost, undecided, unexplained),
     which is what this check was calibrated on. `execute` reproduces
     `WHERE cycle_id = %s AND phase <> ALL(%s)` using the params the check
     actually passed — not a hardcoded expectation of them.
     """
 
     def __init__(self, desks, cycle_id="cycle-test-1"):
-        self.desks = [tuple(d) + (False, False)[len(d) - 2:] for d in desks]
+        self.desks = [tuple(d) + (False, False, False)[len(d) - 2:] for d in desks]
         self.cycle_id = cycle_id
         self.params_seen = None
 
@@ -110,55 +111,71 @@ def test_fires_on_a_desk_abandoned_mid_pipeline(phase, recorded, monkeypatch):
     assert out == [invariants.KIND_DESK_STALLED]
     assert len(recorded) == 1
     assert recorded[0]["count"] == 1
-    assert recorded[0]["lost"] == 1
+    assert recorded[0]["lost_research"] == 1
     assert recorded[0]["stalled"] == [
-        {"ticker": "HOOD", "phase": phase, "work_landed": False, "explained": False}
+        {"ticker": "HOOD", "phase": phase, "work_landed": False,
+         "decided": False, "explained": False}
     ]
 
 
 # ── The two shapes must stay distinguishable ─────────────────────────────
 
 
-def test_a_stall_whose_work_landed_is_not_counted_as_lost(recorded, monkeypatch):
-    """The live NVDA firing (2026-07-30 07:28): phase stale, work intact.
+def test_a_stall_that_kept_its_research_but_lost_its_decision(recorded, monkeypatch):
+    """The live NVDA firing (2026-07-30 07:28) — and it was NOT benign.
 
-    Its desk carried a `pipeline_incomplete` stamp — "Invalid transition:
-    RESEARCH_DONE -> PM_DONE" — which is the ORCL fix behaving as designed. That
-    shape is produced by a DEPLOYED fix, so it recurs; counting it as lost work
-    would make the check cry loss when nothing was lost, and get it muted.
+    Its analysis and 7 telemetry rows survived, and it carried a
+    `pipeline_incomplete` stamp that looked like the ORCL fix working as
+    designed. The real cause was a same-day regression (`6a9bd82`): the
+    DEBATE_ENGINE=3 branch skipped the `tournament_result` write, which is the
+    Board's chain trigger, so no decision was ever produced.
+
+    Counting this as "nothing lost" is what let a live regression read as
+    healthy. The decision IS the product.
     """
-    out, _ = _run([("NVDA", "RESEARCH_DONE", True, True)], recorded, monkeypatch)
+    out, _ = _run([("NVDA", "RESEARCH_DONE", True, False, True)],
+                  recorded, monkeypatch)
 
-    assert out == [invariants.KIND_DESK_STALLED], "still worth surfacing"
-    assert recorded[0]["count"] == 1
-    assert recorded[0]["lost"] == 0, "work landed — nothing was lost"
-    assert recorded[0]["lost_tickers"] == []
-    assert recorded[0]["stalled"][0]["work_landed"] is True
-    assert recorded[0]["stalled"][0]["explained"] is True
+    assert out == [invariants.KIND_DESK_STALLED]
+    assert recorded[0]["lost_research"] == 0, "the analysis did land"
+    assert recorded[0]["undecided"] == 1, "but no decision was produced"
+    assert recorded[0]["undecided_tickers"] == ["NVDA"]
+    assert recorded[0]["stalled"][0]["decided"] is False
 
 
-def test_lost_and_landed_are_separated_in_one_cycle(recorded, monkeypatch):
-    """A mixed cycle must name which desks actually lost their work."""
+def test_a_stall_that_kept_both_is_neither(recorded, monkeypatch):
+    """Research landed AND a decision exists — surfaced, but nothing lost."""
+    _run([("CRH", "DEBATE_DONE", True, True, False)], recorded, monkeypatch)
+
+    assert recorded[0]["lost_research"] == 0
+    assert recorded[0]["undecided"] == 0
+
+
+def test_the_two_losses_are_reported_separately(recorded, monkeypatch):
+    """One number cannot carry both; flattening hid a live regression."""
     out, _ = _run([
-        ("HOOD", "DEBATE_DONE", False, False),    # lost
-        ("NVDA", "RESEARCH_DONE", True, True),    # landed
-        ("CARS", "RESEARCH_DONE", False, True),   # stamped, but nothing landed
+        ("HOOD", "DEBATE_DONE", False, False, False),   # research lost
+        ("NVDA", "RESEARCH_DONE", True, False, True),   # kept research, no decision
+        ("CRH", "DEBATE_DONE", True, True, False),      # kept both
     ], recorded, monkeypatch)
 
     assert recorded[0]["count"] == 3
-    assert recorded[0]["lost"] == 2
-    assert set(recorded[0]["lost_tickers"]) == {"HOOD", "CARS"}
+    assert recorded[0]["lost_research"] == 1
+    assert recorded[0]["lost_research_tickers"] == ["HOOD"]
+    assert recorded[0]["undecided"] == 1
+    assert recorded[0]["undecided_tickers"] == ["NVDA"]
 
 
-def test_an_explained_stall_with_no_work_is_still_lost(recorded, monkeypatch):
-    """A `pipeline_incomplete` stamp explains the phase, not the missing work.
+def test_an_explained_stall_with_no_research_is_still_lost(recorded, monkeypatch):
+    """A `pipeline_incomplete` stamp explains the PHASE, never the outcome.
 
+    NVDA proved the point: it was stamped, and it was still a regression.
     Treating "explained" as "fine" would re-hide the HOOD case the moment the
     ORCL handler starts stamping it.
     """
-    _run([("HOOD", "DEBATE_DONE", False, True)], recorded, monkeypatch)
+    _run([("HOOD", "DEBATE_DONE", False, False, True)], recorded, monkeypatch)
 
-    assert recorded[0]["lost"] == 1
+    assert recorded[0]["lost_research"] == 1
 
 
 def test_a_single_stall_names_its_ticker(recorded, monkeypatch):

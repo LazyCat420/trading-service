@@ -554,25 +554,34 @@ def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
     check within days. The distinction is that a stall has *already spent* the
     research budget — which is what makes it worth an alert.
 
-    TWO SHAPES, and the difference decides whether anyone should care
-    ----------------------------------------------------------------
+    TWO KINDS OF LOSS, and why one number cannot carry both
+    -------------------------------------------------------
     The first live firing (NVDA, `cycle-observe-1785396275`, 2026-07-30 07:28)
     was not the shape this was calibrated on:
 
-        HOOD  DEBATE_DONE    no analysis_results, no telemetry   work LOST
-        NVDA  RESEARCH_DONE  analysis_results + 7 telemetry rows work LANDED
+        HOOD  DEBATE_DONE    no analysis, no telemetry, no decision
+        NVDA  RESEARCH_DONE  analysis + 7 telemetry rows, but NO decision
 
-    NVDA carried a `pipeline_incomplete` stamp reading *"Invalid transition:
-    RESEARCH_DONE → PM_DONE"*. That is the 2026-07-29 ORCL fix behaving exactly
-    as designed — it converted "the desk vanishes" into "the desk persists at a
-    non-terminal phase" — so this shape is a CONSEQUENCE of that fix, and its
-    work is intact. Only the phase is stale.
+    NVDA also carried a `pipeline_incomplete` stamp ("Invalid transition:
+    RESEARCH_DONE → PM_DONE"), which looks like the 2026-07-29 ORCL fix behaving
+    as designed. It was not benign: the root cause was a same-day regression
+    (`6a9bd82`) where the DEBATE_ENGINE=3 branch returned early and skipped the
+    `tournament_result` whiteboard write — and that write is the CHAIN TRIGGER
+    that dispatches the Board. Seven agents ran, the Board never did, and no
+    decision was produced.
 
-    Both are worth surfacing, but collapsing them would be fatal to the check:
-    the benign shape is produced by a deployed fix and will therefore recur, and
-    a detector that cries loss when nothing was lost gets muted. So each stalled
-    desk carries `work_landed` and `explained`, and the violation carries a
-    `lost` count — the number that actually warrants attention.
+    So a `pipeline_incomplete` stamp **explains the phase, not the outcome**, and
+    "the analysis landed" is not "nothing was lost". A desk can lose:
+
+        its research   — nothing persisted, the spend is simply gone
+        its decision   — research persisted, but the thing the pipeline
+                         EXISTS to produce never happened
+
+    Reporting one `lost` count flattens those, and flattening is what let a live
+    regression read as benign for as long as it took to find the real cause. Each
+    desk therefore carries `work_landed`, `decided` and `explained`, and the
+    violation carries BOTH `lost_research` and `undecided`. `explained` is
+    recorded because it is diagnostic, never because it excuses anything.
     """
     from app.db.connection import get_db
 
@@ -585,6 +594,8 @@ def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
             SELECT d.ticker, d.phase,
                    EXISTS (SELECT 1 FROM analysis_results a
                            WHERE a.cycle_id = d.cycle_id AND a.ticker = d.ticker) landed,
+                   EXISTS (SELECT 1 FROM trade_results t
+                           WHERE t.cycle_id = d.cycle_id AND t.ticker = d.ticker) decided,
                    (d.desk_data #> '{cycle_metadata,pipeline_incomplete}') IS NOT NULL explained
             FROM shared_desk d
             WHERE d.cycle_id = %s AND d.phase <> ALL(%s)
@@ -596,19 +607,22 @@ def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
         return []
 
     stalled = [
-        {"ticker": r[0], "phase": r[1],
-         "work_landed": bool(r[2]), "explained": bool(r[3])}
+        {"ticker": r[0], "phase": r[1], "work_landed": bool(r[2]),
+         "decided": bool(r[3]), "explained": bool(r[4])}
         for r in rows
     ]
-    # The actionable subset: research paid for and nothing to show for it.
-    lost = [s for s in stalled if not s["work_landed"]]
+    # Two distinct losses, never summed into one alarm.
+    lost_research = [s for s in stalled if not s["work_landed"]]
+    undecided = [s for s in stalled if s["work_landed"] and not s["decided"]]
     return [record_violation(
         KIND_DESK_STALLED, cycle_id=cycle_id,
         # One row per cycle: a deploy mid-cycle strands every live desk at once.
         ticker=(stalled[0]["ticker"] if len(stalled) == 1 else ""),
         count=len(stalled),
-        lost=len(lost),
-        lost_tickers=[s["ticker"] for s in lost][:STALL_ROSTER_CAP],
+        lost_research=len(lost_research),
+        lost_research_tickers=[s["ticker"] for s in lost_research][:STALL_ROSTER_CAP],
+        undecided=len(undecided),
+        undecided_tickers=[s["ticker"] for s in undecided][:STALL_ROSTER_CAP],
         stalled=stalled[:STALL_ROSTER_CAP],
         truncated=max(0, len(stalled) - STALL_ROSTER_CAP),
         terminal_phases=sorted(terminal),
