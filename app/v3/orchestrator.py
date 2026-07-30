@@ -1091,6 +1091,53 @@ async def run_v3_pipeline(
                 _queue_agent("board_of_directors", None, parent="quant_analyst")
             return
 
+        # DEBATE_ENGINE=3 — no debate. This belongs HERE, beside the regime-skip
+        # and no-trade gates above, not inside _execute_tournament_debate.
+        #
+        # Returning early from the executor skipped the whiteboard write at
+        # `tournament_result`, and that write is what the subscriber uses to
+        # chain the Board (`elif sec in ("debate_judge", "tournament_result")`).
+        # The Board was therefore never dispatched and the desk stalled at
+        # RESEARCH_DONE with no decision — observed live on NVDA in
+        # cycle-observe-1785396275, 7 agents run and nothing decided.
+        #
+        # Both sibling gates solve this the same way and so does this one:
+        # append a SKIPPED marker (not a synthesized verdict — winning_side
+        # stays "skipped", confidence 0) and dispatch the Board explicitly.
+        # The marker is what lets scoring tell "no debate ran" apart from "the
+        # debate returned nothing".
+        try:
+            from app.services.parameter_store import get_param as _get_engine
+            _engine_sel = int(_get_engine("DEBATE_ENGINE"))
+        except Exception as _e:  # noqa: BLE001 — fail open to the default
+            logger.warning("[V3] DEBATE_ENGINE lookup failed (%s) — no debate", _e)
+            _engine_sel = 3
+
+        if _engine_sel == 3:
+            logger.info(
+                "[V3] %s: debate disabled (DEBATE_ENGINE=3) — Board decides "
+                "on the research desks alone", ticker,
+            )
+            skip_note = (
+                "Debate SKIPPED: the debate engine is disabled. The tournament "
+                "was retired on measurement — its verdict did not beat the "
+                "quant's own thesis_direction on selection or removal, while "
+                "costing ~30% of pipeline spend. Decide from the research "
+                "desks; nothing here stress-tested them."
+            )
+            desk.append_artifact("tournament_result", {
+                "summary": skip_note, "action": "HOLD", "confidence": 0,
+                "winning_side": "skipped", "pitches": [], "survivors": [],
+                "h2h": {}, "jury_verdict": {}, "vetoed": False, "skipped": True,
+                "risk_flags": [], "total_tokens": 0, "shadow_mode": False,
+                "source": "debate_engine_off",
+            })
+            desk.cycle_metadata["debate_skipped_by_engine"] = True
+            if not board_dispatched:
+                board_dispatched = True
+                _queue_agent("board_of_directors", None, parent="quant_analyst")
+            return
+
         if _cog_settings.TOURNAMENT_MODE:
             _queue_agent("tournament_debate", None, parent="quant_analyst")
         else:
@@ -1197,17 +1244,16 @@ async def run_v3_pipeline(
             _engine = 3
 
         if _engine == 3:
-            # No debate ran. Append NOTHING — not a synthesized verdict. See the
-            # measurement block on DEBATE_ENGINE in app/services/parameter_store.py
-            # for why the tournament was retired and why engine 3 must not
-            # fabricate a winning_side. Consumers are None-safe.
-            logger.info(
-                "[V3] %s: debate skipped (DEBATE_ENGINE=3) — no tournament_result, "
-                "no debate_judge; bull/bear/defense still run", ticker,
+            # Defensive only. Engine 3 is gated upstream in _queue_debate_phase,
+            # which appends the SKIPPED marker and dispatches the Board; the
+            # tournament is never queued. Reaching here means something queued
+            # it anyway, so record the skip and return WITHOUT touching the
+            # Board dispatch — the upstream gate owns that, and duplicating it
+            # here is what stalled NVDA at RESEARCH_DONE.
+            logger.warning(
+                "[V3] %s: tournament queued despite DEBATE_ENGINE=3 — skipping",
+                ticker,
             )
-            # A zero-token SKIPPED row, so "did we actually stop paying for it?"
-            # stays a queryable question. The repo's own lesson: without a
-            # stamped field the experiment is unfalsifiable.
             desk.record_agent_telemetry({
                 "agent_name": "v3_tournament_debate",
                 "ticker": ticker,

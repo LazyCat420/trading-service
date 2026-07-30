@@ -274,11 +274,18 @@ class TestOrchestratorWiring:
 
         src = inspect.getsource(orchestrator.run_v3_pipeline)
         assert "DEBATE_ENGINE lookup failed" in src
-        idx = src.find('_get_engine("DEBATE_ENGINE")')
-        assert idx != -1
-        window = src[idx:idx + 400]
-        assert "_engine = 3" in window
-        assert "_engine = 0" not in window
+        # Two lookups now: the engine-3 gate in _queue_debate_phase and the
+        # engine selector in _execute_tournament_debate. BOTH must fail open to
+        # the default, or a transient store error resurrects the tournament.
+        sites, i = [], src.find('_get_engine("DEBATE_ENGINE")')
+        while i != -1:
+            sites.append(src[i:i + 400])
+            i = src.find('_get_engine("DEBATE_ENGINE")', i + 1)
+        assert len(sites) >= 2, f"expected 2 lookups, found {len(sites)}"
+        for n, window in enumerate(sites):
+            assert "= 3" in window, f"lookup #{n} must fail open to no-debate"
+            assert "_engine = 0" not in window, f"lookup #{n} falls back to tournament"
+            assert "_engine_sel = 0" not in window
 
     def test_registry_admits_exactly_the_four_engines(self):
         """0=tournament, 1=panel, 2=panel/shared-evidence, 3=no debate.

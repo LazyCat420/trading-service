@@ -38,31 +38,54 @@ def test_no_debate_is_the_default():
 
 
 def test_fail_open_lands_on_no_debate_not_the_tournament():
-    """A parameter-store hiccup must not resurrect 28.2% of pipeline spend."""
-    src = inspect.getsource(orchestrator._run_v3_pipeline_impl) \
-        if hasattr(orchestrator, "_run_v3_pipeline_impl") \
-        else inspect.getsource(orchestrator)
-    # The except branch around the DEBATE_ENGINE lookup must set 3, not 0.
-    idx = src.find('_get_engine("DEBATE_ENGINE")')
-    assert idx != -1, "DEBATE_ENGINE lookup not found"
-    window = src[idx:idx + 400]
-    assert "_engine = 3" in window, "fail-open must default to no-debate"
-    assert "_engine = 0" not in window, "fail-open must not fall back to the tournament"
+    """A parameter-store hiccup must not resurrect ~30% of pipeline spend.
+
+    Checks EVERY lookup, not just the first. There are two — the gate in
+    _queue_debate_phase (`_engine_sel`) and the engine selector in
+    _execute_tournament_debate (`_engine`) — and a fallback to 0 in either
+    one silently brings the tournament back.
+    """
+    src = inspect.getsource(orchestrator)
+    sites, i = [], src.find('_get_engine("DEBATE_ENGINE")')
+    while i != -1:
+        sites.append(src[i:i + 400])
+        i = src.find('_get_engine("DEBATE_ENGINE")', i + 1)
+    assert len(sites) >= 2, f"expected both DEBATE_ENGINE lookups, found {len(sites)}"
+    for n, window in enumerate(sites):
+        assert "= 3" in window, f"lookup #{n} must fail open to no-debate"
+        assert "_engine = 0" not in window and "_engine_sel = 0" not in window, (
+            f"lookup #{n} must not fall back to the tournament"
+        )
 
 
 def test_engine_3_does_not_fabricate_a_verdict():
-    """Synthesizing winning_side from the quant would be the invented-RSI failure."""
+    """A SKIPPED marker is honest; a synthesized winner is not.
+
+    Engine 3 appends a `tournament_result` — it has to, so the Board gets
+    chained and so scoring can tell "no debate ran" from "the debate returned
+    nothing" (both sibling gates do the same). What it must never do is invent
+    a WINNER. Deriving winning_side from the quant would hand the Board a
+    computed number dressed as a debate outcome, which is the invented-RSI
+    failure with a new name.
+    """
     src = inspect.getsource(orchestrator)
-    idx = src.find("if _engine == 3:")
-    assert idx != -1, "engine-3 branch not found"
-    branch = src[idx:idx + 1600]
-    assert "return" in branch
-    for forbidden in ('append_artifact("tournament_result"',
-                      'append_artifact("debate_judge"',
-                      '"winning_side"'):
-        assert forbidden not in branch, (
-            f"engine 3 must not emit {forbidden} — no debate ran"
+    gate = src[src.find("if _engine_sel == 3:"):]
+    gate = gate[:gate.find("if _cog_settings.TOURNAMENT_MODE:")]
+    assert gate, "engine-3 gate not found"
+    assert '"winning_side": "skipped"' in gate, "the winner must be 'skipped'"
+    assert '"confidence": 0' in gate, "a skip carries no confidence"
+    assert '"total_tokens": 0' in gate, "a skip costs nothing"
+    for forbidden in ('"winning_side": "bull"', '"winning_side": "bear"'):
+        assert forbidden not in gate, (
+            f"engine 3 must not derive a winner ({forbidden})"
         )
+    # It must not READ a research stance to build the marker. Checking for the
+    # bare word would match the skip_note's own prose, which explains WHY the
+    # tournament was retired — matching the explanation instead of the code is
+    # how a guard tests nothing.
+    for read in ("'thesis_direction'", '"thesis_direction"',
+                 "->>'thesis_direction'"):
+        assert read not in gate, f"engine 3 must not read {read}"
 
 
 def test_skip_is_recorded_so_the_saving_is_queryable():
@@ -140,3 +163,63 @@ def test_contradiction_shadow_still_detects_without_the_tournament():
 def test_every_engine_value_is_in_range(engine):
     spec = PARAMETER_REGISTRY["DEBATE_ENGINE"]
     assert spec.min_value <= engine <= spec.max_value
+
+
+# ── the regression the first version shipped ─────────────────────────
+
+def test_engine_3_dispatches_the_board():
+    """Skipping the debate must not skip the DECISION.
+
+    Shipped broken 2026-07-30 and caught only by running a real cycle:
+    the engine-3 branch returned early from _execute_tournament_debate, which
+    skipped the whiteboard write at `tournament_result` — and that write is
+    what the subscriber uses to chain the Board:
+
+        elif sec in ("debate_judge", "tournament_result"):
+            _queue_agent("board_of_directors", ...)
+
+    NVDA ran 7 agents in cycle-observe-1785396275 and produced NO decision,
+    stalling at RESEARCH_DONE. Both sibling gates (regime-skip, no-trade) avoid
+    this by appending a SKIPPED marker and dispatching the Board explicitly;
+    engine 3 must do the same.
+    """
+    src = inspect.getsource(orchestrator)
+    gate = src[src.find("if _engine_sel == 3:"):]
+    gate = gate[:gate.find("if _cog_settings.TOURNAMENT_MODE:")]
+    assert gate, "engine-3 gate not found in _queue_debate_phase"
+    assert '_queue_agent("board_of_directors"' in gate, (
+        "engine 3 must dispatch the Board — skipping the debate must not skip "
+        "the decision"
+    )
+    assert "board_dispatched = True" in gate, "must latch the dispatch"
+    assert '"winning_side": "skipped"' in gate, (
+        "append a SKIPPED marker so scoring can tell 'no debate ran' from "
+        "'the debate returned nothing'"
+    )
+
+
+def test_engine_3_gate_sits_beside_its_siblings():
+    """All three debate-skip paths live in _queue_debate_phase, so they share
+    the board_dispatched latch. A skip that returns from the EXECUTOR instead
+    cannot dispatch the Board — that was the bug."""
+    src = inspect.getsource(orchestrator)
+    qdp = src[src.find("def _queue_debate_phase():"):]
+    qdp = qdp[:qdp.find("async def _has_pending_peer_requests")]
+    assert "if _engine_sel == 3:" in qdp, (
+        "the engine-3 gate must be inside _queue_debate_phase"
+    )
+    # every skip path in that function dispatches the board
+    assert qdp.count('_queue_agent("board_of_directors"') >= 3, (
+        "regime-skip, no-trade and engine-3 must each dispatch the Board"
+    )
+
+
+def test_executor_branch_does_not_own_board_dispatch():
+    """The defensive branch left in the executor must NOT try to dispatch the
+    Board; duplicating that responsibility is what made the bug subtle."""
+    src = inspect.getsource(orchestrator)
+    fn = src[src.find("async def _execute_tournament_debate"):]
+    branch = fn[fn.find("if _engine == 3:"):][:1200]
+    assert "board_of_directors" not in branch, (
+        "the upstream gate owns the Board dispatch"
+    )
