@@ -438,6 +438,55 @@ def _check_agent_cost(cycle_id: str) -> list[str]:
     return out
 
 
+KIND_DESK_ABANDONED = "DESK_ABANDONED_MID_PIPELINE"
+
+
+def record_ticker_crash(*, ticker: str, cycle_id: str, error: BaseException) -> list[str]:
+    """The per-ticker pipeline RAISED. Name the exception while we still have it.
+
+    `pipeline_service` gathers ticker tasks with `return_exceptions=True` so one
+    bad ticker cannot kill the batch — correct, and the reason a stall is
+    per-ticker rather than per-cycle (HOOD died at `DEBATE_DONE` while EXLS and
+    CRH finished 12 minutes later in the same cycle). But the exception was only
+    ever *logged*: no table recorded it, so "why did this desk stop?" was
+    answerable only from container logs that rotate.
+
+    Deliberately does NOT stamp the desk terminal. Setting `ABORTED` would make
+    `DESK_STALLED_MID_PIPELINE` go silent — the loss would vanish behind a
+    detector reporting health, which is the exact failure this module exists to
+    prevent. Leaving the phase alone keeps two independent observers: this one
+    fires at the moment of failure and names the cause, and the cycle-level
+    stall check still fires at cycle end as a backstop. Neither mutes the other,
+    and the surviving phase is the only record of where the pipeline stopped.
+    """
+    if not ticker or not cycle_id:
+        return []
+
+    phase = "NO_DESK"
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            row = db.execute(
+                "SELECT phase FROM shared_desk WHERE cycle_id = %s AND ticker = %s "
+                "LIMIT 1",
+                [cycle_id, ticker],
+            ).fetchone()
+        if row and row[0]:
+            phase = str(row[0])
+    except Exception as e:  # noqa: BLE001 — a probe failure must not lose the record
+        logger.debug("[Invariants] %s: phase probe failed (%s)", ticker, e)
+
+    return [record_violation(
+        KIND_DESK_ABANDONED, ticker=ticker, cycle_id=cycle_id,
+        phase_at_crash=phase,
+        error_type=type(error).__name__,
+        # asyncio.TimeoutError stringifies to "" — the type is the only signal
+        # there, which is why it is recorded separately.
+        error=str(error)[:500],
+    )]
+
+
 def _terminal_phases() -> tuple[frozenset[str], str]:
     """The phases a finished desk is allowed to sit in, plus the skip phase.
 

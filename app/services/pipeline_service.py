@@ -1629,6 +1629,26 @@ class PipelineService:
             for t, r in zip(tickers, results):
                 if isinstance(r, Exception):
                     logger.error("[PipelineService] Ticker %s failed: %s", t, r, exc_info=r)
+                    # Persist WHY (2026-07-30). This log line was the only record
+                    # that a ticker crashed, so a desk stranded mid-pipeline —
+                    # HOOD at DEBATE_DONE, 6 of 204 desks in 7 days — could be
+                    # detected afterwards but never explained, because
+                    # `save_analysis_result` runs only after `run_v3_pipeline`
+                    # RETURNS and `check_ticker_complete` is not in a `finally`.
+                    #
+                    # Records the exception type separately: asyncio.TimeoutError
+                    # stringifies to "" and would otherwise arrive as a blank
+                    # cause. Does not touch the desk's phase — see the note in
+                    # record_ticker_crash.
+                    try:
+                        from app.v3.invariants import record_ticker_crash
+
+                        record_ticker_crash(ticker=t, cycle_id=cycle_id, error=r)
+                    except Exception as rec_err:  # noqa: BLE001
+                        logger.debug(
+                            "[PipelineService] could not record %s crash "
+                            "(non-fatal): %s", t, rec_err,
+                        )
 
             if cls._stop_requested:
                 raise asyncio.CancelledError("Cycle stopped by user")

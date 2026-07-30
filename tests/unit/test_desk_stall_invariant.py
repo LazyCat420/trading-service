@@ -291,6 +291,142 @@ def test_a_probe_failure_is_not_a_violation(monkeypatch, recorded):
     assert recorded == []
 
 
+# ── The crash recorder: name the cause, do not mute the detector ─────────
+
+
+def _crash(recorded, monkeypatch, error, *, desks=(("HOOD", "DEBATE_DONE"),),
+           ticker="HOOD", cycle_id="cycle-test-1"):
+    """Drive record_ticker_crash against a fake desk table, capturing writes."""
+    class _DB:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, sql, params=None):
+            self.statements.append(sql)
+            want_cycle, want_ticker = params[0], params[1]
+            rows = [(p,) for t, p in desks
+                    if t == want_ticker and want_cycle == cycle_id]
+            return _Result(rows)
+
+    db = _DB()
+
+    @contextmanager
+    def _get_db():
+        yield db
+
+    monkeypatch.setattr("app.db.connection.get_db", _get_db)
+    out = invariants.record_ticker_crash(
+        ticker=ticker, cycle_id=cycle_id, error=error,
+    )
+    return out, db
+
+
+def test_records_the_exception_type_and_message(recorded, monkeypatch):
+    out, _ = _crash(recorded, monkeypatch, RuntimeError("board leg exploded"))
+
+    assert out == [invariants.KIND_DESK_ABANDONED]
+    assert recorded[0]["error_type"] == "RuntimeError"
+    assert recorded[0]["error"] == "board leg exploded"
+    assert recorded[0]["phase_at_crash"] == "DEBATE_DONE"
+    assert recorded[0]["ticker"] == "HOOD"
+
+
+def test_a_timeout_is_still_identifiable(recorded, monkeypatch):
+    """`asyncio.TimeoutError` stringifies to "" — the type is the only signal.
+
+    Recording only str(error) would file the most likely cause of a stall as a
+    blank.
+    """
+    import asyncio
+
+    _crash(recorded, monkeypatch, asyncio.TimeoutError())
+
+    assert recorded[0]["error"] == ""
+    assert recorded[0]["error_type"] == "TimeoutError"
+
+
+def test_records_no_desk_when_the_crash_beat_the_desk_row(recorded, monkeypatch):
+    _crash(recorded, monkeypatch, RuntimeError("early"), desks=())
+
+    assert recorded[0]["phase_at_crash"] == "NO_DESK"
+
+
+def test_the_crash_recorder_never_writes_to_shared_desk(recorded, monkeypatch):
+    """It must NOT stamp the desk terminal.
+
+    Setting ABORTED would silence DESK_STALLED_MID_PIPELINE and hide the lost
+    work behind a detector reporting health. The surviving phase is also the
+    only record of where the pipeline stopped.
+    """
+    _out, db = _crash(recorded, monkeypatch, RuntimeError("boom"))
+
+    joined = " ".join(db.statements).upper()
+    assert "UPDATE" not in joined
+    assert "INSERT" not in joined
+    assert "DELETE" not in joined
+    assert joined.count("SELECT") == 1
+
+
+def test_a_crash_still_leaves_the_stall_check_firing(recorded, monkeypatch):
+    """The two observers must be independent — neither mutes the other."""
+    _crash(recorded, monkeypatch, RuntimeError("boom"))
+    recorded.clear()
+
+    out, _ = _run([("HOOD", "DEBATE_DONE")], recorded, monkeypatch)
+
+    assert out == [invariants.KIND_DESK_STALLED]
+
+
+@pytest.mark.parametrize("ticker,cycle", [("", "c"), ("T", ""), ("", "")])
+def test_crash_recorder_needs_both_identifiers(ticker, cycle, recorded, monkeypatch):
+    out = invariants.record_ticker_crash(
+        ticker=ticker, cycle_id=cycle, error=RuntimeError("x"),
+    )
+    assert out == []
+    assert recorded == []
+
+
+def test_a_probe_failure_still_records_the_crash(recorded, monkeypatch):
+    """The crash is the point; the phase is a nicety. Losing both would be worse."""
+    @contextmanager
+    def _boom():
+        raise RuntimeError("no database")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("app.db.connection.get_db", _boom)
+    out = invariants.record_ticker_crash(
+        ticker="HOOD", cycle_id="cycle-test-1", error=ValueError("real cause"),
+    )
+
+    assert out == [invariants.KIND_DESK_ABANDONED]
+    assert recorded[0]["phase_at_crash"] == "NO_DESK"
+    assert recorded[0]["error_type"] == "ValueError"
+
+
+def test_the_crash_recorder_is_wired_into_the_gather_loop():
+    """Structural: the recorder is worthless if the crash path never calls it.
+
+    The exception branch in pipeline_service is reached only when a real ticker
+    pipeline raises inside `asyncio.gather`, which no unit test drives — so
+    assert the call exists in the module that owns that branch.
+    """
+    import ast
+    import inspect
+
+    from app.services import pipeline_service
+
+    tree = ast.parse(inspect.getsource(pipeline_service))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "record_ticker_crash" in called, (
+        "pipeline_service never calls record_ticker_crash — a crashing ticker "
+        "goes back to being log-only"
+    )
+
+
 # ── Live replay (the calibration this was built from) ────────────────────
 
 
