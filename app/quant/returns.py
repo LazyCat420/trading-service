@@ -172,3 +172,72 @@ def load_close_returns(ticker: str, lookback_days: int = 500) -> np.ndarray:
     if closes.size < 2:
         return np.array([])
     return np.diff(np.log(closes))
+
+
+def latest_close(ticker: str) -> float | None:
+    """Most recent close for `ticker`, from ONE vendor.
+
+    `ORDER BY date DESC LIMIT 1` without a source filter is non-deterministic on
+    a dual-source ticker: both vendors carry the same max date, and whichever
+    row the planner emits first wins. The vendors disagree by a mean 20.05%
+    (ALLY 1.11%, CRH ~1%, DRIP 718%) — see the module header — so an entry price
+    read one way and an exit price read the other turns a vendor spread into
+    P&L. 19% of completed desks sit on such a ticker.
+    """
+    ticker = ticker.strip().upper()
+    with get_db() as db:
+        row = db.execute(
+            f"""
+            SELECT close FROM price_history
+            WHERE ticker = %(ticker)s AND close IS NOT NULL AND close > 0
+              AND source = ({_dominant_source_sql()})
+            ORDER BY date DESC LIMIT 1
+            """,
+            {"ticker": ticker},
+        ).fetchone()
+    if not row or row[0] is None:
+        return None
+    val = float(row[0])
+    return val if val == val and val > 0 else None
+
+
+def forward_window(ticker: str, start, sessions: int) -> list[float] | None:
+    """`sessions` consecutive closes from the first bar on/after `start`.
+
+    Returns None unless the FULL window exists — a short window silently scored
+    as a full one is how a "+7 session" move becomes a 3-session move on a
+    dual-source ticker, where `LIMIT 8` returns 8 ROWS spanning ~4 dates.
+    Measured on CRH: the unfiltered read gives +0.970% where the truth is
+    -2.358%, a sign flip, on 19% of scored desks.
+
+    One bar per date, one vendor for the whole window — mixing conventions
+    mid-window manufactures a jump (DRIP: 133 daily moves over 15%).
+    """
+    ticker = ticker.strip().upper()
+    n = int(sessions)
+    if n < 2:
+        return None
+    with get_db() as db:
+        rows = db.execute(
+            f"""
+            SELECT close FROM price_history
+            WHERE ticker = %(ticker)s AND close IS NOT NULL AND close > 0
+              AND date >= %(start)s
+              AND source = ({_dominant_source_sql()})
+            ORDER BY date ASC LIMIT %(n)s
+            """,
+            {"ticker": ticker, "start": start, "n": n},
+        ).fetchall()
+    closes = [float(r[0]) for r in rows if r[0] is not None]
+    closes = [c for c in closes if c == c and c > 0]
+    if len(closes) < n:
+        return None  # window has not closed yet
+    return closes
+
+
+def forward_move_pct(ticker: str, start, sessions: int) -> float | None:
+    """Percent move over an exact `sessions`-bar forward window, or None."""
+    w = forward_window(ticker, start, sessions)
+    if not w or w[0] <= 0:
+        return None
+    return (w[-1] - w[0]) / w[0] * 100.0
