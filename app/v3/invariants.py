@@ -213,3 +213,248 @@ def check_persisted_fields(
                 artifact=artifact_name, field=f,
             ))
     return violations
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CYCLE-LEVEL CHECKS
+#
+# The per-ticker checks above catch work that vanished. These catch the slower
+# failures — the ones that degrade a system over days while every individual
+# cycle still looks fine. Detection lag measured during the 2026-07-29 audit,
+# all found by hand:
+#
+#   price universe 2,642 -> 509 tickers          9 days
+#   get_sec_filings rejecting 27% of calls       7+ days
+#   board HOLD share 58% -> 100%                 4 days
+#   tool attribution 100% -> 0.6%                ~3 weeks
+#   tournament: 31% of tokens, zero tool calls   never noticed
+#
+# THRESHOLDS ARE CALIBRATED AGAINST REAL DATA, not guessed. Each constant below
+# records the observed healthy range it was set against, because a check that
+# fires on a healthy cycle gets muted, then ignored, then deleted — and the
+# muting is silent.
+# ═══════════════════════════════════════════════════════════════════════════
+
+KIND_UNIVERSE_NOT_COVERED = "ANALYSED_UNIVERSE_NOT_REFRESHED"
+KIND_TOOL_FAILURE_RATE = "TOOL_FAILURE_RATE_CEILING"
+KIND_DECISION_DRIFT = "DECISION_DISTRIBUTION_DRIFT"
+KIND_AGENT_COST_NO_RESEARCH = "AGENT_BURNS_TOKENS_WITHOUT_RESEARCH"
+KIND_ATTRIBUTION_DECAY = "TELEMETRY_ATTRIBUTION_DECAY"
+
+#: Healthy tools measured 0-3% failure over 14 days (n>=200 each); the broken
+#: one sat at 27%. 15% separates them with room to spare.
+TOOL_FAIL_PCT_CEILING = 15
+TOOL_FAIL_MIN_CALLS = 20
+
+#: Per-cycle HOLD share is unusable as a signal — cycles carry 3-6 decisions, so
+#: one all-HOLD cycle of 4 tickers is 100% and entirely normal.
+#:
+#: The BASELINE must be long. The 07-25 -> 07-28 ramp was GRADUAL
+#: (58 -> 66 -> 73 -> 93 -> 100%), so adjacent 20-vs-20 windows differed by only
+#: +5pp and a naive comparison misses the most consequential change of the
+#: month. Against a 150-decision trailing baseline it is +28pp.
+#:
+#: Calibrated by replaying six dates: fires on 07-10 (+29pp, HOLD 36->65%) and
+#: 07-29 (+28pp, the ramp); silent on 07-15 (-2), 07-20 (+1), 07-24 (+7) and
+#: 07-30 (+1, once the ramp is absorbed into the baseline). Both fires are real
+#: regime changes, and every stable period is quiet.
+DRIFT_WINDOW = 20
+DRIFT_BASELINE = 150
+DRIFT_MIN_SHIFT_PCT = 25
+
+#: PER-CALL, never per-cycle: a cycle-wide SUM scales with ticker count, so a
+#: threshold on it flags a normal 4-ticker cycle and says nothing about the
+#: agent. Measured per call over 7 days:
+#:
+#:     v3_tournament_debate     242k   loops 1.0   <- 31% of ALL spend
+#:     v3_fundamental_analyst   158k   loops 5.8   (researches)
+#:     v3_junior_analyst        153k   loops 5.4   (researches)
+#:     v3_board_of_directors     31k   loops 1.0
+#:     v3_decision_synthesizer   29k   loops 1.0
+#:
+#: 150k separates the tournament from every other non-researching agent by ~5x.
+#: A board or synthesizer SHOULD deliberate without tools; the tournament doing
+#: it at 8x their cost is the budget fact worth surfacing.
+COST_NO_RESEARCH_TOKENS = 150_000
+
+#: Attribution was 100% in June and decayed to 0.6% by 07-27 without anyone
+#: noticing. Below half, the telemetry cannot answer "which agent researches".
+ATTRIBUTION_MIN_PCT = 50
+
+
+def check_cycle_complete(*, cycle_id: str) -> list[str]:
+    """Cycle-level postconditions. Returns the violations found.
+
+    Every check is independently wrapped: one failing probe must not suppress
+    the other four, which is how a single schema change silently disables a
+    whole observability layer.
+    """
+    violations: list[str] = []
+    if not cycle_id:
+        return violations
+    for check in (_check_universe_coverage, _check_tool_failure_rates,
+                  _check_decision_drift, _check_agent_cost, _check_attribution):
+        try:
+            violations.extend(check(cycle_id) or [])
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[Invariants] %s failed (non-fatal): %s", check.__name__, e)
+    return violations
+
+
+def _check_universe_coverage(cycle_id: str) -> list[str]:
+    """Every analysed ticker must have a price bar this week.
+
+    The 07-20 collapse (2,642 -> 509 distinct tickers) ran for nine days while
+    the bot reasoned over stale technicals. It was a *stock vs flow* confusion:
+    509 was always the S&P-500 daily refresh set, and 2,642 was a one-off
+    backfill draining away. A set-difference catches it on the first cycle.
+    """
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        stale = db.execute(
+            """
+            SELECT a.ticker FROM analysis_results a
+            WHERE a.cycle_id = %s
+              AND NOT EXISTS (
+                SELECT 1 FROM price_history p
+                WHERE p.ticker = a.ticker AND p.date > CURRENT_DATE - 7)
+            """,
+            [cycle_id],
+        ).fetchall()
+    if not stale:
+        return []
+    return [record_violation(
+        KIND_UNIVERSE_NOT_COVERED, cycle_id=cycle_id,
+        stale_tickers=[r[0] for r in stale][:20], count=len(stale),
+    )]
+
+
+def _check_tool_failure_rates(cycle_id: str) -> list[str]:
+    """No tool may sit above the failure ceiling.
+
+    Reads `tool_usage_stats` deliberately: tool_name/success/called_at are the
+    columns that table gets RIGHT (see the note in app/tools/registry.py). Its
+    broken agent attribution is irrelevant here.
+    """
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        rows = db.execute(
+            """
+            SELECT tool_name, COUNT(*) n,
+                   ROUND(100.0 * COUNT(*) FILTER (WHERE NOT success) / COUNT(*)) fail_pct
+            FROM tool_usage_stats
+            WHERE called_at > NOW() - INTERVAL '24 hours'
+            GROUP BY 1 HAVING COUNT(*) >= %s
+            """,
+            [TOOL_FAIL_MIN_CALLS],
+        ).fetchall()
+    out = []
+    for name, n, pct in rows:
+        if pct is not None and float(pct) > TOOL_FAIL_PCT_CEILING:
+            out.append(record_violation(
+                KIND_TOOL_FAILURE_RATE, cycle_id=cycle_id,
+                tool=name, calls=int(n), failure_pct=float(pct),
+                ceiling=TOOL_FAIL_PCT_CEILING,
+            ))
+    return out
+
+
+def _check_decision_drift(cycle_id: str) -> list[str]:
+    """The HOLD share must not lurch between rolling windows.
+
+    Compares the last DRIFT_WINDOW decisions against the DRIFT_WINDOW before
+    them. Deliberately NOT per-cycle: a cycle carries 3-6 decisions, so one
+    all-HOLD cycle is 100% and perfectly normal — an absolute threshold would
+    fire on almost every healthy cycle.
+
+    The 07-25 -> 07-28 ramp (58% -> 100% HOLD) is exactly this shape, and it
+    was the most consequential change of the month.
+    """
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        rows = db.execute(
+            """
+            SELECT action FROM trade_results
+            WHERE action IS NOT NULL
+            ORDER BY created_at DESC LIMIT %s
+            """,
+            [DRIFT_WINDOW + DRIFT_BASELINE],
+        ).fetchall()
+    if len(rows) < DRIFT_WINDOW + DRIFT_BASELINE:
+        return []  # not enough history to compare — silence, not a guess
+    recent = [r[0] for r in rows[:DRIFT_WINDOW]]
+    prior = [r[0] for r in rows[DRIFT_WINDOW:DRIFT_WINDOW + DRIFT_BASELINE]]
+    r_pct = 100.0 * sum(1 for a in recent if a == "HOLD") / len(recent)
+    p_pct = 100.0 * sum(1 for a in prior if a == "HOLD") / len(prior)
+    if abs(r_pct - p_pct) < DRIFT_MIN_SHIFT_PCT:
+        return []
+    return [record_violation(
+        KIND_DECISION_DRIFT, cycle_id=cycle_id,
+        hold_pct_recent=round(r_pct, 1), hold_pct_prior=round(p_pct, 1),
+        shift=round(r_pct - p_pct, 1), window=DRIFT_WINDOW,
+        baseline=DRIFT_BASELINE,
+    )]
+
+
+def _check_agent_cost(cycle_id: str) -> list[str]:
+    """Flag an agent that spent heavily without calling a single tool.
+
+    Not a bug on its own — a synthesizer SHOULD deliberate. It is a budget fact
+    that should be chosen rather than discovered: the tournament consumed 31%
+    of all tokens at 242k per call with loops=1.0, and nobody knew until
+    someone went looking.
+    """
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        rows = db.execute(
+            """
+            SELECT agent_name, AVG(token_usage) tok, AVG(loops_used) loops
+            FROM v3_agent_telemetry
+            WHERE cycle_id = %s
+            GROUP BY 1
+            """,
+            [cycle_id],
+        ).fetchall()
+    out = []
+    for name, tok, loops in rows:
+        if tok and int(tok) > COST_NO_RESEARCH_TOKENS and (loops or 0) <= 1.0:
+            out.append(record_violation(
+                KIND_AGENT_COST_NO_RESEARCH, cycle_id=cycle_id,
+                agent=name, tokens=int(tok), avg_loops=float(loops or 0),
+            ))
+    return out
+
+
+def _check_attribution(cycle_id: str) -> list[str]:
+    """The telemetry that answers "which agent researches" must keep working.
+
+    Attribution in `agent_tool_telemetry` was 100% in June and decayed to 0.6%
+    by late July, unnoticed, because a decaying observability layer produces no
+    symptom other than answers quietly becoming wrong.
+    """
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        row = db.execute(
+            """
+            SELECT COUNT(*) n,
+                   COUNT(*) FILTER (WHERE agent_name IS NOT NULL
+                                      AND agent_name <> 'unknown') named
+            FROM agent_tool_telemetry
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            """,
+        ).fetchone()
+    if not row or not row[0] or int(row[0]) < TOOL_FAIL_MIN_CALLS:
+        return []
+    pct = 100.0 * int(row[1]) / int(row[0])
+    if pct >= ATTRIBUTION_MIN_PCT:
+        return []
+    return [record_violation(
+        KIND_ATTRIBUTION_DECAY, cycle_id=cycle_id,
+        attributed_pct=round(pct, 1), calls=int(row[0]),
+        floor=ATTRIBUTION_MIN_PCT,
+    )]
