@@ -244,14 +244,33 @@ async def lazy_web_search(query: str, limit: int = 6, **_extra) -> str:
                                name, query, type(e).__name__, e)
 
     if not results:
-        # Distinguishable from an empty-but-successful search on purpose: the
-        # QUANT_ONLY triage gate reads this to refuse to conclude "no catalyst"
-        # from a broken tool.
+        # "No provider raised" and "no provider matched" are different facts
+        # and used to share one message. Both RSS providers return HTTP 200
+        # with zero <item>s for an over-specific query, so `errors` stays
+        # empty and the tool reported an outage — 19 times in 14 days, on
+        # queries like "TSMC TSM dividend history buyback share count trend
+        # 2022 2023 2024 2025 2026". The agent was told the web was down and
+        # reasonably retried something just as long.
+        #
+        # The distinction matters downstream too: the QUANT_ONLY triage gate
+        # reads `degraded` to refuse to conclude "no catalyst" from a broken
+        # tool. A genuinely empty result is evidence; an outage is not.
+        if not errors:
+            return json.dumps({
+                "status": "empty",
+                "degraded": False,
+                "query": query,
+                "message": (
+                    f"No news matched. The query was {len(query.split())} words "
+                    "long — RSS search matches headlines, not prose. Retry with "
+                    "2-4 words: the company name plus one catalyst."
+                ),
+            })
         return json.dumps({
             "status": "error",
             "degraded": True,
             "message": "Web search unavailable — every provider failed: "
-                       + "; ".join(errors or ["no provider returned results"]),
+                       + "; ".join(errors),
         })
 
     final = _apply_recency(results, max(limit, 10))
