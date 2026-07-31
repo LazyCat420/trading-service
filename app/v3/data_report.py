@@ -23,6 +23,35 @@ logger = logging.getLogger(__name__)
 # place (see collector_stats' note on timeouts).
 _EXPECT_TRUTHY = {"yfinance_price", "yfinance_fund"}
 
+# Collectors that routinely need more than the fast deadline. Measured over
+# the 7 days ending 2026-07-31: multi_api_news blew the 90s budget on 59 of
+# 115 runs and youtube on 67 of 115 — yet 90% of those completed by ~220s
+# (max 294s). The work was being done on more than half of all runs and
+# thrown to the next cycle every time. These two get a second, longer wait;
+# everything else still cuts at the fast deadline.
+_SLOW_COLLECTORS = {"multi_api_news", "youtube"}
+
+
+async def wait_with_slow_lane(
+    task_map: dict, fast_budget: float, slow_budget: float,
+) -> tuple[set, float]:
+    """Two-phase pre-collect deadline.
+
+    Phase 1: every collector gets `fast_budget`. Phase 2: if any of the
+    known-slow collectors are still running, keep waiting for THEM (only)
+    up to `slow_budget` total. A hung fast collector cannot extend the wait,
+    but if one happens to finish during the extension its data reaches this
+    cycle's report, so pending is recomputed from actual task state.
+
+    Returns (still-pending tasks, the budget that was actually applied).
+    """
+    _, pending = await asyncio.wait(set(task_map), timeout=fast_budget)
+    slow_pending = {t for t in pending if task_map[t] in _SLOW_COLLECTORS}
+    if not slow_pending or slow_budget <= fast_budget:
+        return pending, fast_budget
+    await asyncio.wait(slow_pending, timeout=slow_budget - fast_budget)
+    return {t for t in pending if not t.done()}, slow_budget
+
 
 def classify_collector_outcome(
     name: str, result: Any, deadline_passed: bool,
@@ -195,9 +224,14 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     task_map = {asyncio.create_task(run_with_telemetry(n, c)): n for n, c in coros.items()}
     # 45s lost reddit/youtube/multi-api on 4 of 5 tickers in the 07-23 cycle
     # audit — agents ran on finnhub+yfinance only. Configurable, default 90s.
+    # cycle-v3-1785504601 (07-31): multi_api_news + youtube hit the 90s
+    # deadline on 6/6 tickers and all 12 landed late — hence the slow lane.
     from app.config import settings as _settings
     _precollect_budget = float(getattr(_settings, "PRECOLLECT_TIMEOUT_SECONDS", 90))
-    done, pending = await asyncio.wait(task_map.keys(), timeout=_precollect_budget)
+    _slow_budget = float(getattr(_settings, "PRECOLLECT_SLOW_TIMEOUT_SECONDS", 240))
+    pending, _budget_used = await wait_with_slow_lane(
+        task_map, _precollect_budget, _slow_budget
+    )
     _deadline_passed["v"] = True
     timed_out = sorted(task_map[t] for t in pending)
     # Don't cancel the stragglers — the report proceeds without them, but they
@@ -244,7 +278,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     )
     if timed_out:
         _emit("precollect_timeout",
-              f"Timed out after {_precollect_budget:.0f}s: {', '.join(timed_out)}", "warning")
+              f"Timed out after {_budget_used:.0f}s: {', '.join(timed_out)}", "warning")
 
     from app.v3 import collector_stats
     collector_stats.record(cycle_id, ticker, ok=ok, errored=errored,

@@ -190,6 +190,11 @@ class Settings(BaseSettings):
     TRIAGE_MAX_CONSECUTIVE_GLANCE: int = 5  # force Standard after N Glance skips
     TRIAGE_DEEP_NEWS_VOLUME: int = 5  # >= N news articles in 24h → Deep tier
     PRECOLLECT_TIMEOUT_SECONDS: int = 90  # per-ticker pre-collection budget (was 45)
+    # Slow lane for multi_api_news/youtube only: they missed the 90s deadline
+    # on >half of runs (7d to 07-31) but 90% of those finished by ~220s, so
+    # the data was collected and then wasted every cycle. 240s captures ~p90;
+    # the 5-minute straggler watchdog is the hard ceiling above this.
+    PRECOLLECT_SLOW_TIMEOUT_SECONDS: int = 240
 
     # ── Alpha Decay Purge (Mathematical Pruning) ──
     ALPHA_DECAY_ENABLED: bool = True  # toggle fundamental math purge
