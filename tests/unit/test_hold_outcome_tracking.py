@@ -100,10 +100,17 @@ class TestHoldScoring:
         assert ece_with < ece_without
 
     def test_score_version_stamped(self):
+        # Assert against the constant, not a literal. Pinning "v4" here made
+        # every legitimate bump look like a regression while testing nothing
+        # the constant does not already say; the point of this test is that
+        # the stamp REACHES both payloads. The current value is pinned once,
+        # deliberately, in test_confidence_calibration.py.
+        from app.autoresearch.auditors.decision_audit import SCORE_VERSION
+
         rows = [("BUY", 70, 2.0, "WIN", 5.0)] * 4
         result = self._run(rows)
-        assert result["score_version"] == "v4"
-        assert result["outcome_stats"]["score_version"] == "v4"
+        assert result["score_version"] == SCORE_VERSION
+        assert result["outcome_stats"]["score_version"] == SCORE_VERSION
         assert result["outcome_stats"]["cohort_n"] == 4
         assert result["outcome_stats"]["cohort_window_days"] == 30
 

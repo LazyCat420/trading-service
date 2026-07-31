@@ -203,9 +203,25 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             **{
                 k: _jsonsafe(decision_quality.get("outcome_stats", {}).get(k))
                 for k in ("cohort_n", "cohort_window_days", "median_decision_age_days",
-                          "hold_accuracy", "win_rate", "calibration_ece")
+                          "hold_accuracy", "win_rate", "calibration_ece",
+                          "confidence_tau_win_rate", "confidence_tau_magnitude",
+                          "confidence_predicts")
             },
         }
+
+        # What each stated confidence has actually earned. Reported every
+        # cycle because the gap is the finding: 15.8 points of overstatement
+        # and an inverted top bucket are invisible in a single ECE number.
+        try:
+            from app.autoresearch.confidence_calibration import calibration_map
+            cmap = calibration_map()
+            perf_metrics["confidence_calibration"] = {
+                "inversions": cmap.get("inversions"),
+                "mean_overstatement": cmap.get("mean_overstatement"),
+                "buckets": cmap.get("buckets", []),
+            }
+        except Exception as e:  # noqa: BLE001 — reporting, never blocks a cycle
+            logger.debug("[AR] calibration map unavailable: %s", e)
 
         _update_ar_state(report_id, phase="recovery")
         recovery = _audit_recovery()

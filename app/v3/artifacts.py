@@ -755,6 +755,24 @@ TRADE_DECISION_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            # This field had no description at all, and it is the one that
+            # reaches decision_outcomes and gets scored. Stating the measured
+            # record is the only thing that has a chance of moving it: the
+            # scale is used as P(correct) by ECE, by the 70 floor, and by
+            # anyone reading the number.
+            "description": (
+                "P(this call is directionally correct at the 7-day horizon), "
+                "0-100. This is a PROBABILITY, not conviction or position "
+                "size — 70 means 'right about 7 times in 10', so seven of ten "
+                "calls at 70 must resolve correctly. "
+                "Measured record to 2026-07-31 (resolved directional calls): "
+                "stated 70 won 62%, 75 won 63%, 85 won 67%, 90 won 68%, and "
+                "95 won only 45% — an average overstatement of ~16 points, "
+                "and the 95 bucket is worse than a coin flip. Do not reach "
+                "for 90+ unless the thesis would survive being wrong about "
+                "the single most load-bearing fact; on this record that band "
+                "has earned no more than ~68%."
+            ),
         },
         "reasoning": {
             "type": "string",

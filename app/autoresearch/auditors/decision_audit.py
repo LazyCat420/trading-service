@@ -19,7 +19,74 @@ logger = logging.getLogger(__name__)
 #   v4 (2026-07-19): HOLD claims tracked — calibration cohort now includes
 #       HOLD_CORRECT/HOLD_MISS ("all claims"); directional win rate unchanged;
 #       hold_accuracy + cohort provenance surfaced.
-SCORE_VERSION = "v4"
+#   v5 (2026-07-31): discrimination is Kendall's tau over every qualified
+#       confidence bucket, replacing a two-bucket (>=70 vs <50) comparison
+#       that ignored 50-69 and could not see a fall-off inside >=70. Scores
+#       either side of this change are NOT comparable on the calibration
+#       term. Also reports which axis confidence tracks (frequency vs
+#       magnitude) and excludes DEGRADED_ARTIFACT from the cohort. The
+#       two-bucket term scored the live desk ~1.0 while tau says 0.50.
+SCORE_VERSION = "v5"
+
+
+def _bucket_rank_tau(qualified: dict, value_of) -> float | None:
+    """Kendall's tau between bucket confidence and some per-bucket value.
+
+    Concordant/discordant over bucket PAIRS rather than rows, because the
+    question is whether the confidence SCALE is ordered, and rows inside one
+    bucket all share a stated confidence. Ties contribute to neither.
+
+    Returns None when fewer than two buckets qualify — no relationship is
+    measurable from one point, and returning a number there would invent one.
+    """
+    points = sorted((conf, value_of(rows)) for conf, rows in qualified.items())
+    if len(points) < 2:
+        return None
+    concordant = discordant = 0
+    for i in range(len(points)):
+        for j in range(i + 1, len(points)):
+            delta = points[j][1] - points[i][1]
+            if delta > 0:
+                concordant += 1
+            elif delta < 0:
+                discordant += 1
+    total = concordant + discordant
+    if total == 0:
+        return 0.0
+    return (concordant - discordant) / total
+
+
+def _rank_discrimination(qualified: dict, bucket_win_rate) -> tuple[float, float | None]:
+    """(score in [0,1], raw tau). 0.5 means no discrimination, as before."""
+    tau = _bucket_rank_tau(qualified, bucket_win_rate)
+    if tau is None:
+        return 0.5, None
+    return (tau + 1.0) / 2.0, tau
+
+
+# A tau this small is not an ordering, just sampling noise on a handful of
+# buckets. Naming an axis below it would be the same overclaim the two-bucket
+# term made.
+_TAU_MEANINGFUL = 0.34
+
+
+def _confidence_axis(win_tau: float | None, mag_tau: float | None) -> str:
+    """Which axis is a confidence number carrying — frequency, or size?
+
+    A confidence label claims "how often I will be right". If it orders P&L
+    magnitude but not win rate, it is a conviction/size signal wearing a
+    probability's name, and every consumer that reads it as P(win) — ECE,
+    Brier, any sizing rule — is on the wrong axis.
+    """
+    w = (win_tau or 0.0) >= _TAU_MEANINGFUL
+    m = (mag_tau or 0.0) >= _TAU_MEANINGFUL
+    if w and m:
+        return "both"
+    if m:
+        return "magnitude"
+    if w:
+        return "frequency"
+    return "neither"
 
 
 def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
@@ -30,8 +97,11 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
       - win_rate_score: ex-flat 7-day directional accuracy / 0.60 (capped).
         60%+ sustained = full credit (decided-only baseline is a coin flip).
       - calibration_score: 0.7*honesty (1 - 2*ECE over confidence deciles)
-        + 0.3*discrimination (high-conf beats low-conf). Uniform stated
-        confidence caps this term at 0.85 even when perfectly honest.
+        + 0.3*discrimination — Kendall's tau over every qualified confidence
+        bucket, rescaled to [0,1] with 0.5 = no ordering. ECE alone is
+        gameable by stating the base rate on every trade, so full credit
+        still requires differentiating AND being right; unlike the two-bucket
+        term it replaced, an inversion anywhere on the scale is penalised.
       - risk_score: profit factor / 2.0 (capped). PF 2.0+ = full credit.
 
     Interpretation: ~90 = sustained 58-60% win rate with honest,
@@ -171,14 +241,42 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                     )
                 honesty_score = max(0.0, 1.0 - 2.0 * ece) if ece is not None else 0.5
 
-                high_conf = [r for r in claims if r[1] is not None and r[1] >= 70]
-                low_conf = [r for r in claims if r[1] is not None and r[1] < 50]
-                if len(high_conf) >= MIN_BUCKET and len(low_conf) >= MIN_BUCKET:
-                    discrimination_score = min(1.0, max(0.0, 0.5 + _bucket_win_rate(high_conf) - _bucket_win_rate(low_conf)))
-                else:
-                    discrimination_score = 0.5
+                # Discrimination across EVERY qualified bucket, not two of them.
+                #
+                # This used to be `win_rate(conf>=70) - win_rate(conf<50)`,
+                # which is a two-value gate wearing a distribution's name: it
+                # ignored 50-69 entirely, and — because it collapsed all of
+                # >=70 into one bucket — it could not see a fall-off inside
+                # that range. Measured 2026-07-31, that is exactly what was
+                # hiding: win rate runs 74->63%, 85->66%, 91->72%, 95->46%.
+                # The desk's most confident calls are its worst, and the old
+                # term scored the desk as discriminating well throughout.
+                # (With the floor at 70, the conf<50 arm is also usually too
+                # small to qualify, so the term silently sat at neutral 0.5.)
+                #
+                # Kendall's tau over the same buckets ECE already uses: count
+                # concordant vs discordant bucket pairs, so a single inversion
+                # at the top is penalised no matter where it sits. tau=+1 is
+                # perfectly ordered, -1 perfectly inverted, 0 no relationship;
+                # rescaled to [0,1] with 0.5 = no discrimination, which keeps
+                # the previous neutral value meaning the same thing.
+                discrimination_score, conf_tau = _rank_discrimination(
+                    qualified, _bucket_win_rate
+                )
 
                 calibration_score = 0.7 * honesty_score + 0.3 * discrimination_score
+
+                # Which axis is confidence tracking? The win-rate tau above
+                # answers "more often"; this answers "bigger". Measured
+                # 2026-07-31 it orders BOTH (win +0.50, |P&L| +0.64) — the
+                # scale works. What is wrong is the LEVEL (15.8 points of
+                # overstatement) and the top bucket (95 wins 45.5%). Reporting
+                # both taus keeps that distinction visible instead of letting
+                # one number stand for "calibration".
+                mag_tau = _bucket_rank_tau(
+                    qualified,
+                    lambda rows: sum(abs(x[2] or 0.0) for x in rows) / len(rows),
+                )
 
                 if avg_loss_pnl > 0:
                     profit_factor = avg_win_pnl / avg_loss_pnl
@@ -218,6 +316,14 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                     "calibration_ece": round(ece, 3) if ece is not None else None,
                     "calibration_honesty": round(honesty_score, 3),
                     "calibration_discrimination": round(discrimination_score, 3),
+                    # Raw taus behind the score, and which axis the number
+                    # actually carries. A confidence that orders magnitude but
+                    # not frequency is a conviction signal wearing a
+                    # probability's name; today it orders both, so the defect
+                    # is level and the top bucket, not the axis.
+                    "confidence_tau_win_rate": round(conf_tau, 3) if conf_tau is not None else None,
+                    "confidence_tau_magnitude": round(mag_tau, 3) if mag_tau is not None else None,
+                    "confidence_predicts": _confidence_axis(conf_tau, mag_tau),
                     "risk_score": round(risk_score, 3),
                     # Cohort provenance: the rolling terms are only comparable
                     # across cycles when the cohort is. When these shift, score
