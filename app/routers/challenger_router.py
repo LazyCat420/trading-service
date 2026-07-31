@@ -20,6 +20,36 @@ router = APIRouter(prefix="/api/v1/challenger", tags=["Challenger"])
 
 _CORRECT = ("WIN", "HOLD_CORRECT")
 
+# ticker_metadata.sector mixes vendor taxonomies (GICS from one collector,
+# Yahoo from another), so the same real sector arrives under two names and
+# the per-sector slice runs on arbitrarily halved buckets. Fold the Yahoo
+# labels into their GICS equivalents before slicing.
+_SECTOR_CANON = {
+    "Financial Services": "Financials",
+    "Technology": "Information Technology",
+    "Healthcare": "Health Care",
+    "Consumer Cyclical": "Consumer Discretionary",
+    "Consumer Defensive": "Consumer Staples",
+    "Basic Materials": "Materials",
+}
+
+# Buckets that are not real sectors: a "regression" here is unactionable
+# noise, so they stay visible in the sectors table but never flag.
+_NOT_A_SECTOR = {"Unknown", "ETF", ""}
+
+
+def regressing_sectors(sectors: dict) -> list[str]:
+    """Sectors where the champion beats the challenger by a real margin.
+
+    A net margin of 2 is required so a 2-1 split (indistinguishable from a
+    coin flip) doesn't flag alongside a 4-0. Non-sector buckets never flag.
+    """
+    return [
+        s for s, v in sectors.items()
+        if s not in _NOT_A_SECTOR
+        and v["champion_wins"] - v["challenger_wins"] >= 2
+    ]
+
 
 def _champion_correct(action: str | None, outcome: str | None) -> bool | None:
     """Grade an action against a resolved outcome label; None = ungraded."""
@@ -58,6 +88,7 @@ async def challenger_stats(label: str = Query(default=None)):
 
         experiments: dict = {}
         for spec_label, ticker, agree, champ_act, chall_act, chall_out, champ_out, sector in rows:
+            sector = _SECTOR_CANON.get(sector, sector)
             exp = experiments.setdefault(
                 spec_label,
                 {
@@ -101,10 +132,7 @@ async def challenger_stats(label: str = Query(default=None)):
             # challenger on disagreements is flagged even if the aggregate
             # favours the challenger — "better on average, broken somewhere"
             # must be visible before promotion.
-            regressing = [
-                s for s, v in exp["sectors"].items()
-                if v["champion_wins"] > v["challenger_wins"] and v["champion_wins"] >= 2
-            ]
+            regressing = regressing_sectors(exp["sectors"])
             out.append({
                 **exp,
                 "agreement_rate": agreement_rate,
