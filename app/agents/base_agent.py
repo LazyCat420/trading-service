@@ -95,9 +95,16 @@ def get_ticker_outcome_context(ticker: str) -> str:
 
         with get_db() as db:
             rows = db.execute(
+                # Only real trade outcomes belong in "prior trade history".
+                # DEGRADED_ARTIFACT rows are pipeline crashes scored as
+                # trades (confidence 0, mean -5.75%); rendering them here put
+                # lines like "DEGRADED_ARTIFACT: entry=$X → exit=$Y (-5.8%)
+                # conf=0" into a prompt that tells the analyst not to repeat
+                # past mistakes. That is teaching the desk from our outages.
                 "SELECT outcome, entry_price, exit_price, pnl_pct, confidence, resolved_at "
                 "FROM decision_outcomes "
-                "WHERE ticker = %s AND outcome IS NOT NULL "
+                "WHERE ticker = %s "
+                "  AND outcome IN ('WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_MISS') "
                 "ORDER BY resolved_at DESC NULLS LAST LIMIT 5",
                 [ticker],
             ).fetchall()

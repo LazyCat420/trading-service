@@ -215,6 +215,36 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                     logger.debug("[OUTCOME] %s: override lookup failed: %s",
                                  ticker, e)
 
+                # The policy gate is the OTHER way a decision gets overruled,
+                # and the check above cannot see it. A blocked BUY leaves
+                # shared_desk.final_decision AND analysis_results.action both
+                # reading 'BUY' — the gate's refusal lives only in
+                # trade_results.policy_action — so `board_action != action` is
+                # false and the row lands unlabelled. It is then graded WIN or
+                # LOSS as though the trade had been taken, and
+                # override_scorecard() counts it in `kept_buys`: the desk gets
+                # credit for keeping a trade the gate actually refused.
+                # Measured 2026-07-31: 17 BUY + 2 SELL blocks, all NULL.
+                if overridden_from is None:
+                    try:
+                        gate_row = db.execute(
+                            "SELECT policy_action FROM trade_results "
+                            "WHERE cycle_id = %s AND ticker = %s LIMIT 1",
+                            [cycle_id, ticker],
+                        ).fetchone()
+                        policy_action = gate_row[0] if gate_row else None
+                        if policy_action and policy_action.startswith("HOLD_POLICY_BLOCKED"):
+                            # Record what was overruled, matching the
+                            # synthesizer path's meaning: the action that did
+                            # NOT survive. The row keeps action=BUY so the
+                            # counterfactual stays scoreable — that is how the
+                            # confidence floor gets back-tested — but it is now
+                            # distinguishable from a trade that was allowed.
+                            overridden_from = action
+                    except Exception as e:  # noqa: BLE001 — provenance, never blocks
+                        logger.debug("[OUTCOME] %s: policy-gate lookup failed: %s",
+                                     ticker, e)
+
                 outcome_id = f"do-{uuid.uuid4().hex[:12]}"
                 db.execute(
                     """INSERT INTO decision_outcomes
@@ -390,6 +420,14 @@ def override_scorecard(days: int = 30) -> dict:
     Compare `overridden_buys.mean_pnl` against `kept_buys.mean_pnl`. If the
     overrides are systematically WORSE than the BUYs that survived, the veto is
     finding something real; if they are better, it is costing money.
+
+    `blocked_by_gate` is the same counterfactual for the POLICY gate rather
+    than the synthesizer, and it exists because those rows used to be counted
+    as `kept_buys` — the desk was credited with keeping trades the confidence
+    floor had refused. Comparing its mean against `kept_buys` back-tests the
+    floor itself. No verdict is printed for it yet: at 19 rows it is under the
+    20-row bar the veto comparison uses, and the same "a small mean is noise"
+    rule has to apply to both or the bar means nothing.
     """
     out: dict = {"days": days, "note": None}
     try:
@@ -398,6 +436,15 @@ def override_scorecard(days: int = 30) -> dict:
                 """
                 SELECT
                     CASE
+                        -- Order matters: a policy-blocked BUY keeps
+                        -- action='BUY' (so its counterfactual stays
+                        -- scoreable) and now carries overridden_from='BUY'.
+                        -- It must be caught BEFORE kept_buys, which it used
+                        -- to fall into while overridden_from was NULL —
+                        -- crediting the desk with keeping a trade the gate
+                        -- refused.
+                        WHEN action = overridden_from
+                            THEN 'blocked_by_gate'
                         WHEN action = 'BUY' AND overridden_from IS NULL
                             THEN 'kept_buys'
                         WHEN action = 'HOLD' AND overridden_from = 'BUY'

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/challenger", tags=["Challenger"])
 
 _CORRECT = ("WIN", "HOLD_CORRECT")
+_INCORRECT = ("LOSS", "HOLD_MISS")
 
 # ticker_metadata.sector mixes vendor taxonomies (GICS from one collector,
 # Yahoo from another), so the same real sector arrives under two names and
@@ -52,10 +53,25 @@ def regressing_sectors(sectors: dict) -> list[str]:
 
 
 def _champion_correct(action: str | None, outcome: str | None) -> bool | None:
-    """Grade an action against a resolved outcome label; None = ungraded."""
-    if not outcome or outcome in ("FLAT",):
-        return None
-    return outcome in _CORRECT
+    """Grade an action against a resolved outcome label; None = ungraded.
+
+    Allow-list, not deny-list. The old form returned `outcome in _CORRECT`
+    for anything that was not FLAT, so every label the grader did not know
+    about silently graded as "this side was WRONG". `DEGRADED_ARTIFACT` — a
+    pipeline crash — would therefore have counted as a loss for the champion
+    and could hand the challenger a win. That cohort happens to predate the
+    challenger table so nothing is mis-scored today, but the shape of the bug
+    does not depend on that accident: the next label added anywhere in the
+    outcome pipeline inherits it.
+
+    An unrecognised outcome is ungraded (None), which drops the pair from the
+    denominator rather than scoring it.
+    """
+    if outcome in _CORRECT:
+        return True
+    if outcome in _INCORRECT:
+        return False
+    return None
 
 
 @router.get("/stats")

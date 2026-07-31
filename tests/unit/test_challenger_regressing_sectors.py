@@ -61,3 +61,25 @@ def test_merged_bucket_crosses_the_floor_the_halves_missed():
     assert regressing_sectors(halves) == []
     merged = {"Financials": _slot(champ=2)}
     assert regressing_sectors(merged) == ["Financials"]
+
+
+# ── grading must be an allow-list ───────────────────────────────────────────
+
+def test_an_unknown_outcome_is_ungraded_not_a_loss():
+    """The old form was `outcome in _CORRECT` for anything but FLAT, so every
+    label the grader did not know about scored as "this side was WRONG" —
+    a DEGRADED_ARTIFACT pipeline crash would have handed the challenger a win.
+    """
+    from app.routers.challenger_router import _champion_correct
+    assert _champion_correct("BUY", "DEGRADED_ARTIFACT") is None
+    assert _champion_correct("BUY", "SOME_LABEL_ADDED_LATER") is None
+    assert _champion_correct("BUY", "FLAT") is None
+    assert _champion_correct("BUY", None) is None
+
+
+def test_known_outcomes_still_grade():
+    from app.routers.challenger_router import _champion_correct
+    assert _champion_correct("BUY", "WIN") is True
+    assert _champion_correct("HOLD", "HOLD_CORRECT") is True
+    assert _champion_correct("BUY", "LOSS") is False
+    assert _champion_correct("HOLD", "HOLD_MISS") is False

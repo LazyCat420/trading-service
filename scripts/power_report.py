@@ -132,13 +132,18 @@ def effective_n(clusters: list[list[float]], rho: float) -> float:
     return n_total / deff if deff > 0 else float("nan")
 
 
-def fetch(executable_only: bool) -> tuple[list[dict], int, int]:
+def fetch(include_degraded: bool) -> tuple[list[dict], int, int]:
     """Resolved outcomes, plus (degraded_count, fills_count)."""
     where = ["resolved_at IS NOT NULL", "pnl_pct IS NOT NULL"]
-    if executable_only:
+    if not include_degraded:
         # DEGRADED_ARTIFACT rows are pipeline failures scored as trades. They
         # are hypothetical — measured 2026-07-30, they carry ZERO fills — so
         # including them measures the pipeline's crash rate, not its judgement.
+        #
+        # Excluded BY DEFAULT since 2026-07-31. It was opt-in behind
+        # --executable-only, which meant the default invocation quietly
+        # reported the contaminated number and every other consumer that
+        # copied this file's logic inherited the wrong default.
         where.append("outcome <> 'DEGRADED_ARTIFACT'")
 
     with get_db() as db:
@@ -166,10 +171,13 @@ def main() -> int:
     ap.add_argument("--horizon", type=int, default=10,
                     help="forward-window length in sessions (default 10)")
     ap.add_argument("--executable-only", action="store_true",
-                    help="exclude DEGRADED_ARTIFACT rows (pipeline failures)")
+                    help="(default; kept for compatibility) exclude DEGRADED_ARTIFACT rows")
+    ap.add_argument("--include-degraded", action="store_true",
+                    help="include DEGRADED_ARTIFACT pipeline failures — measures "
+                         "the crash rate alongside judgement, rarely what you want")
     args = ap.parse_args()
 
-    rows, degraded, fills = fetch(args.executable_only)
+    rows, degraded, fills = fetch(args.include_degraded)
     if len(rows) < 2:
         print(f"Only {len(rows)} resolved outcome(s) — nothing to compute.")
         return 1
@@ -200,12 +208,12 @@ def main() -> int:
     blocks_only = mde(sd, blocks)
 
     print("=" * 72)
-    print("MEASUREMENT CEILING" + ("  [EXECUTABLE ONLY]" if args.executable_only else ""))
+    print("MEASUREMENT CEILING" + ("  [INCLUDES DEGRADED]" if args.include_degraded else "  [EXECUTABLE ONLY]"))
     print("=" * 72)
     print(f"resolved outcomes ............... {n}")
     print(f"trade fills (entire history) .... {fills if fills >= 0 else 'n/a'}")
     print(f"DEGRADED_ARTIFACT rows .......... {degraded}"
-          + ("  (excluded)" if args.executable_only else "  (INCLUDED — see --executable-only)"))
+          + ("  (INCLUDED — crash rate is in these numbers)" if args.include_degraded else "  (excluded)"))
     print(f"decision span ................... {dates[0]} .. {dates[-1]} "
           f"({(dates[-1] - dates[0]).days}d)")
     print(f"pnl_pct sd ...................... {sd:.2f}pp")

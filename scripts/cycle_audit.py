@@ -291,6 +291,57 @@ def check_benchmark_timings(cur, cycle_id):
             {"missing": missing, "tokens": tokens, "cache_hit_pct": cache})
 
 
+def check_confidence_is_monotonic(cur, cycle_id):
+    """Higher stated confidence must win more often, or it is not confidence.
+
+    This is a COHORT check, not a per-cycle one — it reads the whole resolved
+    record, so it moves slowly and the same verdict will repeat across cycles.
+    It is here because it is the one quality question the current sample size
+    can actually answer: `power_report.py` puts the detectable effect on mean
+    P&L at ~8.84pp, far above any edge we could show, but a monotonicity
+    violation in the ranking needs far less data than a difference in means.
+
+    Measured 2026-07-31: 70-78 wins 62.7%, 80-89 wins 67.4%, and 90-95 wins
+    58.9% — the desk's most confident bucket is worse than its least confident
+    one above the floor. Average P&L still rises with confidence (2.92 → 2.72
+    → 4.57), so confidence is tracking magnitude while wearing a probability
+    label. Anything sizing positions off it is reading the wrong axis.
+    """
+    cur.execute(
+        """
+        SELECT width_bucket(confidence, 70, 95, 3) b,
+               COUNT(*) n,
+               ROUND(AVG(confidence)::numeric, 1) stated,
+               ROUND(100.0 * COUNT(*) FILTER (WHERE outcome = 'WIN')
+                     / NULLIF(COUNT(*), 0), 1) realized
+        FROM decision_outcomes
+        WHERE outcome IN ('WIN', 'LOSS') AND confidence >= 70
+        GROUP BY 1 HAVING COUNT(*) >= 30 ORDER BY 1
+        """
+    )
+    rows = cur.fetchall()
+    if len(rows) < 2:
+        return ("confidence ranks outcomes", INFO,
+                "not enough resolved rows above the floor to rank", {})
+
+    buckets = [(float(s), float(r), n) for _, n, s, r in rows if r is not None]
+    inversions = [
+        (buckets[i][0], buckets[i][1], buckets[i + 1][0], buckets[i + 1][1])
+        for i in range(len(buckets) - 1)
+        if buckets[i + 1][1] < buckets[i][1]
+    ]
+    worst_gap = max((s - r for s, r, _ in buckets), default=0.0)
+    detail = " | ".join(f"conf~{s:.0f}: {r:.0f}% won (n={n})" for s, r, n in buckets)
+    if inversions:
+        s0, r0, s1, r1 = inversions[0]
+        detail = (f"conf~{s1:.0f} wins {r1:.0f}% vs conf~{s0:.0f} at {r0:.0f}% "
+                  f"— higher confidence, worse outcome. {detail}")
+    status = FAIL if inversions else (WARN if worst_gap > 15 else PASS)
+    return ("confidence ranks outcomes", status, detail,
+            {"buckets": buckets, "inversions": len(inversions),
+             "worst_stated_minus_realized": round(worst_gap, 1)})
+
+
 CHECKS = [
     check_collector_lateness,
     check_collector_errors,
@@ -301,6 +352,7 @@ CHECKS = [
     check_policy_blocks_recorded,
     check_cycle_attribution,
     check_benchmark_timings,
+    check_confidence_is_monotonic,
 ]
 
 

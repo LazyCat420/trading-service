@@ -50,7 +50,8 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
         try:
             with get_db() as db:
                 hist_count = db.execute(
-                    "SELECT COUNT(*) FROM decision_outcomes WHERE resolved_at IS NOT NULL AND outcome != 'CANCELED'"
+                    "SELECT COUNT(*) FROM decision_outcomes WHERE resolved_at IS NOT NULL "
+                    "AND outcome NOT IN ('CANCELED', 'DEGRADED_ARTIFACT')"
                 ).fetchone()
                 if hist_count and hist_count[0] >= 3:
                     # Fall through to the outcome-based scoring below
@@ -102,7 +103,8 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                 SELECT action, confidence, pnl_pct, outcome,
                        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)) / 86400.0
                 FROM decision_outcomes
-                WHERE resolved_at IS NOT NULL AND outcome != 'CANCELED' AND resolved_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
+                WHERE resolved_at IS NOT NULL AND outcome NOT IN ('CANCELED', 'DEGRADED_ARTIFACT')
+                  AND resolved_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
                 ORDER BY resolved_at DESC LIMIT 100
                 """,
             ).fetchall()
@@ -309,7 +311,8 @@ def _backfill_cycle_summaries(db) -> None:
             outcome_pnl = do.pnl_pct
         FROM decision_outcomes do
         WHERE cs.ticker = do.ticker AND cs.action = do.action
-          AND do.resolved_at IS NOT NULL AND do.outcome != 'CANCELED' AND cs.was_correct IS NULL
+          AND do.resolved_at IS NOT NULL
+          AND do.outcome NOT IN ('CANCELED', 'DEGRADED_ARTIFACT') AND cs.was_correct IS NULL
           AND cs.cycle_date >= do.created_at - INTERVAL '1 day' AND cs.cycle_date <= do.created_at + INTERVAL '1 day'
         """
     )
