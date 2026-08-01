@@ -30,6 +30,11 @@ PY="$REPO_ROOT/.venv/bin/python"
 LOG_DIR="$REPO_ROOT/logs"
 LOG="$LOG_DIR/evo_cron.log"
 LOCK="$REPO_ROOT/.evo-worktrees/.cron.lock"
+# Proof of life. A tick with an empty queue logs nothing — which makes "running
+# fine, nothing to do" look exactly like "cron stopped firing three weeks ago",
+# and a drain that quietly stops running is the failure this script exists to
+# prevent. The stamp's mtime answers it without growing a log.
+STAMP="$REPO_ROOT/.evo-worktrees/.last-run"
 CRON_TAG="# trading-service-coral-drain"
 CRON_LINE="20 * * * * $REPO_ROOT/scripts/evo_cron.sh >> $LOG 2>&1 $CRON_TAG"
 
@@ -42,6 +47,15 @@ CORES="${EVO_CRON_CORES:-6}"
 WITH_CORES="$REPO_ROOT/../braindeadbot-client/scripts/with-cores.sh"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+# How long since a tick last got past its guards. "never" is the loud answer.
+stamp_age() {
+  [ -f "$STAMP" ] || { echo "never"; return; }
+  local secs=$(( $(date +%s) - $(stat -c %Y "$STAMP" 2>/dev/null || echo 0) ))
+  if   [ "$secs" -lt 5400 ]; then echo "${secs}s ago"
+  else echo "$((secs / 3600))h ago — cron may not be firing"
+  fi
+}
 
 usage_exit() { sed -n '2,25p' "${BASH_SOURCE[0]}"; exit "${1:-0}"; }
 
@@ -132,8 +146,11 @@ pending="$(sed -n 's/^QUEUE://p' <<<"$state")"
 cycle="$(sed -n 's/^CYCLE://p' <<<"$state")"
 live="$(sed -n 's/^LIVE://p' <<<"$state")"
 
+# Past this point the tick has done its job, whatever it decides next.
+[ "$CHECK_ONLY" = 1 ] || : > "$STAMP"
+
 if [ "${pending:-0}" -eq 0 ]; then
-  [ "$CHECK_ONLY" = 1 ] && log "CHECK: queue empty, cycle=$cycle — would not drain"
+  [ "$CHECK_ONLY" = 1 ] && log "CHECK: queue empty, cycle=$cycle, live=$live — would not drain (last tick: $(stamp_age))"
   exit 0
 fi
 
