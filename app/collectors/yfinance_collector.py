@@ -71,7 +71,13 @@ async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
     try:
         df = await asyncio.to_thread(stock.history, period=period, auto_adjust=True)
         if df is None or df.empty:
-            logger.info(f"[yfinance] No price data for {ticker}")
+            # WARNING, not INFO — see the note on the except below. An empty
+            # frame is the single most common failure and it used to be
+            # invisible.
+            logger.warning(
+                "[yfinance] %s: FETCH_EMPTY — history(period=%s) returned %s",
+                ticker, period, "None" if df is None else "0 rows",
+            )
             return None
 
         ohlc = [c for c in ("Open", "High", "Low", "Close") if c in df.columns]
@@ -84,11 +90,29 @@ async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
                     ticker, before - len(df),
                 )
         if df.empty:
-            logger.info(f"[yfinance] No complete bars for {ticker}")
+            logger.warning(
+                "[yfinance] %s: FETCH_ALL_INCOMPLETE — every bar had a null in %s",
+                ticker, "/".join(ohlc),
+            )
             return None
         return df
     except Exception as e:
-        logger.info(f"[yfinance] Error fetching price history for {ticker}: {e}")
+        # WARNING with the exception TYPE, and never a bare message.
+        #
+        # This was `logger.info(...)` with only str(e). Everything a fetch can
+        # fail with — HTTP 429, socket timeout, JSON decode, a curl_cffi
+        # error — collapsed into one INFO line that reached no error counter
+        # and no telemetry table. So when 15 of 18 price failures landed in the
+        # 09:xx ET bucket over 07-27..07-31, `execution_errors` held no record
+        # of ANY of them: not a rate limit, not a timeout, nothing. The cause
+        # was unknowable from the outside, which is why this is the first fix.
+        #
+        # The tag prefixes exist so the three paths can be counted apart in
+        # SQL: FETCH_EMPTY / FETCH_ALL_INCOMPLETE / FETCH_EXCEPTION.
+        logger.warning(
+            "[yfinance] %s: FETCH_EXCEPTION — %s: %s",
+            ticker, type(e).__name__, e,
+        )
         return None
 
 
@@ -98,6 +122,7 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
     Returns number of rows inserted.
     """
     if _is_blocked_ticker(ticker):
+        logger.warning("[yfinance] %s: COLLECT_BLOCKED — on the ticker blocklist", ticker)
         return 0
     df = await fetch_ohlcv_dataframe(ticker, period)
     if df is None:
@@ -106,6 +131,18 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
         # rather than returning early. yfinance returns NaN often enough
         # (rate limits, after hours) that skipping here would leave the
         # freshness of the whole table at the mercy of the vendor.
+        #
+        # This branch had NO log of its own, which made the most common way to
+        # return 0 the least instrumented one: the caller's derived
+        # "yfinance_price returned no data" event was the only trace, and it
+        # cannot say why. The fetcher now tags its three failure modes; this
+        # line closes the loop so a reader can join the two.
+        logger.warning(
+            "[yfinance] %s: COLLECT_NO_FRAME — fetch returned nothing "
+            "(see the FETCH_* line above for the reason); refreshing "
+            "technicals from stored prices only",
+            ticker,
+        )
         await _refresh_technicals(ticker)
         return 0
 
