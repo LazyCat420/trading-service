@@ -85,6 +85,60 @@ async def test_collect_price_history_salvages_frame_with_one_nan_bar(mock_ticker
 
 @pytest.mark.asyncio
 @patch("app.collectors.yfinance_collector.yf.Ticker")
+async def test_collect_price_history_salvages_inconsistent_bar(mock_ticker, mock_db):
+    """One internally inconsistent bar must not discard the frame — repeatedly.
+
+    Reproduces cycle-v3-1785504601: yfinance shipped RBLX's 2026-07-18
+    gap-down session with Open=49.46 above High=40.0. The frame-level
+    high_is_max check rejected all 125 rows, and because the bar stayed inside
+    the 6-month window, every later fetch failed identically — 10 straight
+    sessions with no yfinance writes, and a desk that priced RBLX 24% off.
+    """
+    df = pd.DataFrame({
+        "Open": [100.0, 49.46, 101.0],
+        "High": [105.0, 40.0, 106.0],
+        "Low": [95.0, 38.93, 96.0],
+        "Close": [102.0, 39.11, 103.0],
+        "Volume": [1000, 3132086, 2000],
+    }, index=pd.to_datetime(["2023-01-01", "2023-01-02", "2023-01-03"]))
+
+    mock_ticker_inst = MagicMock()
+    mock_ticker_inst.history.return_value = df
+    mock_ticker.return_value = mock_ticker_inst
+
+    count = await collect_price_history("RBLX")
+
+    # The two consistent bars are kept; only the impossible one is dropped.
+    assert count == 2
+    mock_db.executemany.assert_called_once()
+    written_dates = [r[1] for r in mock_db.executemany.call_args[0][1]]
+    assert datetime.date(2023, 1, 2) not in written_dates
+
+
+@pytest.mark.asyncio
+@patch("app.collectors.yfinance_collector.yf.Ticker")
+async def test_collect_price_history_all_bars_inconsistent(mock_ticker, mock_db):
+    """All-bad frame still reports 0 — salvage must not manufacture success."""
+    df = pd.DataFrame({
+        "Open": [49.46],
+        "High": [40.0],
+        "Low": [38.93],
+        "Close": [39.11],
+        "Volume": [3132086],
+    }, index=pd.to_datetime(["2023-01-02"]))
+
+    mock_ticker_inst = MagicMock()
+    mock_ticker_inst.history.return_value = df
+    mock_ticker.return_value = mock_ticker_inst
+
+    count = await collect_price_history("RBLX")
+
+    assert count == 0
+    mock_db.executemany.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.collectors.yfinance_collector.yf.Ticker")
 async def test_collect_price_history_all_bars_incomplete(mock_ticker, mock_db):
     """Salvage must not manufacture success when nothing is usable."""
     df = pd.DataFrame({

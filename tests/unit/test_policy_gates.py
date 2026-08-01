@@ -61,6 +61,33 @@ def test_gate_holds_without_signal():
     assert _apply_policy_gates(desk) == "HOLD_NO_SIGNAL"
 
 
+# ── Stale-price gate (promoted from shadow 2026-07-31) ──────────────
+# cycle-v3-1785504601: a desk on a 10-trading-day-old baseline emitted a
+# 75-confidence thesis with a stop-loss above the real spot. The shadow saw it
+# and blocked nothing.
+
+def test_gate_blocks_buy_on_stale_price_data():
+    desk = _desk()
+    desk.cycle_metadata["stale_price_age_trading_days"] = 10
+    desk.cycle_metadata["stale_price_as_of"] = "2026-07-17"
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA"
+
+
+def test_stale_hold_is_still_a_plain_hold():
+    """A HOLD trades nothing — stale data must not relabel it as a block."""
+    desk = _desk()
+    desk.final_decision = {"action": "HOLD", "confidence": 0}
+    desk.cycle_metadata["stale_price_age_trading_days"] = 10
+    assert _apply_policy_gates(desk) == "HOLD_NO_SIGNAL"
+
+
+def test_stale_age_at_detection_threshold_does_not_block():
+    """Gate and detection share the >3 threshold; 3 is fresh enough."""
+    desk = _desk()
+    desk.cycle_metadata["stale_price_age_trading_days"] = 3
+    assert _apply_policy_gates(desk) == "EXECUTE_BUY"
+
+
 # ── SELL-on-unheld: the bug that survived 5+ downstream fixes ────────
 # The gate must express "can't sell, not held" ITSELF — every prior fix
 # patched a downstream layer (agent prompt, executor block, event emit)

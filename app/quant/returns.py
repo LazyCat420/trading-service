@@ -40,14 +40,32 @@ MAX_FFILL_GAP = 5
 #     232.39% and 1 jump once a single vendor is pinned
 #
 # So collapsing to one row per date is NOT sufficient; the series must come
-# from ONE vendor for the whole window. Preference is by row count in the
-# window (yfinance holds 15.14M of 15.15M rows, so it wins in practice), ties
-# broken by source name so the choice is deterministic across processes.
-# Single-source tickers are unaffected: AAPL reads 24.73% either way.
+# from ONE vendor for the whole window. Preference is FRESHNESS first, then row
+# count: a vendor only competes if its newest bar is within
+# _FRESHNESS_LAG_DAYS of the best vendor's newest bar, and among those the
+# deepest history wins (yfinance holds 15.14M of 15.15M rows, so it wins
+# whenever it is current), ties broken by source name so the choice is
+# deterministic across processes. Single-source tickers are unaffected: AAPL
+# reads 24.73% either way.
+#
+# Freshness outranks depth because depth alone picked a dead series in
+# cycle-v3-1785504601: yfinance stopped writing RBLX/EC on 2026-07-17 (a bad
+# vendor bar re-failed validation every day) while polygon carried bars through
+# 07-30 — and the row-count rule kept choosing yfinance, so the desk analysed
+# RBLX 24% off its real price with polygon's fresh series sitting in the same
+# table. When both vendors are current the freshness test ties and the choice
+# is identical to the old rule, so scoring paths only change behavior in
+# exactly the failure mode.
+
+# Calendar days a vendor's newest bar may lag the best vendor's newest bar and
+# still be pinned. 2 covers overnight publishing skew between vendors (they
+# lag EACH OTHER, not today, so weekends don't need padding) without letting a
+# stale series through; the stale-price guardrail fires at 4+ trading days.
+_FRESHNESS_LAG_DAYS = 2
 
 
 def _dominant_source_sql(alias: str = "price_history") -> str:
-    """SQL scalar subquery naming the vendor with the most rows for a ticker.
+    """SQL scalar subquery naming the freshest-then-deepest vendor for a ticker.
 
     Bound parameter is `%(ticker)s`, so callers must use named parameters.
     """
@@ -55,7 +73,13 @@ def _dominant_source_sql(alias: str = "price_history") -> str:
         SELECT source FROM {alias}
         WHERE ticker = %(ticker)s
         GROUP BY source
-        ORDER BY count(*) DESC, source
+        ORDER BY
+            (max(date) >= (
+                SELECT max(date) - {_FRESHNESS_LAG_DAYS} FROM {alias}
+                WHERE ticker = %(ticker)s
+            )) DESC,
+            count(*) DESC,
+            source
         LIMIT 1
     """
 
@@ -81,15 +105,26 @@ def _keep_dominant_source(df: pd.DataFrame) -> pd.DataFrame:
 
     Per-ticker rather than global: two tickers may legitimately have different
     dominant vendors, and mixing conventions WITHIN a column is the bug.
+    Mirrors `_dominant_source_sql`: freshness first (when the frame carries a
+    `date` column), then row count, then source name.
     """
     if "source" not in df.columns or df["source"].nunique() <= 1:
         return df
 
+    grouped = df.groupby(["ticker", "source"], sort=True)
+    if "date" in df.columns:
+        stats = grouped.agg(_n=("source", "size"), _mx=("date", "max")).reset_index()
+        stats["_mx"] = pd.to_datetime(stats["_mx"])  # date objects → comparable
+        best = stats.groupby("ticker")["_mx"].transform("max")
+        stats["_fresh"] = stats["_mx"] >= best - pd.Timedelta(days=_FRESHNESS_LAG_DAYS)
+    else:
+        stats = grouped.size().reset_index(name="_n")
+        stats["_fresh"] = True
     winner = (
-        df.groupby(["ticker", "source"], sort=True)
-        .size()
-        .reset_index(name="_n")
-        .sort_values(["ticker", "_n", "source"], ascending=[True, False, True])
+        stats.sort_values(
+            ["ticker", "_fresh", "_n", "source"],
+            ascending=[True, False, False, True],
+        )
         .groupby("ticker", sort=True)
         .head(1)
         .loc[:, ["ticker", "source"]]

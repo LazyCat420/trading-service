@@ -115,6 +115,45 @@ def test_mixing_vendors_would_also_dilute_variance():
     assert ann_vol(duplicated) < 0.8 * ann_vol(pinned)
 
 
+def test_stale_dominant_vendor_loses_to_fresh_minority():
+    """The cycle-v3-1785504601 RBLX shape: depth alone must not pin a dead series.
+
+    yfinance stopped writing RBLX on 2026-07-17 (a bad vendor bar re-failed
+    validation every collection) while polygon carried bars through 07-30. The
+    row-count rule kept choosing yfinance, so the desk analysed RBLX at the
+    07-17 close — 24% off the real price — with the fresh series sitting in the
+    same table. Freshness outranks depth.
+    """
+    rows = [
+        {"ticker": "RBLX", "date": pd.Timestamp("2026-07-17") - pd.Timedelta(days=i),
+         "close": 51.0, "source": "yfinance"}
+        for i in range(20)
+    ] + [
+        {"ticker": "RBLX", "date": pd.Timestamp("2026-07-30") - pd.Timedelta(days=i),
+         "close": 39.0, "source": "polygon"}
+        for i in range(5)
+    ]
+    df = _keep_dominant_source(pd.DataFrame(rows))
+    assert set(df["source"]) == {"polygon"}
+
+
+def test_overnight_publishing_skew_does_not_flip_the_vendor():
+    """One vendor updating a day later than the other is not staleness; the
+    deep vendor must keep winning or the pin would flip-flop conventions on
+    ordinary mornings."""
+    rows = [
+        {"ticker": "SKEW", "date": pd.Timestamp("2026-07-29") - pd.Timedelta(days=i),
+         "close": 100.0, "source": "yfinance"}
+        for i in range(20)
+    ] + [
+        {"ticker": "SKEW", "date": pd.Timestamp("2026-07-30") - pd.Timedelta(days=i),
+         "close": 87.0, "source": "polygon"}
+        for i in range(5)
+    ]
+    df = _keep_dominant_source(pd.DataFrame(rows))
+    assert set(df["source"]) == {"yfinance"}
+
+
 def test_no_source_column_is_a_passthrough():
     df = pd.DataFrame({"ticker": ["A"], "date": [pd.Timestamp("2026-07-20")],
                        "close": [1.0]})
