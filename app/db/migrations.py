@@ -516,6 +516,79 @@ def run_migrations(conn):
     # This migration is idempotent: it only deletes if the bad data exists.
     _fix_eth_cagr_data(conn)
 
+    # ── Autovacuum thresholds for the big tables ──
+    _tune_autovacuum_for_large_tables(conn)
+
+
+# Per-table autovacuum overrides. Scale factor 0 + a fixed row threshold, which
+# is the standard treatment for tables far larger than the defaults assume.
+#
+# Threshold sizing: analyze often enough that the planner's row estimate never
+# drifts far, vacuum at roughly twice that. Both are absolute, so they do NOT
+# recede as the table grows — which is the entire bug being fixed.
+_AUTOVACUUM_TUNING = {
+    # 15.2M rows, append-mostly. The one that had never been touched.
+    "price_history": {"analyze": 50_000, "vacuum": 100_000},
+    # 1.3M rows but high churn — rows are rewritten on every refresh.
+    "technicals": {"analyze": 25_000, "vacuum": 50_000},
+    "pipeline_events": {"analyze": 10_000, "vacuum": 20_000},
+    "sec_13f_holdings": {"analyze": 5_000, "vacuum": 10_000},
+}
+
+
+def _tune_autovacuum_for_large_tables(conn):
+    """Give the large tables absolute autovacuum thresholds instead of ratios.
+
+    Postgres' defaults are proportional: autoanalyze at 10% of the table
+    changed, autovacuum at 20% dead. On a big table the trigger point recedes
+    exactly as fast as the table grows, so it is never reached.
+
+    Measured on trading_bot 2026-07-31 (PG16, autovacuum on, track_counts on,
+    every table at reloptions=NULL):
+
+        price_history   15,163,653 live | 26,885 dead
+                        needs 3,032,781 dead to vacuum, 1,516,415 mods to analyze
+                        last_autovacuum = NULL, last_autoanalyze = NULL — never, ever
+
+    So this is not a broken autovacuum daemon; it fires fine on the smaller
+    tables (technicals 07-29, ontology_nodes 07-29, sec_13f_holdings 07-26).
+    It is a threshold that a 15M-row table cannot reach. The visible symptom is
+    the planner working from a stale reltuples — it estimated 30k rows for
+    price_history against an actual 15.2M — and a manual ANALYZE only fixes
+    that until it drifts back, which is why this belongs in the schema and not
+    in someone's shell history.
+
+    ALTER TABLE ... SET is idempotent metadata-only DDL: no table rewrite, no
+    lock beyond a brief ACCESS EXCLUSIVE on the catalog row, safe to re-run at
+    every boot. A missing table is skipped rather than raised, so this stays
+    boot-safe on a fresh or partial database.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    for table, cfg in _AUTOVACUUM_TUNING.items():
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+                if cur.fetchone()[0] is None:
+                    continue
+                # Identifiers cannot be bound as parameters, and these come from
+                # the module-level dict above — never from input.
+                cur.execute(
+                    f"ALTER TABLE public.{table} SET ("
+                    "  autovacuum_analyze_scale_factor = 0,"
+                    f" autovacuum_analyze_threshold = {int(cfg['analyze'])},"
+                    "  autovacuum_vacuum_scale_factor = 0,"
+                    f" autovacuum_vacuum_threshold = {int(cfg['vacuum'])})"
+                )
+            conn.commit()
+        except Exception as e:
+            logger.warning("[migrations] autovacuum tuning skipped for %s: %s", table, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
 
 def _fix_eth_cagr_data(conn):
     """One-time fix for corrupted portfolio data."""
