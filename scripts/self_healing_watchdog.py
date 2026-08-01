@@ -18,17 +18,22 @@ calls a round, three rounds, hourly. It returned, measured: 57 rejections out of
 57 debates, 33 of them because a 4096-token completion was asked to re-emit a
 file it had been shown 4,000 characters of.
 
-So this half observes, and ``scripts/evo_runner.py`` — on a host checkout, where
-git and pytest exist — proposes, applies in a throwaway worktree, and *scores by
-running the suite*. Only a patch that fixes a reproduction test without
-regressing the baseline gets a branch, and a branch is where automation stops.
+The host-side replacement that used to propose patches was removed 2026-07-31.
+It ranked LLM-written candidates by "the suite goes green" and produced two
+top-scored patches in its life — both wrong the same way, re-adding a tool to
+the analyst whitelists directly above the comment explaining why a human had
+removed it, because a stale test still demanded it. Green is only the right
+target when the tests are right, and no grader can ask that.
 
-SCOPE (``repair_scope.is_patchable``) still applies before anything is queued:
+So this observes and STOPS. A human writes the fix and grades it with
+``scripts/grade_patch.py``, which keeps every guarantee the loop had — throwaway
+worktree, a reproduction test that must fail on unmodified HEAD, regressions
+measured against a captured baseline, deleted public symbols counted as a
+regression.
+
+SCOPE (``repair_scope.is_patchable``) still applies before anything is logged:
 only trading-cycle source is repairable. The repair machinery, DB schema,
 config, deploy scripts, and tests are off-limits.
-
-Probation and rollback (``check_probation_fixes``) remain for fixes the old
-loop already wrote to disk.
 """
 
 import sys
@@ -45,7 +50,6 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.db.connection import get_db
-from app.cognition.evolution.rollback_monitor import check_probation_fixes
 from app.cognition.evolution.target_map import list_available_targets, resolve_target
 from app.cognition.evolution.repair_scope import is_patchable
 
@@ -243,10 +247,10 @@ def has_consecutive_failures(target_type: str, target_name: str) -> bool:
 # unattended, gated only by a `py_compile` check. An LLM-authored patch could
 # reach production with no test coverage and no human in the loop.
 #
-# Automated repair now stops at the disk write. Accepted fixes are re-applied on
-# boot from `stable_harnesses` and rolled back by `check_probation_fixes` if they
-# degrade, so recovery never required a redeploy in the first place. Building and
-# shipping an image is a human action — do not reintroduce it here.
+# Automated repair now stops at the LOG. Nothing here writes to disk at all
+# since the deployer was removed 2026-07-31, so there is no patch to roll back
+# and no probation to monitor. Building and shipping an image is a human
+# action — do not reintroduce it here.
 
 
 def write_healing_report(cycle_id: str, target_name: str, patch_id: str, success: bool, msg: str):
@@ -288,12 +292,8 @@ async def heal_once():
     the standalone entrypoint tears the service down in a `finally`, which would
     kill the live DB pool and scheduler if invoked from inside the running app.
     """
-    logger.info("=" * 60)
-    logger.info("INSPECTING PROBATIONARY FIXES")
-    logger.info("=" * 60)
-    probation_summary = check_probation_fixes(current_cycle_id="current")
-    logger.info(f"Probation summary: {probation_summary}")
-
+    # (Probation inspection removed 2026-07-31 with the evolution deployer:
+    # it queried a table frozen on 07-28 and matched 0 rows every run.)
     cycle_id, status, error, phase = get_active_cycle()
     logger.info(f"Active Cycle ID: {cycle_id} | Status: {status} | Phase: {phase}")
         
@@ -407,9 +407,11 @@ async def heal_once():
     # check — measured at ~20 minutes and 47k input tokens per proposer call,
     # hourly, for proposals that were rejected 57 times out of 57.
     #
-    # So it records the failure and stops. `scripts/evo_runner.py`, running on a
-    # host checkout, proposes against both vLLM boxes, applies each candidate in
-    # a throwaway worktree, and scores it by running the tests.
+    # So it records the failure and stops. The host-side proposer that used to
+    # drain this was removed 2026-07-31: it ranked patches by "the suite goes
+    # green" and both of its two top-scored patches reverted a deliberate human
+    # decision to satisfy a stale test. `scripts/grade_patch.py` grades a fix a
+    # human wrote, keeping the worktree isolation and the fail-on-HEAD control.
     from app.cognition.evolution.coral.attempts import enqueue_job
 
     target_rel = target_info.get("relative_path", "")
@@ -443,8 +445,9 @@ async def heal_once():
         return
 
     logger.info(
-        "[SELF-HEAL] Queued repair job %s for %s::%s. Drain it on a host "
-        "checkout with:  python scripts/evo_runner.py --once",
+        "[SELF-HEAL] Logged failure %s for %s::%s. Nothing drains this — fix "
+        "it and grade the fix with:  python scripts/grade_patch.py <branch> "
+        "--repro <test>",
         job_id[:8], target_rel, target_name,
     )
     write_healing_report(

@@ -1143,9 +1143,9 @@ class SchedulerService:
         """Hourly engineering-failure diagnosis.
 
         Observes only: resolves the failure to a symbol and writes a row to
-        evolution_repair_queue. No LLM call, no patch, nothing written to disk.
-        Repair happens in scripts/evo_runner.py on a host checkout, because
-        proving a patch means running the tests and this image has no pytest.
+        evolution_repair_queue, which is a failure LOG. No LLM call, no patch,
+        nothing written to disk, and since 2026-07-31 nothing drains it either.
+        A human writes the fix and grades it with scripts/grade_patch.py.
 
         Calls heal_once(), NOT run_healing_cycle() — the latter is the standalone
         entrypoint and shuts the service down when it finishes.

@@ -41,40 +41,6 @@ async def run_autoresearch(job_id: str, payload: dict):
             [job_id]
         )
 
-async def run_deploy_fix(job_id: str, payload: dict):
-    fix_id = payload.get("fix_id")
-    if not fix_id:
-        raise ValueError("Missing fix_id in payload")
-    
-    from app.cognition.evolution.deployer import deploy_fix_to_disk
-    logger.info("Deploying fix %s on local disk...", fix_id)
-    res = deploy_fix_to_disk(fix_id)
-    if "error" in res:
-        raise Exception(res["error"])
-        
-    with get_db() as db:
-        db.execute(
-            "UPDATE system_commands SET status = 'completed', payload = %s WHERE id = %s",
-            [json.dumps(res), job_id]
-        )
-
-async def run_rollback_fix(job_id: str, payload: dict):
-    fix_id = payload.get("fix_id")
-    if not fix_id:
-        raise ValueError("Missing fix_id in payload")
-    
-    from app.cognition.evolution.deployer import rollback_fix
-    logger.info("Rolling back fix %s...", fix_id)
-    res = rollback_fix(fix_id)
-    if "error" in res:
-        raise Exception(res["error"])
-        
-    with get_db() as db:
-        db.execute(
-            "UPDATE system_commands SET status = 'completed', payload = %s WHERE id = %s",
-            [json.dumps(res), job_id]
-        )
-
 async def run_activate_brain_graph(job_id: str, payload: dict):
     """Re-seed + spread-activate the brain graph, persisting activation.
 
@@ -167,8 +133,15 @@ async def poll_system_commands():
             with get_db() as db:
                 cmd = db.execute(
                     "SELECT id, command_type, payload FROM system_commands "
+                    # DEPLOY_FIX/ROLLBACK_FIX dropped 2026-07-31 with the
+                    # evolution deployer. They wrote a row from the frozen
+                    # `pending_evolution_fixes` archive (last written 07-27,
+                    # mostly June) straight onto disk. Nothing has enqueued
+                    # either command since the API legs were severed on 07-28,
+                    # but the handler still would have applied a two-month-old
+                    # LLM patch to a live checkout if anything ever did.
                     "WHERE status = 'pending' AND command_type IN "
-                    "('AUTORESEARCH', 'DEPLOY_FIX', 'ROLLBACK_FIX', 'ACTIVATE_BRAIN_GRAPH', "
+                    "('AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', "
                     "'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY') "
                     "LIMIT 1 FOR UPDATE SKIP LOCKED"
                 ).fetchone()
@@ -186,10 +159,6 @@ async def poll_system_commands():
                     try:
                         if cmd_type == "AUTORESEARCH":
                             await run_autoresearch(job_id, payload)
-                        elif cmd_type == "DEPLOY_FIX":
-                            await run_deploy_fix(job_id, payload)
-                        elif cmd_type == "ROLLBACK_FIX":
-                            await run_rollback_fix(job_id, payload)
                         elif cmd_type == "ACTIVATE_BRAIN_GRAPH":
                             await run_activate_brain_graph(job_id, payload)
                         elif cmd_type == "RUN_FRED_COLLECTION":

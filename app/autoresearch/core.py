@@ -346,14 +346,12 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         # app.pipeline.* modules were deleted in the V3 purge; the imports
         # failed silently every cycle.)
 
-        # Probation Rollbacks
-        try:
-            from app.cognition.evolution.rollback_monitor import check_probation_fixes
-            rollback_summary = check_probation_fixes(cycle_id)
-            if rollback_summary.get("rolled_back", 0) > 0:
-                logger.warning("[AUTORESEARCH] Rolled back %d degrading fixes!", rollback_summary["rolled_back"])
-        except Exception as rb_err:
-            logger.warning("[AUTORESEARCH] Rollback monitor failed: %s", rb_err)
+        # (Probation rollbacks removed 2026-07-31 with the evolution deployer.
+        # check_probation_fixes queried pending_evolution_fixes for rows with
+        # status='deployed' and a probation window still open. That table was
+        # frozen on 07-28 and nothing has deployed into it since, so the query
+        # matched 0 rows and could never match more — measured, not assumed. It
+        # ran once per cycle to do nothing.)
 
         # (Meta-Agent Judge removed: app.agents.meta_agent_judge never existed
         # in the V3 tree — the import failed and logged a warning every cycle.)

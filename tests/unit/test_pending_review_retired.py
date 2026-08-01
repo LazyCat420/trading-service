@@ -158,29 +158,46 @@ def test_mutators_return_instead_of_raising():
     assert pending_review.approve_fix("nope")["status"] == "archived"
     assert pending_review.reject_fix("nope")["status"] == "archived"
 
-
-# ── The deploy path must refuse too ─────────────────────────────────────────
+# ── The deploy path is GONE, not merely refusing ────────────────────────────
 #
-# 2026-07-29: retiring approve_fix() was not sufficient. trading-client exposes
-# POST /fixes/{id}/deploy, which skips approval entirely and queues DEPLOY_FIX
-# into system_commands; eval_worker.run_deploy_fix() then calls
-# deploy_fix_to_disk(), whose status gate admits 'pending' — exactly what the 3
-# stranded rows still are. That path ends in a real write to a real source file,
-# so the refusal belongs at the write, not only at the approval.
+# There used to be a test here asserting deploy_fix_to_disk() refused a retired
+# fix. On 2026-07-31 the whole evolution deployer was deleted along with the
+# autonomous repair loop, and eval_worker stopped dispatching DEPLOY_FIX and
+# ROLLBACK_FIX. Deletion is strictly stronger than a refusal, and there is no
+# longer a module to point the test at. Nothing in trading-service enqueues
+# either command, so removing the consumer strands nothing.
+#
+# What still needs guarding is that the retirement is not quietly undone:
 
-def test_deploy_to_disk_refuses_a_retired_fix():
-    from app.cognition.evolution import deployer
 
-    # deploy_fix_to_disk selects only 5 columns, in its own order:
-    # (id, target_type, target_name, proposed_fix, status). Status is 'pending'
-    # so the row passes the pre-existing status gate and reaches the refusal.
-    deployer_row = ("fix-may-2026", "prompt", "some_agent", "diff...", "pending")
-    db = _FakeDb([deployer_row])
-    with patch.object(deployer, "get_db", lambda: _fake_get_db(db)):
-        result = deployer.deploy_fix_to_disk("fix-may-2026")
+def test_no_code_path_deploys_a_stored_fix_to_disk():
+    """No executable reference to the deploy/rollback commands may return.
 
-    assert result["archived"] is True
-    assert result["actionable"] is False
-    assert "RETIRED" in result["error"]
-    # Nothing may be written, backed up, or marked deployed.
-    assert not any("UPDATE" in s.upper() for s in db.statements)
+    Greps the tree rather than importing, because the thing being asserted is an
+    ABSENCE — there is no module left to import, and a test that imports one
+    would only prove the module exists.
+    """
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    hits = subprocess.run(
+        ["git", "grep", "-nE", r"DEPLOY_FIX|ROLLBACK_FIX|deploy_fix_to_disk",
+         "--", "app", "scripts"],
+        cwd=root, capture_output=True, text=True,
+    ).stdout.splitlines()
+
+    live = []
+    for hit in hits:
+        # "path:lineno:source" — rsplit is wrong, a Windows-ish path could
+        # contain ':' but the source certainly can.
+        parts = hit.split(":", 2)
+        if len(parts) < 3:
+            continue
+        source = parts[2].strip()
+        # Comments explaining the removal are the point; code is not.
+        if source.startswith("#"):
+            continue
+        live.append(hit)
+
+    assert not live, "a deploy-to-disk path came back:\n" + "\n".join(live)

@@ -76,11 +76,13 @@ def assert_git_available() -> str:
 
 
 @contextmanager
-def attempt_worktree(label: str = ""):
-    """Yield a fresh detached worktree at HEAD; always remove it afterwards.
+def attempt_worktree(label: str = "", ref: str = "HEAD"):
+    """Yield a fresh detached worktree at ``ref``; always remove it afterwards.
 
     The worktree is detached on purpose — a candidate must never be able to move
-    a branch that a human is using.
+    a branch that a human is using. That is also why ``ref`` is only ever read:
+    grading a branch checks it out detached, so nothing the grader does can
+    advance the branch being graded.
     """
     assert_git_available()
     WORKTREE_DIR.mkdir(exist_ok=True)
@@ -88,7 +90,7 @@ def attempt_worktree(label: str = ""):
     path = WORKTREE_DIR / slug
 
     with _WORKTREE_LOCK:
-        git("worktree", "add", "--detach", str(path), "HEAD")
+        git("worktree", "add", "--detach", str(path), ref)
     logger.info("[CORAL-WT] created %s", path)
     try:
         for name in _LINKED_FILES:

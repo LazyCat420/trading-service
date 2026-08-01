@@ -1,30 +1,31 @@
-"""CORAL-style repair loop: measured fitness instead of a judge's opinion.
+"""Patch grading: measured fitness instead of an opinion.
 
-Ported from the ideas in https://github.com/Human-Agent-Society/CORAL, adapted
-to run entirely on the local vLLM boxes.
+What remains of a CORAL-style repair loop, after the loop was removed on
+2026-07-31 and the grader was kept.
 
-What was taken:
+The proposing is gone. It ranked LLM-written patches by "the test suite goes
+green", produced exactly two top-scored patches in its life, and both were
+wrong in the same way: they re-added `get_parameters` to the analyst
+whitelists — inserting the line directly above the comment explaining why a
+human had deliberately removed it — because a stale test still demanded it.
+Green is only the right target when the tests are right, and nothing in the
+loop could ask that question. It cost ~4,800 lines to learn.
 
-* **A grader scores every candidate.** CORAL's only interface contract is
-  ``grade(codebase_path, tasks) -> ScoreBundle``. Fitness is *measured*, never
-  voted on. Here that is pytest: a generated reproduction test that must fail
-  before the patch, plus the existing suite, compared against a captured
-  baseline rather than against "all green".
-* **Worktree isolation.** Each candidate is applied and graded in its own
-  ``git worktree``; nothing touches the checkout until a patch has earned it.
-* **Attempts as durable shared state.** Every candidate is recorded with its
-  score, keyed by the commit it produced, and the next round of proposers reads
-  the leaderboard — CORAL's ``.coral/public/attempts`` as a table.
-* **Pivot on plateau.** Consecutive attempts that fail to beat the baseline stop
-  the target rather than grinding, mirroring CORAL's heartbeat.
-* **Islands.** The two vLLM boxes run different model families (Qwen on jetson,
-  Gemma on dgx_spark), so a round genuinely samples two distributions.
+The grading is the part that was always good, and it is kept whole, driven by
+`scripts/grade_patch.py` against a patch a human wrote:
 
-What was deliberately NOT taken: the agent runtimes (Claude Code, Codex, …).
-They need tool-calling and network egress this loop does not have, and the whole
-point of the rewrite is that the *grader* carries the quality, not the author.
+* **Fitness is measured, never voted on.** pytest decides: a reproduction test
+  that must FAIL before the patch, plus the existing suite compared against a
+  captured baseline rather than against "all green" — this repo carries
+  pre-existing failures, and a grader demanding all-green rejects everything
+  forever.
+* **Worktree isolation.** A patch is applied and graded in its own throwaway
+  ``git worktree``, so a destructive edit destroys a copy. This is what let the
+  old size-ratio heuristic be deleted.
+* **Deleted public symbols are a regression** even when every test passes —
+  that is how the old loop's best-scoring proposal passed review while removing
+  nine functions, including a collector's entrypoint.
 
-What this replaces: ``debate.py``'s proposer/critic/judge council, which asked a
-4096-token completion to re-emit whole files it had only seen 4,000 chars of,
-and then let an LLM judge score the result without ever showing it the original.
+`attempts.py` is now a failure log rather than a work queue: the watchdog still
+records which cycle failures were in patchable scope, and nothing drains it.
 """
