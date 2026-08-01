@@ -305,14 +305,17 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: opinion block failed (non-fatal): %s", ticker, e)
 
-    # Staleness SHADOW (2026-07-27). Deliberately observational, not a gate.
-    # After the collection + refresh-coverage fixes the active watchlist
-    # measures 0 tickers blocked by every candidate staleness rule on every
-    # simulated session (scripts/simulate_freshness_thresholds.py), so a hard
-    # gate here would be dead weight that can only fire on a regression — and
-    # a threshold guessed today, against one clean week, is exactly the
-    # unfalsifiable edit this investigation kept running into. Record what a
-    # gate WOULD have blocked; promote it only when the distribution earns it.
+    # Staleness gate, detection half. Shadow-only from 2026-07-27 ("promote it
+    # only when the distribution earns it") — promoted 2026-07-31, because the
+    # distribution earned it: cycle-v3-1785504601 shadow-fired on exactly
+    # RBLX/EC (10 trading days) and AGX (4), all three true positives, and the
+    # RBLX desk went on to emit a 75-confidence thesis with a stop-loss ABOVE
+    # the real spot, priced 24% off. Detection records here; ENFORCEMENT is the
+    # HOLD_POLICY_BLOCKED_STALE_PRICE_DATA gate in `_apply_policy_gates`, which
+    # reads the age this block stashes on the desk. Fail-open on gate failure:
+    # an unreadable baseline must not block the cycle — the executor-side
+    # checks remain the backstop, and the desk prompt still carries its own
+    # ⚠ STALE banner.
     try:
         from app.quant.technical_baseline import compute_technical_baseline
 
@@ -323,23 +326,25 @@ async def run_v3_pipeline(
         if isinstance(_trd, int) and _trd > 3:
             from app.v3.telemetry import record_guardrail_firing
 
+            desk.cycle_metadata["stale_price_age_trading_days"] = _trd
+            desk.cycle_metadata["stale_price_as_of"] = str((_b or {}).get("as_of"))
             record_guardrail_firing(
-                "SHADOW_STALE_PRICE_DATA",
+                "STALE_PRICE_DATA",
                 ticker=ticker,
                 cycle_id=cycle_id or "",
                 detail={
                     "age_trading_days": _trd,
                     "as_of": str((_b or {}).get("as_of")),
-                    "shadow": True,
-                    "would_block": True,
+                    "shadow": False,
+                    "enforced_by": "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA",
                 },
             )
-            logger.info(
-                "[V3] %s: SHADOW stale-data flag — baseline is %d trading day(s) "
-                "old (observational, trade NOT blocked)", ticker, _trd,
+            logger.warning(
+                "[V3] %s: STALE price data — baseline is %d trading day(s) old; "
+                "any BUY/SELL from this desk will be policy-blocked", ticker, _trd,
             )
-    except Exception as e:  # noqa: BLE001 — a shadow must never affect a cycle
-        logger.debug("[V3] %s: staleness shadow skipped: %s", ticker, e)
+    except Exception as e:  # noqa: BLE001 — detection failure must not block
+        logger.warning("[V3] %s: staleness detection skipped: %s", ticker, e)
 
     # Alternative data (2026-07-23 collector wave): insider cluster buys +
     # social chatter, precomputed for the research analysts — same rationale
@@ -718,6 +723,7 @@ async def run_v3_pipeline(
     board_dispatched = False
     synth_dispatched = False
     peer_drop_logged = False
+    research_tier_dispatched = False
 
     def _queue_agent(name: str, module: Any, query: str = "", parent: str = ""):
         if run_counts.get(name, 0) >= MAX_RUNS_PER_AGENT:
@@ -737,7 +743,8 @@ async def run_v3_pipeline(
         logger.info("[V3] Queued dynamic task: %s (query='%s', parent='%s')", name, query, parent)
 
     async def whiteboard_subscriber(event):
-        nonlocal regime, fa_skipped, debate_dispatched, board_dispatched, synth_dispatched
+        nonlocal regime, fa_skipped, debate_dispatched, board_dispatched, \
+            synth_dispatched, research_tier_dispatched
         # The bus delivers only this ticker's events (subscription is
         # ticker-scoped), but keep the filter as defense in depth against
         # unscoped publishers — a cross-ticker event here would cross-trigger
@@ -800,6 +807,27 @@ async def run_v3_pipeline(
                 _queue_agent("junior_analyst", junior_analyst, parent="regime_engine")
 
         elif sec == "desk_note":  # junior_analyst completed
+            # Latch, same pattern as debate_dispatched. A desk_note RE-write is
+            # the JA answering a peer request, not a new research phase — but
+            # this branch used to process it as one, re-queueing FA+QA+VA whose
+            # runs were already complete (_queue_agent dedupes only against
+            # PENDING tasks). Measured in cycle-v3-1785504601: 4 of 6 tickers
+            # carried one peer request to the JA, and each became 4 duplicate
+            # analyst runs — 17 of the cycle's 18 extra runs, the "~1.4
+            # runs/ticker" waste the 07-30 handoff ranked #1. The re-written
+            # note still lands on the whiteboard where the debate and Board
+            # read it; nothing downstream needs the re-dispatch. The latch also
+            # keeps a re-run's triage from firing twice — a second desk_note
+            # recommending SKIP used to clear the task queue MID-debate.
+            if research_tier_dispatched:
+                logger.info(
+                    "[V3] %s: desk_note re-write (peer-request answer) — "
+                    "research tier already dispatched, not re-dispatching",
+                    ticker,
+                )
+                return
+            research_tier_dispatched = True
+
             # JA is the first real intelligence gate (plan 2.2): honor its
             # triage_recommendation. Anything unrecognized behaves as FULL.
             triage = str((event.get("content") or {}).get("triage_recommendation") or "FULL").upper()
@@ -2390,6 +2418,22 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     # make the real firing rate unreadable. Do not "fix" this omission.
     if action == "HOLD":
         return "HOLD_NO_SIGNAL"
+
+    # Stale-price gate (promoted from shadow 2026-07-31). The desk's whole
+    # technical baseline — stops, targets, sizing, fair-value anchor — derives
+    # from the pinned price series; when that series is >3 trading days old the
+    # numbers are fiction (cycle-v3-1785504601: RBLX priced 24% off, stop above
+    # spot). A HOLD on stale data trades nothing and passes above; a BUY/SELL
+    # must not execute. Age is stashed at desk-build time by the detection
+    # block; absent means fresh (or detection failed — executor checks remain
+    # the backstop for that).
+    stale_age = desk.cycle_metadata.get("stale_price_age_trading_days")
+    if isinstance(stale_age, int) and stale_age > 3:
+        return _record_gate(
+            desk, "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA",
+            action=action, age_trading_days=stale_age,
+            as_of=desk.cycle_metadata.get("stale_price_as_of"),
+        )
 
     # A SELL is only executable for a position the bot actually holds — there is
     # no shorting. The holdings flag is resolved once at desk-build time
