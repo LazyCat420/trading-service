@@ -80,10 +80,17 @@ async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
             )
             return None
 
-        ohlc = [c for c in ("Open", "High", "Low", "Close") if c in df.columns]
-        if ohlc:
+        # Volume belongs in this subset. yfinance's mid-session forming bar has
+        # real OHLC but a NaN Volume (the session hasn't closed, so there's no
+        # final volume yet) — that row survived an OHLC-only dropna, then blew
+        # up PriceHistorySchema's `Volume: Series[int]` coercion and took all
+        # 124 other good rows down with it. Reproduced 2026-08-01: a single
+        # NaN Volume with valid OHLC on the newest row causes
+        # `PriceHistorySchema.validate` to reject the ENTIRE 125-row frame.
+        cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+        if cols:
             before = len(df)
-            df = df.dropna(subset=ohlc)
+            df = df.dropna(subset=cols)
             if len(df) < before:
                 logger.debug(
                     "[yfinance] %s: dropped %d incomplete bar(s) at fetch",
@@ -92,7 +99,7 @@ async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
         if df.empty:
             logger.warning(
                 "[yfinance] %s: FETCH_ALL_INCOMPLETE — every bar had a null in %s",
-                ticker, "/".join(ohlc),
+                ticker, "/".join(cols),
             )
             return None
         return df
@@ -159,16 +166,27 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
     # strictly better than keeping none of them — a partial frame is still an
     # upsert, and the dropped bar arrives complete on the next collection.
     #
+    # Volume is in this subset for the same reason it had to be added to
+    # fetch_ohlcv_dataframe's dropna: yfinance's forming bar can carry valid
+    # OHLC and a NaN Volume (no final volume until the session settles), and
+    # `Volume: Series[int]` coercion rejects the whole frame on that one NaN.
+    # Measured 2026-08-01: a single NaN-Volume row with otherwise-valid OHLC
+    # discarded all 125 rows via PriceHistorySchema.validate. This is the most
+    # likely cause of the 09:xx ET opening-bell failures (15 of 18 over
+    # 07-27..07-31): the market-open cycle runs while today's bar is still
+    # forming, and that bar's Volume is exactly the field yfinance has not
+    # settled yet.
+    #
     # Note the incremental-fetch trap: the NaN is in the NEWEST bar, so a
     # narrower `period` does not avoid it. Salvage is what fixes this, not a
     # smaller window.
-    _ohlc = ["Open", "High", "Low", "Close"]
+    _cols = ["Open", "High", "Low", "Close", "Volume"]
     _before = len(df)
-    df = df.dropna(subset=[c for c in _ohlc if c in df.columns])
+    df = df.dropna(subset=[c for c in _cols if c in df.columns])
     _dropped = _before - len(df)
     if _dropped:
         logger.warning(
-            "[yfinance] %s: dropped %d incomplete bar(s) of %d (NaN OHLC — "
+            "[yfinance] %s: dropped %d incomplete bar(s) of %d (NaN OHLC/Volume — "
             "usually the in-progress session); keeping %d",
             ticker, _dropped, _before, len(df),
         )
@@ -211,7 +229,12 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
 
     try:
         df = PriceHistorySchema.validate(df)
-    except pandera.errors.SchemaError as e:
+    except (pandera.errors.SchemaError, pandera.errors.SchemaErrors) as e:
+        # SchemaErrors (plural) is pandera's lazy/multi-failure variant and is
+        # not a subclass of SchemaError — a coercion failure on a column like
+        # Volume raises SchemaErrors, which this except clause did not catch
+        # until now. An uncaught SchemaErrors here doesn't return 0, it
+        # crashes the whole collect_all() call for the ticker, unhandled.
         logger.error(f"[yfinance] Validation failed for {ticker}: {e}")
         await _refresh_technicals(ticker)
         return 0
