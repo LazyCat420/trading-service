@@ -142,6 +142,36 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
         await _refresh_technicals(ticker)
         return 0
 
+    # Same salvage for internally inconsistent bars (High < Open etc.). The
+    # schema's OHLC checks are frame-level, so one bad bar used to reject the
+    # whole frame — and unlike the NaN case, a bad bar mid-history stays inside
+    # the fetch window, so the failure REPEATS every collection until the bar
+    # ages out. Measured in cycle-v3-1785504601: RBLX's 2026-07-18 gap-down bar
+    # (Open 49.46 > High 40.0, straight from Yahoo) blocked all yfinance writes
+    # for 10 sessions; the desk then analysed RBLX at the 07-17 close, 24% off.
+    # We drop the bar rather than clamping it: we cannot know which field is
+    # wrong, and the other vendor usually has the session.
+    from app.validation.schema import ohlc_consistency_mask
+    _mask = ohlc_consistency_mask(df)
+    if not _mask.all():
+        _bad = df[~_mask]
+        logger.warning(
+            "[yfinance] %s: dropped %d internally inconsistent bar(s) (%s); "
+            "keeping %d",
+            ticker,
+            len(_bad),
+            ", ".join(str(d.date()) for d in _bad.index[:5]),
+            int(_mask.sum()),
+        )
+        df = df[_mask]
+    if df.empty:
+        logger.error(
+            "[yfinance] %s: every bar was inconsistent — no usable price rows",
+            ticker,
+        )
+        await _refresh_technicals(ticker)
+        return 0
+
     try:
         df = PriceHistorySchema.validate(df)
     except pandera.errors.SchemaError as e:
