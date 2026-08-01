@@ -25,6 +25,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ── Boilerplate patterns that indicate empty/fallback outputs ──
+# The single-word patterns MUST be word-bounded: unanchored `n/?a` matches the
+# substring "na" inside ordinary prose — "operatioNAl", "NArrative", "sigNAls".
+# Measured in cycle-v3-1785504601: 32 of 58 desk artifacts (1.9–4.1 KB of
+# grounded prose, quality 70–87) carried FALLBACK_OUTPUT, every one of them
+# from `n/?a` alone — a 55% fallback rate that was 100% false positives, on a
+# flag that can force full-panel escalation via guardrails.py.
 _BOILERPLATE_PATTERNS = [
     r"unable to (?:analyze|assess|evaluate|determine)",
     r"no (?:data|information) (?:available|found|provided)",
@@ -32,10 +38,10 @@ _BOILERPLATE_PATTERNS = [
     r"not (?:analyzed|available|applicable)",
     r"skipped (?:detailed|due to)",
     r"could not (?:retrieve|obtain|find|access)",
-    r"n/?a",
-    r"placeholder",
-    r"tbd",
-    r"unknown",
+    r"\bn/?a\b",
+    r"\bplaceholders?\b",
+    r"\btbd\b",
+    r"\bunknown\b",
     r"error (?:occurred|during|while)",
     r"failed to (?:retrieve|fetch|load|parse)",
 ]
