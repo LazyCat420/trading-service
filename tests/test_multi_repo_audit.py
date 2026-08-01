@@ -186,6 +186,50 @@ class TestP2ToolSchemaSync(unittest.TestCase):
             "tool_schemas.json must be identical in both repos",
         )
 
+    def test_flat_artifact_matches_the_split_source(self):
+        """The built artifact must match a fresh build of tool_schemas/.
+
+        The test above compares the copies to EACH OTHER, which passes happily
+        while all of them are equally stale — and that is exactly what happened.
+        `build_tool_schemas.py` is run only by lazy-agent-service/deploy.sh, so
+        editing a schema under `tool_schemas/` without deploying that one repo
+        leaves the flat artifact — the file every runtime loader actually reads —
+        behind. Found 2026-07-31: the 07-31 `canvas_add_widget` guidance (do NOT
+        route a question that merely CONTAINS numbers to the converter) had been
+        written into the source and never built, so no agent ever saw it. The
+        copies were byte-identical to each other the whole time.
+
+        Comparing against `load_split()` rather than re-running the build keeps
+        this read-only — it must not silently repair the artifact it is guarding.
+        """
+        flat_path = os.path.join(TRADING_SERVICE_ROOT, "tool_schemas.json")
+        if not os.path.exists(flat_path):
+            # Gitignored in this repo, so a fresh worktree simply has no copy.
+            self.skipTest("trading-service/tool_schemas.json not found")
+
+        sys.path.insert(0, os.path.join(TRADING_SERVICE_ROOT, "scripts"))
+        try:
+            import build_tool_schemas
+        except SystemExit as e:  # the script exits hard when the source is absent
+            self.skipTest(f"split source not available: {e}")
+        finally:
+            sys.path.pop(0)
+
+        if not os.path.isdir(build_tool_schemas.SOURCE_DIR):
+            self.skipTest("tool_schemas/ split source not found")
+
+        expected = json.dumps(build_tool_schemas.load_split(), indent=2) + "\n"
+        with open(flat_path, "r", encoding="utf-8") as f:
+            actual = f.read()
+
+        self.assertEqual(
+            expected,
+            actual,
+            "tool_schemas.json is stale against tool_schemas/ — run "
+            "`python3 scripts/build_tool_schemas.py` and commit the result. "
+            "Until then the agents are reading the OLD schema.",
+        )
+
 
 class TestExcInfoOnErrors(unittest.TestCase):
     """Verify critical error logs include exc_info=True for stack traces."""

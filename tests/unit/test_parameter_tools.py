@@ -29,11 +29,16 @@ def test_whitelists_grant_write_to_pm_and_board_only():
     assert "propose_parameter_change" in wl["user_chat"]
     assert "get_parameters" in wl["v3_portfolio_manager"]
     assert "get_parameters" in wl["v3_board_of_directors"]
-    # Analysts see the limits but cannot change them.
-    assert "get_parameters" in wl["v3_fundamental_analyst"]
-    assert "propose_parameter_change" not in wl["v3_fundamental_analyst"]
-    assert "get_parameters" in wl["v3_quant_analyst"]
-    assert "propose_parameter_change" not in wl["v3_quant_analyst"]
+    # Analysts hold NEITHER grant. They used to hold the read (the original
+    # "see the limits but cannot change them" split), but both analysts dropped
+    # get_parameters on 2026-07-25: zero calls in 60 days and no prompt line
+    # asking for it, because the risk envelope reaches these desks through the
+    # precomputed context block rather than a tool call. Asserting the drop, not
+    # just the absence of the write, so re-adding a tool no prompt mentions has
+    # to be a deliberate edit here too.
+    for analyst in ("v3_fundamental_analyst", "v3_quant_analyst"):
+        assert "get_parameters" not in wl[analyst]
+        assert "propose_parameter_change" not in wl[analyst]
     # Workers with no grant stay without it.
     assert "propose_parameter_change" not in wl.get("v3_junior_analyst", [])
 
