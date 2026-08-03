@@ -285,6 +285,13 @@ def write_healing_report(cycle_id: str, target_name: str, patch_id: str, success
 from app.services.boot_service import BootService
 from app.services.startup_tasks import startup_vllm_discovery
 
+# The last error event this watchdog acted on. get_latest_error_events always
+# returns the newest error rows for the cycle, so an event that nothing
+# clears (e.g. one failed analyst artifact) was re-"Detected" on every hourly
+# pass — 2026-08-03 logged the same GE junior-analyst failure as a fresh
+# crash five hours running. One failure, one detection.
+_last_handled_event: tuple | None = None
+
 async def heal_once():
     """One diagnosis pass. Assumes the service context is ALREADY booted.
 
@@ -304,8 +311,19 @@ async def heal_once():
         if not error_events:
             logger.info("No active pipeline event crashes found. System healthy.")
             return
-        # Use the latest error event
+        # Use the latest error event — unless it's the one we already handled.
+        global _last_handled_event
         crash_event = error_events[0]
+        event_key = (cycle_id, crash_event["phase"], crash_event["step"],
+                     crash_event["timestamp"])
+        if event_key == _last_handled_event:
+            logger.info(
+                "Newest error event %s/%s (%s) already handled on a previous "
+                "pass — no new crashes.",
+                crash_event["phase"], crash_event["step"], crash_event["timestamp"],
+            )
+            return
+        _last_handled_event = event_key
         error_msg = crash_event["detail"]
         logger.warning(f"Detected crash event in {crash_event['phase']}/{crash_event['step']}: {error_msg}")
     else:

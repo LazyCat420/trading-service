@@ -406,6 +406,18 @@ FALSE_TICKERS = {
     "PI",
 }
 
+# Frozen copy of the hand-curated list above, captured BEFORE any runtime
+# mutation. FALSE_TICKERS grows at runtime: verification auto-bans symbols
+# whose yfinance lookup came back empty, and _load_from_db folds every
+# `rejected` company_registry row back in on boot. That auto-ban is an
+# EXTRACTION heuristic — on 2026-05-07 a bulk verification run (a yfinance
+# outage) mass-rejected 71 real ETFs including SPY, QQQ, IWM and SMH, and
+# from then on every EXPLICIT price fetch for them (watchlist refresh,
+# precollect, screener ETF rows) was refused as "in FALSE_TICKERS".
+# Callers guarding explicit, caller-chosen fetches must check THIS set;
+# only text-extraction paths should honour the runtime bans.
+STATIC_FALSE_TICKERS = frozenset(FALSE_TICKERS)
+
 # Market cap threshold: if a FALSE_TICKER symbol has market cap >= this, allow it
 # through to context scoring instead of hard-blocking it.
 # e.g. OPEN (Opendoor, $1.5B), FAST (Fastenal, $40B), RUN (Sunrun, $3B)

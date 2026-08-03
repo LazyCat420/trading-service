@@ -93,6 +93,18 @@ KNOWN_ADR_MAP: dict[str, str] = {
     "TTE.PA": "TTE",        # TotalEnergies → NYSE
 }
 
+# ── Renamed US tickers ───────────────────────────────────────────────
+# Dead symbol → its current listing after a corporate rename. Unlike the ADR
+# map this is same-company-same-exchange, so the rewrite is safe by
+# construction — but the ⚠ above still applies: verify the destination trades
+# (scripts/audit_adr_map.py) before adding an entry. FB reached cycle
+# cycle-v3-1785763800 on 2026-08-03 and produced the cycle's only
+# yfinance_price failure; META has the data.
+RENAMED_TICKERS: dict[str, str] = {
+    "FB": "META",       # Facebook → Meta Platforms (renamed 2022-06)
+}
+
+
 # Reverse map: US ticker → list of foreign equivalents (for reference/logging only)
 _REVERSE_MAP: dict[str, list[str]] = {}
 for _foreign, _us in KNOWN_ADR_MAP.items():
@@ -358,6 +370,11 @@ def resolve_tickers_batch(tickers: list[str]) -> list[str]:
     resolved = []
     for ticker in tickers:
         t = ticker.upper().strip()
+        if t in RENAMED_TICKERS:
+            logger.info(
+                "[us_ticker_resolver] %s was renamed — using %s", t, RENAMED_TICKERS[t]
+            )
+            t = RENAMED_TICKERS[t]
         if is_us_tradeable(t):
             resolved.append(t)
         else:
@@ -371,7 +388,9 @@ def resolve_tickers_batch(tickers: list[str]) -> list[str]:
                 logger.warning(
                     "[us_ticker_resolver] Dropped non-US ticker %s (no US equivalent)", t
                 )
-    return resolved
+    # Renames/ADR-resolution can converge on a symbol already in the list
+    # (e.g. ["FB", "META"]) — analyze it once, first occurrence wins.
+    return list(dict.fromkeys(resolved))
 
 
 async def resolve_tickers_batch_async(tickers: list[str]) -> list[str]:
@@ -382,6 +401,11 @@ async def resolve_tickers_batch_async(tickers: list[str]) -> list[str]:
     resolved = []
     for ticker in tickers:
         t = ticker.upper().strip()
+        if t in RENAMED_TICKERS:
+            logger.info(
+                "[us_ticker_resolver] %s was renamed — using %s", t, RENAMED_TICKERS[t]
+            )
+            t = RENAMED_TICKERS[t]
         if is_us_tradeable(t):
             resolved.append(t)
         else:
@@ -392,4 +416,4 @@ async def resolve_tickers_batch_async(tickers: list[str]) -> list[str]:
                 logger.warning(
                     "[us_ticker_resolver] Dropped non-US ticker %s (no US equivalent)", t
                 )
-    return resolved
+    return list(dict.fromkeys(resolved))

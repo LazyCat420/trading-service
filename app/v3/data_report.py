@@ -276,6 +276,25 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
             "youtube": collect_youtube(ticker),
         }
 
+    # A blocklisted ticker is a SKIP, not an outage. collect_price_history
+    # refuses blocklisted tickers and returns 0, which classify_collector_outcome
+    # reads as "returned no data" — so cycle-v3-1785763800's FB (blocklisted,
+    # renamed to META in 2022) surfaced as a precollect ERROR event and the
+    # self-healing watchdog then reported it as a crash. Refusing to fetch is
+    # the guard working; don't dispatch the collectors at all, and say why.
+    # Fail-closed: only the collector's own explicit blocklist check may
+    # downgrade to skip — every other zero-result still classifies as error.
+    from app.collectors.yfinance_collector import _is_blocked_ticker
+    if _is_blocked_ticker(ticker):
+        for _n in ("yfinance_price", "yfinance_fund"):
+            if coros.pop(_n, None) is not None:
+                _outcomes[_n] = "skipped"
+                _emit(
+                    f"precollect_{_n}_skip",
+                    f"{ticker} is on the ticker blocklist — {_n} skipped (refusal, not an outage)",
+                    "warning",
+                )
+
     # Execute all collection tasks in parallel with a hard deadline. asyncio.wait
     # (not wait_for+gather) so the collectors that DID finish keep their results
     # and we can name exactly which ones ran out of clock — the old code logged
@@ -328,14 +347,16 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
 
     ok = sorted(n for n, s in _outcomes.items() if s == "ok")
     errored = sorted(n for n, s in _outcomes.items() if s == "error")
-    skipped = sorted(set(_FULL_COLLECTORS) - set(coros)) if is_fast_path else []
+    # Anything not dispatched is a skip — the fast path drops the heavy
+    # scrapers, and a blocklisted ticker drops the yfinance collectors.
+    skipped = sorted(set(_FULL_COLLECTORS) - set(coros))
     collect_ms = int((time.monotonic() - t_collect) * 1000)
     logger.info(
         "[V3][precollect] %s in %dms: ok=%s%s%s%s",
         ticker, collect_ms, ",".join(ok) or "-",
         f" error={','.join(errored)}" if errored else "",
         f" timeout={','.join(timed_out)}" if timed_out else "",
-        f" skipped(fast-path)={','.join(skipped)}" if skipped else "",
+        f" skipped={','.join(skipped)}" if skipped else "",
     )
     if timed_out:
         _emit("precollect_timeout",

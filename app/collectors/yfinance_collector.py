@@ -37,10 +37,20 @@ from app.db.connection import get_db
 
 
 def _is_blocked_ticker(ticker: str) -> bool:
-    """Pre-collection guard: reject tickers in the FALSE_TICKERS blocklist."""
+    """Pre-collection guard: reject tickers on the STATIC blocklist only.
+
+    Deliberately checks STATIC_FALSE_TICKERS, not the runtime-augmented
+    FALSE_TICKERS. The runtime auto-bans come from extraction verification
+    ("yfinance returned nothing, likely delisted") and from company_registry's
+    `rejected` rows — and a transient vendor outage on 2026-05-07 mass-banned
+    SPY, QQQ, IWM, SMH and 67 other real ETFs that way, permanently refusing
+    every explicit price fetch for them. A caller that names a ticker outright
+    (watchlist refresh, precollect, screener) is not extracting it from text
+    and gets only the hand-curated slang/acronym list.
+    """
     try:
-        from app.processors.ticker_extractor import FALSE_TICKERS
-        if ticker.upper() in FALSE_TICKERS:
+        from app.processors.ticker_extractor import STATIC_FALSE_TICKERS
+        if ticker.upper() in STATIC_FALSE_TICKERS:
             logger.warning("[yfinance] BLOCKED ticker '%s' — in FALSE_TICKERS", ticker)
             return True
     except ImportError:
