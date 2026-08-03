@@ -103,7 +103,7 @@ If the baseline is marked STALE, say so in data_gaps and treat levels as indicat
 8. Emit the JSON. Its `overlays` field is MANDATORY — put every support/resistance zone and trendline you identified there (see OUTPUT). The desk renders those on the ticker chart automatically.
 
 ## RULES
-- Uncertainty is stated, never silently neutral. At most one `request_peer_analysis` (qualitative facts you can't compute). Unresolved quantitative questions go in `sub_analyses_requested` — the Board treats them as open uncertainty.
+- Uncertainty is stated, never silently neutral. At most one `request_peer_analysis` (qualitative facts you can't compute) — and only to an agent that has NOT already run this desk; requests to already-run agents are dropped, so prefer `sub_analyses_requested`. Unresolved quantitative questions go in `sub_analyses_requested` — the Board treats them as open uncertainty.
 
 ## OUTPUT
 {

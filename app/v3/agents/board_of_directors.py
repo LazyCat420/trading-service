@@ -69,6 +69,12 @@ _BOARD_COMMON = """
 The desk includes the Regime Engine's board_directive with live factor scores. Where it conflicts with your philosophy, the directive wins — it reflects TODAY's market, not an archetype.
 
 ## TOOLS (conditional — never reflexive)
+- `whiteboard_write`/`whiteboard_annotate`: annotate a desk's entry (the
+  entry_id is printed in each whiteboard section header) rather than writing
+  new sections. If you do write, ONLY the collaboration sections are legal —
+  'market_context', 'risk_flags', 'signals', 'consensus', 'trade_plan'. The
+  report sections (fundamental_report, quant_report, debate/board/decision
+  sections) are orchestrator-owned and a write to them is rejected.
 - `get_portfolio_state`: only when existing exposure would change sizing.
 - `get_parameters`: the live risk envelope (size/concentration caps, confidence threshold, drawdown breaker, ATR multiplier, R:R) with hard bounds — consult it instead of assuming defaults.
 - `propose_parameter_change`: at most ONE per decision, only when the envelope genuinely constrains a trade you believe in, with specific evidence. Tightening applies now; loosening auto-reverts after a TTL. Board-only params (drawdown breaker, wake budget) are your call alone.

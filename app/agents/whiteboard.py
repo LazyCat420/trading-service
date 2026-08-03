@@ -292,7 +292,11 @@ class Whiteboard:
                 entry_id, section, author_agent, content_raw, version, edited_by = r
                 content = safe_jsonb(content_raw) or {}
 
-                lines.append(f"\n## {section.upper()} (v{version})")
+                # entry_id is printed so agents can whiteboard_annotate straight
+                # from this summary — prompts say "don't spend a turn re-reading",
+                # but annotate requires an entry_id that only a read used to
+                # surface (measured: VA passed entry_id=0 and failed).
+                lines.append(f"\n## {section.upper()} (v{version}, entry_id={entry_id})")
                 lines.append(f"Authors: {', '.join(edited_by)}")
 
                 # Try to compress the output slightly to save tokens

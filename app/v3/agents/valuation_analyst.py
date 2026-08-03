@@ -124,6 +124,8 @@ the date they were recorded. Treat it as the OPPOSITE of the valuation math.
    freshness would change your call. Do not re-fetch what the block gave you.
 6. `whiteboard_annotate` ONE line against the Fundamental Analyst's valuation
    pillar — AGREE or DISPUTE, with the multiple or implied rate behind it.
+   Use the entry_id printed in that section's header in the SHARED WHITEBOARD
+   summary (e.g. "## RISK_FLAGS (v2, entry_id=417)") — never guess or pass 0.
    Pass author="v3_valuation_analyst". A disagreement nobody wrote down never
    gets confronted, and you are the only desk holding the multiples.
 7. Emit the JSON.

@@ -1237,8 +1237,22 @@ async def run_v3_pipeline(
                             "fundamental_analyst": fundamental_analyst,
                             "quant_analyst": quant_analyst
                         }.get(target)
-                        
-                        if target_mod:
+
+                        if target_mod and run_counts.get(target, 0) > 0:
+                            # An already-run analyst's sections are on the
+                            # whiteboard; re-running it duplicates the work
+                            # after its consumers have moved on (measured:
+                            # FA exhausted its loop budget, re-tasked the
+                            # junior, and the 43s/22k-token re-run's answer
+                            # arrived after FA's artifact was final).
+                            logger.info(
+                                "[V3] Peer request for %s dropped — already ran "
+                                "%d time(s) this desk (requester=%s).",
+                                target, run_counts[target], requester,
+                            )
+                            t["status"] = "dropped_already_ran"
+                            updated = True
+                        elif target_mod:
                             _queue_agent(target, target_mod, query=query_text, parent=requester)
                             t["status"] = "running"
                             updated = True

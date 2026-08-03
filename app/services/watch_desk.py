@@ -513,12 +513,18 @@ def _eval_trigger(trig: dict, ctx: dict, watch: dict, market_open: bool = True) 
 # ─── The background loop ─────────────────────────────────────────────────────
 def _wakes_today() -> int:
     """Count REAL wakes so far this US trading day (a row with a cycle_id). The day
-    boundary is Eastern-market midnight, not UTC (which would reset mid-afternoon PT)."""
+    boundary is Eastern-market midnight, not UTC (which would reset mid-afternoon PT).
+
+    watch_events.cycle_id holds the wd-* COMMAND id; a command that lost the
+    dispatch race ends 'skipped' in v3_system_commands and is refunded here so
+    a burned enqueue can't eat the day's budget."""
     with get_db() as db:
         row = db.execute(
-            "SELECT COUNT(*) FROM watch_events WHERE cycle_id IS NOT NULL "
-            "AND (fired_at AT TIME ZONE 'America/New_York') "
-            ">= date_trunc('day', NOW() AT TIME ZONE 'America/New_York')"
+            "SELECT COUNT(*) FROM watch_events we WHERE we.cycle_id IS NOT NULL "
+            "AND (we.fired_at AT TIME ZONE 'America/New_York') "
+            ">= date_trunc('day', NOW() AT TIME ZONE 'America/New_York') "
+            "AND NOT EXISTS (SELECT 1 FROM v3_system_commands c "
+            "                WHERE c.id = we.cycle_id AND c.status = 'skipped')"
         ).fetchone()
         return row[0] if row else 0
 
@@ -627,18 +633,9 @@ async def evaluate_watches() -> dict:
 
     # ── Rank, then spend the budget on the most consequential trips ────────
     if candidates:
-        held = _held_tickers()
-        candidates.sort(key=lambda c: _trip_priority(c, held), reverse=True)
-        for cand in candidates:
-            if budget_left <= 0:
-                deferred.append(f"{cand['ticker']}({cand['trig']['type']})")
-                continue
-            cycle_id = await _enqueue_wake(cand["watch"], cand["trig"], cand["detail"])
-            if cycle_id:
-                _mark_fired(cand["watch"], cand["trig"], cand["detail"],
-                            cand["value"], cycle_id)
-                budget_left -= 1
-                fired_total += 1
+        fired_total, budget_left = await _spend_wake_budget(
+            candidates, budget_left, deferred
+        )
 
     if deferred:
         logger.warning(
@@ -650,6 +647,37 @@ async def evaluate_watches() -> dict:
     return {"status": "ok", "watches": len(watches), "tickers": evaluated,
             "fired": fired_total, "deferred": len(deferred),
             "budget_left": max(budget_left, 0)}
+
+
+async def _spend_wake_budget(
+    candidates: list, budget_left: int, deferred: list
+) -> tuple[int, int]:
+    """Rank the trips, then spend AT MOST ONE wake this sweep.
+
+    cycle_main drains commands serially (LIMIT 1), so a burst of N enqueues
+    can only ever start one cycle — yet every enqueue used to be marked
+    fired, burning 5/6 of the daily budget on 'Cycle already running' skips
+    (measured: exactly 1 completed / 5 skipped per day for 7 straight days)
+    and advancing last_fired_at past headlines that could then never trip
+    again. Losing candidates now stay unmarked and compete again next sweep.
+
+    Returns (fired_count, budget_left).
+    """
+    held = _held_tickers()
+    candidates.sort(key=lambda c: _trip_priority(c, held), reverse=True)
+    fired = 0
+    for cand in candidates:
+        if budget_left <= 0:
+            deferred.append(f"{cand['ticker']}({cand['trig']['type']})")
+            continue
+        cycle_id = await _enqueue_wake(cand["watch"], cand["trig"], cand["detail"])
+        if cycle_id:
+            _mark_fired(cand["watch"], cand["trig"], cand["detail"],
+                        cand["value"], cycle_id)
+            budget_left -= 1
+            fired += 1
+            break  # budget spent only on the accepted wake; rest re-trip
+    return fired, budget_left
 
 
 async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
