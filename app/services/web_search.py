@@ -554,22 +554,37 @@ class WebSearchService:
             return
 
         urls = [a.url for a in to_scrape]
+        # This imported `app.collectors.crawl4ai_config.scrape_urls_batch`,
+        # a module that does not exist anywhere in the repo. The ImportError
+        # was swallowed by the `except Exception` below and logged as a
+        # generic "Batch scrape failed", so enrichment had NEVER run once and
+        # every web-search result stayed a snippet. A broken import inside a
+        # blanket try/except is indistinguishable from a flaky dependency.
+        #
+        # scraper-service is the real path (app/services/scraper_client.py),
+        # the same one app/tools/web_tools.py:scrape_url uses. It scrapes one
+        # URL per call, so fan out and keep whatever comes back — a partial
+        # enrichment is worth more than none.
         try:
-            from app.collectors.crawl4ai_config import scrape_urls_batch
+            from app.services.scraper_client import scraper_client
 
             logger.info("Scraping %d URLs for full text...", len(urls))
-            batch = await asyncio.wait_for(
-                scrape_urls_batch(urls, max_chars=4000, fast=True),
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    *(scraper_client.scrape(u, engine="http") for u in urls),
+                    return_exceptions=True,
+                ),
                 timeout=15.0,
             )
-            for i, sr in enumerate(batch):
-                if sr.get("success") and sr.get("text") and len(sr["text"]) > 100:
-                    to_scrape[i].full_text = sr["text"]
-            logger.info(
-                "Scraped %d/%d URLs",
-                sum(1 for s in batch if s.get("success")),
-                len(urls),
-            )
+            got = 0
+            for article, res in zip(to_scrape, results):
+                if isinstance(res, Exception) or not res or not res.get("success"):
+                    continue
+                text = (res.get("content") or "")[:4000]
+                if len(text) > 100:
+                    article.full_text = text
+                    got += 1
+            logger.info("Scraped %d/%d URLs", got, len(urls))
         except Exception as e:
             logger.warning("Batch scrape failed: %s: %s", type(e).__name__, e)
 

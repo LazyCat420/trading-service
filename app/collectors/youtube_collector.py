@@ -288,12 +288,14 @@ async def _process_video(
         if published_at < cutoff:
             return "skipped_old"
 
-    try:
-        from app.routers.data import is_blocked
-        if is_blocked("youtube", video_id):
-            return "blocked"
-    except Exception:
-        pass
+    # A per-video block check used to live here as
+    # `from app.routers.data import is_blocked` wrapped in `except: pass`.
+    # That module is trading-CLIENT's (trading-client/app/routers/data.py:796);
+    # this service has no app.routers.data, so the import raised every time,
+    # the bare except swallowed it, and the guard has never once run. Removed
+    # rather than left as a comforting no-op — if per-video blocking is wanted
+    # in this service it needs a real implementation against `data_flags`, and
+    # a dead branch that reads like a guard is worse than no guard at all.
 
     raw_transcript = _strip_promo_content(raw_transcript)
 

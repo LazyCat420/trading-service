@@ -36,14 +36,13 @@ SCRAPER_MAP: dict[str, str] = {
     "congress_trades": "app/collectors/congress_collector.py",
     "fred": "app/collectors/fred_collector.py",
     "macro_indicators": "app/collectors/fred_collector.py",
-    "coingecko": "app/collectors/coingecko_collector.py",
-    "commodity": "app/collectors/commodity_collector.py",
     "options": "app/collectors/options_collector.py",
     "earnings": "app/collectors/earnings_collector.py",
     "insider": "app/collectors/insider_collector.py",
     "fmp": "app/collectors/fmp_collector.py",
-    "gdelt": "app/collectors/gdelt_collector.py",
-    "eia": "app/collectors/eia_collector.py",
+    # coingecko/commodity/gdelt/eia removed 2026-08-03 with their collectors:
+    # every one had no caller anywhere, and a repair target pointing at a file
+    # nothing runs sends the self-healer to fix code that cannot fail.
 }
 
 PROMPT_MAP: dict[str, str] = {
@@ -81,7 +80,12 @@ OPTIMIZER_MAP: dict[str, str] = {
     "memory_optimizer": "app/services/memory/working_memory.py",
     "processing_optimizer": "app/services/pipeline_service.py",
     "janitor_optimizer": "app/services/data_flag_service.py",
-    "debate_optimizer": "app/cognition/evolution/debate.py",
+    # "debate_optimizer" removed 2026-08-03: it pointed at
+    # app/cognition/evolution/debate.py, deleted by cebd2be ("keep the grader,
+    # delete the robot"). The comment above says stale entries are removed
+    # rather than left dangling — that rule just had no test behind it, so the
+    # next purge broke it again. tests/unit/test_dead_code_removal.py now
+    # checks every map in this file.
 }
 
 
