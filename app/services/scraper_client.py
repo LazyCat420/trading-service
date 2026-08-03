@@ -30,6 +30,8 @@ class ScraperServiceClient:
     # Generous: a vision-OCR scrape can run 30-40s per page, and /scrape/batch or
     # a multi-feed /collect fans several of those out server-side.
     _TIMEOUT_S = 300.0
+    # Sources whose collectors are rate-limited upstream and legitimately slow.
+    _SLOW_SOURCE_TIMEOUT_S = {"reddit-purge": 900.0}
 
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or settings.SCRAPER_SERVICE_URL).rstrip("/")
@@ -84,9 +86,13 @@ class ScraperServiceClient:
         """
         sem = self._get_semaphore(source)
         payload = {"source": source, **(req_data or {})}
+        # reddit-purge walks listings + per-thread comment feeds at reddit's
+        # 1-req/10s RSS budget — a legitimate sweep runs 5-10 minutes and was
+        # dying on the generic 300s timeout (as a laundered empty error).
+        timeout_s = self._SLOW_SOURCE_TIMEOUT_S.get(source, self._TIMEOUT_S)
         try:
             async with sem:
-                async with httpx.AsyncClient(timeout=self._TIMEOUT_S) as client:
+                async with httpx.AsyncClient(timeout=timeout_s) as client:
                     resp = await client.post(f"{self.base_url}/collect", json=payload)
                     resp.raise_for_status()
                     data = resp.json()
@@ -97,8 +103,11 @@ class ScraperServiceClient:
             return data.get("items", [])
         except Exception as e:
             self.failures += 1
-            self.last_error = str(e)
-            logger.error(f"[scraper_client] Unexpected error collecting from {source}: {e}")
+            self.last_error = repr(e)
+            # repr, not str: httpx/asyncio timeout exceptions stringify to ""
+            # and the failure arrives as a blank cause (the laundered-timeout
+            # trap that hid this exact defect).
+            logger.error(f"[scraper_client] Unexpected error collecting from {source}: {e!r}")
             return []
 
 
