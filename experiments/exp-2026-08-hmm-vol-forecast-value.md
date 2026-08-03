@@ -1,7 +1,7 @@
 # exp-2026-08-hmm-vol-forecast-value
 
-**Status:** running
-**Started:** 2026-08-03 · **Stopped:** —
+**Status:** stopped-rejected
+**Started:** 2026-08-03 · **Stopped:** 2026-08-03
 
 **Type:** OFFLINE code experiment (not a `CHALLENGER_SPEC` prompt variant).
 Nothing here touches the live decision path.
@@ -116,8 +116,101 @@ tightly realized volatility tracks the target.
   and the honest response is to say so in the desk block rather than keep
   rendering a forecast that a 20-day standard deviation matches.
 
-## Result (fill on stop)
+## Result (2026-08-03)
 
-- Usable paired days: — · QLIKE DM (HMM vs trailing): — · (HMM vs GARCH): —
-- Part 2 sizing: —
-- Decision & rationale: —
+**The HMM is REDUNDANT on this axis.** 249 paired days, 2025-08-05 .. 2026-07-31.
+Realized volatility over the window: **12.83% annualized**.
+
+### The forecasts
+
+| forecast | mean | min | max | cost/day |
+|---|---|---|---|---|
+| HMM | **14.74%** | 12.20% | 35.32% | ~22 s |
+| GARCH(1,1) | 13.37% | 8.81% | 22.89% | 0.056 s |
+| trailing 20-day σ | **12.36%** | 5.78% | 20.39% | ~0 |
+
+The HMM runs **~1.9 points hot** against a 12.83% realized. Trailing σ is the
+closest to the truth on average and it is the one that costs nothing.
+
+### Primary — QLIKE, Diebold-Mariano
+
+| comparison | t | 95% CI | verdict |
+|---|---|---|---|
+| HMM vs trailing | −0.89 | [−0.492, 0.092] | no significant difference |
+| HMM vs GARCH | +0.67 | [−0.057, 0.100] | no significant difference |
+| GARCH vs trailing | −1.37 | [−0.454, 0.009] | no significant difference |
+
+Mean QLIKE: GARCH 0.590 < HMM 0.618 < trailing 0.764. Nominal ordering favours
+the models, but **nothing clears the pre-registered bar** (t ≤ −2.0 with the CI
+excluding zero). The HMM does not beat a 20-day standard deviation.
+
+### Secondary — MSE, and it is worse than a tie
+
+| comparison | t | verdict |
+|---|---|---|
+| HMM vs trailing | **+2.73** | **TRAILING better** |
+| HMM vs GARCH | **+3.04** | **GARCH better** |
+| GARCH vs trailing | −1.55 | no significant difference |
+
+Mean MSE: GARCH 1.323 < trailing 1.376 < HMM 1.877. On a symmetric loss the
+HMM is **significantly the worst of the three**.
+
+### Why the two losses disagree, and why that is not a contradiction
+
+QLIKE penalises under-forecasting risk harder than over-forecasting; MSE is
+symmetric and quadratic. The HMM's error is almost entirely a **systematic
+upward bias** with occasional 35% spikes — the exact error profile QLIKE
+forgives and MSE punishes. Both losses are describing the same defect.
+
+This also closes the loop on the earlier Kupiec result. `exp-2026-08-hmm-
+regime-overlay` found 3.21% band breaches against 5% expected — slightly *too
+few*, i.e. a band slightly **too wide**. That was not significant on its own
+(p=0.167) and read as "calibrated". Three independent measurements now agree:
+the HMM's band is honest but **too wide**, and being too wide is precisely what
+makes it no more useful than a free estimator.
+
+### Part 2 — vol-targeted sizing (secondary, non-promotable)
+
+| strategy | return | Sharpe | vol | maxDD | mean exposure |
+|---|---|---|---|---|---|
+| buy & hold | 19.85% | **1.55** | 12.83% | −9.03% | 1.00 |
+| trailing-sized | 13.92% | 1.25 | 11.12% | **−7.96%** | 0.87 |
+| GARCH-sized | 10.47% | 0.99 | 10.53% | −8.45% | 0.84 |
+| HMM-sized | 8.49% | 0.85 | 10.02% | −8.80% | 0.79 |
+
+Every sized variant loses Sharpe to buy-and-hold, and the ordering matches the
+forecast quality exactly — the best forecast produces the best sized portfolio.
+Two honest caveats: exposure is **capped at 1.0**, so in a calm bull market the
+rule can only ever remove return and never add it back, and a leveraged version
+is a different (untested) strategy; and the registration already committed that
+a Sharpe difference is not resolvable at n=249. **Nothing here promotes.** What
+it does show is that the HMM is the *worst* input to it, which is consistent
+with everything above.
+
+## Decision
+
+Per the pre-registered consequence for "trailing σ wins or ties": **stop
+presenting the HMM's volatility number as a forecast that has earned anything.**
+
+What the HMM still uniquely provides, and what the race does not touch:
+
+- a regime **label** with a posterior probability,
+- an **expected duration** (~32 calm days vs ~5 stressed),
+- the **transition dynamics** between states.
+
+GARCH and trailing σ produce none of those. So this is not a case for deleting
+the model — it is a case for being precise about which of its outputs has been
+validated. The desk line now carries the measured limits so an agent cannot
+read the vol figure as a superior estimate.
+
+**Open question for a human, not settled here:** the HMM costs ~22s inside a
+per-component budget that `context_block.py` documents as already starving
+GARCH, HRP and the sizing bracket when the HMM runs long. Its vol number is
+matched by a 0.056s model. Whether the regime label alone justifies 22s per
+cycle is a cost decision, and it is now an informed one.
+
+**Follow-up worth registering separately (not done here):** GARCH had the best
+mean loss on BOTH losses and is 400× cheaper. It did not clear the bar against
+trailing σ either (t=−1.37), so the honest current state is that *no* model on
+this desk has demonstrated a volatility edge over a 20-day standard deviation.
+A longer window would give that comparison real power.

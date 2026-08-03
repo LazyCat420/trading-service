@@ -453,7 +453,20 @@ def build_hmm_context_line(
         f"This state historically runs {stats['annualized_vol_pct']:.1f}% annualized vol "
         f"with an expected duration of {stats['expected_duration_days']} days. "
         f"This is a price-only statistical estimate shown for comparison — it is NOT "
-        f"a directive and does not override the Regime Engine's classification."
+        f"a directive and does not override the Regime Engine's classification. "
+        # Measured limits, carried in the line so an agent cannot read the vol
+        # figure as a validated forecast. Both were established offline against
+        # 249 point-in-time days (experiments/exp-2026-08-*), and stating them
+        # here is the pre-registered consequence of that result — an unqualified
+        # number in a prompt is treated as authoritative no matter what a
+        # docstring says elsewhere.
+        f"MEASURED LIMITS (249 sessions, 2025-08..2026-07): the state LABEL, its "
+        f"duration and the switching odds are this model's own; the volatility "
+        f"figure is NOT more accurate than a free 20-day standard deviation "
+        f"(Diebold-Mariano on QLIKE, no significant difference; on squared error "
+        f"it is significantly worse) and it runs ~1.9 points HOT. Directional "
+        f"skill is nil — 58% against a 59% always-flat baseline. Use the state "
+        f"and its persistence; do not treat the vol number as a forecast edge."
     )
 
 
