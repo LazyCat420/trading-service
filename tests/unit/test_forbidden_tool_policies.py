@@ -84,6 +84,36 @@ def test_registration_actually_passes_the_policies():
     )
 
 
+def test_every_agent_module_is_registered():
+    """An agent absent from registration gets NO policies at all.
+
+    This was live: `delta_analyst` was missing from the hand-maintained
+    _V3_AGENT_MODULES list, so its persona never received the denylist —
+    confirmed against prism's /custom-agents on 2026-08-03, where
+    CUSTOM_V3_DELTA_ANALYST was the one v3 persona with `policies: none`.
+    A missing agent does not fail loudly; it just runs unrestricted.
+    """
+    import importlib
+    import pkgutil
+
+    import app.v3.agents as pkg
+    from app.v3.prism_registration import _discover_v3_agent_modules
+
+    registered = set(_discover_v3_agent_modules())
+    expected = set()
+    for mod_info in pkgutil.iter_modules(pkg.__path__):
+        path = f"app.v3.agents.{mod_info.name}"
+        module = importlib.import_module(path)
+        if getattr(module, "AGENT_NAME", None) and getattr(module, "TOOL_WHITELIST", None) is not None:
+            expected.add(path)
+
+    assert expected, "no agent modules found — the discovery filter is broken"
+    assert registered == expected, (
+        f"registration misses {sorted(expected - registered)} — those agents "
+        f"run without the DENY policies"
+    )
+
+
 @pytest.mark.parametrize("tool", sorted(_V3_DENIED_TOOLS))
 def test_no_v3_agent_whitelists_a_denied_tool(tool):
     """Belt and braces: the denylist and the whitelists must not disagree."""

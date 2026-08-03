@@ -18,20 +18,45 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Registry of V3 agents to register with Prism
-_V3_AGENT_MODULES = [
-    "app.v3.agents.junior_analyst",
-    "app.v3.agents.fundamental_analyst",
-    "app.v3.agents.quant_analyst",
-    "app.v3.agents.valuation_analyst",
-    "app.v3.agents.regime_engine",
-    "app.v3.agents.portfolio_manager",
-    "app.v3.agents.decision_agent",
-    "app.v3.agents.debate_judge",
-    "app.v3.agents.bull_agent",
-    "app.v3.agents.bear_agent",
-    "app.v3.agents.board_of_directors",
-]
+def _discover_v3_agent_modules() -> list[str]:
+    """Every agent module in `app.v3.agents`, discovered rather than listed.
+
+    This was a hand-maintained list of 11 module paths, and it had drifted:
+    `delta_analyst` was missing. It is a real agent — 14 tool calls in
+    telemetry — but nothing here registered it, so its Prism persona was never
+    refreshed with our identity, our tool whitelist, or (as of 2026-08-03) the
+    DENY policies that are the only working restriction on a custom agent.
+    Verified live against prism's /custom-agents: 11 of 12 CUSTOM_V3_* personas
+    carried `policies`, and CUSTOM_V3_DELTA_ANALYST carried none.
+
+    A list you must remember to append to fails silently and invisibly: the
+    missing agent still runs, just unrestricted. Discovery makes adding an
+    agent module sufficient. `tests/unit/test_forbidden_tool_policies.py`
+    asserts the two can never diverge again.
+
+    The filter is the same one the tests use — a module is an agent when it
+    declares both AGENT_NAME and TOOL_WHITELIST. Helpers and shared mixins in
+    the package declare neither and are skipped.
+    """
+    import importlib
+    import pkgutil
+
+    import app.v3.agents as pkg
+
+    modules: list[str] = []
+    for mod_info in pkgutil.iter_modules(pkg.__path__):
+        module_path = f"app.v3.agents.{mod_info.name}"
+        try:
+            module = importlib.import_module(module_path)
+        except Exception as e:  # noqa: BLE001 — one bad module must not stop the rest
+            logger.error(
+                "[V3Prism] Could not import %s for registration: %s",
+                module_path, e,
+            )
+            continue
+        if getattr(module, "AGENT_NAME", None) and getattr(module, "TOOL_WHITELIST", None) is not None:
+            modules.append(module_path)
+    return sorted(modules)
 
 #: Tools a v3 trading agent must never reach, enforced as prism DENY policies.
 #:
@@ -113,7 +138,14 @@ async def register_v3_agents() -> dict[str, bool]:
         client.url = target_url
         clients[target_url] = client
 
-    for module_path in _V3_AGENT_MODULES:
+    agent_modules = _discover_v3_agent_modules()
+    logger.info(
+        "[V3Prism] Discovered %d V3 agent modules to register: %s",
+        len(agent_modules),
+        ", ".join(m.rsplit(".", 1)[-1] for m in agent_modules),
+    )
+
+    for module_path in agent_modules:
         try:
             import importlib
             module = importlib.import_module(module_path)
