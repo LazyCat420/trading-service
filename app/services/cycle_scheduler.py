@@ -958,6 +958,27 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register market-open trading cycle: %s", e
                 )
 
+            # ── Reddit trending sweep (5:45 AM PT, before the market-open
+            # discovery cycle at 6:30 reads discovered_tickers). Previously
+            # this only ran inside Discovery Mode's <3-eligible escape hatch,
+            # so the trending feed sat 14+ days stale. ──
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_reddit_trending_sweep,
+                    trigger=CronTrigger(hour=5, minute=45, day_of_week="mon-fri", timezone=pt_tz),
+                    id="reddit_trending_sweep",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info(
+                    "[SCHEDULER] Registered reddit trending sweep (cron: 5:45 AM PT, mon-fri)"
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register reddit trending sweep: %s", e
+                )
+
             # ── Live Feed Reports — governed interval (default 4h); report type auto-selected by time of day ──
             try:
                 from app.services.parameter_store import get_param as _get_param
@@ -1521,6 +1542,23 @@ class SchedulerService:
             )
         except Exception as e:
             logger.error("[SCHEDULER] StockTwits sweep failed: %s", e)
+
+    @staticmethod
+    async def _run_reddit_trending_sweep():
+        """Daily pre-market reddit sweep → discovered_tickers/reddit_posts.
+
+        Feeds the 6:30 PT market-open discovery cycle, which reads
+        discovered_tickers from the last 24h. Runs through scraper-service's
+        reddit-purge collector (megathread + rising comments, weighted
+        mention counts, yfinance-validated).
+        """
+        try:
+            from app.collectors.reddit_collector import run_reddit_purge_discovery
+
+            count = await run_reddit_purge_discovery(limit=15)
+            logger.info("[SCHEDULER] Reddit trending sweep stored %d ticker(s)", count)
+        except Exception as e:
+            logger.error("[SCHEDULER] Reddit trending sweep failed: %s", e)
 
     @staticmethod
     async def _run_smart_money_returns():

@@ -81,10 +81,16 @@ class RedditPurgeCollector:
         url = f"https://www.reddit.com/r/{subreddit}/{listing_type}.rss?limit={limit}"
         domain = "www.reddit.com"
         try:
-            async with rate_limiter.acquire(domain):
-                r = await session_manager.client.get(url, headers=_get_reddit_headers(), timeout=15.0)
+            for attempt in (1, 2):
+                async with rate_limiter.acquire(domain):
+                    r = await session_manager.client.get(url, headers=_get_reddit_headers(), timeout=15.0)
+                if r.status_code == 429 and attempt == 1:
+                    retry_after = float(r.headers.get("retry-after") or 20)
+                    await asyncio.sleep(min(retry_after, 30))
+                    continue
+                break
             if r.status_code != 200:
-                logger.warning(f"[reddit-purge] RSS fallback failed for r/{subreddit}/{listing_type}: HTTP {r.status_code}")
+                logger.warning(f"[reddit-purge] RSS failed for r/{subreddit}/{listing_type}: HTTP {r.status_code}")
                 return []
             feed = feedparser.parse(r.text)
             posts = []
@@ -97,15 +103,22 @@ class RedditPurgeCollector:
             return []
 
     async def get_subreddit_posts(self, subreddit: str, listing_type: str = "hot", limit: int = 5) -> list[dict]:
+        # RSS-first (2026-08-03): the unauthenticated .json endpoints 403 on
+        # every egress we have, so leading with .json just burned a
+        # rate-limit slot per listing and pushed the RSS calls into 429s.
+        # .json stays as the fallback for the day reddit reopens it.
+        posts = await self._get_subreddit_posts_rss(subreddit, listing_type, limit)
+        if posts:
+            return posts
         url = f"https://www.reddit.com/r/{subreddit}/{listing_type}.json?limit={limit}"
         domain = "www.reddit.com"
         try:
             async with rate_limiter.acquire(domain):
                 r = await session_manager.client.get(url, headers=_get_reddit_headers(), timeout=15.0)
             if r.status_code != 200:
-                logger.warning(f"[reddit-purge] Failed to fetch r/{subreddit}/{listing_type}: HTTP {r.status_code} — trying RSS fallback")
-                return await self._get_subreddit_posts_rss(subreddit, listing_type, limit)
-            
+                logger.warning(f"[reddit-purge] r/{subreddit}/{listing_type}: RSS empty and .json HTTP {r.status_code}")
+                return []
+
             data = r.json()
             posts = []
             for child in data.get("data", {}).get("children", []):
@@ -128,7 +141,55 @@ class RedditPurgeCollector:
             logger.error(f"[reddit-purge] Error fetching posts from r/{subreddit}: {e}")
             return []
 
+    async def _get_thread_data_rss(self, permalink: str) -> tuple[str, str, list[str]]:
+        """Thread + comments over RSS — the transport that still answers.
+
+        Reddit's `{permalink}.json` 403s unauthenticated, which silently
+        emptied every comment fetch and starved the mention counter down to
+        bare titles (the RedditPurgeScraper design weights comments 1pt each
+        and megathread comments are most of the signal). The thread's Atom
+        feed still serves: entry[0] is the post (title + selftext as HTML),
+        the rest are comments. 429s are pacing, not blocking — one retry.
+        """
+        import feedparser
+
+        url = f"https://www.reddit.com{permalink}.rss?limit=100"
+        domain = "www.reddit.com"
+        _strip = re.compile(r"<[^>]+>")
+        try:
+            for attempt in (1, 2):
+                async with rate_limiter.acquire(domain):
+                    r = await session_manager.client.get(url, headers=_get_reddit_headers(), timeout=15.0)
+                if r.status_code == 429 and attempt == 1:
+                    retry_after = float(r.headers.get("retry-after") or 20)
+                    await asyncio.sleep(min(retry_after, 30))
+                    continue
+                break
+            if r.status_code != 200:
+                logger.warning(f"[reddit-purge] thread RSS failed for {permalink}: HTTP {r.status_code}")
+                return "", "", []
+            feed = feedparser.parse(r.text)
+            if not feed.entries:
+                return "", "", []
+            post = feed.entries[0]
+            title = getattr(post, "title", "") or ""
+            selftext = _strip.sub(" ", getattr(post, "summary", "") or "")
+            comments = []
+            for entry in feed.entries[1:101]:
+                body = _strip.sub(" ", getattr(entry, "summary", "") or "").strip()
+                if body and body not in ("[deleted]", "[removed]"):
+                    comments.append(body)
+            logger.info(f"[reddit-purge] thread RSS: {len(comments)} comments for {permalink}")
+            return title, selftext, comments
+        except Exception as e:
+            logger.warning(f"[reddit-purge] thread RSS error for {permalink}: {e}")
+            return "", "", []
+
     async def get_thread_data(self, permalink: str) -> tuple[str, str, list[str]]:
+        # RSS-first, same reasoning as get_subreddit_posts.
+        title, selftext, comments = await self._get_thread_data_rss(permalink)
+        if title or comments:
+            return title, selftext, comments
         url = f"https://www.reddit.com{permalink}.json"
         domain = "www.reddit.com"
         try:

@@ -16,8 +16,13 @@ from lazycat.ratelimit import KeyedRateLimiter
 
 # Requests per second per domain — tune these as you learn each site's limits
 DOMAIN_LIMITS: dict[str, float] = {
-    "reddit.com": 0.5,              # 1 req per 2 seconds
-    "www.reddit.com": 0.5,
+    # Reddit's unauthenticated .json endpoints 403 outright now; RSS stays up
+    # but rate-limits hard (measured 2026-08-03: 429s persisted even at ~7s
+    # spacing once sweeps ran back-to-back). Consumers are a once-daily
+    # trending sweep and per-ticker precollect — slow is fine, lost feeds
+    # are not.
+    "reddit.com": 0.1,              # 1 req per 10 seconds
+    "www.reddit.com": 0.1,
     "youtube.com": 1.0,
     "www.youtube.com": 1.0,
     "seekingalpha.com": 0.3,
