@@ -478,3 +478,123 @@ def full_gate(
         "bootstrap": bs,
         "is_oos": oos,
     }
+
+
+# ── Coverage tests ────────────────────────────────────────────────────────
+#
+# The three gates above ask "is this mean return real?" — the question you ask
+# of a STRATEGY. A forecasting model asks a different one: it states a band and
+# claims the truth falls inside it a stated fraction of the time. Grading that
+# needs a coverage test, and this service had none — `scripts/power_report.py`
+# names Kupiec as the model for a self-validating control (one you can settle
+# on the model's OWN output at daily frequency, instead of waiting on the
+# desk's 8.84pp minimum detectable effect and its 329 effective decisions),
+# and no implementation existed anywhere in the repo.
+#
+# Why this is the escape route from the MDE wall: a regime model that changes
+# desk P&L by 1-3pp is undetectable for about a year. The same model makes a
+# volatility claim EVERY day, so its own claim can be settled on thousands of
+# observations right now. Grade the model where n is large.
+
+def kupiec_pof(
+    breaches: int,
+    observations: int,
+    expected_rate: float,
+) -> dict:
+    """Kupiec proportion-of-failures test for a forecast band.
+
+    A model that says "tomorrow's return stays inside ±x with 95% probability"
+    should be breached 5% of the time. Too MANY breaches means the band is too
+    narrow (the model understates risk); too FEW means it is too wide, which is
+    also a failure — an always-huge band is never breached and forecasts
+    nothing. This is a two-sided likelihood-ratio test, so it catches both.
+
+        LR = -2 ln[ (1-p)^(n-x) p^x / (1-x/n)^(n-x) (x/n)^x ]  ~ chi2(1)
+
+    Returns a structured verdict. `passes` is True when the observed breach
+    rate is statistically indistinguishable from `expected_rate`, i.e. the
+    model's stated confidence is honest. Like every gate here, "could not run"
+    is its own state and never a silent pass.
+    """
+    try:
+        n = int(observations)
+        x = int(breaches)
+        p = float(expected_rate)
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "non-numeric inputs"}
+
+    if n < MIN_OBSERVATIONS:
+        return {"ok": False,
+                "reason": f"need >={MIN_OBSERVATIONS} observations, got {n}"}
+    if not 0.0 < p < 1.0:
+        return {"ok": False, "reason": f"expected_rate must be in (0,1), got {p}"}
+    if not 0 <= x <= n:
+        return {"ok": False, "reason": f"breaches {x} outside 0..{n}"}
+
+    observed = x / n
+
+    # Boundary cases: the observed-likelihood term has a 0*log(0) that numpy
+    # would emit as nan. The limit is 0, so substitute it directly.
+    def _xlogy(a: float, b: float) -> float:
+        return 0.0 if a == 0 else a * math.log(b)
+
+    ll_null = _xlogy(n - x, 1.0 - p) + _xlogy(x, p)
+    ll_obs = _xlogy(n - x, 1.0 - observed) + _xlogy(x, observed)
+    lr = -2.0 * (ll_null - ll_obs)
+    lr = max(0.0, lr)
+
+    # chi2(1) survival = 2*(1 - Phi(sqrt(lr))). Uses the same normal CDF the
+    # PSR/DSR gates use, so this file keeps its single scipy-free convention.
+    p_value = 2.0 * (1.0 - _norm_cdf(math.sqrt(lr)))
+
+    return {
+        "ok": True,
+        "observations": n,
+        "breaches": x,
+        "observed_rate": round(observed, 4),
+        "expected_rate": round(p, 4),
+        "lr_statistic": round(lr, 4),
+        "p_value": round(p_value, 4),
+        # A band is honest when we CANNOT reject that its breach rate equals
+        # the stated one. Note the asymmetry with the gates above: there,
+        # passing means rejecting the null of no edge; here, passing means
+        # failing to reject the null of correct coverage.
+        "passes": bool(p_value >= 0.05),
+        "direction": (
+            "calibrated" if p_value >= 0.05
+            else ("too_narrow" if observed > p else "too_wide")
+        ),
+    }
+
+
+def coverage_gate(
+    realized: np.ndarray | list[float],
+    bands: np.ndarray | list[float],
+    expected_rate: float,
+    label: str = "",
+) -> dict:
+    """Count band breaches, then Kupiec-test the rate.
+
+    `bands[i]` is the model's two-sided band for `realized[i]`, in the same
+    units. A breach is |realized| > band. Pairs elementwise, so the caller is
+    responsible for having aligned the model's as-of date with the realized
+    window it was predicting — the whole test is worthless if that join has
+    look-ahead in it.
+    """
+    r = np.asarray(realized, dtype=float).ravel()
+    b = np.asarray(bands, dtype=float).ravel()
+    if r.size != b.size:
+        return {"ok": False,
+                "reason": f"length mismatch: {r.size} realized vs {b.size} bands"}
+
+    good = np.isfinite(r) & np.isfinite(b) & (b > 0)
+    dropped = int(r.size - good.sum())
+    r, b = r[good], b[good]
+    if r.size == 0:
+        return {"ok": False, "reason": "no usable pairs"}
+
+    breaches = int(np.sum(np.abs(r) > b))
+    out = kupiec_pof(breaches, r.size, expected_rate)
+    out["label"] = label
+    out["dropped_pairs"] = dropped
+    return out
