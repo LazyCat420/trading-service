@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 import traceback
 import uuid
 from datetime import datetime, timezone
@@ -7,15 +8,39 @@ from app.utils.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
 
+# How often to surface accumulated drops after the first one. Kept coarse so a
+# hard outage (every record dropping) doesn't flood stderr.
+_DROP_LOG_EVERY = 50
+
+
 class DbLoggingHandler(logging.Handler):
     """
     Standard logging handler that writes log messages with level WARNING or higher
     directly into the PostgreSQL 'execution_errors' and 'cycle_audit_log' tables.
     Designed with zero-crash propagation — DB failures will not interrupt execution.
+
+    Failures inside the handler are COUNTED and reported to stderr (never via
+    logging — that would recurse into this handler). Before this counter, the
+    blanket except/pass made a dead capture path indistinguishable from a
+    quiet system: the 07-31→08-02 outage ran 2.5 days unnoticed.
     """
+
+    # Class-level so every instance and every registration shares one tally.
+    dropped = 0
 
     def __init__(self, level=logging.WARNING):
         super().__init__(level=level)
+
+    @classmethod
+    def _note_drop(cls, err: BaseException) -> None:
+        cls.dropped += 1
+        if cls.dropped == 1 or cls.dropped % _DROP_LOG_EVERY == 0:
+            print(
+                f"[UnifiedLogger] DB error capture has dropped {cls.dropped} "
+                f"record(s) this process; latest cause: {err!r}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def emit(self, record):
         try:
@@ -45,8 +70,8 @@ class DbLoggingHandler(logging.Handler):
             # Save to database
             self._write_to_db(cycle_id, phase, ticker, error_type, error_message, stack_trace, record.levelname)
         except Exception as e:
-            # Suppress logging failures to prevent loop/hangs
-            pass
+            # Suppress logging failures to prevent loop/hangs — but count them.
+            self._note_drop(e)
 
     def _write_to_db(self, cycle_id: str, phase: str, ticker: str, error_type: str, error_message: str, stack_trace: str, levelname: str):
         try:
@@ -103,8 +128,8 @@ class DbLoggingHandler(logging.Handler):
                 logging.getLogger(__name__).warning(
                     "[UnifiedLogger] Mongo mirror failed (non-fatal): %s", me
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            self._note_drop(e)
 
 
 def setup_db_logger():
