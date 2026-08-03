@@ -232,6 +232,13 @@ def compute_contradiction_shadow(desk) -> dict[str, Any]:
             for c, cl in zip(contradictions, clusters)
         ) or "BULLISH" in sentiment_map.values() and "BEARISH" in sentiment_map.values()
 
+        # Exported (2026-08-03). This was a local, so the only thing a caller
+        # could read was `would_downgrade_to_hold` — which requires a decision
+        # to already exist. Running the SAME detector *before* the board decides
+        # (see build_dissent_block) needs the conflict flag on its own, because
+        # at that point there is no final_action to pair it with.
+        report["has_directional_conflict"] = bool(has_directional_conflict)
+
         # The shadow metric: what the mesh's contradiction gate WOULD have done.
         # A directional conflict paired with a live trade action is exactly the
         # case a "downgrade-to-HOLD on unresolved dissent" gate would catch.
@@ -268,3 +275,103 @@ def compute_contradiction_shadow(desk) -> dict[str, Any]:
         report["error"] = str(e)
 
     return report
+
+
+# Field the deciding agent writes to answer the dissent. Named once, here,
+# because three places must agree on it: the prompt block below, the board /
+# synthesizer output contracts, and the policy backstop in the orchestrator.
+DISSENT_RESOLUTION_FIELD = "dissent_resolution"
+
+# A resolution has to be an ARGUMENT, not an acknowledgement. Below this the
+# agent typed something like "noted" or "mixed signals" and the backstop treats
+# the dissent as unaddressed. Deliberately low: the gate is here to catch an
+# EMPTY answer, not to grade prose.
+_MIN_RESOLUTION_CHARS = 80
+
+
+def build_dissent_block(report: dict[str, Any]) -> str:
+    """Render detected cross-desk dissent as a prompt section, or "".
+
+    2026-08-03. This replaces a silent numeric cap. The old contradiction gate
+    ran AFTER the desk had decided and rewrote `confidence` to 60 — which the
+    70-point floor then always blocked, so a mechanism documented as "not a
+    downgrade to HOLD" was a guaranteed one, and the flagged trades it was
+    supposed to gather outcome evidence on could never resolve.
+
+    The information is the same; only its position moved. Detect the dissent in
+    code, put it in front of the agent BEFORE it decides, and let it price the
+    disagreement itself — the same shape as the precomputed quant/valuation
+    blocks, and as the jury veto the board may override in writing.
+
+    Returns "" when there is nothing to say. Announcing "no disagreement found"
+    on every desk would teach the agent to read consensus as confirmation.
+    """
+    if not isinstance(report, dict) or report.get("error"):
+        return ""
+    if not report.get("has_directional_conflict"):
+        return ""
+
+    sentiment = report.get("sentiment_by_source") or {}
+    if not isinstance(sentiment, dict) or not sentiment:
+        return ""
+
+    # Only the pre-decision desks are evidence here. A decision artifact from
+    # THIS cycle would be the agent's own view (or an upstream one it is about
+    # to supersede), and quoting it back reads as independent corroboration.
+    _own = {"final_decision", "trade_decision"}
+    lines = [
+        f"- **{src}** reads this as **{stance}**"
+        for src, stance in sorted(sentiment.items())
+        if src not in _own
+    ]
+    if len(lines) < 2:
+        return ""
+
+    detail = [
+        f"- {c.get('description', '')} (severity: {c.get('severity', '?')})"
+        for c in (report.get("contradictions") or [])
+        if isinstance(c, dict) and c.get("description")
+    ][:5]
+
+    block = [
+        "## ⚠ UNRESOLVED CROSS-DESK DISSENT",
+        "",
+        "The desks below do NOT agree on direction for this ticker:",
+        "",
+        *lines,
+    ]
+    if detail:
+        block += ["", "Detected conflicts:", *detail]
+    block += [
+        "",
+        "This is mixed evidence, and it is YOUR call to price — not a cap "
+        "applied to you afterwards. You may trade against a dissenting desk. "
+        "If you do, you must say why it is wrong, in the "
+        f"`{DISSENT_RESOLUTION_FIELD}` field: name the dissenting desk and the "
+        "specific claim of its you reject, and what evidence outweighs it.",
+        "",
+        f"A BUY or SELL with no `{DISSENT_RESOLUTION_FIELD}` is held by policy "
+        "— not because the disagreement forbids the trade, but because an "
+        "unanswered disagreement is not a decision. A HOLD needs no resolution.",
+        "",
+        "Do not lower confidence merely to look cautious. If you have genuinely "
+        "reconciled the conflict, say so and keep your number.",
+    ]
+    return "\n".join(block)
+
+
+def resolution_is_substantive(decision: dict) -> bool:
+    """True when the decision actually answers the dissent.
+
+    Checks the dedicated field first, then falls back to the veto-override
+    justification — an agent that wrote a full override rationale has plainly
+    engaged with the disagreement, and failing it on field naming would block a
+    trade for a formatting reason.
+    """
+    if not isinstance(decision, dict):
+        return False
+    for key in (DISSENT_RESOLUTION_FIELD, "override_justification"):
+        val = decision.get(key)
+        if isinstance(val, str) and len(val.strip()) >= _MIN_RESOLUTION_CHARS:
+            return True
+    return False

@@ -106,6 +106,10 @@ Calibration rules, both directions:
 - confidence_floor: RAISE the bar for this decision (never lowers the firm floor).
 - conviction_vector: data_quality/consensus_strength/regime_alignment/risk_adjusted, 0-100. data_quality < 40 hard-blocks the trade.
 - overrides_veto + override_justification: overriding a jury-majority veto requires written justification AND full mitigation (stop_loss, dynamic_trigger, position_size_pct). Sparingly.
+- dissent_resolution: REQUIRED to BUY or SELL when an "UNRESOLVED CROSS-DESK DISSENT" section
+  appears in your context. Name the dissenting desk, the specific claim of its you reject, and
+  what outweighs it. Omit the field entirely when no such section is present. This is not a
+  confidence penalty — resolve the conflict honestly and keep your number.
 - position_size_pct = 0 means "watch, don't trade" — honored literally.
 - exit_style: "hard_stop" (monitor sells on breach) or "reanalyze_on_breach" (breach wakes a re-analysis instead).
 

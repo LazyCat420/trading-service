@@ -158,6 +158,15 @@ def _ablate(d: dict, gate: str) -> bool:
         dec.pop("decision_provenance", None)
         return True
 
+    if gate == "HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT":
+        # Replayable, unlike the health/price gates: the gate reads only
+        # cycle_metadata["dissent_detected"], which is written to the desk
+        # before the board runs and therefore persisted in desk_data. Removing
+        # it is exactly "what if we had never told the board the desks
+        # disagreed" — the counterfactual this script exists to price.
+        meta.pop("dissent_detected", None)
+        return True
+
     return False
 
 

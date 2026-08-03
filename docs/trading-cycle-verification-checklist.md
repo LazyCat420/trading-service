@@ -50,6 +50,22 @@ DB: `postgresql://trader:…@10.0.0.16:5433/trading_bot`. Cycle logs: `/app/logs
   event shows the gate outcome (EXECUTE_BUY / EXECUTE_SELL / BLOCK_*).
 - [ ] `analysis_results` row per ticker with the final verdict; `d_result` in the result JSON populated
   in tournament mode (**WAS BROKEN** — always null in tournament cycles).
+- [ ] Every policy firing in `v3_guardrail_firings` carries a non-null `detail->>'triage_tier'`
+  (**WAS BROKEN 2026-08-03** — nothing wrote `cycle_metadata["triage_tier"]`, so all 30 firings
+  in 21 days recorded null and per-tier block rates were unanswerable).
+- [ ] When the desks disagree on direction, a `v3_dissent_*` event fires BEFORE the board runs and
+  the board's context carries the `UNRESOLVED CROSS-DESK DISSENT` section. A BUY/SELL that answers
+  it in `dissent_resolution` executes at its stated confidence; one that does not is blocked as
+  `HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT` (**never** as LOW_CONFIDENCE — that label means the desk
+  chose a low number, not that we overwrote its high one).
+- [ ] No decision carries `confidence_cap_reason`. The post-hoc cap-to-60 was removed 2026-08-03;
+  it always collided with the 70 floor and turned a documented "not a downgrade" into a guaranteed
+  block.
+- [ ] Implausible stop/target levels are dropped BEFORE `save_trade_result` and before the result is
+  built, on **both** the full-panel and delta paths — `trade_results.stop_loss` must never hold a
+  value that `DROPPED_IMPLAUSIBLE_LEVEL` was recorded for.
+- [ ] `v3_delta` tier writes a `trade_results` row (**WAS BROKEN** — 40 of 40 delta analyses had no
+  row, 5 of them with real filled orders). `v3_glance` legitimately writes none.
 
 ## 6. Trade execution
 - [ ] Only runs when the cycle was started with `trade:true`. **WAS BROKEN** (always ran).

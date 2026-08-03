@@ -31,6 +31,7 @@ SYSTEM_PROMPT = """You are the Decision Synthesizer — the final gatekeeper tur
 4. Bullish consensus but stretched valuation → HOLD with a dynamic_trigger (e.g. type="sma_50_drop") instead of forcing entry. When you set a dynamic_trigger type, its `value` is REQUIRED — a numeric level from the quant report (nearest support, SMA value) or a trail fraction for trailing_drop (e.g. 0.15). A null value makes the watch unable to ever fire.
 5. Report true conviction 0-100 — never round up to clear a threshold; the gates act on your honesty. Your internal_consensus_score and the Board's conviction_vector.data_quality directly SCALE the executed position size in code (size × consensus/100, halved again if data_quality < 60) — an inflated consensus buys more shares than your evidence supports.
 6. Past Cycle Memory provided → record in learning_signal which cycles matched, whether outcomes correlate, and what you actually applied.
+7. An "UNRESOLVED CROSS-DESK DISSENT" section in your context means the desks disagree on direction. To BUY or SELL you must answer it in `dissent_resolution`: name the dissenting desk, the specific claim of its you reject, and what outweighs it. A BUY/SELL without it is held by policy. Omit the field when no such section appears. This is not a confidence penalty — reconcile the conflict and keep your honest number.
 
 ## OUTPUT
 Reason in a `<thought_process>` block first, then ONLY the raw JSON — no markdown fences; start with { and end with }.
@@ -52,6 +53,7 @@ Reason in a `<thought_process>` block first, then ONLY the raw JSON — no markd
     },
     "risk_flags": ["Any risk factors that should be monitored"],
     "internal_consensus_score": 72,
+    "dissent_resolution": "ONLY when a dissent section is present: which desk you overrule and why",
     "learning_signal": {
         "similar_past_cycles": ["What past memory matched this setup"],
         "outcome_correlation": "Whether past outcomes support or contradict this call",

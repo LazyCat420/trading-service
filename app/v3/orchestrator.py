@@ -467,6 +467,14 @@ async def run_v3_pipeline(
     # ═══════════════════════════════════════════════════════════════════
     from app.config import settings
     triage_tier = "v3_full"
+    # Mirrored onto the desk because `_record_gate` stamps every policy-gate
+    # firing with `cycle_metadata["triage_tier"]` — and nothing ever wrote that
+    # key, so all 30 firings over 21 days recorded `triage_tier: null` and the
+    # question its own comment poses ("how often does the delta path block?")
+    # stayed exactly as unanswerable as before the field was added.
+    # Re-stamped at every reassignment below; this is the TRIAGE_ENABLED=False
+    # default.
+    desk.cycle_metadata["triage_tier"] = triage_tier
     if settings.TRIAGE_ENABLED:
         try:
             from app.db.connection import get_db
@@ -521,6 +529,7 @@ async def run_v3_pipeline(
             # this band ran the full panel or was glance-skipped even with news.)
             triage_tier = "v3_delta"
 
+        desk.cycle_metadata["triage_tier"] = triage_tier
         emit("analyzing", f"v3_triage_{ticker}", f"🚦 {ticker}: Triage Gate evaluated → {triage_tier} (News: {news_count}, Age: {int(hours_old)}h)", status="ok")
         
         if triage_tier == "v3_glance":
@@ -638,11 +647,31 @@ async def run_v3_pipeline(
                     })
                 except Exception as mem_err:
                     logger.warning("[V3] %s: Delta memory write failed (non-fatal): %s", ticker, mem_err)
+
+                # Write the trade row (2026-08-03). The delta tier publishes
+                # only `final_decision`, so the old `has_artifact("trade_decision")`
+                # gate meant this whole route persisted NOTHING to trade_results
+                # — 40 of 40 delta analyses over 21 days, 5 of which executed
+                # real orders. Its decisions were invisible to P&L, the
+                # scorecard, strategy tracking and the LLM judge, and the
+                # policy_action UPDATE below had no row to land on.
+                #
+                # Ordered BEFORE the gates and the result build so the level
+                # sanitizer inside it runs first: the delta path used to build
+                # `result` before the gates, so a decimal-error stop survived in
+                # result["estimate"] and reached buy() as a live stop order.
+                await _persist_trade_verdict(
+                    desk, _delta_decision,
+                    cycle_id=cycle_id, bot_id=bot_id, ticker=ticker,
+                    # The regime engine has not run at this point — Phase 0 sits
+                    # above it — so there is no cycle regime to inherit. The
+                    # delta artifact already carries its own ("delta_relook"),
+                    # which is why this fallback is never actually consumed.
+                    regime=(desk.regime_classification or {}).get("regime", "delta_relook"),
+                    source="v3_delta",
+                )
+
                 save_desk(desk)
-                elapsed_s = time.monotonic() - t_pipeline
-                result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
-                result["triage_tier"] = "v3_delta"
-                result["escalated"] = False
                 # Layer 6 lives at the end of the full-panel flow, which this
                 # early return skips. Without this, `policy_action` is unset and
                 # pipeline_service's enforcement branches (which key off it)
@@ -650,6 +679,10 @@ async def run_v3_pipeline(
                 # missing-regime and strategy-health CUT gates entirely, and was
                 # sized without the consensus/data-quality haircuts.
                 policy_action = _apply_policy_gates(desk)
+                elapsed_s = time.monotonic() - t_pipeline
+                result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
+                result["triage_tier"] = "v3_delta"
+                result["escalated"] = False
                 result["policy_action"] = policy_action
                 try:
                     _persist_policy_action(cycle_id, ticker, policy_action)
@@ -679,6 +712,7 @@ async def run_v3_pipeline(
                 ticker, delta.get("material_change", "material change or no prior thesis"),
             )
             triage_tier = "v3_delta_escalated"
+            desk.cycle_metadata["triage_tier"] = triage_tier
             # continue below to the full blackboard panel
 
     # ═══════════════════════════════════════════════════════════════════
@@ -971,7 +1005,7 @@ async def run_v3_pipeline(
                 # signals disagree. Non-fatal; synthesizer runs without it.
                 try:
                     verdict = desk.debate_judge or {}
-                    v_conf = int(verdict.get("confidence") or 0)
+                    v_conf = _judge_confidence(verdict)
                     if v_conf < 60:
                         from app.services.retrieval_decomposed import build_decomposed_block
                         deep_block = await build_decomposed_block(
@@ -1593,110 +1627,6 @@ async def run_v3_pipeline(
             _queue_agent("bull_argument", bull_agent, parent="tournament_debate")
             _queue_agent("bear_rebuttal", bear_agent, parent="tournament_debate")
 
-    async def _persist_trade_verdict():
-        if desk.has_artifact("trade_decision"):
-            try:
-                from app.services.trade_result_saver import save_trade_result
-                trade_decision = desk.trade_decision or {}
-
-                # Contradiction gate — the shadow's first promotion. Unresolved
-                # cross-desk directional dissent (e.g. board BUY over a BEARISH
-                # quant/tournament verdict) is by definition mixed evidence, so
-                # stated confidence is capped at 60. Deliberately NOT the full
-                # downgrade-to-HOLD: only 1 of 7 flagged trades has resolved so
-                # far, so the shadow keeps collecting the evidence for that.
-                try:
-                    from app.v3.contradiction_shadow import compute_contradiction_shadow
-                    _gate = compute_contradiction_shadow(desk)
-                    _conf = trade_decision.get("confidence")
-                    if (
-                        _gate.get("would_downgrade_to_hold")
-                        and isinstance(_conf, (int, float))
-                        and _conf > 60
-                    ):
-                        trade_decision["confidence_uncapped"] = _conf
-                        trade_decision["confidence"] = 60
-                        trade_decision["confidence_cap_reason"] = (
-                            "contradiction_gate: unresolved cross-desk directional dissent "
-                            f"({_gate.get('sentiment_by_source')})"
-                        )
-                        logger.warning(
-                            "[V3] %s: contradiction gate capped confidence %s -> 60 (%s)",
-                            ticker, _conf, _gate.get("sentiment_by_source"),
-                        )
-                        # 2026-07-25 audit: this cap rewrites a live decision
-                        # but left its evidence only in the artifact, so the
-                        # question "how often does the contradiction gate bind,
-                        # and is 60 the right cap?" had no queryable answer.
-                        _record_gate(
-                            desk, "contradiction_confidence_cap",
-                            uncapped=_conf, capped_to=60,
-                            sentiment_by_source=_gate.get("sentiment_by_source"),
-                        )
-                except Exception as gate_err:
-                    logger.warning("[V3] %s: contradiction gate failed (non-fatal): %s", ticker, gate_err)
-                if not trade_decision.get("regime"):
-                    trade_decision["regime"] = regime
-                if not trade_decision.get("persona_used"):
-                    board_decision = desk.final_decision or {}
-                    trade_decision["persona_used"] = board_decision.get(
-                        "persona_used", _persona_label(regime)
-                    )
-                # Normalize to snake_case: the LLM sometimes emits display case
-                # ("Warren Buffett"), which splits persona telemetry keys.
-                persona = str(trade_decision.get("persona_used") or "")
-                trade_decision["persona_used"] = persona.strip().lower().replace(" ", "_")
-                save_trade_result(ticker, cycle_id, trade_decision)
-
-                # Feed the judge: llm_audit_logs + context_blobs are the
-                # LLM-as-a-Judge inputs (evaluate_decision). Their producer
-                # (rlm_wrapper → log_rlm_audit_trail) lost its caller in the
-                # SDK migration, so decision_evaluations starved after the V2
-                # era. The compressed desk context is exactly the blob whose
-                # section headers the judge's faithfulness markers match.
-                try:
-                    from app.services.rlm_audit import log_rlm_audit_trail
-                    _telemetry = desk.agent_telemetry or []
-                    log_rlm_audit_trail(
-                        cycle_id=cycle_id,
-                        bot_id=bot_id,
-                        ticker=ticker,
-                        context=desk.get_compressed_context(include_debate=True),
-                        trading_system_prompt="V3 pure agentic pipeline (desk-compressed context)",
-                        active_model="v3_pipeline",
-                        response_text=json.dumps(trade_decision, default=str),
-                        tokens_used=sum(int(e.get("token_usage") or 0) for e in _telemetry),
-                        execution_time=sum(int(e.get("elapsed_ms") or 0) for e in _telemetry) / 1000.0,
-                        agent_step="v3_decision",
-                    )
-                except Exception as audit_err:
-                    logger.warning("[V3] %s: decision audit log failed (non-fatal): %s", ticker, audit_err)
-
-                # Paired challenger (observational): re-decide from the same
-                # desk evidence under the experimental spec, log the pair.
-                # Only runs when CHALLENGER_SPEC is set — see app/v3/challenger.
-                try:
-                    from app.v3.challenger import get_challenger_spec, run_challenger
-                    if get_challenger_spec():
-                        await run_challenger(desk, cycle_id, ticker, trade_decision)
-                except Exception as ch_err:
-                    logger.warning("[V3] %s: challenger failed (non-fatal): %s", ticker, ch_err)
-
-                try:
-                    from app.trading.strategy_tracker import record_strategy
-                    action = trade_decision.get("action", "HOLD")
-                    record_strategy(
-                        strategy_candidate_id=None,
-                        decision_outcome_id=None,
-                        agent_prompt_hash="v3_pipeline",
-                        ticker=ticker,
-                        signal=action,
-                        entry_price=None,
-                    )
-                except Exception as st_err:
-                    logger.warning("[V3] %s: Strategy tracking failed (non-fatal): %s", ticker, st_err)
-            except Exception as e:
-                logger.error("[V3] %s: Failed to persist trade result: %s", ticker, e)
 
     # Subscribe live whiteboard triggers
     from app.agents.whiteboard import whiteboard
@@ -1949,7 +1879,53 @@ async def run_v3_pipeline(
                     desk.advance_phase(DeskPhase.DEBATE_DONE)
                     save_desk(desk)
                     emit("analyzing", f"v3_debate_done_{ticker}", f"⚔️ {ticker}: Debate layer complete", status="ok")
-                    
+
+                # Cross-desk dissent, detected BEFORE the desk decides (2026-08-03).
+                # The same detector used to run only at the end and silently
+                # rewrite `confidence` to 60 — which the 70 floor always blocked,
+                # so a "cap, not a downgrade" was a guaranteed downgrade and the
+                # flagged trades could never resolve to prove the gate right.
+                #
+                # Moved in front of the decision instead: the board is told which
+                # desks disagree and must answer them in `dissent_resolution`.
+                # Nothing here changes a number — the enforcement is the
+                # HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT backstop, which fires
+                # only when the dissent went UNANSWERED.
+                #
+                # Runs pre-decision on purpose: at this point the desk carries no
+                # final_decision/trade_decision, so the detector sees exactly the
+                # research + debate artifacts and cannot mistake the agent's own
+                # verdict for a corroborating source.
+                try:
+                    from app.v3.contradiction_shadow import (
+                        build_dissent_block, compute_contradiction_shadow,
+                    )
+                    _pre = compute_contradiction_shadow(desk)
+                    _dissent_block = build_dissent_block(_pre)
+                    if _dissent_block:
+                        desk.cycle_metadata["dissent_context"] = _dissent_block
+                        desk.cycle_metadata["dissent_detected"] = {
+                            "sentiment_by_source": _pre.get("sentiment_by_source"),
+                            "contradiction_count": _pre.get("contradiction_count"),
+                        }
+                        logger.warning(
+                            "[V3] %s: cross-desk dissent detected pre-decision (%s) "
+                            "— board must answer it in dissent_resolution",
+                            ticker, _pre.get("sentiment_by_source"),
+                        )
+                        emit(
+                            "analyzing", f"v3_dissent_{ticker}",
+                            f"🔀 {ticker}: desks disagree on direction "
+                            f"({_pre.get('sentiment_by_source')}) — the board must "
+                            f"resolve it in writing to trade",
+                            status="warning",
+                        )
+                except Exception as _de:  # noqa: BLE001 — never block on detection
+                    logger.warning(
+                        "[V3] %s: pre-decision dissent detection failed "
+                        "(non-fatal): %s", ticker, _de,
+                    )
+
                 outcome = await _run_board_of_directors(
                     desk=desk, regime=regime, breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
                     parent_agent=_SECTION_TO_AGENT.get(parent, parent),
@@ -2005,7 +1981,11 @@ async def run_v3_pipeline(
                     include_debate_context=True, custom_instructions=query, parent_agent=parent
                 )
                 breaker.record_outcome("decision_synthesizer", outcome)
-                await _persist_trade_verdict()
+                await _persist_trade_verdict(
+                    desk, desk.trade_decision,
+                    cycle_id=cycle_id, bot_id=bot_id, ticker=ticker,
+                    regime=regime, source="v3_full",
+                )
 
         if loop_counter >= MAX_LOOP_ITERATIONS:
             iteration_log.append({"iteration": loop_counter, "event": "max_loop_iterations_hit"})
@@ -2152,6 +2132,13 @@ async def run_v3_pipeline(
     # ═══════════════════════════════════════════════════════════════════
     # LAYER 6: Policy Gates (Trade Execution Rules)
     # ═══════════════════════════════════════════════════════════════════
+    # Sanitize once more before the result is built. `_persist_trade_verdict`
+    # already ran this, but ONLY when the synthesizer produced a decision — a
+    # desk that stops at the Board (DECISION_AGENT_ENABLED off, or a degraded
+    # synthesizer) would otherwise reach the executor with an unchecked level.
+    # Idempotent: an already-dropped level is None and is skipped.
+    _drop_implausible_levels(desk)
+
     policy_action = _apply_policy_gates(desk)
 
     emit(
@@ -2238,11 +2225,8 @@ def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> No
     """Record the enforced policy label on the trade row (PG + Mongo mirror).
 
     A 0-rowcount UPDATE is REPORTED, not swallowed (2026-07-29 harness audit).
-    This is a blind UPDATE: `save_trade_result` is the only INSERT, it runs from
-    `_persist_trade_verdict` alone, and that is gated on
-    `has_artifact("trade_decision")`. The delta and glance triage tiers publish
-    only `final_decision`, so no row exists to update — the statement matched 0
-    rows and returned silently.
+    This is a blind UPDATE: `save_trade_result` is the only INSERT and it runs
+    from `_persist_trade_verdict` alone.
 
     Measured over 2026-07-24..29, the window where the column is fully deployed:
 
@@ -2254,6 +2238,16 @@ def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> No
     nowhere, so every funnel query silently under-counted and the delta tier was
     unmeasurable. The enforcement itself was never affected: pipeline_service
     reads `policy_action` off the in-memory result dict, not the DB.
+
+    FIXED for the delta tier 2026-08-03. This docstring used to justify the hole
+    by calling delta "a path that never produced a trade decision" — it does
+    produce one, an agent's reasoned BUY/SELL that gets executed, and a later
+    count found 40 of 40 delta analyses with no trade row and 5 of them holding
+    real filled orders. The delta branch now calls `_persist_trade_verdict`
+    explicitly, so a row exists by the time this UPDATE runs.
+
+    GLANCE is still expected to match 0 rows, and that remains correct: it
+    writes a hardcoded HOLD@0 before any agent runs and can never trade.
 
     Logged rather than repaired here on purpose. Inserting a synthetic row from
     this function would invent a trade record for a path that never produced a
@@ -2376,6 +2370,248 @@ def _record_gate(desk: SharedDesk, label: str, **detail: Any) -> str:
     except Exception as e:  # never let telemetry break an enforcing gate
         logger.warning("[V3] policy gate telemetry failed (non-fatal): %s", e)
     return label
+
+
+async def _persist_trade_verdict(
+    desk: SharedDesk,
+    decision: dict | None,
+    *,
+    cycle_id: str,
+    bot_id: str,
+    ticker: str,
+    regime: str,
+    source: str = "v3_full",
+) -> None:
+    """Write the trade row + its downstream records for a decided ticker.
+
+    `decision` defaults to the synthesizer's `trade_decision`. The DELTA
+    tier passes its own artifact explicitly (2026-08-03): it publishes only
+    `final_decision`, so the old `has_artifact("trade_decision")` gate meant
+    the delta path wrote NO trade_results row at all — measured, 40 of 40
+    delta analyses over 21 days, including 5 that executed real orders
+    (UNH, ALLY, AXP x2, DIS).
+
+    The docstring on `_persist_policy_action` justified that hole as "a path
+    that never produced a trade decision". True of the GLANCE tier, which
+    writes a hardcoded HOLD@0 and trades nothing. False of DELTA, which is
+    an agent's reasoned BUY/SELL that pipeline_service will execute — so it
+    was invisible to P&L, the scorecard, strategy tracking and the judge.
+    """
+    decision = decision if decision is not None else desk.trade_decision
+    if decision:
+        try:
+            from app.services.trade_result_saver import save_trade_result
+            trade_decision = decision
+
+            # BEFORE the write, so trade_results can never store a level the
+            # sanitizer already rejected (it used to run afterwards, inside
+            # the policy chain — see _drop_implausible_levels).
+            _drop_implausible_levels(desk)
+
+            # The confidence cap that used to live here is GONE (2026-08-03).
+            # It rewrote a live decision's `confidence` to 60 while its own
+            # comment claimed it was "deliberately NOT the full downgrade to
+            # HOLD" — but ANALYSIS_CONFIDENCE_THRESHOLD is 70, so every
+            # decision it touched was then blocked as LOW_CONFIDENCE. Two
+            # separate harms: the label blamed the desk for a number WE
+            # wrote, and no capped trade could ever execute, so the outcome
+            # evidence the gate said it was gathering could never arrive
+            # (that is why "only 1 of 7 flagged trades has resolved").
+            #
+            # The dissent is now surfaced to the board BEFORE it decides (see
+            # the board_of_directors branch) and enforced, only when left
+            # unanswered, by HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT. Whether
+            # the agent addressed it is recorded here so the question "does
+            # answering the dissent predict a better trade?" stays askable.
+            try:
+                from app.v3.contradiction_shadow import resolution_is_substantive
+
+                if desk.cycle_metadata.get("dissent_detected"):
+                    _merged = {**(desk.final_decision or {}), **trade_decision}
+                    trade_decision["dissent_addressed"] = resolution_is_substantive(_merged)
+                    trade_decision["dissent_sources"] = (
+                        desk.cycle_metadata["dissent_detected"].get("sentiment_by_source")
+                    )
+            except Exception as gate_err:
+                logger.warning("[V3] %s: dissent stamp failed (non-fatal): %s", ticker, gate_err)
+            if not trade_decision.get("regime"):
+                trade_decision["regime"] = regime
+            if not trade_decision.get("persona_used"):
+                board_decision = desk.final_decision or {}
+                trade_decision["persona_used"] = board_decision.get(
+                    "persona_used", _persona_label(regime)
+                )
+            # Normalize to snake_case: the LLM sometimes emits display case
+            # ("Warren Buffett"), which splits persona telemetry keys.
+            persona = str(trade_decision.get("persona_used") or "")
+            trade_decision["persona_used"] = persona.strip().lower().replace(" ", "_")
+            save_trade_result(ticker, cycle_id, trade_decision)
+
+            # Feed the judge: llm_audit_logs + context_blobs are the
+            # LLM-as-a-Judge inputs (evaluate_decision). Their producer
+            # (rlm_wrapper → log_rlm_audit_trail) lost its caller in the
+            # SDK migration, so decision_evaluations starved after the V2
+            # era. The compressed desk context is exactly the blob whose
+            # section headers the judge's faithfulness markers match.
+            try:
+                from app.services.rlm_audit import log_rlm_audit_trail
+                _telemetry = desk.agent_telemetry or []
+                log_rlm_audit_trail(
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                    ticker=ticker,
+                    context=desk.get_compressed_context(include_debate=True),
+                    trading_system_prompt="V3 pure agentic pipeline (desk-compressed context)",
+                    active_model="v3_pipeline",
+                    response_text=json.dumps(trade_decision, default=str),
+                    tokens_used=sum(int(e.get("token_usage") or 0) for e in _telemetry),
+                    execution_time=sum(int(e.get("elapsed_ms") or 0) for e in _telemetry) / 1000.0,
+                    agent_step="v3_decision",
+                )
+            except Exception as audit_err:
+                logger.warning("[V3] %s: decision audit log failed (non-fatal): %s", ticker, audit_err)
+
+            # Paired challenger (observational): re-decide from the same
+            # desk evidence under the experimental spec, log the pair.
+            # Only runs when CHALLENGER_SPEC is set — see app/v3/challenger.
+            #
+            # Full panel only. The challenger re-decides from the desk's
+            # research/debate artifacts, and a delta desk carries none of
+            # them — pairing a full-evidence challenger against a re-look
+            # would compare the spec to a different question.
+            try:
+                from app.v3.challenger import get_challenger_spec, run_challenger
+                if source == "v3_full" and get_challenger_spec():
+                    await run_challenger(desk, cycle_id, ticker, trade_decision)
+            except Exception as ch_err:
+                logger.warning("[V3] %s: challenger failed (non-fatal): %s", ticker, ch_err)
+
+            try:
+                from app.trading.strategy_tracker import record_strategy
+                action = trade_decision.get("action", "HOLD")
+                record_strategy(
+                    strategy_candidate_id=None,
+                    decision_outcome_id=None,
+                    agent_prompt_hash="v3_pipeline",
+                    ticker=ticker,
+                    signal=action,
+                    entry_price=None,
+                )
+            except Exception as st_err:
+                logger.warning("[V3] %s: Strategy tracking failed (non-fatal): %s", ticker, st_err)
+        except Exception as e:
+            logger.error("[V3] %s: Failed to persist trade result: %s", ticker, e)
+
+
+def _judge_confidence(verdict: Any) -> int:
+    """Read a debate verdict's confidence from EITHER artifact shape.
+
+    `debate_judge` has two live writers with incompatible key names:
+
+      * the judge agent itself emits `winner` + `final_confidence` (that is the
+        required schema in artifacts.py), and with DEBATE_ENGINE=3 — the
+        default — bull/bear/judge IS the live debate path;
+      * the tournament copy and the two skip markers written in
+        `_queue_debate_phase` emit `winning_side` + `confidence`.
+
+    Readers that knew only one shape silently scored the other as 0.
+    `shared_desk.get_compressed_context` and `agent_runner` already accept both;
+    the two readers in this module did not, which is why the synthesizer's
+    "only when the verdict is low-confidence" deep-retrieval hook fired on every
+    real judge verdict, including 18 in 14 days that were actually >= 60.
+
+    Anything unreadable is 0 — the same direction the callers already default to.
+    """
+    if not isinstance(verdict, dict):
+        return 0
+    raw = verdict.get("confidence")
+    if raw is None:
+        raw = verdict.get("final_confidence")
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _drop_implausible_levels(desk: SharedDesk) -> list[str]:
+    """Drop decimal-error stop/target levels off the live decision artifact.
+
+    Stop/target sanity against the last close (2026-07-28 fidelity audit).
+    `stop_loss` and `take_profit` are emitted by BOTH the Board and the
+    synthesizer and NOTHING checked either — they were the largest unguarded
+    surface left, and they size real orders. Measured over 14 days: 3 of 358
+    decisions carried an implausible level, including LMT with a stop of $0.92
+    and a target of $1.25 against a $581 close. That is not a bad trade, it is a
+    decimal error, and executing it would either never stop out or liquidate
+    instantly.
+
+    The band is deliberately wide (0.3x-1.5x of close for a stop, 0.7x-3.0x for
+    a target). It is a DECIMAL-ERROR detector, not a strategy opinion: a tight
+    stop and an ambitious target are both legitimate and must pass.
+
+    Lifted OUT of `_apply_policy_gates` (2026-08-03). It is a sanitizer, not a
+    gate — it returns no label and mutates the artifact — and living inside the
+    gate chain meant it ran at whatever point that chain happened to be called:
+
+      * full panel — gates ran BEFORE the result was built, so the drop reached
+        the executor, but AFTER `save_trade_result` and `save_desk`, so
+        `trade_results` and `shared_desk` both kept the bad number while
+        telemetry claimed DROPPED_IMPLAUSIBLE_LEVEL;
+      * delta re-look — gates ran AFTER `_build_v1_compatible_result`, so the
+        dropped level survived in `result["estimate"]["stop_loss"]`, which
+        pipeline_service hands straight to `buy()` as a live stop order.
+
+    One sanitizer, called before anything reads or persists the levels, removes
+    both. Idempotent: a level already dropped to None fails the isinstance check
+    and is skipped, so calling it twice is free.
+
+    Returns the field names it dropped (empty list = nothing to do).
+    """
+    decision = desk.trade_decision or desk.final_decision or {}
+    if not isinstance(decision, dict):
+        return []
+    action = str(decision.get("action") or "").strip().upper() or "HOLD"
+
+    _levels = {
+        "stop_loss": (0.3, 1.5),
+        "take_profit": (0.7, 3.0),
+    }
+    _last_close = None
+    try:
+        from app.db.connection import get_db
+
+        with get_db() as _db:
+            _row = _db.execute(
+                "SELECT close FROM price_history WHERE ticker = %s "
+                "ORDER BY date DESC LIMIT 1", [desk.ticker],
+            ).fetchone()
+        _last_close = float(_row[0]) if _row and _row[0] else None
+    except Exception as _e:  # noqa: BLE001 — a price lookup must never block
+        logger.debug("[V3] %s: stop/target sanity lookup failed: %s",
+                     desk.ticker, _e)
+
+    dropped: list[str] = []
+    if _last_close and _last_close > 0:
+        for _field, (_lo, _hi) in _levels.items():
+            _v = decision.get(_field)
+            if not isinstance(_v, (int, float)) or isinstance(_v, bool):
+                continue
+            if _v <= 0 or not (_last_close * _lo <= _v <= _last_close * _hi):
+                # Dropped, not clamped. A clamped level is a number the desk
+                # never chose, presented as though it had — and the Board's
+                # exit logic would then act on our arithmetic, not its thesis.
+                decision[_field] = None
+                dropped.append(_field)
+                _record_gate(
+                    desk, "DROPPED_IMPLAUSIBLE_LEVEL", action=action,
+                    field=_field, value=_v, last_close=round(_last_close, 2),
+                )
+                logger.warning(
+                    "[V3] %s: %s=%s is implausible against a %.2f close — "
+                    "dropped (band %.1fx-%.1fx)",
+                    desk.ticker, _field, _v, _last_close, _lo, _hi,
+                )
+    return dropped
 
 
 def _apply_policy_gates(desk: SharedDesk) -> str:
@@ -2506,57 +2742,6 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     if not desk.has_artifact("regime_classification"):
         return _record_gate(desk, "HOLD_POLICY_BLOCKED_MISSING_REGIME", action=action)
 
-    # Stop/target sanity against the last close (2026-07-28 fidelity audit).
-    # `stop_loss`, `take_profit` and `position_size_pct` are emitted by BOTH the
-    # Board and the synthesizer and NOTHING checked any of them — they were the
-    # largest unguarded surface left, and they size real orders.
-    #
-    # Measured over 14 days: 3 of 358 decisions carried an implausible level,
-    # including LMT with a stop of $0.92 and a target of $1.25 against a $581
-    # close. That is not a bad trade, it is a decimal error, and executing it
-    # would either never stop out or liquidate instantly.
-    #
-    # The band is deliberately wide (0.3x-1.5x of close for a stop, 0.7x-3.0x
-    # for a target). It is a DECIMAL-ERROR detector, not a strategy opinion: a
-    # tight stop and an ambitious target are both legitimate and must pass.
-    _levels = {
-        "stop_loss": (0.3, 1.5),
-        "take_profit": (0.7, 3.0),
-    }
-    _last_close = None
-    try:
-        from app.db.connection import get_db
-
-        with get_db() as _db:
-            _row = _db.execute(
-                "SELECT close FROM price_history WHERE ticker = %s "
-                "ORDER BY date DESC LIMIT 1", [desk.ticker],
-            ).fetchone()
-        _last_close = float(_row[0]) if _row and _row[0] else None
-    except Exception as _e:  # noqa: BLE001 — a price lookup must never block
-        logger.debug("[V3] %s: stop/target sanity lookup failed: %s",
-                     desk.ticker, _e)
-
-    if _last_close and _last_close > 0:
-        for _field, (_lo, _hi) in _levels.items():
-            _v = decision.get(_field)
-            if not isinstance(_v, (int, float)) or isinstance(_v, bool):
-                continue
-            if _v <= 0 or not (_last_close * _lo <= _v <= _last_close * _hi):
-                # Dropped, not clamped. A clamped level is a number the desk
-                # never chose, presented as though it had — and the Board's
-                # exit logic would then act on our arithmetic, not its thesis.
-                decision[_field] = None
-                _record_gate(
-                    desk, "DROPPED_IMPLAUSIBLE_LEVEL", action=action,
-                    field=_field, value=_v, last_close=round(_last_close, 2),
-                )
-                logger.warning(
-                    "[V3] %s: %s=%s is implausible against a %.2f close — "
-                    "dropped (band %.1fx-%.1fx)",
-                    desk.ticker, _field, _v, _last_close, _lo, _hi,
-                )
-
     # Strategy health (Ruuj ch.5): "has the model degraded" is checked
     # separately from "is it losing money". A decision-critical agent whose
     # telemetry quality collapses must not keep OPENING positions — SELLs
@@ -2587,6 +2772,32 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
             desk, "HOLD_POLICY_BLOCKED_DATA_QUALITY",
             action=action, data_quality=data_quality,
         )
+
+    # Unresolved cross-desk dissent (2026-08-03). The desks disagreed on
+    # direction, the board was TOLD so before it decided, and it is trading
+    # anyway without saying why the dissenting desk is wrong.
+    #
+    # This is the same shape as the jury-veto override directly below: the
+    # disagreement does not forbid the trade, but overriding it in silence is
+    # not a decision. Fail-CLOSED — a missing resolution blocks, because the
+    # whole failure mode being fixed here is a gate that looked like it was
+    # merely trimming confidence while actually blocking every trade under a
+    # label that blamed the desk.
+    #
+    # Only reachable when detection ran and found a conflict; an absent
+    # `dissent_detected` (detection failed, or the desks agreed) never blocks.
+    if desk.cycle_metadata.get("dissent_detected"):
+        from app.v3.contradiction_shadow import resolution_is_substantive
+
+        mitigation = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
+        if not resolution_is_substantive(mitigation):
+            return _record_gate(
+                desk, "HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT",
+                action=action, confidence=confidence,
+                sentiment_by_source=(
+                    desk.cycle_metadata["dissent_detected"].get("sentiment_by_source")
+                ),
+            )
 
     tournament = getattr(desk, "tournament_result", None) or {}
 
@@ -3315,8 +3526,12 @@ def _extract_debate_result(desk: SharedDesk) -> dict[str, Any] | None:
     bear_conf = _safe_int((desk.bear_rebuttal or {}).get("confidence", 0))
 
     if desk.debate_judge:
-        winner = desk.debate_judge.get("winner", "tie")
-        conf = _safe_int(desk.debate_judge.get("final_confidence", 0))
+        # Both shapes, same reason as _judge_confidence: a validator-coerced
+        # judge artifact carries `winning_side`/`confidence` instead of
+        # `winner`/`final_confidence`, and reading only the latter scored it
+        # "tie" at 0 — a real verdict rendered as no verdict.
+        winner = desk.debate_judge.get("winner") or desk.debate_judge.get("winning_side") or "tie"
+        conf = _judge_confidence(desk.debate_judge)
         judge_action = "BUY" if winner == "bull" else ("SELL" if winner == "bear" else "HOLD")
         summary = desk.debate_judge.get("summary", "")
     else:

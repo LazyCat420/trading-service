@@ -588,6 +588,19 @@ async def run_v3_agent(
             if fundamental:
                 dynamic_sections.append((_KEEP, fundamental))
 
+        # Cross-desk dissent — ONLY the two agents that issue an action, and
+        # never shed. It is the one block whose absence changes what the policy
+        # layer does: HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT holds any BUY/SELL
+        # that does not answer it, so shedding this would hold a trade for a
+        # disagreement the agent was never shown.
+        #
+        # Replaces a post-hoc cap that rewrote `confidence` to 60 after the
+        # desk had already decided (see contradiction_shadow.build_dissent_block).
+        if agent_name in ("v3_board_of_directors", "v3_decision_synthesizer"):
+            dissent = desk.cycle_metadata.get("dissent_context", "")
+            if dissent:
+                dynamic_sections.append((_KEEP, dissent))
+
         # Precomputed valuation math — scoped to the desk that judges price and
         # the board that sizes the trade. Never shed, for the same reason as the
         # technical baseline: these are the numbers the reconciliation pass will

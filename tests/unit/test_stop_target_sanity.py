@@ -57,27 +57,92 @@ class TestTheBandDoesNotSecondGuessStrategy:
 
 
 class TestTheGuardIsWiredAndFailsOpen:
+    """The check lives in `_drop_implausible_levels`, not in the policy gate.
+
+    It moved out on 2026-08-03. Inside the gate chain it ran at whatever point
+    that chain happened to be called, and the two callers disagreed: the full
+    panel gated BEFORE building the result (drop reached the executor) while the
+    delta re-look gated AFTER (the bad level survived in
+    result["estimate"]["stop_loss"] and went to buy() as a live stop order).
+    Both also persisted the desk and the trade row before the gate ran, so
+    telemetry recorded a drop the database never saw.
+    """
+
     def test_it_drops_rather_than_clamps(self):
         """A clamped level is a number the desk never chose, presented as
         though it had — the Board's exit logic would then act on our
         arithmetic instead of its thesis."""
         from app.v3 import orchestrator as orch
 
-        src = inspect.getsource(orch._apply_policy_gates)
+        src = inspect.getsource(orch._drop_implausible_levels)
         assert "DROPPED_IMPLAUSIBLE_LEVEL" in src
         assert "decision[_field] = None" in src
 
     def test_the_price_lookup_cannot_block_a_cycle(self):
         from app.v3 import orchestrator as orch
 
-        src = inspect.getsource(orch._apply_policy_gates)
+        src = inspect.getsource(orch._drop_implausible_levels)
         assert "a price lookup must never block" in src
 
     def test_the_band_in_code_matches_the_contract_here(self):
-        """If someone widens the band in the gate, this fails rather than
-        silently describing a band that no longer exists."""
+        """If someone widens the band, this fails rather than silently
+        describing a band that no longer exists."""
+        from app.v3 import orchestrator as orch
+
+        src = inspect.getsource(orch._drop_implausible_levels)
+        for field, (lo, hi) in BANDS.items():
+            assert f'"{field}": ({lo}, {hi})' in src
+
+    def test_the_policy_gate_no_longer_touches_levels(self):
+        """Pinning the split. A sanitizer that mutates the artifact must not
+        sit in a chain whose call position varies by triage tier."""
         from app.v3 import orchestrator as orch
 
         src = inspect.getsource(orch._apply_policy_gates)
-        for field, (lo, hi) in BANDS.items():
-            assert f'"{field}": ({lo}, {hi})' in src
+        assert "DROPPED_IMPLAUSIBLE_LEVEL" not in src
+
+    def test_it_runs_before_the_trade_row_is_written(self):
+        """`trade_results` used to store levels the sanitizer had rejected,
+        because the write happened first."""
+        from app.v3 import orchestrator as orch
+
+        src = inspect.getsource(orch._persist_trade_verdict)
+        drop_at = src.index("_drop_implausible_levels(desk)")
+        save_at = src.index("save_trade_result(ticker, cycle_id, trade_decision)")
+        assert drop_at < save_at
+
+    def test_the_delta_tier_sanitizes_before_it_builds_its_result(self):
+        """This is the regression. The delta path used to call the gates AFTER
+        `_build_v1_compatible_result`, so the dropped level survived in
+        result["estimate"]["stop_loss"] — which pipeline_service hands straight
+        to buy() as a live stop order."""
+        from app.v3 import orchestrator as orch
+
+        src = inspect.getsource(orch.run_v3_pipeline)
+        region = src[:src.index('result["triage_tier"] = "v3_delta"')]
+        persist_at = region.rindex("_persist_trade_verdict(")
+        build_at = region.rindex("_build_v1_compatible_result(desk")
+        assert persist_at < build_at, (
+            "the delta tier builds its result before sanitizing/persisting"
+        )
+
+    def test_the_full_panel_sanitizes_before_it_builds_its_result(self):
+        from app.v3 import orchestrator as orch
+
+        src = inspect.getsource(orch.run_v3_pipeline)
+        region = src[src.index("LAYER 6: Policy Gates"):]
+        drop_at = region.index("_drop_implausible_levels(desk)")
+        build_at = region.index("_build_v1_compatible_result(desk")
+        assert drop_at < build_at
+
+    def test_the_glance_tier_is_exempt_and_that_is_correct(self):
+        """A Triage-Gate glance writes a hardcoded HOLD@0 before any agent runs.
+        It carries no stop_loss/take_profit to sanitize and can never trade, so
+        the absence of a sanitizer call on that path is by design, not an
+        oversight for someone to 'fix' later."""
+        from app.v3 import orchestrator as orch
+
+        src = inspect.getsource(orch.run_v3_pipeline)
+        glance = src[src.index('triage_tier == "v3_glance"'):]
+        glance = glance[:glance.index("return result")]
+        assert "stop_loss" not in glance and "take_profit" not in glance

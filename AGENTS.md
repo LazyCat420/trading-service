@@ -208,3 +208,34 @@ The pre-collected data report (`data_report.py`) is capped at **15,000 character
 ## 14. Inactive Agents
 
 - **`portfolio_manager.py`**: INACTIVE. Part of V2 scoring/gatekeeper system. Registered with Prism but NOT invoked by V3 orchestrator. Reserved for future Layer 6 (Portfolio Optimization).
+
+---
+
+## 15. Cross-Desk Dissent (the agent decides, the gate only checks it answered)
+
+When the research/debate desks disagree on direction, the disagreement is
+detected in code and **injected into the deciding agent's prompt before it
+decides** — it is never applied to the decision afterwards.
+
+1. **Detect** — `compute_contradiction_shadow(desk)` runs in the orchestrator's
+   `board_of_directors` branch, before `_run_board_of_directors`. At that point
+   the desk holds no `final_decision`/`trade_decision`, so the detector cannot
+   mistake the agent's own verdict for a corroborating source.
+2. **Inject** — `build_dissent_block()` renders it; `agent_runner` adds it for
+   `v3_board_of_directors` and `v3_decision_synthesizer` only, at `_KEEP`
+   (never shed).
+3. **Answer** — the agent writes `dissent_resolution`: which desk it overrules
+   and why. ≥80 chars, or a full `override_justification`, counts as an answer.
+4. **Enforce** — `HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT` blocks a BUY/SELL that
+   left it unanswered. Fail-closed. A HOLD never needs a resolution.
+
+**Confidence is never rewritten.** The previous design capped a flagged
+decision's `confidence` to 60 *after* the desk decided. With
+`ANALYSIS_CONFIDENCE_THRESHOLD = 70` that was a guaranteed block wearing a
+"deliberately NOT the full downgrade-to-HOLD" comment, reported under a label
+(`LOW_CONFIDENCE`) that blamed the desk for a number the harness had written —
+and since no flagged trade could execute, the outcome evidence the mechanism
+said it was gathering could never arrive. Do not reintroduce a numeric cap here.
+
+**Source**: `app/v3/contradiction_shadow.py`, `app/v3/orchestrator.py`
+(`_apply_policy_gates`), `app/v3/agent_runner.py`
