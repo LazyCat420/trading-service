@@ -52,6 +52,84 @@ _SUBSTANTIVE_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: Keys that belong to the `emit_structured_output` envelope rather than to any
+#: artifact — the tool's own request shape (`schema`/`data`/`label`), the
+#: `/compute/synthetic-output` response shape (`acknowledged`/`_synthetic`/
+#: `validationWarnings`), and the double-encoded `arguments` wrapper the
+#: provider adapter sometimes leaves in place.
+_ENVELOPE_KEYS = frozenset({
+    "schema", "data", "label", "arguments",
+    "acknowledged", "_synthetic", "validationWarnings",
+})
+
+
+def _unwrap_structured_output(
+    parsed: dict, artifact_type: str, agent_name: str
+) -> dict:
+    """Return the artifact from inside an `emit_structured_output` envelope.
+
+    `emit_structured_output` is NOT on any v3 whitelist, but Prism offers it to
+    the personas anyway (the ToolCanary logs an OFF-WHITELIST warning every
+    time), and the models reach for it as the natural way to emit a typed
+    artifact. Its request shape wraps the real payload:
+
+        {"schema": {...}, "label": "desk_note", "data": {<the artifact>}}
+
+    That parses as clean JSON, so the unparseable-output repair pass never
+    fires — but every required field is now one level down, so
+    `validate_artifact` reports them all missing and `_artifact_collapsed`
+    calls it a total collapse. Measured on cycle-v3-1785792600 (PLTR,
+    2026-08-03): the junior and quant analysts each lost a complete, correct
+    artifact this way and were retried from scratch, ~185s of the cycle spent
+    re-deriving research that had already been produced.
+
+    FAIL-CLOSED. Unwrapping only happens when the top level carries `data` and
+    *nothing that is not envelope furniture*. A real artifact that merely has a
+    `data` field alongside its own keys is left exactly as it was, so this can
+    only ever recover a run that would otherwise have been thrown away.
+    """
+    for _ in range(2):  # `arguments` may wrap the envelope one extra level
+        if not isinstance(parsed, dict) or not parsed:
+            return parsed
+        extra = set(parsed) - _ENVELOPE_KEYS
+        if extra:
+            return parsed
+
+        # `{"arguments": "{\"data\": ...}"}` — the provider adapter passed the
+        # OpenAI-style function-call envelope through without decoding it.
+        inner = parsed.get("arguments")
+        if isinstance(inner, str) and "data" not in parsed:
+            try:
+                decoded = json.loads(inner)
+            except (ValueError, TypeError):
+                return parsed
+            if not isinstance(decoded, dict):
+                return parsed
+            parsed = decoded
+            continue
+
+        payload = parsed.get("data")
+        # The model stringified its own payload — the same defect that makes
+        # the tool itself reject the call with "'data' ... must be an object".
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                return parsed
+        if not isinstance(payload, dict) or not payload:
+            return parsed
+
+        logger.warning(
+            "[V3Runner] %s wrapped its %s in an emit_structured_output "
+            "envelope (keys=%s) — unwrapped `data` (%d fields). The artifact "
+            "was intact; only the envelope was wrong.",
+            agent_name, artifact_type, sorted(parsed), len(payload),
+        )
+        return payload
+
+    return parsed
+
+
 def _artifact_collapsed(artifact_type: str, artifact: dict) -> bool:
     """True when a research artifact kept NONE of its content-bearing fields.
 
@@ -991,10 +1069,21 @@ async def run_v3_agent(
                 outcome = (
                     PhaseOutcome.DATA_GAP if is_retry else PhaseOutcome.AGENT_ERROR
                 )
+                # Log the keys the artifact DID keep. Without them a collapse
+                # is undiagnosable after the fact: the raw model text lives
+                # only in the container's stdout, which dies with the
+                # container (cycle-v3-1785792600's junior-analyst collapse was
+                # unreconstructable an hour later for exactly this reason),
+                # and `agent_traces.tool_args` is truncated at 2000 chars.
+                # The key list alone identifies the wrong-schema shape —
+                # e.g. ['data', 'label', 'schema'] is the emit_structured_output
+                # envelope handled in _unwrap_structured_output().
                 logger.error(
                     "[V3Runner] %s analyst artifact for %s is missing required "
-                    "fields %s — returning %s (retry=%s)",
+                    "fields %s — returning %s (retry=%s). Keys actually "
+                    "present: %s",
                     agent_name, desk.ticker, missing_required, outcome.value, is_retry,
+                    sorted(artifact)[:20] if isinstance(artifact, dict) else type(artifact).__name__,
                 )
                 emit(
                     "analyzing",
@@ -1381,7 +1470,7 @@ def _parse_artifact(
         from app.utils.text_utils import parse_json_response
         parsed = parse_json_response(text)
         if isinstance(parsed, dict) and parsed:
-            return parsed
+            return _unwrap_structured_output(parsed, artifact_type, agent_name)
     except Exception:
         pass
 
