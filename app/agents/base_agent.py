@@ -575,6 +575,11 @@ async def run_agent(
 
             t0 = time.time()
             final_text = await harness.run(full_prompt)
+            # Reasoning-leak canary — same tripwire as call_prism_agent /
+            # chat_with_tools; the harness path is a third response site and
+            # a shared helper only helps callers that call it.
+            from app.services.prism_agent_caller import strip_reasoning_leak
+            final_text, _leaked = strip_reasoning_leak(final_text, agent_name)
             elapsed_ms = int((time.time() - t0) * 1000)
         finally:
             _active_agents.discard(agent_name)

@@ -21,8 +21,59 @@ FIRM_CONTEXT = (
 )
 
 import httpx
+import re
 
 _dynamic_model_cache = {}
+
+# ── Reasoning-leak canary (2026-08-03) ──────────────────────────────────────
+# Gold Spark swapped to deepseek-v4-flash-0731 on 07-31; prism's thinking-off
+# flag uses the Qwen spelling (enable_thinking) which DeepSeek silently
+# ignores, so reasoning ran on every call and intermittently leaked into
+# content (flash_briefings 126/127 opened with "The user wants me to…").
+# The real fix is the vllm-shim in lazy-agent-service; this is the tripwire
+# that catches the NEXT silent model swap. Applied at every response site —
+# call_prism_agent, chat_with_tools, and base_agent's harness path — because
+# a shared helper is only a shared fix if every caller actually calls it.
+_REASONING_LEAK_RE = re.compile(
+    r"^(?:the user (?:wants|is asking|has asked)|let me\b|i need to\b|okay[,.]"
+    r"|i am an?\b|i'm an?\b|the task\b|first,? (?:let|i)\b|we need to\b)",
+    re.IGNORECASE,
+)
+_FIRST_HEADING_RE = re.compile(r"\n#{1,3} ")
+
+
+def strip_reasoning_leak(text: str, agent_name: str = "") -> tuple[str, bool]:
+    """Detect a reasoning trace leaked into response content; salvage if safe.
+
+    Returns (text, leaked). When the leak is followed by the real markdown
+    report (observed shape: briefing 126), cut to the first heading — but only
+    if that keeps ≥30% of the text AND ≥400 chars, because the other observed
+    shape (briefing 127) is reasoning all the way down to a trailing Sources
+    heading, where cutting would keep 9% and destroy the only content there is.
+    Unsalvageable leaks are returned unchanged so the caller ships *something*
+    while the canary log points at the real problem.
+    """
+    stripped = (text or "").lstrip()
+    if not stripped or not _REASONING_LEAK_RE.match(stripped):
+        return text, False
+
+    logger.error(
+        "[THINK-LEAK] %s: response content starts with a reasoning trace "
+        "(%r). The thinking-off flag is not reaching the model — check the "
+        "vllm-shim and whether the endpoint's model changed.",
+        agent_name or "unknown", stripped[:80],
+    )
+    m = _FIRST_HEADING_RE.search(stripped)
+    if m:
+        remainder = stripped[m.start():].lstrip()
+        if len(remainder) >= 400 and len(remainder) >= 0.3 * len(stripped):
+            logger.warning(
+                "[THINK-LEAK] %s: salvaged report from first heading "
+                "(kept %d of %d chars)", agent_name or "unknown",
+                len(remainder), len(stripped),
+            )
+            return remainder, True
+    return text, True
 
 
 def _extract_token_usage(resp: Any, response_text: str) -> int:
@@ -259,6 +310,16 @@ async def call_prism_agent(
         except Exception as parse_err:
             logger.error("[PrismAgentCaller] %s: response body was not JSON (%s) — returning empty text", agent_id, parse_err)
             response_text = ""
+        response_text, leaked = strip_reasoning_leak(response_text, agent_id)
+        if not response_text:
+            # A reasoning-capable model that burns its whole output budget on
+            # reasoning returns content="" with finish=stop — same symptom as
+            # a genuinely textless turn, so make it loud instead of silent.
+            logger.warning(
+                "[THINK-LEAK] %s: empty response text — if the model is a "
+                "reasoner, the output budget may have been consumed by "
+                "reasoning tokens.", agent_id,
+            )
         elapsed_ms = int((time.monotonic() - start) * 1000)
         tokens = _extract_token_usage(resp, response_text)
         
@@ -505,6 +566,7 @@ class PrismLLMShim:
                 # text is null (not missing) on textless turns — don't let the
                 # raw envelope leak through as the response.
                 response_text = (payload_json.get("text") or "").strip()
+                response_text, _leaked = strip_reasoning_leak(response_text, agent_name)
                 # Prism emits camelCase toolCalls with {id, name, args} items;
                 # normalize to the OpenAI {function:{name, arguments}} shape
                 # the client-side tool loop (registry.execute_tool_call) expects.
