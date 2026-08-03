@@ -38,6 +38,11 @@ STANDARD_TIER_AGENTS = {
     "v3_board_of_directors",
     "v3_decision_synthesizer",
     "user_chat",  # human-driven chat proxy
+    # Not an LLM: app/autoresearch/component_health.py, whose only proposal
+    # is HMM_REGIME_MODE -> 1 after 3 consecutive failing evaluations. It
+    # goes through the governor like everyone else so the change is bounded,
+    # audited, and visible in runtime_parameters.
+    "component_health_monitor",
 }
 BOARD_TIER_AGENTS = {
     "v3_board_of_directors",

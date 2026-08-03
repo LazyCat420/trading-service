@@ -220,19 +220,24 @@ def build_quant_math_block(
     # block's whole budget, so it is the one that must yield first.
     if not _budget_exhausted(_started, "HMM regime shadow", ticker):
         try:
-            from app.quant.regime_hmm import build_hmm_context_line
+            from app.quant.regime_hmm import build_hmm_context_line, hmm_regime_mode
 
-            # Hard deadline on the CALL, not merely a check before it: a
-            # pre-call budget check cannot stop a component that starts just
-            # under budget and then hangs. Without this the outer timeout is
-            # still the only backstop, and it takes the neighbours with it.
-            hmm_line = _with_deadline(
-                lambda: build_hmm_context_line(cycle_id=cycle_id),
-                seconds=max(1.0, _COMPONENT_BUDGET_SEC - (time.monotonic() - _started)),
-                label="HMM regime shadow", ticker=ticker,
-            )
-            if hmm_line:
-                parts.append(hmm_line)
+            # Modes 1 (shadow) and 2 (off) skip the desk-path fit entirely —
+            # withholding the LINE while still paying the ~22-32s fit would
+            # keep starving the sizing bracket for nothing. In mode 1 the
+            # 5:30 PM PT snapshot job keeps the graded daily series alive.
+            if hmm_regime_mode() == 0:
+                # Hard deadline on the CALL, not merely a check before it: a
+                # pre-call budget check cannot stop a component that starts just
+                # under budget and then hangs. Without this the outer timeout is
+                # still the only backstop, and it takes the neighbours with it.
+                hmm_line = _with_deadline(
+                    lambda: build_hmm_context_line(cycle_id=cycle_id),
+                    seconds=max(1.0, _COMPONENT_BUDGET_SEC - (time.monotonic() - _started)),
+                    label="HMM regime shadow", ticker=ticker,
+                )
+                if hmm_line:
+                    parts.append(hmm_line)
         except Exception as e:
             logger.debug("[QuantMathBlock] %s: HMM shadow failed (non-fatal): %s", ticker, e)
 

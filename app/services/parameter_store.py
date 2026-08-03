@@ -265,6 +265,43 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
                     "quant signal, but bull/bear was never measured and keeps "
                     "an adversarial pass on the desk). Gates which engine RUNS.",
     ),
+    # HMM regime shadow.
+    #
+    # 0 = active: the desk-path fit runs and the shadow line is rendered into
+    #     the quant math block (today's behaviour), and the 5:30 PM PT
+    #     posterior snapshot keeps the daily graded series.
+    # 1 = shadow: the desk path SKIPS the fit entirely (returning its ~22-32s
+    #     to the budget that starves GARCH/HRP/sizing when the HMM runs long)
+    #     and the prompt line is withheld — but the daily snapshot still runs,
+    #     so grading continues and re-enabling stays an evidence-based call.
+    # 2 = off: nothing runs, snapshot included. Human-only; the monitor never
+    #     sets 2 because a component with no data series can never earn its
+    #     way back.
+    #
+    # Measured context (experiments/exp-2026-08-hmm-*, n=249 point-in-time
+    # days): the band is calibrated but TOO WIDE (Kupiec p=0.167 at a 3.21%
+    # breach rate vs 5% expected), the vol forecast is NOT better than a free
+    # trailing 20-day sigma (QLIKE DM insignificant; MSE significantly WORSE,
+    # t=+2.73, ~1.9pp hot), and direction has no skill (58% vs an always-FLAT
+    # 59%). The state LABEL/duration/switching odds are the outputs nothing
+    # else produces, and whether they are worth ~22-32s/cycle is an OPEN human
+    # call — which is why the DEFAULT stays 0.
+    #
+    # app/autoresearch/component_health.py evaluates the stored posteriors
+    # daily and proposes 0 -> 1 here after 3 consecutive FAILING verdicts
+    # (band understating risk, significantly worse than free on both losses,
+    # snapshot gap, or a stale-tape run). It never proposes a re-enable.
+    #
+    # Fail-open lands on the DEFAULT (0, active): the line is advisory prose
+    # carrying its own measured limits, not a gate, so one cycle of transient
+    # resurrection after a store failure is acceptable — whereas failing to 1
+    # would silently retire a component the user believes is on.
+    "HMM_REGIME_MODE": ParamSpec(
+        default=0, min_value=0, max_value=2, direction=RISK_NEUTRAL, kind="int",
+        description="0=active (HMM shadow line reaches the desks), 1=shadow "
+                    "(no desk fit, no prompt line; daily posterior snapshot "
+                    "and grading continue), 2=off (nothing runs; human-only).",
+    ),
     # Equation Lab
     "EQUATION_LAB_MAX_PER_RUN": ParamSpec(
         default=2, min_value=1, max_value=6, direction=RISK_NEUTRAL, kind="int",

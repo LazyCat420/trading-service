@@ -1,100 +1,73 @@
-# HANDOFF — Portfolio import: seed a profile with real holdings (2026-07-27)
+# HANDOFF — Component efficacy monitor: is the HMM earning its keep? (2026-08-03)
 
-Shipped `dcdd2ba`, **deployed** to `synology` 2026-07-27 23:50Z, container
-`Up (healthy)` confirmed via `docker ps` after the deploy. Verified live
-end-to-end against a throwaway profile (`import-smoke-test`, created and
-deleted; **no existing profile was touched**).
+## What is live right now
 
-Pairs with **trading-client `0afce8f`**, which owns the file parsing and the UI.
-Deploy this repo FIRST when both change — the client calls the endpoint added
-here.
+The trading cycle now has a scheduled answer to "is this expensive component
+helping?", starting with the HMM regime shadow — the full audit and design
+rationale is in
+[`docs/AUDIT_COMPONENT_EFFICACY_2026-08-03.md`](docs/AUDIT_COMPONENT_EFFICACY_2026-08-03.md).
 
-**⚠ Carried forward from the previous wave and still unrun:** the skill-gate /
-data-collection post-deploy checklist. It now lives in
-[`docs/HANDOFF_skill_gate_2026-07-27.md`](docs/HANDOFF_skill_gate_2026-07-27.md)
-§"Verify next cycle" — that work is unaffected by this wave, but nobody has run
-the checks yet.
+- `app/autoresearch/component_health.py` grades the HMM's stored daily
+  posteriors every weekday at **5:45 PM PT** (after the 5:30 snapshot):
+  Kupiec band coverage, Diebold-Mariano vs the FREE trailing 20-day σ
+  (QLIKE + MSE), and operational health (snapshot gaps, stale-tape runs).
+  Verdicts: `insufficient_data` / `healthy` / `redundant` / `failing`.
+- **3 consecutive daily `failing` verdicts → auto-disable**: the monitor
+  proposes `HMM_REGIME_MODE` 0→1 through the parameter governor and writes a
+  ⚠️ agent note. Mode 1 = desk path skips the fit (frees ~22–32s of the
+  45s quant budget), prompt line withheld, **daily snapshot + grading
+  continue**. Mode 2 (fully off) is human-only. The monitor never re-enables.
+- `GET /api/v1/component-health` (+ `/history`) serves the latest verdict,
+  the real thresholds, and the mode semantics. Reports persist in
+  `component_health_reports` (table auto-created).
+- Grading math is shared: `app/quant/regime_grading.py` is imported by the
+  monitor, `scripts/grade_hmm_regime.py`, and `scripts/vol_forecast_race.py`.
 
-Previous handoffs archived:
-[`docs/HANDOFF_skill_gate_2026-07-27.md`](docs/HANDOFF_skill_gate_2026-07-27.md) ·
-[`docs/HANDOFF_data_collection_audit_2026-07-27.md`](docs/HANDOFF_data_collection_audit_2026-07-27.md) ·
-[`docs/HANDOFF_coral_repair_loop_2026-07-27.md`](docs/HANDOFF_coral_repair_loop_2026-07-27.md).
+First live reading (read-only dry run): **redundant** — calibrated band
+(Kupiec p=0.384, n=119), loses to free on MSE only (t=+2.38), ops healthy.
+Matches the pre-registered 08-03 experiments; no auto-disable fires today.
 
----
+## Open items
 
-## What this wave was
-
-Every bot profile had to start flat at its starting cash. There was no way to
-hand the bot an existing book and say "manage this". `bot_manager.import_positions()`
-plus `POST /api/v1/bot/profiles/{bot_id}/import` is that path.
-
-## What is live
-
-`app/services/bot_manager.py::import_positions(bot_id, positions, cash, mode,
-set_starting_cash)`, exposed at `POST /api/v1/bot/profiles/{bot_id}/import`.
-`mode` is `replace` (wipe the profile's positions/orders/fills/lots/closures/
-snapshots first) or `merge` (share-weighted average into what is there).
-
-Each imported holding writes **three** rows, not one:
-
-- `positions` — qty, `avg_entry_price` = real cost basis, `stop_source='imported'`
-- `trade_fills` — a synthetic BUY, `source='import'`, zero fees
-- `position_lots` — one open lot, `is_legacy=TRUE`
-
-**The lot is not optional.** Without it the first SELL has nothing to close
-against and lot-level realized P&L is wrong for the life of the profile. The
-schema already had `is_legacy` for exactly this case.
-
-## Three decisions that are easy to get wrong later
-
-**Entry price is the REAL cost basis** (the user chose this over rebasing to
-import-day price). It keeps P&L honest and makes stops relative to a price that
-may be years old, which cuts both ways: a long-held winner's stop sits far below
-the market, and **a long-held loser is already through its stop the moment it
-lands**.
-
-So — **imported positions get `exit_style='reanalyze_on_breach'`.** With the
-default `hard_stop`, importing an underwater book would have the background
-monitor liquidate every position past its stop on the first pass after import.
-`check_stop_losses()` skips `reanalyze_on_breach` positions and hands the breach
-to the agent instead. Do not "normalise" imported positions to `hard_stop`.
-
-**The ATR stop is deliberately NOT used.** `_compute_stop_loss_pct` is
-`ATR*k / entry_price`; against an entry price from 2019 that produces a
-sub-1% stop on a 10x winner. Imports use the asset-class default from
-`_STOP_BOUNDS` (see `_default_stop_pct`) unless the file supplies a per-row
-`stop_loss_pct`.
-
-**`total_pnl` and `total_trades` are left alone.** An import is not a trade the
-bot made and the scorecard must not count it as one. Only `cash_balance` and
-(optionally) `starting_cash` move. `starting_cash` becomes `cash + total cost
-basis` — the capital actually put in — so equity-vs-starting reads as true
-lifetime return.
+1. **The human call the monitor will keep surfacing:** the HMM is `redundant`
+   — not harmful, not better than free; its unique outputs are the state
+   label/duration/switch odds at ~22–32s/cycle. To take the cost off the desk:
+   propose `HMM_REGIME_MODE=1` via chat. Grading continues either way.
+2. **trading-client has no panel for `/api/v1/component-health` yet.** The
+   endpoint serves everything needed (verdict definitions + thresholds
+   included, eval-trust convention). Until then the JSON is readable directly.
+3. First scheduled run is the next weekday 5:45 PM PT — check
+   `component_health_reports` has a row after it.
 
 ## Gotchas
 
-- **Blocked while a cycle is running**, same as reset/delete. It wipes and
-  rewrites the same tables a cycle is mid-way through using.
-- **`replace` mode deletes `portfolio_snapshots` too**, which resets the
-  drawdown breaker's peak reference for that profile. Same behaviour as
-  `reset_bot_profile`; intentional, but it means the breaker starts fresh.
-- **File parsing is NOT here.** It lives in trading-client
-  (`app/services/portfolio_import.py`) because it is pure CPU on a small upload
-  and stays responsive mid-cycle, when this service's event loop stalls for
-  seconds. This endpoint takes already-normalised JSON. Do not move the parser
-  in "for consistency".
-- The endpoint re-validates positive quantity and positive cost per row and
-  raises `ValueError` → 400. The transaction is all-or-nothing.
+- **`redundant` does NOT auto-disable — by design.** Only demonstrated harm
+  (band too NARROW, worse than free on BOTH losses, snapshot gap ≥4 trading
+  days, stale run ≥3) counts toward the 3-strike disable. Don't "fix" this
+  by making redundant count; that call was deliberately left to the user.
+- **Fail-open direction is ACTIVE (mode 0)** — a store failure resurrects the
+  prompt line rather than silently retiring the component. Commented in the
+  registry entry; don't invert it.
+- `component_health_monitor` is in `STANDARD_TIER_AGENTS`
+  (parameter_validator.py) — it is not an LLM; it's the monitor's audited
+  path to its one proposal. Removing it from the set silently breaks
+  auto-disable (the governor would reject with "not authorized").
+- The old grading names (`_load_posteriors`, `predictive_band`, …) are
+  re-exports in `scripts/grade_hmm_regime.py`; `vol_forecast_race.py` and
+  `test_hmm_grading.py` import them from there. Keep the aliases if you move
+  things again.
 
-## Still open
+## Where the reasoning lives
 
-- **No dedupe against an existing import.** Running `replace` twice is fine;
-  running `merge` twice silently doubles the book. There is no import-batch id
-  and no undo beyond `reset`.
-- **Cost basis is one blended lot per ticker**, not the real tax lots. Brokers
-  can export per-lot detail (Schwab's lot view, Fidelity's cost-basis page) and
-  the `position_lots` table could hold them faithfully; the importer collapses
-  them to a single weighted lot today.
-- **No price sanity check at import.** A cost basis wildly off from the current
-  market is accepted silently. A "this is 40x the current price, sure?" warning
-  in the preview would catch a units mistake the parser's guards miss.
+`docs/AUDIT_COMPONENT_EFFICACY_2026-08-03.md` (this wave) ·
+`experiments/exp-2026-08-hmm-regime-overlay.md` and
+`exp-2026-08-hmm-vol-forecast-value.md` (the measured record the thresholds
+encode) · `scripts/power_report.py` (why P&L is not a verdict input) ·
+parameter registry comments on `HMM_REGIME_MODE` / `TOURNAMENT_DEBATE_MODE` /
+`DEBATE_ENGINE` (the retire-by-measurement pattern this follows).
+
+Previous handoff (portfolio import, 2026-07-27) archived to
+[`docs/HANDOFF_portfolio_import_2026-07-27.md`](docs/HANDOFF_portfolio_import_2026-07-27.md);
+its unrun post-deploy checklist in
+[`docs/HANDOFF_skill_gate_2026-07-27.md`](docs/HANDOFF_skill_gate_2026-07-27.md)
+§"Verify next cycle" is still unrun.

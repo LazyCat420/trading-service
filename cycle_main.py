@@ -312,6 +312,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         from app.routers.cycle_replay_router import router as cycle_replay_router
         from app.routers.challenger_router import router as challenger_router
         from app.routers.eval_trust_router import router as eval_trust_router
+        from app.routers.component_health_router import router as component_health_router
         # The scraper was extracted back into the standalone scraper-service (:8001);
         # trading-service no longer SERVES /scrape, /collect, /stream. Its own
         # scraping now goes out over HTTP via app.services.scraper_client. The
@@ -331,6 +332,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         app.include_router(cycle_replay_router)
         app.include_router(challenger_router)
         app.include_router(eval_trust_router)
+        app.include_router(component_health_router)
     except Exception as e:
         logger.error(f"Failed to include routers: {e}")
 

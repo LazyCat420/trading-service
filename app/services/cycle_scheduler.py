@@ -755,6 +755,29 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register HMM snapshot: %s", e)
 
+            # ── Component health (5:45 PM PT weekdays, after the snapshot
+            # above has stored the day's posterior).
+            #
+            # Grades the HMM shadow against the free trailing-sigma baseline
+            # daily, and withholds it from prompts (HMM_REGIME_MODE -> 1) on
+            # 3 consecutive FAILING verdicts. Cheap: reads stored rows, no
+            # fits. See app/autoresearch/component_health.py for what counts
+            # as failing and what deliberately does not.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_component_health,
+                    trigger=CronTrigger(hour=17, minute=45, day_of_week="mon-fri",
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="component_health_evaluation",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered component health evaluation "
+                            "(cron: 5:45 PM PT, mon-fri)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register component health: %s", e)
+
             # ── Smart money: 13F collection + return recomputation ──
             # 13F filings are due 45 days after quarter end, so funds land in a
             # burst through mid-Feb/May/Aug/Nov. We sweep daily during those
@@ -1249,7 +1272,17 @@ class SchedulerService:
         """
         import asyncio as _asyncio
         try:
-            from app.quant.regime_hmm import classify_regime, persist_posterior
+            from app.quant.regime_hmm import (
+                classify_regime, hmm_regime_mode, persist_posterior,
+            )
+
+            # Mode 2 (off) is the only mode that stops the snapshot. Mode 1
+            # (shadow) keeps it: the daily series is what component_health
+            # grades, and a disabled component with no data series could
+            # never earn its way back.
+            if hmm_regime_mode() >= 2:
+                logger.info("[SCHEDULER] HMM snapshot skipped (HMM_REGIME_MODE=2)")
+                return
 
             result = await _asyncio.to_thread(classify_regime)
             if not result.get("ok"):
@@ -1267,6 +1300,26 @@ class SchedulerService:
             )
         except Exception as e:
             logger.error("[SCHEDULER] HMM posterior snapshot failed: %s", e)
+
+    @staticmethod
+    async def _run_component_health():
+        """Daily component-efficacy evaluation. The sync body does DB reads,
+        so it runs on a thread — a blocking call here would stall the event
+        loop the healthcheck answers on."""
+        import asyncio as _asyncio
+        try:
+            from app.autoresearch.component_health import (
+                run_component_health_evaluation,
+            )
+
+            report = await _asyncio.to_thread(run_component_health_evaluation)
+            logger.info(
+                "[SCHEDULER] Component health: %s -> %s (action=%s)",
+                report.get("component"), report.get("verdict"),
+                report.get("action"),
+            )
+        except Exception as e:
+            logger.error("[SCHEDULER] Component health evaluation failed: %s", e)
 
     @staticmethod
     async def _run_13f_collection():

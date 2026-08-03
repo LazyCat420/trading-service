@@ -398,6 +398,23 @@ def reset_cache() -> None:
         _CACHE.clear()
 
 
+def hmm_regime_mode() -> int:
+    """0=active, 1=shadow (no desk line; daily snapshot continues), 2=off.
+
+    The registry entry (parameter_store.HMM_REGIME_MODE) carries the full
+    semantics and the measured rationale. Fail-open lands on ACTIVE — the
+    registry default — because the line is advisory prose, not a gate: a
+    transient store failure briefly resurrecting it is acceptable, silently
+    retiring a component the user believes is on is not.
+    """
+    try:
+        from app.services.parameter_store import get_param
+        return int(get_param("HMM_REGIME_MODE"))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[RegimeHMM] mode read failed (non-fatal, ACTIVE): %s", e)
+        return 0
+
+
 def build_hmm_context_line(
     as_of: date | None = None, cycle_id: str | None = None,
 ) -> str:
