@@ -145,11 +145,16 @@ async def run_discovery(
         logger.warning("[DiscoveryMode] Institutional scan failed: %s", e)
 
     # ── Filter: US-tradeable only ──
-    try:
-        from app.validation.ticker_validator import is_us_tradeable
-    except ImportError:
-        def is_us_tradeable(t):
-            return True  # Fallback if validator not available
+    # This imported app.validation.ticker_validator, a module that does not
+    # exist in this service, and fell back to `return True` on ImportError —
+    # so the filter admitted EVERY candidate, including the foreign tickers it
+    # was written to drop, and logged nothing. The real implementation was in
+    # app/utils/us_ticker_resolver.py the whole time (same function name; it
+    # rejects exchange suffixes like .KS/.T/.HK and numeric codes).
+    #
+    # No try/except: if this import breaks, the filter must fail loudly rather
+    # than silently pass everything through again.
+    from app.utils.us_ticker_resolver import is_us_tradeable
 
     valid_candidates = {}
     for tkr, info in source_tracker.items():

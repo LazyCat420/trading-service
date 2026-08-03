@@ -194,9 +194,17 @@ def main() -> int:
     print("  A FAIL here is a real kill. A PASS is 'not yet falsified', not 'proven'.\n")
 
     factor_names = ("momentum", "low_vol", "beta", "reversal")
-    # Trials run against this same price history. A floor, not the true count —
-    # every prior sweep on the same data also belongs here.
-    n_trials = len(factor_names)
+    # Trials run against this same price history. This used to be
+    # len(factor_names) = 4 with a comment admitting it was a floor; the ledger
+    # now answers it. Every hypothesis ever scored on price_history is a draw
+    # from the same well, and deflating against 4 when the truth is ~12+ fails
+    # in the direction that lets noise through.
+    from app.quant.trial_registry import seed_known_trials, trial_count
+
+    seed_known_trials()
+    n_trials = trial_count()
+    print(f"  Multiple-testing denominator: {n_trials} distinct hypotheses on "
+          f"record (research_trials), not the 4 factors in this sweep.\n")
 
     results = {}
     for name in factor_names:
@@ -220,13 +228,14 @@ def main() -> int:
         # however many factors were run against this same price history, and
         # selection alone inflates it — best-of-100 pure-noise series reaches an
         # annualized Sharpe of ~3.3 (see tests/unit/test_multiple_testing_gates).
-        # n_trials counts the factors in THIS sweep, which is a floor: every
-        # earlier sweep on the same data belongs in that count too, so the real
-        # deflation is stronger than what is shown here.
-        from app.quant.stat_gates import (
-            deflated_sharpe_ratio, min_track_record_length,
+        # n_trials comes from the trial ledger (see above), so this deflation
+        # accounts for the sweeps that came before this one.
+        from app.quant.stat_gates import min_track_record_length
+        from app.quant.trial_registry import deflated_sharpe_from_registry
+
+        dsr = deflated_sharpe_from_registry(
+            rets, label=f"factor:{name}", source="scripts/factor_backtest.py",
         )
-        dsr = deflated_sharpe_ratio(rets, n_trials=n_trials)
         trl = min_track_record_length(rets)
         if dsr.get("verdict") != "INSUFFICIENT_DATA":
             # `NEVER` carries no min_track_record: a negative edge cannot be

@@ -56,6 +56,16 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_earnings_data",
         "get_sec_filings",
         "get_congress_trades",
+        # Smart money (2026-08-03). These three were registered tools granted
+        # to NOBODY — 79k trade scores and 1k actor track records recomputed
+        # every morning that no LLM could reach. The desk path now gets the
+        # actor-quality summary precomputed in alt_data_block (analysts rarely
+        # spend a turn on an optional call), but an interactive user asks the
+        # open-ended forms — "who's been buying NVDA", "which representatives
+        # actually beat SPY" — which no fixed block can anticipate.
+        "get_smart_money_signal",
+        "get_smart_money_leads",
+        "get_smart_money_leaderboard",
         # Research
         "lazy_web_search",
         "scrape_url",

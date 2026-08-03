@@ -58,6 +58,12 @@ MAX_ITERATIONS = 200
 CONVERGENCE_TOL = 1e-4
 CANDIDATE_STATES = (2, 3)
 _SEED = 20260725
+
+# A posterior fitted on a tape this many sessions behind is flagged. Two is
+# deliberate rather than generous: the model's whole job is to notice a state
+# CHANGE, and a STRESSED turn that began yesterday is invisible to a fit that
+# ends last week.
+STALE_AFTER_SESSIONS = 2
 _MIN_VARIANCE = 1e-8                     # variance floor: a collapsing state
                                          # otherwise drives likelihood to +inf
 
@@ -280,10 +286,31 @@ def classify_regime(
         for i in range(len(labels))
     ]
 
+    # How stale is the tape this posterior was fitted on? Measured 2026-08-03:
+    # SPY's dominant vendor (yfinance, 8,428 rows) had stopped at 07-27 while
+    # asset_prices carried GSPC through 08-03, so the regime shadow injected
+    # into every desk was six sessions behind and said so nowhere a reader
+    # could act on — the block printed "data through 2026-07-27" with nothing
+    # to compare it against. Root cause was the FALSE_TICKERS blocklist
+    # refusing every explicit SPY fetch since 2026-05-07 (fixed same day).
+    # A regime model reading a week-old tape cannot see a regime CHANGE, which
+    # is the only thing it exists to catch, so the staleness travels with the
+    # result and the desk line warns.
+    last_bar = dates[-1] if dates else None
+    stale_sessions = None
+    if last_bar is not None:
+        try:
+            from app.quant.technical_baseline import _trading_day_age
+            stale_sessions = _trading_day_age(ticker, as_of or date.today(), last_bar)
+        except Exception as e:
+            logger.debug("[RegimeHMM] staleness probe failed (non-fatal): %s", e)
+
     return {
         "ok": True,
         "ticker": ticker.strip().upper(),
         "as_of": str(dates[-1]) if dates else None,
+        "stale_sessions": stale_sessions,
+        "is_stale": bool(stale_sessions is not None and stale_sessions >= STALE_AFTER_SESSIONS),
         "n_states": best["n_states"],
         "selected_by": "BIC",
         "bic_by_states": {f["n_states"]: round(f["bic"], 1) for f in fits},
@@ -409,6 +436,15 @@ def build_hmm_context_line(
     # the same blind spot that let a 71-day-old RSI read as current. The
     # technicals block already warns like this; this one now does too.
     as_of_txt = f", data through {r['as_of']}" if r.get("as_of") else ""
+    # A date alone gave the reader nothing to measure against — see the
+    # staleness note in classify_regime. Say how far behind, and say what it
+    # costs, so a stale posterior reads as degraded rather than current.
+    if r.get("is_stale"):
+        as_of_txt += (
+            f" — **{r['stale_sessions']} sessions STALE**; a fit this far behind "
+            f"cannot have seen a recent regime change, so treat the label as "
+            f"historical and lean on the Regime Engine's live read"
+        )
     return (
         f"- HMM regime shadow ({r['n_states']}-state Gaussian HMM on {r['ticker']} "
         f"daily returns, n={r['observations']}, selected by {r['selected_by']}"
@@ -419,3 +455,107 @@ def build_hmm_context_line(
         f"This is a price-only statistical estimate shown for comparison — it is NOT "
         f"a directive and does not override the Regime Engine's classification."
     )
+
+
+# ── Persistence ───────────────────────────────────────────────────────────
+#
+# The posterior was computed every cycle, rendered into a prompt, and dropped.
+# This module's own docstring says it exists to be "the baseline the LLM must
+# beat" — and that comparison had never been run, because grading needs the
+# daily series and nothing kept one (`grep -rn hmm scripts/` returned nothing
+# on 2026-08-03). Storing the posterior is what makes the module's stated
+# purpose testable at all.
+#
+# One row per (ticker, as_of). Re-running a day overwrites it, so a backfill
+# is idempotent and a corrected vendor feed can be re-fitted in place.
+
+def ensure_posterior_table() -> None:
+    with get_db() as db:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS regime_hmm_posteriors (
+                ticker              TEXT NOT NULL,
+                as_of               DATE NOT NULL,
+                regime              TEXT NOT NULL,
+                confidence          DOUBLE PRECISION,
+                n_states            INTEGER,
+                state_probabilities JSONB,
+                -- the state's own claims, which are what gets graded
+                mean_daily_return_pct DOUBLE PRECISION,
+                annualized_vol_pct    DOUBLE PRECISION,
+                expected_duration_days DOUBLE PRECISION,
+                -- ALL states, not just the current one: the honest one-step
+                -- predictive variance is the mixture over where the chain
+                -- goes next (gamma_T @ A), so grading needs every state's
+                -- mean and variance plus the transition matrix.
+                state_stats         JSONB,
+                transition_matrix   JSONB,
+                observations        INTEGER,
+                stale_sessions      INTEGER,
+                bic                 DOUBLE PRECISION,
+                computed_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (ticker, as_of)
+            )
+            """
+        )
+
+
+def persist_posterior(result: dict) -> bool:
+    """Store one classification. False on any failure — never raises.
+
+    Fail-open like everything else in this module: a desk must not stall
+    because a measurement table is unavailable.
+    """
+    if not result or not result.get("ok") or not result.get("as_of"):
+        return False
+    try:
+        import json
+
+        stats = result.get("state_stats", {}).get(result["regime"], {})
+        bic_map = result.get("bic_by_states") or {}
+        bic = bic_map.get(result.get("n_states"))
+        ensure_posterior_table()
+        with get_db() as db:
+            db.execute(
+                """
+                INSERT INTO regime_hmm_posteriors (
+                    ticker, as_of, regime, confidence, n_states,
+                    state_probabilities, mean_daily_return_pct,
+                    annualized_vol_pct, expected_duration_days,
+                    state_stats, transition_matrix, observations,
+                    stale_sessions, bic
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (ticker, as_of) DO UPDATE SET
+                    regime = EXCLUDED.regime,
+                    confidence = EXCLUDED.confidence,
+                    n_states = EXCLUDED.n_states,
+                    state_probabilities = EXCLUDED.state_probabilities,
+                    mean_daily_return_pct = EXCLUDED.mean_daily_return_pct,
+                    annualized_vol_pct = EXCLUDED.annualized_vol_pct,
+                    expected_duration_days = EXCLUDED.expected_duration_days,
+                    state_stats = EXCLUDED.state_stats,
+                    transition_matrix = EXCLUDED.transition_matrix,
+                    observations = EXCLUDED.observations,
+                    stale_sessions = EXCLUDED.stale_sessions,
+                    bic = EXCLUDED.bic,
+                    computed_at = CURRENT_TIMESTAMP
+                """,
+                [
+                    result["ticker"], result["as_of"], result["regime"],
+                    result.get("confidence"), result.get("n_states"),
+                    json.dumps(result.get("state_probabilities") or {}),
+                    stats.get("mean_daily_return_pct"),
+                    stats.get("annualized_vol_pct"),
+                    stats.get("expected_duration_days"),
+                    json.dumps(result.get("state_stats") or {}),
+                    json.dumps(result.get("transition_matrix") or []),
+                    result.get("observations"), result.get("stale_sessions"),
+                    bic,
+                ],
+            )
+        return True
+    except Exception as e:
+        logger.warning("[RegimeHMM] posterior persist failed (non-fatal): %s", e)
+        return False

@@ -728,6 +728,33 @@ class SchedulerService:
             except Exception as e:
                 logger.warning("[SCHEDULER] Failed to register macro refresh: %s", e)
 
+            # ── HMM regime posterior (5:30 PM PT weekdays, after the macro
+            # refresh above has landed the day's closes).
+            #
+            # regime_hmm.py says in its first paragraph that it exists to be
+            # "the baseline the LLM must beat" — and that comparison had never
+            # been run, because the posterior was rendered into a prompt and
+            # dropped. Nothing kept the daily series a grader needs.
+            #
+            # Deliberately its OWN job rather than a write inside the desk
+            # path: build_quant_math_block runs the fit under a per-component
+            # deadline, and a DB write in there competes for the budget that
+            # already starves GARCH/HRP/sizing when the HMM runs long.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_hmm_posterior_snapshot,
+                    trigger=CronTrigger(hour=17, minute=30, day_of_week="mon-fri",
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="hmm_posterior_snapshot",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info("[SCHEDULER] Registered HMM posterior snapshot "
+                            "(cron: 5:30 PM PT, mon-fri)")
+            except Exception as e:
+                logger.warning("[SCHEDULER] Failed to register HMM snapshot: %s", e)
+
             # ── Smart money: 13F collection + return recomputation ──
             # 13F filings are due 45 days after quarter end, so funds land in a
             # burst through mid-Feb/May/Aug/Nov. We sweep daily during those
@@ -1211,6 +1238,35 @@ class SchedulerService:
             logger.info("[SCHEDULER] Macro refresh: %s market rows", result.get("total", 0))
         except Exception as e:
             logger.error("[SCHEDULER] Market data refresh failed: %s", e)
+
+    @staticmethod
+    async def _run_hmm_posterior_snapshot():
+        """Store today's HMM regime posterior so the shadow can be graded.
+
+        Uses a FRESH classification rather than the per-cycle cache: the cache
+        is keyed by cycle and this job has no cycle, and a snapshot taken
+        after the close should reflect the close.
+        """
+        import asyncio as _asyncio
+        try:
+            from app.quant.regime_hmm import classify_regime, persist_posterior
+
+            result = await _asyncio.to_thread(classify_regime)
+            if not result.get("ok"):
+                logger.warning("[SCHEDULER] HMM snapshot: fit failed (%s)",
+                               result.get("reason"))
+                return
+            stored = await _asyncio.to_thread(persist_posterior, result)
+            stale = result.get("stale_sessions")
+            logger.info(
+                "[SCHEDULER] HMM snapshot: %s as of %s (%.0f%% posterior)%s%s",
+                result.get("regime"), result.get("as_of"),
+                result.get("confidence") or 0.0,
+                "" if stored else " — NOT STORED",
+                f" — tape {stale} sessions stale" if stale else "",
+            )
+        except Exception as e:
+            logger.error("[SCHEDULER] HMM posterior snapshot failed: %s", e)
 
     @staticmethod
     async def _run_13f_collection():
