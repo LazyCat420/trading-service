@@ -352,6 +352,20 @@ Output ONLY a JSON list of indexes: [0, 5, 2]
                 filtered_candidates, ollama_host, ollama_model
             )
 
+        # Hard cap on thread fetches. Each thread costs a ~10s-paced RSS call
+        # (reddit's budget), so the production limit=15 x 4 subs could queue
+        # 60+ fetches — past even the 900s client timeout, and starving any
+        # concurrently-running cycle's per-ticker reddit search. Priority
+        # threads (Daily/Moves megathreads) were collected first and survive
+        # the cut; the original bot solved this with its LLM filter.
+        _MAX_THREAD_FETCHES = 12
+        if len(filtered_candidates) > _MAX_THREAD_FETCHES:
+            logger.info(
+                "[reddit-purge] capping thread fetches: %d candidates -> %d",
+                len(filtered_candidates), _MAX_THREAD_FETCHES,
+            )
+            filtered_candidates = filtered_candidates[:_MAX_THREAD_FETCHES]
+
         # 4. Fetch details & count tickers
         ticker_scores: dict[str, int] = {}
         ticker_to_posts: dict[str, list[dict]] = {}

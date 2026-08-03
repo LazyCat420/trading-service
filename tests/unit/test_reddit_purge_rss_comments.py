@@ -156,3 +156,30 @@ def test_weighted_scoring_counts_comments(collector, monkeypatch):
     # TSLA: 3 (title) + 2 (body) + 2 comments = 7; BABA: 1 comment = 1
     assert scores == {"TSLA": 7, "BABA": 1}
     assert results[0]["ticker"] == "TSLA"
+
+
+def test_thread_fetches_are_hard_capped(collector, monkeypatch):
+    """60+ rising candidates must not queue 60 paced RSS fetches — the cap
+    keeps the sweep inside its timeout and off the live cycles' rate budget."""
+    col, install = collector
+    install([])
+    fetched = []
+
+    async def fake_posts(sub, listing_type="hot", limit=5):
+        if listing_type == "rising":
+            return [{"id": f"{sub}{i}", "title": f"post {i}", "subreddit": sub,
+                     "permalink": f"/r/{sub}/comments/{i}/x/", "score": 1,
+                     "selftext": "", "num_comments": 0, "created_utc": 0,
+                     "upvote_ratio": 0.5, "author": "u"} for i in range(20)]
+        return []
+
+    async def fake_thread(permalink):
+        fetched.append(permalink)
+        return ("", "", [])
+
+    monkeypatch.setattr(col, "get_subreddit_posts", fake_posts)
+    monkeypatch.setattr(col, "get_thread_data", fake_thread)
+    monkeypatch.setattr(col.validator, "validate_ticker", lambda t: False)
+
+    asyncio.run(col.collect(subreddits=["wallstreetbets", "stocks", "pennystocks"], limit=20))
+    assert len(fetched) == 12
