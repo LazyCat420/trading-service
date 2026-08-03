@@ -54,6 +54,19 @@ def _ensure_telemetry_table() -> None:
                 EXCEPTION WHEN others THEN NULL;
                 END $$;
             """)
+            # KV-cache probe + prompt footprint (2026-08-03). cached_tokens /
+            # prompt_tokens are the harness's LAST-request usage snapshot;
+            # sys/user_prompt_chars were computed in agent_runner since the
+            # context-budget work but never persisted.
+            db.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS cached_tokens INTEGER DEFAULT 0;
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER DEFAULT 0;
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS sys_prompt_chars INTEGER DEFAULT 0;
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS user_prompt_chars INTEGER DEFAULT 0;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
+            """)
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_v3_telemetry_cycle
                 ON v3_agent_telemetry (cycle_id)
@@ -156,6 +169,10 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                 "loops_used": entry.get("loops_used", 0), "token_usage": entry.get("token_usage", 0),
                 "quality_score": entry.get("quality_score", -1),
                 "artifact_size_bytes": entry.get("artifact_size_bytes", 0),
+                "cached_tokens": entry.get("cached_tokens", 0),
+                "prompt_tokens": entry.get("prompt_tokens", 0),
+                "sys_prompt_chars": entry.get("sys_prompt_chars", 0),
+                "user_prompt_chars": entry.get("user_prompt_chars", 0),
             }
             for entry in entries
         ]
@@ -166,12 +183,14 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                     INSERT INTO v3_agent_telemetry
                         (cycle_id, ticker, agent_name, phase, outcome,
                          elapsed_ms, loops_used, token_usage, quality_score,
-                         artifact_size_bytes)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         artifact_size_bytes, cached_tokens, prompt_tokens,
+                         sys_prompt_chars, user_prompt_chars)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [r["cycle_id"], r["ticker"], r["agent_name"], r["phase"], r["outcome"],
                      r["elapsed_ms"], r["loops_used"], r["token_usage"], r["quality_score"],
-                     r["artifact_size_bytes"]],
+                     r["artifact_size_bytes"], r["cached_tokens"], r["prompt_tokens"],
+                     r["sys_prompt_chars"], r["user_prompt_chars"]],
                 )
         try:
             import uuid as _uuid

@@ -584,9 +584,10 @@ async def run_agent(
             int(getattr(harness, "total_tokens", 0) or 0),
             elapsed_ms,
             tool_call_count + 1,
+            dict(getattr(harness, "last_usage", {}) or {}),
         )
 
-    content, tokens, elapsed_ms, loops_used = await _agent_llm_call()
+    content, tokens, elapsed_ms, loops_used, last_usage = await _agent_llm_call()
 
     if not content or not str(content).strip():
         content = f"Agent failed: empty response from {agent_name}"
@@ -632,5 +633,16 @@ async def run_agent(
         "execution_ms": elapsed_ms,
         "loops_used": loops_used,
         "stop_reason": stop_reason,
+        # Snapshot of the harness's LAST request, not a loop-wide sum. That is
+        # the right probe for "is prefix caching working at all": the final
+        # iteration carries the longest shared prefix, so cacheReadInputTokens
+        # = 0 here means the KV cache is doing nothing for this agent.
+        "cached_tokens": int(last_usage.get("cacheReadInputTokens") or 0),
+        "cache_creation_tokens": int(last_usage.get("cacheCreationInputTokens") or 0),
+        "prompt_tokens": int(
+            last_usage.get("totalInputTokens")
+            or last_usage.get("inputTokens")
+            or 0
+        ),
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
     }

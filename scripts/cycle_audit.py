@@ -269,7 +269,12 @@ def check_cycle_attribution(cur, cycle_id):
 
 
 def check_benchmark_timings(cur, cycle_id):
-    """Phase timings are NULL, so phase cost can only be derived by hand."""
+    """Phase timings should be filled from pipeline_events since 2026-08-03.
+
+    cache_hit_pct is the COLLECTOR fast-path skip rate (scraper steps skipped
+    because a <48h thesis existed) — it says nothing about LLM KV-cache reuse;
+    that lives in v3_agent_telemetry.cached_tokens.
+    """
     cur.execute(
         """
         SELECT collect_ms, analyze_ms, trade_ms, total_tokens, cache_hit_pct
@@ -287,8 +292,8 @@ def check_benchmark_timings(cur, cycle_id):
     status = PASS if not missing else WARN
     return ("phase timings recorded", status,
             f"missing: {', '.join(missing) or 'none'}"
-            + f" | tokens={tokens or 0:,} cache={cache or 0}%",
-            {"missing": missing, "tokens": tokens, "cache_hit_pct": cache})
+            + f" | tokens={tokens or 0:,} collector_skip={cache or 0}%",
+            {"missing": missing, "tokens": tokens, "collector_skip_pct": cache})
 
 
 def check_confidence_is_monotonic(cur, cycle_id):

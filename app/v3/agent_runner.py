@@ -800,6 +800,8 @@ async def run_v3_agent(
         final_text = result.get("response", "")
         loops_used = result.get("loops_used", 1)
         token_usage = result.get("tokens_used", 0)
+        cached_tokens = result.get("cached_tokens", 0)
+        prompt_tokens = result.get("prompt_tokens", 0)
         stop_reason = result.get("stop_reason", "completed")
 
         # Budget exhaustion — the harness hit max_iterations without a final
@@ -1291,7 +1293,8 @@ async def run_v3_agent(
         if not degraded:
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
-                              artifact_size_bytes=artifact_size_bytes)
+                              artifact_size_bytes=artifact_size_bytes,
+                              cached_tokens=cached_tokens, prompt_tokens=prompt_tokens)
 
         # Classify outcome
         data_gaps = artifact.get("data_gaps", [])
@@ -1400,6 +1403,8 @@ def _record_telemetry(
     sys_prompt_chars: int = 0,
     user_prompt_chars: int = 0,
     artifact_size_bytes: int = 0,
+    cached_tokens: int = 0,
+    prompt_tokens: int = 0,
 ) -> None:
     """Record telemetry for a V3 agent run."""
     entry = {
@@ -1412,9 +1417,12 @@ def _record_telemetry(
         "phase": desk.phase.value,
         "quality_score": quality_score,
         "artifact_size_bytes": artifact_size_bytes,
-        # Context budget report: per-agent prompt footprint (chars). The DB
-        # insert ignores extra keys; these surface in logs/v3_metadata.
         "sys_prompt_chars": sys_prompt_chars,
         "user_prompt_chars": user_prompt_chars,
+        # KV-cache probe: last-request snapshot from the harness (see
+        # base_agent run_agent return keys). cached_tokens == 0 on a
+        # multi-iteration run means prefix caching did nothing for this agent.
+        "cached_tokens": cached_tokens,
+        "prompt_tokens": prompt_tokens,
     }
     desk.record_agent_telemetry(entry)

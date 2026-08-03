@@ -449,8 +449,9 @@ class PipelineService:
             """Revive cycle_benchmarks/cycle_ticker_benchmarks (the DevOps
             Performance panel). Their V2 writer died in the V3 purge, freezing
             the dashboard on 2026-06-24 data. V3 interleaves collect/analyze
-            per ticker, so the per-phase ms columns stay NULL — the panel
-            renders the summary cards (total, cache hit, tickers) without them.
+            per ticker, so the phase columns are derived after the fact from
+            pipeline_events wall-clock spans (first→last event per phase) —
+            overlapping phases mean they can sum to more than total_ms.
             """
             try:
                 from app.db.connection import get_db
@@ -480,14 +481,30 @@ class PipelineService:
                             "SELECT COALESCE(SUM(tokens_used), 0) FROM llm_audit_logs WHERE cycle_id = %s",
                             [cycle_id],
                         ).fetchone()
+                    phase_ms = {"collecting": None, "analyzing": None, "trading": None}
+                    try:
+                        for phase, ms in db.execute(
+                            """SELECT phase,
+                                      EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) * 1000
+                               FROM pipeline_events
+                               WHERE cycle_id = %s AND phase IN ('collecting', 'analyzing', 'trading')
+                               GROUP BY phase""",
+                            [cycle_id],
+                        ).fetchall():
+                            phase_ms[phase] = int(ms) if ms is not None else None
+                    except Exception as ph_err:
+                        logger.warning("[PipelineService] phase-ms derivation failed (non-fatal): %s", ph_err)
                     db.execute(
                         """INSERT INTO cycle_benchmarks
                         (cycle_id, started_at, finished_at, total_ms, ticker_count, avg_ticker_ms,
+                         collect_ms, analyze_ms, trade_ms,
                          steps_total, steps_skipped, steps_ok, steps_error, total_tokens, cache_hit_pct, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (cycle_id) DO UPDATE SET
                             finished_at = EXCLUDED.finished_at, total_ms = EXCLUDED.total_ms,
                             ticker_count = EXCLUDED.ticker_count, avg_ticker_ms = EXCLUDED.avg_ticker_ms,
+                            collect_ms = EXCLUDED.collect_ms, analyze_ms = EXCLUDED.analyze_ms,
+                            trade_ms = EXCLUDED.trade_ms,
                             steps_total = EXCLUDED.steps_total, steps_skipped = EXCLUDED.steps_skipped,
                             steps_ok = EXCLUDED.steps_ok, steps_error = EXCLUDED.steps_error,
                             total_tokens = EXCLUDED.total_tokens, cache_hit_pct = EXCLUDED.cache_hit_pct,
@@ -496,6 +513,7 @@ class PipelineService:
                             cycle_id, summary.get("started_at"), summary.get("ended_at"),
                             total_ms, ticker_count,
                             int(total_ms / ticker_count) if total_ms and ticker_count else None,
+                            phase_ms["collecting"], phase_ms["analyzing"], phase_ms["trading"],
                             steps_total, skipped, ok, err,
                             int(tokens_row[0]) if tokens_row else 0,
                             round(skipped / steps_total * 100, 1) if steps_total else 0.0,

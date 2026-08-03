@@ -348,6 +348,26 @@ async def start_health_server(shutdown_event: asyncio.Event):
     server.should_exit = True
     await task
 
+def setup_error_capture():
+    """Attach the DB error logger to the root logger, or die loudly.
+
+    Must run AFTER logging.basicConfig(force=True) — force=True strips every
+    existing root handler, so an earlier registration would be silently undone.
+    Until 2026-08-02 registration only happened as a side effect of a lazy
+    HTTP-path import; every container since the 07-31 deploy ran with zero
+    error capture (execution_errors/cycle_audit_log empty while 795 WARN/ERR
+    lines went to stdout in 30h).
+    """
+    from app.services.logging import setup_db_logger
+    from app.services.logging.unified_logger import DbLoggingHandler
+
+    setup_db_logger()
+    if not any(isinstance(h, DbLoggingHandler) for h in logging.getLogger().handlers):
+        raise RuntimeError("DB error logger failed to register on the root logger")
+    # Canary row: one WARNING per boot proves the capture path end-to-end.
+    logger.warning("db-logger-canary: DB error capture registered at boot")
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -356,6 +376,7 @@ def main():
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     sys.stdout.reconfigure(line_buffering=True)
+    setup_error_capture()
     logger.info("Trading Cycle Backend starting (V3 pipeline)...")
 
     ap = argparse.ArgumentParser(description="Trading Cycle Backend")
