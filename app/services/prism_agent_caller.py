@@ -41,6 +41,15 @@ _REASONING_LEAK_RE = re.compile(
 )
 _FIRST_HEADING_RE = re.compile(r"\n#{1,3} ")
 
+# Milder tier: not a reasoning trace, just a conversational acknowledgment
+# before the real report ("I'll write the market close briefing based on the
+# provided data.\n\n# Market Close Flash Briefing…" — observed live 08-03 with
+# thinking correctly OFF). Same salvage rule, quieter log.
+_PREAMBLE_RE = re.compile(
+    r"^(?:i'll\b|i will\b|sure[,!]|certainly[,!.]|here (?:is|'s)\b)",
+    re.IGNORECASE,
+)
+
 
 def strip_reasoning_leak(text: str, agent_name: str = "") -> tuple[str, bool]:
     """Detect a reasoning trace leaked into response content; salvage if safe.
@@ -54,7 +63,23 @@ def strip_reasoning_leak(text: str, agent_name: str = "") -> tuple[str, bool]:
     while the canary log points at the real problem.
     """
     stripped = (text or "").lstrip()
-    if not stripped or not _REASONING_LEAK_RE.match(stripped):
+    if not stripped:
+        return text, False
+
+    if not _REASONING_LEAK_RE.match(stripped):
+        # Conversational acknowledgment before the report — trim it with the
+        # same retention-guarded heading cut, but don't sound the leak alarm.
+        if _PREAMBLE_RE.match(stripped):
+            m = _FIRST_HEADING_RE.search(stripped)
+            if m:
+                remainder = stripped[m.start():].lstrip()
+                if len(remainder) >= 400 and len(remainder) >= 0.3 * len(stripped):
+                    logger.info(
+                        "[PREAMBLE] %s: trimmed conversational preamble "
+                        "(%d chars) before first heading",
+                        agent_name or "unknown", m.start(),
+                    )
+                    return remainder, False
         return text, False
 
     logger.error(

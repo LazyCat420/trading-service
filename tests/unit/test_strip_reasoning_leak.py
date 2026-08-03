@@ -57,3 +57,19 @@ def test_okay_preamble_flagged():
     out, leaked = strip_reasoning_leak(text, "x")
     assert leaked is True
     assert out.startswith("# Mid-Day Market Flash Briefing")
+
+
+def test_conversational_preamble_trimmed_quietly():
+    # observed live 2026-08-03 with thinking correctly off
+    text = ("I'll write the market close briefing based on the provided data.\n\n"
+            + _report().lstrip())
+    out, leaked = strip_reasoning_leak(text, "flash_briefing")
+    assert leaked is False  # not a reasoning leak — no alarm
+    assert out.startswith("# Mid-Day Market Flash Briefing")
+
+
+def test_preamble_without_heading_left_alone():
+    text = "I'll summarize: markets rose broadly on tech strength."
+    out, leaked = strip_reasoning_leak(text, "x")
+    assert out == text
+    assert leaked is False
