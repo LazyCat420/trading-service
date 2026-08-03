@@ -110,6 +110,12 @@ def run_migrations(conn):
     _safe_add_column(conn, "news_articles", "quality_reason", "TEXT")
     _safe_add_column(conn, "news_articles", "quality_score", "INTEGER")
     _safe_add_column(conn, "news_articles", "is_cluster_winner", "BOOLEAN")
+    # 'detected' = ticker found in title/summary; 'query_fallback' = row
+    # inherited the QUERIED ticker because extraction found none (Finnhub/
+    # yfinance per-ticker feeds). Wake triggers must not act on fallback rows
+    # — one generic roundup stored under 5 tickers woke a trade-enabled
+    # cycle on 2026-08-02. NULL = legacy row (pre-2026-08-03, unknown).
+    _safe_add_column(conn, "news_articles", "ticker_attribution", "TEXT")
     # Grounded fact extraction (langextract-style; app/services/news_extraction.py):
     # facts with source-aligned quotes, cached per article.
     _safe_add_column(conn, "news_articles", "grounded_facts", "JSONB")

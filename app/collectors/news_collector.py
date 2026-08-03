@@ -828,7 +828,14 @@ async def collect_finnhub_news(
                     t for t in detected_tickers
                     if _is_article_relevant_to_ticker(t, full_text)
                 }
-            tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
+            # Fallback attribution is recorded so wake triggers can refuse it
+            # (see collect_finnhub_news for the measured ghost-wake case).
+            if detected_tickers:
+                tickers_to_insert = list(detected_tickers)
+                attribution = "detected"
+            else:
+                tickers_to_insert = [ticker.upper()]
+                attribution = "query_fallback"
 
             from app.processors.dedup_engine import DedupEngine
             dedup = DedupEngine(table="news_articles")
@@ -846,6 +853,7 @@ async def collect_finnhub_news(
                     "published_at": published_at,
                     "summary": summary,
                     "content_hash": content_hash,
+                    "ticker_attribution": attribution,
                 })
             safe_emit(
                 emit_cb,
@@ -869,8 +877,8 @@ async def collect_finnhub_news(
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'finnhub', %s, CURRENT_TIMESTAMP, %s, %s)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'finnhub', %s, CURRENT_TIMESTAMP, %s, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -884,6 +892,7 @@ async def collect_finnhub_news(
                             item.get("content_hash"),
                             _qs,
                             _qr,
+                            item.get("ticker_attribution", "detected"),
                         ],
                     )
                     count += 1
@@ -983,7 +992,14 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     t for t in detected_tickers
                     if _is_article_relevant_to_ticker(t, full_text)
                 }
-            tickers_to_insert = list(detected_tickers) if detected_tickers else [ticker.upper()]
+            # Fallback attribution is recorded so wake triggers can refuse it
+            # (see collect_finnhub_news for the measured ghost-wake case).
+            if detected_tickers:
+                tickers_to_insert = list(detected_tickers)
+                attribution = "detected"
+            else:
+                tickers_to_insert = [ticker.upper()]
+                attribution = "query_fallback"
 
             from app.processors.dedup_engine import DedupEngine
             dedup = DedupEngine(table="news_articles")
@@ -1001,6 +1017,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     "published_at": published_at,
                     "summary": summary,
                     "content_hash": content_hash,
+                    "ticker_attribution": attribution,
                 })
             return res
 
@@ -1018,8 +1035,8 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance', %s, CURRENT_TIMESTAMP, %s, %s)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance', %s, CURRENT_TIMESTAMP, %s, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -1033,6 +1050,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                             item.get("content_hash"),
                             _qs,
                             _qr,
+                            item.get("ticker_attribution", "detected"),
                         ],
                     )
                     count += 1

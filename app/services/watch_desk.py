@@ -431,13 +431,23 @@ def _rsi(closes: list[float], period: int = 14) -> float | None:
 
 def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
     """Recent (title, collected_at) for the ticker from news_articles — cheap read.
-    Returns [] if the table/rows are absent."""
+    Returns [] if the table/rows are absent.
+
+    A wake is a trade-enabled cycle, so only rows whose ticker was actually
+    DETECTED in the text may trip one: 'query_fallback' rows inherited the
+    queried ticker when extraction found nothing (one generic "Earnings,
+    PMI..." roundup stored under 5 tickers woke the LLY cycle 2026-08-02),
+    and 'discarded' rows are scrape artifacts. NULL attribution (legacy) and
+    'thin' quality stay eligible — dropping them would blind every watch on
+    pre-migration rows for 48h."""
     try:
         with get_db() as db:
             rows = db.execute(
                 "SELECT title, collected_at FROM news_articles "
                 "WHERE ticker = %s "
                 f"AND collected_at >= NOW() - INTERVAL '{int(hours)} hours' "
+                "AND (ticker_attribution IS NULL OR ticker_attribution != 'query_fallback') "
+                "AND (quality_status IS NULL OR quality_status != 'discarded') "
                 "ORDER BY collected_at DESC LIMIT 40",
                 [ticker],
             ).fetchall()
