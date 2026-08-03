@@ -104,9 +104,122 @@ def build_alt_data_block(ticker: str) -> str:
     except Exception as e:
         logger.debug("[AltDataBlock] %s: congress query failed (non-fatal): %s", ticker, e)
 
+    quality = smart_money_quality_line(ticker)
+    if quality:
+        parts.append(quality)
+
     if not parts:
         return ""
     return "## ALTERNATIVE DATA (code-computed — verify, don't re-fetch)\n" + "\n".join(parts)
+
+
+_QUALITY_WINDOW_DAYS = 180
+
+
+def _ordinal(n: int) -> str:
+    """1 -> 1st, 13 -> 13th, 72 -> 72nd. The teens are all -th."""
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def smart_money_quality_line(ticker: str) -> str:
+    """How good are the actors who traded this ticker — the weighting fact.
+
+    `smart_money_trade_scores` (79k rows, recomputed daily) and
+    `smart_money_performance` were computed for three registered tools that
+    were whitelisted to NO agent, so nothing on the desk path had ever read
+    them. The disclosure counts above say WHO traded; they cannot say whether
+    those people have ever been right, which is what should move a weighting.
+
+    Reports a WITHIN-COHORT PERCENTILE, never the raw alpha, because the raw
+    alpha is not a usable measure of skill (measured 2026-08-03):
+
+      * The fund cohort is the 26 hand-picked CIKs in sec_collector's
+        TRACKED_FUNDS — selected BECAUSE they are famous and successful, with
+        no dead funds. Their measured alpha runs +4 to +8pp over 1,500+ scored
+        trades each (Millennium +8.3/n=1867, Citadel +6.9/n=2113). Sustained
+        7pp alpha over 1,800 trades is not a plausible skill estimate; it is
+        selection plus a mega-cap tilt against SPY over 2012-2025.
+      * Reporting that raw number per ticker made every mega-cap read
+        "+2 to +5.7pp, buyers and sellers alike" — the cohort's shared bias,
+        not anything about the ticker. Buy and sell sides were within 0.1pp of
+        each other on NVDA, which is the tell.
+
+    A percentile rank inside the actor's OWN cohort cancels any bias shared by
+    that cohort, and it does discriminate: T's congress buyers sit at the 13th
+    percentile while MSTR's sits at the 72nd. It is still a relative statement
+    among tracked actors, never proof of skill. Returns "" when quiet.
+    """
+    ticker = (ticker or "").strip().upper()
+    if not ticker:
+        return ""
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                """
+                WITH cohort AS (
+                    SELECT actor_type, actor_id,
+                           PERCENT_RANK() OVER (
+                               PARTITION BY actor_type ORDER BY avg_alpha
+                           ) AS pctile
+                    FROM smart_money_performance
+                    WHERE horizon = '1y' AND rankable AND avg_alpha IS NOT NULL
+                ),
+                sized AS (
+                    SELECT actor_type, COUNT(*) AS cohort_n
+                    FROM cohort GROUP BY actor_type
+                ),
+                actors AS (
+                    SELECT DISTINCT s.actor_type, s.actor_id, s.direction, c.pctile
+                    FROM smart_money_trade_scores s
+                    JOIN cohort c
+                      ON c.actor_type = s.actor_type AND c.actor_id = s.actor_id
+                    WHERE s.ticker = %s
+                      AND s.event_date >= CURRENT_DATE - MAKE_INTERVAL(days => %s)
+                      -- congress_trades carries future-dated rows and the
+                      -- scores inherit them. Same guard as the congress query.
+                      AND s.event_date <= CURRENT_DATE
+                )
+                SELECT a.direction, a.actor_type, COUNT(*) AS n,
+                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY a.pctile) AS med,
+                       MAX(z.cohort_n) AS cohort_n
+                FROM actors a
+                JOIN sized z ON z.actor_type = a.actor_type
+                GROUP BY a.direction, a.actor_type
+                ORDER BY n DESC
+                """,
+                [ticker, _QUALITY_WINDOW_DAYS],
+            ).fetchall()
+    except Exception as e:
+        logger.debug(
+            "[AltDataBlock] %s: smart-money quality query failed (non-fatal): %s",
+            ticker, e,
+        )
+        return ""
+
+    if not rows:
+        return ""
+
+    segments = [
+        f"{n} {(direction or 'unknown').lower()}-side "
+        f"{'fund' if actor_type == 'fund' else 'congress'} actor(s) at the "
+        f"{_ordinal(round(med * 100))} percentile of their cohort (n={cohort_n})"
+        for direction, actor_type, n, med, cohort_n in rows
+        if n and med is not None
+    ]
+    if not segments:
+        return ""
+
+    return (
+        f"- Smart-money actor quality ({_QUALITY_WINDOW_DAYS}d): "
+        + "; ".join(segments)
+        + ". Percentile ranks each actor's 1y alpha against others of the SAME "
+        "type, because absolute alphas are not comparable — the fund cohort is "
+        "26 hand-picked survivors and its raw alpha is inflated by that "
+        "selection. A high percentile means 'better than peers we also track', "
+        "not 'skilled'; use it to weight the disclosures above, never alone."
+    )
 
 
 def alt_macro_lines() -> list[str]:
