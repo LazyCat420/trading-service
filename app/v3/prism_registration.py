@@ -33,6 +33,49 @@ _V3_AGENT_MODULES = [
     "app.v3.agents.board_of_directors",
 ]
 
+#: Tools a v3 trading agent must never reach, enforced as prism DENY policies.
+#:
+#: WHY A POLICY AND NOT THE WHITELIST. `enabled_tools` below is not a
+#: restriction. Prism's AgentPersonaRegistry.registerCustom() copies
+#: `availableTools` out of the Mongo document but NOT `coreToolsLocked`, so
+#: AgenticToolResolver's `persona?.coreToolsLocked ?? true` defaults a CUSTOM_*
+#: agent to LOCKED and force-adds every CORE_AGENTIC / system tool on top of
+#: the list we register — even though the SDK explicitly sends
+#: coreToolsLocked:false. Measured in agent_tool_telemetry:
+#:
+#:   execute_command    1 call  2026-07-18  SUCCEEDED  v3_fundamental_analyst
+#:   write_file         2 calls 2026-07-19..20 both SUCCEEDED
+#:   query_datastore    1 call  2026-07-18  SUCCEEDED
+#:   execute_javascript 6 calls to 2026-07-30 all SUCCEEDED
+#:   execute_skill      1 call  2026-07-22  failed
+#:
+#: The ToolCanary in app/v3/tool_telemetry.py logged every one of these — AFTER
+#: they ran. It is telemetry; it blocks nothing. A DENY policy is evaluated by
+#: prism's AutoApprovalEngine BEFORE the tier system and BEFORE full-auto, and
+#: is documented there as a terminal rejection. Since these agents register
+#: with auto_approve=True, it is the only thing that can actually stop a call.
+#:
+#: DELIBERATELY NOT LISTED — execute_python. It is the most-used of the set (32
+#: calls, all successful: reverse-DCF ladders, ATR stops, contradiction
+#: analysis) and it does not run in this container: tools-service executes it
+#: as a subprocess with socket creation blocked, RLIMIT_DATA capped, and cwd a
+#: temp dir that is wiped afterwards. Kept as a deliberate, reviewed exception
+#: on 2026-08-03 rather than by omission.
+_V3_DENIED_TOOLS = (
+    "execute_command",
+    "execute_javascript",
+    "execute_skill",
+    "write_file",
+    "query_datastore",
+)
+
+#: Serialized PolicyRule shape prism reconstructs in registerCustom():
+#: `{tool, decision, name}`. Tool matching is exact, and DENY sorts first.
+_V3_TOOL_POLICIES = [
+    {"tool": tool, "decision": "DENY", "name": f"deny({tool})"}
+    for tool in _V3_DENIED_TOOLS
+]
+
 # Common guidelines appended to all V3 agents
 _V3_COMMON_GUIDELINES = """
 ## V3 Pipeline Rules
@@ -105,6 +148,8 @@ async def register_v3_agents() -> dict[str, bool]:
                         # Non-interactive pipeline: Qwen's <think> block burns
                         # tokens/latency on every call with nobody watching.
                         thinking_default=False,
+                        # The actual enforcement — see _V3_DENIED_TOOLS.
+                        policies=_V3_TOOL_POLICIES,
                     )
                     if not registered_id:
                         agent_success = False
@@ -159,6 +204,9 @@ async def register_v3_agents() -> dict[str, bool]:
                         guidelines=_V3_COMMON_GUIDELINES,
                         enabled_tools=["mcp__lazy-tool-service__lazy_web_search"],
                         thinking_default=False,
+                        # Same denylist: these auxiliary agents run in the same
+                        # container and have even less reason to reach a shell.
+                        policies=_V3_TOOL_POLICIES,
                     )
                     if not registered_id:
                         agent_success = False

@@ -17,11 +17,27 @@ Arbitrary code execution and filesystem writes, succeeding, in the agent that
 decides trades. The fix pinned each `CUSTOM_V3_*` persona's `availableTools`
 to the code whitelist so Prism sees zero discovery headroom.
 
-**Since 2026-07-23 the off-whitelist count is ZERO.** That is the single most
-valuable safety property in the tool layer, and until this file existed it was
-protected by nothing at all — one persona re-sync writing an empty
-`availableTools` would have silently restored full-catalog access, and the only
-evidence would have been a tool name in a telemetry table nobody queries.
+**CORRECTION, 2026-08-03: "since 2026-07-23 the off-whitelist count is ZERO"
+was never true, and pinning `availableTools` does not close the hole.**
+`agent_tool_telemetry` records, all AFTER the lockdown:
+
+    execute_command      1 call  2026-07-18  succeeded
+    write_file           2 calls 2026-07-19..20 succeeded
+    query_datastore      1 call  2026-07-18  succeeded
+    execute_javascript   6 calls to 2026-07-30 succeeded
+    execute_python      32 calls to 2026-08-03 succeeded
+    emit_structured_output  50 calls on 2026-08-03 across SEVEN agents
+
+The reason is upstream: prism's `AgentPersonaRegistry.registerCustom()` copies
+`availableTools` out of the Mongo document but NOT `coreToolsLocked`, so
+`AgenticToolResolver`'s `persona?.coreToolsLocked ?? true` defaults a custom
+agent to LOCKED and force-adds the whole CORE_AGENTIC / system set on top of
+whatever we pinned. The pin was never the enforcement.
+
+The enforcement is now a per-agent DENY policy shipped from
+`app/v3/prism_registration.py` — see `test_forbidden_tool_policies.py`. The
+tests below still matter: they keep the forbidden names off our own whitelists,
+which is a necessary condition, just not a sufficient one.
 
 ## Why the empty-list case gets its own test
 

@@ -43,14 +43,37 @@ def _hash_args(arguments: dict | None) -> str:
 _MCP_PREFIX = "mcp__lazy-tool-service__"
 
 # Framework-injected; never on an agent whitelist by design.
+#
+# `emit_structured_output` joined this set on 2026-08-03. Prism force-adds the
+# CORE_AGENTIC set to every custom agent (see app/v3/prism_registration.py for
+# why `availableTools` cannot prevent it), and the models use it as the natural
+# way to emit a typed artifact — 50 calls across SEVEN agents in one day, all
+# harmless. Warning on each of them buried the one line that mattered: a
+# FORBIDDEN `execute_python` hit sat in the same log at the same severity.
+# A canary that cries wolf 50x/day is not a canary.
 _META_TOOLS = frozenset({
     "discover_and_enable_tools", "enable_tools", "search_tools", "think",
+    "emit_structured_output", "list_artifacts",
 })
 
 # Reaching any of these from a trading agent is a security regression, not
 # drift. Each was observed SUCCEEDING before the lockdown.
+#
+# These are now genuinely BLOCKED rather than merely logged: they ship as
+# prism DENY policies from app/v3/prism_registration.py, which
+# AutoApprovalEngine evaluates ahead of the tier system and ahead of full-auto.
+# The canary stays as the witness that the policy is holding — a line here now
+# means the DENY did not apply, which is a real regression worth an ERROR.
+#
+# execute_python was REMOVED from this set on 2026-08-03, deliberately and on
+# the record. It was the most-used member (32 calls, all successful — reverse
+# DCF ladders, ATR stops, contradiction analysis) and it does not execute in
+# this container: tools-service runs it as a subprocess with socket creation
+# blocked, RLIMIT_DATA capped, and cwd a temp dir wiped afterwards. Calling it
+# a security regression while every agent used it weekly made the label
+# meaningless. It is a sandboxed calculator, and it is allowed.
 _FORBIDDEN = frozenset({
-    "execute_command", "execute_python", "execute_javascript", "execute_skill",
+    "execute_command", "execute_javascript", "execute_skill",
     "write_file", "query_datastore",
 })
 
@@ -87,12 +110,38 @@ def _canary_check(agent_name: str, tool_name: str) -> None:
         if allowed is None or tool in allowed:
             return
 
-        severity = logger.error if tool in _FORBIDDEN else logger.warning
-        severity(
-            "[ToolCanary] OFF-WHITELIST%s: %s called %r, which is not on its "
-            "whitelist. The 2026-07-22 meta-tool lockdown should make this "
-            "impossible — check the CUSTOM_V3_* persona availableTools pin.",
-            " (FORBIDDEN)" if tool in _FORBIDDEN else "", agent_name, tool,
+        if tool in _FORBIDDEN:
+            # The DENY policy registered in app/v3/prism_registration.py should
+            # have made this call impossible. Reaching here means the policy is
+            # NOT holding — the persona lost it (a re-registration without
+            # `policies=`, or a prism-side registerCustom that stopped
+            # reconstructing them). Record it where it can be alerted on, not
+            # only in a log line.
+            logger.error(
+                "[ToolCanary] FORBIDDEN TOOL EXECUTED: %s called %r. The DENY "
+                "policy in app/v3/prism_registration.py did NOT hold — verify "
+                "the CUSTOM_%s persona still carries its `policies` array.",
+                agent_name, tool, agent_name.upper(),
+            )
+            try:
+                from app.v3.invariants import record_violation
+
+                record_violation(
+                    "FORBIDDEN_TOOL_EXECUTED",
+                    agent=agent_name,
+                    tool=tool,
+                )
+            except Exception as e:  # noqa: BLE001 — telemetry must never abort
+                logger.debug("[ToolCanary] could not record violation: %s", e)
+            return
+
+        logger.warning(
+            "[ToolCanary] OFF-WHITELIST: %s called %r, which is not on its "
+            "whitelist. Prism force-adds the CORE_AGENTIC set to every custom "
+            "agent (see app/v3/prism_registration.py) — if this tool is benign "
+            "and recurring, add it to _META_TOOLS so it stops masking real "
+            "breaches.",
+            agent_name, tool,
         )
     except Exception as e:  # never let the canary break telemetry
         logger.debug("[ToolCanary] check failed (non-fatal): %s", e)
