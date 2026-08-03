@@ -79,6 +79,67 @@ def classify_collector_outcome(
     return "ok", "ok", "ok", "Finished {name}"
 
 
+_SOCIAL_FLOOR_CHARS = 2000   # reserved for sections 4-6; news trims to make room
+_NEWS_MIN_CHARS = 600        # news never trims below this
+
+
+def assemble_report(
+    header: str,
+    market_md: str,
+    tech_md: str,
+    news_md: str,
+    social_sections: list[tuple[str, str]],
+    cap: int,
+    ticker: str = "?",
+) -> str:
+    """Assemble the data report under a hard cap with a social-section floor.
+
+    The old assembly appended sections 4-6 last, "if budget remains" — and
+    budget never remained (measured 2026-08-03: the YouTube section reached
+    0/187 recent context blobs). News is the section that scales with feed
+    volume, so NEWS yields the floor; market/technicals stay untrimmed.
+    """
+    social_len = sum(len(s) for s, _ in social_sections)
+    floor = min(_SOCIAL_FLOOR_CHARS, social_len)
+
+    core_head = (
+        f"{header}"
+        f"## 1. Market Data & Fundamentals\n{market_md}\n\n"
+        f"## 2. Technical Indicators\n{tech_md}\n\n"
+    )
+    news_budget = cap - len(core_head) - len("## 3. Recent News & Sentiment\n\n\n") - floor
+    news_budget = max(news_budget, _NEWS_MIN_CHARS)
+    if len(news_md) > news_budget:
+        news_md = news_md[: news_budget - 60] + "\n[... news trimmed — full feed via tools ...]"
+
+    report = core_head + f"## 3. Recent News & Sentiment\n{news_md}\n\n"
+    budget_remaining = cap - len(report)
+
+    for section_text, section_name in social_sections:
+        if budget_remaining <= 0:
+            break
+        if len(section_text) <= budget_remaining:
+            report += section_text
+            budget_remaining -= len(section_text)
+        else:
+            truncated = section_text[: max(budget_remaining - 80, 0)]
+            report += truncated + f"\n[... {section_name} TRUNCATED — data available via tools ...]\n"
+            budget_remaining = 0
+
+    # Hard safety net — an oversized header/market/tech block can still blow the cap
+    if len(report) > cap:
+        logger.warning(
+            "[V3] Data report for %s exceeded %d chars (%d) — hard-truncating",
+            ticker, cap, len(report),
+        )
+        report = (
+            report[: cap - 100]
+            + "\n\n[... DATA REPORT TRUNCATED — full data available via tools ...]\n"
+        )
+
+    return report
+
+
 async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str | None = None) -> str:
     """Collect core stock datasets in parallel and format them into a markdown report."""
     ticker = ticker.upper().strip()
@@ -318,13 +379,18 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         # Recency-windowed: without the filter, three-week-old transcripts (the
         # collector was starved by the 45s pre-collect cancel from 06-28 to
         # 07-17) were presented to agents as "Recent YouTube Analyses".
+        # COALESCE onto the raw transcript: `summary` has had no writer since
+        # the V2 summarizer was deleted (2026-06-24), so the one column agents
+        # were shown was permanently NULL — titles-only at best. The first
+        # ~700 chars of a transcript carry the thesis statement.
         yt_rows = db.execute(
             """
-            SELECT channel, title, published_at, summary
+            SELECT channel, title, published_at,
+                   COALESCE(NULLIF(summary, ''), LEFT(raw_transcript, 700)) AS summary
             FROM youtube_transcripts
             WHERE ticker = %s
               AND published_at > NOW() - INTERVAL '21 days'
-            ORDER BY published_at DESC LIMIT 5
+            ORDER BY published_at DESC LIMIT 3
             """,
             [ticker]
         ).fetchall()
@@ -368,9 +434,12 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
 
     # 4. Construct Final Document — with size cap to prevent context overflow
     #
-    # Priority order (highest to lowest): market data > technicals > news > reddit > youtube
-    # If the full report exceeds _MAX_DATA_REPORT_CHARS, drop lower-priority sections first.
-    _MAX_DATA_REPORT_CHARS = 10000
+    # The cap matches agent_runner's 5,000-char injection cut (with margin for
+    # its section header). At the old 10k, this builder padded a report whose
+    # tail agent_runner then blindly sliced off: sections 4-6 appeared in
+    # 0/187 recent context blobs. One budgeter, one cap — and a reserved
+    # floor means social sections trim the NEWS section instead of dying.
+    _MAX_DATA_REPORT_CHARS = 4900
 
     # Watch Desk wake context: if this cycle was triggered by a watch tripping,
     # tell the agent exactly WHAT woke it so it focuses on the change, not a
@@ -457,46 +526,20 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         f"{lessons_md}"
     )
 
-    # Build sections in priority order (highest priority first)
-    core_sections = (
-        f"## 1. Market Data & Fundamentals\n"
-        f"{market_data_md}\n\n"
-        f"## 2. Technical Indicators\n"
-        f"{tech_md}\n\n"
-        f"## 3. Recent News & Sentiment\n"
-        f"{news_md}\n\n"
-    )
-
     social_sections = [
         (f"## 4. Institutional Fund Holdings\n{institutional_md}\n\n", "Institutional"),
         (f"## 5. Reddit Social Sentiment\n{reddit_md}\n\n", "Reddit"),
         (f"## 6. YouTube Mentions & Transcripts\n{youtube_md}\n", "YouTube"),
     ]
 
-    report = header + core_sections
-    budget_remaining = _MAX_DATA_REPORT_CHARS - len(report)
-
-    if budget_remaining > 0:
-        for section_text, section_name in social_sections:
-            if len(section_text) <= budget_remaining:
-                report += section_text
-                budget_remaining -= len(section_text)
-            else:
-                # Partial fit — truncate this section
-                truncated = section_text[: budget_remaining - 80]
-                report += truncated + f"\n[... {section_name} TRUNCATED — data available via tools ...]\n"
-                budget_remaining = 0
-                break
-
-    # Hard safety net — if core sections alone exceed the cap
-    if len(report) > _MAX_DATA_REPORT_CHARS:
-        logger.warning(
-            "[V3] Data report for %s exceeded %d chars (%d) — hard-truncating",
-            ticker, _MAX_DATA_REPORT_CHARS, len(report),
-        )
-        report = (
-            report[: _MAX_DATA_REPORT_CHARS - 100]
-            + "\n\n[... DATA REPORT TRUNCATED — full data available via tools ...]\n"
-        )
+    report = assemble_report(
+        header=header,
+        market_md=market_data_md,
+        tech_md=tech_md,
+        news_md=news_md,
+        social_sections=social_sections,
+        cap=_MAX_DATA_REPORT_CHARS,
+        ticker=ticker,
+    )
 
     return report
