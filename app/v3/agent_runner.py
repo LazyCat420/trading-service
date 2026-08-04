@@ -27,7 +27,7 @@ from app.v3.guardrails import (
     enter_v3_session,
     exit_v3_session,
 )
-from app.v3.artifacts import validate_artifact
+from app.v3.artifacts import ARTIFACT_SCHEMAS, validate_artifact
 from app.v3.quality_scorer import score_artifact
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,38 @@ def _unwrap_structured_output(
         return payload
 
     return parsed
+
+
+def _is_wrong_shape(artifact_type: str, artifact: dict) -> bool:
+    """True when a parsed dict carries NOTHING the artifact is made of.
+
+    This is the fragment detector, and it is deliberately independent of the
+    SDK: `lazycat-sdk` is BIND-MOUNTED into this container, so a trading-service
+    deploy never ships a fix made over there. The guard has to hold on its own.
+
+    A JSON extractor that walks into a malformed outer object hands back one of
+    its nested blocks — the `metrics` dict off a fundamental_report, a single
+    `overlays` entry off a quant_report. Those parse cleanly, so the tool-less
+    repair pass never fires; the run instead reaches schema validation, is
+    correctly called a collapse, and burns a full ~100s tool-enabled re-run to
+    recover what was a PARSE failure all along.
+
+    Deliberately the weakest possible test — not one required or substantive
+    field present. Anything that kept even one is a real, if degraded, artifact
+    and belongs to `_artifact_collapsed` and the branches below, which already
+    grade it. Unknown artifact types are never narrowed.
+    """
+    if not isinstance(artifact, dict) or not artifact:
+        return False
+    schema = ARTIFACT_SCHEMAS.get(artifact_type)
+    if not schema:
+        return False
+    known = set(schema.get("required", ())) | set(
+        _SUBSTANTIVE_FIELDS.get(artifact_type, ())
+    )
+    if not known:
+        return False
+    return not (known & set(artifact))
 
 
 def _artifact_collapsed(artifact_type: str, artifact: dict) -> bool:
@@ -911,6 +943,26 @@ async def run_v3_agent(
         # Parse the artifact from the agent's output
         artifact = _parse_artifact(final_text, artifact_type, agent_name)
 
+        # A fragment is a PARSE failure wearing an artifact's clothes: valid
+        # JSON, so the repair pass below never fired, and the run instead spent
+        # a full tool-enabled re-run (~100s, 37.7k tokens on TSM 2026-08-04)
+        # rediscovering research it had already produced. Route it to repair —
+        # but HOLD ON TO IT. If repair does not land, the fragment is restored
+        # so the collapse branches below grade it exactly as they did before:
+        # AGENT_ERROR first, DATA_GAP on the retry. Failing straight to
+        # AGENT_ERROR here would return it twice and let should_abort() take
+        # the whole ticker down, which the 2026-07-26 audit deliberately
+        # designed against.
+        fragment: dict | None = None
+        if artifact is not None and _is_wrong_shape(artifact_type, artifact):
+            logger.warning(
+                "[V3Runner] %s: parsed output is not a %s — it carries none of "
+                "its fields (keys=%s). Treating as unparseable so the repair "
+                "pass can run.",
+                agent_name, artifact_type, sorted(artifact)[:20],
+            )
+            fragment, artifact = artifact, None
+
         # Salvage pass. A tool-enabled agent that reaches its iteration ceiling
         # is told by the harness to "summarize", and models frequently answer
         # with one more *pseudo* tool call in plain text (e.g.
@@ -976,6 +1028,16 @@ async def run_v3_agent(
                     agent_name, desk.ticker, type(e).__name__, e,
                 )
 
+        # Repair did not land (or could not run — it needs a tool-enabled
+        # agent). Put the fragment back and let the collapse branches grade it.
+        if artifact is None and fragment is not None:
+            logger.warning(
+                "[V3Runner] %s: repair did not recover a %s for %s — falling "
+                "back to the fragment so it is graded, not discarded",
+                agent_name, artifact_type, desk.ticker,
+            )
+            artifact = fragment
+
         if artifact is None:
             logger.error(
                 "[V3Runner] %s produced no parseable artifact for %s",
@@ -1003,7 +1065,13 @@ async def run_v3_agent(
             if not str(artifact.get("reasoning") or "").strip():
                 artifact.pop("reasoning", None)
 
-        # Flattened-inner-object salvage (2026-07-26 audit): the fundamental
+        # Flattened-inner-object salvage (2026-07-26 audit). NOTE 2026-08-04:
+        # this was a per-field patch for one instance of the extractor bug now
+        # fixed at source (`_is_wrong_shape` above + the SDK's depth-0 scan), so
+        # a bare {direction, matters_this_week, why} is intercepted upstream and
+        # repaired rather than re-nested here. Kept as a second line of defence:
+        # the SDK is bind-mounted and may lag this deploy. Original note —
+        # the fundamental
         # analyst emitted ONLY its nested `near_term_read` body at the top
         # level — {direction, matters_this_week, why} — which parses as clean
         # JSON, so the unparseable-repair pass above never fired. It then

@@ -201,7 +201,17 @@ async def test_breaker_retries_once_then_survives_without_aborting_the_desk():
             cycle_id="cycle-test", bot_id="b1", emit=lambda *a, **k: None,
         )
 
-    assert len(calls) == 2, "expected exactly one breaker retry"
+    # The breaker's unit is the TOOL-ENABLED attempt. Since 2026-08-04 a
+    # fragment also triggers one tool-less repair call per attempt, which is
+    # not a retry and must not be counted as one.
+    attempts = [c for c in calls if c.get("enable_tools")]
+    repairs = [c for c in calls if not c.get("enable_tools")]
+    assert len(attempts) == 2, "expected exactly one breaker retry"
+    assert len(repairs) == 2, (
+        "each attempt should try the cheap tool-less repair before the "
+        "fragment is graded — that is what stops a parse failure costing a "
+        "full tool-enabled re-run"
+    )
     assert outcome == PhaseOutcome.DATA_GAP
     assert not breaker.should_abort("fundamental_analyst", outcome), (
         "a persistently malformed analyst artifact must degrade the desk, "

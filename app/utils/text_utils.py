@@ -62,12 +62,41 @@ def _is_placeholder_json(d: dict) -> bool:
     return False
 
 
+# A '{' followed by a quoted key — the model was writing JSON, whatever else
+# is in the buffer.
+_LOOKS_LIKE_JSON = re.compile(r'\{[^{}]{0,400}?"[\w .-]{1,64}"\s*:', re.DOTALL)
+
+
 def _malformed_fallback(cleaned: str) -> dict | None:
     """Last-resort parser for markdown analysis reports.
 
     Only accepted when it recovered a decision, matching the previous
     `fallback_data and "action" in fallback_data` gate.
+
+    DECLINES anything that contains a JSON object. This parser scrapes prose
+    with regexes, and `action`, `confidence` and `reasoning` — the complete
+    required set for `final_decision`/`trade_decision` — are exactly what it
+    is best at pulling out of arbitrary text (`reasoning` it fills
+    unconditionally). Pointed at a decision whose JSON merely failed to
+    parse, it therefore returns a schema-clean BUY assembled by regex out of
+    a broken buffer, and nothing downstream can tell it from a real vote.
+    Verified 2026-08-04 on a `final_decision` truncated at its closing brace:
+    action=BUY, confidence=78, zero validation errors.
+
+    A buffer holding a JSON object is a PARSE failure, and the honest handler
+    is the caller's tool-less repair pass, which asks the model to re-emit.
+    This fallback exists for the different case it was written for — a persona
+    that ignored the JSON instruction and wrote a markdown report — and that
+    case still reaches it.
     """
+    if _LOOKS_LIKE_JSON.search(cleaned):
+        logger.warning(
+            "[text_utils] declining the prose fallback: the response contains "
+            "a JSON object that failed to parse (%d chars). Scraping it with "
+            "regexes would manufacture fields the model never emitted.",
+            len(cleaned),
+        )
+        return None
     fallback_data = parse_malformed_text_response(cleaned)
     if fallback_data and "action" in fallback_data:
         return fallback_data
