@@ -142,8 +142,14 @@ async def build_evidence_packet(
                 logger.warning(f"[PACKET] Failed to fetch technicals for {ticker}: {e}")
 
             try:
+                # Same placeholder filter as finance_tools.get_market_data: an
+                # all-NULL row (known ingestion defect) must not consume the
+                # 4-row evidence window and render the newest quarter as N/A.
                 fin_rows = db.execute(
-                    "SELECT * FROM financial_history WHERE ticker = %s ORDER BY period_end DESC LIMIT 4",
+                    "SELECT * FROM financial_history WHERE ticker = %s"
+                    " AND COALESCE(revenue, gross_profit, operating_income,"
+                    "              net_income, eps, free_cash_flow) IS NOT NULL"
+                    " ORDER BY period_end DESC LIMIT 4",
                     [ticker],
                 ).fetchall()
                 if fin_rows:

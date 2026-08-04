@@ -72,6 +72,23 @@ REQUIRED_SDK_CAPABILITIES = [
     ),
 ]
 
+#: Same idea, but for string literals rather than bound names: the 0.3.9
+#: hook-abort contract is `getattr(hook_err, "abort_agent_run", False)` inside
+#: AgentHarness.run — the marker lives in co_consts (a getattr argument), not
+#: co_names. Without it, every ManagerAgent doom-loop guard raises into a
+#: logger.warning and no guard ever aborts a run (the measured 08-04 defect).
+#: (module, class, method, const, what breaks without it)
+REQUIRED_SDK_CONST_CAPABILITIES = [
+    (
+        "lazycat.agent",
+        "AgentHarness",
+        "run",
+        "abort_agent_run",
+        "hook exceptions marked abort_agent_run=True are swallowed, so every "
+        "doom-loop guard silently reverts to a no-op (needs lazycat-sdk >= 0.3.9)",
+    ),
+]
+
 
 def _binds_attribute(module_name: str, class_name: str, method: str, attr: str) -> bool:
     """True if `method` on `class_name` contains an assignment binding `attr`."""
@@ -80,6 +97,26 @@ def _binds_attribute(module_name: str, class_name: str, method: str, attr: str) 
     mod = importlib.import_module(module_name)
     func = getattr(getattr(mod, class_name), method)
     return attr in func.__code__.co_names
+
+
+def _mentions_const(module_name: str, class_name: str, method: str, const: str) -> bool:
+    """True if `method` (or any code object nested in it) carries `const` as a
+    string literal. Walks co_consts recursively because async generators and
+    inner closures each get their own code object."""
+    import importlib
+
+    mod = importlib.import_module(module_name)
+    func = getattr(getattr(mod, class_name), method)
+
+    def walk(code) -> bool:
+        for c in code.co_consts:
+            if isinstance(c, str) and c == const:
+                return True
+            if hasattr(c, "co_consts") and walk(c):
+                return True
+        return False
+
+    return walk(func.__code__)
 
 
 def check_sdk_capabilities() -> list[str]:
@@ -95,6 +132,17 @@ def check_sdk_capabilities() -> list[str]:
             continue
         if not present:
             missing.append(f"{class_name}.{attr} — absent; {consequence}")
+    for module_name, class_name, method, const, consequence in REQUIRED_SDK_CONST_CAPABILITIES:
+        try:
+            present = _mentions_const(module_name, class_name, method, const)
+        except Exception as e:
+            missing.append(
+                f"{class_name}.{method}[{const!r}] — could not probe "
+                f"({type(e).__name__}: {e}); {consequence}"
+            )
+            continue
+        if not present:
+            missing.append(f"{class_name}.{method}[{const!r}] — absent; {consequence}")
     return missing
 
 
@@ -115,10 +163,10 @@ def assert_sdk_capabilities() -> None:
     if not missing:
         logger.info(
             "[Boot] lazycat-sdk %s at %s — all %d required capabilities present "
-            "(model attribution reads prism's done-event).",
+            "(model attribution reads prism's done-event; doom-loop aborts live).",
             version,
             sdk_path,
-            len(REQUIRED_SDK_CAPABILITIES),
+            len(REQUIRED_SDK_CAPABILITIES) + len(REQUIRED_SDK_CONST_CAPABILITIES),
         )
         return
 

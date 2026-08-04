@@ -1835,9 +1835,16 @@ async def run_v3_pipeline(
                     )
 
             elif name == "bear_rebuttal":
+                # include_debate_context=True or the bear never sees the bull:
+                # its prompt promises "the Bull Analyst's thesis" and mandates
+                # bull_claim_addressed, but without this flag
+                # get_compressed_context drops bull_argument and the bear
+                # rebuts a reconstruction (measured 08-04: 9/9 big-cycle bears
+                # confabulated the bull's claims, incl. a fabricated quote).
                 outcome = await _run_agent_with_circuit_breaker(
                     desk=desk, agent_module=module, phase_name="bear_rebuttal",
                     breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
+                    include_debate_context=True,
                     custom_instructions=query, parent_agent=parent
                 )
                 abort = _check_abort(desk, breaker, "bear_rebuttal", outcome)
@@ -2461,6 +2468,7 @@ async def _persist_trade_verdict(
                 # "v3_pipeline" survives only as the no-attribution fallback —
                 # rows with a real model are what the leaderboard groups on.
                 _models = [e.get("model_used") for e in _telemetry if e.get("model_used")]
+                _providers = [e.get("provider") for e in _telemetry if e.get("provider")]
                 log_rlm_audit_trail(
                     cycle_id=cycle_id,
                     bot_id=bot_id,
@@ -2472,6 +2480,13 @@ async def _persist_trade_verdict(
                     tokens_used=sum(int(e.get("token_usage") or 0) for e in _telemetry),
                     execution_time=sum(int(e.get("elapsed_ms") or 0) for e in _telemetry) / 1000.0,
                     agent_step="v3_decision",
+                    # Which box decided, and how much context the desk carried:
+                    # per-agent prompt_tokens is the harness's LAST-request
+                    # input snapshot, so this sum is the desk's final-request
+                    # context mass — 0 here meant box saturation was invisible
+                    # from the DB (08-04 audit).
+                    endpoint_name=(_providers[-1] if _providers else ""),
+                    prompt_tokens=sum(int(e.get("prompt_tokens") or 0) for e in _telemetry),
                 )
             except Exception as audit_err:
                 logger.warning("[V3] %s: decision audit log failed (non-fatal): %s", ticker, audit_err)

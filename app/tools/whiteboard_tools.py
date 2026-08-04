@@ -83,7 +83,7 @@ async def whiteboard_write(ticker: str, section: str, content: str, author: str 
 
 @registry.register(
     name="whiteboard_read",
-    description="Read a specific section of the team's shared whiteboard for a given ticker. The whiteboard is a living document where agents collaborate. Sections include: 'market_context', 'risk_flags', 'signals', 'consensus', 'trade_plan'.",
+    description="Read a section of the team's shared whiteboard for a given ticker. Pipeline artifact sections (written by the desk as it works): 'desk_note', 'fundamental_report', 'quant_report', 'valuation_report', 'bull_argument', 'bear_rebuttal', 'debate_judge', 'tournament_result', 'regime_classification', 'final_decision'. Collaboration sections written during research: 'market_context', 'risk_flags', 'signals'. Board-written only late in the cycle (empty before the decision): 'consensus', 'trade_plan'. Omit section to get the full whiteboard summary.",
     parameters={
         "type": "object",
         "properties": {
@@ -93,10 +93,10 @@ async def whiteboard_write(ticker: str, section: str, content: str, author: str 
             },
             "section": {
                 "type": "string",
-                "description": "The section name to read."
+                "description": "The exact section name to read, e.g. 'bull_argument' or 'quant_report' (NOT 'bull'/'bear' — those do not exist). Omit for the full whiteboard summary."
             }
         },
-        "required": ["ticker", "section"]
+        "required": ["ticker"]
     },
     tier=1,
     source="whiteboard",

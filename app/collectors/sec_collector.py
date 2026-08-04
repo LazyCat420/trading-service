@@ -174,8 +174,16 @@ def _parse_filing(filer_name: str, cik: str, filing) -> tuple[list[dict], str]:
         )
 
         shares = int(_num(row.get("SharesPrnAmount")))
-        # SEC EDGAR reports 13F values in THOUSANDS of dollars
-        value = _num(row.get("Value")) * 1000
+        # Since the SEC's Jan-2023 rule change, Form 13F values are filed in
+        # FULL DOLLARS (the pre-2023 convention was thousands). The old
+        # unconditional *1000 here inflated every edgar-sourced holding 1000x —
+        # agents were shown "$185B institutional value" in an $8B company (MP,
+        # 08-04 cycle). Quarters through 2022Q3 were still FILED before the
+        # rule change, so a historical backfill keeps the thousands scaling.
+        # Sanity check either way: value/shares should be a plausible price.
+        value = _num(row.get("Value"))
+        if filing_quarter and str(filing_quarter) <= "2022Q3":
+            value *= 1000
 
         # `ticker` is part of the PRIMARY KEY (cik, ticker, filing_quarter) and is
         # declared NOT NULL, so it cannot be left NULL. When no real ticker

@@ -439,9 +439,20 @@ class SharedDesk:
             include_debate: If True, include debate artifacts too.
 
         Returns:
-            A clean narrative string ≤ _MAX_COMPRESSED_CONTEXT_CHARS.
+            A clean narrative string capped at ~_MAX_COMPRESSED_CONTEXT_CHARS
+            (the 500-char research floor can push it ~60 chars past the cap
+            when the verdict block is near its own maximum).
         """
         sections: list[str] = []
+        # Verdict-bearing sections (tournament/judge verdict, Board verdict) are
+        # collected separately and appended AFTER truncation: the old layout
+        # rendered them last and tail-truncated the whole string, so the Board
+        # verdict was cut from the deciding agent's context on 133 of 134
+        # decisions 07-28..08-04 — the synthesizer ("Baseline = the Board's
+        # verdict", decision_agent.py) decided blind and on 08-04 hallucinated
+        # the board's stance (ET: board BUY@63 reported as an aligned HOLD).
+        # Research prose absorbs the cut; verdicts always render.
+        verdict_sections: list[str] = []
 
         # Research artifacts
         if self.desk_note:
@@ -644,9 +655,14 @@ class SharedDesk:
         # _apply_policy_gates (which reads desk.tournament_result directly, not
         # this string) fires identically either way. What shadow removes is the
         # winner's influence on the Board — measured at t = -0.17 against
-        # realized P&L for 31% of pipeline spend.
+        # realized P&L for 31% of pipeline spend. It gates the VERDICT sections
+        # only: bull/bear/defense prose stays visible, because blinding the
+        # BEAR to the bull it is rebutting is not part of the experiment (the
+        # whiteboard summary already keeps bull/bear visible in shadow — this
+        # matches that behavior).
+        include_verdicts = include_debate
         if include_debate and tournament_debate_mode() == TOURNAMENT_MODE_SHADOW:
-            include_debate = False
+            include_verdicts = False
 
         if include_debate:
             if self.bull_argument:
@@ -668,7 +684,7 @@ class SharedDesk:
                 sections.append(f"## Bull Final Defense\n{summary}")
 
             tournament = getattr(self, "tournament_result", None)
-            if tournament:
+            if tournament and include_verdicts:
                 action = tournament.get("action", "?")
                 conf = tournament.get("confidence", 0)
                 side = tournament.get("winning_side", "split")
@@ -710,11 +726,11 @@ class SharedDesk:
                         )
                 if juror_lines:
                     text += "\n**Juror reasoning:**\n" + "\n".join(juror_lines)
-                sections.append(text)
+                verdict_sections.append(text)
 
             # Skip the debate_judge artifact when it is just a copy of the
             # tournament verdict already rendered above.
-            if self.debate_judge and not (tournament and self.debate_judge.get("source") == "tournament_debate"):
+            if include_verdicts and self.debate_judge and not (tournament and self.debate_judge.get("source") == "tournament_debate"):
                 summary = self.debate_judge.get("summary", "")
                 # Tournament mode writes winning_side/confidence; the classic
                 # debate judge wrote winner/final_confidence — accept both.
@@ -729,7 +745,7 @@ class SharedDesk:
                 loser_best = self.debate_judge.get("strongest_point_of_loser", "")
                 if loser_best:
                     text += f"\n**Loser's best point:** {loser_best}"
-                sections.append(text)
+                verdict_sections.append(text)
 
         # Regime
         if self.regime_classification:
@@ -761,29 +777,43 @@ class SharedDesk:
             if tag_lines:
                 sections.append("## Desk Tags\n" + "\n".join(tag_lines))
 
-        # Board of Directors
+        # Board of Directors — FIRST among the verdicts: if verdict_text itself
+        # ever overflows and tail-truncates, the tournament/judge prose absorbs
+        # the cut, never the Board verdict the synthesizer baselines on.
         if self.final_decision:
             action = self.final_decision.get("action", "?")
             conf = self.final_decision.get("confidence", 0)
             reasoning = self.final_decision.get("reasoning", "")
-            sections.append(
+            verdict_sections.insert(
+                0,
                 f"## Board of Directors Verdict\n**Action: {action} @ {conf}% confidence**\n{reasoning}"
             )
 
-        combined = (
-            "\n\n---\n\n".join(sections)
-            if sections
-            else "No artifacts on desk yet."
-        )
+        sep = "\n\n---\n\n"
+        combined = sep.join(sections)
+        verdict_text = sep.join(verdict_sections)
 
-        # Truncate to prevent context snowball
-        if len(combined) > _MAX_COMPRESSED_CONTEXT_CHARS:
+        # Truncate to prevent context snowball — research prose only. Verdicts
+        # are appended after the cut so they can never be the casualty.
+        budget = _MAX_COMPRESSED_CONTEXT_CHARS
+        if verdict_text and len(verdict_text) > budget - 600:
+            verdict_text = (
+                verdict_text[: budget - 600]
+                + "\n\n[... verdict TRUNCATED — full artifacts available on SharedDesk ...]"
+            )
+        if verdict_text:
+            notice = "\n\n[... research context TRUNCATED — full artifacts available on SharedDesk ...]"
+            if combined and len(combined) + len(sep) + len(verdict_text) > budget:
+                keep = max(budget - len(verdict_text) - len(sep) - len(notice), 500)
+                combined = combined[:keep] + notice
+            combined = combined + sep + verdict_text if combined else verdict_text
+        elif len(combined) > budget:
             combined = (
-                combined[: _MAX_COMPRESSED_CONTEXT_CHARS - 100]
+                combined[: budget - 100]
                 + "\n\n[... TRUNCATED — full artifacts available on SharedDesk ...]"
             )
 
-        return combined
+        return combined or "No artifacts on desk yet."
 
     def record_agent_telemetry(self, entry: dict[str, Any]) -> None:
         """Record a telemetry entry for an agent run."""

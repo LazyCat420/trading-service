@@ -9,8 +9,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 class DoomLoopException(Exception):
-    """Raised when the LLM gets stuck in a repeating text loop."""
-    pass
+    """Raised when the LLM gets stuck in a repeating text loop.
+
+    abort_agent_run is the lazycat-sdk (>=0.3.9) hook-abort contract: hook
+    exceptions carrying this attribute propagate out of the harness instead of
+    being swallowed as "hook errors". Without it, every ManagerAgent doom-loop
+    guard raised into a logger.warning and no guard ever aborted a run
+    (measured 08-04: the same guard tripped at 219.9s and 220.1s in one board
+    run and the run kept going).
+    """
+    abort_agent_run = True
 
 class DoomLoopDetector:
     """

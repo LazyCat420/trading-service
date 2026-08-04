@@ -14,15 +14,26 @@ _MAX_SECTION_CHARS = 1800
 # Injection order: decision-relevant sections first so the global cap can only
 # ever cost the tail. The old ORDER BY section ASC (alphabetical) meant
 # risk_flags and tournament_result — the sections the board most needs — were
-# always the first casualties of truncation.
+# always the first casualties of truncation. The v3 debate sections
+# (bull_argument, bear_rebuttal, debate_judge, valuation_report, signals) were
+# missing from this list entirely, so they sorted dead last and fell past the
+# 8000-char cap on every fat board — measured 08-04: the judge graded a debate
+# whose bull/bear claims were cut from its summary on 9 of 9 big-cycle tickers.
 _SECTION_PRIORITY = [
     "final_decision",
+    "tournament_result",
+    "debate_judge",
     "regime_classification",
     "risk_flags",
+    "bull_argument",
+    "bear_rebuttal",
+    "signals",
     "quant_report",
     "fundamental_report",
+    "valuation_report",
     "desk_note",
-    "tournament_result",
+    "consensus",
+    "trade_plan",
     "market_context",
 ]
 

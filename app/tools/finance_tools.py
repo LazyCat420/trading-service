@@ -69,7 +69,10 @@ async def get_market_data(ticker: str) -> str:
                     "ForwardPE",
                     "PEG",
                     "P/B",
-                    "ProfitMargin",
+                    # Named to match the screener's column (net_margin): the old
+                    # "ProfitMargin" label sent agents chasing a nonexistent
+                    # screener field 'profit_margin' (6 failed calls on 08-04).
+                    "NetMargin",
                     "ROE",
                     "Revenue",
                     "RevenueGrowth",
@@ -86,8 +89,10 @@ async def get_market_data(ticker: str) -> str:
         q_rows = db.execute(
             """
             SELECT period_end, revenue, gross_profit, operating_income, net_income, eps, free_cash_flow
-            FROM financial_history 
-            WHERE ticker = %s AND period_type = 'quarterly' 
+            FROM financial_history
+            WHERE ticker = %s AND period_type = 'quarterly'
+              AND COALESCE(revenue, gross_profit, operating_income,
+                           net_income, eps, free_cash_flow) IS NOT NULL
             ORDER BY period_end DESC LIMIT 4
         """,
             [ticker],
@@ -105,8 +110,10 @@ async def get_market_data(ticker: str) -> str:
         a_rows = db.execute(
             """
             SELECT period_end, revenue, gross_profit, operating_income, net_income, eps, free_cash_flow
-            FROM financial_history 
-            WHERE ticker = %s AND period_type = 'annual' 
+            FROM financial_history
+            WHERE ticker = %s AND period_type = 'annual'
+              AND COALESCE(revenue, gross_profit, operating_income,
+                           net_income, eps, free_cash_flow) IS NOT NULL
             ORDER BY period_end DESC LIMIT 4
         """,
             [ticker],

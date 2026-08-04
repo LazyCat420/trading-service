@@ -832,13 +832,22 @@ async def run_v3_agent(
         elif dynamic_block:
             # Either V3_PROMPT_SPLIT is off (legacy layout), or the non-sheddable
             # core alone still overflows the embedder. The system prompt is the
-            # only place left that Prism does not embed.
+            # only place left that Prism does not embed — and since it is not
+            # embedded, the shed sections cost nothing here: restore them.
+            # Before this, every decision agent (KEEP core ~21k chars) shed the
+            # whiteboard summary — the carrier of final_decision — and then
+            # routed to the system prompt anyway, so the Board/synthesizer ran
+            # without the whiteboard on 100% of 08-04's decision builds while
+            # the shed bought no embed relief at all.
+            if prompt_split and not _fits_embedder and shed:
+                dynamic_block = "\n\n".join(t for _, t in dynamic_sections)
             system_prompt += "\n\n" + dynamic_block
             if prompt_split and not _fits_embedder:
                 logger.warning(
-                    "[V3Runner] %s: non-sheddable context (~%d tok) still exceeds "
-                    "Prism's %d-token memory embedder after shedding %d section(s) "
-                    "— routing to system prompt (KV-cache reuse skipped).",
+                    "[V3Runner] %s: non-sheddable context (~%d tok) exceeds "
+                    "Prism's %d-token memory embedder — routing FULL dynamic "
+                    "block to system prompt (%d shed section(s) restored, "
+                    "KV-cache reuse skipped).",
                     agent_name, (_fixed_chars + len(dynamic_block)) // 3,
                     _EMBED_TOKEN_LIMIT, len(shed),
                 )
@@ -1020,13 +1029,18 @@ async def run_v3_agent(
                         "[V3Runner] %s: artifact repair succeeded for %s",
                         agent_name, desk.ticker,
                     )
-                    elapsed_ms = int((time.monotonic() - t_start) * 1000)
-                    token_usage += repair_result.get("tokens_used", 0)
+                token_usage += repair_result.get("tokens_used", 0)
+                # Recompute on BOTH repair outcomes: recomputing only on
+                # success meant an AGENT_ERROR row's elapsed_ms excluded the
+                # failed repair pass, understating retry cost (~647s of board
+                # retries undercounted on 08-04).
+                elapsed_ms = int((time.monotonic() - t_start) * 1000)
             except Exception as e:
                 logger.warning(
                     "[V3Runner] %s: artifact repair failed for %s: %s: %s",
                     agent_name, desk.ticker, type(e).__name__, e,
                 )
+                elapsed_ms = int((time.monotonic() - t_start) * 1000)
 
         # Repair did not land (or could not run — it needs a tool-enabled
         # agent). Put the fragment back and let the collapse branches grade it.

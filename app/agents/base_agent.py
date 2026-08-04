@@ -452,11 +452,18 @@ async def run_agent(
                 logger.debug(f"Telemetry failed: {e}")
 
             # Doom loop check
-            current_call = {"name": tool_name, "args": arguments, "error": error_msg}
+            current_call = {"name": tool_name, "args": arguments, "error": error_msg,
+                            "failed": failed}
             prior_calls.append(current_call)
 
-            # Check 1: Tool loop repetition (same tool + args >= 3 times)
-            same_calls = [c for c in prior_calls if c["name"] == tool_name and c["args"] == arguments]
+            # Check 1: Tool loop repetition (same tool + args >= 3 times, FAILED
+            # calls only). Successful identical repeats are wasteful but benign
+            # — the synthesizer legitimately called think 3x identically on
+            # 08-04 — and now that DoomLoopException actually aborts (SDK
+            # 0.3.9), counting successes would kill healthy runs.
+            same_calls = [c for c in prior_calls
+                          if c["name"] == tool_name and c["args"] == arguments
+                          and c.get("failed")]
             if len(same_calls) >= 3:
                 from app.services.streaming_observer import DoomLoopException
                 logger.error(
@@ -476,15 +483,20 @@ async def run_agent(
                     )
                     raise DoomLoopException(f"Agent {agent_name} caught in tool error loop for {tool_name}: {error_msg}")
 
-            # Check 3: Active session time limit check
+            # Check 3: Active session time — LOG ONLY, deliberately not an
+            # abort. While the SDK swallowed hook exceptions this raise was a
+            # no-op anyway; now that abort_agent_run propagates (SDK 0.3.9),
+            # honoring 180s would kill HEALTHY runs — under big-cycle
+            # concurrency on Gold Spark, successful agent runs measured
+            # 200-535s on 08-04 (decode-throughput sharing, not stalling).
+            # A real time abort needs a load-scaled threshold (planned); the
+            # asyncio 600s ceiling in the runner remains the hard stop.
             elapsed_s = time.time() - t0
             if elapsed_s > 180 and tool_call_count > 4:
-                from app.services.streaming_observer import DoomLoopException
                 logger.error(
                     "[ManagerAgent] Agent %s took too much time (%.1fs) over %d tool turns without completing.",
                     agent_name, elapsed_s, tool_call_count
                 )
-                raise DoomLoopException(f"Agent {agent_name} exceeded active progress time limit (elapsed: {elapsed_s:.1f}s, turns: {tool_call_count})")
 
         # Pre-call hook, built here so it closes over this run's ticker — the
         # value the model keeps losing to bad JSON escaping.
