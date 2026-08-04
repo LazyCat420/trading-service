@@ -2456,13 +2456,18 @@ async def _persist_trade_verdict(
             try:
                 from app.services.rlm_audit import log_rlm_audit_trail
                 _telemetry = desk.agent_telemetry or []
+                # The model that actually decided: last attributed agent run
+                # on this desk (the decision/synthesis agent runs last).
+                # "v3_pipeline" survives only as the no-attribution fallback —
+                # rows with a real model are what the leaderboard groups on.
+                _models = [e.get("model_used") for e in _telemetry if e.get("model_used")]
                 log_rlm_audit_trail(
                     cycle_id=cycle_id,
                     bot_id=bot_id,
                     ticker=ticker,
                     context=desk.get_compressed_context(include_debate=True),
                     trading_system_prompt="V3 pure agentic pipeline (desk-compressed context)",
-                    active_model="v3_pipeline",
+                    active_model=(_models[-1] if _models else "v3_pipeline"),
                     response_text=json.dumps(trade_decision, default=str),
                     tokens_used=sum(int(e.get("token_usage") or 0) for e in _telemetry),
                     execution_time=sum(int(e.get("elapsed_ms") or 0) for e in _telemetry) / 1000.0,

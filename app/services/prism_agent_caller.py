@@ -615,6 +615,7 @@ class PrismLLMShim:
                 logger.error("[PrismAgentCaller] chat_with_tools: response body was not JSON (%s) — returning empty text", parse_err)
                 response_text = ""
                 tool_calls = []
+                payload_json = {}
 
             elapsed_ms = int((time.monotonic() - start) * 1000)
             total_tokens = _extract_token_usage(resp, response_text)
@@ -624,6 +625,10 @@ class PrismLLMShim:
                 "total_tokens": total_tokens,
                 "elapsed_ms": elapsed_ms,
                 "tool_calls": tool_calls,
+                # Prism's server-side resolved model, not an echo of the
+                # request — the value a per-model scorecard must attribute to.
+                "model_used": payload_json.get("model"),
+                "provider": payload_json.get("provider"),
             }
         
     async def stream_prism_agent(self, payload: dict):

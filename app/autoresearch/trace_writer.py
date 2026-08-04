@@ -36,6 +36,8 @@ def write_agent_trace(
     tool_result: object,
     failed: bool,
     latency_ms: int,
+    model_name: str | None = None,
+    endpoint_name: str | None = None,
 ) -> None:
     """Insert one agent_traces row. Never raises — telemetry must not break runs."""
     try:
@@ -63,6 +65,7 @@ def write_agent_trace(
             "latency_ms": int(latency_ms or 0), "loop_step": _loop_steps[step_key],
             "stop_reason": "error" if failed else "completed",
             "created_at": datetime.now(timezone.utc), "service_source": "trading-service",
+            "model_name": model_name, "endpoint_name": endpoint_name,
         }
         with get_db() as db:
             db.execute(
@@ -72,13 +75,14 @@ def write_agent_trace(
                     tool_name, tool_args, tool_result_summary,
                     why_tool_was_called, tokens_before, tokens_after,
                     latency_ms, loop_step, stop_reason, created_at,
-                    service_source
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    service_source, model_name, endpoint_name
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [_rec["id"], _rec["run_id"], _rec["agent_name"], _rec["task_type"], _rec["goal"],
                  _rec["tool_name"], _rec["tool_args"], _rec["tool_result_summary"], _rec["why_tool_was_called"],
                  _rec["tokens_before"], _rec["tokens_after"], _rec["latency_ms"], _rec["loop_step"],
-                 _rec["stop_reason"], _rec["created_at"], _rec["service_source"]],
+                 _rec["stop_reason"], _rec["created_at"], _rec["service_source"],
+                 _rec["model_name"], _rec["endpoint_name"]],
             )
             db.commit()
         try:

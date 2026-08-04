@@ -3945,3 +3945,31 @@ def _fix_eth_cagr_data(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── decision_outcomes.models_used (2026-08-03) ──
+    #
+    # Which LLM model produced each agent's contribution to the decision this
+    # row scores. JSONB of {agent_name: model_id}, same shape rationale as
+    # skill_versions above: a decision is made by a fleet of agents that can be
+    # served by different models (Jetson vs Gold Spark routing), and the roster
+    # changes. Values come from v3_agent_telemetry.model_used — prism's
+    # server-side resolved model, not the requested one — captured per desk at
+    # record time.
+    #
+    # This is the join that makes a per-model P&L leaderboard possible at all:
+    # before it, no table on the outcome path knew the model (llm_audit_logs
+    # said "v3_pipeline" on every row).
+    #
+    # NULL means "we do not know" — pre-attribution rows are not backfilled.
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE decision_outcomes "
+                "ADD COLUMN IF NOT EXISTS models_used JSONB"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

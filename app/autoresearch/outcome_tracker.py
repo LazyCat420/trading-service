@@ -116,6 +116,30 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
 
     try:
         with get_db() as db:
+            # Which model served each agent on each desk this cycle — the
+            # per-model leaderboard's join key. Same snapshot rationale as
+            # skill_versions, but per TICKER rather than per cycle: routing is
+            # per-agent and a cycle can straddle a gateway-side model swap, so
+            # stamping one cycle-wide model would average over the boundary.
+            # ORDER BY created_at makes the dict's last-write the latest run
+            # (retries overwrite their first attempt).
+            models_by_ticker: dict = {}
+            import json as _mjson
+            try:
+                m_rows = db.execute(
+                    """
+                    SELECT ticker, agent_name, model_used
+                    FROM v3_agent_telemetry
+                    WHERE cycle_id = %s AND model_used IS NOT NULL
+                    ORDER BY created_at
+                    """,
+                    [cycle_id],
+                ).fetchall()
+                for _t, _agent, _model in m_rows:
+                    models_by_ticker.setdefault(_t, {})[_agent] = _model
+            except Exception as e:  # noqa: BLE001 — provenance, never blocks
+                logger.debug("[OUTCOME] model snapshot failed: %s", e)
+
             # The entry price is read through the same one-vendor path as the
             # exit price below. Reading them independently is what let a vendor
             # SPREAD become P&L: price_history carries both a yfinance and a
@@ -246,14 +270,18 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                                      ticker, e)
 
                 outcome_id = f"do-{uuid.uuid4().hex[:12]}"
+                # Serialized like skill_versions: psycopg adapts dict->hstore,
+                # not JSONB.
+                _models = models_by_ticker.get(ticker)
+                models_used = _mjson.dumps(_models) if _models else None
                 db.execute(
                     """INSERT INTO decision_outcomes
                     (id, cycle_id, ticker, action, confidence, entry_price,
-                     created_at, skill_versions, overridden_from)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                     created_at, skill_versions, overridden_from, models_used)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     [outcome_id, cycle_id, ticker, action, confidence,
                      round(entry_price, 4), datetime.now(timezone.utc),
-                     skill_versions, overridden_from],
+                     skill_versions, overridden_from, models_used],
                 )
                 recorded += 1
 

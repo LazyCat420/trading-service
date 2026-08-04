@@ -67,6 +67,20 @@ def _ensure_telemetry_table() -> None:
                 EXCEPTION WHEN others THEN NULL;
                 END $$;
             """)
+            # Model attribution (2026-08-03). model_used is prism's
+            # server-side resolved model from the stream's done event — the
+            # per-model leaderboard joins on it. NULL = pre-attribution row.
+            db.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS model_used TEXT;
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS provider TEXT;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v3_telemetry_model
+                ON v3_agent_telemetry (model_used, created_at)
+            """)
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_v3_telemetry_cycle
                 ON v3_agent_telemetry (cycle_id)
@@ -173,6 +187,8 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                 "prompt_tokens": entry.get("prompt_tokens", 0),
                 "sys_prompt_chars": entry.get("sys_prompt_chars", 0),
                 "user_prompt_chars": entry.get("user_prompt_chars", 0),
+                "model_used": entry.get("model_used") or None,
+                "provider": entry.get("provider") or None,
             }
             for entry in entries
         ]
@@ -184,13 +200,13 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                         (cycle_id, ticker, agent_name, phase, outcome,
                          elapsed_ms, loops_used, token_usage, quality_score,
                          artifact_size_bytes, cached_tokens, prompt_tokens,
-                         sys_prompt_chars, user_prompt_chars)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         sys_prompt_chars, user_prompt_chars, model_used, provider)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [r["cycle_id"], r["ticker"], r["agent_name"], r["phase"], r["outcome"],
                      r["elapsed_ms"], r["loops_used"], r["token_usage"], r["quality_score"],
                      r["artifact_size_bytes"], r["cached_tokens"], r["prompt_tokens"],
-                     r["sys_prompt_chars"], r["user_prompt_chars"]],
+                     r["sys_prompt_chars"], r["user_prompt_chars"], r["model_used"], r["provider"]],
                 )
         try:
             import uuid as _uuid

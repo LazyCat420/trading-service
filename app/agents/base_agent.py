@@ -301,6 +301,10 @@ async def run_agent(
         t0 = time.time()
         tool_call_count = 0
         prior_calls = []
+        # Late-bound model identity for the tool-result hook: the hook closure
+        # is built before the model is resolved, so it reads this holder at
+        # call time. _agent_llm_call fills it right after resolution.
+        _model_holder = {"model": None, "provider": None}
 
         def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool, elapsed_ms: int = 0) -> None:
             """Post-call hook: record the actual outcome to V3 telemetry."""
@@ -422,6 +426,8 @@ async def run_agent(
                     tool_result=result,
                     failed=failed,
                     latency_ms=elapsed_ms,
+                    model_name=_model_holder["model"],
+                    endpoint_name=_model_holder["provider"],
                 )
                 
                 if provider:
@@ -518,6 +524,8 @@ async def run_agent(
             kwargs["model"] = resolved_model
         if resolved_provider:
             kwargs["provider"] = resolved_provider
+        _model_holder["model"] = resolved_model
+        _model_holder["provider"] = resolved_provider
             
         agent = BaseAgent(**kwargs)
         if enable_tools and agent_tools:
@@ -590,9 +598,15 @@ async def run_agent(
             elapsed_ms,
             tool_call_count + 1,
             dict(getattr(harness, "last_usage", {}) or {}),
+            # Prefer the stream's done-event model (prism's server-side
+            # resolution) over what we asked for — a gateway-side swap makes
+            # the requested name a lie (observed 07-31: silent switch to
+            # deepseek-v4-flash-0731).
+            getattr(harness, "last_model", None) or resolved_model,
+            getattr(harness, "last_provider", None) or resolved_provider,
         )
 
-    content, tokens, elapsed_ms, loops_used, last_usage = await _agent_llm_call()
+    content, tokens, elapsed_ms, loops_used, last_usage, model_used, provider_used = await _agent_llm_call()
 
     if not content or not str(content).strip():
         content = f"Agent failed: empty response from {agent_name}"
@@ -638,6 +652,8 @@ async def run_agent(
         "execution_ms": elapsed_ms,
         "loops_used": loops_used,
         "stop_reason": stop_reason,
+        "model_used": model_used,
+        "provider": provider_used,
         # Snapshot of the harness's LAST request, not a loop-wide sum. That is
         # the right probe for "is prefix caching working at all": the final
         # iteration carries the longest shared prefix, so cacheReadInputTokens

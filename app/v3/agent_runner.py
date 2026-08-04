@@ -894,6 +894,8 @@ async def run_v3_agent(
         cached_tokens = result.get("cached_tokens", 0)
         prompt_tokens = result.get("prompt_tokens", 0)
         stop_reason = result.get("stop_reason", "completed")
+        model_used = result.get("model_used")
+        provider_used = result.get("provider")
 
         # Budget exhaustion — the harness hit max_iterations without a final
         # answer, so the "response" is a sentinel, not an artifact. (The old
@@ -986,7 +988,8 @@ async def run_v3_agent(
                 status="error",
             )
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
-                              sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
+                              sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                              model_used=model_used, provider=provider_used)
             return PhaseOutcome.AGENT_ERROR
 
         # Decision artifacts: empty VALUES are as fatal as missing keys. The
@@ -1053,7 +1056,8 @@ async def run_v3_agent(
                     status="error",
                 )
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
-                                  sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
+                                  sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                                  model_used=model_used, provider=provider_used)
                 return PhaseOutcome.AGENT_ERROR
 
             # ANALYST artifacts (2026-07-26 audit): the branch above was scoped
@@ -1107,7 +1111,8 @@ async def run_v3_agent(
                 )
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
                                   outcome.value,
-                                  sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
+                                  sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                                  model_used=model_used, provider=provider_used)
                 # On the retry we keep going so the salvaged research still
                 # reaches the desk — but tagged, never as a clean SUCCESS.
                 if outcome is PhaseOutcome.AGENT_ERROR:
@@ -1396,7 +1401,8 @@ async def run_v3_agent(
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                               artifact_size_bytes=artifact_size_bytes,
-                              cached_tokens=cached_tokens, prompt_tokens=prompt_tokens)
+                              cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
+                              model_used=model_used, provider=provider_used)
 
         # Classify outcome
         data_gaps = artifact.get("data_gaps", [])
@@ -1507,6 +1513,8 @@ def _record_telemetry(
     artifact_size_bytes: int = 0,
     cached_tokens: int = 0,
     prompt_tokens: int = 0,
+    model_used: str | None = None,
+    provider: str | None = None,
 ) -> None:
     """Record telemetry for a V3 agent run."""
     entry = {
@@ -1526,5 +1534,7 @@ def _record_telemetry(
         # multi-iteration run means prefix caching did nothing for this agent.
         "cached_tokens": cached_tokens,
         "prompt_tokens": prompt_tokens,
+        "model_used": model_used,
+        "provider": provider,
     }
     desk.record_agent_telemetry(entry)
