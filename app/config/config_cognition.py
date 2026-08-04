@@ -50,6 +50,20 @@ class CognitionSettings(BaseSettings):
     #                persona and model stay confounded at a finer grain.
     TOURNAMENT_JURY_ROUTING: str = "off"
 
+    #   MODEL_SHADOW_AGENTS: comma-separated agent names whose prompt is ALSO
+    #   sent to MODEL_SHADOW_ENDPOINT after the primary call returns, purely to
+    #   benchmark that box. The shadow answer is recorded in model_shadow_runs
+    #   and never reaches a decision. Empty = off.
+    #
+    #   Pick candidates by LOOP COUNT, not prompt size: since Jetson went to
+    #   65k every v3 role's largest single call fits, so what separates a good
+    #   Jetson job from a bad one is how many times the ~1.9x slower box is hit
+    #   serially. v3_regime_engine averages 1.1 loops (+~2.6s); the 7-8 loop
+    #   agentic roles would pay ~+20s and one of them (v3_fundamental_analyst)
+    #   overflows 65k anyway once Qwen's ~1.39x heavier tokenization is applied.
+    MODEL_SHADOW_AGENTS: str = ""
+    MODEL_SHADOW_ENDPOINT: str = "jetson"
+
     # Layer 4: Reflective Memory (Dev 5)
     ENABLE_REFLECTIVE_MEMORY: bool = True
 

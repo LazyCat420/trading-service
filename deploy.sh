@@ -45,6 +45,11 @@ EXTRA_SSH_SYNC() {
   # jobs. Same reason as MONGO_STORE_BACKEND below: the remote .env is
   # overwritten from the vault master above, so this must be appended HERE.
   ssh "$DEPLOY_SSH_HOST" "echo 'TOURNAMENT_JURY_ROUTING=${TOURNAMENT_JURY_ROUTING:-split}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  # Shadow-benchmark these agents on a second box (answer is recorded, never
+  # used). v3_regime_engine is the measured best Jetson candidate: 1.1 loops,
+  # so it pays the ~1.9x throughput gap once, off the critical path.
+  ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_AGENTS=${MODEL_SHADOW_AGENTS:-v3_regime_engine}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_ENDPOINT=${MODEL_SHADOW_ENDPOINT:-jetson}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   # Postgres→Mongo migration: per-table backend flags (pg|dual|mongo). This
   # service overwrites its .env from the vault master (above), so runtime flags
   # must be appended HERE, not via deploy-kit/.env.deploy (SKIP_ENV_DEPLOY=true).

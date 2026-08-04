@@ -1486,6 +1486,40 @@ async def run_v3_agent(
                               cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
                               model_used=model_used, provider=provider_used)
 
+            # Benchmark a second box on this exact prompt, off the critical
+            # path. Dispatched only on a NON-degraded success: shadowing a run
+            # whose primary already failed would compare the boxes on an input
+            # the pipeline itself could not handle. Nothing awaits this and no
+            # result of it reaches the desk.
+            try:
+                from app.v3.model_shadow import dispatch_shadow, shadow_endpoint_for
+                shadow_ep = shadow_endpoint_for(agent_name)
+                if shadow_ep:
+                    dispatch_shadow(
+                        endpoint=shadow_ep,
+                        agent_name=agent_name,
+                        ticker=desk.ticker,
+                        cycle_id=cycle_id,
+                        bot_id=bot_id,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        max_tokens=safe_max_tokens,
+                        enable_tools=bool(tool_whitelist),
+                        prism_overrides=prism_overrides,
+                        timeout_seconds=timeout_seconds,
+                        primary={
+                            "model_used": model_used,
+                            "provider": provider_used,
+                            "elapsed_ms": elapsed_ms,
+                            "tokens_used": token_usage,
+                            "loops_used": loops_used,
+                            "response": final_text,
+                        },
+                    )
+            except Exception as shadow_err:
+                logger.warning("[V3AgentRunner] shadow dispatch skipped for %s: %s",
+                               agent_name, shadow_err)
+
         # Classify outcome
         data_gaps = artifact.get("data_gaps", [])
         if degraded or (data_gaps and len(data_gaps) > 2):
