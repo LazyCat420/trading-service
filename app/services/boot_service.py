@@ -40,6 +40,13 @@ class BootService:
 
         logger.info("[Boot] Starting application boot sequence...")
 
+        # The SDK is bind-mounted, not installed into the image, so its version
+        # is NOT controlled by this service's deploy. Probe the attributes we
+        # actually read before anything uses them — a stale mount degrades model
+        # attribution silently rather than erroring. Capability only; this must
+        # never care which models are loaded.
+        cls._run_stage("SDK Capability Check", cls._check_sdk_capabilities, required=False)
+
         # --- Required Boot Stages ---
         cls._run_stage("DB Connection & Schema", cls._init_database, required=True)
         cls._run_stage("Vector Store Indexes", cls._init_vector_indices, required=True)
@@ -188,6 +195,12 @@ class BootService:
     # -------------------------------------------------------------------------
     # INDIVIDUAL STAGES
     # -------------------------------------------------------------------------
+
+    @classmethod
+    def _check_sdk_capabilities(cls):
+        from app.services.sdk_capabilities import assert_sdk_capabilities
+
+        assert_sdk_capabilities()
 
     @classmethod
     def _register_v3_agents(cls):
