@@ -103,6 +103,38 @@ def shadow_endpoint_for(agent_name: str) -> str | None:
         return None
 
 
+#: Harness/guard failures come back as a NORMAL return value with an error
+#: string in `response` — no exception is raised. Recording those as SUCCESS
+#: is how a box that refused the job entirely gets reported as "28x faster
+#: than Gold Spark" (observed 2026-08-04: prism returned a 0-token-window
+#: error for jetson in 1046ms and it was booked as a win).
+_FAILURE_MARKERS = (
+    "context window is critically full",
+    "⚠️ **Error:**",
+    "Summarizing progress so far",
+)
+
+
+def classify_shadow(text: str, tokens: int, loops: int) -> tuple[str, str | None]:
+    """(outcome, error) for a shadow that returned without raising.
+
+    Fail-closed: anything that does not look like real generated work is a
+    failure, because the cost of crediting a refusal as a success is a
+    benchmark that recommends the wrong box.
+    """
+    body = (text or "").strip()
+    if not body:
+        return "EMPTY_RESPONSE", "empty response text"
+    for marker in _FAILURE_MARKERS:
+        if marker in body:
+            return "HARNESS_ERROR", body[:500]
+    if not tokens:
+        # Zero billed tokens means the model never generated anything, however
+        # plausible the returned string looks.
+        return "NO_TOKENS", "0 tokens billed — no generation occurred"
+    return "SUCCESS", None
+
+
 def _record(row: dict) -> None:
     _ensure_shadow_table()
     try:
@@ -173,21 +205,35 @@ async def _run_and_record(
             timeout=timeout_seconds,
         )
         elapsed = int((_time.monotonic() - t0) * 1000)
+        text = result.get("response") or ""
+        tokens = result.get("tokens_used") or 0
+        loops = result.get("loops_used") or 0
+        outcome, err = classify_shadow(text, tokens, loops)
         _record({
             **base,
             "shadow_model": result.get("model_used"),
             "shadow_provider": result.get("provider"),
             "shadow_elapsed_ms": elapsed,
-            "shadow_tokens": result.get("tokens_used") or 0,
-            "shadow_loops": result.get("loops_used") or 0,
-            "shadow_outcome": "SUCCESS",
-            "shadow_text": result.get("response") or "",
+            "shadow_tokens": tokens,
+            "shadow_loops": loops,
+            "shadow_outcome": outcome,
+            "shadow_error": err,
+            "shadow_text": text,
         })
-        logger.info(
-            "[ModelShadow] %s on %s: %dms vs primary %sms (model=%s)",
-            agent_name, endpoint, elapsed, primary.get("elapsed_ms"),
-            result.get("model_used"),
-        )
+        if outcome == "SUCCESS":
+            logger.info(
+                "[ModelShadow] %s on %s: SUCCESS %dms/%dtok vs primary %sms/%stok (model=%s)",
+                agent_name, endpoint, elapsed, tokens,
+                primary.get("elapsed_ms"), primary.get("tokens_used"),
+                result.get("model_used"),
+            )
+        else:
+            # Loud, because a fast failure is the one result most likely to be
+            # mistaken for a fast success.
+            logger.warning(
+                "[ModelShadow] %s on %s: %s after %dms (%dtok) — NOT a win: %s",
+                agent_name, endpoint, outcome, elapsed, tokens, (err or "")[:160],
+            )
     except asyncio.TimeoutError:
         # Recorded, not dropped: a box that times out on a job has FAILED that
         # job, and dropping the row would flatter it by making the failure
