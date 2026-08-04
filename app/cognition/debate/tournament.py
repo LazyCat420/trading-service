@@ -11,6 +11,7 @@ All LLM calls go through app.services.prism_agent_caller (Rule 2).
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -638,21 +639,40 @@ async def _run_jury_scoring(
     total_tokens = 0
     vetoed = False
 
-    async def run_juror(juror_name, juror_config):
-        # T4 (opt-in): the "consensus" keyword routes this scoring call to the
-        # lightweight Jetson endpoint (resolve_default_model_for_agent). Jury
-        # scoring is a consensus task, so the lighter box fits. Default OFF —
-        # if Jetson is disabled this call raises and the juror soft-falls to the
-        # default score, silently degrading the panel.
-        if cognition_settings.TOURNAMENT_JURY_ON_JETSON:
-            agent_name = f"tournament_jury_consensus_{juror_name.lower()}"
-        else:
-            agent_name = f"tournament_jury_{juror_name.lower()}"
+    def _juror_endpoint(index: int, cid: str) -> str | None:
+        """Which vLLM box scores juror #index. None = leave routing alone."""
+        mode = cognition_settings.TOURNAMENT_JURY_ROUTING
+        if mode == "off":
+            return None
+        if mode == "jetson":
+            return "jetson"
+        if mode != "split":
+            logger.warning(
+                "[TOURNAMENT] Unknown TOURNAMENT_JURY_ROUTING=%r — treating as 'off'", mode)
+            return None
+        # Deterministic, seeded on cycle_id rather than random: the same cycle
+        # always reproduces the same assignment (re-running a cycle re-runs the
+        # same experiment), while the offset rotates across cycles so no juror
+        # persona is pinned to one box. hashlib, not hash() — the builtin is
+        # salted per process, so it would give a different split on every
+        # container restart and silently un-reproduce past cycles.
+        offset = int(hashlib.sha256((cid or "").encode()).hexdigest()[:8], 16)
+        return "jetson" if (offset + index) % 2 else "dgx_spark"
+
+    async def run_juror(juror_name, juror_config, juror_index):
+        # T4: which box scores this juror (TOURNAMENT_JURY_ROUTING). The agent
+        # NAME is deliberately identical on every box — routing goes through
+        # `endpoint_override`, not the "consensus" name keyword, so both arms
+        # of a split land under the SAME role label and the model leaderboard
+        # can compare them as one job instead of two.
+        endpoint = _juror_endpoint(juror_index, cycle_id)
+        agent_name = f"tournament_jury_{juror_name.lower()}"
         # Unique first line per juror → separate Prism conversations for the
         # concurrent jury calls (identical prompts collide → 409, see pitches).
         juror_prompt = f"[Juror: {juror_name.replace('_', ' ')}]\n{user_prompt}"
         try:
             response, tokens, ms = await llm.chat(
+                endpoint_override=endpoint,
                 system=juror_config["system_prompt"],
                 user=juror_prompt,
                 temperature=0.3,
@@ -675,6 +695,10 @@ async def _run_jury_scoring(
                 # polluted the verdict text and hid the failure entirely.
                 logger.warning("[TOURNAMENT] Jury %s invalid format (%s) — re-prompting once", juror_name, error)
                 retry_response, retry_tokens, _ = await llm.chat(
+                    # Same box as the first attempt — a retry that lands on the
+                    # other model would credit one model's recovery to the
+                    # other and quietly break the per-role comparison.
+                    endpoint_override=endpoint,
                     system=juror_config["system_prompt"],
                     user=(
                         f"{juror_prompt}\n\n"
@@ -694,16 +718,22 @@ async def _run_jury_scoring(
                 tokens = (tokens or 0) + (retry_tokens or 0)
                 is_valid, parsed, error = validate_jury_score(retry_response)
                 if not is_valid:
-                    logger.error("[TOURNAMENT] Jury %s failed twice (%s) — juror EXCLUDED from panel", juror_name, error)
+                    logger.error("[TOURNAMENT] Jury %s failed twice on %s (%s) — juror EXCLUDED from panel",
+                                 juror_name, endpoint, error)
                     return {"juror": juror_name, "outcome": "PARSE_FAIL", "error": error,
-                            "veto": False, "score": None}, tokens
+                            "veto": False, "score": None, "endpoint": endpoint}, tokens
 
             parsed["juror"] = juror_name
+            # Stamped on every outcome, success or not: a box whose jurors keep
+            # getting EXCLUDED is a model losing the job, and that only shows
+            # up if the failures carry the endpoint too.
+            parsed["endpoint"] = endpoint
             return parsed, tokens or 0
         except Exception as e:
-            logger.error("[TOURNAMENT] Jury %s failed: %s — juror EXCLUDED from panel", juror_name, e)
+            logger.error("[TOURNAMENT] Jury %s failed on %s: %s — juror EXCLUDED from panel",
+                         juror_name, endpoint, e)
             return {"juror": juror_name, "outcome": "AGENT_ERROR", "error": str(e)[:300],
-                    "veto": False, "score": None}, 0
+                    "veto": False, "score": None, "endpoint": endpoint}, 0
 
     # T5: fast mode runs a single juror (Risk_Manager) — the only juror with
     # veto power (the other two hardcode veto=false), so the risk gate is
@@ -720,18 +750,26 @@ async def _run_jury_scoring(
     # they score the same finished bracket and never read each other.
     juror_items = list(active_jurors.items())
     gathered = await asyncio.gather(
-        *(run_juror(name, config) for name, config in juror_items),
+        *(run_juror(name, config, i) for i, (name, config) in enumerate(juror_items)),
         return_exceptions=True,
     )
     results = []
-    for (name, _config), outcome in zip(juror_items, gathered):
+    for i, ((name, _config), outcome) in enumerate(zip(juror_items, gathered)):
         if isinstance(outcome, BaseException):
             # A juror that dies must not take the panel with it — it is simply
             # excluded, exactly as a PARSE_FAIL juror already is below.
             logger.error("[TOURNAMENT] Juror %s failed: %s", name, outcome)
-            results.append(({"juror": name, "score": None}, 0))
+            results.append(({"juror": name, "score": None,
+                             "endpoint": _juror_endpoint(i, cycle_id)}, 0))
             continue
         results.append(outcome)
+
+    if cognition_settings.TOURNAMENT_JURY_ROUTING != "off":
+        logger.info(
+            "[TOURNAMENT] Jury routing=%s → %s",
+            cognition_settings.TOURNAMENT_JURY_ROUTING,
+            {p.get("juror"): p.get("endpoint") for p, _ in results},
+        )
 
     scores = []
     votes = {"A": 0, "B": 0}

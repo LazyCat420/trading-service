@@ -31,12 +31,24 @@ class CognitionSettings(BaseSettings):
     # until explicitly enabled.
     #   FAST_MODE: drop pitch personas 4→2 (Value+Momentum) and jury 3→1 (Risk
     #   Manager) for non-core tickers — ~half the tournament LLM calls.
-    #   JURY_ON_JETSON: route the 3 jury scoring calls to the lightweight Jetson
-    #   vLLM endpoint (via the "consensus" routing keyword). Leave OFF unless the
-    #   Jetson endpoint is confirmed live — a disabled endpoint makes jurors
-    #   silently fall back to the default score.
     TOURNAMENT_FAST_MODE: bool = False
-    TOURNAMENT_JURY_ON_JETSON: bool = False
+
+    #   JURY_ROUTING: which box scores the jury. Replaces the old boolean
+    #   TOURNAMENT_JURY_ON_JETSON (2026-08-04), which could only move ALL
+    #   jurors to Jetson — and did so by renaming the agent to contain
+    #   "consensus", so the two arms landed under different role labels and
+    #   could never be compared as the same job.
+    #     "off"    — every juror on Gold Spark (unchanged behaviour).
+    #     "jetson" — every juror on Jetson. Exercises the box; produces NO
+    #                cross-model comparison, since nothing scores the same
+    #                bracket on Gold Spark.
+    #     "split"  — jurors alternate across the two boxes WITHIN a tournament,
+    #                so both models score a byte-identical bracket. This is the
+    #                only mode that can answer "which model is better at jury
+    #                scoring". The split is keyed on cycle_id so a given juror
+    #                persona lands on both boxes across cycles — otherwise
+    #                persona and model stay confounded at a finer grain.
+    TOURNAMENT_JURY_ROUTING: str = "off"
 
     # Layer 4: Reflective Memory (Dev 5)
     ENABLE_REFLECTIVE_MEMORY: bool = True

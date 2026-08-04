@@ -155,17 +155,49 @@ async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str
     
     raise RuntimeError(f"No models found at vLLM endpoint: {url}")
 
-async def resolve_default_model_for_agent(agent_name: str, force_refresh: bool = False) -> tuple[str, str]:
+# Endpoint key -> the prism provider slug that reaches it. Both halves of
+# the pair have to move together: `provider` is what prism routes on, and
+# `endpoint_key` is what we ask for the live model name. Keeping them in one
+# mapping is what makes `endpoint_override` safe to expose.
+ENDPOINT_PROVIDERS: dict[str, str] = {
+    "jetson": "vllm",
+    "dgx_spark": "vllm-2",
+}
+
+
+async def resolve_default_model_for_agent(
+    agent_name: str,
+    force_refresh: bool = False,
+    endpoint_override: str | None = None,
+) -> tuple[str, str]:
     """Resolve default model based on agent role to balance load.
     Jetson handles lightweight janitorial, consensus, and curation tasks.
     Gold Spark handles heavy quant research, debates, and final decisions.
+
+    `endpoint_override` names a box directly ("jetson" / "dgx_spark") and skips
+    the name-keyword rule entirely. It exists so a caller can vary the MODEL
+    without varying the agent NAME — the keyword rule can only move work to
+    Jetson by renaming the agent, which relabels the role and makes the two
+    arms of a per-role model comparison look like two different jobs.
+
+    An unknown override RAISES rather than falling back to the default box: a
+    silent fallback would run both arms of an A/B on the same box while the
+    telemetry still claimed a split, which is worse than no comparison at all.
     """
     from app.services.prism_agent_caller import llm
 
     provider = "vllm-2"
     endpoint_key = "dgx_spark"
 
-    if agent_name:
+    if endpoint_override:
+        if endpoint_override not in ENDPOINT_PROVIDERS:
+            raise ValueError(
+                f"Unknown endpoint_override {endpoint_override!r} — "
+                f"expected one of {sorted(ENDPOINT_PROVIDERS)}"
+            )
+        endpoint_key = endpoint_override
+        provider = ENDPOINT_PROVIDERS[endpoint_key]
+    elif agent_name:
         name_lower = agent_name.lower()
         # Collector & lightweight agents route to Jetson
         collector_keywords = (
@@ -205,6 +237,7 @@ async def call_prism_agent(
     parent_agent_session_id: str | None = None,
     model_override: str | None = None,
     project: str | None = None,
+    endpoint_override: str | None = None,
 ) -> tuple[str, int, int]:
     """Route an LLM call through Prism SDK."""
     start = time.monotonic()
@@ -262,7 +295,9 @@ async def call_prism_agent(
         from app.v3.guardrails import get_budget_for_role
         max_iter = get_budget_for_role(agent_id).max_turns
 
-        default_model, default_provider = await resolve_default_model_for_agent(fallback_agent_name or agent_id)
+        default_model, default_provider = await resolve_default_model_for_agent(
+            fallback_agent_name or agent_id, endpoint_override=endpoint_override
+        )
         model = model_override or default_model
         
         if model_override:
@@ -508,6 +543,7 @@ class PrismLLMShim:
                 bot_id=bot_id,
                 actor_label=actor_label,
                 model_override=model_override,
+                endpoint_override=endpoint_override,
             )
 
     async def chat_with_tools(
@@ -547,7 +583,9 @@ class PrismLLMShim:
         priority_val = priority.value if hasattr(priority, "value") else int(priority)
 
         async with concurrency_controller.track(label=agent_name, tokens=est_tokens, priority=priority_val):
-            default_model, default_provider = await resolve_default_model_for_agent(agent_name)
+            default_model, default_provider = await resolve_default_model_for_agent(
+                agent_name, endpoint_override=endpoint_override
+            )
             model = model_override or default_model
             
             if model_override:
