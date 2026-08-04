@@ -38,6 +38,13 @@ EXTRA_SSH_SYNC() {
   ssh "$DEPLOY_SSH_HOST" "echo 'JETSON_MAX_CONCURRENT=6' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'DGX_MAX_CONCURRENT=8' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'ANALYSIS_WORKER_TIMEOUT_SECONDS=1800' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  # Per-role model benchmarking: which box scores the tournament jury.
+  # off|jetson|split — "split" alternates jurors across Gold Spark and Jetson
+  # within one tournament so both models score an identical bracket, which is
+  # what makes the per-role leaderboard a comparison rather than two separate
+  # jobs. Same reason as MONGO_STORE_BACKEND below: the remote .env is
+  # overwritten from the vault master above, so this must be appended HERE.
+  ssh "$DEPLOY_SSH_HOST" "echo 'TOURNAMENT_JURY_ROUTING=${TOURNAMENT_JURY_ROUTING:-split}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   # Postgres→Mongo migration: per-table backend flags (pg|dual|mongo). This
   # service overwrites its .env from the vault master (above), so runtime flags
   # must be appended HERE, not via deploy-kit/.env.deploy (SKIP_ENV_DEPLOY=true).
