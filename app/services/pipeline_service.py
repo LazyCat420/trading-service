@@ -1143,6 +1143,44 @@ class PipelineService:
                     active_bot_id = get_active_bot_id()
                     
                     from app.utils.text_utils import parse_json_response
+
+                    def _gatekeeper_unusable(why: str) -> dict:
+                        """Degrade to the scoring engine when the gatekeeper produced
+                        no usable verdict.
+
+                        A gatekeeper that timed out, errored, or emitted unparseable
+                        text has expressed NO opinion. Letting that fall through to
+                        the `else` branch below ends the cycle green with 0 tickers
+                        and an empty rationale — indistinguishable from a genuine
+                        "no compelling setups" verdict. On 2026-08-05 that discarded
+                        20 eligible candidates (RDDT delta 0.92, SHOP +30.3%) three
+                        cycles running, and the UI showed three healthy cycles.
+                        A failure must degrade loudly, never decide silently.
+                        """
+                        fallback_tickers = [s["ticker"] for s in top_scorers[:max_tickers]]
+                        logger.error(
+                            "[PipelineService] Gatekeeper unusable (%s) — degrading to "
+                            "top %d scorers: %s", why, len(fallback_tickers), fallback_tickers,
+                        )
+                        try:
+                            PipelineStateDB.append_events(cycle_id, [{
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                                "phase": "gatekeeper",
+                                "step": "GATEKEEPER_DEGRADED",
+                                "detail": (
+                                    f"⚠️ Gatekeeper unusable ({why}) — selection fell back to "
+                                    f"the scoring engine's top {len(fallback_tickers)}."
+                                ),
+                                "status": "degraded",
+                                "data": {"reason": why, "fallback_tickers": fallback_tickers},
+                            }])
+                        except Exception as _evt_err:  # noqa: BLE001 — telemetry must not abort the cycle
+                            logger.warning("[PipelineService] degraded-event emit failed: %s", _evt_err)
+                        return {"response": json.dumps({
+                            "selected_tickers": fallback_tickers,
+                            "rationale": f"Gatekeeper {why} — auto-selected by scoring engine",
+                        })}
+
                     # Wrap gatekeeper in a timeout to prevent indefinite hangs
                     try:
                         result = await asyncio.wait_for(
@@ -1159,18 +1197,26 @@ class PipelineService:
                             timeout=180.0,
                         )
                     except asyncio.TimeoutError:
-                        logger.error("[PipelineService] Gatekeeper LLM call timed out after 180s — falling back to top scorers")
-                        fallback_tickers = [s["ticker"] for s in top_scorers[:max_tickers]]
-                        logger.warning("[PipelineService] Timeout fallback: using top %d scorers: %s", len(fallback_tickers), fallback_tickers)
-                        result = {"response": json.dumps({"selected_tickers": fallback_tickers, "rationale": "Gatekeeper timed out — auto-selected by scoring engine"})}
-                    
+                        result = _gatekeeper_unusable("timed out after 180s")
+
                     final_text = result.get("response", "{}")
                     logger.info("[PipelineService] Raw gatekeeper response: %s", final_text)
                     parsed = parse_json_response(final_text)
                     logger.info("[PipelineService] Parsed gatekeeper JSON: %s", parsed)
                     if not parsed:
                         parsed = {}
-                        
+
+                    # A genuine "select nothing" verdict parses into a dict that
+                    # CARRIES the selected_tickers key. Anything else — an agent
+                    # error string, prose, a truncated stream — is a failure, and
+                    # is routed to the scoring engine rather than being read as a
+                    # decision to sit the cycle out.
+                    if "selected_tickers" not in parsed:
+                        result = _gatekeeper_unusable(
+                            f"returned no parseable selection ({str(final_text)[:160]!r})"
+                        )
+                        parsed = parse_json_response(result["response"]) or {}
+
                     selected = parsed.get("selected_tickers", [])
                     rationale = parsed.get("rationale", "")
                     

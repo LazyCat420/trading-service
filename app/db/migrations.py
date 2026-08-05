@@ -981,11 +981,62 @@ def _fix_eth_cagr_data(conn):
     _safe_add_column(conn, "tool_playbook", "recommended_tool_sequence", "TEXT")
     _safe_add_column(conn, "tool_playbook", "stop_conditions", "TEXT")
     _safe_add_column(conn, "tool_playbook", "bad_patterns_to_avoid", "TEXT")
+    _safe_add_column(conn, "tool_playbook", "tool_name", "TEXT")
     try:
         with conn.cursor() as cur:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tool_playbook_task ON tool_playbook(task_type)")
             conn.commit()
     except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    # ── tool_playbook: collapse the unbounded duplicate pile ──
+    # update_tool_playbook() inserted a fresh uuid4 PK per (agent, tool) on
+    # EVERY run under `ON CONFLICT DO NOTHING` — a conflict that can never fire
+    # against a random PK. The table reached 4,948 rows (+831/day) by
+    # 2026-08-05, and base_agent injected every matching row into the prompt:
+    # 1,387 identical lines, a 131k-char junior-analyst prompt, and an instant
+    # "0 output tokens of a 0 token window" from prism. Every discovery cycle
+    # died at the first agent.
+    #
+    # The natural key is (agent_role, task_type, market_context, tool_name).
+    # tool_name has to be its OWN column: recommended_tool_sequence embeds the
+    # live stats ("avg score: 94.2 over 104 uses"), so keying on that text
+    # would still mint a new row every time a score moved.
+    try:
+        with conn.cursor() as cur:
+            # Backfill tool_name from the legacy free-text sequence.
+            cur.execute("""
+                UPDATE tool_playbook
+                   SET tool_name = substring(recommended_tool_sequence
+                                             from 'Primary tool: ([^ ]+)')
+                 WHERE tool_name IS NULL
+                   AND recommended_tool_sequence LIKE 'Primary tool: %'
+            """)
+            # Keep the newest row per natural key, drop the rest.
+            cur.execute("""
+                DELETE FROM tool_playbook a
+                 USING tool_playbook b
+                 WHERE a.tool_name IS NOT NULL
+                   AND a.tool_name        IS NOT DISTINCT FROM b.tool_name
+                   AND a.agent_role       IS NOT DISTINCT FROM b.agent_role
+                   AND a.task_type        IS NOT DISTINCT FROM b.task_type
+                   AND a.market_context   IS NOT DISTINCT FROM b.market_context
+                   AND (a.created_at, a.id) < (b.created_at, b.id)
+            """)
+            deleted = cur.rowcount
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_playbook_natural_key
+                    ON tool_playbook (agent_role, task_type, market_context, tool_name)
+                 WHERE tool_name IS NOT NULL
+            """)
+            conn.commit()
+            if deleted:
+                print(f"[migrations] tool_playbook: removed {deleted} duplicate rows")
+    except Exception as e:
+        print(f"[migrations] tool_playbook dedupe skipped: {e}")
         try:
             conn.rollback()
         except Exception:

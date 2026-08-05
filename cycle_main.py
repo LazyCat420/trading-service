@@ -20,6 +20,23 @@ if local_dir not in sys.path:
 
 logger = logging.getLogger("cycle_backend")
 
+
+def _worker_identity() -> str:
+    """Which instance is this? Stamped on every command claim.
+
+    Any process pointed at the shared database is an equal claimant for queued
+    cycles (`FOR UPDATE SKIP LOCKED` is atomic but instance-blind). On
+    2026-08-05 a stale local container six weeks behind master silently took
+    two scheduled cycles from the NAS and killed both; the logs named no
+    instance, so answering "who ran this cycle" meant diffing container code
+    against master by hand. Cheap identity here is the whole diagnosis.
+    """
+    import socket
+    return f"{os.environ.get('WORKER_NAME') or socket.gethostname()}/{os.environ.get('GIT_SHA', 'unknown-build')}"
+
+
+WORKER_ID = _worker_identity()
+
 async def run_single_cycle(
     tickers: list[str] | None = None,
     cycle_id: str = "",
@@ -104,7 +121,7 @@ def drain_schedule_refreshes():
 
 async def poll_system_commands(shutdown: asyncio.Event):
     from app.db.connection import get_db
-    logger.info("[cycle_backend] Started system commands poller for V3.")
+    logger.info("[cycle_backend] Started system commands poller for V3. worker=%s", WORKER_ID)
     
     while not shutdown.is_set():
         try:
@@ -129,7 +146,10 @@ async def poll_system_commands(shutdown: asyncio.Event):
                 try:
                     payload = json.loads(payload_val) if isinstance(payload_val, str) else (payload_val or {})
                     result = None
-                    logger.info("[cycle_backend] Processing command %s (%s)", cmd_type, job_id)
+                    logger.info(
+                        "[cycle_backend] Processing command %s (%s) | claimed by worker=%s",
+                        cmd_type, job_id, WORKER_ID,
+                    )
                     
                     if cmd_type in ("START_CYCLE", "START_V3_CYCLE"):
                         from app.services.pipeline_service import PipelineService

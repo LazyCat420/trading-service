@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Tool-playbook tips cache: (agent_name -> (tips, fetched_monotonic)).
 _PLAYBOOK_CACHE: dict[str, tuple[str, float]] = {}
 _PLAYBOOK_TTL_SEC = 3600.0
+_PLAYBOOK_MAX_CHARS = 2000
 
 
 _REQUESTED_MAX_TOKENS = 8192
@@ -286,13 +287,28 @@ def _get_tool_playbook_tips(agent_name: str, limit: int = 3) -> str:
         from app.db.connection import get_db
         with get_db() as db:
             rows = db.execute(
-                "SELECT recommended_tool_sequence FROM tool_playbook "
-                "WHERE agent_role = %s ORDER BY created_at DESC LIMIT %s",
+                "SELECT DISTINCT ON (recommended_tool_sequence) recommended_tool_sequence, "
+                "       COALESCE(last_validated_at, created_at) AS freshness "
+                "  FROM tool_playbook "
+                " WHERE agent_role = %s "
+                " ORDER BY recommended_tool_sequence, freshness DESC "
+                " LIMIT %s",
                 [agent_name, limit],
             ).fetchall()
         tips = "\n".join(f"- {r[0]}" for r in rows if r and r[0])
     except Exception as e:  # noqa: BLE001 — advisory context, never blocks the agent
         logger.debug("[V3Runner] tool_playbook fetch failed: %s", e)
+    # Belt-and-braces cap. This is advisory context appended to every agent
+    # prompt; on 2026-08-05 an unbounded version of this injection reached
+    # 131k chars and prism rejected the request outright ("0 output tokens of
+    # a 0 token window"), taking down every discovery cycle. Advisory text
+    # must never be able to cost a cycle, however the table misbehaves.
+    if len(tips) > _PLAYBOOK_MAX_CHARS:
+        logger.warning(
+            "[V3Runner] tool_playbook tips for %s were %d chars — truncated to %d",
+            agent_name, len(tips), _PLAYBOOK_MAX_CHARS,
+        )
+        tips = tips[:_PLAYBOOK_MAX_CHARS].rsplit("\n", 1)[0]
     _PLAYBOOK_CACHE[agent_name] = (tips, time.monotonic())
     return tips
 

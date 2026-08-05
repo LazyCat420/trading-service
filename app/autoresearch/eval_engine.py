@@ -435,20 +435,42 @@ def update_tool_playbook():
                 """
             ).fetchall()
 
+            # UPSERT on the natural key, never accumulate.
+            #
+            # This used to INSERT a fresh uuid4 PK per row under
+            # `ON CONFLICT DO NOTHING`, which cannot fire against a random key —
+            # so every run appended another copy of every (agent, tool) pair.
+            # By 2026-08-05 that was 4,948 rows growing ~831/day, and since
+            # base_agent injects the matching rows into each agent prompt it
+            # produced 131k-char prompts that prism rejected outright, killing
+            # every discovery cycle at the first agent. tool_name is a real
+            # column because recommended_tool_sequence carries the live stats
+            # and therefore changes on almost every run.
             for agent_name, tool_name, uses, avg_score in rows:
-                playbook_id = str(uuid.uuid4())
                 seq = f"Primary tool: {tool_name} (avg score: {avg_score:.1f} over {uses} uses)"
-                
-                # Insert tool_playbook
+
                 db.execute(
                     """
-                    INSERT INTO tool_playbook (id, task_type, market_context, agent_role, recommended_tool_sequence, required_preconditions)
-                    VALUES (%s, 'general', 'any', %s, %s, 'None')
-                    ON CONFLICT DO NOTHING
+                    INSERT INTO tool_playbook (
+                        id, task_type, market_context, agent_role,
+                        tool_name, recommended_tool_sequence,
+                        required_preconditions, score_stats, last_validated_at
+                    )
+                    VALUES (%s, 'general', 'any', %s, %s, %s, 'None', %s, NOW())
+                    ON CONFLICT (agent_role, task_type, market_context, tool_name)
+                    DO UPDATE SET
+                        recommended_tool_sequence = EXCLUDED.recommended_tool_sequence,
+                        score_stats               = EXCLUDED.score_stats,
+                        last_validated_at         = NOW()
                     """,
-                    [playbook_id, agent_name, seq]
+                    [
+                        str(uuid.uuid4()), agent_name, tool_name, seq,
+                        json.dumps({"uses": int(uses), "avg_score": round(float(avg_score), 2)}),
+                    ],
                 )
-                
-            logger.info("[EvalWorker] Updated tool playbook based on latest eval scores.")
+
+            logger.info(
+                "[EvalWorker] Updated tool playbook: %d agent/tool pairs upserted.", len(rows)
+            )
         except Exception as e:
             logger.error(f"[EvalWorker] Failed to update tool playbook: {e}")
