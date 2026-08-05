@@ -437,6 +437,14 @@ def update_tool_playbook():
 
             # UPSERT on the natural key, never accumulate.
             #
+            # The `WHERE tool_name IS NOT NULL` on the conflict target is load
+            # bearing, not decoration: uq_tool_playbook_natural_key is a PARTIAL
+            # unique index, and Postgres refuses to infer a partial index unless
+            # the statement repeats its predicate ("no unique or exclusion
+            # constraint matching the ON CONFLICT specification"). Drop it and
+            # every call raises, which the except below turns into a log line —
+            # the playbook silently stops updating while row counts look correct.
+            #
             # This used to INSERT a fresh uuid4 PK per row under
             # `ON CONFLICT DO NOTHING`, which cannot fire against a random key —
             # so every run appended another copy of every (agent, tool) pair.
@@ -458,6 +466,7 @@ def update_tool_playbook():
                     )
                     VALUES (%s, 'general', 'any', %s, %s, %s, 'None', %s, NOW())
                     ON CONFLICT (agent_role, task_type, market_context, tool_name)
+                    WHERE tool_name IS NOT NULL
                     DO UPDATE SET
                         recommended_tool_sequence = EXCLUDED.recommended_tool_sequence,
                         score_stats               = EXCLUDED.score_stats,
