@@ -40,10 +40,16 @@ async def startup_vllm_discovery():
                         raise ValueError(f"Model not yet resolved for active endpoint '{ep.name}' ({ep.url})")
 
             # 3. Verify V3 agents are loaded in both live registries (via /config/agents)
-            from app.v3.prism_registration import _V3_AGENT_MODULES
+            # _V3_AGENT_MODULES was a static list; it became the discovery
+            # helper below and this call site was never updated, so step 3 threw
+            # ImportError on every attempt. The retry loop then presented a
+            # PERMANENT breakage as a transient one — 36 identical "Retrying in
+            # 5s..." lines — and the whole readiness check (prism health, model
+            # resolution, agent registration) has been silently dead ever since.
+            from app.v3.prism_registration import _discover_v3_agent_modules
             import importlib
             expected_agent_ids = []
-            for path in _V3_AGENT_MODULES:
+            for path in _discover_v3_agent_modules():
                 try:
                     mod = importlib.import_module(path)
                     expected_agent_ids.append(f"CUSTOM_{mod.AGENT_NAME.upper()}")
