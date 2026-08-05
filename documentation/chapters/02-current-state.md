@@ -6,7 +6,7 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile ok"><div class="label">Tickers into analysis</div><div class="value">13</div><div class="note">was 0–1</div></div>
   <div class="tile ok"><div class="label">tool_playbook rows</div><div class="value">63</div><div class="note">purged from 4,948</div></div>
   <div class="tile ok"><div class="label">Playbook injection</div><div class="value">231 ch</div><div class="note">was ~120,000</div></div>
-  <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">7</div><div class="note">new concern, see open items</div></div>
+  <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
 ## Verified working
@@ -27,11 +27,24 @@ twice against production: row count held at 63, 61 rows had
 required — row count alone cannot distinguish a working upsert from one that
 raises on every row.
 
-**Agents produce real artifacts again.** Cycle `cycle-v3-1785953340` had one
-`no parseable artifact` occurrence across the whole run, against a **100%**
-failure rate before the fix — every ticker in every discovery cycle since
-2026-08-04 21:44 had aborted at the first agent. Sample output from
-`v3_fundamental_analyst` on NYT, showing the pipeline doing genuine work:
+**Agents produce real artifacts again, and failures no longer abort a ticker.**
+Measured over ~2 hours of cycle `cycle-v3-1785953340`:
+
+| Signal | This cycle | Before the fix |
+|---|---:|---|
+| `no parseable artifact` | 2 | every agent, every ticker |
+| `Circuit breaker tripped` | **0** | every ticker |
+| Tickers `ABORTED` | **0** | every ticker |
+| Agent tool-turn timeouts | 12 | not reached |
+
+The two parse failures (`v3_fundamental_analyst` on UBER,
+`v3_valuation_analyst` on NYT) were both absorbed by the single retry, so no
+ticker was lost. That is the substantive change: before the fix a parse failure
+was *guaranteed* on the retry too, so the breaker tripped every time and every
+ticker aborted at the first agent. Occasional agent flakiness is normal; a 100%
+deterministic failure was not.
+
+Sample output from `v3_fundamental_analyst` on NYT, showing genuine work:
 
 > NYT reported Q2 2026 earnings this morning that resolved the prior cycle's
 > fundamental-vs-technical divergence in the bear's favor … guided Q3
@@ -58,8 +71,9 @@ the verification cycle:
 ✅ UBER: v3_fundamental_analyst → NEUTRAL @ 55% (5 turns, 203055ms)
 ```
 
-After 80 minutes: **203 pipeline events, 6 tickers touched, 16 agents
-completed**. The comparison that matters is the broken cycle from the same
+After ~2 hours: **211+ pipeline events, 32 agent completions**, and the pipeline
+has reached the **debate layer** (`v3_debate_judge` on SHOP), past the whole
+research stack. The comparison that matters is the broken cycle from the same
 morning — `cycle-v3-1785936600` produced **17 events total** and ended at the
 gatekeeper.
 
@@ -71,10 +85,11 @@ verification cycle was still running at the time of writing, with no
 finishes. Selection, artifact generation, and per-agent completion are
 confirmed. **Debate, trade execution, and cycle completion are not.**
 
-**The cycle is slow.** 16 agents in 80 minutes, with individual agents taking
-203–529 seconds. At that rate 13 tickers is a multi-hour run. Whether this is a
-regression or was simply invisible while every agent failed instantly is
-unknown — see [Open items](#open-items). It needs a baseline before anyone
+**The cycle is slow.** 32 agent completions in ~2 hours, with individual agents
+taking 203–529 seconds and **12** exhausting their tool-turn budget. At that
+rate 13 tickers through the full 4+1 layer stack is a multi-hour run. Whether
+this is a regression or was simply invisible while every agent failed instantly
+is unknown — see [Open items](#open-items). It needs a baseline before anyone
 calls it a regression.
 
 ## Shipped today

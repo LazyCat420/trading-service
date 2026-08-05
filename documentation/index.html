@@ -160,7 +160,7 @@ figcaption{margin-top:.8rem;font-size:.82rem;color:var(--ink-soft);text-align:ce
       <h1>Trading Service — Working Documentation</h1>
       <p class="sub">How the cycle backend behaves under the hood: invariants, failure modes, and what is verified working.</p>
     </div>
-    <span class="stamp">generated 2026-08-05 18:31 UTC · do not edit by hand</span>
+    <span class="stamp">generated 2026-08-05 18:44 UTC · do not edit by hand</span>
   </div>
 </header>
 <div class="shell">
@@ -236,13 +236,16 @@ if "selected_tickers" not in parsed:
   <div class="tile ok"><div class="label">Tickers into analysis</div><div class="value">13</div><div class="note">was 0–1</div></div>
   <div class="tile ok"><div class="label">tool_playbook rows</div><div class="value">63</div><div class="note">purged from 4,948</div></div>
   <div class="tile ok"><div class="label">Playbook injection</div><div class="value">231 ch</div><div class="note">was ~120,000</div></div>
-  <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">7</div><div class="note">new concern, see open items</div></div>
+  <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 <h2 id="verified-working">Verified working</h2>
 <p><strong>The playbook constraint holds.</strong> <code>tool_playbook</code> sits at 63 rows behind <code>uq_tool_playbook_natural_key</code>, down from 4,948. Injection measured live on the running container:</p>
 <div class="scroll-x"><table><thead><tr><th>Agent</th><th style="text-align:right">Injected</th><th style="text-align:right">Lines</th></tr></thead><tbody><tr><td><code>v3_junior_analyst</code></td><td style="text-align:right">231 chars</td><td style="text-align:right">3</td></tr><tr><td><code>v3_fundamental_analyst</code></td><td style="text-align:right">223 chars</td><td style="text-align:right">3</td></tr><tr><td><code>v3_quant_analyst</code></td><td style="text-align:right">204 chars</td><td style="text-align:right">3</td></tr></tbody></table></div>
 <p><strong>The writer upserts rather than accumulating.</strong> <code>update_tool_playbook()</code> run twice against production: row count held at 63, 61 rows had <code>last_validated_at</code> refreshed, zero errors logged. All three signals are required — row count alone cannot distinguish a working upsert from one that raises on every row.</p>
-<p><strong>Agents produce real artifacts again.</strong> Cycle <code>cycle-v3-1785953340</code> had one <code>no parseable artifact</code> occurrence across the whole run, against a <strong>100%</strong> failure rate before the fix — every ticker in every discovery cycle since 2026-08-04 21:44 had aborted at the first agent. Sample output from <code>v3_fundamental_analyst</code> on NYT, showing the pipeline doing genuine work:</p>
+<p><strong>Agents produce real artifacts again, and failures no longer abort a ticker.</strong> Measured over ~2 hours of cycle <code>cycle-v3-1785953340</code>:</p>
+<div class="scroll-x"><table><thead><tr><th>Signal</th><th style="text-align:right">This cycle</th><th>Before the fix</th></tr></thead><tbody><tr><td><code>no parseable artifact</code></td><td style="text-align:right">2</td><td>every agent, every ticker</td></tr><tr><td><code>Circuit breaker tripped</code></td><td style="text-align:right"><strong>0</strong></td><td>every ticker</td></tr><tr><td>Tickers <code>ABORTED</code></td><td style="text-align:right"><strong>0</strong></td><td>every ticker</td></tr><tr><td>Agent tool-turn timeouts</td><td style="text-align:right">12</td><td>not reached</td></tr></tbody></table></div>
+<p>The two parse failures (<code>v3_fundamental_analyst</code> on UBER, <code>v3_valuation_analyst</code> on NYT) were both absorbed by the single retry, so no ticker was lost. That is the substantive change: before the fix a parse failure was <em>guaranteed</em> on the retry too, so the breaker tripped every time and every ticker aborted at the first agent. Occasional agent flakiness is normal; a 100% deterministic failure was not.</p>
+<p>Sample output from <code>v3_fundamental_analyst</code> on NYT, showing genuine work:</p>
 <blockquote><p>NYT reported Q2 2026 earnings this morning that resolved the prior cycle's fundamental-vs-technical divergence in the bear's favor … guided Q3 digital-only subscription revenue growth to just 12–15% vs Q2's 16.4%. <code>thesis_direction: BEARISH, confidence: 62</code></p></blockquote>
 <p><strong>Gatekeeper failure degrades instead of deciding.</strong> Caught live:</p>
 <div class="scroll-x"><pre><code>ERROR [PipelineService] Gatekeeper unusable (returned no parseable selection
@@ -253,10 +256,10 @@ top 15 scorers</code></pre></div>
 <p><strong>Agents complete with real verdicts</strong>, not just parseable output. Sampled from the verification cycle:</p>
 <div class="scroll-x"><pre><code>✅ CVS:  v3_fundamental_analyst → BULLISH @ 55% (9 turns, 529159ms)
 ✅ UBER: v3_fundamental_analyst → NEUTRAL @ 55% (5 turns, 203055ms)</code></pre></div>
-<p>After 80 minutes: <strong>203 pipeline events, 6 tickers touched, 16 agents completed</strong>. The comparison that matters is the broken cycle from the same morning — <code>cycle-v3-1785936600</code> produced <strong>17 events total</strong> and ended at the gatekeeper.</p>
+<p>After ~2 hours: <strong>211+ pipeline events, 32 agent completions</strong>, and the pipeline has reached the <strong>debate layer</strong> (<code>v3_debate_judge</code> on SHOP), past the whole research stack. The comparison that matters is the broken cycle from the same morning — <code>cycle-v3-1785936600</code> produced <strong>17 events total</strong> and ended at the gatekeeper.</p>
 <h2 id="not-yet-verified">Not yet verified</h2>
 <p><strong>A full cycle has not been observed end to end since the fix.</strong> The verification cycle was still running at the time of writing, with no <code>Saved analysis result</code> lines yet — those land when a ticker's whole pipeline finishes. Selection, artifact generation, and per-agent completion are confirmed. <strong>Debate, trade execution, and cycle completion are not.</strong></p>
-<p><strong>The cycle is slow.</strong> 16 agents in 80 minutes, with individual agents taking 203–529 seconds. At that rate 13 tickers is a multi-hour run. Whether this is a regression or was simply invisible while every agent failed instantly is unknown — see <a href="#open-items">Open items</a>. It needs a baseline before anyone calls it a regression.</p>
+<p><strong>The cycle is slow.</strong> 32 agent completions in ~2 hours, with individual agents taking 203–529 seconds and <strong>12</strong> exhausting their tool-turn budget. At that rate 13 tickers through the full 4+1 layer stack is a multi-hour run. Whether this is a regression or was simply invisible while every agent failed instantly is unknown — see <a href="#open-items">Open items</a>. It needs a baseline before anyone calls it a regression.</p>
 <h2 id="shipped-today">Shipped today</h2>
 <div class="scroll-x"><table><thead><tr><th>Commit</th><th>Change</th></tr></thead><tbody><tr><td><code>b3d3d90</code></td><td>Playbook natural key + dedupe migration, gatekeeper failure/refusal split, prompt cap, worker identity</td></tr><tr><td><code>8182868</code></td><td>Repeat the partial-index predicate so the upsert actually fires</td></tr><tr><td><code>3653899</code></td><td>Revive the dead startup readiness check; stamp <code>GIT_SHA</code>/<code>WORKER_NAME</code> at deploy</td></tr></tbody></table></div>
 <blockquote><p><strong><code>3653899</code> and later are pushed but NOT deployed.</strong> The deploy was held because restarting the container kills the in-flight verification cycle, which was producing real analysis. Run <code>npm run deploy</code> once <code>pipeline_state.status</code> is no longer <code>running</code>. Until then the NAS is on <code>8182868</code>, and worker identity reads <code>&lt;container-id&gt;/unknown-build</code> rather than <code>nas-prod/&lt;sha&gt;</code>.</p></blockquote></section>
@@ -266,11 +269,12 @@ top 15 scorers</code></pre></div>
 <p>The call passes <code>enable_tools=False</code> to get clean JSON, yet still goes through <code>/agent</code>, which carries a large tool payload on this project. It may be paying that cost for nothing.</p>
 <p><strong>Next step:</strong> capture the raw prism response for one failing call. The current log records only that content was empty, never what actually came back. Decide between <code>/chat</code> and a model known to survive <code>/agent</code> <em>after</em> that evidence exists, not before.</p>
 <h2 id="2-agents-exhaust-their-tool-turn-budget">2. Agents exhaust their tool-turn budget</h2>
-<p>Seven occurrences in one cycle:</p>
+<p>Twelve occurrences in the first two hours of one cycle:</p>
 <div class="scroll-x"><pre><code>ERROR [ManagerAgent] Agent v3_fundamental_analyst took too much time
 (207.6s) over 7 tool turns without completing.</code></pre></div>
 <p>These agents are working — the NYT report quoted in <em>Current state</em> came from one — but several run out of budget before finishing. This is a plausible contributor to the cycle's slow wall-clock, and it means some tickers get a truncated analysis rather than a complete one.</p>
 <p>Unclear whether this is new or was simply invisible while every agent failed earlier. <strong>Needs a baseline before it is treated as a regression.</strong></p>
+<p>This is now the main constraint on cycle throughput: 32 agent completions in two hours, against 13 tickers that each traverse the full 4+1 layer stack.</p>
 <h2 id="3-a-reserved-section-write-is-blocked-but-reports-success">3. A reserved-section write is blocked but reports success</h2>
 <div class="scroll-x"><pre><code>[WhiteboardTool] BLOCKED write to reserved section 'fundamental_report'
   by agent 'v3_fundamental_analyst' (NYT)

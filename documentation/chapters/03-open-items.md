@@ -19,7 +19,7 @@ exists, not before.
 
 ## 2. Agents exhaust their tool-turn budget
 
-Seven occurrences in one cycle:
+Twelve occurrences in the first two hours of one cycle:
 
 ```
 ERROR [ManagerAgent] Agent v3_fundamental_analyst took too much time
@@ -33,6 +33,9 @@ truncated analysis rather than a complete one.
 
 Unclear whether this is new or was simply invisible while every agent failed
 earlier. **Needs a baseline before it is treated as a regression.**
+
+This is now the main constraint on cycle throughput: 32 agent completions in
+two hours, against 13 tickers that each traverse the full 4+1 layer stack.
 
 ## 3. A reserved-section write is blocked but reports success
 
