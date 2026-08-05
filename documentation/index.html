@@ -160,7 +160,7 @@ figcaption{margin-top:.8rem;font-size:.82rem;color:var(--ink-soft);text-align:ce
       <h1>Trading Service — Working Documentation</h1>
       <p class="sub">How the cycle backend behaves under the hood: invariants, failure modes, and what is verified working.</p>
     </div>
-    <span class="stamp">generated 2026-08-05 18:26 UTC · do not edit by hand</span>
+    <span class="stamp">generated 2026-08-05 18:31 UTC · do not edit by hand</span>
   </div>
 </header>
 <div class="shell">
@@ -250,10 +250,16 @@ if "selected_tickers" not in parsed:
 top 15 scorers</code></pre></div>
 <p>Before <code>b3d3d90</code> this exact fault ended the cycle green with 0 tickers.</p>
 <p><strong>Worker identity is stamped on claims.</strong> <code>claimed by worker=&lt;name&gt;/&lt;sha&gt;</code>.</p>
+<p><strong>Agents complete with real verdicts</strong>, not just parseable output. Sampled from the verification cycle:</p>
+<div class="scroll-x"><pre><code>✅ CVS:  v3_fundamental_analyst → BULLISH @ 55% (9 turns, 529159ms)
+✅ UBER: v3_fundamental_analyst → NEUTRAL @ 55% (5 turns, 203055ms)</code></pre></div>
+<p>After 80 minutes: <strong>203 pipeline events, 6 tickers touched, 16 agents completed</strong>. The comparison that matters is the broken cycle from the same morning — <code>cycle-v3-1785936600</code> produced <strong>17 events total</strong> and ended at the gatekeeper.</p>
 <h2 id="not-yet-verified">Not yet verified</h2>
-<p><strong>A full cycle has not been observed end to end since the fix.</strong> The verification cycle reached the analysis phase with 13 tickers and was still running at the time of writing; no <code>Saved analysis result</code> lines had appeared yet. Selection and artifact generation are confirmed. Debate, trade execution, and cycle completion are <strong>not</strong> confirmed for this build.</p>
+<p><strong>A full cycle has not been observed end to end since the fix.</strong> The verification cycle was still running at the time of writing, with no <code>Saved analysis result</code> lines yet — those land when a ticker's whole pipeline finishes. Selection, artifact generation, and per-agent completion are confirmed. <strong>Debate, trade execution, and cycle completion are not.</strong></p>
+<p><strong>The cycle is slow.</strong> 16 agents in 80 minutes, with individual agents taking 203–529 seconds. At that rate 13 tickers is a multi-hour run. Whether this is a regression or was simply invisible while every agent failed instantly is unknown — see <a href="#open-items">Open items</a>. It needs a baseline before anyone calls it a regression.</p>
 <h2 id="shipped-today">Shipped today</h2>
-<div class="scroll-x"><table><thead><tr><th>Commit</th><th>Change</th></tr></thead><tbody><tr><td><code>b3d3d90</code></td><td>Playbook natural key + dedupe migration, gatekeeper failure/refusal split, prompt cap, worker identity</td></tr><tr><td><code>8182868</code></td><td>Repeat the partial-index predicate so the upsert actually fires</td></tr><tr><td><code>3653899</code></td><td>Revive the dead startup readiness check; stamp <code>GIT_SHA</code>/<code>WORKER_NAME</code> at deploy</td></tr></tbody></table></div></section>
+<div class="scroll-x"><table><thead><tr><th>Commit</th><th>Change</th></tr></thead><tbody><tr><td><code>b3d3d90</code></td><td>Playbook natural key + dedupe migration, gatekeeper failure/refusal split, prompt cap, worker identity</td></tr><tr><td><code>8182868</code></td><td>Repeat the partial-index predicate so the upsert actually fires</td></tr><tr><td><code>3653899</code></td><td>Revive the dead startup readiness check; stamp <code>GIT_SHA</code>/<code>WORKER_NAME</code> at deploy</td></tr></tbody></table></div>
+<blockquote><p><strong><code>3653899</code> and later are pushed but NOT deployed.</strong> The deploy was held because restarting the container kills the in-flight verification cycle, which was producing real analysis. Run <code>npm run deploy</code> once <code>pipeline_state.status</code> is no longer <code>running</code>. Until then the NAS is on <code>8182868</code>, and worker identity reads <code>&lt;container-id&gt;/unknown-build</code> rather than <code>nas-prod/&lt;sha&gt;</code>.</p></blockquote></section>
 <section class="chapter" id="open-items"><h1 id="open-items">Open items</h1>
 <h2 id="1-the-gatekeeper-llm-returns-empty-responses">1. The gatekeeper LLM returns empty responses</h2>
 <p><code>v3_portfolio_manager</code> (<code>deepseek-v4-flash-0731</code> on <code>vllm-2</code>, via prism <code>/agent</code>) intermittently returns nothing: failed 08-04 22:28, succeeded 23:00, failed 08-05 06:31 and 11:11. Selection currently comes from the scoring engine fallback, so the gatekeeper's qualitative judgement — catalyst quality, mega-cap balance, freshness overrides — is <strong>not being applied at all</strong>.</p>
