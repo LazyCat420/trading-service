@@ -1504,8 +1504,6 @@ async def run_v3_agent(
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
                         max_tokens=safe_max_tokens,
-                        enable_tools=bool(tool_whitelist),
-                        prism_overrides=prism_overrides,
                         timeout_seconds=timeout_seconds,
                         primary={
                             "model_used": model_used,

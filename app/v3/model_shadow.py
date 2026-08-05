@@ -166,14 +166,83 @@ def _record(row: dict) -> None:
         logger.warning("[ModelShadow] Failed to record %s: %s", row.get("agent_name"), e)
 
 
+async def _prism_chat(
+    *, provider: str, model: str, system_prompt: str, user_prompt: str,
+    max_tokens: int, timeout_seconds: float,
+) -> dict:
+    """Call prism's TOOL-LESS /chat endpoint and collect the SSE stream.
+
+    Why not the SDK's call_agent (i.e. /agent), which everything else uses:
+    /agent attaches the full MCP catalog server-side — measured 2026-08-04 at
+    **275 tools = 91,255 tokens**, before any prompt. That alone exceeds a 65k
+    box's entire window, so /agent can NEVER reach Jetson; prism answers with a
+    context_exhausted error and a 0-token window. No request field changes it
+    (enabledTools/tools/toolsEnabled and the project name were all tested and
+    the count stayed at 275) because tool attachment is server-side policy, not
+    a request parameter — [[availabletools-is-not-enforcement-policies-are]].
+
+    CAVEAT this imposes on the comparison: the shadow runs the job WITHOUT
+    tools while the primary ran WITH them. For v3_regime_engine that is still
+    like-for-like — its own module records that its tools have had zero calls
+    in 60 days, so the tool-enabled primary is not actually using them — but
+    it would NOT be a fair comparison for a genuinely tool-using role. Do not
+    reuse this path for one without re-checking that agent's tool call counts.
+    """
+    import json as _json
+    import httpx
+    from app.config import settings
+
+    url = f"{settings.PRISM_URL.rstrip('/')}/chat"
+    payload = {
+        "model": model,
+        "provider": provider,
+        "project": settings.PROJECT_NAME,
+        "systemPrompt": system_prompt,
+        "messages": [{"role": "user", "content": user_prompt}],
+        "maxTokens": max_tokens,
+        "thinkingEnabled": False,
+    }
+    text_parts: list[str] = []
+    done: dict = {}
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        async with client.stream("POST", url, json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    evt = _json.loads(line[6:])
+                except Exception:
+                    continue
+                kind = evt.get("type")
+                if kind == "chunk":
+                    text_parts.append(evt.get("content") or "")
+                elif kind == "done":
+                    done = evt
+                elif kind == "error":
+                    raise RuntimeError(str(evt)[:300])
+    usage = done.get("usage") or {}
+    return {
+        "response": "".join(text_parts),
+        # Total, not output-only: the leaderboard's token columns are totals
+        # everywhere else and a shadow that reported only output would look
+        # artificially cheap next to the primary.
+        "tokens_used": (usage.get("inputTokens") or 0) + (usage.get("outputTokens") or 0),
+        "loops_used": 1,
+        "model_used": done.get("model"),
+        "provider": done.get("provider"),
+    }
+
+
 async def _run_and_record(
     *, endpoint: str, agent_name: str, ticker: str, cycle_id: str, bot_id: str,
-    system_prompt: str, user_prompt: str, max_tokens: int, enable_tools: bool,
-    prism_overrides: dict | None, timeout_seconds: float,
-    primary: dict,
+    system_prompt: str, user_prompt: str, max_tokens: int,
+    timeout_seconds: float, primary: dict,
 ) -> None:
+    # NB: deliberately takes no enable_tools/prism_overrides. The /chat path
+    # cannot honour either, and a parameter the executor ignores is how
+    # `endpoint_override` sat dead in three signatures for months.
     import time as _time
-    from app.agents.base_agent import run_agent
 
     base = {
         "cycle_id": cycle_id, "ticker": ticker, "agent_name": agent_name,
@@ -188,19 +257,24 @@ async def _run_and_record(
 
     t0 = _time.monotonic()
     try:
+        from app.services.prism_agent_caller import (
+            ENDPOINT_PROVIDERS, get_live_model_from_vllm, llm,
+        )
+        ep = llm._endpoints.get(endpoint)
+        if not ep or not ep.url:
+            raise RuntimeError(f"endpoint {endpoint!r} is not configured")
         result = await asyncio.wait_for(
-            run_agent(
-                agent_name=agent_name,
-                ticker=ticker,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
+            _prism_chat(
+                provider=ENDPOINT_PROVIDERS[endpoint],
+                model=await get_live_model_from_vllm(ep.url),
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                max_tokens=max_tokens,
-                enable_tools=enable_tools,
-                # The whole point: same name, same prompt, different box.
-                endpoint_override=endpoint,
-                prism_overrides=prism_overrides,
+                # The primary's budget was sized against Gold Spark's 1M
+                # window; reusing it here can push prompt+output past 65k and
+                # produce a context rejection that looks like a model failure.
+                # Floor 4096 is prism's ContextExhaustionGuard minimum.
+                max_tokens=max(4096, min(max_tokens, 8192)),
+                timeout_seconds=timeout_seconds,
             ),
             timeout=timeout_seconds,
         )
