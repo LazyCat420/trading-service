@@ -17,6 +17,14 @@ log records only that content was empty, never what actually came back. Decide
 between `/chat` and a model known to survive `/agent` *after* that evidence
 exists, not before.
 
+**2026-08-05: the capture is now armed.** `base_agent.run_agent` logs raw
+content, resolved model/provider, token count, elapsed time, loop count and
+usage at the empty-response site before substituting the sentinel. The next
+failure self-documents; look for `EMPTY RESPONSE from v3_portfolio_manager`
+in the container logs. Supporting fact for the tool-payload hypothesis:
+`CUSTOM_V3_PORTFOLIO_MANAGER` registers prism-side with 13 tools the
+gatekeeper never uses.
+
 ## 2. Agents exhaust their tool-turn budget
 
 Twelve occurrences in the first two hours of one cycle:
@@ -66,19 +74,19 @@ instances refuse risks a far worse failure — a misconfigured flag silently
 stops every cycle with no error to notice. Observability first; enforcement
 only if this recurs.
 
-## 5. `pipeline_state` can strand a cycle at `running`
+## 5. `pipeline_state` can strand a cycle at `running` — FIXED 2026-08-05
 
-A process that dies mid-cycle leaves `status='running'`, and the next scheduled
-command is skipped with `Pipeline state is stuck at 'running' from a previous
-crashed cycle`. Orphan detection exists but on 2026-08-05 did not clear the
-state before the next scheduled cycle was due. Worth confirming the auto-clear
-threshold is shorter than the scheduling interval.
+The auto-clear judged staleness on `started_at > 30min`, which failed both
+ways: a crash less than 30 minutes before the next scheduled command made a
+healthy instance skip a cycle it could have run (the 2026-08-05 case), and a
+legitimately long cycle could be force_reset out from under a live owner.
+Staleness is now judged on `updated_at`, which `save_state()` stamps on every
+cycle event emit — a real heartbeat. Threshold: 15 minutes without any state
+write. See *Current state* for the mechanism.
 
-## 6. Log noise that trains the eye to ignore logs
+## 6. Log noise that trains the eye to ignore logs — FIXED 2026-08-05
 
-- `$SKHYV: possibly delisted; no price data found` — logged at **critical**,
-  15× in 3.5 hours. A delisted ticker is not a critical event.
-- `Twitter accounts sweep stored 0 tweets across 16 accounts` — backend
-  unconfigured; configure it or stop sweeping.
-- `[SCHEDULER] Job sch-bot-<id> has no next_run_time` — recurs with no visible
-  consequence; either it matters or it should not be a warning.
+All three silenced at the correct layer; see *Current state*. The Twitter
+sweep is now gated behind `TWITTER_SWEEP_ENABLED=False` — flip it the day
+scraper-service gets `TWITTER_ACCOUNTS` credentials, or the collector stays a
+deliberate no-op.

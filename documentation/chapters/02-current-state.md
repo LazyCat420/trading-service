@@ -9,6 +9,52 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-05 — the open-items wave
+
+Six fixes landed in one branch (`fix/open-items-2026-08-05`), driven by the
+client-side open-items list. Mechanisms, with the diagnostics that motivated
+them:
+
+**One firm-wide confidence scale (client open items 1+2).** Measured baseline
+before the change, 348 desks over 14 days: every stage's mean confidence sat
+at 57–66 — inside the 55–69 dead band below the calibrated execution floor of
+70 (`final_decision` mean 60.2, stdev 15.2). The artifact schemas turned out
+to be **validation-only** — `agent_runner` never serializes them into a
+prompt — so anchoring them alone would have been a no-op. The operative
+anchor is a "WHAT `confidence` MEANS" section added to nine agent prompts
+(junior, quant, valuation, bull, bear, debate judge, delta, decision
+synthesizer, regime), each defining the number as P(this stage's claim is
+right over its horizon) with the Board's 80-90/70-79/55-69/<55 bands.
+Schema descriptions mirror it via `_CONF_BANDS`. The floor of 70 is
+untouched. **Do not edit these prompts again before a full measurement
+window has passed** — the before/after comparison is the whole point.
+
+**Regime fallback is distinguishable (client open item 2).** Diagnostic
+first: recent regime artifacts are fully formed (313/313 carry every field),
+so the CONTRADICTORY-87% dominance is the model's own emission, not a parse
+fallback — classified once per cycle and copied to every desk (one label, one
+confidence per cycle). The fallback paths are still made honest: the
+orchestrator's initial and missing-field regime is now `UNCLASSIFIED`
+(persona routing unchanged — unknown labels already fall back to Jane Street
+with a warning), and a validator-coerced label stamps `regime_fallback: true`.
+
+**Empty-response capture armed (open item 1 here).** See that item.
+
+**Heartbeat orphan clear (open item 5 here).** `start_cycle` judges a stuck
+`running` state by `updated_at` (stamped on every event emit) with a
+15-minute threshold, not `started_at > 30min`.
+
+**Per-ticker drop reconciliation (client open item 3).** Every ticker in the
+fan-out now ends the cycle as either a real decision or an explicit
+`v3_dropped_<ticker>` pipeline event with the reason (crash, abort sentinel,
+no result, no price history). The noop HOLD/confidence-0 sentinel counts as a
+drop, not a decision. The FDVV shape — 11 desks in, 10 decisions out, nothing
+recorded — cannot recur silently.
+
+**Watch trips report as `watch_trip` (client open item 7).** `list_cycles`
+labels `wd-*` event groups `watch_trip` instead of letting them fall through
+to `aborted`; the client badge is in trading-client.
+
 ## Verified working
 
 **The playbook constraint holds.** `tool_playbook` sits at 63 rows behind
