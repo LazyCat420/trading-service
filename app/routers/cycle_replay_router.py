@@ -337,7 +337,16 @@ def list_cycles(
                 # AND its events are still fresh — a hard kill (crash-loop, OOM,
                 # container restart) skips the pipeline's except/finally and
                 # leaves pipeline_state stuck on "running" forever.
-                if cycle_id == live_cycle_id:
+                if cycle_id.startswith("wd-"):
+                    # A Watch Desk trip mirrors one event into pipeline_events
+                    # under its wd-<id> COMMAND id (watch_desk.py:_log_event).
+                    # It has no telemetry, no trades and no done event, so it
+                    # used to fall through every completion check and render as
+                    # an aborted cycle ("0 tickers · 0s", red dot) — open item
+                    # 7, 2026-08-05. It is not a failure; it is the trigger for
+                    # the real cycle that follows.
+                    status = "watch_trip"
+                elif cycle_id == live_cycle_id:
                     stale = (
                         row[2] is not None
                         and (datetime.now(timezone.utc) - _as_utc(row[2])).total_seconds() > STALE_RUNNING_SECS
