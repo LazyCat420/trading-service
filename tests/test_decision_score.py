@@ -13,6 +13,7 @@ from app.quant.decision_score import (
     compute_risk_reward,
     rank_scores,
     score_decision,
+    universe_percentile,
 )
 
 
@@ -229,6 +230,38 @@ class TestBanding:
         assert s["band"] not in ("BUY", "SELL", "HOLD")
 
 
+class TestUniversePercentile:
+    """The live path scores ONE ticker at a time, so `rank_scores` can never
+    run there. Auditing cycle-v3-1785962005 found all 11 rows with a NULL
+    percentile — the column existed and nothing filled it."""
+
+    def test_every_scoreable_result_carries_a_percentile(self):
+        s = score_decision(_fundamental(), _technical(), ticker="T")
+        assert s["percentile"] is not None
+        assert s["percentile_universe"] > 0
+
+    def test_not_scoreable_carries_none(self):
+        s = score_decision({"pe_ratio": 20.0}, {}, ticker="THIN")
+        assert s.get("percentile") is None
+
+    def test_monotonic_in_the_score(self):
+        good = score_decision(_fundamental(pe_ratio=9.0, revenue_growth=0.40,
+                                           profit_margin=0.30), _technical())
+        bad = score_decision(_fundamental(pe_ratio=70.0, revenue_growth=-0.05,
+                                          profit_margin=-0.06), _technical())
+        assert good["score"] > bad["score"]
+        assert good["percentile"] > bad["percentile"]
+
+    def test_clamped_at_both_ends(self):
+        assert universe_percentile(0.0) == 0.0
+        assert universe_percentile(100.0) == 100.0
+        assert universe_percentile(None) is None
+
+    def test_median_composite_lands_near_the_middle(self):
+        # p50 of the measured universe is a composite of 52.3.
+        assert 45.0 <= universe_percentile(52.3) <= 55.0
+
+
 class TestRanking:
     def test_percentile_spans_the_scored_set(self):
         scores = [
@@ -252,12 +285,16 @@ class TestRanking:
         thin = next(s for s in scores if s["ticker"] == "THIN")
         assert "percentile" not in thin
 
-    def test_single_name_is_not_ranked(self):
-        """A percentile over one name is 100 by construction and means
-        nothing."""
+    def test_single_name_keeps_its_universe_rank(self):
+        """A WITHIN-SET percentile over one name is 100 by construction and
+        means nothing, so `rank_scores` must decline to compute one — and in
+        declining it must not clobber the universe percentile the scorer
+        already attached, which is the only meaningful rank for a lone name."""
         scores = [score_decision(_fundamental(), _technical(), ticker="ONE")]
+        before = scores[0]["percentile"]
         rank_scores(scores)
-        assert "percentile" not in scores[0]
+        assert scores[0]["percentile"] == before
+        assert scores[0]["percentile_universe"] > 1
 
 
 class TestBlock:

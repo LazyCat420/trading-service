@@ -97,6 +97,7 @@ from __future__ import annotations
 
 import logging
 import math
+from itertools import pairwise
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -622,8 +623,15 @@ def score_decision(fundamental: dict | None,
             _HYBRID_FUNDAMENTAL_WEIGHT * result["fundamental_score"]
             + (1.0 - _HYBRID_FUNDAMENTAL_WEIGHT) * result["technical_score"], 1)
 
+    # Cross-sectional rank against the standing universe. Computed HERE rather
+    # than by a caller holding the whole cycle, because the pipeline scores one
+    # ticker at a time and no such caller exists — the reason this column was
+    # NULL on every row of cycle-v3-1785962005.
+    result["percentile"] = universe_percentile(result["score"])
+    result["percentile_universe"] = _COMPOSITE_UNIVERSE_N
+
     result["confidence"] = _confidence(result, fundamental, technical)
-    _apply_gates(result, fundamental, technical)
+    _apply_gates(result, fundamental)
     return result
 
 
@@ -700,7 +708,7 @@ def _confidence(result: dict, fundamental: dict, technical: dict) -> int:
     return int(max(0, min(85, round(conf))))
 
 
-def _apply_gates(result: dict, fundamental: dict, technical: dict) -> None:
+def _apply_gates(result: dict, fundamental: dict) -> None:
     """Structural checks, recorded SEPARATELY from the score.
 
     Kept out of the composite on purpose. A content bonus must not out-point a
@@ -872,8 +880,8 @@ def build_decision_score_block(ticker: str, score: dict | None = None) -> str:
         lines.append("  " + "   ".join(bits))
     if s.get("percentile") is not None:
         lines.append(
-            f"  cross-sectional rank: {s['percentile']:g}th percentile of "
-            f"{s.get('percentile_universe', '?')} scored names this cycle"
+            f"  cross-sectional rank: {s['percentile']:g}th percentile of the "
+            f"{s.get('percentile_universe', '?')}-name scored universe"
         )
     lines.append("")
 
@@ -924,8 +932,56 @@ def build_decision_score_block(ticker: str, score: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+# Percentile knots for the COMPOSITE itself, measured 2026-08-05 over the 881
+# tickers that scored out of the 1,195 with a fundamentals row. Reproduce with
+# `scripts/decision_score_report.py distribution`.
+#
+# This exists because `rank_scores` could not run on the live path and the
+# `percentile` column was therefore always NULL — caught by auditing
+# cycle-v3-1785962005, where all 11 rows came back with no percentile. The
+# pipeline scores ONE ticker at a time inside `run_v3_pipeline`, so there is no
+# moment where a cycle's names are all in hand to rank against each other.
+#
+# Ranking against the standing universe is also the better question. A
+# percentile within a 10-name cycle says "best of whatever was screened today",
+# which moves with the screen; against the universe it says "top decile of
+# everything we track", which is the claim a book with finite capital needs.
+_COMPOSITE_KNOTS: tuple[tuple[float, float], ...] = (
+    (6.6, 0.0), (32.7, 5.0), (42.4, 15.0), (46.9, 25.0), (52.3, 50.0),
+    (58.2, 75.0), (62.0, 85.0), (67.4, 95.0), (85.8, 100.0),
+)
+_COMPOSITE_UNIVERSE_N = 881
+
+
+def universe_percentile(score: float | None) -> float | None:
+    """Where `score` sits in the measured universe distribution, 0-100.
+
+    Linear interpolation between the knots above, clamped at both ends. None
+    in, None out — a name with no score has no rank, and inventing one is the
+    failure this module exists to avoid.
+    """
+    s = _finite(score)
+    if s is None:
+        return None
+    knots = _COMPOSITE_KNOTS
+    if s <= knots[0][0]:
+        return 0.0
+    if s >= knots[-1][0]:
+        return 100.0
+    for (x0, y0), (x1, y1) in pairwise(knots):
+        if x0 <= s <= x1:
+            if x1 == x0:
+                return round(y1, 1)
+            return round(y0 + (y1 - y0) * (s - x0) / (x1 - x0), 1)
+    return None
+
+
 def rank_scores(scores: list[dict]) -> list[dict]:
-    """Attach a cross-sectional percentile to each scoreable result.
+    """Attach a WITHIN-SET percentile to each scoreable result.
+
+    Used by the report script when a whole set is in hand at once. The live
+    per-ticker path cannot call this — see `universe_percentile`, which answers
+    the same question against the standing universe instead.
 
     This is the half an absolute screen cannot do. Banding a name against
     fixed cutoffs answers "is this good?"; the pipeline is already stuck on
