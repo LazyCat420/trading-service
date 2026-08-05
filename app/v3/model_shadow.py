@@ -70,6 +70,18 @@ def _ensure_shadow_table() -> None:
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
             """)
+            # The prompt that was actually compared (2026-08-05). Without it a
+            # row records two answers to a question nobody kept, so the run can
+            # never be replayed or re-scored — and replay is the only way to
+            # reach a useful n: a real cycle costs ~8 minutes per sample, the
+            # same prompt replayed costs seconds.
+            db.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE model_shadow_runs ADD COLUMN IF NOT EXISTS system_prompt TEXT;
+                    ALTER TABLE model_shadow_runs ADD COLUMN IF NOT EXISTS user_prompt TEXT;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
+            """)
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_model_shadow_agent
                 ON model_shadow_runs (agent_name, created_at)
@@ -148,8 +160,8 @@ def _record(row: dict) -> None:
                     primary_tokens, primary_loops, primary_text,
                     shadow_model, shadow_provider, shadow_elapsed_ms,
                     shadow_tokens, shadow_loops, shadow_outcome,
-                    shadow_error, shadow_text
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    shadow_error, shadow_text, system_prompt, user_prompt
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     row["cycle_id"], row["ticker"], row["agent_name"], row["endpoint"],
@@ -160,6 +172,9 @@ def _record(row: dict) -> None:
                     row.get("shadow_elapsed_ms") or 0, row.get("shadow_tokens") or 0,
                     row.get("shadow_loops") or 0, row["shadow_outcome"],
                     (row.get("shadow_error") or None), (row.get("shadow_text") or "")[:_MAX_TEXT],
+                    # NOT capped at _MAX_TEXT: a truncated prompt cannot be
+                    # replayed, which is the whole reason it is stored.
+                    row.get("system_prompt"), row.get("user_prompt"),
                 ),
             )
     except Exception as e:
@@ -253,6 +268,8 @@ async def _run_and_record(
         "primary_tokens": primary.get("tokens_used"),
         "primary_loops": primary.get("loops_used"),
         "primary_text": primary.get("response"),
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
     }
 
     t0 = _time.monotonic()
