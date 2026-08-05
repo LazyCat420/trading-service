@@ -1,0 +1,2 @@
+Trading Service — Working Documentation
+How the cycle backend behaves under the hood: invariants, failure modes, and what is verified working.

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trading Service — Working Documentation</title>
+<style>
+:root{
+  --ground:#f6f7f9; --panel:#ffffff; --panel-2:#eef1f5;
+  --ink:#1b2027; --ink-soft:#5a6472; --rule:#d8dee7;
+  --accent:#0f6f6c; --accent-soft:#e2f0ef;
+  --ok:#1f7a4d; --warn:#8a6100; --bad:#a32b25;
+  --ok-bg:#e4f2ea; --warn-bg:#fbf0d8; --bad-bg:#f9e5e3;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.04);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ground:#111419; --panel:#181c23; --panel-2:#1f242c;
+    --ink:#e5e9ef; --ink-soft:#9aa5b4; --rule:#2b323c;
+    --accent:#5ec8c0; --accent-soft:#16302f;
+    --ok:#6ed49b; --warn:#e8bb5c; --bad:#f2867e;
+    --ok-bg:#14291f; --warn-bg:#2c2413; --bad-bg:#2e1a19;
+    --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#111419; --panel:#181c23; --panel-2:#1f242c;
+  --ink:#e5e9ef; --ink-soft:#9aa5b4; --rule:#2b323c;
+  --accent:#5ec8c0; --accent-soft:#16302f;
+  --ok:#6ed49b; --warn:#e8bb5c; --bad:#f2867e;
+  --ok-bg:#14291f; --warn-bg:#2c2413; --bad-bg:#2e1a19;
+  --shadow:none;
+}
+:root[data-theme="light"]{
+  --ground:#f6f7f9; --panel:#ffffff; --panel-2:#eef1f5;
+  --ink:#1b2027; --ink-soft:#5a6472; --rule:#d8dee7;
+  --accent:#0f6f6c; --accent-soft:#e2f0ef;
+  --ok:#1f7a4d; --warn:#8a6100; --bad:#a32b25;
+  --ok-bg:#e4f2ea; --warn-bg:#fbf0d8; --bad-bg:#f9e5e3;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.04);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:16px; line-height:1.65; -webkit-font-smoothing:antialiased;
+}
+.masthead{
+  border-bottom:1px solid var(--rule); background:var(--panel);
+  padding:2.2rem 1.5rem 1.6rem;
+}
+.masthead-inner{max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;gap:1rem;align-items:baseline;justify-content:space-between}
+.masthead h1{
+  font-family:ui-serif,Charter,"Bitstream Charter",Georgia,serif;
+  font-size:1.9rem;font-weight:600;margin:0;letter-spacing:-.01em;text-wrap:balance;
+}
+.masthead .sub{color:var(--ink-soft);font-size:.9rem;margin:.35rem 0 0}
+.stamp{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;
+  color:var(--ink-soft);background:var(--panel-2);border:1px solid var(--rule);
+  border-radius:999px;padding:.3rem .7rem;white-space:nowrap;
+}
+.shell{max-width:1180px;margin:0 auto;padding:2rem 1.5rem 5rem;display:grid;grid-template-columns:220px minmax(0,1fr);gap:2.6rem;align-items:start}
+nav.toc{position:sticky;top:1.5rem;font-size:.86rem}
+nav.toc h2{
+  font-size:.7rem;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--ink-soft);margin:0 0 .7rem;font-weight:600;
+  font-family:system-ui,sans-serif;border:0;padding:0;
+}
+nav.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.1rem}
+nav.toc a{
+  display:block;padding:.32rem .6rem;border-radius:6px;color:var(--ink-soft);
+  text-decoration:none;border-left:2px solid transparent;
+}
+nav.toc a:hover{color:var(--ink);background:var(--panel-2)}
+nav.toc a.chapter{color:var(--ink);font-weight:550}
+nav.toc a.sub{padding-left:1.1rem;font-size:.82rem}
+main{min-width:0}
+section.chapter{
+  background:var(--panel);border:1px solid var(--rule);border-radius:10px;
+  padding:1.9rem 2.1rem;margin-bottom:1.5rem;box-shadow:var(--shadow);
+}
+main h1,main h2,main h3,main h4{
+  font-family:ui-serif,Charter,"Bitstream Charter",Georgia,serif;
+  letter-spacing:-.01em;text-wrap:balance;
+}
+main h1{font-size:1.55rem;margin:0 0 1.1rem;padding-bottom:.6rem;border-bottom:1px solid var(--rule);font-weight:600}
+main h2{font-size:1.18rem;margin:2.1rem 0 .7rem;font-weight:600}
+main h3{font-size:1rem;margin:1.5rem 0 .5rem;font-weight:650}
+main h4{font-size:.92rem;margin:1.2rem 0 .4rem;font-weight:650;color:var(--ink-soft)}
+main p,main li{max-width:70ch}
+main p{margin:0 0 .95rem}
+main ul,main ol{margin:0 0 1rem;padding-left:1.35rem;display:flex;flex-direction:column;gap:.3rem}
+main li{margin:0}
+a{color:var(--accent)}
+a:focus-visible,nav.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.87em;
+  background:var(--panel-2);border:1px solid var(--rule);border-radius:4px;padding:.08em .35em;
+}
+pre{
+  background:var(--panel-2);border:1px solid var(--rule);border-radius:8px;
+  padding:.9rem 1.05rem;margin:0 0 1rem;overflow-x:auto;
+}
+pre code{background:none;border:0;padding:0;font-size:.83rem;line-height:1.6}
+.scroll-x{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:.89rem;margin:0 0 1rem;font-variant-numeric:tabular-nums}
+th,td{border-bottom:1px solid var(--rule);padding:.55rem .7rem;text-align:left;vertical-align:top}
+th{
+  font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--ink-soft);font-weight:600;border-bottom:1.5px solid var(--rule);white-space:nowrap;
+}
+tbody tr:last-child td{border-bottom:0}
+blockquote{
+  margin:0 0 1rem;padding:.7rem 1.1rem;border-left:3px solid var(--accent);
+  background:var(--accent-soft);border-radius:0 6px 6px 0;color:var(--ink);
+}
+blockquote p:last-child{margin-bottom:0}
+hr{border:0;border-top:1px solid var(--rule);margin:1.8rem 0}
+figure{margin:1.4rem 0;padding:1.1rem;background:var(--panel-2);border:1px solid var(--rule);border-radius:8px;overflow-x:auto}
+figure svg{max-width:100%;height:auto;display:block;margin:0 auto;color:var(--ink)}
+figcaption{margin-top:.8rem;font-size:.82rem;color:var(--ink-soft);text-align:center;max-width:none}
+.status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8rem;margin:0 0 1.4rem}
+.tile{border:1px solid var(--rule);border-radius:8px;padding:.8rem .9rem;background:var(--panel);border-left-width:3px}
+.tile .label{font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-soft);font-weight:600}
+.tile .value{font-size:1.32rem;font-weight:650;margin-top:.15rem;font-variant-numeric:tabular-nums;font-family:ui-serif,Charter,Georgia,serif}
+.tile .note{font-size:.78rem;color:var(--ink-soft);margin-top:.15rem}
+.tile.ok{border-left-color:var(--ok)} .tile.ok .value{color:var(--ok)}
+.tile.warn{border-left-color:var(--warn)} .tile.warn .value{color:var(--warn)}
+.tile.bad{border-left-color:var(--bad)} .tile.bad .value{color:var(--bad)}
+.pill{
+  display:inline-block;font-size:.7rem;font-weight:650;letter-spacing:.04em;
+  text-transform:uppercase;padding:.16rem .5rem;border-radius:999px;
+  border:1px solid transparent;white-space:nowrap;vertical-align:.06em;
+}
+.pill.ok{background:var(--ok-bg);color:var(--ok);border-color:var(--ok)}
+.pill.warn{background:var(--warn-bg);color:var(--warn);border-color:var(--warn)}
+.pill.bad{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
+.pill.info{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+@media (max-width:900px){
+  .shell{grid-template-columns:1fr;gap:1.4rem;padding:1.2rem 1rem 3rem}
+  nav.toc{position:static;border-bottom:1px solid var(--rule);padding-bottom:1rem}
+  nav.toc ol{flex-direction:row;flex-wrap:wrap;gap:.3rem}
+  section.chapter{padding:1.3rem 1.15rem}
+}
+@media print{
+  body{background:#fff}
+  nav.toc,.stamp{display:none}
+  .shell{display:block;max-width:none;padding:0}
+  section.chapter{border:0;box-shadow:none;page-break-inside:avoid;padding:0 0 1.5rem}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <div>
+      <h1>Trading Service — Working Documentation</h1>
+      <p class="sub">How the cycle backend behaves under the hood: invariants, failure modes, and what is verified working.</p>
+    </div>
+    <span class="stamp">generated 2026-08-05 18:26 UTC · do not edit by hand</span>
+  </div>
+</header>
+<div class="shell">
+  <nav class="toc" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol><li><a class="chapter" href="#how-to-use-this">How to use this document</a></li><li><a class="sub" href="#the-contract">The contract</a></li><li><a class="sub" href="#when-to-write-here">When to write here</a></li><li><a class="sub" href="#chapters">Chapters</a></li><li><a class="chapter" href="#agent-pipeline">From an agent call to an artifact</a></li><li><a class="sub" href="#prompt-assembly-is-the-load-bearing-step">Prompt assembly is the load-bearing step</a></li><li><a class="sub" href="#empty-responses-become-a-sentinel-string">Empty responses become a sentinel string</a></li><li><a class="sub" href="#the-circuit-breaker-aborts-the-ticker-not-the-cycle">The circuit breaker aborts the ticker, not the cycle</a></li><li><a class="sub" href="#cycle-commands-are-claimed-not-addressed">Cycle commands are claimed, not addressed</a></li><li><a class="sub" href="#migrations-run-at-import-time">Migrations run at import time</a></li><li><a class="chapter" href="#current-state">Current state</a></li><li><a class="sub" href="#verified-working">Verified working</a></li><li><a class="sub" href="#not-yet-verified">Not yet verified</a></li><li><a class="sub" href="#shipped-today">Shipped today</a></li><li><a class="chapter" href="#open-items">Open items</a></li><li><a class="sub" href="#1-the-gatekeeper-llm-returns-empty-responses">1. The gatekeeper LLM returns empty responses</a></li><li><a class="sub" href="#2-agents-exhaust-their-tool-turn-budget">2. Agents exhaust their tool-turn budget</a></li><li><a class="sub" href="#3-a-reserved-section-write-is-blocked-but-reports-success">3. A reserved-section write is blocked but reports success</a></li><li><a class="sub" href="#4-no-enforcement-against-a-second-claiming-instance">4. No enforcement against a second claiming instance</a></li><li><a class="sub" href="#5-pipeline_state-can-strand-a-cycle-at-running">5. pipeline_state can strand a cycle at running</a></li><li><a class="sub" href="#6-log-noise-that-trains-the-eye-to-ignore-logs">6. Log noise that trains the eye to ignore logs</a></li><li><a class="chapter" href="#incidents">Incidents</a></li><li><a class="sub" href="#2026-08-05-cycles-processed-01-tickers-while-reporting-success">2026-08-05 — Cycles processed 0–1 tickers while reporting success</a></li><li><a class="sub" href="#diagnostic-notes">Diagnostic notes</a></li></ol>
+  </nav>
+  <main><section class="chapter" id="how-to-use-this"><h1 id="how-to-use-this-document">How to use this document</h1>
+<p>The persistent working record for <code>trading-service</code>, the cycle backend. It holds what a competent reader could not recover from the code in ten minutes: why things are shaped the way they are, which failures look like successes, and what is verified working versus merely believed to work.</p>
+<p>The operator-facing view of the same system — cycle state, what the UI shows — lives in <code>trading-client/documentation/</code>. This document is the code side.</p>
+<h2 id="the-contract">The contract</h2>
+<p><strong>Markdown is the source of truth. HTML is generated.</strong></p>
+<div class="scroll-x"><pre><code class="lang-bash">python3 documentation/build_docs.py          # rebuild index.html
+python3 documentation/build_docs.py --check  # fail if index.html is stale</code></pre></div>
+<p>Chapters are <code>documentation/chapters/*.md</code>. <code>index.html</code> is built from them and must never be hand-edited. The builder is stdlib-only and produces a single self-contained page — no install step, no network at view time.</p>
+<h2 id="when-to-write-here">When to write here</h2>
+<p>In the same change as the code, never afterwards from memory:</p>
+<ul>
+<li>a fix ships → record what it <strong>proved</strong>, with the evidence, in <em>Current state</em></li>
+<li>something is found broken → <em>Open items</em>, even if it is not being fixed now</li>
+<li>a failure is diagnosed → <em>Incidents</em>; the reasoning outlives the patch</li>
+<li>an invariant is discovered → <em>Agent pipeline</em>, so the next reader learns the rule rather than rediscovering it through an outage</li>
+</ul>
+<p>Prefer measured numbers, log lines, and commit SHAs to adjectives. Mark unverified claims as unverified — a hypothesis labelled as one is useful, a hypothesis dressed as a finding costs the next reader a day.</p>
+<p>Reports belong here, in the repo, not in a hosted artifact that expires from reach. See <code>06-report-standards.md</code> in <code>trading-client/documentation/</code> for the full house style covering page construction, diagrams, and writing.</p>
+<h2 id="chapters">Chapters</h2>
+<div class="scroll-x"><table><thead><tr><th>File</th><th>Holds</th></tr></thead><tbody><tr><td><code>00-how-to-use-this.md</code></td><td>This contract</td></tr><tr><td><code>01-agent-pipeline.md</code></td><td>How an agent call becomes an artifact, and its failure modes</td></tr><tr><td><code>02-current-state.md</code></td><td>What is verified working, with evidence</td></tr><tr><td><code>03-open-items.md</code></td><td>Known-broken and not-yet-done</td></tr><tr><td><code>04-incidents.md</code></td><td>Diagnosed failures and their lessons</td></tr></tbody></table></div></section>
+<section class="chapter" id="agent-pipeline"><h1 id="from-an-agent-call-to-an-artifact">From an agent call to an artifact</h1>
+<p>Most cycle failures are agent failures wearing a disguise. This chapter traces the path an agent call takes and names the places where a failure stops looking like one.</p>
+<h2 id="prompt-assembly-is-the-load-bearing-step">Prompt assembly is the load-bearing step</h2>
+<p><code>run_agent()</code> in <code>app/agents/base_agent.py</code> composes a prompt from several sources: the static system prompt, injected data context, prior-outcome context, and — the dangerous one — advisory guidance pulled from the database.</p>
+<p>The danger is that advisory context is <em>unbounded by nature</em>. It comes from a table that another subsystem writes to on a schedule, so its size is not a property of this code at all. When <code>tool_playbook</code> accumulated duplicates, the junior analyst's prompt reached <strong>130,982 characters</strong> without a single line of this module changing.</p>
+<p>Prism does not truncate an over-long prompt. It returns a harness error:</p>
+<div class="scroll-x"><pre><code>Error: The conversation's context window is critically full — only 0 output
+tokens remain out of a 0 token window.</code></pre></div>
+<p>Which arrives downstream as "agent produced no parseable artifact".</p>
+<blockquote><p><strong>Invariant.</strong> Anything appended to a prompt from a database must be bounded at the point of injection, not just at the point of writing. Two guards are deliberate redundancy: <code>_get_tool_playbook_tips</code> caps at <code>_PLAYBOOK_MAX_CHARS = 2000</code>, <em>and</em> <code>tool_playbook</code> carries a unique natural key. Either alone would have prevented the outage; the writer guard can be lost to a schema change, and the reader guard cannot.</p></blockquote>
+<h2 id="empty-responses-become-a-sentinel-string">Empty responses become a sentinel string</h2>
+<p>When an agent returns no content, <code>run_agent</code> substitutes:</p>
+<div class="scroll-x"><pre><code class="lang-python">if not content or not str(content).strip():
+    content = f"Agent failed: empty response from {agent_name}"</code></pre></div>
+<p>This is convenient and quietly hazardous. The failure is now a <em>string in the response field</em>, indistinguishable in type from a real answer. Every caller that does <code>parse_json_response(result["response"])</code> gets <code>{}</code> and must decide for itself whether that means "the model said nothing useful" or "the call failed".</p>
+<p>Callers must therefore check for the <strong>presence of the expected key</strong>, not the truthiness of the parsed value:</p>
+<div class="scroll-x"><pre><code class="lang-python"># Wrong — a failure and a genuine empty selection are identical here.
+selected = parsed.get("selected_tickers", [])
+if not selected:
+    end_cycle()
+
+# Right — only a parsed verdict that CARRIES the key is a decision.
+if "selected_tickers" not in parsed:
+    degrade_loudly()</code></pre></div>
+<p><code>pipeline_service.py</code> does this for the gatekeeper. Any new agent whose empty output would change control flow needs the same treatment.</p>
+<h2 id="the-circuit-breaker-aborts-the-ticker-not-the-cycle">The circuit breaker aborts the ticker, not the cycle</h2>
+<p><code>app/v3/guardrails.py</code> retries a failed phase once, then trips:</p>
+<div class="scroll-x"><pre><code>[V3Runner] v3_junior_analyst produced no parseable artifact for LLY
+[CircuitBreaker] Phase 'junior_analyst' retry 1/1 on AGENT_ERROR
+[V3] LLY: Circuit breaker tripped on junior_analyst — aborting pipeline
+[SharedDesk] cycle-v3-…/LLY: Phase INIT → ABORTED (outcome: AGENT_ERROR)</code></pre></div>
+<p>A result is still saved for the aborted ticker, and the cycle proceeds to the debate stage. A cycle can therefore reach "complete" having produced nothing of value — the per-ticker aborts are the signal, and they are one log level below where anyone looks.</p>
+<h2 id="cycle-commands-are-claimed-not-addressed">Cycle commands are claimed, not addressed</h2>
+<p><code>cycle_main.poll_system_commands()</code> claims from <code>v3_system_commands</code> with <code>SELECT … FOR UPDATE SKIP LOCKED</code>. That guarantees exactly one claimant and says nothing about <em>which</em> process wins — every instance pointed at the shared database is an equal candidate, including a stale container elsewhere on the network.</p>
+<p>Claims are stamped with <code>WORKER_ID</code> (<code>nas-prod/&lt;sha&gt;</code>, from <code>WORKER_NAME</code> and <code>GIT_SHA</code> written by the deploy script) so that "who ran this cycle?" is answerable from one log line rather than by diffing container code against master.</p>
+<h2 id="migrations-run-at-import-time">Migrations run at import time</h2>
+<p><code>app/db/connection.py</code> calls <code>run_migrations(conn)</code> during pool setup, so schema changes in <code>app/db/migrations.py</code> apply on container start. Two consequences worth knowing:</p>
+<ul>
+<li>A migration that raises is caught and logged as <code>[DB] Migration warning: …</code> — the service still starts. Schema changes are therefore best-effort and must be verified, not assumed.</li>
+<li>Because <code>schema.sql</code> runs before migrations, a column added in both places must be idempotent in the migration (<code>_safe_add_column</code>).</li>
+</ul>
+<p>Partial unique indexes have a sharp edge here: Postgres will not infer one for <code>ON CONFLICT</code> unless the statement repeats the index predicate. Omit it and every write raises, which a surrounding <code>except</code> turns into a log line while row counts continue to look healthy.</p></section>
+<section class="chapter" id="current-state"><h1 id="current-state">Current state</h1>
+<p>Verified <strong>2026-08-05</strong> against <code>master@8182868</code> deployed to the NAS.</p>
+<div class="status-grid">
+  <div class="tile ok"><div class="label">Tickers into analysis</div><div class="value">13</div><div class="note">was 0–1</div></div>
+  <div class="tile ok"><div class="label">tool_playbook rows</div><div class="value">63</div><div class="note">purged from 4,948</div></div>
+  <div class="tile ok"><div class="label">Playbook injection</div><div class="value">231 ch</div><div class="note">was ~120,000</div></div>
+  <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">7</div><div class="note">new concern, see open items</div></div>
+</div>
+<h2 id="verified-working">Verified working</h2>
+<p><strong>The playbook constraint holds.</strong> <code>tool_playbook</code> sits at 63 rows behind <code>uq_tool_playbook_natural_key</code>, down from 4,948. Injection measured live on the running container:</p>
+<div class="scroll-x"><table><thead><tr><th>Agent</th><th style="text-align:right">Injected</th><th style="text-align:right">Lines</th></tr></thead><tbody><tr><td><code>v3_junior_analyst</code></td><td style="text-align:right">231 chars</td><td style="text-align:right">3</td></tr><tr><td><code>v3_fundamental_analyst</code></td><td style="text-align:right">223 chars</td><td style="text-align:right">3</td></tr><tr><td><code>v3_quant_analyst</code></td><td style="text-align:right">204 chars</td><td style="text-align:right">3</td></tr></tbody></table></div>
+<p><strong>The writer upserts rather than accumulating.</strong> <code>update_tool_playbook()</code> run twice against production: row count held at 63, 61 rows had <code>last_validated_at</code> refreshed, zero errors logged. All three signals are required — row count alone cannot distinguish a working upsert from one that raises on every row.</p>
+<p><strong>Agents produce real artifacts again.</strong> Cycle <code>cycle-v3-1785953340</code> had one <code>no parseable artifact</code> occurrence across the whole run, against a <strong>100%</strong> failure rate before the fix — every ticker in every discovery cycle since 2026-08-04 21:44 had aborted at the first agent. Sample output from <code>v3_fundamental_analyst</code> on NYT, showing the pipeline doing genuine work:</p>
+<blockquote><p>NYT reported Q2 2026 earnings this morning that resolved the prior cycle's fundamental-vs-technical divergence in the bear's favor … guided Q3 digital-only subscription revenue growth to just 12–15% vs Q2's 16.4%. <code>thesis_direction: BEARISH, confidence: 62</code></p></blockquote>
+<p><strong>Gatekeeper failure degrades instead of deciding.</strong> Caught live:</p>
+<div class="scroll-x"><pre><code>ERROR [PipelineService] Gatekeeper unusable (returned no parseable selection
+('Agent failed: empty response from v3_portfolio_manager')) — degrading to
+top 15 scorers</code></pre></div>
+<p>Before <code>b3d3d90</code> this exact fault ended the cycle green with 0 tickers.</p>
+<p><strong>Worker identity is stamped on claims.</strong> <code>claimed by worker=&lt;name&gt;/&lt;sha&gt;</code>.</p>
+<h2 id="not-yet-verified">Not yet verified</h2>
+<p><strong>A full cycle has not been observed end to end since the fix.</strong> The verification cycle reached the analysis phase with 13 tickers and was still running at the time of writing; no <code>Saved analysis result</code> lines had appeared yet. Selection and artifact generation are confirmed. Debate, trade execution, and cycle completion are <strong>not</strong> confirmed for this build.</p>
+<h2 id="shipped-today">Shipped today</h2>
+<div class="scroll-x"><table><thead><tr><th>Commit</th><th>Change</th></tr></thead><tbody><tr><td><code>b3d3d90</code></td><td>Playbook natural key + dedupe migration, gatekeeper failure/refusal split, prompt cap, worker identity</td></tr><tr><td><code>8182868</code></td><td>Repeat the partial-index predicate so the upsert actually fires</td></tr><tr><td><code>3653899</code></td><td>Revive the dead startup readiness check; stamp <code>GIT_SHA</code>/<code>WORKER_NAME</code> at deploy</td></tr></tbody></table></div></section>
+<section class="chapter" id="open-items"><h1 id="open-items">Open items</h1>
+<h2 id="1-the-gatekeeper-llm-returns-empty-responses">1. The gatekeeper LLM returns empty responses</h2>
+<p><code>v3_portfolio_manager</code> (<code>deepseek-v4-flash-0731</code> on <code>vllm-2</code>, via prism <code>/agent</code>) intermittently returns nothing: failed 08-04 22:28, succeeded 23:00, failed 08-05 06:31 and 11:11. Selection currently comes from the scoring engine fallback, so the gatekeeper's qualitative judgement — catalyst quality, mega-cap balance, freshness overrides — is <strong>not being applied at all</strong>.</p>
+<p>The call passes <code>enable_tools=False</code> to get clean JSON, yet still goes through <code>/agent</code>, which carries a large tool payload on this project. It may be paying that cost for nothing.</p>
+<p><strong>Next step:</strong> capture the raw prism response for one failing call. The current log records only that content was empty, never what actually came back. Decide between <code>/chat</code> and a model known to survive <code>/agent</code> <em>after</em> that evidence exists, not before.</p>
+<h2 id="2-agents-exhaust-their-tool-turn-budget">2. Agents exhaust their tool-turn budget</h2>
+<p>Seven occurrences in one cycle:</p>
+<div class="scroll-x"><pre><code>ERROR [ManagerAgent] Agent v3_fundamental_analyst took too much time
+(207.6s) over 7 tool turns without completing.</code></pre></div>
+<p>These agents are working — the NYT report quoted in <em>Current state</em> came from one — but several run out of budget before finishing. This is a plausible contributor to the cycle's slow wall-clock, and it means some tickers get a truncated analysis rather than a complete one.</p>
+<p>Unclear whether this is new or was simply invisible while every agent failed earlier. <strong>Needs a baseline before it is treated as a regression.</strong></p>
+<h2 id="3-a-reserved-section-write-is-blocked-but-reports-success">3. A reserved-section write is blocked but reports success</h2>
+<div class="scroll-x"><pre><code>[WhiteboardTool] BLOCKED write to reserved section 'fundamental_report'
+  by agent 'v3_fundamental_analyst' (NYT)
+[ToolRegistry] Tool Execution: whiteboard_write by unknown - SUCCESS (62ms)</code></pre></div>
+<p>The agent produced a complete, well-formed report, the write was refused, and the tool returned <strong>SUCCESS</strong> anyway. The agent has no way to learn its output was discarded, so it cannot adapt — and in this instance it went on to exhaust its time budget.</p>
+<p>A refusal reported as success is the same failure shape as the gatekeeper bug: the caller cannot distinguish "done" from "silently dropped". Either the section should be writable by that agent, or the tool must return an error the agent can act on.</p>
+<h2 id="4-no-enforcement-against-a-second-claiming-instance">4. No enforcement against a second claiming instance</h2>
+<p>Any process reaching the shared database can claim a queued cycle. Worker identity now makes this diagnosable in one log line; it does not make it impossible.</p>
+<p><strong>Deliberately not enforced.</strong> An "active worker" flag that non-matching instances refuse risks a far worse failure — a misconfigured flag silently stops every cycle with no error to notice. Observability first; enforcement only if this recurs.</p>
+<h2 id="5-pipeline_state-can-strand-a-cycle-at-running">5. <code>pipeline_state</code> can strand a cycle at <code>running</code></h2>
+<p>A process that dies mid-cycle leaves <code>status='running'</code>, and the next scheduled command is skipped with <code>Pipeline state is stuck at 'running' from a previous crashed cycle</code>. Orphan detection exists but on 2026-08-05 did not clear the state before the next scheduled cycle was due. Worth confirming the auto-clear threshold is shorter than the scheduling interval.</p>
+<h2 id="6-log-noise-that-trains-the-eye-to-ignore-logs">6. Log noise that trains the eye to ignore logs</h2>
+<ul>
+<li><code>$SKHYV: possibly delisted; no price data found</code> — logged at <strong>critical</strong>, 15× in 3.5 hours. A delisted ticker is not a critical event.</li>
+<li><code>Twitter accounts sweep stored 0 tweets across 16 accounts</code> — backend unconfigured; configure it or stop sweeping.</li>
+<li><code>[SCHEDULER] Job sch-bot-&lt;id&gt; has no next_run_time</code> — recurs with no visible consequence; either it matters or it should not be a warning.</li>
+</ul></section>
+<section class="chapter" id="incidents"><h1 id="incidents">Incidents</h1>
+<h2 id="2026-08-05-cycles-processed-01-tickers-while-reporting-success">2026-08-05 — Cycles processed 0–1 tickers while reporting success</h2>
+<p>Three consecutive cycles appeared healthy in the client: one ticker, then zero, then zero. Three independent causes were stacked, which is why fixing only the visible one would have looked like a failed fix.</p>
+<h3 id="an-impossible-conflict-clause">An impossible conflict clause</h3>
+<div class="scroll-x"><pre><code class="lang-sql">INSERT INTO tool_playbook (id, ...) VALUES (%s, ...)
+ON CONFLICT DO NOTHING          -- id is a fresh uuid4: never conflicts</code></pre></div>
+<p><code>ON CONFLICT DO NOTHING</code> against a random primary key is a no-op. The table reached <strong>4,948 rows growing ~831/day</strong>, collapsing to <strong>63</strong> distinct natural keys — 98.7% duplication. Those rows are injected into agent prompts, so <code>v3_junior_analyst</code> prompts reached 130,982 characters containing 1,387 identical lines, prism rejected them, and the circuit breaker aborted every ticker.</p>
+<p>The natural key could not be the sequence text: it embeds live statistics (<code>avg score: 94.2 over 104 uses</code>) and changes almost every run. <code>tool_name</code> had to become a real column.</p>
+<blockquote><p><code>ON CONFLICT DO NOTHING</code> is only a deduplication guard when a conflict is <em>possible</em>. Against a random key it silently does nothing, forever.</p></blockquote>
+<h3 id="a-failed-agent-recorded-as-a-decision">A failed agent recorded as a decision</h3>
+<p>The gatekeeper returned nothing, <code>parse_json_response</code> produced <code>{}</code>, <code>selected_tickers</code> defaulted to <code>[]</code>, and the cycle ended <strong>green</strong>:</p>
+<div class="scroll-x"><pre><code>Gatekeeper chose 0 tickers. Ending cycle early. Rationale:</code></pre></div>
+<p>Twenty eligible candidates were in hand — RDDT at a 0.92 freshness delta, SHOP up 30.3% — and all were discarded.</p>
+<blockquote><p>A component that cannot answer has not answered "no". Failure and refusal need different code paths, or the system reports confident decisions it never made. The empty rationale was the tell.</p></blockquote>
+<h3 id="a-stale-instance-claiming-production-cycles">A stale instance claiming production cycles</h3>
+<p>A local container built <strong>2026-06-26</strong>, six weeks behind master, shared the command queue with the NAS. It claimed the 13:45 and 14:00 UTC cycles, killed each in ~1.5s, and wrote no <code>pipeline_events</code> — invisible in the UI. Its crash left <code>pipeline_state='running'</code>, so the healthy NAS instance skipped its own 14:00 cycle as "stuck from a previous crashed cycle".</p>
+<blockquote><p><code>FOR UPDATE SKIP LOCKED</code> guarantees a single claimant, not the <em>right</em> one. Unstamped claims make "who ran this?" unanswerable from logs.</p></blockquote>
+<h3 id="a-verification-that-passed-while-the-code-was-broken">A verification that passed while the code was broken</h3>
+<p>The first check of the upsert fix:</p>
+<div class="scroll-x"><pre><code>rows before: 63 -&gt; after 2 runs: 63
+VERDICT: UPSERT OK — no growth</code></pre></div>
+<p>Wrong. The count held because <code>update_tool_playbook()</code> raised on <strong>every</strong> row: Postgres will not infer a <em>partial</em> unique index for <code>ON CONFLICT</code> unless the statement repeats the predicate, and the exception was swallowed into one log line. The writer was entirely dead and the metric read healthy.</p>
+<p>The corrected check asserts three things — row count stable, <code>last_validated_at</code> refreshed (proving the UPDATE path ran), and no errors logged.</p>
+<blockquote><p>A check that passes for both the working and the broken state is not a check. Ask what the metric would read if the thing were <strong>entirely</strong> broken; if the answer is "the same", measure something else.</p></blockquote>
+<h3 id="a-permanent-failure-disguised-as-a-transient-one">A permanent failure disguised as a transient one</h3>
+<p>Found while verifying the deploy: <code>startup_tasks.py</code> imported <code>_V3_AGENT_MODULES</code>, a static list replaced by <code>_discover_v3_agent_modules()</code> without this call site being updated. Because the <code>ImportError</code> sits inside a retry loop, it printed 36 identical <code>Retrying in 5s...</code> lines and read as a slow dependency. The readiness check — prism health, endpoint model resolution, agent registration — had been dead since <code>c276d1d</code>. Fixed in <code>3653899</code>.</p>
+<blockquote><p>A retry loop around a deterministic error manufactures the appearance of a transient fault. If every attempt fails identically, it is not transient.</p></blockquote>
+<h2 id="diagnostic-notes">Diagnostic notes</h2>
+<ul>
+<li>Container clocks are <strong>PDT</strong>; cycle IDs encode <strong>UTC</strong> epochs.</li>
+<li>A dead cycle's errors are filed under <code>cycle_id='system-log'</code> in <code>cycle_audit_log</code> — query by time window, not by cycle ID.</li>
+<li><code>wd-</code> prefixed IDs in <code>pipeline_events</code> are Watch Desk trips, not cycles.</li>
+<li>Cycles with explicit tickers bypass discovery <em>and</em> the gatekeeper. A working watch-desk cycle is not evidence that discovery works — this is exactly why the 07:48 cycle succeeded while the scheduled ones returned nothing.</li>
+</ul></section></main>
+</div>
+</body>
+</html>
