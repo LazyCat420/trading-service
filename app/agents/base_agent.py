@@ -661,6 +661,18 @@ async def run_agent(
     content, tokens, elapsed_ms, loops_used, last_usage, model_used, provider_used = await _agent_llm_call()
 
     if not content or not str(content).strip():
+        # Open item 4 (2026-08-05): the sentinel used to be the ONLY record of
+        # an empty response — the intermittent v3_portfolio_manager failures
+        # could not be diagnosed because nothing captured what prism actually
+        # returned. Log the full harness telemetry before substituting, so the
+        # next failure self-documents (was it a model swap, a zero-token
+        # stream, a tool-payload timeout at full duration, ...).
+        logger.error(
+            "[BaseAgent] EMPTY RESPONSE from %s (%s): raw=%r | model=%s "
+            "provider=%s | tokens=%d elapsed=%dms loops=%d | usage=%s",
+            agent_name, ticker, content, model_used, provider_used,
+            tokens, elapsed_ms, loops_used, last_usage,
+        )
         content = f"Agent failed: empty response from {agent_name}"
 
     # ── Verbose output logging (structured, truncated to prevent log spam) ──
