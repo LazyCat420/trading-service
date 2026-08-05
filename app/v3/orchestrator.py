@@ -287,6 +287,76 @@ async def run_v3_pipeline(
         logger.warning("[V3] %s: fundamental snapshot precompute failed "
                        "(non-fatal): %s (%s)", ticker, e, type(e).__name__)
 
+    # Deterministic baseline score (2026-08-05). The fifth of the family, and
+    # the first that COMBINES the other four rather than adding a new input.
+    #
+    # It exists because the Board's confidence stopped meaning anything:
+    # measured on trade_results, the share of decisions clearing the 70 floor
+    # went 81% -> 25.6% -> 24.6% -> 0.0% over four weeks while HOLD went 49% ->
+    # 93%, and 83 of 97 recent rows carry HOLD_NO_SIGNAL + board_reasoned, so
+    # the Board is choosing it rather than a gate forcing it. A prose fix was
+    # tried first (`dcc00af`, an explicit confidence rubric in the Board
+    # prompt) and made it worse: mean 63.6 -> 59.8. So the number is computed
+    # in code and the agent argues with it.
+    #
+    # It also restores a quantity the pipeline lost. `calculate_risk_reward`
+    # left the quant whitelist on 07-25 and `tournament_pitch` — the only other
+    # holder — was retired on 07-29, so nothing on the live path computed an
+    # R:R. The Board still writes stops and targets: UBER got a 5.05:1 setup
+    # and a HOLD at 50 while T got 3.38:1 and a BUY at 62.
+    #
+    # SHADOW ONLY. The band vocabulary is deliberately not BUY/SELL/HOLD and
+    # nothing downstream reads it — it is injected into the prompt and stored
+    # for comparison. 15s: three indexed row reads plus the DCF, no model fit.
+    try:
+        from app.quant.decision_score import (
+            build_decision_score_block, compute_decision_score,
+        )
+
+        def _score_and_render():
+            s = compute_decision_score(ticker)
+            return s, build_decision_score_block(ticker, s)
+
+        score, score_block = await asyncio.wait_for(
+            asyncio.to_thread(_score_and_render), timeout=15,
+        )
+        # Stash the structured score as well as the prose. The prose is for the
+        # agent; the dict is what `trade_result_saver` persists so the shadow
+        # comparison (does the baseline predict P&L better than the board's
+        # confidence?) is answerable later without re-deriving it against
+        # fundamentals that will have moved on — they are not a point-in-time
+        # panel, so a score computed after the fact is not the score the desk
+        # saw.
+        desk.cycle_metadata["decision_score"] = score
+        # Recorded here, before any agent runs, so a desk that dies mid-
+        # pipeline still leaves its baseline behind — those are the rows worth
+        # having, since "the baseline said STRONG_BUY and the desk never
+        # finished" cannot be stored on a decision row that was never written.
+        try:
+            from app.quant.decision_score_store import record_decision_score
+            await asyncio.to_thread(
+                record_decision_score, cycle_id, ticker, score)
+        except Exception as e:
+            logger.debug("[V3] %s: baseline not recorded (non-fatal): %s",
+                         ticker, e)
+        if score_block:
+            desk.cycle_metadata["decision_score_context"] = score_block
+            logger.info(
+                "[V3] %s: deterministic baseline injected — %s %s "
+                "(conf %s, coverage %s%%, R:R %s)",
+                ticker, score.get("band"), score.get("score"),
+                score.get("confidence"), score.get("coverage_pct"),
+                (score.get("risk_reward") or {}).get("ratio"),
+            )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[V3] %s: deterministic baseline TIMED OUT after 15s — the desk has "
+            "no computed composite, no R:R and no structural gates", ticker,
+        )
+    except Exception as e:
+        logger.warning("[V3] %s: deterministic baseline failed (non-fatal): "
+                       "%s (%s)", ticker, e, type(e).__name__)
+
     # Recorded third-party opinion cards (2026-07-27). Unlike every other
     # block built here this one returns "" when there is no coverage, and that
     # is correct: a ticker nobody happened to discuss is not a gap in evidence,

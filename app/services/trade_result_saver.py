@@ -117,6 +117,20 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                     ],
                 )
 
+        # Pair the agents' verdict with the deterministic baseline recorded at
+        # desk-build time (2026-08-05). Shadow only — nothing reads it back
+        # into a decision; it exists so "did the computed score rank better
+        # than the board's confidence?" is a query rather than a rebuild. It
+        # cannot be reconstructed later: `fundamentals` is overwritten as
+        # vendors refresh, so a score recomputed next month is not the score
+        # this desk saw.
+        try:
+            from app.quant.decision_score_store import attach_board_decision
+            attach_board_decision(cycle_id, ticker, action, confidence)
+        except Exception as e:
+            logger.debug("[TradeResultSaver] %s/%s: baseline pairing skipped "
+                         "(non-fatal): %s", cycle_id, ticker, e)
+
         # Best-effort Mongo mirror — replace by (cycle_id, ticker) to match the
         # PG delete-first upsert (JSONB fields stored as native dicts).
         try:

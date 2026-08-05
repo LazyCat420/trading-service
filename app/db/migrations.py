@@ -522,6 +522,9 @@ def run_migrations(conn):
     # This migration is idempotent: it only deletes if the bad data exists.
     _fix_eth_cagr_data(conn)
 
+    # ── Deterministic baseline score, shadow-only (2026-08-05) ──
+    _create_decision_scores(conn)
+
     # ── Autovacuum thresholds for the big tables ──
     _tune_autovacuum_for_large_tables(conn)
 
@@ -4017,6 +4020,66 @@ def _fix_eth_cagr_data(conn):
             cur.execute(
                 "ALTER TABLE decision_outcomes "
                 "ADD COLUMN IF NOT EXISTS models_used JSONB"
+            )
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def _create_decision_scores(conn):
+    """The deterministic baseline score, recorded per (cycle, ticker).
+
+    A SEPARATE table rather than columns on `trade_results`, for two reasons.
+
+    A score exists for every ticker the desk opened, including the ones that
+    died before producing a verdict — and those are the rows most worth having,
+    because "the baseline said STRONG_BUY and the desk never finished" is a
+    finding that a column on the decision row structurally cannot hold.
+
+    And the point of the table is the COMPARISON. `board_confidence` and
+    `board_action` are copied in at write time so the deterministic read and
+    the agent's read sit on one row and can be joined against
+    `decision_outcomes` without reconstructing either. Reconstructing the
+    baseline later is not possible in any case: `fundamentals` is not a
+    point-in-time panel, so a score recomputed next month is not the score the
+    desk was shown.
+
+    NULL board_action means no decision was reached, which is distinct from a
+    HOLD and must stay that way.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS decision_scores (
+                    id                TEXT PRIMARY KEY,
+                    cycle_id          TEXT NOT NULL,
+                    ticker            TEXT NOT NULL,
+                    score             REAL,
+                    band              TEXT NOT NULL,
+                    baseline_confidence INTEGER,
+                    coverage_pct      REAL,
+                    percentile        REAL,
+                    fundamental_score REAL,
+                    technical_score   REAL,
+                    hybrid_score      REAL,
+                    risk_reward       REAL,
+                    rr_target_source  TEXT,
+                    rr_target_horizon TEXT,
+                    gates_failed      TEXT[],
+                    gates_unknown     TEXT[],
+                    detail            JSONB,
+                    board_action      TEXT,
+                    board_confidence  INTEGER,
+                    created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (cycle_id, ticker)
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_decision_scores_ticker "
+                "ON decision_scores (ticker, created_at DESC)"
             )
             conn.commit()
     except Exception:

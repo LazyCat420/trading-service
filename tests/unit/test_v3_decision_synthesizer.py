@@ -69,9 +69,13 @@ def test_save_trade_result_database_logic():
         mock_conn.transaction.assert_called_once()
         mock_transaction.__enter__.assert_called_once()
 
-        # Check executing queries
+        # Check executing queries. Three since 2026-08-05: the delete/insert
+        # pair, then the deterministic-baseline pairing — which must be the
+        # LAST statement and must sit OUTSIDE the transaction, so a shadow
+        # write can neither roll back nor block the decision it annotates.
         calls = mock_conn.execute.call_args_list
-        assert len(calls) == 2
+        assert len(calls) == 3
+        assert mock_conn.transaction.call_count == 1
 
         # First call is DELETE
         delete_query, delete_args = calls[0][0]
@@ -90,6 +94,15 @@ def test_save_trade_result_database_logic():
         assert json.loads(insert_args[6]) == {"quant": 0.4, "fundamental": 0.6}
         assert json.loads(insert_args[7]) == {"quant": "Bullish", "fundamental": "Neutral"}
         assert json.loads(insert_args[8]) == []
+
+        # Third call pairs the agents' verdict with the deterministic baseline
+        # recorded at desk-build time. An UPDATE, never an INSERT: a decision
+        # with no baseline row means the scorer did not run for that desk, and
+        # inserting one here would hide that.
+        pair_query, pair_args = calls[2][0]
+        assert "UPDATE decision_scores" in pair_query
+        assert "INSERT" not in pair_query
+        assert pair_args == ["BUY", 80, cycle_id, ticker]
 
 
 @pytest.mark.asyncio

@@ -636,6 +636,27 @@ async def run_v3_agent(
             if fundamental:
                 dynamic_sections.append((_KEEP, fundamental))
 
+        # Deterministic baseline score (2026-08-05) — the two agents that issue
+        # an action, plus the quant desk that owns the risk numbers. Never
+        # shed: it is the only place on the desk where a composite, a computed
+        # risk/reward and the structural gates appear at all, and the failure
+        # it addresses (every decision landing below the confidence floor) is
+        # precisely a failure of the deciding step.
+        #
+        # NOT given to the analysts. They are meant to reach an independent
+        # read; handing every desk the same precomputed verdict would collapse
+        # the disagreement the board is supposed to weigh, and the block's own
+        # confidence term rewards fundamental/technical agreement — which would
+        # then be measuring an echo.
+        if agent_name in (
+            "v3_quant_analyst",
+            "v3_board_of_directors",
+            "v3_decision_synthesizer",
+        ):
+            score_block = desk.cycle_metadata.get("decision_score_context", "")
+            if score_block:
+                dynamic_sections.append((_KEEP, score_block))
+
         # Cross-desk dissent — ONLY the two agents that issue an action, and
         # never shed. It is the one block whose absence changes what the policy
         # layer does: HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT holds any BUY/SELL
