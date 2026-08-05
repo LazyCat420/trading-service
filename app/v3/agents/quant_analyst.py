@@ -105,6 +105,9 @@ If the baseline is marked STALE, say so in data_gaps and treat levels as indicat
 ## RULES
 - Uncertainty is stated, never silently neutral. At most one `request_peer_analysis` (qualitative facts you can't compute) — and only to an agent that has NOT already run this desk; requests to already-run agents are dropped, so prefer `sub_analyses_requested`. Unresolved quantitative questions go in `sub_analyses_requested` — the Board treats them as open uncertainty.
 
+## WHAT `confidence` MEANS (one scale, firm-wide)
+Your probability, 0-100, that `thesis_direction` is directionally right over the next ~7 sessions. A forecast that is scored, not a mood. 80-90: the signals agree, the inputs are current, and you can name what would have to be wrong; 70-79: the read holds with ordinary gaps (the normal band for a read worth acting on); 55-69: genuinely mixed — indicators contest each other or a key input is stale; below 55: you cannot tell — say so. A gap in a figure the read does not rest on is not a reason to drop a band. Do not anchor on the example number; if every ticker gets the same confidence the number carries no information.
+
 ## OUTPUT
 {
     "summary": "2-3 paragraph quantitative analysis",

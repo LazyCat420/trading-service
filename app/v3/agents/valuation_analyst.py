@@ -140,6 +140,9 @@ the date they were recorded. Treat it as the OPPOSITE of the valuation math.
   confidence and goes in `data_gaps`; it does not become a FAIR verdict by
   default.
 
+## WHAT `confidence` MEANS (one scale, firm-wide)
+Your probability, 0-100, that your `verdict` is the correct read of price versus value — that the mispricing (or fairness) you assert is real. A forecast that is scored, not a mood. 80-90: the key multiples computed from given numbers, doctrine rules applied, and you can name what would have to be wrong; 70-79: the verdict holds with ordinary gaps (the normal band for a verdict worth acting on); 55-69: genuinely mixed — a figure the verdict rests on is missing or NOT COMPUTABLE; below 55: you cannot assess — prefer NOT_ASSESSABLE over a guess. A gap in a figure the verdict does not rest on is not a reason to drop a band. Do not anchor on the example number.
+
 ## OUTPUT
 {
     "summary": "2-3 paragraph valuation analysis: what the price asserts, what the business has delivered, and the gap",

@@ -6,6 +6,19 @@ The SharedDesk validates artifacts against these before appending.
 Each schema defines the JSON structure an agent must return.
 """
 
+# One firm-wide confidence scale (2026-08-05, open item 1). These schemas are
+# VALIDATION-ONLY — agent_runner never serializes them into a prompt — so the
+# operative copy of each anchor lives in the agent's SYSTEM_PROMPT
+# (app/v3/agents/*.py, "WHAT `confidence` MEANS"). The description here mirrors
+# it so the contract is visible wherever the artifact is read. Anchoring only
+# the last stage (dcc00af, 07-28) measurably made things worse: every upstream
+# stage kept emitting an unanchored 55-69 and the Board mirrored its inputs.
+_CONF_BANDS = (
+    "80-90 the evidence agrees and is current; 70-79 holds with ordinary "
+    "gaps (the normal band for a read worth acting on); 55-69 genuinely "
+    "mixed; below 55 cannot tell. Scored, not a mood."
+)
+
 DESK_NOTE_SCHEMA: dict = {
     "type": "object",
     # triage_recommendation is REQUIRED (2026-07-24 audit): the orchestrator
@@ -33,7 +46,10 @@ DESK_NOTE_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
-            "description": "Overall confidence in the findings (0-100)",
+            "description": (
+                "P(the findings would survive an independent fact-check), "
+                "0-100. " + _CONF_BANDS
+            ),
         },
         "leads_to_trace": {
             "type": "array",
@@ -319,6 +335,10 @@ QUANT_REPORT_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            "description": (
+                "P(thesis_direction is right over the next ~7 sessions), "
+                "0-100. " + _CONF_BANDS
+            ),
         },
         "position_sizing_note": {
             "type": "string",
@@ -403,6 +423,10 @@ BULL_ARGUMENT_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            "description": (
+                "P(the bull thesis is directionally right over the next "
+                "~7 sessions), 0-100 — not advocacy. " + _CONF_BANDS
+            ),
         },
     },
 }
@@ -462,6 +486,10 @@ BEAR_REBUTTAL_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            "description": (
+                "P(the bear case is directionally right over the next "
+                "~7 sessions), 0-100 — not advocacy. " + _CONF_BANDS
+            ),
         },
     },
 }
@@ -536,6 +564,10 @@ DEBATE_JUDGE_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            "description": (
+                "P(the declared winner is directionally right over the next "
+                "~7 sessions), 0-100. " + _CONF_BANDS
+            ),
         },
         "weaknesses_of_winner": {
             "type": "array",
@@ -569,6 +601,10 @@ REGIME_CLASSIFICATION_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            "description": (
+                "P(this regime label is the lens that best explains the next "
+                "~5 sessions), 0-100. " + _CONF_BANDS
+            ),
         },
         "rationale": {
             "type": "string",
@@ -854,6 +890,11 @@ DELTA_REPORT_SCHEMA: dict = {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
+            "description": (
+                "P(the emitted action is the right call over the next "
+                "~7 sessions), 0-100 — same scale the Board is scored on. "
+                + _CONF_BANDS
+            ),
         },
         "reasoning": {
             "type": "string",
@@ -988,7 +1029,15 @@ VALUATION_REPORT_SCHEMA: dict = {
             "type": "string",
             "description": "A falsifiable THRESHOLD, not a mood",
         },
-        "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+        "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": (
+                "P(the verdict is the correct read of price vs value), "
+                "0-100. " + _CONF_BANDS
+            ),
+        },
         "doctrine_rules_applied": {
             "type": "array",
             "items": {"type": "string"},

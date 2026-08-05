@@ -66,6 +66,9 @@ data report (fresh price, recent news) versus the prior thesis.
 - Keep tool use minimal — you already have the prior thesis and fresh report.
 - If you have NO prior thesis to compare against, ESCALATE (you can't do a delta).
 
+## WHAT `confidence` MEANS (one scale, firm-wide)
+Your probability, 0-100, that the action you emit is the right call over the next ~7 sessions — the same scale the Board is scored on, since you are re-issuing its decision. 80-90: nothing material changed and the original evidence still verifies; 70-79: the thesis holds with ordinary gaps (the normal band for a decision worth keeping); 55-69: genuinely mixed — something changed that you cannot fully price; below 55: escalate instead of guessing. Do not anchor on the prior decision's number by default — re-derive it from what is true now.
+
 ## OUTPUT SCHEMA (raw JSON only)
 {
     "summary": "one line: what you concluded",

@@ -814,7 +814,12 @@ async def run_v3_pipeline(
         "tournament_debate": 0,
     }
 
-    regime = "CONTRADICTORY"
+    # UNCLASSIFIED, not CONTRADICTORY (open item 2, 2026-08-05): an engine
+    # that never classified must stay distinguishable from one that genuinely
+    # read a contradictory tape. get_persona_prompt treats any unknown label
+    # as Jane Street with a warning, so dispatch behavior is unchanged — but
+    # the artifact trail and logs no longer manufacture a real-looking regime.
+    regime = "UNCLASSIFIED"
     fa_skipped = False  # set when the Regime Engine recommends skipping FA
     # Dispatch-once latches for the decision layer. Peer-requested analyst
     # re-runs (request_peer_analysis) re-write the research sections, which
@@ -864,7 +869,7 @@ async def run_v3_pipeline(
         # Only section WRITES drive the agent chain. Annotations
         # ("whiteboard_annotation") carry the annotated entry's section but no
         # content — letting one fall through would reset regime to
-        # CONTRADICTORY, re-queue FA/QA, or re-trigger the debate chain.
+        # UNCLASSIFIED, re-queue FA/QA, or re-trigger the debate chain.
         if event.get("type") != "whiteboard_update":
             return
         sec = event.get("section")
@@ -873,7 +878,15 @@ async def run_v3_pipeline(
         
         if sec == "regime_classification":
             content = event.get("content") or {}
-            regime = content.get("regime", "CONTRADICTORY")
+            if "regime" not in content:
+                # Same rationale as the UNCLASSIFIED initializer above: a
+                # regime artifact without a label is a failed classification,
+                # not a contradictory tape.
+                logger.warning(
+                    "[V3] regime_classification artifact carries no 'regime' "
+                    "field — treating as UNCLASSIFIED, not CONTRADICTORY"
+                )
+            regime = content.get("regime", "UNCLASSIFIED")
 
             # The Regime Engine owns the skip decision (plan 1.3): honor its
             # suggested_pipeline_modifications instead of hardcoding on the

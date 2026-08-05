@@ -57,6 +57,10 @@ def validate_regime_artifact(artifact: dict) -> dict:
         _note(artifact, f"regime '{artifact.get('regime')}' coerced to {fixed}")
         logger.warning("[ArtifactValidator] invalid regime %r → %s", artifact.get("regime"), fixed)
         artifact["regime"] = fixed
+        # Open item 2 (2026-08-05): a coerced label must stay distinguishable
+        # from a genuine classification — CONTRADICTORY-by-fallback and
+        # CONTRADICTORY-by-judgement previously produced identical artifacts.
+        artifact["regime_fallback"] = True
 
     factors = artifact.get("factors")
     if isinstance(factors, dict):
