@@ -271,6 +271,11 @@ async def run_agent(
         _user_preview, "..." if len(full_prompt) > 1000 else "",
     )
 
+    # Once a model resolution attempt fails (or a resolved model produced a
+    # harness error), every retry re-resolves with force_refresh=True so the
+    # 5-minute model cache cannot re-serve the identity that just failed.
+    _resolution_state = {"force_refresh": False}
+
     # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
     # (prism-proxy) container redeploy instead of failing the whole pipeline.
     @aresilient_call(retries=5, backoff="exponential", base_delay=5.0, max_delay=60.0)
@@ -526,13 +531,28 @@ async def run_agent(
         resolved_provider = None
         if not resolved_model:
             from app.services.prism_agent_caller import resolve_default_model_for_agent
+            # Fail-closed: proceeding without a model hands the choice to the
+            # SDK's hardcoded default (lazycat/agent.py — the Jetson's model),
+            # and prism routes by model NAME, so a 2-second Gold Spark blip
+            # rerouted a 62k-token junior-analyst payload onto the 65k Jetson
+            # where the ContextExhaustionGuard refused it before iteration 1
+            # (cycle-v3-1785905061, 2026-08-04). Raising instead lets the
+            # aresilient_call backoff (~75s) ride out the blip.
             try:
                 resolved_model, resolved_provider = await resolve_default_model_for_agent(
-                    agent_name, endpoint_override=endpoint_override
+                    agent_name,
+                    force_refresh=_resolution_state["force_refresh"],
+                    endpoint_override=endpoint_override,
                 )
                 logger.info("[BaseAgent] Dynamically resolved default model for %s: %s (provider: %s)", agent_name, resolved_model, resolved_provider)
             except Exception as e:
-                logger.warning("[BaseAgent] Failed to resolve default model for %s: %s. Using default fallback.", agent_name, e)
+                _resolution_state["force_refresh"] = True
+                logger.warning(
+                    "[BaseAgent] Model resolution failed for %s: %s — retrying "
+                    "via aresilient_call rather than falling back to the SDK "
+                    "default model.", agent_name, e,
+                )
+                raise
         
         if resolved_model:
             kwargs["model"] = resolved_model
@@ -603,6 +623,24 @@ async def run_agent(
             from app.services.prism_agent_caller import strip_reasoning_leak
             final_text, _leaked = strip_reasoning_leak(final_text, agent_name)
             elapsed_ms = int((time.time() - t0) * 1000)
+
+            # Harness/guard refusals come back as a NORMAL string (prism
+            # injects the error as an assistant message and returns it), so
+            # without this check the error text is booked as the agent's
+            # artifact and parsing chews on it downstream. Same markers the
+            # shadow bench uses (model_shadow.classify_shadow). Head-only
+            # check: a real artifact opens with '{' JSON, so a marker in the
+            # head is decisively prism's injected recovery preamble, not the
+            # model quoting the phrase deep inside its own analysis.
+            from app.v3.model_shadow import _FAILURE_MARKERS
+            _head = (final_text or "").lstrip()[:500]
+            for _marker in _FAILURE_MARKERS:
+                if _marker in _head:
+                    _resolution_state["force_refresh"] = True
+                    raise RuntimeError(
+                        f"Prism harness error for {agent_name} (model "
+                        f"{resolved_model}): {_head[:200]}"
+                    )
         finally:
             _active_agents.discard(agent_name)
 
