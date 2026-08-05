@@ -73,7 +73,21 @@ class SchedulerService:
                     )
             else:
                 if scheduler.running:
-                    logger.warning("[SCHEDULER] Job %s has no next_run_time", job_id)
+                    # A spent one-shot (DateTrigger) has no next run BY DESIGN
+                    # — every sch-bot-* research job emitted this warning as
+                    # its last act after completing successfully (open item 8,
+                    # 2026-08-05). Only a recurring job with no next fire is
+                    # worth a warning.
+                    from apscheduler.triggers.date import DateTrigger
+
+                    _job = scheduler.get_job(job_id)
+                    if _job is None or isinstance(getattr(_job, "trigger", None), DateTrigger):
+                        logger.info(
+                            "[SCHEDULER] Job %s has no next_run_time (one-shot spent)",
+                            job_id,
+                        )
+                    else:
+                        logger.warning("[SCHEDULER] Job %s has no next_run_time", job_id)
         except Exception as e:
             logger.warning(
                 "[SCHEDULER] Failed to sync next_run_at for %s: %s", job_id, e

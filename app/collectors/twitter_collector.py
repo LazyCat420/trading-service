@@ -136,6 +136,15 @@ async def collect_for_ticker(ticker: str, limit: int = 50) -> int:
 
 async def collect_fintwit_sweep(limit: int = 20) -> int:
     """Sweep all whitelisted FinTwit and Crypto accounts for latest tweets."""
+    from app.config import settings
+
+    if not settings.TWITTER_SWEEP_ENABLED:
+        logger.info(
+            "Twitter sweep disabled (TWITTER_SWEEP_ENABLED=False) — "
+            "scraper-service has no TWITTER_ACCOUNTS credentials."
+        )
+        return 0
+
     logger.info("Starting Twitter FinTwit and Crypto accounts sweep")
     all_accounts = FINTWIT_ACCOUNTS + CRYPTO_ACCOUNTS
     total_stored = 0
@@ -176,6 +185,17 @@ async def collect_fintwit_sweep(limit: int = 20) -> int:
 
 async def collect_all() -> int:
     """Run general sweep: watchlist tickers cashtags + whitelist account feeds."""
+    from app.config import settings
+
+    if not settings.TWITTER_SWEEP_ENABLED:
+        # The cashtag searches ride the same unconfigured twscrape backend as
+        # the account sweep — no credentials means every request returns [].
+        logger.info(
+            "Twitter collection disabled (TWITTER_SWEEP_ENABLED=False) — "
+            "skipping account sweep and cashtag searches."
+        )
+        return 0
+
     # Fetch watchlist tickers from DB
     tickers = []
     try:

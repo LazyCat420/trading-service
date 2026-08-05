@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     PIPELINE_VERSION: str = "v2"  # "v1" | "v2" | "ab"
     PIPELINE_BENCHMARK_GROUP: str = "baseline"
     MACRO_SCOUT_ENABLED: bool = True  # enable/disable macro strategy scout
+    # Off until scraper-service has TWITTER_ACCOUNTS credentials (open item 8,
+    # 2026-08-05): with none configured, twscrape returns [] for every request
+    # and each 6-hourly sweep burned network churn to store 0 tweets and log a
+    # warning. Flip to True the day credentials are provisioned.
+    TWITTER_SWEEP_ENABLED: bool = False
 
     # ── Decision Pipeline ──
     DECISION_AGENT_ENABLED: bool = True  # enable Layer 5 decision synthesis agent

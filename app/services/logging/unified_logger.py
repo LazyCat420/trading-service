@@ -44,8 +44,14 @@ class DbLoggingHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            # Avoid recursive loops if db client logs a warning/error
-            if record.name.startswith("psycopg") or record.name.startswith("app.db"):
+            # Avoid recursive loops if db client logs a warning/error.
+            # yfinance is excluded too (open item 8, 2026-08-05): its
+            # "possibly delisted" ERROR for every thin ADR propagated to root
+            # and this handler promoted it to severity='critical' in
+            # cycle_audit_log (15x in one 3.5h window for $SKHYV). A delisted
+            # ticker is vendor noise, not a critical event — it stays visible
+            # on stdout at ERROR, just not in the audit tables.
+            if record.name.startswith(("psycopg", "app.db", "yfinance")):
                 return
 
             cycle_id = getattr(record, "cycle_id", get_trace_id())
