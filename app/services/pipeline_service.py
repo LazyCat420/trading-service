@@ -237,19 +237,28 @@ class PipelineService:
                     "no in-memory task exists. Checking started_at for auto-clear.",
                     db_status,
                 )
-                started_at = db_state.get("started_at")
+                # Staleness is judged on updated_at, not started_at (open
+                # item 6, 2026-08-05). save_state() runs on every cycle event
+                # emit, so updated_at is a heartbeat: a live cycle stamps it
+                # continuously, a crashed one stops. The old started_at>30min
+                # rule failed both ways — a crash <30min before the next
+                # scheduled command made a healthy instance skip a cycle it
+                # could have run, and a legitimately long cycle older than
+                # 30min could be force_reset out from under a live owner.
+                heartbeat = db_state.get("updated_at") or db_state.get("started_at")
                 is_stale = False
-                if started_at:
-                    started_at = ensure_aware(started_at) or started_at
-                    if isinstance(started_at, datetime):
-                        delta = datetime.now(timezone.utc) - started_at
-                        if delta.total_seconds() > 1800: # 30 minutes
+                if heartbeat:
+                    heartbeat = ensure_aware(heartbeat) or heartbeat
+                    if isinstance(heartbeat, datetime):
+                        delta = datetime.now(timezone.utc) - heartbeat
+                        if delta.total_seconds() > 900:  # 15 min without any state write
                             is_stale = True
-                
+
                 if is_stale:
                     logger.warning(
-                        "[PipelineService] Auto-clearing orphaned state older than 30 minutes (started_at=%s).",
-                        started_at,
+                        "[PipelineService] Auto-clearing orphaned state: no state "
+                        "write for >15 minutes (last heartbeat=%s).",
+                        heartbeat,
                     )
                     await cls.force_reset()
                 else:
@@ -1337,9 +1346,15 @@ class PipelineService:
             except Exception as dir_err:
                 logger.warning("[PipelineService] directive fetch failed (non-fatal): %s", dir_err)
 
+            # Tickers dropped before analysis, with the precise reason — read
+            # by the end-of-cycle reconciliation so a pre-flight skip is not
+            # re-reported with a vaguer reason (open item 3, 2026-08-05).
+            preflight_dropped: dict[str, str] = {}
+
             async def _process_ticker(i: int, ticker_name: str):
                 if cls._stop_requested:
                     logger.info("[PipelineService] V3 Cycle stopped by user request (ticker=%s).", ticker_name)
+                    preflight_dropped[ticker_name] = "stop_requested"
                     return None
 
                 # Pre-flight: a ticker with no price history cannot support a
@@ -1367,6 +1382,23 @@ class PipelineService:
                             "usable price history. Every technical claim would "
                             "rest on nothing.", ticker_name,
                         )
+                        # This log line used to be the ONLY record of the drop —
+                        # nothing in the UI said the ticker was ever cut.
+                        preflight_dropped[ticker_name] = "no_price_history"
+                        cls._append_events_safe(cycle_id, [{
+                            "phase": "analyzing",
+                            "step": f"v3_dropped_{ticker_name}",
+                            "status": "skipped",
+                            "detail": (
+                                f"{ticker_name}: dropped before analysis — "
+                                "no usable price history"
+                            ),
+                            "data": {
+                                "kind": "ticker_dropped",
+                                "ticker": ticker_name,
+                                "reason": "no_price_history",
+                            },
+                        }])
                         return None
                 except Exception as ph_err:  # noqa: BLE001 — never block on a probe
                     logger.debug(
@@ -1716,6 +1748,50 @@ class PipelineService:
 
             if cls._stop_requested:
                 raise asyncio.CancelledError("Cycle stopped by user")
+
+            # Reconciliation (open item 3, 2026-08-05): every ticker that
+            # entered the fan-out must leave the cycle as either a real
+            # decision or an explicit dropped event. FDVV in
+            # cycle-v3-1785962005 never reached a verdict — 11 desks in, 10
+            # decisions out, nothing recorded anywhere. A dropped ticker is
+            # NEVER backfilled as a decision (a failed agent must not read as
+            # one — that includes the noop HOLD/0 sentinel, which is an abort
+            # wearing a decision's shape); it is recorded as dropped, loudly.
+            _recon_events = []
+            for t, r in zip(tickers, results):
+                if (
+                    isinstance(r, dict)
+                    and r.get("action") in ("BUY", "SELL", "HOLD")
+                    and r.get("triage_tier") != "v3_aborted"
+                ):
+                    continue  # a real verdict (deliberate triage skips carry one too)
+                if r is None and t in preflight_dropped:
+                    continue  # already recorded with its precise reason
+                if isinstance(r, Exception):
+                    reason = f"crashed: {type(r).__name__}: {r}"
+                elif r is None:
+                    reason = "no result returned"
+                elif isinstance(r, dict) and r.get("triage_tier") == "v3_aborted":
+                    reason = str(r.get("rationale") or "pipeline aborted")
+                elif isinstance(r, dict):
+                    reason = f"no actionable verdict (action={r.get('action')!r})"
+                else:
+                    reason = f"unexpected result type {type(r).__name__}"
+                _recon_events.append({
+                    "phase": "analyzing",
+                    "step": f"v3_dropped_{t}",
+                    "status": "warning",
+                    "detail": f"⚠️ {t}: no decision this cycle — {reason}",
+                    "data": {"kind": "ticker_dropped", "ticker": t, "reason": reason},
+                })
+            if _recon_events:
+                logger.warning(
+                    "[PipelineService] Cycle %s reconciliation: %d of %d "
+                    "tickers produced no decision: %s",
+                    cycle_id, len(_recon_events), len(tickers),
+                    [e["data"]["ticker"] for e in _recon_events],
+                )
+                cls._append_events_safe(cycle_id, _recon_events)
 
             from app.services.bot_manager import get_active_bot_id
             active_bot_id = get_active_bot_id()
