@@ -9,6 +9,52 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-05 (evening) — the debate rework
+
+Traced backwards from ten HOLDs (write-up in the client's *Incidents*) and
+found the confidence scale was **not** the binding constraint: `VNRX` decided
+HOLD at confidence 74, above the floor. Two real defects, both fixed here.
+
+**The debate was unfair, measurably.** The Bear runs with
+`include_debate_context=True` and reads the Bull's thesis; the Bull gets no
+debate context and never replies. `BULL_DEFENSE` lost its producer on 07-29 as
+dead code — correct at the time, the tournament was the live engine — and the
+linear bull/bear debate was restored to the live path on **07-30, one day
+later, without its third turn**. Measured consequence: the Bear won **72-94%
+of 288 debates**, and in a long-only book a bear win can only become HOLD.
+The third turn is restored (`app/v3/agents/bull_defense.py`), and the judge no
+longer lets an attack the Bull never had a chance to answer decide the winner
+— those route to sizing instead.
+
+**The debate was unconditional.** Every ticker got byte-identical prompts.
+`app/v3/debate_frame.py` now derives the 2-3 live propositions for each desk
+from artifacts already computed — SOLVENCY on a structural gate FAIL,
+ENTRY_QUALITY when R:R is below the floor while the directional read is
+constructive, DESK_DISAGREEMENT, VALUATION, DATA_SUFFICIENCY,
+TREND_VS_REVERSION, CATALYST, and THESIS_DURABILITY as fallback. Deliberately
+**deterministic**: no model call, no added cycle cost, and the trigger is
+auditable after the fact. Verified against the two real cases — VNRX frames as
+SOLVENCY, UBS as SOLVENCY + ENTRY_QUALITY.
+
+Cost: one extra agent call per debating ticker (the defense).
+
+**Known limitation.** The leverage gate fires at debt/equity > 4.0 against a
+general-universe threshold, so a normally-levered bank (UBS at 4.52) opens a
+SOLVENCY frame that a sector-aware gate would not. Both propositions still
+reach the debaters, so nothing is lost — but the lead question is arguably
+wrong for financials. Sector-aware gates belong to `decision_score`, not here.
+
+**How to tell if this worked.** The bear win rate is directly measurable and
+largely independent of the confidence anchoring shipped this morning: query
+`debate_judge.winner` over `shared_desk`. A fair debate should land nearer
+50-60% bear, not 72-94%. `proposition_verdicts` also makes it measurable
+whether the debate answered the question it was given or argued past it.
+
+**Measurement confound, stated plainly.** This morning's confidence-anchor
+window (to ~08-12) is now confounded for the four debate agents, whose prompts
+changed again. That was a deliberate trade: the debate defect outranks a clean
+measurement of a secondary fix. The bear-win-rate metric above is unaffected.
+
 ## Shipped 2026-08-05 — the open-items wave
 
 Six fixes landed in one branch (`fix/open-items-2026-08-05`), driven by the
