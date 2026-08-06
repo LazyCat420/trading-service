@@ -358,7 +358,13 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "v3_valuation_analyst": 6,
     "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
-    "v3_bull_defense": 1,        # No tools — answers from what is on the desk
+    # 3, not 1 (fixed 2026-08-05, same evening it shipped). agent_runner sets
+    # `enable_tools=bool(tool_whitelist)`, and this agent carries whiteboard_read
+    # — so tools ARE on and a budget of 1 gave it a single iteration. It spent
+    # that iteration on a tool call and had none left to answer: RNGR came back
+    # at 49 and 94 chars, "no parseable artifact". A tool-carrying agent needs at
+    # least one turn to call and one to answer; 3 matches the rest of the debate.
+    "v3_bull_defense": 3,
     "v3_debate_judge": 3,        # No tools — pure reasoning
     "v3_regime_engine": 5,
     "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk

@@ -27,6 +27,7 @@ from app.v3.guardrails import (
     enter_v3_session,
     exit_v3_session,
 )
+from app.utils.text_utils import sanitize_ascii
 from app.v3.artifacts import ARTIFACT_SCHEMAS, validate_artifact
 from app.v3.quality_scorer import score_artifact
 
@@ -1659,9 +1660,19 @@ def _parse_artifact(
     except Exception:
         pass
 
+    # Log WHAT came back, not just how much (2026-08-05). The char count alone
+    # made this undiagnosable: a 49-char failure and an 11,248-char failure are
+    # completely different bugs (a spent turn budget vs a model that reasoned
+    # instead of emitting), and the count cannot tell them apart. Same lesson as
+    # the gatekeeper's empty-response sentinel earlier today. Head AND tail,
+    # because a truncated artifact looks fine at the front and dies at the end.
+    _preview = (text or "").strip()
     logger.warning(
-        "[V3Runner] Failed to parse artifact from %s output (%d chars)",
+        "[V3Runner] Failed to parse artifact from %s output (%d chars)\n"
+        "  HEAD: %s\n  TAIL: %s",
         agent_name, len(text),
+        sanitize_ascii(_preview[:600]),
+        sanitize_ascii(_preview[-300:]) if len(_preview) > 900 else "(shown above)",
     )
     return None
 

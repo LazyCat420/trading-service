@@ -1,5 +1,49 @@
 # Open items
 
+## 0. Reasoning eats the output budget — the analysts cannot emit their artifact
+
+**Impact: the research layer.** Analyst artifact failures went from **0%
+through 08-03** to 22-36% on 08-04 and after. This is the cause of the
+"no valid artifact produced" events, and it is **not** a logic bug in any
+agent — it is a model/flag mismatch one service away.
+
+**Root cause, captured live 2026-08-05** by the empty-response instrumentation
+added that morning:
+
+```
+[THINK-LEAK] v3_valuation_analyst: response content starts with a reasoning
+  trace ('Let me get memory peers specifically (MU, WDC, STX)...').
+  The thinking-off flag is not reaching the model.
+EMPTY RESPONSE from v3_valuation_analyst (AMD): raw='' |
+  model=deepseek-v4-flash-0731 provider=vllm-2 |
+  usage={'inputTokens': 40042, 'outputTokens': 4097, ...}
+```
+
+Gold Spark swapped to `deepseek-v4-flash-0731` on 07-31. Prism's thinking-off
+flag uses the **Qwen spelling (`enable_thinking`), which DeepSeek silently
+ignores**, so reasoning runs on every call. The model then spends its whole
+output allowance thinking — 4,097 output tokens with `content` returning
+**empty** — and never reaches the JSON. Where some reasoning does land in
+content, the artifact parser sees prose, not an artifact.
+
+Note the shape: this is *not* the same as an agent being slow. Per-loop time
+barely moved (53s → 63s); what changed is that analysts now burn 4-6 loops and
+frequently end with nothing to show.
+
+**The real fix is the vllm-shim in `lazy-agent-service`** — it must send the
+DeepSeek-compatible thinking-off parameter instead of the Qwen one. That is a
+different repo and is not fixed here. `strip_reasoning_leak` is only a
+tripwire, and its salvage cuts to the first *markdown heading*, so it can
+never recover a V3 agent's **JSON** artifact.
+
+**Mitigations that ARE in this repo (2026-08-05):** the unparseable-artifact
+log now records the head and tail of what came back, not just a character
+count — a 49-char failure and an 11,248-char failure are different bugs and
+the count could not tell them apart.
+
+**Do not "fix" this by trimming prompts or raising retries.** Both leave the
+model reasoning into a budget that has no room for the answer.
+
 ## 1. The gatekeeper LLM returns empty responses
 
 `v3_portfolio_manager` (`deepseek-v4-flash-0731` on `vllm-2`, via prism

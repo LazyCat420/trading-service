@@ -328,3 +328,38 @@ def test_the_deciding_prompts_frame_the_exit_symmetrically():
     delta_src = open(delta_analyst.__file__).read()
     assert "ALREADY HOLDS THIS TICKER" in delta_src
     assert "REAFFIRM then means KEEP" in delta_src
+
+
+# ─────────────────────────── turn budgets ───────────────────────────
+
+
+def test_a_tool_carrying_agent_never_has_a_single_turn_budget():
+    """agent_runner sets `enable_tools=bool(tool_whitelist)`, so ANY non-empty
+    whitelist turns tools on — and a budget of 1 then gives the agent one
+    iteration total. Spend it on a tool call and there is no turn left to emit
+    the artifact.
+
+    This is not hypothetical: v3_bull_defense shipped with whiteboard_read and
+    a budget of 1 and returned 49- and 94-char non-artifacts for RNGR within
+    the hour.
+    """
+    import importlib
+    import pkgutil
+
+    import app.v3.agents as pkg
+    from app.agents.tool_whitelists import AGENT_BUDGET_OVERRIDES
+
+    offenders = []
+    for mod_info in pkgutil.iter_modules(pkg.__path__):
+        module = importlib.import_module(f"app.v3.agents.{mod_info.name}")
+        name = getattr(module, "AGENT_NAME", None)
+        whitelist = getattr(module, "TOOL_WHITELIST", None)
+        if not name or not whitelist:
+            continue  # tool-less agents legitimately run on a single turn
+        budget = AGENT_BUDGET_OVERRIDES.get(name)
+        if budget is not None and budget < 2:
+            offenders.append(f"{name}: {len(whitelist)} tool(s), budget {budget}")
+    assert not offenders, (
+        "a tool-carrying agent needs one turn to call and one to answer: "
+        + "; ".join(offenders)
+    )
