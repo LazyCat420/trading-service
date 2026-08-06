@@ -9,6 +9,36 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## First evidence after the debate rework — `cycle-v3-1785978092`
+
+The first cycle to run with the framing and the exit frame live (the
+`bull_defense` turn-budget fix was **not** yet deployed, so this ran the
+one-turn defense — 8 of 11 desks produced one anyway).
+
+| | before | this cycle |
+|---|---|---|
+| Bear win rate | 72–94% (288 debates) | **33%** — bull 4, bear 3, tie 2 |
+| Executions | 0 across the prior week | **1** (`C` BUY @ 70, `EXECUTE_BUY`) |
+| Action mix | 94% HOLD | 8 HOLD, 1 BUY |
+
+**Treat this as directional, not settled.** Nine judged debates is a small
+sample against 288, one cycle cannot establish a rate, and the confidence
+anchoring shipped the same morning is a second change inside the same window.
+The bear win rate is still the cleanest signal available, because it does not
+depend on the confidence scale at all.
+
+**`POSITION_REVIEW` fired on exactly the held names** — LLY and LMT, both open
+positions, both framed as keep-or-exit rather than as entry decisions. Both
+resolved *keep*, which is a legitimate outcome; what matters is that the
+question asked was the right one. No held name produced a SELL yet.
+
+**One honest read of the frames:** `DATA_SUFFICIENCY` led 8 of 10 framings.
+That is not the framer being monotonous — it is correctly detecting the damage
+from open item 0. Missing valuation and fundamental artifacts become data gaps,
+and the framer reads that as "is there enough here to have a view at all". If
+the frames do not diversify once the vllm-shim is fixed, that is a finding
+about the framer rather than about the data.
+
 ## Shipped 2026-08-05 (evening) — held positions are exit decisions
 
 **A correction first.** An earlier note in this wave claimed SELL was
