@@ -62,3 +62,4 @@ scripts/test_v3_agent.py
 
 # EnterWorktree scratch worktrees (parallel sessions live here)
 .claude/worktrees/
+backfill_blocked_labels_undo.json

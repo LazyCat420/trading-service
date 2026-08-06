@@ -262,10 +262,28 @@ the shape of a block with no `trade_results` row, was pinned as correct
 behaviour. The tests now call `resolve_overridden_from()`, the function the
 recorder itself uses, and one of them pins that wiring.
 
-**Not yet done:** the 8 historical rows are still unlabelled, and the 5 graded
-ones are still in `kept_buys`. Backfilling them from `v3_guardrail_firings` is
-a data fix, not a code one — worth doing before the next scorecard read, since
-`kept_buys` currently carries five trades that were never taken.
+**Backfilled 2026-08-06.** The code fix only protects new rows, so the history
+was relabelled from `v3_guardrail_firings` by
+`scripts/backfill_blocked_decision_labels.py` (`--dry-run` by default). Seven
+rows carried the gap — three of them `HOLD_POLICY_BLOCKED_MISSING_REGIME`
+rather than `LOW_CONFIDENCE`, which is why the guardrail match is a prefix:
+
+```
+CRH   cycle-v3-1785120233        BUY@75  LOSS -4.87%   MISSING_REGIME
+ASIC  cycle-v3-1785120233        BUY@85  WIN  +5.21%   MISSING_REGIME
+COF   cycle-v3-1785120233        BUY@75  WIN  +3.04%   MISSING_REGIME
+ASML  cycle-observe-1785396275   BUY@65  WIN  +8.22%   LOW_CONFIDENCE
+ASML  cycle-observe-1785397223   BUY@65  WIN  +8.22%   LOW_CONFIDENCE
+RIVN  cycle-v3-1785739018        BUY@60  ungraded      LOW_CONFIDENCE
+BLK   cycle-v3-1785991713        BUY@68  ungraded      LOW_CONFIDENCE
+```
+
+All 25 policy blocks on record are now labelled; none are unlabelled. Only
+`overridden_from` was written — `action`, `outcome` and `pnl_pct` keep their
+meaning as the counterfactual, so the four WINs and one LOSS above are still
+available to back-test the floor with. They are simply no longer counted as
+trades the desk chose to keep. The script writes
+`backfill_blocked_labels_undo.json` before touching anything.
 
 ## 8. The retry contract held in one branch and not its neighbour — FIXED 2026-08-06
 
