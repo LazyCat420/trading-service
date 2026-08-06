@@ -9,6 +9,51 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-05 (evening) — held positions are exit decisions
+
+**A correction first.** An earlier note in this wave claimed SELL was
+structurally unreachable because held names are never re-analysed. That was
+wrong, and the query behind it was wrong: a `LIMIT 12` covered about two days
+of cycles, not ten. The exit machinery works — all nine held positions carry
+active watches, the watches fire (ALLY 08-03, HOOD and JPM 08-04) and are
+evaluated hourly, and held names are re-analysed regularly. Two even executed
+BUYs, at confidence 71 and 82.
+
+**The real defect is semantic.** Zero SELLs in 14 days, because every re-look
+of a held name reasons about *entry*:
+
+> HOOD, held, re-looked 08-05: *"price remains below all SMAs with bearish
+> MACD … we continue to wait for trend confirmation before **re-engaging**"* →
+> HOLD at 52, on a position the book already owned.
+
+The cause is an asymmetry in what the desk is told. The not-held branch of
+`portfolio_context` states a hard **constraint** — "the bot cannot SELL what it
+does not hold". The held branch stated only a bare **fact**: entry, P&L, days.
+So the desk knew what it could not do when flat, and nothing about what it
+could do when long. `HOLD` carries both "do not enter" and "keep the position",
+and only the entry meaning was ever being reasoned about — producing a HOLD
+that silently keeps a position the same paragraph describes as broken.
+
+Fixed at the four places it matters: the held branch of `portfolio_context` now
+states the decision frame (BUY adds, HOLD *keeps* as an active choice, SELL
+exits and is correct when the opening thesis fails); `debate_frame` gains
+POSITION_REVIEW at top priority, with ENTRY_QUALITY suppressed for held names
+because entry quality is not a question about committed capital; and the Board,
+the synthesizer and the delta tier each carry the same frame. All of them say
+*judge the thesis, not the P&L* in both directions, and warn against
+overcorrecting — an underwater position with an intact thesis is a KEEP, a
+profitable one with a broken thesis is a SELL. The goal is a real exit
+decision, not a sell bias.
+
+**Historical note.** 167 of 176 SELLs (95%) were on tickers the bot did not
+hold, and were policy-blocked after the desk had already spent ~1,243s each.
+The not-held constraint correctly killed those; what it revealed is that
+genuine exits were never being generated at all.
+
+**How to tell if this worked.** Count SELLs on *held* tickers, not SELLs
+overall — the old totals were mostly invalid shorts. Any exit should also carry
+a thesis-based rationale, not a P&L one.
+
 ## Shipped 2026-08-05 (evening) — the debate rework
 
 Traced backwards from ten HOLDs (write-up in the client's *Incidents*) and
