@@ -546,9 +546,24 @@ def build() -> str:
 
 
 def _strip_stamp(page: str) -> str:
-    """Compare pages ignoring the generation timestamp, so --check reports real
-    content drift rather than 'it was built at a different second'."""
-    return re.sub(r"generated [^<]*", "", page)
+    """Compare pages ignoring TIMESTAMPS, so --check reports real content drift.
+
+    Two kinds of timestamp are neutralised, for the same reason:
+
+    - the generation stamp, which differs on every rebuild;
+    - the per-chapter ``data-ts`` freshness marks, whose SOURCE changes when a
+      chapter is committed (an uncommitted edit is dated by mtime, a committed
+      one by its commit date). Without this, `--check` failed immediately after
+      every documentation commit and the Stop hook rebuilt, producing a fresh
+      diff, which needed another commit — a loop that reported "stale" when
+      nothing a reader can see had changed.
+
+    Content drift still fails the check; only the clock is ignored. The marks
+    refresh on the next real content rebuild, which is exactly when the thing
+    they describe has actually moved.
+    """
+    page = re.sub(r"generated [^<]*", "", page)
+    return re.sub(r'data-ts="[^"]*"', 'data-ts=""', page)
 
 
 def main() -> int:
