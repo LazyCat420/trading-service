@@ -175,7 +175,7 @@ figcaption{margin-top:.8rem;font-size:.82rem;color:var(--ink-soft);text-align:ce
       <h1>Trading Service — Working Documentation</h1>
       <p class="sub">How the cycle backend behaves under the hood: invariants, failure modes, and what is verified working.</p>
     </div>
-    <span class="stamp"><span class="freshness lede" data-ts="2026-08-06T05:50:34.655105+00:00"></span>generated 2026-08-06 05:50 UTC · do not edit by hand</span>
+    <span class="stamp"><span class="freshness lede" data-ts="2026-08-06T06:50:45.813667+00:00"></span>generated 2026-08-06 06:50 UTC · do not edit by hand</span>
   </div>
 </header>
 <div class="shell">
@@ -245,7 +245,7 @@ if "selected_tickers" not in parsed:
 <li>Because <code>schema.sql</code> runs before migrations, a column added in both places must be idempotent in the migration (<code>_safe_add_column</code>).</li>
 </ul>
 <p>Partial unique indexes have a sharp edge here: Postgres will not infer one for <code>ON CONFLICT</code> unless the statement repeats the index predicate. Omit it and every write raises, which a surrounding <code>except</code> turns into a log line while row counts continue to look healthy.</p></section>
-<section class="chapter" id="current-state"><span class="freshness" data-ts="2026-08-06T05:50:34.655105+00:00"></span><h1 id="current-state">Current state</h1>
+<section class="chapter" id="current-state"><span class="freshness" data-ts="2026-08-06T06:50:45.813667+00:00"></span><h1 id="current-state">Current state</h1>
 <p>Verified <strong>2026-08-05</strong> against <code>master@8182868</code> deployed to the NAS.</p>
 <div class="status-grid">
   <div class="tile ok"><div class="label">Tickers into analysis</div><div class="value">13</div><div class="note">was 0–1</div></div>
@@ -255,8 +255,9 @@ if "selected_tickers" not in parsed:
 </div>
 <h2 id="the-artifact-repair-now-recovers-the-agents-work-first-measurement">The artifact repair now recovers the agent's work — first measurement</h2>
 <p><code>83cb633</code> gives the tool-less repair pass the agent's own tool results instead of only its last sentence. It is firing as intended — recoveries of 3 to 12 tool results, 245 to 9,588 characters of findings, across judges, analysts, the Board, the synthesizer and the defense turn.</p>
-<div class="scroll-x"><table><thead><tr><th></th><th>repairs attempted</th><th>recovered</th><th>rate</th></tr></thead><tbody><tr><td>Before (8h)</td><td>80</td><td>40</td><td><strong>50%</strong></td></tr><tr><td>After</td><td>18</td><td>12</td><td><strong>66%</strong></td></tr></tbody></table></div>
-<p><strong>Suggestive, not proven.</strong> If the true rate were still 50%, seeing 12 or more of 18 happens about 12% of the time — so this is not luck-proof at n=18. Re-run the comparison once a few hundred repairs have accumulated before treating 66% as the number.</p>
+<div class="scroll-x"><table><thead><tr><th></th><th>repairs attempted</th><th>recovered</th><th>rate</th></tr></thead><tbody><tr><td>Before (10h)</td><td>100</td><td>49</td><td><strong>49%</strong></td></tr><tr><td>After</td><td>32</td><td>24</td><td><strong>75%</strong></td></tr></tbody></table></div>
+<p><strong>This one holds up.</strong> At the first reading (12 of 18, 66%) it did not — that could have come up by luck about 12% of the time, and it was recorded as unproven. The sample nearly doubled and the effect strengthened rather than regressed to the baseline: <strong>P(≥24 of 32 | the rate were still 49%) = 0.0025</strong>. The 95% interval on the after-rate is 58–87%, so "about three in four" is the honest description; 75% is the point estimate, not a precision claim.</p>
+<p>Roughly half the repairs that used to be thrown away now come back as artifacts. What it recovers is analysis the cycle already paid for — the agent had done the research and merely narrated instead of emitting it.</p>
 <p><strong>Measure it from <code>cycle_audit_log</code>, not the container log.</strong> A deploy restarts the container and <code>docker logs</code> starts empty, which silently made the before-period read as zero. The audit log survives the restart; it is the only source that can compare across a deploy.</p>
 <h2 id="second-cycle-cycle-v3-1785985682-and-a-correction-to-the-first-read">Second cycle — <code>cycle-v3-1785985682</code>, and a correction to the first read</h2>
 <p>The first cycle after the debate rework showed a 33% bear win rate. The second, with the <code>bull_defense</code> turn-budget fix also live, came in at <strong>57%</strong> (bear 4, tie 2, bull 1).</p>

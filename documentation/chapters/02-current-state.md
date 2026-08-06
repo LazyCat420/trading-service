@@ -18,13 +18,19 @@ the Board, the synthesizer and the defense turn.
 
 | | repairs attempted | recovered | rate |
 |---|---|---|---|
-| Before (8h) | 80 | 40 | **50%** |
-| After | 18 | 12 | **66%** |
+| Before (10h) | 100 | 49 | **49%** |
+| After | 32 | 24 | **75%** |
 
-**Suggestive, not proven.** If the true rate were still 50%, seeing 12 or more
-of 18 happens about 12% of the time — so this is not luck-proof at n=18. Re-run
-the comparison once a few hundred repairs have accumulated before treating 66%
-as the number.
+**This one holds up.** At the first reading (12 of 18, 66%) it did not — that
+could have come up by luck about 12% of the time, and it was recorded as
+unproven. The sample nearly doubled and the effect strengthened rather than
+regressed to the baseline: **P(≥24 of 32 | the rate were still 49%) = 0.0025**.
+The 95% interval on the after-rate is 58–87%, so "about three in four" is the
+honest description; 75% is the point estimate, not a precision claim.
+
+Roughly half the repairs that used to be thrown away now come back as
+artifacts. What it recovers is analysis the cycle already paid for — the agent
+had done the research and merely narrated instead of emitting it.
 
 **Measure it from `cycle_audit_log`, not the container log.** A deploy restarts
 the container and `docker logs` starts empty, which silently made the
