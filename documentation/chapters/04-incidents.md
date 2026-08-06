@@ -88,6 +88,56 @@ agent registration — had been dead since `c276d1d`. Fixed in `3653899`.
 > A retry loop around a deterministic error manufactures the appearance of a
 > transient fault. If every attempt fails identically, it is not transient.
 
+## 2026-08-06 — The Gatekeeper's "empty response" was a sampling parameter
+
+`GATEKEEPER_DEGRADED` fired four times on 2026-08-06 and twice on 08-05, every
+one of them `Agent failed: empty response from v3_portfolio_manager`. Each
+occurrence silently demoted ticker selection from the Gatekeeper's judgement to
+raw top-N-by-score — the cycle stayed green.
+
+The cause is not the model, the prompt, or the box. Prism's `ParameterRegistry`
+gives `minP` an `agentDefault` of **0.05** and injects it whenever the caller
+omits the field, which `trading-service` always did — `AgentHarness.run` never
+forwarded `min_p`, so no `BaseAgent` caller could set it. vLLM running
+speculative decoding refuses any `min_p > 0`:
+
+```
+ValueError: The min_p and logit_bias sampling parameters are not yet
+supported with speculative decoding
+```
+
+and it raises that **inside the stream generator, after already answering HTTP
+200**. Prism therefore receives an empty stream rather than an error, and
+reports a successful call with no content.
+
+Measured against the Jetson, interleaved rounds, identical prompt, one variable
+changed:
+
+| arm | non-empty | valid artifact | median |
+|---|---|---|---|
+| as production sent it | **0/3** | 0/3 | 1.8s |
+| `min_p=0.0` | **3/3** | **3/3** | 52.7s |
+
+`0.0` is vLLM's own default, so the fix restores standard sampling rather than
+tuning it. Shipped as a `min_p` passthrough in lazycat-sdk `0.3.10` plus
+`base_agent.min_p_for()`, which sends `0.0` to the local vLLM boxes only and
+leaves cloud models on the gateway default.
+
+> A provider that answers `HTTP 200` and *then* fails inside its own stream is
+> indistinguishable from a terse model. The failure has to be diagnosed from
+> the request that produced it, not from the empty response it returned.
+
+Two corrections to the record fell out of the same measurement:
+
+- **The `/agent` tool floor is not 275 tools / 91,255 tokens.** It measures
+  **83 tools / ~21k tokens**, leaving **38,179** available output tokens on the
+  Jetson's 65k window. `/agent` reaches the Jetson fine; the older figure
+  predates whatever narrowed the catalog and should not be used to justify
+  routing anything to `/chat`.
+- **`enable_tools=False` does not remove tools.** It is a client-side flag that
+  only stops the SDK sending schemas; prism attaches its catalog server-side
+  regardless, and the SDK's own comment notes prism forces the agentic loop.
+
 ## Diagnostic notes
 
 - Container clocks are **PDT**; cycle IDs encode **UTC** epochs.

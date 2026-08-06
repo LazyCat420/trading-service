@@ -19,6 +19,64 @@ logger = logging.getLogger(__name__)
 
 _active_agents = set()
 
+
+def _base_agent_accepts_min_p() -> bool:
+    """Does the INSTALLED lazycat SDK take `min_p` on BaseAgent?
+
+    deploy.sh syncs lazycat-sdk alongside app/, so these move together in a
+    normal deploy — but a partial one would make every BaseAgent construction
+    raise TypeError, i.e. turn a sampling fix into a total agent outage.
+    Checked once at import; see the min_p block in run_agent for the why.
+    """
+    try:
+        import inspect
+
+        from lazycat.agent import BaseAgent as _BA
+
+        return "min_p" in inspect.signature(_BA.__init__).parameters
+    except Exception:  # noqa: BLE001 — never let a capability probe stop boot
+        return False
+
+
+_BASE_AGENT_ACCEPTS_MIN_P = _base_agent_accepts_min_p()
+
+#: Model-name markers for providers that never had the speculative-decoding
+#: problem. Matched on the MODEL, not the provider, because prism routes on the
+#: model name and `provider` is "vllm" by default even for an overridden model.
+_CLOUD_MODEL_MARKERS = ("gpt-", "claude-", "gemini-")
+
+
+def min_p_for(provider: str | None, model: str | None) -> float | None:
+    """`0.0` for the local vLLM boxes, `None` (gateway default) otherwise.
+
+    WHY THIS EXISTS. Prism's ParameterRegistry gives `minP` an agentDefault of
+    0.05 and injects it into every /agent call, because we never sent the
+    field. vLLM with speculative decoding REFUSES any min_p > 0:
+
+        ValueError: The min_p and logit_bias sampling parameters are not yet
+        supported with speculative decoding
+
+    and raises it INSIDE the stream generator, after already answering HTTP
+    200 — so prism sees an empty stream rather than an error and reports a
+    successful call with no content. That is what the gatekeeper's "empty
+    response from v3_portfolio_manager" was (GATEKEEPER_DEGRADED x4 on
+    2026-08-06, degrading ticker selection to the raw scoring engine).
+
+    Measured that day against the Jetson, interleaved, same prompt, one
+    variable changed: prism default 0/3 non-empty; min_p=0.0 3/3 non-empty and
+    3/3 a valid artifact. 0.0 is vLLM's OWN default, so this restores standard
+    sampling rather than tuning it.
+
+    Fail-safe by omission: an unknown provider gets None and keeps today's
+    behaviour, so a new endpoint cannot silently inherit a sampling override.
+    """
+    if any(marker in (model or "").lower() for marker in _CLOUD_MODEL_MARKERS):
+        return None
+    # `provider` is None on the model_override path, where BaseAgent falls back
+    # to "vllm" itself — so the fallback here must match BaseAgent's, or that
+    # path keeps the broken default.
+    return 0.0 if (provider or "vllm").startswith("vllm") else None
+
 #: Bounds on the tool transcript handed to the artifact repair pass. The whole
 #: point is to give the repair the agent's own findings, but it rides in a
 #: prompt that is already ~27k chars, so the ceiling is deliberate and low:
@@ -599,7 +657,26 @@ async def run_agent(
             kwargs["provider"] = resolved_provider
         _model_holder["model"] = resolved_model
         _model_holder["provider"] = resolved_provider
-            
+
+        # See min_p_for: prism injects minP=0.05, and a spec-decoding vLLM box
+        # answers that with an empty stream and an HTTP 200.
+        resolved_min_p = min_p_for(
+            resolved_provider or kwargs.get("provider"), resolved_model
+        )
+        if resolved_min_p is not None:
+            if _BASE_AGENT_ACCEPTS_MIN_P:
+                kwargs["min_p"] = resolved_min_p
+            else:
+                # A partial deploy (app/ updated, lazycat-sdk not synced) would
+                # otherwise TypeError on EVERY agent construction — turning a
+                # sampling fix into a total agent outage. Degrade to the old
+                # broken-but-running behaviour and say so.
+                logger.warning(
+                    "[BaseAgent] Installed lazycat SDK does not accept min_p; "
+                    "prism will inject minP=0.05 and a speculative-decoding "
+                    "vLLM box will answer with an empty stream. Sync lazycat-sdk."
+                )
+
         agent = BaseAgent(**kwargs)
         if enable_tools and agent_tools:
             for t in agent_tools:

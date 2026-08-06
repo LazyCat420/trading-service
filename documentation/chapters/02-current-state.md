@@ -9,6 +9,33 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-06 — `min_p=0` on the local vLLM boxes
+
+Every prism `/agent` call from this service carried prism's injected
+`minP: 0.05`, and a vLLM box running speculative decoding refuses it — after
+answering `HTTP 200`, from inside the stream. The caller sees an empty
+response, so it read as a model or prompt defect. Full diagnosis in
+`04-incidents.md`.
+
+Measured on the Jetson, interleaved, same prompt, one variable changed:
+**0/3 non-empty → 3/3 non-empty and 3/3 a valid artifact.**
+
+- `lazycat-sdk 0.3.10` (`327a73d`) — `AgentHarness.run` now forwards
+  `BaseAgent.min_p`. It always existed on `call_agent`; the harness dropped it,
+  so no caller could reach it. Unset stays `None`, so cloud providers keep the
+  gateway default.
+- `base_agent.min_p_for(provider, model)` — sends `0.0` for `vllm*` providers,
+  `None` for cloud models (matched on the model name, because prism routes on
+  the name and `provider` defaults to `"vllm"` even for an overridden model).
+  Unknown providers get `None`, so a new endpoint cannot silently inherit it.
+- A partial deploy (`app/` updated, `lazycat-sdk` not synced) would `TypeError`
+  on every agent construction, so the SDK's signature is probed once at import
+  and the fix degrades to a warning rather than an outage.
+
+This is the root cause behind `GATEKEEPER_DEGRADED`; it is not a Gatekeeper
+fix. Any agent on a local box was losing the same way, and the Gatekeeper was
+merely the one pinned there.
+
 ## Re-verification against the database — 2026-08-06
 
 Every claim in the two sections below was re-run against `shared_desk`,
