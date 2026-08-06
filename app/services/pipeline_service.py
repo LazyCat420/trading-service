@@ -639,7 +639,6 @@ class PipelineService:
             try:
                 from app.trading.watchlist import get_active
                 from app.utils.batch_screener import get_watchlist_snapshots
-                from app.agents.base_agent import run_agent
                 from app.v3.agents.portfolio_manager import SYSTEM_PROMPT, AGENT_NAME
                 import json
                 
@@ -1148,9 +1147,6 @@ class PipelineService:
                         "conversational text or formatting blocks. Your response must begin with { and end with }."
                     )
                     
-                    from app.services.bot_manager import get_active_bot_id
-                    active_bot_id = get_active_bot_id()
-                    
                     from app.utils.text_utils import parse_json_response
 
                     def _gatekeeper_unusable(why: str) -> dict:
@@ -1190,23 +1186,56 @@ class PipelineService:
                             "rationale": f"Gatekeeper {why} — auto-selected by scoring engine",
                         })}
 
-                    # Wrap gatekeeper in a timeout to prevent indefinite hangs
-                    try:
-                        result = await asyncio.wait_for(
-                            run_agent(
-                                agent_name=AGENT_NAME,
-                                ticker="WATCHLIST",
-                                cycle_id=cycle_id,
-                                bot_id=active_bot_id,
-                                system_prompt=system_prompt,
-                                user_prompt=user_prompt,
-                                enable_tools=False, # DISABLED tools so it strictly outputs JSON!
-                                endpoint_override="jetson", # Pin to Jetson (Qwen) to avoid DeepSeek tool-payload failure
-                            ),
-                            timeout=180.0,
+                    # ── Tool-less /chat, NOT /agent (2026-08-06) ──
+                    # This agent wants strict JSON and passes no tools, but
+                    # `enable_tools=False` is a client-side flag: prism still
+                    # attaches its whole MCP catalog server-side on /agent —
+                    # 275 tools / 91,255 tokens before a single prompt token.
+                    # That was the empty responses. Measured on this exact
+                    # call: ~21,940 total input tokens for a ~1,900-token
+                    # prompt, and the model emitted 229–1,493 output tokens
+                    # that arrived as empty content on the larger watchlists.
+                    #
+                    # It is NOT a model defect and NOT a thinking-off problem:
+                    # `reasoningOutputTokens` was 0 on every failing run, and a
+                    # raw call with these same messages returns clean JSON on
+                    # both boxes. Pinning the model was tried first and made it
+                    # worse — /agent's catalog is 1.4x Jetson's 65k window, so
+                    # `endpoint_override="jetson"` failed 3/3 at zero tokens.
+                    # Route, don't re-pin. See prism_agent_caller.chat_toolless.
+                    from app.services.prism_agent_caller import (
+                        chat_toolless, resolve_default_model_for_agent,
+                    )
+
+                    async def _call_gatekeeper() -> dict:
+                        gk_model, gk_provider = await resolve_default_model_for_agent(AGENT_NAME)
+                        return await chat_toolless(
+                            provider=gk_provider,
+                            model=gk_model,
+                            system_prompt=system_prompt,
+                            user_prompt=user_prompt,
+                            max_tokens=4096,
+                            timeout_seconds=180.0,
                         )
-                    except asyncio.TimeoutError:
-                        result = _gatekeeper_unusable("timed out after 180s")
+
+                    # One retry: /chat is a raw httpx stream, so it does not sit
+                    # behind run_agent's aresilient_call backoff any more, and a
+                    # single transient blip must not cost the cycle its selection.
+                    result = None
+                    for _attempt in (1, 2):
+                        try:
+                            result = await asyncio.wait_for(_call_gatekeeper(), timeout=180.0)
+                            break
+                        except asyncio.TimeoutError:
+                            if _attempt == 2:
+                                result = _gatekeeper_unusable("timed out after 180s")
+                        except Exception as _gk_err:  # noqa: BLE001 — degrade loudly, never decide silently
+                            logger.warning(
+                                "[PipelineService] Gatekeeper /chat attempt %d failed: %s",
+                                _attempt, _gk_err,
+                            )
+                            if _attempt == 2:
+                                result = _gatekeeper_unusable(f"call failed ({_gk_err})")
 
                     final_text = result.get("response", "{}")
                     logger.info("[PipelineService] Raw gatekeeper response: %s", final_text)

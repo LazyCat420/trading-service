@@ -190,6 +190,81 @@ ENDPOINT_PROVIDERS: dict[str, str] = {
 }
 
 
+async def chat_toolless(
+    *, provider: str, model: str, system_prompt: str, user_prompt: str,
+    max_tokens: int, timeout_seconds: float,
+) -> dict:
+    """Call prism's TOOL-LESS `/chat` endpoint and collect the SSE stream.
+
+    Use this for any agent that passes `enable_tools=False`. The SDK's
+    `call_agent` (i.e. `/agent`) attaches the full MCP catalog server-side —
+    measured 2026-08-04 at **275 tools = 91,255 tokens**, before any prompt —
+    and no request field removes it (`enabledTools`/`tools`/`toolsEnabled` and
+    three `project` values all returned 275/91,255) because tool attachment is
+    server-side policy, not a request parameter. `enable_tools=False` is a
+    CLIENT-side flag: it stops us sending schemas, it does not stop prism
+    attaching them.
+
+    Two consequences, both measured:
+      * 91,255 tokens is 1.4x Jetson's 65,536 window, so `/agent` can never
+        reach Jetson at all — it answers with a 0-token window and an empty
+        stream. Pinning an `/agent` caller to Jetson is a guaranteed failure
+        (2026-08-06: the gatekeeper was pinned there and failed 3/3).
+      * Even on Gold Spark's 1M window the catalog is charged against the
+        request: the gatekeeper measured ~21,940 total input tokens for a
+        ~1,900-token prompt, and returned empty content on the larger
+        watchlists while the same model answered a raw call perfectly.
+
+    Returns the same shape as `run_agent`'s result dict for the keys callers
+    actually read: `response`, `tokens_used`, `loops_used`, `model_used`,
+    `provider`.
+    """
+    import json as _json
+    import httpx
+    from app.config import settings
+
+    url = f"{settings.PRISM_URL.rstrip('/')}/chat"
+    payload = {
+        "model": model,
+        "provider": provider,
+        "project": settings.PROJECT_NAME,
+        "systemPrompt": system_prompt,
+        "messages": [{"role": "user", "content": user_prompt}],
+        "maxTokens": max_tokens,
+        "thinkingEnabled": False,
+    }
+    text_parts: list[str] = []
+    done: dict = {}
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        async with client.stream("POST", url, json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    evt = _json.loads(line[6:])
+                except Exception:
+                    continue
+                kind = evt.get("type")
+                if kind == "chunk":
+                    text_parts.append(evt.get("content") or "")
+                elif kind == "done":
+                    done = evt
+                elif kind == "error":
+                    raise RuntimeError(str(evt)[:300])
+    usage = done.get("usage") or {}
+    return {
+        "response": "".join(text_parts),
+        # Total, not output-only: the leaderboard's token columns are totals
+        # everywhere else and a shadow that reported only output would look
+        # artificially cheap next to the primary.
+        "tokens_used": (usage.get("inputTokens") or 0) + (usage.get("outputTokens") or 0),
+        "loops_used": 1,
+        "model_used": done.get("model"),
+        "provider": done.get("provider"),
+    }
+
+
 async def resolve_default_model_for_agent(
     agent_name: str,
     force_refresh: bool = False,

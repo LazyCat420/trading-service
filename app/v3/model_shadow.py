@@ -187,14 +187,10 @@ async def _prism_chat(
 ) -> dict:
     """Call prism's TOOL-LESS /chat endpoint and collect the SSE stream.
 
-    Why not the SDK's call_agent (i.e. /agent), which everything else uses:
-    /agent attaches the full MCP catalog server-side — measured 2026-08-04 at
-    **275 tools = 91,255 tokens**, before any prompt. That alone exceeds a 65k
-    box's entire window, so /agent can NEVER reach Jetson; prism answers with a
-    context_exhausted error and a 0-token window. No request field changes it
-    (enabledTools/tools/toolsEnabled and the project name were all tested and
-    the count stayed at 275) because tool attachment is server-side policy, not
-    a request parameter — [[availabletools-is-not-enforcement-policies-are]].
+    Thin alias for `prism_agent_caller.chat_toolless`, which holds the
+    transport and the measurements for why `/agent` is unusable here. Kept as a
+    named function because the CAVEAT below is specific to the shadow bench and
+    does not belong on the shared helper.
 
     CAVEAT this imposes on the comparison: the shadow runs the job WITHOUT
     tools while the primary ran WITH them. For v3_regime_engine that is still
@@ -203,50 +199,13 @@ async def _prism_chat(
     it would NOT be a fair comparison for a genuinely tool-using role. Do not
     reuse this path for one without re-checking that agent's tool call counts.
     """
-    import json as _json
-    import httpx
-    from app.config import settings
+    from app.services.prism_agent_caller import chat_toolless
 
-    url = f"{settings.PRISM_URL.rstrip('/')}/chat"
-    payload = {
-        "model": model,
-        "provider": provider,
-        "project": settings.PROJECT_NAME,
-        "systemPrompt": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
-        "maxTokens": max_tokens,
-        "thinkingEnabled": False,
-    }
-    text_parts: list[str] = []
-    done: dict = {}
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        async with client.stream("POST", url, json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    evt = _json.loads(line[6:])
-                except Exception:
-                    continue
-                kind = evt.get("type")
-                if kind == "chunk":
-                    text_parts.append(evt.get("content") or "")
-                elif kind == "done":
-                    done = evt
-                elif kind == "error":
-                    raise RuntimeError(str(evt)[:300])
-    usage = done.get("usage") or {}
-    return {
-        "response": "".join(text_parts),
-        # Total, not output-only: the leaderboard's token columns are totals
-        # everywhere else and a shadow that reported only output would look
-        # artificially cheap next to the primary.
-        "tokens_used": (usage.get("inputTokens") or 0) + (usage.get("outputTokens") or 0),
-        "loops_used": 1,
-        "model_used": done.get("model"),
-        "provider": done.get("provider"),
-    }
+    return await chat_toolless(
+        provider=provider, model=model,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        max_tokens=max_tokens, timeout_seconds=timeout_seconds,
+    )
 
 
 async def _run_and_record(
