@@ -9,6 +9,54 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-06 — `scripts/jetson_benchmark.py`
+
+Answers two questions that were previously re-derived from scratch every
+session, and persists both to `box_benchmark_runs` so they accrue instead of
+resetting.
+
+**`--phase inventory` — what the box has actually processed.** vLLM's counters
+are since *process start* and do not survive a restart, so the durable history
+has to come from the database. First run:
+
+| source | volume | window |
+|---|---|---|
+| `llm_audit_logs` (jetson) | 12,720 calls | 2026-06-06 → **06-25**, then nothing |
+| `v3_agent_telemetry` (`provider='vllm'`) | 0 | ever |
+| `model_shadow_runs` (jetson) | 21 SUCCESS / 1 error | 08-04 → 08-06 |
+| vLLM counters | 127 requests, 1.52M prompt tok | 50.1h uptime → **2.53 req/hr** |
+
+**`--phase reliability` — transport arms on replayed real prompts.** The corpus
+is `model_shadow_runs.system_prompt/user_prompt`, i.e. prompts the desk
+actually sent; those columns exist so a replay costs seconds instead of an
+~8-minute cycle. A synthetic fixture would measure a distribution the desk does
+not have, so an empty corpus aborts rather than inventing one.
+
+Four properties it will not give up, each one a mistake that has already been
+made here:
+
+- **`--runs` defaults to 10, not 3.** At n=3 a 2/3 result is compatible with a
+  true success rate anywhere from ~15% to ~95%, so "2/3 vs 3/3" is one unlucky
+  run rather than a finding.
+- **Arms interleave within each round.** All-A-then-all-B lets a busy box or a
+  warming prefix cache pick the winner.
+- **The cold start is reported separately, never in the median.** An idle
+  Jetson pays ~21s on its first call.
+- **Classification is fail-closed, and a known-bad arm is kept.**
+  `agent-nominp` reproduces the pre-fix failure on demand (measured:
+  `EMPTY_RESPONSE`, 1,539ms, 0 chars) — without it, a future "it works now"
+  would be unfalsifiable.
+
+**`--phase concurrency`** is gated on `pipeline_state` being idle and fails
+closed if that read fails: stressing a shared box during a live cycle degrades
+the desk the benchmark is meant to measure. vLLM does not OOM under load — it
+queues and preempts — so the knee to watch is `num_requests_waiting` lifting
+off zero, not a crash.
+
+Deliberately **not** wired into CI or `verify_deploy.py`: it is a
+non-deterministic, minutes-long test against shared hardware, and gating a
+deploy on the Jetson's mood is a coin flip, not a test.
+
 ## Shipped 2026-08-06 — `min_p=0` on the local vLLM boxes
 
 Every prism `/agent` call from this service carried prism's injected

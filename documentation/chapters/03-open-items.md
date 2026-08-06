@@ -136,7 +136,41 @@ the count could not tell them apart.
 **Do not "fix" this by trimming prompts or raising retries.** Both leave the
 model reasoning into a budget that has no room for the answer.
 
-## 1. The gatekeeper LLM returns empty responses
+## 1. The gatekeeper LLM returns empty responses — ROOT-CAUSED 2026-08-06
+
+> **RESOLVED, and the hypothesis below was wrong.** It was not the tool
+> payload. Prism injects `minP: 0.05` whenever the caller omits the field, and
+> a vLLM box running speculative decoding refuses any `min_p > 0` — raising it
+> *inside the stream generator, after answering HTTP 200*, so prism sees an
+> empty stream rather than an error. Fixed by forwarding `min_p=0.0`
+> (lazycat-sdk `0.3.10` + `base_agent.min_p_for`); full write-up in
+> `04-incidents.md`. Two supporting claims below are also retired: the tool
+> floor re-measured at **83 tools / ~21k tokens** (not 275/91k), leaving
+> 38,179 output tokens on the Jetson, and `enable_tools=False` never removed
+> tools at all — it is client-side only.
+
+## 1b. The Jetson has processed almost nothing since 2026-06-25
+
+Found while building the benchmark, and invisible on any live metrics page:
+
+| source | volume | window |
+|---|---|---|
+| `llm_audit_logs` (jetson) | **12,720 calls** | 2026-06-06 → **06-25**, then nothing |
+| `v3_agent_telemetry` (`provider='vllm'`) | **0** | ever |
+| `model_shadow_runs` (jetson) | 21 SUCCESS, 1 error | 08-04 → 08-06 |
+| vLLM lifetime counters | 127 requests / 1.52M prompt tok | 50.1h uptime |
+
+The box served thousands of calls a day in June, went dark on **06-25**, and
+has run at **~2.5 requests/hour** since. The `minP` fix removes the reason no
+v3 agent could reach it, but nothing yet *routes* work there — so this stays
+open until a role is deliberately assigned and its results measured.
+
+Note the measurement trap: vLLM's counters are **since process start** and do
+not survive a restart, so the six-week gap is only visible in the database.
+`scripts/jetson_benchmark.py --phase inventory` snapshots both into
+`box_benchmark_runs` so the history accrues instead of resetting.
+
+## 1c. (superseded) The gatekeeper's empty responses — original diagnosis
 
 `v3_portfolio_manager` (`deepseek-v4-flash-0731` on `vllm-2`, via prism
 `/agent`) intermittently returns nothing: failed 08-04 22:28, succeeded 23:00,
