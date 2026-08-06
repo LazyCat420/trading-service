@@ -9,6 +9,48 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Every fix live — `cycle-v3-1785991713`, and the debate result settles
+
+The first cycle with the whole set deployed: per-desk framing, the restored
+defense turn at its corrected budget, the exit frame, the repair fix, and the
+corrected canary.
+
+**The defense turn ran on 10 of 10 desks.** It was 8 of 11 with a 1-turn budget
+and 6 of 8 after the budget fix; at full coverage the debate now has three
+turns on every desk that holds one.
+
+**Bear win rate, pooled over the three post-fix cycles:**
+
+| | bull | bear | tie | bear% |
+|---|---|---|---|---|
+| cycle 1 | 4 | 3 | 2 | 33% |
+| cycle 2 | 1 | 4 | 2 | 57% |
+| cycle 3 | 6 | 3 | 1 | 30% |
+| **pooled** | **11** | **10** | **5** | **38%** (n=26) |
+
+Against the 72–94% measured over 288 debates beforehand:
+P(≤10 bear wins of 26 | rate still 72%) = 3.6e-04. The asymmetry is gone, and
+at n=26 that is no longer a small-sample story. Individual cycles still swing
+(30% to 57%), so quote the pooled figure, not a cycle.
+
+**The exit frame is working on real holdings.** Two held names came through:
+
+```
+VZ    [HELD]  POSITION_REVIEW  -> bull wins -> HOLD 65        (keep)
+EXLS  [HELD]  DATA_SUFFICIENCY -> bull wins -> BUY 72 EXECUTED (add)
+```
+
+`EXLS` is the first execution on a name the book already owns — the "BUY =
+add to the existing position" branch of the exit frame, taken deliberately
+rather than as a fresh entry. **Still no SELL.** Both reviews concluded keep or
+add, which are legitimate outcomes; the open question is whether a held name
+whose thesis has actually broken now exits. That needs a broken thesis to
+appear, so it cannot be forced.
+
+**The floor bound again:** `FCF BUY @ 64 -> HOLD_POLICY_BLOCKED_LOW_CONFIDENCE`,
+the second instance after `UNH`. Both mechanisms remain live — the Board
+choosing HOLD, and the floor blocking a BUY it wanted.
+
 ## The artifact repair now recovers the agent's work — first measurement
 
 `83cb633` gives the tool-less repair pass the agent's own tool results instead
