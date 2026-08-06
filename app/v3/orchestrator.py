@@ -3418,13 +3418,40 @@ def _build_cycle_metadata(
         from app.tools.portfolio_tools import get_position_context
         pos_ctx = get_position_context(ticker, bot_id)
         if pos_ctx and pos_ctx.get("held"):
+            # The held branch used to state the position as a bare FACT while
+            # the not-held branch below stated a hard CONSTRAINT. That asymmetry
+            # is why the book never sold (2026-08-05): with nothing framing the
+            # exit, the desk kept reasoning about entry even on names it owned,
+            # and a broken thesis came out as "wait for confirmation before
+            # re-engaging" (HOOD, 08-05) — which silently means KEEP. `HOLD`
+            # carries both meanings and only the entry one was being reasoned.
             metadata["portfolio_context"] = (
                 f"CURRENTLY HOLDING {ticker}: "
                 f"Entry ${(pos_ctx.get('avg_entry') or 0):.2f}, "
                 f"P&L {(pos_ctx.get('unrealized_pnl_pct') or 0):+.1f}%, "
-                f"Held {pos_ctx.get('holding_days', 0)} days."
+                f"Held {pos_ctx.get('holding_days', 0)} days.\n"
+                "YOU ALREADY OWN THIS. You are not deciding whether to enter — "
+                "you are deciding what to do with capital that is already "
+                "committed and already at risk. Your three actions mean:\n"
+                f"  BUY  = add to the existing {ticker} position\n"
+                "  HOLD = KEEP it at its current size, and you are accountable "
+                "for that as an active choice\n"
+                "  SELL = EXIT it. This is available to you and it is the "
+                "CORRECT action when the thesis that opened the position no "
+                "longer holds.\n"
+                "Judge the position on its thesis, not on its P&L, and not on "
+                "whether you would open it again today. 'Wait for confirmation "
+                "before re-engaging' is not available here — you are already "
+                "engaged, and choosing HOLD is choosing to stay engaged."
             )
             metadata["held"] = True
+            # Structured copy for the debate framer, which must not parse prose.
+            metadata["position"] = {
+                "held": True,
+                "avg_entry": pos_ctx.get("avg_entry"),
+                "unrealized_pnl_pct": pos_ctx.get("unrealized_pnl_pct"),
+                "holding_days": pos_ctx.get("holding_days"),
+            }
         else:
             metadata["portfolio_context"] = (
                 f"NO OPEN POSITION in {ticker}. The bot cannot SELL what it "

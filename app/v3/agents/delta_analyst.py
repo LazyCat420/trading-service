@@ -58,6 +58,22 @@ data report (fresh price, recent news) versus the prior thesis.
   invalidation with force, or anything that genuinely reopens the debate.
   → escalate = true. Do NOT try to produce a final call; the full panel will.
 
+## IF THE BOOK ALREADY HOLDS THIS TICKER
+The Portfolio Context says so. REAFFIRM then means KEEP a live position, not "do
+nothing" — it is an active decision to stay exposed, and it is the default this
+tier is structurally biased toward. Guard against that bias:
+- A wake trigger that FIRED because the price broke your invalidation level is
+  evidence the thesis is breaking. That is an ESCALATE (or a SELL if the break is
+  unambiguous) — never a REAFFIRM of the prior HOLD.
+- Describing a confirmed downtrend, a broken setup, or a de-rating on a position
+  the book OWNS and then reaffirming is a contradiction. Measured 2026-08-05:
+  a held name was reaffirmed at confidence 52 while the reasoning called it a
+  confirmed downtrend below every SMA, and the position stayed open.
+- "Wait for confirmation before re-engaging" is not available for a name already
+  held. You are engaged; REAFFIRM keeps you engaged.
+Judge the position on its thesis, not its P&L. An intact thesis with ordinary
+gaps is a legitimate REAFFIRM — do not overcorrect into exiting on noise.
+
 ## RULES
 - Be CONSERVATIVE. When genuinely unsure whether a change is material, ESCALATE.
   Saving compute must never rubber-stamp a stale thesis through a real change.

@@ -91,6 +91,35 @@ def derive_debate_frame(desk: Any) -> dict:
     def add(priority: int, key: str, proposition: str, because: str) -> None:
         candidates.append((priority, key, proposition, because))
 
+    # ── Held position: this is an EXIT decision, not an entry one ──
+    # Outranks everything else because it changes what the other questions
+    # MEAN. "Is the entry good?" is not a question about capital already
+    # committed. Measured 2026-08-05: every re-look of a held name reasoned in
+    # entry framing ("wait for trend confirmation before re-engaging" — HOOD,
+    # on a position the bot owned) and so returned HOLD, which for a held name
+    # silently means KEEP. Zero SELLs in 14 days.
+    position = metadata.get("position") if isinstance(metadata, dict) else None
+    position = position if isinstance(position, dict) else {}
+    if position.get("held") or (isinstance(metadata, dict) and metadata.get("held")):
+        pnl = position.get("unrealized_pnl_pct")
+        days = position.get("holding_days")
+        detail = []
+        if isinstance(pnl, (int, float)):
+            detail.append(f"P&L {pnl:+.1f}%")
+        if isinstance(days, (int, float)):
+            detail.append(f"held {days:g} days")
+        add(
+            120, "POSITION_REVIEW",
+            "WE ALREADY OWN THIS. The question is not whether to buy — it is "
+            "whether the thesis that opened this position still holds. Argue "
+            "KEEP versus EXIT: the Bull carries the case for keeping (or "
+            "adding), the Bear carries the case for exiting. Judge the "
+            "position on its thesis, not on its P&L and not on whether you "
+            "would open it again today. 'Wait for confirmation' is not a "
+            "verdict here — the capital is already committed either way.",
+            "an open position" + (f" ({', '.join(detail)})" if detail else ""),
+        )
+
     # ── Solvency: nothing else matters until the company can fund itself ──
     failed_structural = [
         (name, g) for name, g in gates.items()
@@ -120,14 +149,20 @@ def derive_debate_frame(desk: Any) -> dict:
             + list(quant.get("data_gaps") or [])
         ) if g
     ]
-    if band == "NOT_SCOREABLE" or (isinstance(coverage, (int, float)) and coverage < 40):
+    if (
+        band == "NOT_SCOREABLE"
+        or (isinstance(coverage, (int, float)) and coverage < 40)
+        or len(gaps) >= 6
+    ):
         add(
             90, "DATA_SUFFICIENCY",
             "Is there enough verified evidence to take a position at all? "
             "Argue whether the gaps are peripheral or load-bearing. "
             "'Insufficient data' is a legitimate verdict here, not a cop-out.",
             score.get("not_scoreable_reason")
-            or f"pillar coverage {coverage}% is below the 40% line",
+            or (f"pillar coverage {coverage}% is below the 40% line"
+                if isinstance(coverage, (int, float)) and coverage < 40
+                else f"{len(gaps)} data gaps recorded across the research"),
         )
 
     # ── Cross-desk disagreement: name it instead of averaging it away ──
@@ -145,7 +180,11 @@ def derive_debate_frame(desk: Any) -> dict:
     rr_block = score.get("risk_reward") if isinstance(score.get("risk_reward"), dict) else {}
     rr = rr_block.get("ratio")
     constructive = f_dir in _BULLISH or q_dir in _BULLISH
-    if isinstance(rr, (int, float)) and rr < _MIN_RR and constructive:
+    # Never for a name we already own: "is the entry acceptable?" is not a
+    # question about capital that is already committed, and asking it is how
+    # the desk talked itself into "wait before re-engaging" on a live position.
+    held_now = bool(position.get("held") or (isinstance(metadata, dict) and metadata.get("held")))
+    if isinstance(rr, (int, float)) and rr < _MIN_RR and constructive and not held_now:
         add(
             80, "ENTRY_QUALITY",
             f"The direction may be right; the ENTRY is the question. Computed "

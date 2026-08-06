@@ -250,3 +250,81 @@ def test_debate_phases_are_reachable_from_the_source(phase):
     no-ops and the desk stalls without a verdict."""
     source = _ORCHESTRATOR.read_text()
     assert f'name == "{phase}"' in source
+
+
+# ─────────────────────────── held positions are exit decisions ───────────────
+
+
+def test_a_held_position_reframes_the_whole_debate():
+    """Measured 2026-08-05: every re-look of a held name reasoned about ENTRY
+    ("wait for trend confirmation before re-engaging" — HOOD, on a position the
+    book owned) and so returned HOLD, which for a held name means KEEP. Zero
+    SELLs in 14 days. The exit question must lead."""
+    desk = _Desk(
+        cycle_metadata={
+            "held": True,
+            "position": {"held": True, "unrealized_pnl_pct": -8.4, "holding_days": 12},
+            **_score(gates=[{"name": "liquidity", "verdict": "FAIL", "detail": "cr 0.3"}]),
+        }
+    )
+    frame = derive_debate_frame(desk)
+    assert frame["keys"][0] == "POSITION_REVIEW", (
+        "the exit question must outrank every entry-shaped question"
+    )
+    lead = frame["frames"][0]
+    assert "KEEP" in lead["proposition"] and "EXIT" in lead["proposition"]
+    assert "-8.4" in lead["because"]
+
+
+def test_entry_quality_is_never_asked_about_a_position_we_own():
+    """'Is the entry acceptable?' is not a question about committed capital."""
+    metadata = {
+        "held": True,
+        "position": {"held": True},
+        **_score(risk_reward={"ratio": 0.68}),
+    }
+    desk = _Desk(cycle_metadata=metadata, fundamental_report={"thesis_direction": "BULLISH"})
+    assert "ENTRY_QUALITY" not in derive_debate_frame(desk)["keys"]
+
+    # …but it is exactly the right question when the book is flat.
+    flat = _Desk(
+        cycle_metadata=_score(risk_reward={"ratio": 0.68}),
+        fundamental_report={"thesis_direction": "BULLISH"},
+    )
+    assert "ENTRY_QUALITY" in derive_debate_frame(flat)["keys"]
+
+
+def test_position_review_survives_a_metadata_only_held_flag():
+    """`position` is new; older desks carry only the `held` boolean."""
+    desk = _Desk(cycle_metadata={"held": True})
+    assert derive_debate_frame(desk)["keys"][0] == "POSITION_REVIEW"
+
+
+def test_a_flat_desk_never_opens_a_position_review():
+    """A check that fires for both states is not a check."""
+    assert "POSITION_REVIEW" not in derive_debate_frame(_Desk())["keys"]
+    assert "POSITION_REVIEW" not in derive_debate_frame(
+        _Desk(cycle_metadata={"held": False, "position": {"held": False}})
+    )["keys"]
+
+
+def test_the_deciding_prompts_frame_the_exit_symmetrically():
+    """The not-held branch always stated a hard constraint; the held branch
+    stated a bare fact. That asymmetry is why nothing ever sold."""
+    from app.v3.agents import board_of_directors, decision_agent, delta_analyst
+
+    for module in (board_of_directors, decision_agent):
+        prompt = getattr(module, "SYSTEM_PROMPT", "") or getattr(
+            module, "_BOARD_COMMON", ""
+        )
+        source = (prompt + open(module.__file__).read()).lower()
+        assert "already holds this ticker" in source
+        # The exit must be named as an available action, not merely mentioned.
+        assert "sell" in source and "exit" in source
+        assert "thesis, not on its p&l" in source
+        # …and must not overcorrect into a sell bias.
+        assert "overcorrect" in source
+
+    delta_src = open(delta_analyst.__file__).read()
+    assert "ALREADY HOLDS THIS TICKER" in delta_src
+    assert "REAFFIRM then means KEEP" in delta_src
