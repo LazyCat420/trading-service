@@ -1201,7 +1201,7 @@ class PipelineService:
                                 system_prompt=system_prompt,
                                 user_prompt=user_prompt,
                                 enable_tools=False, # DISABLED tools so it strictly outputs JSON!
-                                model_override="gemini-1.5-pro-002", # Fix: pin to robust model
+                                endpoint_override="jetson", # Pin to Jetson (Qwen) to avoid DeepSeek tool-payload failure
                             ),
                             timeout=180.0,
                         )
