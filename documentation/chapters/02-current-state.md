@@ -9,6 +9,28 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## The artifact repair now recovers the agent's work — first measurement
+
+`83cb633` gives the tool-less repair pass the agent's own tool results instead
+of only its last sentence. It is firing as intended — recoveries of 3 to 12
+tool results, 245 to 9,588 characters of findings, across judges, analysts,
+the Board, the synthesizer and the defense turn.
+
+| | repairs attempted | recovered | rate |
+|---|---|---|---|
+| Before (8h) | 80 | 40 | **50%** |
+| After | 18 | 12 | **66%** |
+
+**Suggestive, not proven.** If the true rate were still 50%, seeing 12 or more
+of 18 happens about 12% of the time — so this is not luck-proof at n=18. Re-run
+the comparison once a few hundred repairs have accumulated before treating 66%
+as the number.
+
+**Measure it from `cycle_audit_log`, not the container log.** A deploy restarts
+the container and `docker logs` starts empty, which silently made the
+before-period read as zero. The audit log survives the restart; it is the only
+source that can compare across a deploy.
+
 ## Second cycle — `cycle-v3-1785985682`, and a correction to the first read
 
 The first cycle after the debate rework showed a 33% bear win rate. The second,
