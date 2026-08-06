@@ -175,7 +175,7 @@ figcaption{margin-top:.8rem;font-size:.82rem;color:var(--ink-soft);text-align:ce
       <h1>Trading Service — Working Documentation</h1>
       <p class="sub">How the cycle backend behaves under the hood: invariants, failure modes, and what is verified working.</p>
     </div>
-    <span class="stamp"><span class="freshness lede" data-ts="2026-08-06T23:06:16.552938+00:00"></span>generated 2026-08-06 23:06 UTC · do not edit by hand</span>
+    <span class="stamp"><span class="freshness lede" data-ts="2026-08-06T23:29:48.454972+00:00"></span>generated 2026-08-06 23:29 UTC · do not edit by hand</span>
   </div>
 </header>
 <div class="shell">
@@ -245,7 +245,7 @@ if "selected_tickers" not in parsed:
 <li>Because <code>schema.sql</code> runs before migrations, a column added in both places must be idempotent in the migration (<code>_safe_add_column</code>).</li>
 </ul>
 <p>Partial unique indexes have a sharp edge here: Postgres will not infer one for <code>ON CONFLICT</code> unless the statement repeats the index predicate. Omit it and every write raises, which a surrounding <code>except</code> turns into a log line while row counts continue to look healthy.</p></section>
-<section class="chapter" id="current-state"><span class="freshness" data-ts="2026-08-06T23:06:16.552938+00:00"></span><h1 id="current-state">Current state</h1>
+<section class="chapter" id="current-state"><span class="freshness" data-ts="2026-08-06T23:29:48.454972+00:00"></span><h1 id="current-state">Current state</h1>
 <p>Verified <strong>2026-08-05</strong> against <code>master@8182868</code> deployed to the NAS.</p>
 <div class="status-grid">
   <div class="tile ok"><div class="label">Tickers into analysis</div><div class="value">13</div><div class="note">was 0–1</div></div>
@@ -265,6 +265,12 @@ if "selected_tickers" not in parsed:
 <li><strong>The cold start is reported separately, never in the median.</strong> An idle Jetson pays ~21s on its first call.</li>
 <li><strong>Classification is fail-closed, and a known-bad arm is kept.</strong> <code>agent-nominp</code> reproduces the pre-fix failure on demand (measured: <code>EMPTY_RESPONSE</code>, 1,539ms, 0 chars) — without it, a future "it works now" would be unfalsifiable.</li>
 </ul>
+<h3 id="first-full-run-n10-x-4-arms-interleaved-2026-08-06">First full run — n=10 x 4 arms, interleaved, 2026-08-06</h3>
+<p>Corpus: 19 replayed <code>v3_regime_engine</code> prompts (the only shadowed role).</p>
+<div class="scroll-x"><table><thead><tr><th>arm</th><th>non-empty</th><th>valid artifact</th><th>median (warm)</th><th>median TTFT</th></tr></thead><tbody><tr><td><code>chat</code></td><td>10/10</td><td><strong>10/10</strong></td><td><strong>16.2s</strong></td><td><strong>2.9s</strong></td></tr><tr><td><code>agent</code></td><td>10/10</td><td>8/10</td><td>68.1s</td><td>8.4s</td></tr><tr><td><code>agent+tools</code></td><td>9/10</td><td>8/10</td><td>45.4s</td><td>8.8s</td></tr><tr><td><code>agent-nominp</code> (known-bad)</td><td><strong>0/10</strong></td><td>0/10</td><td>1.4s</td><td>—</td></tr></tbody></table></div>
+<p><strong>The <code>minP</code> failure is deterministic, not intermittent: 0/10.</strong> Every call, same ~1.4s, same zero bytes. The fix in <code>04-incidents.md</code> shipped on 0/3; at n=10 there is no ambiguity left about the cause.</p>
+<p><strong>For a role that does not need tools, <code>/chat</code> wins on both axes</strong> — 10/10 vs 8/10 valid, ~4x faster, ~3x better TTFT. The tool catalog costs roughly 5.5s before the first token even on the arm that never calls a tool. Both <code>/agent</code> arms lost their two runs to the model wandering into prose instead of emitting the artifact (one produced 28,955 characters).</p>
+<p><strong>Scope, deliberately stated:</strong> this measures <code>v3_regime_engine</code>, whose tools show zero calls in 60 days. It is evidence about a <em>tool-less</em> job and says nothing about a genuinely tool-using role. The operating rule it supports is "<code>/chat</code> for pure processing, <code>/agent</code> when the agent must actually call something" — not a blanket preference in either direction. Widen <code>MODEL_SHADOW_AGENTS</code> to get a corpus that can speak for a tool-using role.</p>
 <p><strong><code>--phase concurrency</code></strong> is gated on <code>pipeline_state</code> being idle and fails closed if that read fails: stressing a shared box during a live cycle degrades the desk the benchmark is meant to measure. vLLM does not OOM under load — it queues and preempts — so the knee to watch is <code>num_requests_waiting</code> lifting off zero, not a crash.</p>
 <p>Deliberately <strong>not</strong> wired into CI or <code>verify_deploy.py</code>: it is a non-deterministic, minutes-long test against shared hardware, and gating a deploy on the Jetson's mood is a coin flip, not a test.</p>
 <h2 id="shipped-2026-08-06-min_p0-on-the-local-vllm-boxes">Shipped 2026-08-06 — <code>min_p=0</code> on the local vLLM boxes</h2>
@@ -367,7 +373,7 @@ top 15 scorers</code></pre></div>
 <h2 id="shipped-today">Shipped today</h2>
 <div class="scroll-x"><table><thead><tr><th>Commit</th><th>Change</th></tr></thead><tbody><tr><td><code>b3d3d90</code></td><td>Playbook natural key + dedupe migration, gatekeeper failure/refusal split, prompt cap, worker identity</td></tr><tr><td><code>8182868</code></td><td>Repeat the partial-index predicate so the upsert actually fires</td></tr><tr><td><code>3653899</code></td><td>Revive the dead startup readiness check; stamp <code>GIT_SHA</code>/<code>WORKER_NAME</code> at deploy</td></tr></tbody></table></div>
 <blockquote><p><strong><code>3653899</code> and later are pushed but NOT deployed.</strong> The deploy was held because restarting the container kills the in-flight verification cycle, which was producing real analysis. Run <code>npm run deploy</code> once <code>pipeline_state.status</code> is no longer <code>running</code>. Until then the NAS is on <code>8182868</code>, and worker identity reads <code>&lt;container-id&gt;/unknown-build</code> rather than <code>nas-prod/&lt;sha&gt;</code>.</p></blockquote></section>
-<section class="chapter" id="open-items"><span class="freshness" data-ts="2026-08-06T23:02:11.514549+00:00"></span><h1 id="open-items">Open items</h1>
+<section class="chapter" id="open-items"><span class="freshness" data-ts="2026-08-06T16:07:18-07:00"></span><h1 id="open-items">Open items</h1>
 <h2 id="0-the-analysts-cannot-emit-their-artifact-and-the-first-diagnosis-was-wrong">0. The analysts cannot emit their artifact — and the first diagnosis was wrong</h2>
 <blockquote><p><strong>RETRACTED 2026-08-05, same day.</strong> Everything below the line was written on the strength of a <code>[THINK-LEAK]</code> alarm, and the alarm was a <strong>false positive</strong>. Measured afterwards: <strong>43 of 43</strong> chat calls reached the vllm-shim carrying <code>enable_thinking=false</code> (<code>absent=0</code>), the shim mirrors it onto DeepSeek's <code>thinking</code> key, a direct probe with the flag returns <code>reasoning_content: null</code>, and the model reports <strong><code>reasoningOutputTokens: 0</code></strong>. The model is not reasoning. The thinking-off flag works end to end.</p>
 <p>What the canary actually matched was the junior analyst's own prose — <em>"Let me trace the most load-bearing lead. The key story here is the AI capex…"</em>. Its regex fires on any answer opening "Let me…", and its error message asserts a cause it cannot observe. That assertion was believed and written up here as fact. The canary now requires usage evidence before accusing (<code>reasoning_tokens == 0</code> → not a leak); see <code>test_think_leak_canary.py</code>.</p>

@@ -47,6 +47,34 @@ made here:
   `EMPTY_RESPONSE`, 1,539ms, 0 chars) — without it, a future "it works now"
   would be unfalsifiable.
 
+### First full run — n=10 x 4 arms, interleaved, 2026-08-06
+
+Corpus: 19 replayed `v3_regime_engine` prompts (the only shadowed role).
+
+| arm | non-empty | valid artifact | median (warm) | median TTFT |
+|---|---|---|---|---|
+| `chat` | 10/10 | **10/10** | **16.2s** | **2.9s** |
+| `agent` | 10/10 | 8/10 | 68.1s | 8.4s |
+| `agent+tools` | 9/10 | 8/10 | 45.4s | 8.8s |
+| `agent-nominp` (known-bad) | **0/10** | 0/10 | 1.4s | — |
+
+**The `minP` failure is deterministic, not intermittent: 0/10.** Every call,
+same ~1.4s, same zero bytes. The fix in `04-incidents.md` shipped on 0/3; at
+n=10 there is no ambiguity left about the cause.
+
+**For a role that does not need tools, `/chat` wins on both axes** — 10/10 vs
+8/10 valid, ~4x faster, ~3x better TTFT. The tool catalog costs roughly 5.5s
+before the first token even on the arm that never calls a tool. Both `/agent`
+arms lost their two runs to the model wandering into prose instead of emitting
+the artifact (one produced 28,955 characters).
+
+**Scope, deliberately stated:** this measures `v3_regime_engine`, whose tools
+show zero calls in 60 days. It is evidence about a *tool-less* job and says
+nothing about a genuinely tool-using role. The operating rule it supports is
+"`/chat` for pure processing, `/agent` when the agent must actually call
+something" — not a blanket preference in either direction. Widen
+`MODEL_SHADOW_AGENTS` to get a corpus that can speak for a tool-using role.
+
 **`--phase concurrency`** is gated on `pipeline_state` being idle and fails
 closed if that read fails: stressing a shared box during a live cycle degrades
 the desk the benchmark is meant to measure. vLLM does not OOM under load — it
