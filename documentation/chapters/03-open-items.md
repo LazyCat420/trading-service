@@ -73,10 +73,16 @@ fails too (`4134 chars`, unparseable again).
 
 **Fix candidates, cheapest first — none applied yet, and the choice matters:**
 
-1. **Give the repair the agent's own work.** It has a `ConversationSession`;
-   passing the accumulated turns (or at least the tool results) would let it
-   write the report it already researched. Does not touch any agent prompt, so
-   it stays clear of the confidence measurement window.
+1. **Give the repair the agent's own work — APPLIED 2026-08-05.** `run_agent`
+   now accumulates a bounded transcript of tool results (12 entries × 1,200
+   chars, cleared per retry so a repair is built from the attempt that actually
+   failed) and returns it; the repair prompt leads with *"WHAT YOU ALREADY
+   FOUND"* before the rejected attempt. Touches no agent prompt, so it stays
+   clear of the confidence measurement window, and the repair runs tool-less so
+   the schemas that dominate the first call are already gone.
+   **Unproven** — it needs a cycle to show whether repairs now succeed. Watch
+   for `repairing <TICKER> with N recovered tool result(s)` followed by fewer
+   `produced no parseable artifact` lines.
 2. **Tell the model when it is on its last turn.** The output directive sits in
    the user prompt from turn one; nothing signals "emit now or lose the work".
 3. **Raise the turn budget.** Simplest, least targeted, and it buys time rather

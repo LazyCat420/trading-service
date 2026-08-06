@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 _active_agents = set()
 
+#: Bounds on the tool transcript handed to the artifact repair pass. The whole
+#: point is to give the repair the agent's own findings, but it rides in a
+#: prompt that is already ~27k chars, so the ceiling is deliberate and low:
+#: ~12 calls x 1,200 chars ≈ 14k chars worst case, and the repair runs
+#: TOOL-LESS so the schemas that dominate the first call's payload are gone.
+_TRANSCRIPT_MAX_ENTRIES = 12
+_TRANSCRIPT_ENTRY_CHARS = 1200
+
 # A final answer that is really an unexecuted tool call the model wrote as
 # prose, e.g. `call:mcp__lazy-tool-service__get_sec_filings{ticker:WFC}` or
 # `get_finviz_fundamentals({"ticker": "FCF"})`. Models emit these when they
@@ -276,6 +284,15 @@ async def run_agent(
     # 5-minute model cache cannot re-serve the identity that just failed.
     _resolution_state = {"force_refresh": False}
 
+    # What the agent actually LEARNED, kept so a failed artifact can be repaired
+    # from its own research (2026-08-05). The common artifact failure is an
+    # agent that narrates its next step and runs out of turns — "I'll complete
+    # the analysis and emit the desk_note JSON" — leaving the harness to return
+    # the announcement. The repair pass previously saw only that announcement,
+    # so it was asked to write a report from material containing none. Declared
+    # here, OUTSIDE the retry wrapper, so it is still readable at the return.
+    tool_transcript: list[dict] = []
+
     # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
     # (prism-proxy) container redeploy instead of failing the whole pipeline.
     @aresilient_call(retries=5, backoff="exponential", base_delay=5.0, max_delay=60.0)
@@ -306,6 +323,9 @@ async def run_agent(
         t0 = time.time()
         tool_call_count = 0
         prior_calls = []
+        # Each retry starts a fresh transcript: a repair must be built from the
+        # attempt that actually failed, not from a discarded earlier one.
+        tool_transcript.clear()
         # Late-bound model identity for the tool-result hook: the hook closure
         # is built before the model is resolved, so it reads this holder at
         # call time. _agent_llm_call fills it right after resolution.
@@ -320,7 +340,26 @@ async def run_agent(
             if not tool_name:
                 return
             tool_call_count += 1
-            
+
+            # Keep a bounded record of what this call returned, for the repair
+            # pass. Capped per entry AND in total: an unbounded transcript
+            # would land straight back in a prompt that is already large.
+            if len(tool_transcript) < _TRANSCRIPT_MAX_ENTRIES and not was_blocked:
+                try:
+                    import json as _json_t
+
+                    _payload = (
+                        result if isinstance(result, str)
+                        else _json_t.dumps(result, default=str)
+                    )
+                except Exception:  # noqa: BLE001 — a transcript must never break the run
+                    _payload = str(result)
+                tool_transcript.append({
+                    "tool": tool_name,
+                    "args": str(arguments)[:200],
+                    "result": (_payload or "")[:_TRANSCRIPT_ENTRY_CHARS],
+                })
+
             failed = False
             error_msg = ""
             if was_blocked:
@@ -726,6 +765,9 @@ async def run_agent(
         "execution_ms": elapsed_ms,
         "loops_used": loops_used,
         "stop_reason": stop_reason,
+        # The agent's own findings, so a failed artifact can be repaired from
+        # the research it already paid for rather than from its last sentence.
+        "tool_transcript": tool_transcript,
         "model_used": model_used,
         "provider": provider_used,
         # Snapshot of the harness's LAST request, not a loop-wide sum. That is

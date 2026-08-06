@@ -1041,8 +1041,33 @@ async def run_v3_agent(
                 agent_name, desk.ticker, len(final_text),
             )
             try:
+                # Hand back the agent's OWN findings, not just its last
+                # sentence (2026-08-05). The common failure is an agent that
+                # narrates its next step and runs out of turns — "I'll complete
+                # the analysis and emit the desk_note JSON" — so `final_text`
+                # is an announcement containing no analysis. Repairing from
+                # that alone asks the model to write a report out of nothing,
+                # and it failed again about as often as it succeeded. The
+                # research is in the tool results; give it those.
+                _transcript = result.get("tool_transcript") or []
+                _findings = ""
+                if _transcript:
+                    _lines = [
+                        "## WHAT YOU ALREADY FOUND (your own tool results this run)",
+                        "Use these. They are the research behind the report you "
+                        "were about to write.",
+                        "",
+                    ]
+                    for _entry in _transcript:
+                        _lines.append(
+                            f"### {_entry.get('tool')} {_entry.get('args', '')}\n"
+                            f"{_entry.get('result', '')}"
+                        )
+                    _findings = "\n".join(_lines) + "\n\n"
+
                 repair_prompt = (
                     f"{user_prompt}\n\n"
+                    f"{_findings}"
                     f"## PREVIOUS ATTEMPT (UNPARSEABLE)\n"
                     f"Your previous reply could not be parsed as the "
                     f"required artifact:\n\n{final_text[:2000]}\n\n"
@@ -1051,6 +1076,11 @@ async def run_v3_agent(
                     f"reply with ONLY the '{artifact_type}' JSON "
                     f"object. Start with '{{' and end with '}}'. "
                     f"No markdown fences, no commentary.\n"
+                )
+                logger.info(
+                    "[V3Runner] %s: repairing %s with %d recovered tool "
+                    "result(s) (%d chars of findings)",
+                    agent_name, desk.ticker, len(_transcript), len(_findings),
                 )
                 # Measured separately: this prompt carries the failed attempt
                 # back in (so it is larger), but runs tool-less (so the schemas
