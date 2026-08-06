@@ -9,6 +9,44 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Second cycle — `cycle-v3-1785985682`, and a correction to the first read
+
+The first cycle after the debate rework showed a 33% bear win rate. The second,
+with the `bull_defense` turn-budget fix also live, came in at **57%** (bear 4,
+tie 2, bull 1).
+
+| | baseline | cycle 1 | cycle 2 | pooled |
+|---|---|---|---|---|
+| Bear wins | 72–94% (288 debates) | 33% (9) | 57% (7) | **44%** (16) |
+
+**So 33% was a small-sample low, not the new rate.** Pooled across both cycles
+the bear takes 44% of 16 verdicts — clearly off the 72–94% baseline, and
+consistent with a debate that no longer guarantees one side, but not the
+step-change a single cycle suggested. Sixteen verdicts is still small; do not
+quote a rate from this without more.
+
+**A correction worth making explicitly.** I wrote earlier that "the floor was
+never the binding constraint". That was too broad. This cycle produced:
+
+```
+UNH   BUY  64   HOLD_POLICY_BLOCKED_LOW_CONFIDENCE
+```
+
+The Board wanted to buy and the floor stopped it — the first time in these
+cycles the floor has actually bound. Both mechanisms are real: `VNRX` decided
+HOLD *at 74*, above the floor (the Board choosing), and `UNH` wanted BUY at 64
+(the floor blocking). The original claim holds for the case it was made about
+and not as a general statement.
+
+**The defense turn is running:** 6 of 8 desks, against 8 of 11 when it had a
+1-turn budget. The two without it (`ASIC`, `UNH`) still reached a verdict —
+`UNH`'s judge ruled for the bull with no defense at all — which is the
+fail-open path behaving as designed rather than stranding the desk.
+
+**Artifact failures over the same window: 13 of 121 (10%)**, down from the
+22–36% of 08-04/08-05 but not gone. That is the baseline the repair fix
+(`83cb633`) has to beat; it was not yet deployed when this cycle ran.
+
 ## First evidence after the debate rework — `cycle-v3-1785978092`
 
 The first cycle to run with the framing and the exit frame live (the
