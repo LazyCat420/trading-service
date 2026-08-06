@@ -1,6 +1,35 @@
 # Open items
 
-## 0. Reasoning eats the output budget — the analysts cannot emit their artifact
+## 0. The analysts cannot emit their artifact — and the first diagnosis was wrong
+
+> **RETRACTED 2026-08-05, same day.** Everything below the line was written on
+> the strength of a `[THINK-LEAK]` alarm, and the alarm was a **false
+> positive**. Measured afterwards: **43 of 43** chat calls reached the
+> vllm-shim carrying `enable_thinking=false` (`absent=0`), the shim mirrors it
+> onto DeepSeek's `thinking` key, a direct probe with the flag returns
+> `reasoning_content: null`, and the model reports
+> **`reasoningOutputTokens: 0`**. The model is not reasoning. The thinking-off
+> flag works end to end.
+>
+> What the canary actually matched was the junior analyst's own prose — *"Let
+> me trace the most load-bearing lead. The key story here is the AI capex…"*.
+> Its regex fires on any answer opening "Let me…", and its error message
+> asserts a cause it cannot observe. That assertion was believed and written
+> up here as fact. The canary now requires usage evidence before accusing
+> (`reasoning_tokens == 0` → not a leak); see `test_think_leak_canary.py`.
+>
+> **The artifact loss is real and still open.** What is refuted is the
+> mechanism, not the symptom. The evidence points instead at agents exhausting
+> their tool-turn budget and ending on narration or nothing —
+> `took too much time (216.6s) over 5 tool turns without completing`,
+> `outputTokens=4097` with `content` empty. Diagnose that next, from the
+> head/tail logging added at the unparseable-artifact site, and **do not
+> re-open the thinking-flag theory without new evidence**.
+>
+> Lesson worth keeping: a tripwire that names a root cause in its message is
+> making a claim, and a claim needs evidence the tripwire can actually see.
+
+### Original entry, retained for the record
 
 **Impact: the research layer.** Analyst artifact failures went from **0%
 through 08-03** to 22-36% on 08-04 and after. This is the cause of the

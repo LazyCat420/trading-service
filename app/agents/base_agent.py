@@ -621,7 +621,17 @@ async def run_agent(
             # chat_with_tools; the harness path is a third response site and
             # a shared helper only helps callers that call it.
             from app.services.prism_agent_caller import strip_reasoning_leak
-            final_text, _leaked = strip_reasoning_leak(final_text, agent_name)
+            # Hand the canary the usage evidence. Without it the tripwire fires
+            # on any report that opens "Let me…" and asserts a cause it cannot
+            # actually see.
+            _usage = dict(getattr(harness, "last_usage", {}) or {})
+            _reasoning_tokens = _usage.get("reasoningOutputTokens")
+            final_text, _leaked = strip_reasoning_leak(
+                final_text, agent_name,
+                reasoning_tokens=(
+                    _reasoning_tokens if isinstance(_reasoning_tokens, int) else None
+                ),
+            )
             elapsed_ms = int((time.time() - t0) * 1000)
 
             # Harness/guard refusals come back as a NORMAL string (prism

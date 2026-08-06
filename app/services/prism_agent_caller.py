@@ -51,7 +51,9 @@ _PREAMBLE_RE = re.compile(
 )
 
 
-def strip_reasoning_leak(text: str, agent_name: str = "") -> tuple[str, bool]:
+def strip_reasoning_leak(
+    text: str, agent_name: str = "", reasoning_tokens: int | None = None
+) -> tuple[str, bool]:
     """Detect a reasoning trace leaked into response content; salvage if safe.
 
     Returns (text, leaked). When the leak is followed by the real markdown
@@ -64,6 +66,29 @@ def strip_reasoning_leak(text: str, agent_name: str = "") -> tuple[str, bool]:
     """
     stripped = (text or "").lstrip()
     if not stripped:
+        return text, False
+
+    # A prefix match is a SUSPICION, not evidence (2026-08-05). The regex fires
+    # on any answer that opens "Let me…", and analysts legitimately write that
+    # way — "Let me trace the most load-bearing lead. The key story here is the
+    # AI capex/FCF…" is the junior analyst's report, not a leaked trace.
+    #
+    # When the usage block says ZERO reasoning tokens, the model demonstrably
+    # did not think, so a leak is impossible and the alarm is a false positive.
+    # This matters more than the noise: the canary's own error message names a
+    # cause ("the thinking-off flag is not reaching the model"), that message
+    # was believed, and it was written into the docs as the root cause of an
+    # unrelated artifact-loss bug. A tripwire that asserts a diagnosis has to
+    # be right about it. Measured the same day: 43/43 chat calls reached the
+    # shim carrying enable_thinking=false, and reasoningOutputTokens was 0.
+    #
+    # None means "unknown" — callers that cannot see usage keep the old
+    # behaviour rather than silently losing the tripwire.
+    if reasoning_tokens == 0 and _REASONING_LEAK_RE.match(stripped):
+        logger.debug(
+            "[THINK-LEAK] %s: opening phrase matched but the model emitted 0 "
+            "reasoning tokens — prose, not a leak.", agent_name or "unknown",
+        )
         return text, False
 
     if not _REASONING_LEAK_RE.match(stripped):
