@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import html
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -301,6 +302,21 @@ body{
   color:var(--ink-soft);background:var(--panel-2);border:1px solid var(--rule);
   border-radius:999px;padding:.3rem .7rem;white-space:nowrap;
 }
+/* Freshness — "updated 5 minutes ago", computed in the browser so it stays
+   true long after the build. Empty until the script fills it, so a page opened
+   with JS off shows nothing rather than a stale or broken label. */
+.freshness{display:none}
+.freshness:not(:empty){
+  display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:.68rem;letter-spacing:.02em;color:var(--ink-soft);
+  border:1px solid var(--rule);border-radius:999px;padding:.12rem .5rem;
+  margin:0 0 .9rem;vertical-align:middle;
+}
+.freshness.lede:not(:empty){margin:0 .5rem 0 0;border:0;padding:0}
+/* Anything changed in the last day is what a returning reader is looking for. */
+.freshness.recent:not(:empty){
+  color:var(--accent);border-color:var(--accent);background:var(--accent-soft);font-weight:600;
+}
 .shell{max-width:1180px;margin:0 auto;padding:2rem 1.5rem 5rem;display:grid;grid-template-columns:220px minmax(0,1fr);gap:2.6rem;align-items:start}
 nav.toc{position:sticky;top:1.5rem;font-size:.86rem}
 nav.toc h2{
@@ -408,7 +424,7 @@ PAGE = """<!doctype html>
       <h1>{title}</h1>
       <p class="sub">{subtitle}</p>
     </div>
-    <span class="stamp">generated {stamp} · do not edit by hand</span>
+    <span class="stamp"><span class="freshness lede" data-ts="{newest}"></span>generated {stamp} · do not edit by hand</span>
   </div>
 </header>
 <div class="shell">
@@ -418,9 +434,73 @@ PAGE = """<!doctype html>
   </nav>
   <main>{body}</main>
 </div>
+<script>
+/* Relative "updated N ago" labels. Rendered at VIEW time, not build time: a
+   relative string baked into static HTML is wrong the moment it is written,
+   and the generation stamp answers a different question ("when did the builder
+   run") from the one a reader has ("is this current"). */
+(function () {{
+  var UNITS = [
+    ["year", 31536000], ["month", 2592000], ["week", 604800],
+    ["day", 86400], ["hour", 3600], ["minute", 60]
+  ];
+  function ago(seconds) {{
+    for (var i = 0; i < UNITS.length; i++) {{
+      var n = Math.floor(seconds / UNITS[i][1]);
+      if (n >= 1) return n + " " + UNITS[i][0] + (n === 1 ? "" : "s") + " ago";
+    }}
+    return "just now";
+  }}
+  function paint() {{
+    var now = Date.now();
+    var nodes = document.querySelectorAll(".freshness[data-ts]");
+    for (var i = 0; i < nodes.length; i++) {{
+      var raw = nodes[i].getAttribute("data-ts");
+      var when = raw ? new Date(raw) : null;
+      if (!when || isNaN(when.getTime())) continue;
+      var seconds = (now - when.getTime()) / 1000;
+      if (seconds < 0) seconds = 0;
+      nodes[i].textContent = "updated " + ago(seconds);
+      nodes[i].title = when.toLocaleString();
+      /* Highlight only what changed in the last day — if everything is
+         highlighted, nothing is. */
+      nodes[i].classList.toggle("recent", seconds < 86400);
+    }}
+  }}
+  paint();
+  /* A page left open overnight must not still claim "updated 2 minutes ago". */
+  setInterval(paint, 60000);
+}})();
+</script>
 </body>
 </html>
 """
+
+
+def _last_touched(path: Path) -> str:
+    """ISO-8601 timestamp for when this chapter last actually changed.
+
+    A generation stamp says when the BUILDER ran, which is not the question a
+    reader has — they want to know whether what they are reading is current.
+    Uncommitted edits win over the commit date (the file on disk is the newer
+    truth); otherwise the last commit that touched the file. Falls back to
+    mtime so this works in a tarball with no git.
+    """
+    try:
+        dirty = subprocess.run(
+            ["git", "-C", str(DOCS_DIR), "status", "--porcelain", "--", str(path)],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if not dirty:
+            out = subprocess.run(
+                ["git", "-C", str(DOCS_DIR), "log", "-1", "--format=%cI", "--", str(path)],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+            if out:
+                return out
+    except Exception:
+        pass
+    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
 
 
 def build() -> str:
@@ -435,9 +515,11 @@ def build() -> str:
         title = parts[0].strip() or title
         subtitle = parts[1].strip() if len(parts) > 1 else ""
 
-    nav_parts, body_parts = [], []
+    nav_parts, body_parts, touched = [], [], []
     for path in chapters:
         md = path.read_text(encoding="utf-8")
+        chap_ts = _last_touched(path)
+        touched.append(chap_ts)
         sub_toc: list[dict] = []
         rendered = render_markdown(md, toc=sub_toc)
         m = re.search(r"^#\s+(.*)$", md, re.M)
@@ -446,13 +528,18 @@ def build() -> str:
         nav_parts.append(f'<li><a class="chapter" href="#{chap_id}">{html.escape(chap_title)}</a></li>')
         for entry in sub_toc:
             nav_parts.append(f'<li><a class="sub" href="#{entry["id"]}">{html.escape(entry["text"])}</a></li>')
-        body_parts.append(f'<section class="chapter" id="{chap_id}">{rendered}</section>')
+        body_parts.append(
+            f'<section class="chapter" id="{chap_id}">'
+            f'<span class="freshness" data-ts="{html.escape(chap_ts)}"></span>'
+            f"{rendered}</section>"
+        )
 
     return PAGE.format(
         title=html.escape(title),
         subtitle=html.escape(subtitle),
         css=CSS,
         stamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        newest=html.escape(max(touched) if touched else ""),
         nav="".join(nav_parts),
         body="\n".join(body_parts),
     )
