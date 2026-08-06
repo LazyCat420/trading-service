@@ -21,6 +21,21 @@ def mock_scraper_client():
         mock_client.collect = AsyncMock()
         yield mock_client
 
+@pytest.fixture
+def sweep_enabled():
+    """TWITTER_SWEEP_ENABLED defaults to False (2026-08-05: scraper-service has
+    no TWITTER_ACCOUNTS credentials, so every sweep stored 0 tweets and logged a
+    warning). Tests of the sweep MECHANICS must turn it back on explicitly;
+    test_sweep_is_gated_by_the_flag covers the default."""
+    from app.config import settings
+
+    original = settings.TWITTER_SWEEP_ENABLED
+    settings.TWITTER_SWEEP_ENABLED = True
+    try:
+        yield
+    finally:
+        settings.TWITTER_SWEEP_ENABLED = original
+
 def test_is_quality_tweet():
     # Retweet should be filtered out
     assert _is_quality_tweet({"is_retweet": True, "like_count": 100}) is False
@@ -79,7 +94,7 @@ async def test_collect_for_ticker_success(mock_get_tickers, mock_scraper_client,
 
 @pytest.mark.asyncio
 @patch("app.collectors.twitter_collector.get_ticker_symbols", new_callable=AsyncMock)
-async def test_collect_fintwit_sweep_success(mock_get_tickers, mock_scraper_client, mock_db):
+async def test_collect_fintwit_sweep_success(mock_get_tickers, mock_scraper_client, mock_db, sweep_enabled):
     # Mock response
     mock_scraper_client.collect.return_value = [
         {
@@ -112,3 +127,36 @@ async def test_collect_fintwit_sweep_success(mock_get_tickers, mock_scraper_clie
     # it makes 6 collect calls. Let's assert we got posts stored
     assert count >= 0
     assert mock_scraper_client.collect.call_count == 6
+
+
+@pytest.mark.asyncio
+async def test_sweep_is_gated_by_the_flag(mock_scraper_client):
+    """With no TWITTER_ACCOUNTS credentials the sweep stored 0 tweets across 16
+    accounts every 6 hours and logged a warning for it. The flag must stop the
+    network churn, not merely silence the log — assert the scraper is never
+    called."""
+    from app.config import settings
+
+    original = settings.TWITTER_SWEEP_ENABLED
+    settings.TWITTER_SWEEP_ENABLED = False
+    try:
+        assert await collect_fintwit_sweep(limit=5) == 0
+        assert mock_scraper_client.collect.call_count == 0
+    finally:
+        settings.TWITTER_SWEEP_ENABLED = original
+
+
+@pytest.mark.asyncio
+async def test_collect_all_is_gated_too(mock_scraper_client):
+    """The per-ticker cashtag searches ride the same dead backend as the
+    account sweep, so the flag has to gate both entry points."""
+    from app.collectors.twitter_collector import collect_all
+    from app.config import settings
+
+    original = settings.TWITTER_SWEEP_ENABLED
+    settings.TWITTER_SWEEP_ENABLED = False
+    try:
+        assert await collect_all() == 0
+        assert mock_scraper_client.collect.call_count == 0
+    finally:
+        settings.TWITTER_SWEEP_ENABLED = original

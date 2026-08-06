@@ -657,6 +657,21 @@ async def run_v3_agent(
             if score_block:
                 dynamic_sections.append((_KEEP, score_block))
 
+        # The framed propositions for THIS desk (app/v3/debate_frame.py), to
+        # every participant in the debate INCLUDING the judge — a judge ruling
+        # on different questions than the debaters argued is worse than no
+        # framing at all. Never shed: without it these agents fall back to the
+        # generic "is this a buy" debate this module exists to replace.
+        if agent_name in (
+            "v3_bull_agent",
+            "v3_bear_agent",
+            "v3_bull_defense",
+            "v3_debate_judge",
+        ):
+            frame_block = desk.cycle_metadata.get("debate_frame_context", "")
+            if frame_block:
+                dynamic_sections.append((_KEEP, frame_block))
+
         # Cross-desk dissent — ONLY the two agents that issue an action, and
         # never shed. It is the one block whose absence changes what the policy
         # layer does: HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT holds any BUY/SELL

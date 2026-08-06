@@ -120,11 +120,15 @@ AGENT_TOOL_WHITELISTS: dict[str, list[str]] = {
         "get_sec_filings",
     ],
     "ticker_validator": [],
-    # "v3_bull_defense" removed 2026-07-29: no caller ever queued it. The
-    # three-turn linear debate lost its third turn when the tournament took
-    # over; bull_argument/bear_rebuttal survive as the tournament's fallback,
-    # bull_defense does not. Historical artifacts stay readable (see
-    # BULL_DEFENSE_SCHEMA) — this only drops the grant for an agent that runs.
+    # RESTORED 2026-08-05 with its caller (removed 07-29 as dead code, one day
+    # before the linear debate returned to the live path without its third
+    # turn). No research tools: every fact the defense needs is already on the
+    # desk, and one that fetches NEW evidence makes an argument the Bear cannot
+    # answer — recreating the asymmetry the turn was restored to remove.
+    # Kept in step with app/v3/agents/bull_defense.py::TOOL_WHITELIST, which
+    # prism_registration reads; the two have different consumers and must not
+    # drift.
+    "v3_bull_defense": ["whiteboard_read"],
     # ── Tournament Debate Agents ──
     "tournament_pitch": [
         # Core data
@@ -354,7 +358,7 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "v3_valuation_analyst": 6,
     "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
     "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
-    # "v3_bull_defense" removed 2026-07-29 with its whitelist entry — no caller.
+    "v3_bull_defense": 1,        # No tools — answers from what is on the desk
     "v3_debate_judge": 3,        # No tools — pure reasoning
     "v3_regime_engine": 5,
     "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk

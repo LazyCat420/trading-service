@@ -494,17 +494,17 @@ BEAR_REBUTTAL_SCHEMA: dict = {
     },
 }
 
-#: RETIRED 2026-07-29 — no producer. The three-turn linear debate
-#: (bull_argument -> bear_rebuttal -> bull_defense) was superseded by the
-#: tournament; only the first two survive, as the tournament's exception
-#: fallback. Nothing has queued a bull-defense turn since.
+#: UN-RETIRED 2026-08-05. Retired 07-29 as dead code (correct at the time —
+#: the tournament was the live engine), but the linear bull/bear debate was
+#: restored to the live path on 07-30, one day later, WITHOUT its third turn.
+#: The Bear therefore read the Bull's thesis, added independent risks, and was
+#: never answered: 72-94% bear wins across 288 debates, and in a long-only book
+#: a bear win can only become HOLD. See app/v3/agents/bull_defense.py.
 #:
-#: Measured before retiring: 1,310 desks carry the key, 112 with real content,
-#: all of them June. July: 0. The schema is KEPT rather than deleted because
-#: those 112 desks are still replayed through ``validate_artifact`` and
-#: ``from_dict``; deleting it would make historical desks unreadable to answer
-#: a question nobody asked. It is retired, not shredded — see the retirement
-#: note on ``pending_evolution_fixes`` for the same reasoning.
+#: `defense_points` and `concessions` carry OBJECTS from the restored producer
+#: and bare STRINGS on the 112 June-era desks. Both validate — validate_artifact
+#: checks presence and enums, not item shape — and both must keep working, since
+#: those desks are still replayed through ``from_dict``.
 BULL_DEFENSE_SCHEMA: dict = {
     "type": "object",
     "required": ["summary", "defense_points", "concessions", "final_confidence"],
@@ -515,19 +515,46 @@ BULL_DEFENSE_SCHEMA: dict = {
         },
         "defense_points": {
             "type": "array",
-            "items": {"type": "string"},
-            "description": "Points where the bull thesis still holds after attack",
+            "description": (
+                "Answers to specific bear claims. Objects "
+                "{bear_claim_addressed, defense, evidence_source} from the "
+                "restored producer; bare strings on June-era desks"
+            ),
         },
         "concessions": {
             "type": "array",
-            "items": {"type": "string"},
-            "description": "Points where the bear rebuttal was valid",
+            "description": (
+                "Bear points accepted, as {conceded_point, cost_to_thesis}. "
+                "An EMPTY list is a signal, not a win: a defense that concedes "
+                "nothing has not engaged with the rebuttal"
+            ),
+        },
+        "independent_risks_answered": {
+            "type": "array",
+            "description": (
+                "The risks the Bear raised outside the Bull's original claims, "
+                "each with an answer or an explicit 'unanswered'. This is the "
+                "field the judge reads to decide which bear attacks may count "
+                "toward the verdict"
+            ),
+        },
+        "thesis_survives": {
+            "type": "boolean",
+            "description": (
+                "Whether the bull thesis survives the rebuttal at all. False "
+                "is a legitimate and valuable outcome"
+            ),
         },
         "final_confidence": {
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
-            "description": "Adjusted confidence after bear attack",
+            "description": (
+                "P(the bull thesis AS AMENDED BY THE CONCESSIONS is "
+                "directionally right over the next ~7 sessions), 0-100. "
+                "Normally LOWER than the opening confidence — the Bull has now "
+                "seen the strongest case against it. " + _CONF_BANDS
+            ),
         },
     },
 }
@@ -567,6 +594,23 @@ DEBATE_JUDGE_SCHEMA: dict = {
             "description": (
                 "P(the declared winner is directionally right over the next "
                 "~7 sessions), 0-100. " + _CONF_BANDS
+            ),
+        },
+        "proposition_verdicts": {
+            "type": "array",
+            "description": (
+                "Ruling per framed proposition (see app/v3/debate_frame.py): "
+                "{proposition, verdict, why}. Makes it measurable whether the "
+                "debate answered the question it was given or argued past it"
+            ),
+        },
+        "unanswered_bear_risks": {
+            "type": "array",
+            "description": (
+                "Bear risks the Bull never got to answer. Deliberately "
+                "SEPARATE from the verdict: these inform the Board's sizing "
+                "and stops but must not decide `winner` — counting them is how "
+                "the format produced 72-94% bear wins"
             ),
         },
         "weaknesses_of_winner": {

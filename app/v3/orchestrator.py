@@ -791,7 +791,7 @@ async def run_v3_pipeline(
     from app.v3.agents import regime_engine
     from app.v3.agents import junior_analyst, fundamental_analyst, quant_analyst
     from app.v3.agents import valuation_analyst
-    from app.v3.agents import bull_agent, bear_agent, debate_judge
+    from app.v3.agents import bull_agent, bear_agent, bull_defense, debate_judge
     from app.v3.agents import decision_agent
     from app.config.config_cognition import cognition_settings as _cog_settings
     from app.config import settings as _settings
@@ -808,6 +808,10 @@ async def run_v3_pipeline(
         "valuation_analyst": 0,
         "bull_argument": 0,
         "bear_rebuttal": 0,
+        # Missing keys are fatal here, not merely untracked: _queue_agent reads
+        # through run_counts.get(), but the scheduler loop does
+        # `run_counts[name] += 1` and would KeyError the whole desk.
+        "bull_defense": 0,
         "debate_judge": 0,
         "board_of_directors": 0,
         "decision_synthesizer": 0,
@@ -1071,9 +1075,22 @@ async def run_v3_pipeline(
                     _queue_debate_phase()
                     
         elif sec in ("bull_argument", "bear_rebuttal"):
+            # Three turns, not two (2026-08-05). The Bear reads the Bull's
+            # thesis and adds risks the Bull never anticipated; without a reply
+            # turn it won 72-94% of 288 debates, and a bear win in a long-only
+            # book can only become HOLD. The judge now waits for the defense.
+            #
+            # The defense is NOT a barrier: the task-loop branch queues the
+            # judge whether the defense succeeds or fails, so a dead defense
+            # agent degrades the debate rather than stranding the desk without
+            # a decision (the FDVV failure shape).
             if desk.has_artifact("bull_argument") and desk.has_artifact("bear_rebuttal"):
-                _queue_agent("debate_judge", debate_judge, parent="bull_argument")
-                
+                _queue_agent("bull_defense", bull_defense, parent="bear_rebuttal")
+
+        elif sec == "bull_defense":
+            _queue_agent("debate_judge", debate_judge, parent="bull_defense")
+
+
         elif sec in ("debate_judge", "tournament_result"):
             if not board_dispatched:
                 board_dispatched = True
@@ -1115,6 +1132,31 @@ async def run_v3_pipeline(
         if debate_dispatched:
             return
         debate_dispatched = True
+
+        # Frame the debate before anyone argues (2026-08-05). Deterministic
+        # over artifacts already on the desk — no model call, no added cycle
+        # cost — so the propositions are auditable after the fact. Computed
+        # HERE, once, at the latch: every debate participant must argue the
+        # same questions, and a per-agent recompute could drift as later
+        # artifacts land. Non-fatal: without it the agents fall back to the
+        # generic "is this a buy" debate.
+        try:
+            from app.v3.debate_frame import build_debate_frame_block, derive_debate_frame
+
+            _frame = derive_debate_frame(desk)
+            desk.cycle_metadata["debate_frame"] = _frame
+            desk.cycle_metadata["debate_frame_context"] = build_debate_frame_block(
+                ticker, _frame
+            )
+            logger.info(
+                "[V3] %s: debate framed as %s (%d candidates considered)",
+                ticker, _frame.get("keys"), _frame.get("considered", 0),
+            )
+        except Exception as _frame_err:  # noqa: BLE001 — never block the debate
+            logger.warning(
+                "[V3] %s: debate framing failed (%s) — falling back to the "
+                "unframed debate", ticker, _frame_err,
+            )
 
         if desk.phase == DeskPhase.INIT:
             desk.advance_phase(DeskPhase.RESEARCH_DONE)
@@ -1942,6 +1984,40 @@ async def run_v3_pipeline(
                         content=desk.bear_rebuttal,
                         author_agent="v3_bear_agent"
                     )
+
+            elif name == "bull_defense":
+                # The debate's third turn. include_debate_context=True for the
+                # same reason the bear needs it — a defense that cannot read
+                # the rebuttal answers a reconstruction of it.
+                outcome = await _run_agent_with_circuit_breaker(
+                    desk=desk, agent_module=module, phase_name="bull_defense",
+                    breaker=breaker, cycle_id=cycle_id, bot_id=bot_id, emit=emit,
+                    include_debate_context=True,
+                    custom_instructions=query, parent_agent=parent
+                )
+                # DELIBERATELY NOT _check_abort. A failed defense must not kill
+                # the desk: the debate is merely incomplete, and the judge is
+                # instructed to handle a missing reply by not awarding the bear
+                # points the bull never got to answer. Aborting here would
+                # trade a 72-94% bear bias for a desk that reaches no decision
+                # at all, which is strictly worse.
+                if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.bull_defense:
+                    await whiteboard.write_section(
+                        ticker=ticker, cycle_id=cycle_id,
+                        section="bull_defense",
+                        content=desk.bull_defense,
+                        author_agent="v3_bull_defense"
+                    )
+                else:
+                    # Fail-open: the whiteboard write is what chains the judge,
+                    # so a failed defense would otherwise strand the desk with
+                    # a debate and no verdict.
+                    logger.warning(
+                        "[V3] %s: bull_defense produced no artifact (%s) — "
+                        "chaining the judge on an incomplete debate",
+                        ticker, outcome,
+                    )
+                    _queue_agent("debate_judge", debate_judge, parent="bear_rebuttal")
 
             elif name == "debate_judge":
                 outcome = await _run_debate_judge(

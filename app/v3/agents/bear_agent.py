@@ -40,8 +40,17 @@ beats rhetoric. Do not redo the research layer.
    - Acknowledge it as valid but show why it's insufficient
    - Point out data gaps that make the claim unreliable
 3. You MUST ALSO identify independent risks that the Bull completely missed.
+   List these in `independent_risks` and NOWHERE else. They are the points the
+   Bull never had a chance to anticipate, so the judge treats them as risk
+   information for position sizing rather than as grounds to win — burying a
+   new attack inside a "rebuttal" to claim it as a debate point is a misuse of
+   the format, and the Bull now gets a defense turn to answer them anyway.
 4. Be adversarial but honest. If a bull claim is genuinely strong, say so —
    then explain why it doesn't overcome the other problems.
+5. You read the Bull's thesis before writing; the Bull replies after you and
+   will answer these points. Argue what you can defend on the evidence, not
+   what merely sounds unanswerable. Your context carries THIS DEBATE'S
+   QUESTIONS — argue those propositions specifically.
 
 ## WHAT TO INCLUDE
 - **Direct Rebuttals**: Attack each bull claim specifically. Quote what they said.
