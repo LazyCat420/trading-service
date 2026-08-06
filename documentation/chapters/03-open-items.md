@@ -29,6 +29,63 @@
 > Lesson worth keeping: a tripwire that names a root cause in its message is
 > making a claim, and a claim needs evidence the tripwire can actually see.
 
+### The actual mechanism, captured 2026-08-05
+
+The head/tail logging added at the unparseable-artifact site answered this
+within one cycle. Two shapes, and the common one is not subtle:
+
+**1. The agent narrates its next step and never emits.** This is the majority.
+
+```
+Failed to parse artifact from v3_junior_analyst output (108 chars)
+  HEAD: I'll complete the analysis and emit the desk_note JSON based on
+        the pre-collected data and prior research.
+
+Failed to parse artifact from v3_quant_analyst output (9113 chars)
+  HEAD: ... Let me run a backtest/equation to test the mean-reversion setup
+        on TMUS ... Let me check the library for a suitable equation and run one.
+```
+
+The model announces what it is about to do, the turn budget ends, and the
+harness returns that announcement as the agent's answer. The agent did the
+work — it is mid-flow — it simply never reached the JSON. This is the same
+event the `ManagerAgent` reports as `took too much time (216.6s) over 5 tool
+turns without completing`, seen from the other end.
+
+**2. Braces present, still unparseable.** Rarer:
+
+```
+Failed to parse artifact from v3_quant_analyst output (4466 chars)
+  HEAD: { "summary": "META at $588.77 sits in a confirmed bearish ...
+  TAIL: ..."#no_reversal", "#quant_only"] }
+```
+
+Opens `{`, closes `}`, and still fails — so this is malformed JSON inside the
+body (an unescaped character or a dropped delimiter), not truncation. Worth
+sampling separately; do not lump it with shape 1.
+
+**Why the repair pass does not save shape 1.** `agent_runner` already retries
+tool-lessly, but it hands the model only `final_text[:2000]` — the *narration*
+— plus the original prompt. The agent's actual work lives in its tool results
+and intermediate turns, and none of that reaches the repair. So the repair
+asks for a report from material that does not contain one, and frequently
+fails too (`4134 chars`, unparseable again).
+
+**Fix candidates, cheapest first — none applied yet, and the choice matters:**
+
+1. **Give the repair the agent's own work.** It has a `ConversationSession`;
+   passing the accumulated turns (or at least the tool results) would let it
+   write the report it already researched. Does not touch any agent prompt, so
+   it stays clear of the confidence measurement window.
+2. **Tell the model when it is on its last turn.** The output directive sits in
+   the user prompt from turn one; nothing signals "emit now or lose the work".
+3. **Raise the turn budget.** Simplest, least targeted, and it buys time rather
+   than fixing the shape — an agent that narrates at turn 5 can narrate at
+   turn 8.
+
+Prefer (1): it recovers work already paid for, and it is the only one of the
+three that cannot make the cycle slower.
+
 ### Original entry, retained for the record
 
 **Impact: the research layer.** Analyst artifact failures went from **0%
