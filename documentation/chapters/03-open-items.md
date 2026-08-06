@@ -226,3 +226,73 @@ All three silenced at the correct layer; see *Current state*. The Twitter
 sweep is now gated behind `TWITTER_SWEEP_ENABLED=False` — flip it the day
 scraper-service gets `TWITTER_ACCOUNTS` credentials, or the collector stays a
 deliberate no-op.
+
+## 7. A blocked trade was still scoreable as a kept one — FIXED 2026-08-06
+
+The 2026-07-31 fix gave the policy gate's veto a label. `decision_outcomes`
+deliberately keeps `action='BUY'` on a blocked trade — its P&L is the
+counterfactual, and that is how the confidence floor gets back-tested — so
+`overridden_from` is the *only* thing separating a refused trade from one the
+desk kept. `override_scorecard()` buckets on it.
+
+The label was read from one table, `trade_results.policy_action`. **That row is
+not always written.** Measured 2026-08-06 across all 25 policy blocks on
+record: **8 had no `trade_results` row at all**, so the lookup returned NULL and
+the block was recorded as an allowed trade. **Five had already been graded** —
+`ASML` (×2), `COF`, `ASIC` as WIN, `CRH` as LOSS — crediting the desk with P&L
+on trades the floor refused. This is the exact failure the 2026-07-31 fix was
+written to end; it ended it for the blocks that happened to have the row.
+
+`BLK` and `FCF` were blocked in the *same cycle* (`1785991713`) and only `FCF`
+was labelled. That is the shape to remember: a discriminator with a single
+source, whose absent state is indistinguishable from "no block".
+
+The gate is now read from **two** independent records — `trade_results` and
+`v3_guardrail_firings`, the latter written by the guardrail on the same path
+that refuses the trade, and present for all 25. Either naming a block is a
+block, and each lookup is separately fault-tolerant so an unreadable table
+cannot suppress the other's evidence. A missing row must never read as
+permission.
+
+**The test could not have caught this.** `test_blocked_decisions_are_labelled`
+re-implemented the resolver's branch logic inside the test file and asserted
+against the copy, so production was free to diverge from it — and had.
+It even asserted the bug: `_resolve("BUY", None) is None`, which is precisely
+the shape of a block with no `trade_results` row, was pinned as correct
+behaviour. The tests now call `resolve_overridden_from()`, the function the
+recorder itself uses, and one of them pins that wiring.
+
+**Not yet done:** the 8 historical rows are still unlabelled, and the 5 graded
+ones are still in `kept_buys`. Backfilling them from `v3_guardrail_firings` is
+a data fix, not a code one — worth doing before the next scorecard read, since
+`kept_buys` currently carries five trades that were never taken.
+
+## 8. The retry contract held in one branch and not its neighbour — FIXED 2026-08-06
+
+`should_abort()` kills the whole ticker on a second `AGENT_ERROR`, so the
+2026-07-26 audit set a rule: an artifact failure returns `AGENT_ERROR` on the
+first attempt to earn the retry, and degrades to the non-fatal `DATA_GAP` on
+the retry itself. The collapse branch in `run_v3_agent` honours it. **The
+"no parseable artifact" branch, twelve lines above it, ignored `is_retry`
+entirely.**
+
+That branch was unreachable on a retry by accident rather than by design: a
+truncated artifact used to parse into its own nested block, `_is_wrong_shape`
+caught it, and the fragment was restored so the collapse branch graded it. Then
+the parser stopped handing the nested block back — correctly; salvaging it
+manufactures fields the model never emitted and burns a ~100s tool-enabled
+re-run rediscovering research. It returns `{}` now, `_parse_artifact` reports
+that as `None`, and so `fragment` is `None` too. The restore path had nothing
+to restore, and a truncated artifact took the hard branch on **both** attempts
+and aborted the ticker.
+
+The degrade now lives in the branch itself rather than only in the path that
+used to feed it. Two red tests were the visible symptom and both are green:
+`test_nested_fragment_is_a_parse_failure` was asserting the contract and
+failing against production, and `test_truncated_outer_salvages_inner_fragment`
+was a stale assertion of the salvage behaviour that had been deliberately
+reversed — it now pins `{}` and says why.
+
+Worth stating plainly, because the wave that shipped these fixes did not run
+the suite: **both failures were on `master` and both described live
+behaviour.** A red test here is not noise.

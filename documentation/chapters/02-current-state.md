@@ -9,6 +9,62 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Re-verification against the database — 2026-08-06
+
+Every claim in the two sections below was re-run against `shared_desk`,
+`v3_agent_telemetry`, `decision_outcomes`, `trade_fills`, `v3_guardrail_firings`
+and `trade_results`. Most held. Two things changed, and one prompted a
+code fix.
+
+**The debate figure below is superseded.** `38% (n=26)` was correct for the
+three cycles it was computed over, and is reproducible from the database today.
+A fourth post-fix cycle has since landed and it was the most bearish of the
+four, so the pooled figure has moved:
+
+| | bull | bear | tie | n | bear% |
+|---|---|---|---|---|---|
+| `1785978092` | 4 | 3 | 2 | 9 | 33% |
+| `1785985682` | 1 | 4 | 2 | 7 | 57% |
+| `1785991713` | 6 | 3 | 1 | 10 | 30% |
+| `1786023000` | 2 | 6 | 2 | 10 | **60%** |
+| **pooled** | **13** | **16** | **7** | **36** | **44%** |
+
+Against a measured pre-fix baseline of **251 of 308 (81.5%)**:
+P(≤16 of 36 | rate still 81.5%) = 7.4e-07; against the conservative 72%,
+4.7e-04. **The asymmetry is still gone** — that conclusion survives the extra
+cycle — but quote **44% over 36 verdicts**, not 38% over 26, and note that the
+cycle-to-cycle swing is **30–60%**, wider than the three-cycle window showed.
+
+Denominator, stated once because it is easy to get wrong: verdicts are
+`shared_desk.debate_judge.winner` where the key is non-null. Desks where the
+judge never produced a verdict are excluded (8 across the five cycles: 7 are
+JSON `null` on aborted tickers, 1 is a `no_trade_available_gate` skip). Pooling
+the **pre-fix** cycle `1785962005` (2 bull / 6 bear) into this table produces
+`49%` and the false conclusion that the rework did nothing — that cycle ran
+before the fix and belongs to the baseline.
+
+**A `SELL` on a broken thesis is still unobserved, and now we know why.**
+All 16 post-fix bear wins resolved to `HOLD`, none to `SELL`. That is correct
+in every case: not one was a held name. Held names are `ALLY JPM LLY LMT VZ
+NVDA EXLS TSM C HOOD COF`; the bear won on `AMD CARS SE CRH META TRMB DKS AMZN
+CSCO HCA SHOP LI THC AG UBER PLTR`, and with no shorting a bear win on a name
+the book does not own has no executable form. Only two held names reached a
+debate at all (VZ, EXLS) and the bull won both. So the exit path is not
+suspected-broken — it is **unexercised**, and the sample that would exercise it
+is "held name × bear win", which has occurred **zero** times. Track that pair
+rather than the SELL count.
+
+Confirmed unchanged: defense-turn coverage (10/10 on each of the last two
+cycles), the AGENT_ERROR trend (17.6% → 2.5%), the EXLS fill
+(80.73 @ $33.70), VZ framed `POSITION_REVIEW` and kept, and the floor binding
+on UNH/BLK/FCF/EPD. One fill went unmentioned earlier: `C`, BUY 10.84 @ $137.66
+in `1785978092`.
+
+**What the re-verification broke open:** the label that distinguishes a blocked
+trade from a kept one was leaking, and two tests were red. Both are written up
+in `03-open-items.md` under *"A blocked trade was still scoreable as a kept
+one"* and *"The retry contract held in one branch and not its neighbour"*.
+
 ## Every fix live — `cycle-v3-1785991713`, and the debate result settles
 
 The first cycle with the whole set deployed: per-desk framing, the restored
@@ -20,6 +76,12 @@ and 6 of 8 after the budget fix; at full coverage the debate now has three
 turns on every desk that holds one.
 
 **Bear win rate, pooled over the three post-fix cycles:**
+
+> **Superseded 2026-08-06 — quote 44% (n=36), not 38% (n=26).** The three rows
+> below still reproduce exactly from the database; a fourth post-fix cycle has
+> since landed at 60% bear and moved the pooled figure. See *"Re-verification
+> against the database"* at the top of this chapter. The conclusion — the
+> asymmetry is gone — is unchanged and now rests on a larger sample.
 
 | | bull | bear | tie | bear% |
 |---|---|---|---|---|

@@ -1136,9 +1136,24 @@ async def run_v3_agent(
             artifact = fragment
 
         if artifact is None:
+            # Same retry contract as the collapse branch below, for the same
+            # reason: should_abort() kills the whole ticker on a second
+            # AGENT_ERROR, so returning it twice turns a degraded desk into no
+            # desk at all. This branch used to ignore is_retry, and the
+            # fragment restore above was what kept it off the retry path —
+            # until the parser stopped handing back the nested block. It now
+            # declines to invent fields the model never emitted (correctly),
+            # and returns {} instead, which _parse_artifact reports as None.
+            # So `fragment` is None too, and a truncated artifact reached this
+            # branch on BOTH attempts and took the ticker down. The degrade has
+            # to live here, not only in the restore path that feeds it.
+            outcome = (
+                PhaseOutcome.DATA_GAP if is_retry else PhaseOutcome.AGENT_ERROR
+            )
             logger.error(
-                "[V3Runner] %s produced no parseable artifact for %s",
-                agent_name, desk.ticker,
+                "[V3Runner] %s produced no parseable artifact for %s — "
+                "returning %s (retry=%s)",
+                agent_name, desk.ticker, outcome.value, is_retry,
             )
             emit(
                 "analyzing",
@@ -1146,10 +1161,11 @@ async def run_v3_agent(
                 f"❌ {desk.ticker}: V3 {agent_name} — no valid artifact produced",
                 status="error",
             )
-            _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
+            _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
+                              outcome.value,
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                               model_used=model_used, provider=provider_used)
-            return PhaseOutcome.AGENT_ERROR
+            return outcome
 
         # Decision artifacts: empty VALUES are as fatal as missing keys. The
         # schema check is presence-only, so an LLM emitting reasoning="" or

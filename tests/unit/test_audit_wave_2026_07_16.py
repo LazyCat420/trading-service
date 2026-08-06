@@ -44,15 +44,25 @@ class TestParseJsonResponseNesting:
         parsed = parse_json_response(text)
         assert parsed.get("action") == "SELL"
 
-    def test_truncated_outer_salvages_inner_fragment(self):
-        # Truncated outer JSON can only ever salvage a fragment; the decision
-        # layer treats missing required fields as AGENT_ERROR instead.
+    def test_truncated_outer_yields_nothing_rather_than_a_nested_block(self):
+        # REVERSED from the original assertion, which expected the inner
+        # `conviction_vector` back. Salvaging it hands the desk a dict whose
+        # keys belong to a different object — the nested block wearing the
+        # artifact's name — and that parses cleanly, so the tool-less repair
+        # never fires and a ~100s tool-enabled re-run gets burned rediscovering
+        # research (TSM, 2026-08-04). The parser now declines the prose
+        # fallback rather than manufacture fields the model never emitted.
+        #
+        # The empty dict is the whole signal: _parse_artifact reports it as
+        # None, and run_v3_agent degrades to DATA_GAP on the retry rather than
+        # returning a second AGENT_ERROR — see
+        # test_nested_fragment_is_a_parse_failure.
         text = (
             '{"action": "BUY", "confidence": 80, '
             '"conviction_vector": {"data_quality": 85}, "reasoning": "trunc'
         )
         parsed = parse_json_response(text)
-        assert parsed == {"data_quality": 85}
+        assert parsed == {}
 
 
 class TestDecisionArtifactFatalValidation:

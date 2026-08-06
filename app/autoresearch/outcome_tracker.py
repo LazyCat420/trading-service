@@ -87,6 +87,90 @@ def _is_unscoreable(confidence, result: dict) -> bool:
     return "PIPELINE FAILURE" in thesis or "Failed to parse thesis" in thesis
 
 
+def resolve_overridden_from(db, cycle_id: str, ticker: str, action: str):
+    """Label a decision that something overruled, or None if nothing did.
+
+    Two mechanisms overrule a decision, and they leave different traces.
+
+    1. The SYNTHESIZER downgrade. Execution reads `trade_decision or
+       final_decision`, so the synthesizer wins — over 7 days it turned 21 of
+       41 Board BUYs into HOLDs. Read from shared_desk rather than
+       analysis_results, which carries only the surviving action.
+
+    2. The POLICY GATE refusal. A blocked BUY leaves shared_desk.final_decision
+       AND analysis_results.action both reading 'BUY', so check 1 is false and
+       the row lands unlabelled. It is then graded WIN or LOSS as though the
+       trade had been taken, and override_scorecard() counts it in `kept_buys`:
+       the desk gets credit for keeping a trade the gate actually refused.
+       Measured 2026-07-31: 17 BUY + 2 SELL blocks, all NULL.
+
+    The row deliberately keeps `action='BUY'`. Its P&L is the counterfactual —
+    what the declined trade would have returned — and that is exactly how the
+    floor gets back-tested. What the label changes is that it is distinguishable.
+
+    The gate is read from TWO tables because `trade_results` is not written for
+    every blocked decision. Measured 2026-08-06 over the 25 blocks on record:
+    8 had no `trade_results` row at all, so `policy_action` came back NULL and
+    the block was recorded as a trade the desk kept — 5 of them already graded
+    (ASML x2, COF, ASIC WIN; CRH LOSS). `v3_guardrail_firings` is written by
+    the guardrail itself on the same path that refuses the trade, and carried
+    a row for all 25. Either source naming a block is a block: a missing row in
+    one table must not read as permission.
+
+    Never raises. An unlabelled row is a gap; a lost row is a lost outcome.
+    """
+    try:
+        desk_row = db.execute(
+            "SELECT desk_data->'final_decision'->>'action' "
+            "FROM shared_desk WHERE cycle_id = %s AND ticker = %s LIMIT 1",
+            [cycle_id, ticker],
+        ).fetchone()
+        board_action = desk_row[0] if desk_row else None
+        if board_action and board_action != action:
+            return board_action
+    except Exception as e:  # noqa: BLE001 — provenance, never blocks
+        logger.debug("[OUTCOME] %s: override lookup failed: %s", ticker, e)
+
+    if _was_blocked_by_policy(db, cycle_id, ticker):
+        # Matches the synthesizer path's meaning: the action that did NOT
+        # survive.
+        return action
+    return None
+
+
+def _was_blocked_by_policy(db, cycle_id: str, ticker: str) -> bool:
+    """True when either record of the policy gate says it refused this trade.
+
+    Each lookup is independently fault-tolerant: one table being unreadable
+    must not suppress the other's evidence.
+    """
+    try:
+        gate_row = db.execute(
+            "SELECT policy_action FROM trade_results "
+            "WHERE cycle_id = %s AND ticker = %s LIMIT 1",
+            [cycle_id, ticker],
+        ).fetchone()
+        policy_action = gate_row[0] if gate_row else None
+        if policy_action and policy_action.startswith("HOLD_POLICY_BLOCKED"):
+            return True
+    except Exception as e:  # noqa: BLE001 — provenance, never blocks
+        logger.debug("[OUTCOME] %s: policy-gate lookup failed: %s", ticker, e)
+
+    try:
+        fired = db.execute(
+            "SELECT 1 FROM v3_guardrail_firings "
+            "WHERE cycle_id = %s AND ticker = %s "
+            "AND guardrail LIKE 'HOLD_POLICY_BLOCKED%%' LIMIT 1",
+            [cycle_id, ticker],
+        ).fetchone()
+        if fired:
+            return True
+    except Exception as e:  # noqa: BLE001 — provenance, never blocks
+        logger.debug("[OUTCOME] %s: guardrail lookup failed: %s", ticker, e)
+
+    return False
+
+
 def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
     """
     After a cycle completes, read analysis_results for that cycle and insert
@@ -214,60 +298,9 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 if existing:
                     continue
 
-                # What the BOARD authorised, when the synthesizer changed it.
-                # Execution reads `trade_decision or final_decision`, so the
-                # synthesizer wins — and over 7 days it downgraded 21 of 41
-                # Board BUYs to HOLD. Without this, a HOLD the desk agreed on
-                # and a HOLD that overruled a Board BUY are the same row, and
-                # the largest filter on trade flow stays unmeasurable.
-                #
-                # Read from shared_desk rather than analysis_results, which
-                # carries only the surviving action. Failure is non-fatal: an
-                # unlabelled row is a gap, a missing row is a lost outcome.
-                overridden_from = None
-                try:
-                    desk_row = db.execute(
-                        "SELECT desk_data->'final_decision'->>'action' "
-                        "FROM shared_desk WHERE cycle_id = %s AND ticker = %s "
-                        "LIMIT 1",
-                        [cycle_id, ticker],
-                    ).fetchone()
-                    board_action = desk_row[0] if desk_row else None
-                    if board_action and board_action != action:
-                        overridden_from = board_action
-                except Exception as e:  # noqa: BLE001 — provenance, never blocks
-                    logger.debug("[OUTCOME] %s: override lookup failed: %s",
-                                 ticker, e)
-
-                # The policy gate is the OTHER way a decision gets overruled,
-                # and the check above cannot see it. A blocked BUY leaves
-                # shared_desk.final_decision AND analysis_results.action both
-                # reading 'BUY' — the gate's refusal lives only in
-                # trade_results.policy_action — so `board_action != action` is
-                # false and the row lands unlabelled. It is then graded WIN or
-                # LOSS as though the trade had been taken, and
-                # override_scorecard() counts it in `kept_buys`: the desk gets
-                # credit for keeping a trade the gate actually refused.
-                # Measured 2026-07-31: 17 BUY + 2 SELL blocks, all NULL.
-                if overridden_from is None:
-                    try:
-                        gate_row = db.execute(
-                            "SELECT policy_action FROM trade_results "
-                            "WHERE cycle_id = %s AND ticker = %s LIMIT 1",
-                            [cycle_id, ticker],
-                        ).fetchone()
-                        policy_action = gate_row[0] if gate_row else None
-                        if policy_action and policy_action.startswith("HOLD_POLICY_BLOCKED"):
-                            # Record what was overruled, matching the
-                            # synthesizer path's meaning: the action that did
-                            # NOT survive. The row keeps action=BUY so the
-                            # counterfactual stays scoreable — that is how the
-                            # confidence floor gets back-tested — but it is now
-                            # distinguishable from a trade that was allowed.
-                            overridden_from = action
-                    except Exception as e:  # noqa: BLE001 — provenance, never blocks
-                        logger.debug("[OUTCOME] %s: policy-gate lookup failed: %s",
-                                     ticker, e)
+                overridden_from = resolve_overridden_from(
+                    db, cycle_id, ticker, action
+                )
 
                 outcome_id = f"do-{uuid.uuid4().hex[:12]}"
                 # Serialized like skill_versions: psycopg adapts dict->hstore,
