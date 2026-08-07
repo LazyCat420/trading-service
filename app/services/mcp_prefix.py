@@ -14,25 +14,32 @@ produced one false "zero whitelisted tools are used by any agent" read on
 
 **Both spellings are accepted, one is emitted.** The service behind these tools
 was renamed `lazy-tool-service` -> `lazy-agent-service` on 2026-08-07. The
-prefix is minted by PRISM from its MCP server registration name, not by us, so
-which one arrives depends on which registration is connected — and right now
-BOTH are: `lazy-agent-service` in the `coding/admin` scope, `lazy-tool-service`
-in `vllm-trading-bot/lazy-trader` and `html-notes-client/admin`. Stripping must
-therefore handle either, and it must keep doing so until every scope has moved.
+prefix is minted by PRISM from its MCP server registration name, not by us.
 
-`MCP_EMIT_PREFIX` is what we construct with. It is env-overridable precisely so
-the cut-over does not need a code change in this repo: set
-`MCP_EMIT_PREFIX=mcp__lazy-agent-service__` once prism serves that name in the
-trading scope.
+**The cut-over completed on 2026-08-07 evening.** The server now registers as
+`lazy-agent-service` in all three scopes, the `lazy-tool-service` rows were
+deleted, and prism serves `mcp__lazy-tool-service__*` nowhere. Stripping still
+accepts every spelling and must keep doing so — telemetry, whiteboard rows and
+playbook entries recorded under the old namespace long outlive the
+registration.
+
+`MCP_EMIT_PREFIX` is what we construct with, and **its default is now the live
+name.** It was left defaulting to the old spelling during the cut-over, which
+turned out to be a trap: `scripts/sync_prism_v3_personas.py` computes desired
+tool names through this module, the env var exists only inside the deployed
+container, so running that script from a dev machine proposed reverting all 13
+personas to a prefix prism no longer serves. A dry run caught it. A default
+that is only correct in one environment is a defect, not a configuration.
 """
 
 from __future__ import annotations
 
 import os
 
-#: Emitted when we build a namespaced tool name. Env-overridable so the
-#: registration flip is a config change, not a deploy of five files.
-MCP_EMIT_PREFIX = os.getenv("MCP_EMIT_PREFIX", "mcp__lazy-tool-service__")
+#: Emitted when we build a namespaced tool name. The default MUST match what
+#: prism actually serves — a script run outside the container gets this value,
+#: and the wrong one silently scopes an agent to tools that do not exist.
+MCP_EMIT_PREFIX = os.getenv("MCP_EMIT_PREFIX", "mcp__lazy-agent-service__")
 
 #: Every namespace a live call may arrive under. Order matters only in that a
 #: longer prefix must precede any prefix of itself; these share no such
