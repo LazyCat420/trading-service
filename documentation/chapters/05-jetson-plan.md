@@ -1,5 +1,12 @@
 # The Jetson plan
 
+> **UPDATE 2026-08-07 — the box now has a job; read `07-jetson-role.md` first.**
+> It runs the news fact-extraction backfill, which is real production work and
+> did not need the gatekeeper shadow, because a data-quality job touches no
+> trading decision. Everything below still governs a **decision-path** role, and
+> §1 is still the blocking measurement for that. What changed is that "the
+> Jetson does nothing" is no longer true while §1 accrues.
+
 Written 2026-08-06 at the end of the session that root-caused the empty
 responses. It exists because the next step is **gated on evidence that does not
 exist yet**, and without this file the next session would re-derive the same

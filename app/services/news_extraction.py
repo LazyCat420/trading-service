@@ -51,6 +51,50 @@ _MAX_TEXT_CHARS = 6000
 _CALL_TIMEOUT_S = float(os.getenv("NEWS_EXTRACT_CALL_TIMEOUT_S", "25"))
 _BATCH_BUDGET_S = float(os.getenv("NEWS_EXTRACT_BATCH_BUDGET_S", "22"))
 _CONCURRENCY = 4
+_MAX_TOKENS = 2048
+
+# Preferred hosts for the IN-CYCLE path, first that answers wins.
+#
+# Gold Spark leads on measurement, not on reputation: `scripts/news_extraction_ab.py`
+# at n=40, twice, scored the Jetson at 77-79% of Gold Spark's grounded-fact yield
+# (3.00 vs 3.90 facts/article on articles that name their own ticker), against a
+# rule registered before the run that required 80%. It passed every other gate —
+# 100% valid JSON, 4.8% vs 3.1% drop rate, and 1.6x faster — so it is a real
+# failover now rather than the decorative one it was before `build_payload`
+# disabled reasoning. It is not the primary.
+#
+# The BACKFILL worker pins the Jetson instead, and that is not a contradiction:
+# there the counterfactual is raw scrape text, not Gold Spark. See
+# `app/services/news_backfill.py` and `documentation/chapters/07-jetson-role.md`.
+_ENDPOINT_ORDER: tuple[str, ...] = tuple(
+    k.strip() for k in os.getenv("NEWS_EXTRACT_ENDPOINTS", "dgx_spark,jetson").split(",")
+    if k.strip()
+)
+
+
+def build_payload(model: str, prompt: str) -> dict[str, Any]:
+    """The extraction request body. One builder so the A/B bench sends exactly
+    what production sends — a bench that assembles its own payload measures a
+    configuration nobody ships.
+
+    **`enable_thinking: False` is load-bearing, not a tuning knob.** Measured
+    2026-08-07 on a real 533-token article prompt: with thinking left on, the
+    Jetson (Qwen3.6) spent all 2,048 completion tokens reasoning and returned
+    `finish_reason="length"` with **empty content** — 42.6s for nothing, every
+    time. Since this loop treats an unparseable answer as "try the next host",
+    the Jetson failover could never have succeeded no matter how long the
+    timeout was; it read as a slow host rather than as a misconfigured request.
+    With the flag it answers in ~4.3s. Gold Spark honours the same flag and
+    halves too (12.2s → 5.9s), because extraction is a transcription task and
+    the reasoning tokens were discarded either way.
+    """
+    return {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": _MAX_TOKENS,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
 
 _FACT_CLASSES = (
     "earnings", "guidance", "analyst_action", "product", "legal_regulatory",
@@ -144,12 +188,39 @@ def align_quote(text: str, quote: str) -> tuple[int, int] | None:
 # ── Extraction call ─────────────────────────────────────────────────────────
 
 
-async def _chat_targets() -> list[tuple[str, str, str]]:
-    # Same (provider, model, base_url) resolution the vision engine uses —
-    # one source of truth for which local hosts serve chat completions.
+# prism's endpoint label per box key, matching prism_agent_caller's mapping.
+_PROVIDER_BY_ENDPOINT = {"jetson": "vllm", "dgx_spark": "vllm-2"}
+_ENDPOINT_BY_PROVIDER = {v: k for k, v in _PROVIDER_BY_ENDPOINT.items()}
+
+
+async def _chat_targets(only: tuple[str, ...] | None = None
+                        ) -> list[tuple[str, str, str]]:
+    """Usable (provider, model, base_url) targets in _ENDPOINT_ORDER.
+
+    Host discovery is the vision engine's — one source of truth for which local
+    hosts serve chat completions — but the ORDER is this module's, because OCR
+    and fact-extraction want different boxes. Unknown keys in the env override
+    are ignored rather than fatal, and any host the order does not name is
+    appended, so a typo degrades to "wrong preference" instead of "no hosts".
+
+    `only` is a HARD pin: hosts it does not name are removed, not demoted, and
+    an empty result is the correct answer. The backfill worker needs that —
+    "the Jetson is down" must stop low-priority backlog work, never quietly
+    redirect it onto the box the trading cycle is using.
+    """
     from app.scraper.engines.vision_engine import _vision_targets
 
-    return await _vision_targets()
+    targets = await _vision_targets()
+    if only is not None:
+        allowed = {_PROVIDER_BY_ENDPOINT[k] for k in only
+                   if k in _PROVIDER_BY_ENDPOINT}
+        targets = [t for t in targets if t[0] in allowed]
+    rank = {
+        _PROVIDER_BY_ENDPOINT[key]: i
+        for i, key in enumerate(_ENDPOINT_ORDER)
+        if key in _PROVIDER_BY_ENDPOINT
+    }
+    return sorted(targets, key=lambda t: rank.get(t[0], len(rank)))
 
 
 async def extract_article_facts(
@@ -157,28 +228,48 @@ async def extract_article_facts(
 ) -> list[dict[str, Any]] | None:
     """Extract grounded facts from one article. None = extraction failed
     (caller keeps the raw path); [] = article genuinely has no facts."""
+    facts, _provider = await extract_article_facts_with_source(text, ticker, title)
+    return facts
+
+
+async def extract_article_facts_with_source(
+    text: str, ticker: str, title: str = "", only: tuple[str, ...] | None = None
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """As `extract_article_facts`, plus WHICH BOX produced the answer.
+
+    The stored note used to be the constant "vllm", which made the host
+    preference unverifiable after the fact: no query could distinguish "the
+    Jetson is doing this job" from "the Jetson is listed first and silently
+    failing every call". Recording it is what lets `grounded_facts->>'model'`
+    answer that.
+
+    The note is the BOX KEY ("jetson" / "dgx_spark"), not prism's provider
+    label — because the legacy constant was itself "vllm", which is the Jetson's
+    provider label. Returning the provider would have made 2,153 rows written by
+    the old constant indistinguishable from rows the Jetson actually produced,
+    and the query meant to verify this change would have confirmed it before it
+    shipped.
+    """
     import httpx
 
     if not text or len(text) < _MIN_TEXT_CHARS:
-        return None
+        return None, ""
 
     body_text = text[:_MAX_TEXT_CHARS]
     prompt = _PROMPT_TEMPLATE.format(ticker=ticker, title=title or "(untitled)",
                                      text=body_text)
 
     try:
-        targets = await _chat_targets()
+        targets = await _chat_targets(only=only)
     except Exception as e:  # noqa: BLE001 — no hosts up: raw path
         logger.warning("[news-extract] no chat targets: %s", e)
-        return None
+        return None, ""
+    if not targets:
+        logger.info("[news-extract] no host available within pin %s", only)
+        return None, ""
 
     for provider, model, base_url in targets:
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 2048,
-        }
+        payload = build_payload(model, prompt)
         try:
             async with httpx.AsyncClient(timeout=_CALL_TIMEOUT_S) as client:
                 r = await client.post(f"{base_url}/v1/chat/completions", json=payload)
@@ -216,9 +307,9 @@ async def extract_article_facts(
         if dropped:
             logger.info("[news-extract] dropped %d ungrounded fact(s) for %s",
                         dropped, ticker)
-        return grounded
+        return grounded, _ENDPOINT_BY_PROVIDER.get(provider, provider)
 
-    return None
+    return None, ""
 
 
 # ── Batch + cache layer ─────────────────────────────────────────────────────
@@ -290,10 +381,11 @@ async def ensure_facts(
 
     async def _one(article_id: str, ticker: str, title: str, text: str) -> None:
         async with sem:
-            facts = await extract_article_facts(text, ticker, title)
+            facts, provider = await extract_article_facts_with_source(
+                text, ticker, title)
             if facts is None:
                 return  # transient failure: no store, retry next cycle
-            _store_facts(article_id, facts, "vllm")
+            _store_facts(article_id, facts, provider or "vllm")
             if facts:
                 have[article_id] = facts
 

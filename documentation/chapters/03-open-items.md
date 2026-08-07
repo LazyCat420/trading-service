@@ -149,7 +149,28 @@ model reasoning into a budget that has no room for the answer.
 > 38,179 output tokens on the Jetson, and `enable_tools=False` never removed
 > tools at all — it is client-side only.
 
-## 1a. Nothing routes production work to the Jetson — CONFIRMED 2026-08-06
+## 1a. Nothing routes production work to the Jetson — RESOLVED 2026-08-07
+
+> **The Jetson now has a job.** It runs the news fact-extraction backfill
+> (`app/services/news_backfill.py`), a background worker clearing a measured
+> 42,715-article backlog that the in-cycle 22s budget can never reach. That is
+> production work on a box whose lifetime count was zero.
+>
+> It did **not** get the in-cycle extraction job: a rule registered before the
+> run required 80% of Gold Spark's grounded-fact yield and it scored 77% at
+> n=40, twice. The two jobs differ in counterfactual, not in preference — for
+> the backlog the alternative is raw scrape text, not Gold Spark. Full
+> measurement in `07-jetson-role.md`.
+>
+> Also fixed there: the Jetson was already the *listed* extraction failover and
+> was structurally incapable of answering, because reasoning consumed the whole
+> 2,048-token budget and returned empty content.
+>
+> Still open for a **decision-path** role: the gatekeeper shadow, item 1g.
+
+The original finding, kept because the three causes below are still true of the
+agent-routing path:
+
 
 Verified in code and in the database: **zero production traffic reaches the
 Jetson**, by accident rather than by design. Three independent causes:
@@ -483,3 +504,38 @@ reversed — it now pins `{}` and says why.
 Worth stating plainly, because the wave that shipped these fixes did not run
 the suite: **both failures were on `master` and both described live
 behaviour.** A red test here is not noise.
+
+## 9. News articles are filed under tickers they are not about
+
+Found 2026-08-07 while A/B-testing the two boxes on fact extraction; the bench
+surfaced it, nothing was changed to fix it.
+
+Four of forty sampled articles were attributed to a ticker the body never
+discusses. Two examples, both real rows in `news_articles`:
+
+| ticker | article |
+|---|---|
+| `CME` | "CNBC Daily Open: Iran, Oman in talks on Hormuz; SpaceX is loyal to Nvidia on AI" |
+| `GEN` | "79-year-old key health care provider files Chapter 11 bankruptcy" — about **Genesis Healthcare**, not Gen Digital |
+
+The `GEN` case is the instructive one: a name-based attribution matched
+"Genesis" to a ticker whose company is Norton/Gen Digital. The article is
+genuine news about a genuine company; it is filed against an unrelated position.
+
+**Why it matters beyond tidiness.** These articles reach agents as evidence
+about the ticker they are filed under. The extraction step then does what it is
+told and extracts market-relevant facts *for that ticker* — so a bankruptcy at
+an unrelated healthcare provider can end up in the news block an analyst reads
+about Gen Digital. Grounding does not catch this: the quotes are real and align
+perfectly. The filter checks that a fact came from the article, not that the
+article is about the company.
+
+It also distorted the box comparison, which is how it was found: the Jetson
+returned `{"facts": []}` on these and Gold Spark extracted 3–6 facts about the
+wrong company, and the yield metric scored Gold Spark higher for it. See
+`07-jetson-role.md`.
+
+Not fixed here. The fix belongs in whatever assigns `ticker` at collection time
+(`ticker_attribution` exists as a column and may already record the method),
+and it wants its own measurement of how often this happens across the whole
+corpus rather than in a 40-article sample.

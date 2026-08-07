@@ -9,6 +9,33 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-07 — the Jetson has a job
+
+First production work ever assigned to that box. Full measurement in
+`07-jetson-role.md`; the short version:
+
+- **A latent defect fixed first.** The Jetson was already the listed failover
+  for news fact-extraction and could never have answered: reasoning consumed all
+  2,048 completion tokens and returned `finish_reason="length"` with empty
+  content, 42.6s per call. `build_payload()` now disables reasoning for both
+  boxes — the Jetson answers in 4.3s, and Gold Spark halves too (12.2s → 5.9s)
+  because it was paying for reasoning tokens it discarded.
+- **The in-cycle job stayed on Gold Spark.** A rule registered before the run
+  required ≥80% of its grounded-fact yield; the Jetson scored 77% at n=40, twice
+  (3.00 vs 3.90 facts/article). It passed every other gate — 100% valid JSON,
+  1.6x faster — and the rule was not moved to accommodate it.
+- **The Jetson got the backfill instead**, where the counterfactual is raw
+  scrape text rather than Gold Spark. 42,715 of 44,868 eligible articles (95.2%)
+  had never been extracted; the in-cycle 22s budget cannot reach them.
+  `app/services/news_backfill.py` runs from boot, pinned hard — if the box is
+  down the worker stops rather than redirecting backlog work onto the cycle's box.
+- **Attribution now names the box.** The stored note was the constant `"vllm"`
+  for all 2,153 legacy rows, which made "is the Jetson doing this job" an
+  unanswerable question.
+
+Live acceptance before deploy: 6/6 articles extracted on the Jetson, 22 grounded
+facts, backlog 42,715 → 42,709.
+
 ## Where this stands at session close — 2026-08-06
 
 Deployed and verified: `trading-service@ad33518`, `trading-client@d22e328`,

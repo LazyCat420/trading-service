@@ -158,6 +158,113 @@ async def test_empty_facts_is_a_valid_result_not_a_failure():
     assert out == []
 
 
+# ── request shape ────────────────────────────────────────────────────────────
+
+def test_reasoning_is_disabled_on_the_extraction_call():
+    """Measured 2026-08-07: with reasoning ON, the Jetson spent all 2,048
+    completion tokens thinking and returned finish_reason="length" with EMPTY
+    content — 42.6s, every time, for nothing. The loop reads an unparseable
+    answer as "try the next host", so the Jetson failover could never once have
+    succeeded, and it looked like a slow host rather than a bad request.
+
+    This asserts the flag, not the latency, because the latency is the symptom.
+    """
+    payload = ne.build_payload("some-model", "prompt")
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["max_tokens"] == ne._MAX_TOKENS
+
+
+def test_the_bench_sends_the_same_body_production_sends():
+    """scripts/news_extraction_ab.py chooses which box gets the job. If it built
+    its own payload, the A/B would measure a configuration nobody ships."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "news_extraction_ab.py"
+    spec = importlib.util.spec_from_file_location("news_extraction_ab", path)
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+
+    assert bench.build_payload is ne.build_payload
+    assert bench.align_quote is ne.align_quote
+    assert bench.CALL_TIMEOUT_S == ne._CALL_TIMEOUT_S
+
+
+# ── host preference ──────────────────────────────────────────────────────────
+
+_BOTH_HOSTS = [
+    ("vllm-2", "deepseek-v4-flash-0731", "http://spark:8000"),
+    ("vllm", "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit", "http://jetson:8000"),
+]
+
+
+@pytest.mark.asyncio
+async def test_endpoint_order_overrides_the_vision_engines_order():
+    """Host DISCOVERY is shared with vision OCR; host ORDER is not. OCR wants
+    Gold Spark (the Jetson editorialises on images); extraction wants whatever
+    the A/B picked. A shared list would couple the two decisions."""
+    with patch("app.scraper.engines.vision_engine._vision_targets",
+               new=AsyncMock(return_value=list(_BOTH_HOSTS))), \
+         patch.object(ne, "_ENDPOINT_ORDER", ("jetson", "dgx_spark")):
+        targets = await ne._chat_targets()
+    assert [t[0] for t in targets] == ["vllm", "vllm-2"]
+
+    with patch("app.scraper.engines.vision_engine._vision_targets",
+               new=AsyncMock(return_value=list(_BOTH_HOSTS))), \
+         patch.object(ne, "_ENDPOINT_ORDER", ("dgx_spark", "jetson")):
+        targets = await ne._chat_targets()
+    assert [t[0] for t in targets] == ["vllm-2", "vllm"]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_endpoint_key_degrades_to_preference_not_to_no_hosts():
+    """A typo in NEWS_EXTRACT_ENDPOINTS must cost ordering, never availability —
+    extraction that silently has no hosts reads as "the feature is off"."""
+    with patch("app.scraper.engines.vision_engine._vision_targets",
+               new=AsyncMock(return_value=list(_BOTH_HOSTS))), \
+         patch.object(ne, "_ENDPOINT_ORDER", ("jetsonn", "typo")):
+        targets = await ne._chat_targets()
+    assert len(targets) == 2, "every discovered host must survive a bad key"
+
+
+# ── attribution ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_stored_note_names_the_box_that_answered():
+    """The note used to be the constant "vllm" for every row, which made the
+    host preference unverifiable after the fact: no query could tell "the
+    Jetson is doing this job" from "the Jetson is first and failing silently"."""
+    client = _FakeClient([_chat_response(json.dumps({"facts": [
+        {"class": "earnings", "statement": "Q2 revenue beat",
+         "quote": "reported fiscal Q2 revenue of $62.0 billion",
+         "direction": "bullish"}]}))])
+    with patch.object(ne, "_chat_targets",
+                      new=AsyncMock(return_value=[_BOTH_HOSTS[1]])), \
+         patch("httpx.AsyncClient", return_value=client):
+        facts, provider = await ne.extract_article_facts_with_source(ARTICLE, "MSFT")
+    assert facts and len(facts) == 1
+    assert provider == "jetson", "the Jetson answered; the row must say so"
+
+
+@pytest.mark.asyncio
+async def test_a_failover_is_attributed_to_the_host_that_actually_answered():
+    """The first host erroring and the second answering must not be recorded as
+    the first host's work — that is exactly the reading that hid the empty-
+    content defect for as long as it did."""
+    client = _FakeClient([
+        RuntimeError("jetson down"),
+        _chat_response(json.dumps({"facts": [
+            {"class": "earnings", "statement": "Q2 revenue beat",
+             "quote": "reported fiscal Q2 revenue of $62.0 billion",
+             "direction": "bullish"}]})),
+    ])
+    with patch.object(ne, "_chat_targets",
+                      new=AsyncMock(return_value=[_BOTH_HOSTS[1], _BOTH_HOSTS[0]])), \
+         patch("httpx.AsyncClient", return_value=client):
+        facts, provider = await ne.extract_article_facts_with_source(ARTICLE, "MSFT")
+    assert facts and provider == "dgx_spark"
+
+
 # ── rendering ────────────────────────────────────────────────────────────────
 
 def test_render_facts_line_is_compact_and_directional():

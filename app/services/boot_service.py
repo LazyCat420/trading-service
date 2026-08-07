@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 
 
 class BootService:
+    # Set in shutdown(), read by long-lived background loops. Without it a
+    # forever-loop keeps issuing work while the pool it writes to is being
+    # closed, and the resulting errors read as failures rather than as a
+    # shutdown in progress.
+    _shutting_down: bool = False
+
+    @classmethod
+    def _is_shutting_down(cls) -> bool:
+        return cls._shutting_down
+
     @classmethod
     async def startup(cls):
         """Main startup sequence coordinator."""
@@ -128,6 +138,7 @@ class BootService:
     async def shutdown(cls):
         """Main shutdown sequence coordinator."""
         logger.info("[Boot] Shutting down...")
+        cls._shutting_down = True
 
         # Cancel any running trading cycle
         try:
@@ -360,6 +371,20 @@ class BootService:
         # tickers instead of the full ~500. Runs forever; does not block
         # the rest of startup.
         asyncio.create_task(cls._sp500_daily_refresh_loop())
+
+        # --- News fact-extraction backfill (the Jetson's job) ---
+        # The in-cycle extractor is bounded by a 22s per-cycle budget and is
+        # outrun by the collection rate, so 95% of eligible articles had never
+        # been extracted and were served to agents as raw scrape. This clears
+        # that backlog on the spare box. Pinned to the Jetson: if it is down the
+        # worker stops rather than failing over onto the cycle's box.
+        try:
+            from app.services.news_backfill import backfill_loop
+
+            asyncio.create_task(backfill_loop(cls._is_shutting_down))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[startup] News backfill failed to start "
+                           "(non-fatal): %s", e)
 
         # --- Agent Audit Worker ---
         try:
