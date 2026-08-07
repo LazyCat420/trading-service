@@ -157,28 +157,81 @@ def _extract_token_usage(resp: Any, response_text: str) -> int:
     # Fallback: rough estimate from output length (better than nothing).
     return len(response_text or "") // 4
 
-async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
-    now = time.time()
-    if not force_refresh and url in _dynamic_model_cache:
-        model_id, timestamp = _dynamic_model_cache[url]
-        if now - timestamp < 300: # 5 minutes TTL
-            return model_id
+#: How long a cached model id may still be served AFTER the probe fails.
+#: A box's model id changes only when someone reloads it, so a stale answer is
+#: nearly always the right answer; an hour bounds how long we can be wrong.
+_STALE_MODEL_GRACE_S = 3600
 
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{url}/v1/models")
-            if resp.status_code == 200:
-                models = resp.json().get("data", [])
-                if models:
-                    model_id = models[0].get("id")
-                    if model_id:
-                        _dynamic_model_cache[url] = (model_id, now)
-                        return model_id
-    except Exception as e:
-        logger.error("Failed to fetch model from %s: %s", url, e, exc_info=True)
-        raise RuntimeError(f"VLLM endpoint offline: {url} (error: {e})")
-    
-    raise RuntimeError(f"No models found at vLLM endpoint: {url}")
+
+async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
+    """Resolve the model a vLLM box is serving. Cached 5 min; degrades to stale.
+
+    ON THE CRITICAL PATH. `resolve_default_model_for_agent` calls this for
+    EVERY agent, so whatever this raises, that agent's run raises too.
+
+    WHY IT DEGRADES INSTEAD OF RAISING. 2026-08-06, the first real gatekeeper
+    shadow failed with `VLLM endpoint offline: http://10.0.0.30:8000
+    (error: )` — an httpx timeout, whose message is empty. Seconds later the
+    same box answered a direct probe in 37ms, and measured afterwards it never
+    exceeded 70ms: 0/30 probes over 2s, idle AND under 8 concurrent
+    generations. So the box was not slow. The 2s budget expired inside a
+    container that was mid-cycle, which points at this process, not the
+    endpoint.
+
+    The mechanism is NOT proven — that is stated plainly rather than papered
+    over. What is certain is the shape of the failure: a probe whose result is
+    cached for five minutes took down a call while a perfectly good answer sat
+    in the cache. So a failed refresh now falls back to the last known model id
+    for up to an hour, loudly, and only an empty cache is fatal. A genuinely
+    dead box still fails — one layer down, at prism, with a real error message
+    instead of an empty one.
+    """
+    now = time.time()
+    cached = _dynamic_model_cache.get(url)
+    if not force_refresh and cached and now - cached[1] < 300:  # 5 minute TTL
+        return cached[0]
+
+    last_error: Exception | None = None
+    # Two attempts: the observed failure was transient, and a retry costs at
+    # most a few seconds against a value good for the next five minutes.
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{url}/v1/models")
+                if resp.status_code == 200:
+                    models = resp.json().get("data", [])
+                    if models:
+                        model_id = models[0].get("id")
+                        if model_id:
+                            _dynamic_model_cache[url] = (model_id, now)
+                            return model_id
+                last_error = RuntimeError(
+                    f"HTTP {resp.status_code} with no usable model list"
+                )
+        except Exception as e:  # noqa: BLE001 — retried, then degraded below
+            last_error = e
+            # The type matters: an httpx timeout stringifies to "", so the old
+            # message read "(error: )" and said nothing about what went wrong.
+            logger.warning(
+                "[VLLM] model probe attempt %d/2 failed for %s: %s: %s",
+                attempt, url, type(e).__name__, str(e) or "<no message>",
+            )
+
+    if cached and now - cached[1] < _STALE_MODEL_GRACE_S:
+        logger.warning(
+            "[VLLM] model probe failed for %s (%s: %s) — serving the cached id "
+            "%s from %.0fs ago rather than failing the call.",
+            url, type(last_error).__name__, str(last_error) or "<no message>",
+            cached[0], now - cached[1],
+        )
+        return cached[0]
+
+    if last_error is None:
+        raise RuntimeError(f"No models found at vLLM endpoint: {url}")
+    raise RuntimeError(
+        f"VLLM endpoint offline: {url} "
+        f"({type(last_error).__name__}: {str(last_error) or '<no message>'})"
+    )
 
 # Endpoint key -> the prism provider slug that reaches it. Both halves of
 # the pair have to move together: `provider` is what prism routes on, and
