@@ -14,6 +14,11 @@ MIN_TOOLS_FLOOR = 2
 # service was renamed and only some copies would have followed.
 from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
 
+# Reputation drives PRUNING, so it must never see a synthetic call. See
+# PROBE_SERVICE_SOURCES for why an untagged probe run can take a working tool
+# away from a live agent.
+from app.services.logging.tool_logging import PROBE_EXCLUSION_SQL  # noqa: E402
+
 # ── Reputation thresholds ──
 # Tools below these success rates get warnings injected into agent prompts
 REPUTATION_UNRELIABLE_THRESHOLD = 0.6   # success_rate < 60% → warning
@@ -62,6 +67,7 @@ def get_tool_reputation(
                 FROM tool_usage_stats
                 WHERE tool_name IN ({placeholders})
                   AND called_at > NOW() - INTERVAL '{int(window_hours)} hours'
+                  AND {PROBE_EXCLUSION_SQL}
                 GROUP BY tool_name
                 """,
                 tool_names,

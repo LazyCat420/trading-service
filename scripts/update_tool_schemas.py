@@ -61,6 +61,12 @@ sys.path.insert(0, project_root)
 try:
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
     from app.tools import registry
+    # Every namespace prism may have filed our tools under, not just the one
+    # spelling that was hardcoded here. A name we fail to recognise as ours
+    # falls into the `mcp__` branch below and is SKIPPED as a foreign server's
+    # tool — so a missed spelling silently drops tools from the catalog, which
+    # is the failure this whole refresh exists to avoid.
+    from app.services.mcp_prefix import strip_mcp_prefix
 except Exception as e:
     sys.exit(f"FATAL: cannot load tool whitelists/registry ({e}); refusing to generate an unfiltered registry.")
 
@@ -93,8 +99,10 @@ for schema in native_schemas:
 for schema in prism_schemas:
     name = schema.get("name")
     if name:
-        if name.startswith("mcp__lazy-tool-service__"):
-            schema["name"] = name.replace("mcp__lazy-tool-service__", "")
+        bare = strip_mcp_prefix(name)
+        if bare != name:
+            # One of OUR namespaces — bare it and keep it.
+            schema["name"] = bare
         elif name.startswith("mcp__"):
             # Skip tools from other MCP servers
             continue

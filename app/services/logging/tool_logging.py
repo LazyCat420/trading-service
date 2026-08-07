@@ -17,6 +17,33 @@ logger = logging.getLogger(__name__)
 
 from app.services.mcp_prefix import strip_mcp_prefix
 
+#: `service_source` values that are NOT production traffic. Anything logged
+#: under one of these is a synthetic call — an audit probe, a contract test, a
+#: reachability sweep — and must be excluded from every question of the form
+#: "is this tool used?" or "is this tool healthy?".
+#:
+#: This exists because the 2026-07-15 ecosystem audit curled its way through the
+#: catalog and every probe landed in `tool_usage_stats` indistinguishable from a
+#: real call. It is still there: each of `strain_detail`, `html_notes_web_search`,
+#: `canvas_read_dom` and a dozen others shows 1-2 lifetime "calls", all stamped
+#: 2026-07-15, all from that sweep. Read naively, a tool nobody uses looks used.
+#:
+#: The sharper hazard is the other direction. `tool_optimizer` computes tool
+#: reputation from this table and PRUNES low-success tools out of live agents'
+#: schemas. A probe suite deliberately sends malformed payloads to check that a
+#: tool rejects them predictably — so an untagged probe run scores a working
+#: tool as failing and takes it away from the agents that depend on it. Probing
+#: is only safe once the probe rows are separable.
+PROBE_SERVICE_SOURCES: tuple[str, ...] = ("audit-probe", "contract-test")
+
+#: Ready-to-interpolate SQL guard. Callers that measure production behaviour
+#: should AND this into their WHERE clause.
+PROBE_EXCLUSION_SQL = (
+    "COALESCE(service_source, '') <> ALL(ARRAY["
+    + ", ".join(f"'{s}'" for s in PROBE_SERVICE_SOURCES)
+    + "])"
+)
+
 
 def _normalize_tool_name(raw_name: str) -> str:
     """Strip MCP transport prefixes to produce a canonical tool name.

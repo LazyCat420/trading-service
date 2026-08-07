@@ -52,8 +52,16 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Prism renames every tool it registers. Strip it before comparing to a
-# whitelist or every tool looks non-compliant.
-MCP_PREFIX = "mcp__lazy-tool-service__"
+# whitelist or every tool looks non-compliant — failure mode 1 in the docstring
+# above.
+#
+# This used to be a local `MCP_PREFIX = "mcp__lazy-tool-service__"`, matching
+# exactly one spelling. The service was renamed to lazy-agent-service on
+# 2026-08-07 and prism mints the prefix from ITS registration name, so a run
+# after the flip would have normalized nothing and re-reported the same "zero
+# whitelisted tools are used by any agent" that this script exists to prevent.
+# An audit tool that can be wrong in the way it documents is worse than no audit.
+from app.services.mcp_prefix import MCP_PREFIXES, strip_mcp_prefix  # noqa: E402
 
 # Framework-provided tools that are never on an agent whitelist by design.
 META_TOOLS = {
@@ -62,7 +70,7 @@ META_TOOLS = {
 
 
 def normalize(tool: str) -> str:
-    return tool[len(MCP_PREFIX):] if tool.startswith(MCP_PREFIX) else tool
+    return strip_mcp_prefix(tool)
 
 
 def load_whitelists() -> dict[str, list[str]]:
@@ -142,7 +150,8 @@ def main() -> int:
     print("=" * 100)
     print(f"TOOL AUDIT — last {args.days}d (compared against {args.compare_days}d)")
     print("=" * 100)
-    print(f"names normalized past '{MCP_PREFIX}'; meta-tools shown separately\n")
+    print(f"names normalized past {'/'.join(MCP_PREFIXES)}; "
+          f"meta-tools shown separately\n")
 
     report = {}
     for agent in sorted(wl):

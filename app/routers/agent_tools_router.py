@@ -44,7 +44,15 @@ def report_tool_usage(
     payload: ToolUsagePayload,
     token: str = Depends(_verify_api_key)
 ):
-    """Log a tool usage event from any service/source."""
+    """Log a tool usage event from any service/source.
+
+    Synthetic callers — audit sweeps, contract probes, reachability checks —
+    MUST send `service_source` set to one of `PROBE_SERVICE_SOURCES`. Untagged
+    probe rows are unremovable afterwards (nothing distinguishes them from real
+    traffic) and they feed `tool_optimizer`'s reputation pruning, so a probe
+    that deliberately sends a malformed payload can cost a live agent a working
+    tool. The 2026-07-15 sweep is still sitting in this table untagged.
+    """
     from app.services.logging.tool_logging import log_tool_call
     log_tool_call(
         tool_name=payload.tool_name,

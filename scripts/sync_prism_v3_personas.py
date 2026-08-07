@@ -28,31 +28,60 @@ import json
 import sys
 import urllib.request
 
-MCP_PREFIX = "mcp__lazy-tool-service__"
+sys.path.insert(0, ".")
+# THIS SCRIPT IS THE SECOND WRITER OF availableTools. `app/v3/prism_registration.py`
+# writes the same prism field at boot and mints its prefix from
+# `MCP_EMIT_PREFIX`. This file used to hardcode `mcp__lazy-tool-service__`, so
+# running it after the registration flip would have silently rewritten all
+# eleven personas to a prefix prism no longer routes — every v3 agent losing
+# every tool, with the script cheerfully printing "UPDATE" for each one. Two
+# writers of one field must read the prefix from one place.
+from app.services.mcp_prefix import mcp_tool_name  # noqa: E402
+
 NONE_SENTINEL = "__no_tools__"
 
-# agent module name -> prism persona agentId. One persona per agent: a shared
-# persona would need the UNION of whitelists as availableTools, and any agent
-# whose request enables only ITS OWN subset then has permanent discovery
-# headroom — prism re-attaches the meta-tools (observed live 2026-07-22 when
-# delta shared the junior persona).
-PERSONA_SOURCES: dict[str, list[str]] = {
-    "CUSTOM_V3_JUNIOR_ANALYST": ["v3_junior_analyst"],
-    "CUSTOM_V3_DELTA_ANALYST": ["v3_delta_analyst"],
-    "CUSTOM_V3_FUNDAMENTAL_ANALYST": ["v3_fundamental_analyst"],
-    "CUSTOM_V3_QUANT_ANALYST": ["v3_quant_analyst"],
-    "CUSTOM_V3_REGIME_ENGINE": ["v3_regime_engine"],
-    "CUSTOM_V3_BOARD_OF_DIRECTORS": ["v3_board_of_directors"],
-    "CUSTOM_V3_DECISION_SYNTHESIZER": ["v3_decision_synthesizer"],
-    "CUSTOM_V3_BULL_AGENT": ["v3_bull_agent"],
-    "CUSTOM_V3_BEAR_AGENT": ["v3_bear_agent"],
-    "CUSTOM_V3_DEBATE_JUDGE": ["v3_debate_judge"],
-    "CUSTOM_V3_PORTFOLIO_MANAGER": ["v3_portfolio_manager"],
-}
+def _persona_sources() -> dict[str, list[str]]:
+    """prism persona agentId -> the agent modules whose whitelists scope it.
+
+    DISCOVERED, not listed. This was a hand-maintained dict of eleven personas
+    and it had drifted by two: `v3_bull_defense` and `v3_valuation_analyst` are
+    real agent modules with real whitelists, registered on prism by
+    `prism_registration._discover_v3_agent_modules()`, and this script simply
+    never saw them. Measured live 2026-08-07 — both carried
+    `enabledByDefaultTools: []` against a non-empty `availableTools`, which is
+    the maximum-headroom state that makes prism re-attach the discovery
+    meta-tools. Valuation had seven tools available and none enabled: scoped on
+    paper, tool-less in practice, and holding the door open for the trio.
+
+    That is the same failure `_V3_AGENT_MODULES` had, in the same package, for
+    the same reason. A list you must remember to append to fails silently: the
+    agent still runs, just unscoped. Deriving the id the way the registrar does
+    (`CUSTOM_{AGENT_NAME.upper()}`) makes adding a module sufficient.
+
+    One persona per agent: a shared persona would need the UNION of whitelists
+    as availableTools, and any agent enabling only ITS OWN subset then has
+    permanent headroom — observed live 2026-07-22 when delta shared junior's.
+    """
+    import importlib
+    import pkgutil
+
+    import app.v3.agents as pkg
+
+    sources: dict[str, list[str]] = {}
+    for mod_info in pkgutil.iter_modules(pkg.__path__):
+        try:
+            module = importlib.import_module(f"app.v3.agents.{mod_info.name}")
+        except Exception as e:  # noqa: BLE001 — one bad module must not stop the rest
+            print(f"WARN     cannot import app.v3.agents.{mod_info.name}: {e}")
+            continue
+        agent_name = getattr(module, "AGENT_NAME", None)
+        if not agent_name or getattr(module, "TOOL_WHITELIST", None) is None:
+            continue
+        sources[f"CUSTOM_{agent_name.upper()}"] = [agent_name]
+    return sources
 
 
 def _whitelists() -> dict[str, list[str]]:
-    sys.path.insert(0, ".")
     from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
     return AGENT_TOOL_WHITELISTS
 
@@ -60,10 +89,7 @@ def _whitelists() -> dict[str, list[str]]:
 def _mcp_names(tools: list[str]) -> list[str]:
     if not tools:
         return [NONE_SENTINEL]
-    return sorted(
-        t if t.startswith("mcp__") else f"{MCP_PREFIX}{t}"
-        for t in dict.fromkeys(tools)
-    )
+    return sorted(mcp_tool_name(t) for t in dict.fromkeys(tools))
 
 
 def _request(url: str, method: str = "GET", body: dict | None = None):
@@ -83,13 +109,16 @@ def main() -> int:
     args = ap.parse_args()
 
     whitelists = _whitelists()
+    persona_sources = _persona_sources()
+    print(f"Discovered {len(persona_sources)} V3 agent modules to scope: "
+          f"{', '.join(sorted(persona_sources))}\n")
     existing = _request(f"{args.prism}/custom-agents")
     if isinstance(existing, dict):
         existing = existing.get("agents") or existing.get("data") or []
     by_id = {a.get("agentId"): a for a in existing}
 
     changed = skipped = missing = 0
-    for persona_id, sources in PERSONA_SOURCES.items():
+    for persona_id, sources in sorted(persona_sources.items()):
         doc = by_id.get(persona_id)
         if not doc:
             print(f"MISSING  {persona_id} — not registered on prism, skipped")
