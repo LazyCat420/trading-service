@@ -42,18 +42,23 @@ from app.services.research_queue_service import ResearchQueueService
 
 
 class FakeCursor:
-    """Records every statement; returns programmed rows in order."""
+    """Records every statement; returns programmed rows in order.
+
+    Deliberately exposes NO `rowcount`, because the real `PooledCursor` has
+    none and no `__getattr__` passthrough to the psycopg cursor either. A fake
+    that offered one would let a caller write `cur.rowcount`, pass here, and
+    raise `AttributeError` in production — the same shape as the `get_db` bug
+    this file exists to prevent. Count with `RETURNING` instead.
+    """
 
     def __init__(self, results=None):
         self.statements: list[tuple[str, list]] = []
         self._results = list(results or [])
         self._last = None
-        self.rowcount = 0
 
     def execute(self, sql, params=None):
         self.statements.append((" ".join(sql.split()), list(params or [])))
         self._last = self._results.pop(0) if self._results else None
-        self.rowcount = len(self._last) if isinstance(self._last, list) else 0
         return self
 
     def fetchone(self):
@@ -230,6 +235,46 @@ def test_clean_questions_drops_fragments_and_dedupes_preserving_order():
         "What is the segment margin trend into FY26?",
         "Does the covenant reset before the refinancing window?",
     ]
+
+
+def test_pooled_cursor_has_no_rowcount_so_counts_must_use_returning():
+    """The second contract trap in the same file.
+
+    `PooledCursor` wraps a psycopg cursor but exposes no `rowcount` and no
+    `__getattr__` passthrough. Code that counts affected rows with
+    `cur.rowcount` raises `AttributeError`, and inside a `try/except` that
+    becomes a metric permanently reporting 0 — indistinguishable from "nothing
+    happened". Both ledger updaters use `RETURNING id` instead.
+    """
+    from app.db.connection import PooledCursor
+
+    assert not hasattr(PooledCursor, "rowcount")
+    assert not hasattr(PooledCursor, "__getattr__"), (
+        "a passthrough would make rowcount work again — if one is added "
+        "deliberately, delete this test and say so"
+    )
+
+
+def test_mark_not_reasked_counts_rows_it_actually_closed():
+    cursor = FakeCursor(results=[[(11,), (12,), (13,)]])  # RETURNING id
+    with patch("app.services.question_ledger.get_db", fake_get_db(cursor)):
+        n = question_ledger.mark_not_reasked("AAPL", "cycle-9", ["abc123"])
+
+    assert n == 3
+    sql, params = cursor.statements[0]
+    assert "RETURNING id" in sql
+    # The cast is load-bearing: an empty list gives Postgres no element type.
+    assert "%s::text[]" in sql
+    assert params[-1] == ["abc123"]
+
+
+def test_mark_not_reasked_handles_a_desk_that_asked_nothing():
+    """Empty hash list must still be a valid array parameter, not a crash."""
+    cursor = FakeCursor(results=[[(1,)]])
+    with patch("app.services.question_ledger.get_db", fake_get_db(cursor)):
+        n = question_ledger.mark_not_reasked("AAPL", "cycle-9", [])
+    assert n == 1
+    assert cursor.statements[0][1][-1] == []
 
 
 def test_stats_never_folds_dropped_into_answered():

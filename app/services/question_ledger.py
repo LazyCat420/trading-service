@@ -161,7 +161,16 @@ def mark_not_reasked(ticker: str, cycle_id: str, asked_hashes: Iterable[str]) ->
     keep = [h for h in (asked_hashes or []) if h]
     try:
         with get_db() as db:
-            cur = db.execute(
+            # RETURNING, not rowcount: PooledCursor exposes neither `rowcount`
+            # nor a __getattr__ passthrough to the psycopg cursor, so reading
+            # it raises AttributeError — which this function's own except would
+            # have turned into a permanent 0. A metric that is always zero is
+            # worse than no metric.
+            #
+            # `%s::text[]` is required: an empty Python list gives Postgres no
+            # element type to infer, and `x = ANY('{}')` is false so the NOT
+            # correctly drops everything still open when a desk asked nothing.
+            rows = db.execute(
                 """
                 UPDATE dossier_question_log
                    SET status = 'dropped',
@@ -169,11 +178,12 @@ def mark_not_reasked(ticker: str, cycle_id: str, asked_hashes: Iterable[str]) ->
                        resolved_at = CURRENT_TIMESTAMP
                  WHERE ticker = %s
                    AND status IN ('open', 'reasked')
-                   AND NOT (question_hash = ANY(%s))
+                   AND NOT (question_hash = ANY(%s::text[]))
+              RETURNING id
                 """,
                 [cycle_id, ticker, keep],
-            )
-            return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+            ).fetchall()
+            return len(rows or [])
     except Exception as e:
         logger.warning("[questions] mark_not_reasked(%s) failed: %s", ticker, e)
         return 0
@@ -183,17 +193,18 @@ def age_out(days: int = AGE_OUT_DAYS) -> int:
     """Close questions nothing has touched in `days`. Returns rows closed."""
     try:
         with get_db() as db:
-            cur = db.execute(
+            rows = db.execute(
                 """
                 UPDATE dossier_question_log
                    SET status = 'aged_out',
                        resolved_at = CURRENT_TIMESTAMP
                  WHERE status IN ('open', 'reasked')
                    AND last_asked_at < CURRENT_TIMESTAMP - (%s || ' days')::interval
+              RETURNING id
                 """,
                 [int(days)],
-            )
-            return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+            ).fetchall()
+            return len(rows or [])
     except Exception as e:
         logger.warning("[questions] age_out failed: %s", e)
         return 0
