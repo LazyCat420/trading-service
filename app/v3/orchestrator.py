@@ -2330,6 +2330,33 @@ async def run_v3_pipeline(
         )
 
     # ═══════════════════════════════════════════════════════════════════
+    # DOSSIER SYNC — the write side of the persistent research loop.
+    # Runs AFTER the policy gates so the recorded action is the enforced one:
+    # a BUY that a gate blocked must not enter the dossier as a BUY.
+    # Non-fatal by construction and reads no decision — see dossier_sync.
+    # ═══════════════════════════════════════════════════════════════════
+    try:
+        from app.v3.dossier_sync import sync_desk_to_dossier
+        _dossier = sync_desk_to_dossier(
+            desk,
+            cycle_id=cycle_id,
+            action=_decided.get("action"),
+            confidence=_decided.get("confidence") or 0,
+            policy_action=policy_action,
+        )
+        if _dossier.get("questions_found") or _dossier.get("questions_dropped"):
+            emit(
+                "analyzing", f"v3_dossier_{ticker}",
+                f"📒 {ticker}: {_dossier['questions_found']} open question(s) — "
+                f"{_dossier['questions_new']} new, {_dossier['questions_reasked']} re-asked, "
+                f"{_dossier['queued']} queued for deep dive",
+                status="ok",
+                data=_dossier,
+            )
+    except Exception as e:
+        logger.warning("[V3] %s: dossier sync failed (non-fatal): %s", ticker, e)
+
+    # ═══════════════════════════════════════════════════════════════════
     # BUILD RESULT — V1-compatible shape for downstream phases
     # ═══════════════════════════════════════════════════════════════════
     elapsed_s = time.monotonic() - t_pipeline

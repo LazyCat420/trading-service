@@ -26,14 +26,14 @@ class DossierService:
     def get_dossier(cls, ticker: str) -> TickerDossier:
         """Retrieves a ticker's dossier from PG DB or returns a fresh default dossier."""
         ticker = ticker.upper().strip()
-        db = get_db()
-        row = db.execute(
-            "SELECT ticker, lifecycle_state, canonical_thesis, lead_analyst_id, "
-            "open_questions, monitoring_triggers, hold_spec, decision_history, "
-            "attached_artifact_ids, created_at, updated_at "
-            "FROM ticker_dossiers WHERE ticker = %s",
-            [ticker],
-        ).fetchone()
+        with get_db() as db:
+            row = db.execute(
+                "SELECT ticker, lifecycle_state, canonical_thesis, lead_analyst_id, "
+                "open_questions, monitoring_triggers, hold_spec, decision_history, "
+                "attached_artifact_ids, created_at, updated_at "
+                "FROM ticker_dossiers WHERE ticker = %s",
+                [ticker],
+            ).fetchone()
 
         if not row:
             return TickerDossier(
@@ -93,7 +93,6 @@ class DossierService:
     @classmethod
     def save_dossier(cls, dossier: TickerDossier) -> None:
         """Upserts a TickerDossier into PostgreSQL."""
-        db = get_db()
         now = datetime.now(timezone.utc).isoformat()
         thesis_json = json.dumps(dossier.canonical_thesis)
         questions_json = json.dumps(dossier.open_questions)
@@ -102,37 +101,38 @@ class DossierService:
         decisions_json = json.dumps([d.model_dump() for d in dossier.decision_history])
         artifacts_json = json.dumps(dossier.attached_artifact_ids)
 
-        db.execute(
-            """
-            INSERT INTO ticker_dossiers (
-                ticker, lifecycle_state, canonical_thesis, lead_analyst_id,
-                open_questions, monitoring_triggers, hold_spec, decision_history,
-                attached_artifact_ids, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (ticker) DO UPDATE SET
-                lifecycle_state = EXCLUDED.lifecycle_state,
-                canonical_thesis = EXCLUDED.canonical_thesis,
-                lead_analyst_id = EXCLUDED.lead_analyst_id,
-                open_questions = EXCLUDED.open_questions,
-                monitoring_triggers = EXCLUDED.monitoring_triggers,
-                hold_spec = EXCLUDED.hold_spec,
-                decision_history = EXCLUDED.decision_history,
-                attached_artifact_ids = EXCLUDED.attached_artifact_ids,
-                updated_at = EXCLUDED.updated_at
-            """,
-            [
-                dossier.ticker,
-                dossier.lifecycle_state.value,
-                thesis_json,
-                dossier.lead_analyst_id,
-                questions_json,
-                triggers_json,
-                hold_spec_json,
-                decisions_json,
-                artifacts_json,
-                now,
-            ],
-        )
+        with get_db() as db:
+            db.execute(
+                """
+                INSERT INTO ticker_dossiers (
+                    ticker, lifecycle_state, canonical_thesis, lead_analyst_id,
+                    open_questions, monitoring_triggers, hold_spec, decision_history,
+                    attached_artifact_ids, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ticker) DO UPDATE SET
+                    lifecycle_state = EXCLUDED.lifecycle_state,
+                    canonical_thesis = EXCLUDED.canonical_thesis,
+                    lead_analyst_id = EXCLUDED.lead_analyst_id,
+                    open_questions = EXCLUDED.open_questions,
+                    monitoring_triggers = EXCLUDED.monitoring_triggers,
+                    hold_spec = EXCLUDED.hold_spec,
+                    decision_history = EXCLUDED.decision_history,
+                    attached_artifact_ids = EXCLUDED.attached_artifact_ids,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                [
+                    dossier.ticker,
+                    dossier.lifecycle_state.value,
+                    thesis_json,
+                    dossier.lead_analyst_id,
+                    questions_json,
+                    triggers_json,
+                    hold_spec_json,
+                    decisions_json,
+                    artifacts_json,
+                    now,
+                ],
+            )
 
     @classmethod
     def record_decision(
