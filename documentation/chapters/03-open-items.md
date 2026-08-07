@@ -149,6 +149,27 @@ model reasoning into a budget that has no room for the answer.
 > 38,179 output tokens on the Jetson, and `enable_tools=False` never removed
 > tools at all — it is client-side only.
 
+## 1a. Nothing routes production work to the Jetson — CONFIRMED 2026-08-06
+
+Verified in code and in the database: **zero production traffic reaches the
+Jetson**, by accident rather than by design. Three independent causes:
+
+1. The keyword rule in `prism_agent_caller.py` routes
+   `janitor|curator|summarizer|scout|purge|maintenance|consensus|ticker_validator`
+   to Jetson — and **no live agent name matches any of them**. Those roles were
+   never built.
+2. The gatekeeper was the one real Jetson-pinned job. `1755c3d` removed the
+   pin; it now resolves the default box, which is Gold Spark.
+3. The vision engine is deliberately pinned away from it.
+
+`v3_agent_telemetry` has **0** rows with `provider='vllm'`, ever. Only the
+shadow bench touches the box, and that is off the critical path by design.
+
+The `minP` fix removed the reason nothing *could* reach it. Assigning a role is
+a separate, deliberate change and should follow the shadow evidence, not
+precede it — routing a live decision onto a second box on the strength of one
+observation is how the earlier Jetson conclusions went wrong twice.
+
 ## 1b. The Jetson has processed almost nothing since 2026-06-25
 
 Found while building the benchmark, and invisible on any live metrics page:

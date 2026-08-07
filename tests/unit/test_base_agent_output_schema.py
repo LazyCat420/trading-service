@@ -20,19 +20,69 @@ REQUIRED_KEYS = {
 }
 
 
+class _Reply:
+    """One stand-in for BOTH transports.
+
+    2026-08-06: run_agent now derives its transport from the agent's tool
+    declaration (`base_agent.transport_for`), so a tool-less call no longer
+    reaches AgentHarness at all — it goes to prism's /chat. Patching only the
+    harness left these tests making a REAL network call, which is how the
+    reroute was caught. The contract is transport-independent, so the fixture
+    drives both seams from one value and the tests below run against each.
+    """
+
+    def __init__(self, text: str = '{"result": "success"}'):
+        self.text = text
+
+    @property
+    def harness_return(self) -> str:
+        return self.text
+
+    @property
+    def chat_return(self) -> dict:
+        return {
+            "response": self.text,
+            "tokens_used": 42,
+            "loops_used": 1,
+            "model_used": "test-model",
+            "provider": "vllm",
+        }
+
+
 @pytest.fixture
 def mock_harness_run():
-    """Patch the AgentHarness seam so no Prism/network call happens."""
+    """Patch BOTH transport seams so no Prism/network call happens.
+
+    Returns an object whose `.return_value` setter updates both, so existing
+    tests that assign to it keep working across the transport split.
+    """
+    reply = _Reply()
+
     with patch(
         "lazycat.agent.AgentHarness.run",
         new_callable=AsyncMock,
-        return_value='{"result": "success"}',
     ) as harness_run, patch(
+        "app.services.prism_agent_caller.chat_toolless",
+        new_callable=AsyncMock,
+    ) as chat_call, patch(
         "app.services.prism_agent_caller.resolve_default_model_for_agent",
         new_callable=AsyncMock,
         return_value=(None, None),
     ):
-        yield harness_run
+        class _BothSeams:
+            @property
+            def return_value(self):
+                return reply.text
+
+            @return_value.setter
+            def return_value(self, text):
+                reply.text = text
+                harness_run.return_value = reply.harness_return
+                chat_call.return_value = reply.chat_return
+
+        both = _BothSeams()
+        both.return_value = reply.text  # prime both mocks
+        yield both
 
 
 async def _call_run_agent(**overrides):
@@ -95,3 +145,46 @@ async def test_timestamp_is_utc_isoformat(mock_harness_run):
     # Must parse as an aware ISO timestamp
     parsed = datetime.datetime.fromisoformat(result["timestamp"])
     assert parsed.tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_the_contract_holds_on_the_tool_using_transport(mock_harness_run):
+    """The same dict shape must come back when tools route it to /agent.
+
+    Without this, the whole file would only ever exercise /chat (every case
+    above passes enable_tools=False), and a contract break on the tool-using
+    path — the one that carries every research agent — would ship unseen.
+    """
+    # Imported inside run_agent, so patch it at its source module.
+    with patch(
+        "app.agents.tool_whitelists.get_agent_tools",
+        return_value=[{"name": "get_market_data"}],
+    ):
+        result = await _call_run_agent(enable_tools=True)
+
+    assert REQUIRED_KEYS.issubset(result.keys())
+    assert result["response"] == '{"result": "success"}'
+
+
+@pytest.mark.asyncio
+async def test_tool_less_calls_do_not_reach_the_agent_harness(mock_harness_run):
+    """Pins the reroute itself, not just that a dict came back.
+
+    An assertion on the response alone passes whichever transport ran, so it
+    could not tell whether the routing change took effect at all.
+    """
+    with patch("lazycat.agent.AgentHarness.run", new_callable=AsyncMock) as harness:
+        with patch(
+            "app.services.prism_agent_caller.chat_toolless",
+            new_callable=AsyncMock,
+            return_value={
+                "response": '{"ok": true}', "tokens_used": 1,
+                "loops_used": 1, "model_used": "m", "provider": "vllm",
+            },
+        ) as chat:
+            result = await _call_run_agent(enable_tools=False)
+
+    assert chat.await_count == 1, "a tool-less agent must go to /chat"
+    assert harness.await_count == 0, "and must NOT pay for the /agent catalog"
+    assert result["response"] == '{"ok": true}'
+    assert result["loops_used"] == 1

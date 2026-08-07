@@ -55,7 +55,15 @@ EXTRA_SSH_SYNC() {
   # Shadow-benchmark these agents on a second box (answer is recorded, never
   # used). v3_regime_engine is the measured best Jetson candidate: 1.1 loops,
   # so it pays the ~1.9x throughput gap once, off the critical path.
-  ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_AGENTS=${MODEL_SHADOW_AGENTS:-v3_regime_engine}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  # v3_portfolio_manager added 2026-08-06. Every box comparison to date comes
+  # from v3_regime_engine, whose tools show ZERO calls in 60 days — so all of
+  # it is evidence about a tool-LESS job. The gatekeeper is the tool-declaring
+  # case (14 tools in its whitelist, and its own prompt tells it to call
+  # get_parameters), and until this deploy it was structurally unshadowable:
+  # it does not run through agent_runner, which is the only place that
+  # dispatched a shadow. Shadowing is off the critical path and cannot reach a
+  # decision — see app/v3/model_shadow.py.
+  ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_AGENTS=${MODEL_SHADOW_AGENTS:-v3_regime_engine,v3_portfolio_manager}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_ENDPOINT=${MODEL_SHADOW_ENDPOINT:-jetson}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   # Postgres→Mongo migration: per-table backend flags (pg|dual|mongo). This
   # service overwrites its .env from the vault master (above), so runtime flags

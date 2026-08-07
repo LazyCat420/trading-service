@@ -77,6 +77,48 @@ def min_p_for(provider: str | None, model: str | None) -> float | None:
     # path keeps the broken default.
     return 0.0 if (provider or "vllm").startswith("vllm") else None
 
+
+def transport_for(enable_tools: bool, agent_tools: list | None) -> str:
+    """`"agent"` or `"chat"` — the agent's own tool declaration picks the route.
+
+    WHY DERIVE IT. The transport used to be hardcoded at each call site, which
+    let the declaration and the route disagree silently: the gatekeeper's
+    system prompt instructs it to call `get_parameters`, its TOOL_WHITELIST
+    carries 14 tools, and its call site passed `enable_tools=False`. Nothing
+    could reconcile those, because nothing read both.
+
+    THE RULE. Tools declared -> `/agent` (prism attaches the catalog and runs
+    the agentic loop server-side). No tools -> `/chat`, where tool attachment
+    is opt-in and we opt out. Prism's `/chat` is NOT a tool-less endpoint —
+    `ChatRoutes` honours `functionCallingEnabled`/`enabledTools` and executes
+    calls via ToolOrchestratorService — so this is a choice about who decides,
+    not about what is possible.
+
+    MEASURED 2026-08-06, n=10 interleaved, replayed `v3_regime_engine` prompts
+    (a role whose tools show zero calls in 60 days):
+
+        /chat          10/10 non-empty  10/10 valid  16.2s median  2.9s ttft
+        /agent         10/10             8/10        68.1s         8.4s
+        /agent+tools    9/10             8/10        45.4s         8.8s
+
+    The catalog costs ~5.5s before the first token even when no tool is ever
+    called, and both /agent arms lost runs to the model narrating instead of
+    emitting its artifact. That is evidence about a TOOL-LESS job only; it says
+    nothing about a role that genuinely calls something, which is why the rule
+    keys on the declaration rather than preferring one endpoint outright.
+
+    Fail-safe direction: when in doubt, `/agent`. A tool-using agent routed to
+    `/chat` silently loses its tools (the failure the gatekeeper is living
+    proof of); a tool-less agent routed to `/agent` is merely slower.
+    """
+    if not enable_tools:
+        return "chat"
+    # enable_tools=True with an EMPTY whitelist is not "all tools" — it is a
+    # role with nothing to call. Sending it to /agent would attach the catalog
+    # for no reason. (`agent_runner` already computes enable_tools from
+    # bool(tool_whitelist), so this is belt-and-braces for direct callers.)
+    return "agent" if agent_tools else "chat"
+
 #: Bounds on the tool transcript handed to the artifact repair pass. The whole
 #: point is to give the repair the agent's own findings, but it rides in a
 #: prompt that is already ~27k chars, so the ceiling is deliberate and low:
@@ -676,6 +718,62 @@ async def run_agent(
                     "prism will inject minP=0.05 and a speculative-decoding "
                     "vLLM box will answer with an empty stream. Sync lazycat-sdk."
                 )
+
+        # ── Transport, derived from the agent's own declaration ────────────
+        # See transport_for(). A tool-less role pays ~5.5s of TTFT and two
+        # artifact failures in ten for a catalog it never touches.
+        if transport_for(enable_tools, agent_tools) == "chat":
+            from app.services.prism_agent_caller import chat_toolless
+
+            _active_agents.add(agent_name)
+            try:
+                _chat = await chat_toolless(
+                    provider=resolved_provider or "vllm",
+                    model=resolved_model,
+                    system_prompt=system_prompt,
+                    user_prompt=full_prompt,
+                    # Floor 4096: prism's ContextExhaustionGuard rejects any
+                    # request whose output budget is under MINIMUM_VIABLE_
+                    # OUTPUT_TOKENS, and callers legitimately pass small
+                    # budgets (call_prism_agent expresses those as a
+                    # conciseness directive instead, for the same reason).
+                    max_tokens=max(4096, int(max_tokens or 8192)),
+                    timeout_seconds=300.0,
+                )
+            finally:
+                _active_agents.discard(agent_name)
+
+            _text = _chat.get("response") or ""
+            # Same fail-closed marker check the /agent branch does: prism
+            # returns harness errors as ordinary assistant text, so without
+            # this the error string is booked as the agent's artifact.
+            from app.v3.model_shadow import _FAILURE_MARKERS
+            _head = _text.lstrip()[:500]
+            for _marker in _FAILURE_MARKERS:
+                if _marker in _head:
+                    _resolution_state["force_refresh"] = True
+                    raise RuntimeError(
+                        f"Prism chat error for {agent_name} (model "
+                        f"{resolved_model}): {_head[:200]}"
+                    )
+
+            from app.services.prism_agent_caller import strip_reasoning_leak
+            _text, _ = strip_reasoning_leak(_text, agent_name, reasoning_tokens=None)
+
+            _model_holder["model"] = _chat.get("model_used") or resolved_model
+            _model_holder["provider"] = _chat.get("provider") or resolved_provider
+            return (
+                _text,
+                int(_chat.get("tokens_used") or 0),
+                int((time.time() - t0) * 1000),
+                # /chat is single-shot: one loop, and the tool transcript stays
+                # empty because no tool ran. Reporting a higher count here would
+                # inflate the loop stats the box comparison is built on.
+                1,
+                {},
+                _chat.get("model_used") or resolved_model,
+                _chat.get("provider") or resolved_provider,
+            )
 
         agent = BaseAgent(**kwargs)
         if enable_tools and agent_tools:

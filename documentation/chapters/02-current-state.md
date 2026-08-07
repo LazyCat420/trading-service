@@ -9,6 +9,33 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-06 — the agent's tool declaration picks its transport
+
+`base_agent.transport_for(enable_tools, agent_tools)`: declared tools →
+`/agent`, none → `/chat`. The transport used to be hardcoded per call site, so
+the declaration and the route could disagree with nothing able to reconcile
+them — the gatekeeper's prompt instructs it to call `get_parameters`, its
+whitelist carries 14 tools, and its call site passed `enable_tools=False`.
+
+`/chat` is **not** a tool-less endpoint. Prism's `ChatRoutes` honours
+`functionCallingEnabled`/`enabledTools`, injects tool schemas into the system
+prompt, and executes calls through `ToolOrchestratorService`. The real
+difference is *who decides*: opt-in on `/chat`, server-side policy plus a
+forced agentic loop on `/agent`. So this routes on the declaration rather than
+preferring one endpoint outright.
+
+Fail-safe direction is deliberate: no input combination reaches `/agent`
+without a non-empty tool list, and every ambiguous case goes to `/chat` only
+when tools are absent. A tool-using agent on `/chat` silently loses its tools;
+a tool-less agent on `/agent` is merely slower.
+
+Also shipped: the gatekeeper is now **shadowable**. It does not run through
+`agent_runner`, which was the only place that dispatched a shadow, so
+`MODEL_SHADOW_AGENTS=v3_portfolio_manager` previously did nothing at all —
+silently. Every box comparison so far describes `v3_regime_engine`, a role
+whose tools show zero calls in 60 days; the gatekeeper is the tool-declaring
+case no measurement could reach.
+
 ## Shipped 2026-08-06 — `scripts/jetson_benchmark.py`
 
 Answers two questions that were previously re-derived from scratch every

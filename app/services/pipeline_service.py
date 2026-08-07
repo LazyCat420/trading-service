@@ -1237,6 +1237,50 @@ class PipelineService:
                             if _attempt == 2:
                                 result = _gatekeeper_unusable(f"call failed ({_gk_err})")
 
+                    # Shadow this exact prompt on a second box, off the critical
+                    # path. The gatekeeper does NOT go through agent_runner, so
+                    # it was structurally unshadowable: setting
+                    # MODEL_SHADOW_AGENTS=v3_portfolio_manager did nothing at
+                    # all, silently. That mattered because every box comparison
+                    # so far comes from v3_regime_engine — a role whose tools
+                    # show zero calls in 60 days — and the gatekeeper is the
+                    # tool-DECLARING case no measurement could reach.
+                    #
+                    # Dispatched only on a usable result, for the same reason
+                    # agent_runner does: shadowing a run the pipeline itself
+                    # could not handle compares the boxes on a broken input.
+                    try:
+                        if result and result.get("response"):
+                            from app.v3.model_shadow import (
+                                dispatch_shadow, shadow_endpoint_for,
+                            )
+                            _shadow_ep = shadow_endpoint_for(AGENT_NAME)
+                            if _shadow_ep:
+                                dispatch_shadow(
+                                    endpoint=_shadow_ep,
+                                    agent_name=AGENT_NAME,
+                                    ticker="WATCHLIST",
+                                    cycle_id=cycle_id,
+                                    bot_id=active_bot_id,
+                                    system_prompt=system_prompt,
+                                    user_prompt=user_prompt,
+                                    max_tokens=4096,
+                                    timeout_seconds=180.0,
+                                    primary={
+                                        "model_used": result.get("model_used"),
+                                        "provider": result.get("provider"),
+                                        "elapsed_ms": result.get("execution_ms"),
+                                        "tokens_used": result.get("tokens_used"),
+                                        "loops_used": result.get("loops_used"),
+                                        "response": result.get("response"),
+                                    },
+                                )
+                    except Exception as _shadow_err:  # noqa: BLE001 — a bench must never break the cycle
+                        logger.debug(
+                            "[PipelineService] gatekeeper shadow dispatch skipped: %s",
+                            _shadow_err,
+                        )
+
                     final_text = result.get("response", "{}")
                     logger.info("[PipelineService] Raw gatekeeper response: %s", final_text)
                     parsed = parse_json_response(final_text)
