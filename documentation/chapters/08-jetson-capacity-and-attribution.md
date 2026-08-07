@@ -54,11 +54,22 @@ straggler extractions landed by 13:32:38, then nothing for 99 minutes.
 
 ### The real constraint is that the job ends
 
-31,577 articles remained at the time of writing, ~32h at the old rate and ~16h
-at the new one. Standing inflow is only ~1,000 eligible articles/day — about
-**42/hr against a ~5,300/hr ceiling, under 1%**. The Jetson returns to idle
-roughly a day and a half after the backlog clears. "More jobs" is a question
-about that Sunday, not about contention today.
+31,577 articles remained at the time of writing, ~32h at the old rate. Standing
+inflow is only ~1,000 eligible articles/day — about **42/hr against a
+~5,300/hr ceiling, under 1%**. The Jetson returns to idle roughly a day and a
+half after the backlog clears. "More jobs" is a question about that Sunday, not
+about contention today.
+
+**Confirmed after deploy: 2,067 rows/hr** over a 12-minute window, against a
+clean concurrency-3 baseline of ~1,320/hr mean (best hour 1,457). That is +57%,
+and ~15h to drain rather than ~32h.
+
+Worth recording because it nearly caused a wrong revert: **batch wall time did
+not move** (39.5s / 46.7s / 33.2s / 30.0s at concurrency 6, against ~35s at
+concurrency 3), which read as "the change did nothing". It was a confound —
+prompt tokens per request rose from ~840 to ~1,367 in the same window, because
+the backlog drains newest-first and article length varies. Batch duration over
+a variable-size work unit is not a throughput measurement; rows/hour is.
 
 ## 2. The defect: a discriminator with five writers, two of which wrote
 
