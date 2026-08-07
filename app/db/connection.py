@@ -4,9 +4,21 @@ PostgreSQL Connection — Thread-safe connection pool.
 Uses psycopg3 (sync) with a connection pool. Schema auto-initialized on first use.
 
 Public API:
-    get_db()         → returns a PooledCursor that behaves like a standard DB-API cursor
+    get_db()         → a CONTEXT MANAGER yielding a PooledCursor. Always
+                       `with get_db() as db:` — the cursor exists only inside
+                       the block, and the connection returns to the pool on
+                       exit. `db = get_db()` hands back a
+                       `_GeneratorContextManager`, which has no `.execute`.
     get_write_lock() → asyncio.Lock (kept for safety, Postgres handles concurrency natively)
     close_db()       → shutdown the pool
+
+This docstring used to say "returns a PooledCursor that behaves like a standard
+DB-API cursor", and that is what `dossier_service` and `research_queue_service`
+were written against on 2026-08-07: both called `db = get_db()` then
+`db.execute(...)`, so every method raised `AttributeError` on its first
+statement. Nothing caught it because the autouse test fixture patched `get_db`
+with `MagicMock(return_value=cursor)` — which satisfies BOTH the correct and the
+incorrect usage. See tests/conftest.py.
 """
 
 import asyncio

@@ -172,8 +172,33 @@ def mock_db():
 
 @pytest.fixture(autouse=True)
 def patch_get_db(mock_db):
-    """Patch get_db() globally so no real DB connections are created."""
-    with patch("app.db.connection.get_db", return_value=mock_db), \
+    """Patch get_db() globally so no real DB connections are created.
+
+    THE SHAPE MATTERS AS MUCH AS THE ISOLATION
+    ------------------------------------------
+    This used to be `patch(..., return_value=mock_db)`, which made `get_db()`
+    hand back the cursor directly. The real `get_db` is a `@contextmanager`, so
+    that fixture accepted a contract production does not offer — and because
+    `mock_db` also carries `__enter__`/`__exit__`, BOTH of these passed:
+
+        db = get_db(); db.execute(...)      # broken in production
+        with get_db() as db: db.execute(...)  # correct
+
+    A fixture that passes for both states is not a check. It let
+    `dossier_service` and `research_queue_service` ship on 2026-08-07 with
+    `db = get_db()` in every method — an `AttributeError` on the first
+    statement of each — under a green suite.
+
+    So the fake is now shaped like the real thing: a context manager. The wrong
+    usage now fails here, which is the only reason it will not ship again.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _fake_get_db():
+        yield mock_db
+
+    with patch("app.db.connection.get_db", _fake_get_db), \
          patch("app.db.connection._ensure_pool"):
         yield mock_db
 

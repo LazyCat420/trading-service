@@ -4136,6 +4136,42 @@ def _create_persistent_research_tables(conn):
                 "CREATE INDEX IF NOT EXISTS idx_ticker_dossiers_state "
                 "ON ticker_dossiers (lifecycle_state)"
             )
+            # The question ledger. `ticker_dossiers.open_questions` is a JSONB
+            # list of strings — it holds the CURRENT set an agent should read,
+            # and it cannot answer "did research resolve anything", because a
+            # question that disappears from the list leaves no trace.
+            #
+            # One row per (ticker, question), stamped at ask time. This is the
+            # same shape that made SkillOpt measurable: record the governing
+            # fact when it governs, not by reconstructing it later.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS dossier_question_log (
+                    id              BIGSERIAL PRIMARY KEY,
+                    ticker          TEXT NOT NULL,
+                    question_hash   TEXT NOT NULL,
+                    question        TEXT NOT NULL,
+                    source_agent    TEXT,
+                    first_cycle_id  TEXT,
+                    first_asked_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    last_cycle_id   TEXT,
+                    last_asked_at   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    ask_count       INTEGER DEFAULT 1,
+                    status          TEXT NOT NULL DEFAULT 'open',
+                    resolved_at     TIMESTAMPTZ,
+                    resolved_cycle  TEXT,
+                    evidence_ref    TEXT,
+                    queue_item_id   TEXT,
+                    UNIQUE (ticker, question_hash)
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dossier_questions_status "
+                "ON dossier_question_log (status, last_asked_at DESC)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dossier_questions_ticker "
+                "ON dossier_question_log (ticker, status)"
+            )
             conn.commit()
     except Exception as e:
         try:

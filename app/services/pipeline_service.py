@@ -1473,6 +1473,26 @@ class PipelineService:
             except NameError:
                 pass  # scored_results not defined (e.g. fallback path)
 
+            # WORKLIST SHADOW — observation only. Records what the research
+            # queue WOULD have selected against what this cycle selected and
+            # against top_scorers[:N], so the queue-driven universe can be
+            # judged before it is ever acted on. Peeks; never pops.
+            try:
+                _shadow_scorers = top_scorers
+            except NameError:
+                _shadow_scorers = []  # explicit-ticker or fallback path
+            try:
+                from app.services.worklist_shadow import record as _record_worklist_shadow
+                _record_worklist_shadow(
+                    cycle_id=cycle_id,
+                    live_tickers=tickers,
+                    top_scorers=_shadow_scorers,
+                )
+            except Exception as _ws_err:
+                logger.warning(
+                    "[PipelineService] worklist shadow failed (non-fatal): %s", _ws_err
+                )
+
             # Set status to running now that gatekeeper is done
             cls._state.update({
                 "status": "running",
