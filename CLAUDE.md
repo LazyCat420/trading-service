@@ -5,35 +5,42 @@ file covers how a session should be run.
 
 ## Read this first
 
-`documentation/chapters/02-current-state.md` and `03-open-items.md` record what
-is already verified working and what is already known broken. Reading them
-first is how a session avoids spending its opening hour re-deriving either.
-`01-agent-pipeline.md` holds the invariants that cause outages when violated.
+**The documentation for this service lives in `trading-client/documentation/`,
+served at `http://10.0.0.16:8888/documentation`.** Read *Current state* and
+*Open items* there before starting; *From an agent call to an artifact* holds
+the harness invariants that cause outages when violated.
 
 ## Documentation is part of the work
 
-**Every report goes in `documentation/`, never into a hosted artifact.**
-Findings, architecture notes, status summaries, incident write-ups — all are
-chapters in `documentation/chapters/*.md`, rendered by:
+> **`trading-service/documentation/` was deleted on 2026-08-07.** It was copied
+> into no container, so ten chapters — the whole gatekeeper and Jetson thread —
+> were readable only by opening this repo. Two sessions independently
+> re-derived facts that were already written there, because the document could
+> not be opened. Every chapter was absorbed into `trading-client`, which is the
+> only `documentation/` in this stack that a server actually serves.
+
+**Every report goes in `trading-client/documentation/chapters/*.md`** — plans,
+findings, architecture notes, status summaries, incident write-ups — and never
+into a standalone markdown file or a hosted artifact. Write the chapter there
+and name this service in it; do not move the chapter to the code.
 
 ```bash
+cd ../trading-client
 python3 documentation/build_docs.py          # rebuild index.html
 python3 documentation/build_docs.py --check  # fail if the page is stale
+npm run deploy                               # the page serves the CONTAINER
 ```
 
-Markdown is the source of truth; `index.html` is generated and never
-hand-edited. Update the documentation **in the same change as the code**:
+A new chapter must also be listed in `documentation/chapters/_parts.json`; the
+build fails otherwise, so a chapter cannot exist without navigation to it.
+Update the documentation **in the same change as the code**:
 
-- shipped a fix → what it proved, with evidence, in `02-current-state.md`
-- found something broken → `03-open-items.md`, even if not fixing it now
-- diagnosed a failure → `04-incidents.md`; the reasoning outlives the patch
-- discovered an invariant → `01-agent-pipeline.md`
+- shipped a fix → what it proved, with evidence, in *Current state*
+- found something broken → *Open items*, even if not fixing it now
+- diagnosed a failure → *Incidents*; the reasoning outlives the patch
+- discovered an invariant → *From an agent call to an artifact*
 
-A hosted report expires from reach and cannot be corrected in place. A chapter
-is versioned beside the code it describes, greppable, and diffable.
-
-The full house style — page construction, diagram rules, writing standards —
-is in `trading-client/documentation/chapters/06-report-standards.md`.
+If it is not visible at that URL, it is not written down.
 
 ## Operational notes
 
