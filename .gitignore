@@ -62,4 +62,10 @@ scripts/test_v3_agent.py
 
 # EnterWorktree scratch worktrees (parallel sessions live here)
 .claude/worktrees/
+
+# The path parallel sessions actually use. Untracked, it blocks
+# guard_deploy for the whole time any sibling session holds a worktree.
+# (This Dockerfile COPYs named directories, so unlike trading-client's it
+# would not have shipped the checkout in the image.)
+.worktrees/
 backfill_blocked_labels_undo.json
