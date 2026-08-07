@@ -144,6 +144,78 @@ def summarize_ticker_results(results) -> dict:
     }
 
 
+def maybe_shadow_gatekeeper(
+    *, result: dict | None, agent_name: str, cycle_id: str, bot_id: str,
+    system_prompt: str, user_prompt: str, max_tokens: int = 4096,
+    timeout_seconds: float = 180.0,
+) -> bool:
+    """Shadow the gatekeeper's exact prompt on a second box. Never raises.
+
+    Returns True if a shadow was dispatched, so a test can tell "declined" from
+    "threw and was swallowed" — the shipped version was an inline `try` whose
+    only observable was a debug log, and every assertion about it had to be
+    made against the source text rather than the behaviour.
+
+    WHY IT LIVES HERE. The gatekeeper does not go through `agent_runner`, the
+    only place that dispatched a shadow, so it was structurally unshadowable:
+    `MODEL_SHADOW_AGENTS=v3_portfolio_manager` did nothing at all, silently.
+    That matters because every box comparison to date describes
+    `v3_regime_engine`, and the Jetson decision is waiting on gatekeeper rows.
+
+    TWO REFUSALS, both of which corrupt the comparison rather than break it:
+
+    * A DEGRADED result. `_gatekeeper_unusable` returns a synthetic response —
+      the scoring engine's top-N wearing the gatekeeper's shape — precisely so
+      a failure cannot read as a verdict downstream. It carries a non-empty
+      `response`, so the shipped `if result and result.get("response")` check
+      accepted it and would have compared the shadow box against the scoring
+      engine's fallback while the row claimed a gatekeeper primary. Those rows
+      are the ones the >=9-of-10 agreement rule would be computed over, and
+      four of them were produced on 2026-08-06 alone.
+    * No configured endpoint. Nothing to compare against.
+    """
+    try:
+        if not result or not result.get("response"):
+            return False
+        if result.get("degraded"):
+            logger.debug(
+                "[PipelineService] gatekeeper shadow skipped: primary degraded (%s)",
+                result.get("degraded_reason"),
+            )
+            return False
+
+        from app.v3.model_shadow import dispatch_shadow, shadow_endpoint_for
+
+        endpoint = shadow_endpoint_for(agent_name)
+        if not endpoint:
+            return False
+        dispatch_shadow(
+            endpoint=endpoint,
+            agent_name=agent_name,
+            ticker="WATCHLIST",
+            cycle_id=cycle_id,
+            bot_id=bot_id,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            primary={
+                "model_used": result.get("model_used"),
+                "provider": result.get("provider"),
+                "elapsed_ms": result.get("execution_ms"),
+                "tokens_used": result.get("tokens_used"),
+                "loops_used": result.get("loops_used"),
+                "response": result.get("response"),
+            },
+        )
+        return True
+    except Exception as shadow_err:  # noqa: BLE001 — a bench must never break the cycle
+        logger.debug(
+            "[PipelineService] gatekeeper shadow dispatch skipped: %s", shadow_err,
+        )
+        return False
+
+
 class PipelineService:
     _state = PipelineStateDB.default_state()
     _cycle_task = None
@@ -1181,10 +1253,19 @@ class PipelineService:
                             }])
                         except Exception as _evt_err:  # noqa: BLE001 — telemetry must not abort the cycle
                             logger.warning("[PipelineService] degraded-event emit failed: %s", _evt_err)
-                        return {"response": json.dumps({
-                            "selected_tickers": fallback_tickers,
-                            "rationale": f"Gatekeeper {why} — auto-selected by scoring engine",
-                        })}
+                        return {
+                            "response": json.dumps({
+                                "selected_tickers": fallback_tickers,
+                                "rationale": f"Gatekeeper {why} — auto-selected by scoring engine",
+                            }),
+                            # This response is the SCORING ENGINE's, wearing the
+                            # gatekeeper's shape so downstream parsing keeps
+                            # working. Anything that reads it as the model's
+                            # output is comparing against the wrong thing —
+                            # see maybe_shadow_gatekeeper, which declines it.
+                            "degraded": True,
+                            "degraded_reason": why,
+                        }
 
                     # ── Tool-less /chat, NOT /agent (2026-08-06) ──
                     # This agent wants strict JSON and passes no tools, but
@@ -1237,50 +1318,6 @@ class PipelineService:
                             if _attempt == 2:
                                 result = _gatekeeper_unusable(f"call failed ({_gk_err})")
 
-                    # Shadow this exact prompt on a second box, off the critical
-                    # path. The gatekeeper does NOT go through agent_runner, so
-                    # it was structurally unshadowable: setting
-                    # MODEL_SHADOW_AGENTS=v3_portfolio_manager did nothing at
-                    # all, silently. That mattered because every box comparison
-                    # so far comes from v3_regime_engine — a role whose tools
-                    # show zero calls in 60 days — and the gatekeeper is the
-                    # tool-DECLARING case no measurement could reach.
-                    #
-                    # Dispatched only on a usable result, for the same reason
-                    # agent_runner does: shadowing a run the pipeline itself
-                    # could not handle compares the boxes on a broken input.
-                    try:
-                        if result and result.get("response"):
-                            from app.v3.model_shadow import (
-                                dispatch_shadow, shadow_endpoint_for,
-                            )
-                            _shadow_ep = shadow_endpoint_for(AGENT_NAME)
-                            if _shadow_ep:
-                                dispatch_shadow(
-                                    endpoint=_shadow_ep,
-                                    agent_name=AGENT_NAME,
-                                    ticker="WATCHLIST",
-                                    cycle_id=cycle_id,
-                                    bot_id=active_bot_id,
-                                    system_prompt=system_prompt,
-                                    user_prompt=user_prompt,
-                                    max_tokens=4096,
-                                    timeout_seconds=180.0,
-                                    primary={
-                                        "model_used": result.get("model_used"),
-                                        "provider": result.get("provider"),
-                                        "elapsed_ms": result.get("execution_ms"),
-                                        "tokens_used": result.get("tokens_used"),
-                                        "loops_used": result.get("loops_used"),
-                                        "response": result.get("response"),
-                                    },
-                                )
-                    except Exception as _shadow_err:  # noqa: BLE001 — a bench must never break the cycle
-                        logger.debug(
-                            "[PipelineService] gatekeeper shadow dispatch skipped: %s",
-                            _shadow_err,
-                        )
-
                     final_text = result.get("response", "{}")
                     logger.info("[PipelineService] Raw gatekeeper response: %s", final_text)
                     parsed = parse_json_response(final_text)
@@ -1298,6 +1335,22 @@ class PipelineService:
                             f"returned no parseable selection ({str(final_text)[:160]!r})"
                         )
                         parsed = parse_json_response(result["response"]) or {}
+
+                    # Shadow this exact prompt on a second box, off the critical
+                    # path — the tool-DECLARING comparison no measurement could
+                    # reach before. Dispatched HERE, below the parse check,
+                    # rather than straight after the call: "usable" means the
+                    # primary produced a selection, and an unparseable primary
+                    # is one of the three routes into _gatekeeper_unusable.
+                    # maybe_shadow_gatekeeper declines all three.
+                    maybe_shadow_gatekeeper(
+                        result=result,
+                        agent_name=AGENT_NAME,
+                        cycle_id=cycle_id,
+                        bot_id=active_bot_id,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                    )
 
                     selected = parsed.get("selected_tickers", [])
                     rationale = parsed.get("rationale", "")

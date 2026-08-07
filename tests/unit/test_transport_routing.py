@@ -18,6 +18,7 @@ catalog it never touches.
 """
 
 import inspect
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -104,29 +105,119 @@ class TestItIsWiredIntoTheRealCallPath:
         assert "single-shot" in chat_branch
 
 
-class TestGatekeeperIsShadowable:
-    """It does not go through agent_runner, so it was structurally unshadowable
-    — MODEL_SHADOW_AGENTS=v3_portfolio_manager did nothing, silently."""
+class TestTheRouteIsTakenNotJustChosen:
+    """The class above asserts on source text; these drive the real function.
 
-    def test_pipeline_service_dispatches_a_gatekeeper_shadow(self):
+    A source assertion cannot tell a route that is computed from one that is
+    taken — and the transport reroute's first casualty was a test suite that
+    passed while making live network calls, because it patched only the seam
+    the code no longer used.
+    """
+
+    @staticmethod
+    async def _run(enable_tools: bool, tools: list | None):
+        from app.agents.base_agent import run_agent
+
+        with patch(
+            "lazycat.agent.AgentHarness"
+        ) as harness_cls, patch(
+            "app.services.prism_agent_caller.chat_toolless",
+            new_callable=AsyncMock,
+            return_value={
+                "response": '{"ok": true}', "tokens_used": 1, "loops_used": 1,
+                "model_used": "m", "provider": "vllm", "execution_ms": 5,
+            },
+        ) as chat, patch(
+            "app.agents.tool_whitelists.get_agent_tools", return_value=tools or [],
+        ), patch(
+            "app.services.prism_agent_caller.resolve_default_model_for_agent",
+            new_callable=AsyncMock,
+            return_value=("cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit", "vllm"),
+        ):
+            harness_run = AsyncMock(return_value='{"ok": true}')
+            harness_cls.return_value.run = harness_run
+            await run_agent(
+                agent_name="v3_junior_analyst", ticker="_AUDIT_TEST",
+                cycle_id="cycle-test", bot_id="bot-test",
+                system_prompt="s", user_prompt="u", enable_tools=enable_tools,
+            )
+        return chat.await_count, harness_run.await_count
+
+    @pytest.mark.asyncio
+    async def test_a_declared_tool_actually_reaches_the_harness(self):
+        chat_calls, harness_calls = await self._run(True, [{"name": "get_market_data"}])
+
+        assert harness_calls == 1, "a tool-using agent must run the agentic loop"
+        assert chat_calls == 0, "and must not be silently stripped of its tools"
+
+    @pytest.mark.asyncio
+    async def test_a_tool_less_call_actually_reaches_chat(self):
+        chat_calls, harness_calls = await self._run(False, [])
+
+        assert chat_calls == 1
+        assert harness_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_an_empty_whitelist_does_not_reach_the_harness(self):
+        """`enable_tools=True` with nothing to call is the case the truth table
+        settles in the abstract; this is it happening."""
+        chat_calls, harness_calls = await self._run(True, [])
+
+        assert chat_calls == 1
+        assert harness_calls == 0
+
+
+class TestTheGatekeeperIsStillOutsideThisRule:
+    """The role that motivated the change is the one it does not govern.
+
+    `transport_for` derives the route inside `run_agent`. The gatekeeper does
+    not call `run_agent` — `pipeline_service` calls `chat_toolless` directly
+    (1755c3d, a parallel session) — so its route is still hardcoded, and its
+    own declaration still disagrees with it: 13 tools whitelisted, a system
+    prompt whose rule 6 tells it to call `get_parameters`, and a transport
+    that cannot carry a tool call.
+
+    That is not a bug being hidden, it is the state of play: /chat is what
+    made the gatekeeper work again, and nothing has measured it WITH tools.
+    These tests exist so the contradiction is visible and asserted rather than
+    resting on a commit message, and so that whichever way it is resolved —
+    routing it through run_agent, or emptying the whitelist — a test has to be
+    updated deliberately.
+    """
+
+    def test_the_gatekeeper_declares_tools(self):
+        from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
+
+        assert AGENT_TOOL_WHITELISTS.get("v3_portfolio_manager"), (
+            "if this is now empty, the declaration finally matches the /chat "
+            "route — delete this class and say so in 02-current-state.md"
+        )
+
+    def test_by_its_declaration_it_would_route_to_agent(self):
+        from app.agents.tool_whitelists import AGENT_TOOL_WHITELISTS
+
+        tools = list(AGENT_TOOL_WHITELISTS["v3_portfolio_manager"])
+        assert transport_for(True, tools) == "agent"
+
+    def test_but_the_call_site_bypasses_the_rule_entirely(self):
+        """It calls the transport helper directly, so `transport_for` never
+        runs for this agent. Pinned because the fix and the bypass shipped
+        within hours of each other and only one of them is documented."""
         from app.services import pipeline_service
 
-        src = inspect.getsource(pipeline_service)
-        assert "dispatch_shadow(" in src
-        assert "shadow_endpoint_for(AGENT_NAME)" in src
+        src = inspect.getsource(pipeline_service.PipelineService)
+        assert "chat_toolless(" in src
+        assert "transport_for(" not in src
 
-    def test_the_shadow_cannot_break_the_cycle(self):
-        from app.services import pipeline_service
+    def test_so_the_shadow_compares_boxes_and_not_transports(self):
+        """Both sides tool-less is the ONE thing that keeps the comparison
+        honest: `model_shadow._prism_chat` is /chat, and so is the primary.
 
-        src = inspect.getsource(pipeline_service)
-        idx = src.index("shadow_endpoint_for(AGENT_NAME)")
-        window = src[idx - 1200:idx + 2000]
-        assert "except Exception" in window, "an unguarded bench can kill a cycle"
+        The cost is that n=10 gatekeeper rows will still describe a tool-less
+        job — the same limitation every prior box comparison had — so they
+        answer 'which box' and not 'what does the catalog cost'.
+        """
+        from app.v3 import model_shadow
 
-    def test_it_only_shadows_a_usable_result(self):
-        """Shadowing a run the pipeline could not handle compares the boxes on
-        an input that was already broken."""
-        from app.services import pipeline_service
-
-        src = inspect.getsource(pipeline_service)
-        assert 'if result and result.get("response"):' in src
+        src = inspect.getsource(model_shadow._prism_chat)
+        assert "chat_toolless" in src

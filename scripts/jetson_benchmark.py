@@ -233,12 +233,24 @@ def load_corpus(limit: int) -> list[dict]:
 
 # ── Transport arms ──────────────────────────────────────────────────────────
 async def call_chat(model: str, provider: str, item: dict, timeout: float) -> CallResult:
+    """Mirror `prism_agent_caller.chat_toolless`'s payload, field for field.
+
+    The arm is only worth anything if it sends what the desk sends: since
+    5f42260 every tool-less role goes down that helper, so a drift here means
+    the benchmark measures a request production does not make. Held by
+    `tests/unit/test_benchmark_parity.py`.
+    """
+    from app.agents.base_agent import min_p_for
+
     payload = {
         "model": model, "provider": provider, "project": settings.PROJECT_NAME,
         "systemPrompt": item["system_prompt"],
         "messages": [{"role": "user", "content": item["user_prompt"]}],
         "maxTokens": 8192, "thinkingEnabled": False,
     }
+    _min_p = min_p_for(provider, model)
+    if _min_p is not None:
+        payload["minP"] = _min_p
     return await _stream("/chat", payload, "chat", timeout)
 
 

@@ -9,6 +9,36 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Shipped 2026-08-06 (late) — the wave was verified, and it was not all correct
+
+The five commits below shipped green at 3,048 tests. Re-verifying them
+behaviourally — driving the code instead of asserting on its source text —
+found **two defects in the gatekeeper shadow**, both of which would have
+corrupted the n≥10 measurement the Jetson decision is waiting on rather than
+failing loudly:
+
+* the shadow fired on the **degraded fallback**, comparing the second box
+  against the scoring engine's top-N while the row claimed a gatekeeper
+  primary — reachable by three routes, four of which occurred on 2026-08-06;
+* `chat_toolless` returned no `execution_ms`, so every gatekeeper row would
+  have recorded **`primary_elapsed_ms = 0`**.
+
+Both fixed. The dispatch is now `pipeline_service.maybe_shadow_gatekeeper()`,
+which returns whether it fired so its refusals can be asserted.
+
+Also corrected: prism does **not** inject `minP=0.05` per endpoint. It applies
+its agent defaults inside `if (agent)` in the shared
+`prepareGenerationContext`, so the trigger is the **`agent` field in the
+payload**. `/chat` was safe only because `chat_toolless` omitted that field —
+and since the transport rule routes every tool-less role through it, that
+accident was guarding most of the desk. `chat_toolless` now sends `minP`
+explicitly, from the same `min_p_for` decision function as `/agent`.
+
+Live acceptance (`scripts/verify_shipped.py`, new): the Jetson answers with
+`min_p=0.0` **2/2 non-empty at 2,776 ms**, still returns **0/2** with the field
+omitted, and the production `/chat` helper answers in **535 ms**. Suite now
+3,105. Full account in [Verifying the 2026-08-06 wave](#verification).
+
 ## Shipped 2026-08-06 — the agent's tool declaration picks its transport
 
 `base_agent.transport_for(enable_tools, agent_tools)`: declared tools →

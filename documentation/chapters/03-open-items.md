@@ -170,6 +170,32 @@ a separate, deliberate change and should follow the shadow evidence, not
 precede it — routing a live decision onto a second box on the strength of one
 observation is how the earlier Jetson conclusions went wrong twice.
 
+## 1d. The gatekeeper's route is still not governed by its declaration
+
+`5f42260` made the transport derivable — declared tools → `/agent`, none →
+`/chat` — but `transport_for` runs inside `run_agent`, and **the gatekeeper
+does not call `run_agent`**. `pipeline_service` calls `chat_toolless` directly
+(`1755c3d`, a parallel session), so for the one agent that motivated the rule,
+the route is still hardcoded and still disagrees with the declaration: 13 tools
+whitelisted, a system prompt whose rule 6 tells it to call `get_parameters`,
+and a transport that cannot carry a tool call.
+
+This is not a regression — `/chat` is what made the gatekeeper work again, and
+nothing has ever measured it *with* tools. Two consequences worth holding:
+
+* The n≥10 shadow rows will describe a **tool-less** job, the same limitation
+  every prior box comparison had. They answer *which box*, not *what the
+  catalog costs*.
+* Resolving it means either routing the call through `run_agent` or emptying
+  the whitelist, and the two say different things about the role.
+
+`TestTheGatekeeperIsStillOutsideThisRule` in
+`tests/unit/test_transport_routing.py` asserts the contradiction, so either
+resolution requires updating a test deliberately rather than noticing later.
+
+Also still open from that commit: the `/chat`-is-tool-less line in
+`.agents/AGENTS.md` has not been amended to match the measurement.
+
 ## 1b. The Jetson has processed almost nothing since 2026-06-25
 
 Found while building the benchmark, and invisible on any live metrics page:

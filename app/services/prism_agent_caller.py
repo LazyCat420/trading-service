@@ -217,11 +217,13 @@ async def chat_toolless(
 
     Returns the same shape as `run_agent`'s result dict for the keys callers
     actually read: `response`, `tokens_used`, `loops_used`, `model_used`,
-    `provider`.
+    `provider`, `execution_ms`.
     """
     import json as _json
+    import time as _time
     import httpx
     from app.config import settings
+    from app.agents.base_agent import min_p_for
 
     url = f"{settings.PRISM_URL.rstrip('/')}/chat"
     payload = {
@@ -233,8 +235,25 @@ async def chat_toolless(
         "maxTokens": max_tokens,
         "thinkingEnabled": False,
     }
+    # minP is sent EXPLICITLY, not left to prism's default, even though this
+    # endpoint does not currently inject one.
+    #
+    # Prism applies `getAgentDefaults()` — which carries `minP: 0.05`, the
+    # value a speculative-decoding vLLM box answers with an empty stream after
+    # HTTP 200 — inside `if (agent)` in ChatRoutes.prepareGenerationContext.
+    # The trigger is the `agent` FIELD in the payload, not the endpoint: /chat
+    # and /agent share that code path, and /chat is safe here only because this
+    # payload happens to omit `agent`. Since 5f42260 routed every tool-less
+    # role through here, that accident guards most of the desk's LLM calls, and
+    # adding `agent` for persona attribution would silently re-open
+    # GATEKEEPER_DEGRADED on every local box. Sending the field makes the
+    # protection a property of this request instead of an omission.
+    _min_p = min_p_for(provider, model)
+    if _min_p is not None:
+        payload["minP"] = _min_p
     text_parts: list[str] = []
     done: dict = {}
+    _t0 = _time.monotonic()
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         async with client.stream("POST", url, json=payload) as resp:
             resp.raise_for_status()
@@ -262,6 +281,11 @@ async def chat_toolless(
         "loops_used": 1,
         "model_used": done.get("model"),
         "provider": done.get("provider"),
+        # run_agent's result dict carries this and callers read it. Without it
+        # the gatekeeper's shadow rows recorded primary_elapsed_ms=0 on every
+        # row — the primary reading as instant next to the shadow it is being
+        # compared against.
+        "execution_ms": int((_time.monotonic() - _t0) * 1000),
     }
 
 
