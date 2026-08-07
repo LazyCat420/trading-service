@@ -176,6 +176,19 @@ The deployment probe runs the check inside the container over `ssh`, and its
 first useful output was a red one — it correctly reported the NAS as behind
 this checkout while these fixes were still local.
 
+## Checked afterwards, because the first run only covered one box
+
+`verify_shipped.py` exercises the **Jetson**. The gatekeeper does not resolve
+there — `resolve_default_model_for_agent('v3_portfolio_manager')` returns
+`deepseek-v4-flash-0731 / vllm-2`, i.e. **Gold Spark** — so the box that would
+actually have broken if the new explicit `minP` were unwelcome was the one
+untested. Checked directly against the deployed helper: **21 chars in 528 ms,
+38 tokens**, clean JSON. Both boxes accept the field.
+
+The same pass found that `bot_id` is passed to `dispatch_shadow` by both call
+sites, accepted by `_run_and_record`, and then dropped — there is no such
+column. Pre-existing, does not affect the comparison, recorded as open item 1e.
+
 ## What is still not verified
 
 **The gatekeeper shadow has zero rows**, and nothing here changes that. The

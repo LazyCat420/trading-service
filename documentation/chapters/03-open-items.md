@@ -170,6 +170,34 @@ a separate, deliberate change and should follow the shadow evidence, not
 precede it — routing a live decision onto a second box on the strength of one
 observation is how the earlier Jetson conclusions went wrong twice.
 
+## 1e. `model_shadow_runs` cannot say which bot a comparison came from
+
+Found 2026-08-06 while verifying the shadow dispatch; **pre-existing, not from
+that wave**. Both call sites pass `bot_id` — `agent_runner.py:1597` and
+`pipeline_service.maybe_shadow_gatekeeper` — and `_run_and_record` accepts it
+in its signature. `_record` never puts it in the INSERT, and the table has no
+`bot_id` column at all:
+
+```
+id, cycle_id, ticker, agent_name, endpoint, primary_*, shadow_*,
+created_at, system_prompt, user_prompt
+```
+
+So every one of the 22 existing rows is unattributed, and the parameter is
+advertised at three levels while being dropped at the fourth — the same shape
+as the `endpoint_override` that sat dead in three signatures for months.
+
+It does not corrupt the box comparison: `cycle_id` is recorded, so a row can
+still be traced back to its cycle and the bot recovered by join. The cost is
+that the obvious query (`GROUP BY bot_id`) silently returns nothing, and a
+signature that takes an argument it discards invites the next caller to trust
+it.
+
+Two honest resolutions, and they say different things: **add the column** (a
+migration on a shared table) if per-bot attribution is wanted, or **drop the
+parameter** from `_run_and_record` and both call sites if it is not. Deciding
+by default — leaving it as-is — is the one option that keeps the lie.
+
 ## 1d. The gatekeeper's route is still not governed by its declaration
 
 `5f42260` made the transport derivable — declared tools → `/agent`, none →
