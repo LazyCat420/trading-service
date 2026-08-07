@@ -189,6 +189,38 @@ The same pass found that `bot_id` is passed to `dispatch_shadow` by both call
 sites, accepted by `_run_and_record`, and then dropped — there is no such
 column. Pre-existing, does not affect the comparison, recorded as open item 1e.
 
+## The shadow write path, proved without a cycle
+
+Everything downstream of the dispatch had only ever run for
+`v3_regime_engine`; the gatekeeper's own chain — `_run_and_record` → the
+Jetson call → `classify_shadow` → the INSERT — was still unexecuted, and the
+tests above cover it with `dispatch_shadow` mocked. So one real shadow was
+dispatched under the gatekeeper's name with a synthetic primary and a
+distinctive `cycle_id`:
+
+| field | value |
+|---|---|
+| `shadow_outcome` | `SUCCESS` |
+| `shadow_model` | `cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit` |
+| `shadow_elapsed_ms` / tokens | 2,058 ms / 167 |
+| `primary_elapsed_ms` | **1,234** — the synthetic value, arriving intact |
+| `system_prompt` / `user_prompt` | 148 / 116 chars, stored uncapped for replay |
+
+The Jetson returned a well-formed gatekeeper artifact (`{"selected_tickers":
+["NVDA","AMD"], "rationale": ...}`). `primary_elapsed_ms` is the point: before
+today that field was 0 on every row.
+
+The probe row was then deleted by `cycle_id` and the counts re-checked — 22
+rows total, 0 for the gatekeeper, `max(id)` 22, exactly as before. It is not
+in the n≥10 corpus.
+
+One thing the probe found on its own: `MODEL_SHADOW_AGENTS` is **empty in the
+local checkout** — the value lives only in the container's env, appended by
+`deploy.sh`. The first attempt therefore declined to dispatch, correctly. That
+is why `verify_shipped.py` reads the enrolment from inside the container over
+`ssh` rather than from local settings, which would always have said "not
+enrolled".
+
 ## What is still not verified
 
 **The gatekeeper shadow has zero rows**, and nothing here changes that. The

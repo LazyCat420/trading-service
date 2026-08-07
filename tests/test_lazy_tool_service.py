@@ -31,12 +31,17 @@ def register_test_tool():
 
     yield
 
-    # Clean up the registered tool after the test to prevent polluting registry
-    if "test_dummy_tool" in registry.tools:
-        del registry.tools["test_dummy_tool"]
-    registry.schemas = [s for s in registry.schemas if s["function"]["name"] != "test_dummy_tool"]
-    if "test_dummy_tool" in registry._meta:
-        del registry._meta["test_dummy_tool"]
+    # Clean up so the tool does not leak into the next test.
+    #
+    # This used to remove the three pieces by hand — `del registry.tools[...]`,
+    # a list comprehension over `registry.schemas`, `del registry._meta[...]` —
+    # which left `_schema_index` still pointing at the removed slot. The SECOND
+    # test in this file then raised IndexError at fixture setup, so both have
+    # been erroring since long before 2026-08-06. Worse than the crash: the
+    # comprehension shifts every later schema down one, so a stale index that
+    # stays in range resolves to a DIFFERENT tool and silently overwrites its
+    # schema. `unregister()` (lazycat-sdk 0.3.11) moves all four together.
+    registry.unregister("test_dummy_tool")
 
 
 @pytest.mark.asyncio
