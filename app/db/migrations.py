@@ -525,6 +525,9 @@ def run_migrations(conn):
     # ── Deterministic baseline score, shadow-only (2026-08-05) ──
     _create_decision_scores(conn)
 
+    # ── Persistent Research Firm: Ticker Dossiers & Queues ──
+    _create_persistent_research_tables(conn)
+
     # ── Autovacuum thresholds for the big tables ──
     _tune_autovacuum_for_large_tables(conn)
 
@@ -4087,3 +4090,56 @@ def _create_decision_scores(conn):
             conn.rollback()
         except Exception:
             pass
+
+
+def _create_persistent_research_tables(conn):
+    """
+    Creates tables for cross-cycle persistent research memory (dossiers)
+    and explicit research queues (lead, deep dive, monitor, exit review).
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticker_dossiers (
+                    ticker                 TEXT PRIMARY KEY,
+                    lifecycle_state        TEXT NOT NULL DEFAULT 'NEW',
+                    canonical_thesis       JSONB DEFAULT '{}',
+                    lead_analyst_id        TEXT,
+                    open_questions         JSONB DEFAULT '[]',
+                    monitoring_triggers    JSONB DEFAULT '{}',
+                    hold_spec              JSONB DEFAULT '{}',
+                    decision_history       JSONB DEFAULT '[]',
+                    attached_artifact_ids  JSONB DEFAULT '[]',
+                    created_at             TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    updated_at             TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS v3_research_queues (
+                    id             TEXT PRIMARY KEY,
+                    ticker         TEXT NOT NULL,
+                    queue_type     TEXT NOT NULL,
+                    priority       INTEGER DEFAULT 0,
+                    reason         TEXT,
+                    source_agent   TEXT,
+                    status         TEXT DEFAULT 'pending',
+                    payload        JSONB DEFAULT '{}',
+                    created_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    updated_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_queues_type_status "
+                "ON v3_research_queues (queue_type, status, priority DESC, created_at ASC)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ticker_dossiers_state "
+                "ON ticker_dossiers (lifecycle_state)"
+            )
+            conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
