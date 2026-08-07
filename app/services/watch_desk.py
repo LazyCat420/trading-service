@@ -439,7 +439,36 @@ def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
     PMI..." roundup stored under 5 tickers woke the LLY cycle 2026-08-02),
     and 'discarded' rows are scrape artifacts. NULL attribution (legacy) and
     'thin' quality stay eligible — dropping them would blind every watch on
-    pre-migration rows for 48h."""
+    pre-migration rows for 48h.
+
+    **THE 48h ASSUMPTION ABOVE WAS FALSE FOR FOUR DAYS, and NULL is admitted.**
+    The collector began writing `ticker_attribution` 2026-08-03 07:45, but
+    measured 2026-08-07 **74.4% of rows collected in the last 48 hours were
+    still NULL** (78% at 2-7 days) — because three of the five
+    `INSERT INTO news_articles` paths never wrote the column at all:
+    `news_api_rotator.py` x2 and this file's RSS feed writer. So the clause
+    below was not tolerating a shrinking set of legacy rows, it was admitting
+    three quarters of *current* ones, unscreened, into a trade-enabled wake.
+    All five writers populate it as of 2026-08-07; `test_every_news_insert_
+    writes_ticker_attribution` fails if a sixth appears without it.
+
+    NULL now means "collected before 2026-08-07" and nothing else, so this
+    clause self-closes once that date falls out of the `hours` lookback.
+    Do not tighten it to fail-closed before then — verify with:
+        SELECT count(*) FILTER (WHERE ticker_attribution IS NULL)
+        FROM news_articles WHERE collected_at >= NOW() - INTERVAL '48 hours';
+
+    **The vocabulary is now four values, and one of them is an open question.**
+    'detected' (we found the symbol in the text), 'query_fallback' (refused
+    here), 'general' (ticker IS NULL — cannot match this query's `ticker = %s`
+    either way), and **'provider'** — the vendor's own entity tagging, which
+    nothing has verified against the body. 'provider' rows PASS this filter, so
+    behaviour is unchanged from when they were silently NULL; the label only
+    makes the trust level visible for the first time. Whether a vendor claim
+    should arm a trade-enabled wake is now ANSWERABLE and not yet answered —
+    measure wake precision by `ticker_attribution` before tightening, because
+    excluding it blind could blind the desk far more than it protects it.
+    """
     try:
         with get_db() as db:
             rows = db.execute(

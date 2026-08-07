@@ -56,19 +56,50 @@ ENDPOINT: tuple[str, ...] = tuple(
     if k.strip()
 )
 
-# Articles per batch and how many run at once. Concurrency 3 against a measured
-# 6.5s median is ~28 articles/minute — comfortably ahead of the ~1,000/day
-# inflow while leaving the box responsive for its shadow-comparison calls.
+# Articles per batch and how many run at once.
+#
+# **6, because the box's knee is 8 — measured, not guessed.** On 2026-08-07 the
+# Jetson was load-tested by adding k concurrent streams ALONGSIDE this worker
+# and reading total throughput from its own `/metrics`:
+#
+#   +0   2,554 req/hr   406 prefill tok/s   3 running   0 queued
+#   +3   4,146 req/hr   751 prefill tok/s   6 running   0 queued
+#   +6   5,325 req/hr   911 prefill tok/s   8 running   1 queued
+#   +12  5,155 req/hr   904 prefill tok/s   8 running   7 queued   <- p50 doubles
+#
+# `num_requests_running` pins at exactly 8 and prefill throughput flatlines,
+# so past 8 concurrent the box only queues. It is compute-bound, not
+# memory-bound — `kv_cache_usage_perc` peaked at 12.7%, `num_preemptions_total`
+# is 0, and `gpu_memory_utilization` is 0.7 — so raising `max_num_seqs` or
+# handing vLLM more GPU memory would not move it.
+#
+# 6 is the largest setting measured with ZERO queueing, leaving 2 slots of
+# headroom. Do not raise it to 8: the in-cycle extractor and the gatekeeper
+# shadow also land on this box, and a queued shadow call times out into an
+# `AGENT_ERROR` that is indistinguishable from the model failing.
 _BATCH = int(os.getenv("NEWS_BACKFILL_BATCH", "24"))
-_CONCURRENCY = int(os.getenv("NEWS_BACKFILL_CONCURRENCY", "3"))
+_CONCURRENCY = int(os.getenv("NEWS_BACKFILL_CONCURRENCY", "6"))
 
 # Stand down while a trading cycle runs — see `_cycle_is_running`.
 YIELD_TO_CYCLE = os.getenv(
     "NEWS_BACKFILL_YIELD_TO_CYCLE", "true").lower() in ("1", "true", "yes")
 
 # Pause between batches, and the longer nap taken when the backlog is empty.
+#
+# The batch pause was 20s against a ~35s batch — a 36% idle duty cycle, visible
+# as the trailing zeros in a sampled `num_requests_running` trace:
+#     0000233332323333333233332331312311110000
+# At concurrency 6 a batch finishes in roughly half the time, so a 20s pause
+# would have thrown away most of what the extra concurrency bought.
+#
+# Shortening it does NOT weaken the cycle stand-down. `_cycle_is_running` is
+# checked once per batch, at the top, so what bounds an overrun is the in-flight
+# BATCH, never this pause — measured 2026-08-07: the cycle began at 13:32:01.5
+# and the last 15 straggler extractions all landed by 13:32:38, then nothing for
+# 99 minutes. A shorter pause only makes the worker notice sooner, in both
+# directions.
 _IDLE_SLEEP_S = float(os.getenv("NEWS_BACKFILL_IDLE_SLEEP_S", "300"))
-_BATCH_SLEEP_S = float(os.getenv("NEWS_BACKFILL_BATCH_SLEEP_S", "20"))
+_BATCH_SLEEP_S = float(os.getenv("NEWS_BACKFILL_BATCH_SLEEP_S", "10"))
 
 # Newest first. News relevance decays, so the marginal article worth extracting
 # is the recent one an agent might still be asked about — not the oldest row in

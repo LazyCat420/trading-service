@@ -643,8 +643,8 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP, %s, %s)
+                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP, %s, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         [
@@ -658,6 +658,11 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                             item["content_hash"],
                             _qs,
                             _qr,
+                            # This feed never inherits a queried ticker: the
+                            # `is_general` branch stores ticker=NULL rather than
+                            # falling back, so a ticker here was detected AND
+                            # passed `_is_article_relevant_to_ticker`.
+                            "general" if item.get("is_general") else "detected",
                         ],
                     )
                     count += 1

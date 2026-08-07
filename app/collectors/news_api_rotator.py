@@ -193,11 +193,18 @@ async def _persist_articles(
                 )
                 continue
 
-            # Use tickers from API if provided, otherwise detect from full text
+            # Use tickers from API if provided, otherwise detect from full text.
+            # These are two DIFFERENT provenances and must not share one label:
+            # 'provider' is the vendor's own entity tagging, which we have not
+            # verified against the body, while 'detected' means our own
+            # `_detect_tickers_in_text` found the symbol in the text. Collapsing
+            # them would put an unverified vendor claim behind the same mark the
+            # watch desk trusts to arm a trade-enabled wake.
             if article.tickers:
                 detected = rank_tickers_for_fanout(
                     article.tickers, requested_tickers, article.title
                 )
+                attribution = "provider"
             else:
                 full_text = f"{article.title} {summary}"
                 detected = rank_tickers_for_fanout(
@@ -205,6 +212,7 @@ async def _persist_articles(
                     requested_tickers,
                     article.title,
                 )
+                attribution = "detected"
 
             base_id = hashlib.md5(
                 f"{article.title}{article.published_at.isoformat()}".encode()
@@ -236,8 +244,8 @@ async def _persist_articles(
                     db.execute(
                         """
                         INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
+                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason, ticker_attribution)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
                         ON CONFLICT (id) DO NOTHING
                     """,
                         [
@@ -252,6 +260,12 @@ async def _persist_articles(
                             content_hash,
                             _qs,
                             _qr,
+                            # 'provider' or 'detected' per the branch above.
+                            # Either way it is never an inherited query ticker:
+                            # `rank_tickers_for_fanout` only reorders its input
+                            # and drops nothing, so `requested_tickers` cannot
+                            # add a symbol that was not already there.
+                            attribution,
                         ],
                     )
                     count += 1
@@ -261,8 +275,8 @@ async def _persist_articles(
                 db.execute(
                     """
                     INSERT INTO news_articles
-                    (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
+                    (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason, ticker_attribution)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 """,
                     [
@@ -277,6 +291,10 @@ async def _persist_articles(
                         content_hash,
                         _qs,
                         _qr,
+                        # `ticker` is NULL on this branch, so there is no
+                        # attribution to make. Recorded rather than left NULL so
+                        # that NULL keeps meaning "legacy row" and nothing else.
+                        "general",
                     ],
                 )
                 count += 1
