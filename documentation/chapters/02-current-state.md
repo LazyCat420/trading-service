@@ -9,6 +9,39 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## Where this stands at session close — 2026-08-06
+
+Deployed and verified: `trading-service@ad33518`, `trading-client@d22e328`,
+`lazycat-sdk 0.3.11`. Live acceptance **8 pass / 0 fail**, suites green
+(3,285 service · 161 SDK · 5 new client), containers healthy, `restarts=0`.
+
+**Fixed this session, each with a test that fails without it:**
+
+| what | commit |
+|---|---|
+| Gatekeeper shadow compared the box against the scoring engine's fallback | `f073679` |
+| Every shadow row booked `primary_elapsed_ms = 0` | `f073679` |
+| `/chat` relied on omitting a field for its sampling protection | `f073679` |
+| The shadow call site discarded the gatekeeper's tickers (**incident**) | `fd62533` |
+| A 5-min-cached model probe failed calls while holding the answer | `563b9ab` |
+| A stale schema index silently overwrote an unrelated tool | sdk `29e6107` |
+| The documentation was unopenable — no route, not in the image | client `210c925` |
+
+**Not fixed, and why:**
+
+- **The Jetson still has no role.** Nothing is wrong with it (20/20 valid on
+  `/chat`); assigning work is a trading-behaviour change that waits on shadow
+  evidence. Open items 1a, 1d.
+- **1 of 10 gatekeeper shadow rows**, and that one is an `AGENT_ERROR` from
+  the probe timeout since fixed. One row per cycle, so this accrues over days.
+- **The probe timeout itself is unexplained** — survivable now, not diagnosed
+  (item 1f).
+- **`/agent` loses ~2 in 10 artifacts to narration** (item 1h).
+- **`bot_id` is accepted and dropped** by the shadow recorder (item 1e).
+- **Config drift**: `config.py` defaults to the shim URLs, production `.env`
+  overrides to raw boxes. Documented in the client's cycle chapter, not
+  reconciled — changing endpoint routing at session end is not a safe edit.
+
 ## 2026-08-06 (night) — the Jetson measured, and the first real cycles run
 
 Run before putting anything near production, in this order: benchmark the box,
