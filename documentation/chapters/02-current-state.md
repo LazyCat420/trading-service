@@ -9,6 +9,68 @@ Verified **2026-08-05** against `master@8182868` deployed to the NAS.
   <div class="tile warn"><div class="label">Agent tool-turn timeouts</div><div class="value">12</div><div class="note">new concern, see open items</div></div>
 </div>
 
+## 2026-08-06 (night) — the Jetson measured, and the first real cycles run
+
+Run before putting anything near production, in this order: benchmark the box,
+answer the 42-day silence, then run a real cycle and read its log.
+
+### The box is healthy — n=10 × 4 arms, interleaved, real replayed prompts
+
+| arm | non-empty | valid artifact | median (warm) | cold |
+|---|---|---|---|---|
+| `chat` | 10/10 | **10/10** | **16.9 s** | 15.5 s |
+| `agent` | 10/10 | 7/10 | 75.8 s | 230.5 s |
+| `agent+tools` | 10/10 | 8/10 | 67.4 s | 24.8 s |
+| `agent-nominp` (known-bad) | **0/10** | 0/10 | 1.4 s | 1.4 s |
+
+Second independent n=10 on the same day, and `/chat` is **20/20 valid across
+both**. The `minP` control is **0/20** — deterministic, not flaky.
+
+The `/agent` losses are a *different* failure from the one that was fixed:
+`NON_JSON` at 24–30k characters and 205–230 s, i.e. the model narrating instead
+of emitting its artifact. Empty responses are gone; artifact discipline on
+`/agent` is not solved. That is an argument for the transport rule, not
+against the box.
+
+### What actually happened on 2026-06-25
+
+The documented story — "12,720 Jetson calls, then the box went dark" — was read
+off `llm_audit_logs`, and it is **an artefact of the desk stopping, not the
+Jetson failing**:
+
+* `dgx_spark` stops on the **same day** in the same table — and that box has
+  served every cycle since.
+* `cycle_run_summaries` shows **zero cycles between 06-21 and 07-13**. A
+  23-day desk-wide outage, matching the audit gap exactly.
+* The roles that used the Jetson — `ticker_validator` (2,515 calls),
+  `smart_janitor` (1,891), `summarizer_news` (1,512), `watchlist_curator`
+  (780), `voice_data_janitor`, `narrative_curator` — **no longer exist**. They
+  are the same names still hardcoded in the keyword routing list, which is why
+  that list "matches no live agent name" (open item 1a).
+
+So nothing on the box needs fixing before it can be trusted. **The workload was
+retired; the box was never broken.** What is missing is a role, and that is a
+deliberate decision, not a repair.
+
+### The cycles
+
+Two real cycles, queued as `START_CYCLE` on `v3_system_commands` so the NAS
+worker claims them (a local process would be an equal claimant — see the
+2026-08-05 outage).
+
+* `cycle-v3-1786072624` — the gatekeeper chose nine tickers and **the cycle
+  analysed one**. A regression shipped hours earlier; full write-up in
+  [Incidents](#incidents), fixed in `fd62533`.
+* `cycle-v3-1786074021` — gatekeeper chose eight, log reads *"Processing 8
+  tickers"*. Selection intact.
+
+The first-ever gatekeeper shadow row came from that second cycle, with
+`primary_elapsed_ms = 3605` — a real number where every row would have recorded
+0 before `f073679`. Its outcome was `AGENT_ERROR`, from a transient model-probe
+timeout; that path now degrades instead of failing (`563b9ab`), and the box was
+measured innocent: `/v1/models` answered **0/30 probes over 2 s**, median 9–10
+ms, idle *and* under 8 concurrent generations.
+
 ## Shipped 2026-08-06 (late) — the wave was verified, and it was not all correct
 
 The five commits below shipped green at 3,048 tests. Re-verifying them

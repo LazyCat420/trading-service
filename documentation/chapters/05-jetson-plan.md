@@ -39,6 +39,26 @@ That is now fixed and deployed.
 **The shadow only fires during a real cycle.** As of this writing there are
 **zero** gatekeeper shadow rows, because no cycle has run since the deploy.
 
+> **UPDATE 2026-08-06 (night).** Cycles have now been run and the dispatch
+> works, but the count is still effectively zero and three things below have
+> changed:
+>
+> * **The first row is `AGENT_ERROR`** — a transient model-probe timeout, not
+>   a model failure (open item 1f). Useful rows: **0 of 10**. Each cycle
+>   contributes one, so this is roughly ten cycles away, not ten minutes.
+> * **The rows will be tool-LESS after all.** The gatekeeper's call site
+>   bypasses `run_agent`, so `transport_for` never governs it, and both sides
+>   of the comparison run `/chat`. It answers *which box*, not *what the
+>   catalog costs* (open item 1d). The premise of this section — that the
+>   gatekeeper is the tool-declaring case — is **not** what the measurement
+>   will deliver.
+> * **"14 tools" is 13** as counted from `AGENT_TOOL_WHITELISTS`.
+>
+> Also settled: the 42-day silence was a **desk-wide outage**, not a Jetson
+> fault — zero cycles 06-21→07-13, `dgx_spark` stops on the same day, and the
+> roles that used the box were retired. Nothing needs repairing before the box
+> can take work; a role needs assigning. See `02-current-state.md`.
+
 ## Next session, in order
 
 ### 1. Collect gatekeeper shadow evidence (blocking everything else)

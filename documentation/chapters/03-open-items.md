@@ -198,6 +198,56 @@ migration on a shared table) if per-bot attribution is wanted, or **drop the
 parameter** from `_run_and_record` and both call sites if it is not. Deciding
 by default — leaving it as-is — is the one option that keeps the lie.
 
+## 1f. The first gatekeeper shadow failed on a probe, and the mechanism is unproven
+
+`cycle-v3-1786074021` produced the first real gatekeeper shadow row.
+Outcome: `AGENT_ERROR`.
+
+```
+VLLM endpoint offline: http://10.0.0.30:8000 (error: )
+```
+
+`(error: )` is the entire message of an httpx timeout, which stringifies to the
+empty string. The claim in it is false — the box was not offline:
+
+| probe of `/v1/models` | median | max | over the old 2 s budget |
+|---|---|---|---|
+| idle | 9 ms | 70 ms | **0/10** |
+| under 8 concurrent generations | 10 ms | 16 ms | **0/20** |
+
+So the load hypothesis is **refuted by measurement**, not waved away. The 2 s
+expired inside a container that was mid-cycle, which points at this process
+rather than the endpoint — but *why* is **not established**, and nothing here
+should be read as if it were. Candidates not yet separated: event-loop
+saturation during the analysis fan-out (there is precedent — a sync call inside
+an async function has blocked this service's healthcheck before), connection
+churn, or a NAS→Jetson network blip.
+
+`563b9ab` makes the mechanism matter less rather than pretending to know it: a
+failed refresh serves the last known model id for up to an hour, so a transient
+costs a refresh instead of a call. **It does not explain the timeout.** If
+`AGENT_ERROR` rows keep appearing with a populated stale-fallback warning in
+the log, the probe itself is the next thing to instrument.
+
+## 1g. Still only one gatekeeper shadow row — n≥10 is unchanged
+
+The blocking measurement in [the Jetson plan](#jetson-plan) is unmoved. One row
+exists and it is an error, so the useful count is **0 of 10**. Each real cycle
+contributes exactly one row, so this needs roughly ten cycles — the scheduler
+produces them on its own cadence, and nothing should be inferred before then.
+`n=3` cannot decide this; that has already cost one wrong conclusion.
+
+## 1h. `/agent` still loses ~2 in 10 artifacts to narration
+
+Across two independent n=10 runs on 2026-08-06, `/agent` scored 7/10 and 8/10
+valid while `/chat` scored 10/10 and 10/10. The failures are **not** the empty
+responses that were fixed — they are `NON_JSON` at 24–30k characters and
+205–230 s, the model narrating instead of emitting its artifact.
+
+This is a ceiling on any role that genuinely needs tools, since those must
+route to `/agent` (see 1d). It is unrelated to `minP` and will not be fixed by
+anything in that thread.
+
 ## 1d. The gatekeeper's route is still not governed by its declaration
 
 `5f42260` made the transport derivable — declared tools → `/agent`, none →
@@ -225,6 +275,16 @@ Also still open from that commit: the `/chat`-is-tool-less line in
 `.agents/AGENTS.md` has not been amended to match the measurement.
 
 ## 1b. The Jetson has processed almost nothing since 2026-06-25
+
+> **ANSWERED 2026-08-06, and the framing below is wrong.** The box did not go
+> dark — **the desk did**. `cycle_run_summaries` shows zero cycles between
+> 06-21 and 07-13, `dgx_spark` stops in `llm_audit_logs` on the same day as
+> jetson, and the roles that generated those 12,720 calls (`ticker_validator`,
+> `smart_janitor`, `summarizer_news`, `watchlist_curator`, …) were retired and
+> no longer exist. They are the same names still hardcoded in the keyword
+> routing list, which is exactly why that list matches nothing today. There is
+> no Jetson fault to find; there is a role to assign. Evidence in
+> `02-current-state.md`.
 
 Found while building the benchmark, and invisible on any live metrics page:
 

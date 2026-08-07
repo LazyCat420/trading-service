@@ -1,5 +1,63 @@
 # Incidents
 
+## 2026-08-06 — A bench "off the critical path" threw away the desk's stock selection
+
+`cycle-v3-1786072624`, the first real cycle run after the transport wave. The
+gatekeeper worked perfectly and chose nine tickers with a written rationale:
+
+> FB, CPS, GEN, RNGR, MU, RDDT, ASML, USFR, MSBT — *"high relative volume and
+> fresh institutional/trending catalysts…"*
+
+The next line in the log:
+
+```
+ERROR [PipelineService] Portfolio screener failed, falling back to AAPL:
+cannot access local variable 'active_bot_id' where it is not associated with a value
+```
+
+The cycle analysed **one hardcoded ticker** and reported success.
+
+### Cause
+
+`maybe_shadow_gatekeeper(..., bot_id=active_bot_id, ...)` referenced a local
+that is first assigned **~250 lines further down the same function**. Python
+evaluates arguments **at the call site**, before the callee is entered — so the
+`UnboundLocalError` never reached the `try` inside the helper, which exists
+precisely to keep a bench from touching the cycle. The screener's own handler
+caught it and degraded.
+
+Two things made it invisible:
+
+* **Every unit test passed**, and still would: they all call the helper
+  directly, so none of them ever evaluates the pipeline's argument list.
+* The `5f42260` version had the *same* unbound reference, but inline, inside a
+  `try` that swallowed it. There the bug was a silent no-op — the shadow simply
+  never fired. Extracting the helper in `f073679` moved argument evaluation
+  outside the guard and converted a silent no-op into a destructive one.
+
+### Fix — `fd62533`
+
+The signature no longer accepts anything the caller has to compute; the bot id
+is resolved **inside** the guard, where failing costs the bench and nothing
+else. (`_record` drops it anyway — see open item 1e. It was a required argument
+for a value the table has no column for.)
+
+The regression test parses the call site with `ast` and asserts every name in
+it is one the gatekeeper block owns. Put the old argument back and it fails.
+
+### What it cost, and what it says
+
+One cycle's ticker selection. Both cycles were paper-only, so no position was
+opened on the wrong symbol — `app/trading/paper_trader.py` is the sole
+execution path by architectural invariant.
+
+The lesson is the same one this repo keeps paying for and is worth stating
+plainly: **a guarded callee does not protect its own call site**, and a
+degraded decision still looks like a healthy cycle. It was caught only because
+a real cycle was run and its log was read line by line — the unit suite,
+the live acceptance check, and the deployed-container probe were all green
+through it.
+
 ## 2026-08-05 — Cycles processed 0–1 tickers while reporting success
 
 Three consecutive cycles appeared healthy in the client: one ticker, then zero,
