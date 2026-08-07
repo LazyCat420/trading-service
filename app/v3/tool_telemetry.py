@@ -40,7 +40,10 @@ def _hash_args(arguments: dict | None) -> str:
 # Prism renames every tool it registers. Strip before comparing to a whitelist
 # or every call looks non-compliant (this exact artifact produced a "zero
 # whitelisted tools are used by any agent" misread on 2026-07-25).
-_MCP_PREFIX = "mcp__lazy-tool-service__"
+# Both spellings, because the service was renamed lazy-tool-service ->
+# lazy-agent-service and prism mints this prefix from ITS registration name, so
+# which one arrives depends on which scope the call came through.
+from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
 
 # Framework-injected; never on an agent whitelist by design.
 #
@@ -89,9 +92,7 @@ def _canary_check(agent_name: str, tool_name: str) -> None:
     try:
         if not agent_name or not str(agent_name).startswith("v3_"):
             return
-        tool = str(tool_name or "")
-        if tool.startswith(_MCP_PREFIX):
-            tool = tool[len(_MCP_PREFIX):]
+        tool = strip_mcp_prefix(str(tool_name or ""))
         if not tool:
             # Empty tool names: 175 of these landed on 2026-07-13, all failures,
             # none since. Cheap to keep flagging — a silent malformed-dispatch

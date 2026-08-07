@@ -9,12 +9,10 @@ logger = logging.getLogger(__name__)
 MIN_TOOLS_FLOOR = 2
 
 # ── MCP prefixes to strip for canonical tool names ──
-# Must stay in sync with app/services/logging/tool_logging.py
-_MCP_PREFIXES = (
-    "mcp__lazy-tool-service__",
-    "mcp__lazy-tools__",
-    "mcp_",
-)
+# Was a local copy carrying a "Must stay in sync with tool_logging.py" comment.
+# It is now imported from one place, because a comment is not a mechanism: the
+# service was renamed and only some copies would have followed.
+from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
 
 # ── Reputation thresholds ──
 # Tools below these success rates get warnings injected into agent prompts
@@ -175,10 +173,7 @@ async def optimize_agent_tools(
             name = t
         if name:
             clean_name = name
-            for prefix in _MCP_PREFIXES:
-                if clean_name.startswith(prefix):
-                    clean_name = clean_name[len(prefix):]
-                    break
+            clean_name = strip_mcp_prefix(clean_name)
             tool_map[clean_name] = t
 
     if not tool_map:
@@ -233,10 +228,7 @@ async def optimize_agent_tools(
         name = (t.get("name") or t.get("function", {}).get("name")) if isinstance(t, dict) else str(t)
         if name:
             clean_name = name
-            for prefix in _MCP_PREFIXES:
-                if clean_name.startswith(prefix):
-                    clean_name = clean_name[len(prefix):]
-                    break
+            clean_name = strip_mcp_prefix(clean_name)
             if clean_name not in pruned_names:
                 optimized_tools.append(t)
         else:
@@ -357,10 +349,7 @@ async def record_tool_optimization_usage(
             name = str(t)
         if name:
             clean_name = name
-            for prefix in _MCP_PREFIXES:
-                if clean_name.startswith(prefix):
-                    clean_name = clean_name[len(prefix):]
-                    break
+            clean_name = strip_mcp_prefix(clean_name)
             offered_names.append(clean_name)
 
     if not offered_names:
@@ -371,10 +360,7 @@ async def record_tool_optimization_usage(
     cleaned_used_names = set()
     for name in used_tool_names:
         clean_name = name
-        for prefix in _MCP_PREFIXES:
-            if clean_name.startswith(prefix):
-                clean_name = clean_name[len(prefix):]
-                break
+        clean_name = strip_mcp_prefix(clean_name)
         cleaned_used_names.add(clean_name)
 
     try:
@@ -520,10 +506,7 @@ async def mark_tools_as_used_by_prism(
             name = str(t)
         if name:
             clean_name = name
-            for prefix in _MCP_PREFIXES:
-                if clean_name.startswith(prefix):
-                    clean_name = clean_name[len(prefix):]
-                    break
+            clean_name = strip_mcp_prefix(clean_name)
             offered_names.append(clean_name)
 
     if not offered_names:

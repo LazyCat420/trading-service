@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.services.mcp_prefix import mcp_tool_name
+
 logger = logging.getLogger(__name__)
 
 def _discover_v3_agent_modules() -> list[str]:
@@ -158,12 +160,10 @@ async def register_v3_agents() -> dict[str, bool]:
             # V3 agents get ONLY their strict role-specific whitelists.
             # No dynamic tool discovery — discover_and_enable_tools caused
             # agents to pull in 766 tools and blow the 262k context limit.
-            prefixed_whitelist = []
-            for t in tool_whitelist:
-                if t.startswith("mcp__") or t.startswith("domain:"):
-                    prefixed_whitelist.append(t)
-                else:
-                    prefixed_whitelist.append(f"mcp__lazy-tool-service__{t}")
+            # `mcp_tool_name` passes `mcp__*` and `domain:` selectors through
+            # untouched and reads the emitted prefix from one place, so the
+            # lazy-tool-service -> lazy-agent-service rename lands by config.
+            prefixed_whitelist = [mcp_tool_name(t) for t in tool_whitelist]
             
             enabled_tools = prefixed_whitelist
 
@@ -234,7 +234,7 @@ async def register_v3_agents() -> dict[str, bool]:
                         name=agent_name,
                         identity=f"You are a core custom agent ({agent_name}) handling trading analysis and auxiliary tasks.",
                         guidelines=_V3_COMMON_GUIDELINES,
-                        enabled_tools=["mcp__lazy-tool-service__lazy_web_search"],
+                        enabled_tools=[mcp_tool_name("lazy_web_search")],
                         thinking_default=False,
                         # Same denylist: these auxiliary agents run in the same
                         # container and have even less reason to reach a shell.

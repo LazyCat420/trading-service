@@ -791,14 +791,23 @@ async def run_agent(
             # direct-vLLM path where tools are sent as real schemas.
             try:
                 from lazycat.llm import config as _lc_config
+                from app.services.mcp_prefix import mcp_tool_name
                 if getattr(_lc_config, "PRISM_ENABLED", False):
                     _plain = [
                         t.get("function", {}).get("name") or t.get("name")
                         for t in agent_tools
                     ]
                     for name in _plain:
-                        if name and not name.startswith("mcp__"):
-                            agent.add_tool({"name": f"mcp__lazy-tool-service__{name}"})
+                        # `mcp_tool_name` skips already-namespaced names and
+                        # reads the emitted prefix from one place, so the
+                        # lazy-tool-service -> lazy-agent-service rename does not
+                        # need an edit here. Advertising a prefix prism does not
+                        # route is not a soft failure: the model emits the name
+                        # it was given and prism cannot resolve it, which
+                        # surfaces as the agent claiming the tool is unavailable.
+                        aliased = mcp_tool_name(name)
+                        if aliased and aliased != name:
+                            agent.add_tool({"name": aliased})
             except Exception as alias_err:
                 logger.debug("[BaseAgent] MCP alias advertisement skipped: %s", alias_err)
 

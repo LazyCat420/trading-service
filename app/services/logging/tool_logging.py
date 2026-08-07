@@ -15,22 +15,17 @@ from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
-# Known MCP prefixes that should be stripped for canonical names
-_MCP_PREFIXES = (
-    "mcp__lazy-tool-service__",
-    "mcp__lazy-tools__",
-    "mcp_",
-)
+from app.services.mcp_prefix import strip_mcp_prefix
 
 
 def _normalize_tool_name(raw_name: str) -> str:
-    """Strip MCP transport prefixes to produce a canonical tool name."""
-    name = raw_name
-    for prefix in _MCP_PREFIXES:
-        if name.startswith(prefix):
-            name = name[len(prefix):]
-            break
-    return name
+    """Strip MCP transport prefixes to produce a canonical tool name.
+
+    The prefix list moved to `app.services.mcp_prefix` — it was duplicated here
+    and in `tool_optimizer.py`, which carried a "must stay in sync" comment
+    instead of an import.
+    """
+    return strip_mcp_prefix(raw_name)
 
 
 def log_tool_call(
