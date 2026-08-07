@@ -21,6 +21,21 @@ services:
       - YOUTUBE_COOKIES_FILE=/app/cookies.txt
       - USE_LAZY_TOOL_SERVICE=true
       - LAZY_TOOL_SERVICE_URL=http://10.0.0.16:5591
+      # Prism mints the wire prefix from its MCP registration NAME. On
+      # 2026-08-07 the server re-registered as `lazy-agent-service` in all
+      # three scopes and the `lazy-tool-service` rows were deleted, so prism
+      # no longer serves `mcp__lazy-tool-service__*` at all.
+      #
+      # This matters here because `prism_registration.py` builds each V3
+      # persona's `availableTools` with `mcp_tool_name()`. Left on the old
+      # default, every persona would be scoped to tool names that no longer
+      # exist — which does not raise, it just silently scopes an agent to
+      # nothing. Incoming names are unaffected: MCP_PREFIXES accepts all four
+      # spellings, and must keep doing so until every consumer has moved.
+      #
+      # It lives in compose, not .env, because deploy.sh overwrites the remote
+      # .env from vault-service on every deploy. Not a secret.
+      - MCP_EMIT_PREFIX=mcp__lazy-agent-service__
       # System logs (and the office client's /api/v1/system/stream feed) POST
       # here. Unset, it probes "trading-client:8888" first — a host that does
       # not resolve from this container — and only works via a hardcoded IP
