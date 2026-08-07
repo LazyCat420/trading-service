@@ -145,11 +145,25 @@ def summarize_ticker_results(results) -> dict:
 
 
 def maybe_shadow_gatekeeper(
-    *, result: dict | None, agent_name: str, cycle_id: str, bot_id: str,
+    *, result: dict | None, agent_name: str, cycle_id: str,
     system_prompt: str, user_prompt: str, max_tokens: int = 4096,
     timeout_seconds: float = 180.0,
 ) -> bool:
     """Shadow the gatekeeper's exact prompt on a second box. Never raises.
+
+    NOTE THE MISSING `bot_id`. It used to be a required argument, and the call
+    site passed `active_bot_id` — a local that is not bound until ~250 lines
+    LATER in the cycle. Arguments are evaluated at the CALL, outside this
+    function's `try`, so the UnboundLocalError escaped the guard entirely and
+    was caught by the screener's handler as "Portfolio screener failed,
+    falling back to AAPL". A bench meant to be off the critical path
+    **discarded the gatekeeper's nine selected tickers** and ran the cycle on
+    one hardcoded ticker instead (2026-08-06, cycle-v3-1786072624).
+
+    So the signature no longer accepts anything the caller has to compute. The
+    bot id is resolved INSIDE the guard, where a failure can only cost the
+    shadow. `_record` drops it anyway (open item 1e) — it was a required
+    argument for a value the table has no column for.
 
     Returns True if a shadow was dispatched, so a test can tell "declined" from
     "threw and was swallowed" — the shipped version was an inline `try` whose
@@ -178,7 +192,11 @@ def maybe_shadow_gatekeeper(
         if not result or not result.get("response"):
             return False
         if result.get("degraded"):
-            logger.debug(
+            # INFO, not DEBUG: the container does not emit DEBUG, so every
+            # refusal below was invisible in production — which is exactly how
+            # "no shadow row" read as "nothing happened" rather than "declined
+            # for a reason". One line per cycle is not noise.
+            logger.info(
                 "[PipelineService] gatekeeper shadow skipped: primary degraded (%s)",
                 result.get("degraded_reason"),
             )
@@ -188,13 +206,20 @@ def maybe_shadow_gatekeeper(
 
         endpoint = shadow_endpoint_for(agent_name)
         if not endpoint:
+            logger.info(
+                "[PipelineService] gatekeeper shadow skipped: %s is not in "
+                "MODEL_SHADOW_AGENTS", agent_name,
+            )
             return False
+
+        from app.services.bot_manager import get_active_bot_id
+
         dispatch_shadow(
             endpoint=endpoint,
             agent_name=agent_name,
             ticker="WATCHLIST",
             cycle_id=cycle_id,
-            bot_id=bot_id,
+            bot_id=get_active_bot_id(),
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=max_tokens,
@@ -1343,11 +1368,19 @@ class PipelineService:
                     # primary produced a selection, and an unparseable primary
                     # is one of the three routes into _gatekeeper_unusable.
                     # maybe_shadow_gatekeeper declines all three.
+                    #
+                    # EVERY argument here is bound above. It passed
+                    # `bot_id=active_bot_id` until 2026-08-06, and that local is
+                    # not assigned until ~250 lines further down — arguments are
+                    # evaluated at the call site, OUTSIDE the callee's guard, so
+                    # the UnboundLocalError escaped and the screener's handler
+                    # swallowed it as "falling back to AAPL". The gatekeeper had
+                    # already chosen nine tickers. See
+                    # test_gatekeeper_shadow_dispatch.TestTheCallSiteCannotRaise.
                     maybe_shadow_gatekeeper(
                         result=result,
                         agent_name=AGENT_NAME,
                         cycle_id=cycle_id,
-                        bot_id=active_bot_id,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
                     )

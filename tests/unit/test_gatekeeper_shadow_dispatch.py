@@ -43,10 +43,11 @@ def _dispatch(result, endpoint="jetson"):
     """Run the helper with the shadow seam and config faked out."""
     calls = []
     with patch("app.v3.model_shadow.dispatch_shadow", side_effect=lambda **kw: calls.append(kw)), \
-         patch("app.v3.model_shadow.shadow_endpoint_for", return_value=endpoint):
+         patch("app.v3.model_shadow.shadow_endpoint_for", return_value=endpoint), \
+         patch("app.services.bot_manager.get_active_bot_id", return_value="bot-test"):
         fired = maybe_shadow_gatekeeper(
             result=result, agent_name="v3_portfolio_manager",
-            cycle_id="cycle-test", bot_id="bot-test",
+            cycle_id="cycle-test",
             system_prompt="sys", user_prompt="usr",
         )
     return fired, calls
@@ -136,7 +137,7 @@ class TestItCannotBreakTheCycle:
         ), patch("app.v3.model_shadow.shadow_endpoint_for", return_value="jetson"):
             fired = maybe_shadow_gatekeeper(
                 result=GOOD, agent_name="v3_portfolio_manager",
-                cycle_id="c", bot_id="b", system_prompt="s", user_prompt="u",
+                cycle_id="c", system_prompt="s", user_prompt="u",
             )
 
         assert fired is False
@@ -147,7 +148,7 @@ class TestItCannotBreakTheCycle:
         ):
             fired = maybe_shadow_gatekeeper(
                 result=GOOD, agent_name="v3_portfolio_manager",
-                cycle_id="c", bot_id="b", system_prompt="s", user_prompt="u",
+                cycle_id="c", system_prompt="s", user_prompt="u",
             )
 
         assert fired is False
@@ -183,6 +184,108 @@ class TestItIsWiredIntoTheCycle:
 
         deploy = Path(__file__).resolve().parents[2] / "deploy.sh"
         assert "v3_portfolio_manager" in deploy.read_text()
+
+
+class TestTheCallSiteCannotRaise:
+    """A guarded callee does NOT protect its own call site.
+
+    2026-08-06, cycle-v3-1786072624: the call passed `bot_id=active_bot_id`, a
+    local first assigned ~250 lines later. Arguments are evaluated before the
+    function is entered, so the UnboundLocalError never reached the `try`
+    inside `maybe_shadow_gatekeeper` — it propagated out of the gatekeeper
+    block and was caught by the screener's handler as
+
+        Portfolio screener failed, falling back to AAPL:
+        cannot access local variable 'active_bot_id'
+
+    The gatekeeper had already returned nine tickers. A bench that is
+    "off the critical path" replaced the desk's stock selection with one
+    hardcoded symbol, and the cycle went green.
+
+    Every unit test in this file passed throughout, because they all call the
+    helper directly — none of them evaluate the pipeline's argument list. So
+    this reads the call site itself.
+    """
+
+    @staticmethod
+    def _call_site_arg_names() -> set[str]:
+        import ast
+        import inspect
+        import textwrap
+
+        from app.services import pipeline_service
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(pipeline_service.PipelineService)))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "maybe_shadow_gatekeeper"):
+                names = set()
+                for kw in node.keywords:
+                    names |= {
+                        n.id for n in ast.walk(kw.value) if isinstance(n, ast.Name)
+                    }
+                return names
+        raise AssertionError("no call to maybe_shadow_gatekeeper found")
+
+    def test_every_argument_is_a_name_bound_before_the_gatekeeper_runs(self):
+        """`system_prompt`/`user_prompt`/`cycle_id`/`result` are all built by
+        the gatekeeper block itself; `AGENT_NAME` is a constant. Anything else
+        is a variable from elsewhere in a 2,000-line function, and this test is
+        the reason to think twice about it."""
+        allowed = {"result", "AGENT_NAME", "cycle_id", "system_prompt", "user_prompt"}
+
+        assert self._call_site_arg_names() <= allowed, (
+            "the shadow call site references a name it does not own: "
+            f"{self._call_site_arg_names() - allowed}. Resolve it INSIDE "
+            "maybe_shadow_gatekeeper, where the guard can catch it."
+        )
+
+    def test_the_signature_does_not_ask_the_caller_for_a_bot_id(self):
+        """It was required, and `_record` drops it anyway (open item 1e) — a
+        mandatory argument for a value the table has no column for."""
+        import inspect
+
+        from app.services.pipeline_service import maybe_shadow_gatekeeper as f
+
+        assert "bot_id" not in inspect.signature(f).parameters
+
+    def test_the_helper_resolves_the_bot_id_itself(self):
+        _fired, calls = _dispatch(GOOD)
+
+        assert calls[0]["bot_id"] == "bot-test"
+
+    def test_a_failing_bot_id_lookup_costs_only_the_shadow(self):
+        """The lookup now happens inside the guard, so its failure mode is a
+        missing bench row rather than a missing ticker selection."""
+        with patch("app.v3.model_shadow.dispatch_shadow"), \
+             patch("app.v3.model_shadow.shadow_endpoint_for", return_value="jetson"), \
+             patch("app.services.bot_manager.get_active_bot_id",
+                   side_effect=RuntimeError("db down")):
+            fired = maybe_shadow_gatekeeper(
+                result=GOOD, agent_name="v3_portfolio_manager",
+                cycle_id="c", system_prompt="s", user_prompt="u",
+            )
+
+        assert fired is False
+
+
+class TestRefusalsAreVisibleInProduction:
+    """The container does not emit DEBUG, so a `logger.debug` refusal is
+    indistinguishable from the dispatch never being reached — which is exactly
+    how the failure above went unnoticed until the row count stayed at zero."""
+
+    def test_the_declined_paths_log_at_info(self):
+        import inspect
+
+        from app.services import pipeline_service
+
+        src = inspect.getsource(pipeline_service.maybe_shadow_gatekeeper)
+        head = src[:src.index("dispatch_shadow(")]
+        assert "logger.debug" not in head, (
+            "a refusal logged at DEBUG is invisible in the deployed container"
+        )
+        assert head.count("logger.info") >= 2
 
 
 @pytest.mark.parametrize("status,expected", [
