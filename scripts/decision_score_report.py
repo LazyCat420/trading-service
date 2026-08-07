@@ -113,11 +113,18 @@ def shadow() -> int:
     with get_db() as db:
         rows = db.execute(
             """
+            -- `do` is a RESERVED WORD in Postgres (the DO statement), so the
+            -- obvious alias for decision_outcomes is a syntax error and this
+            -- whole subcommand raised before it read a row. It shipped that
+            -- way in aac14ec and stayed dead until 2026-08-07, because the
+            -- only test on this file covers compute_decision_score, never the
+            -- reporter. `outcome` is not reserved.
             SELECT ds.band, ds.score, ds.baseline_confidence, ds.risk_reward,
-                   ds.board_action, ds.board_confidence, do.pnl_pct
+                   ds.board_action, ds.board_confidence, outcome.pnl_pct
               FROM decision_scores ds
-              LEFT JOIN decision_outcomes do
-                     ON do.cycle_id = ds.cycle_id AND do.ticker = ds.ticker
+              LEFT JOIN decision_outcomes outcome
+                     ON outcome.cycle_id = ds.cycle_id
+                    AND outcome.ticker = ds.ticker
              WHERE ds.score IS NOT NULL
             """
         ).fetchall()
@@ -136,6 +143,36 @@ def shadow() -> int:
     pairs = Counter((r[0], r[4] or "NO_DECISION") for r in rows)
     for (band, action), n in pairs.most_common():
         print(f"  {band:18} -> {action:12} {n:5}")
+
+    # ── Dispersion, paired ──────────────────────────────────────────────────
+    # This needs NO resolved outcomes, so it runs before the early return
+    # below — and it is the comparison that diagnosed the all-HOLD desk on
+    # 2026-08-07. Both numbers describe the SAME ticker in the SAME cycle off
+    # the SAME stored rows, so a difference in spread cannot be the market,
+    # the universe, or the data: only the thing that produced the number.
+    # Measured that day: baseline sd 13.76 over 28-84 with 10/74 at >=80,
+    # against board sd 4.73 over 55-74 with 0/74 at >=80 — and means that
+    # matched to within 0.2. The desk had not become uncertain, it had become
+    # unable to be certain.
+    paired = [(float(r[2]), float(r[5])) for r in rows
+              if r[2] is not None and r[5] is not None]
+    if len(paired) >= 10:
+        base = [p[0] for p in paired]
+        board = [p[1] for p in paired]
+        print(f"\nconfidence dispersion, paired on (cycle, ticker), n={len(paired)}")
+        for label, vals in (("baseline (free, deterministic)", base),
+                            ("board    (LLM)", board)):
+            print(f"  {label:32} mean={statistics.mean(vals):5.1f} "
+                  f"sd={statistics.pstdev(vals):5.2f} "
+                  f"range={min(vals):.0f}-{max(vals):.0f} "
+                  f">=80: {sum(1 for v in vals if v >= 80)}/{len(vals)}")
+        print(f"  mean gap (baseline - board): "
+              f"{statistics.mean(b - d for b, d in paired):+.1f} — a gap near "
+              f"zero with very different sd is a SCALE problem, not a "
+              f"disagreement about the names.")
+    else:
+        print(f"\nconfidence dispersion: only {len(paired)} paired rows — "
+              f"need 10 to say anything.")
 
     resolved = [r for r in rows if r[6] is not None]
     if len(resolved) < 30:

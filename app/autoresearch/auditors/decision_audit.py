@@ -408,18 +408,23 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
 def _backfill_cycle_summaries(db) -> None:
     db.execute(
         """
+        -- `do` is a RESERVED WORD in Postgres (the DO statement). This
+        -- backfill has therefore never run: it raises a SyntaxError on every
+        -- call, so `cycle_summaries.was_correct` and `.outcome_pnl` were never
+        -- populated from decision_outcomes. Found 2026-08-07 by the same scan
+        -- that caught the identical alias in scripts/decision_score_report.py.
         UPDATE cycle_summaries cs
         SET was_correct = CASE
-                WHEN do.outcome = 'WIN' THEN TRUE
-                WHEN do.outcome = 'LOSS' THEN FALSE
+                WHEN outcome.outcome = 'WIN' THEN TRUE
+                WHEN outcome.outcome = 'LOSS' THEN FALSE
                 ELSE NULL
             END,
-            outcome_pnl = do.pnl_pct
-        FROM decision_outcomes do
-        WHERE cs.ticker = do.ticker AND cs.action = do.action
-          AND do.resolved_at IS NOT NULL
-          AND do.outcome NOT IN ('CANCELED', 'DEGRADED_ARTIFACT') AND cs.was_correct IS NULL
-          AND cs.cycle_date >= do.created_at - INTERVAL '1 day' AND cs.cycle_date <= do.created_at + INTERVAL '1 day'
+            outcome_pnl = outcome.pnl_pct
+        FROM decision_outcomes outcome
+        WHERE cs.ticker = outcome.ticker AND cs.action = outcome.action
+          AND outcome.resolved_at IS NOT NULL
+          AND outcome.outcome NOT IN ('CANCELED', 'DEGRADED_ARTIFACT') AND cs.was_correct IS NULL
+          AND cs.cycle_date >= outcome.created_at - INTERVAL '1 day' AND cs.cycle_date <= outcome.created_at + INTERVAL '1 day'
         """
     )
 
