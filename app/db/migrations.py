@@ -4132,6 +4132,20 @@ def _create_persistent_research_tables(conn):
                 "CREATE INDEX IF NOT EXISTS idx_research_queues_type_status "
                 "ON v3_research_queues (queue_type, status, priority DESC, created_at ASC)"
             )
+            # The orphan path (2026-08-08, open item 14). A claim that is
+            # reclaimed and re-claimed forever is the stall it replaced wearing
+            # a different status, so the count is what makes a poison item
+            # terminal instead of invisible. Added separately from the CREATE
+            # because the table already exists in production.
+            cur.execute(
+                "ALTER TABLE v3_research_queues "
+                "ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0"
+            )
+            # `reclaim_stale` scans processing rows by age on every pop.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_queues_stale "
+                "ON v3_research_queues (status, updated_at)"
+            )
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ticker_dossiers_state "
                 "ON ticker_dossiers (lifecycle_state)"

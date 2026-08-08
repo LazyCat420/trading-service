@@ -37,24 +37,35 @@ from app.db.connection import get_db
 
 
 def _is_blocked_ticker(ticker: str) -> bool:
-    """Pre-collection guard: reject tickers on the STATIC blocklist only.
+    """Pre-collection guard for an EXPLICITLY NAMED ticker.
 
-    Deliberately checks STATIC_FALSE_TICKERS, not the runtime-augmented
-    FALSE_TICKERS. The runtime auto-bans come from extraction verification
-    ("yfinance returned nothing, likely delisted") and from company_registry's
-    `rejected` rows — and a transient vendor outage on 2026-05-07 mass-banned
-    SPY, QQQ, IWM, SMH and 67 other real ETFs that way, permanently refusing
-    every explicit price fetch for them. A caller that names a ticker outright
-    (watchlist refresh, precollect, screener) is not extracting it from text
-    and gets only the hand-curated slang/acronym list.
+    Deliberately not the runtime-augmented FALSE_TICKERS. Those auto-bans come
+    from extraction verification ("yfinance returned nothing, likely delisted")
+    and from company_registry's `rejected` rows — and a transient vendor outage
+    on 2026-05-07 mass-banned SPY, QQQ, IWM, SMH and 67 other real ETFs that
+    way, permanently refusing every explicit price fetch for them.
+
+    Nor is it the STATIC slang list any more (2026-08-08). That argument was
+    right about the runtime list and stopped one step short: a caller that
+    names a ticker outright is not extracting it from prose, so "does this look
+    like a word" is the wrong question to ask about it. 124 of the slang list's
+    324 entries are currently listed US instruments — AppLovin, ServiceNow,
+    Allstate, Gartner, ON Semiconductor, Welltower — and every one of them was
+    being refused here while other vendors backfilled the recent tip, so the
+    damage was invisible to every freshness check and showed up only as depth:
+    48 bars against a 4,818-bar median.
+
+    `app/collectors/explicit_fetch_guard.py` holds the measurement and the
+    split. What survives is the 200 entries that are not listed anywhere, which
+    is what keeps `data_report`'s skip-not-outage classification working.
     """
-    try:
-        from app.processors.ticker_extractor import STATIC_FALSE_TICKERS
-        if ticker.upper() in STATIC_FALSE_TICKERS:
-            logger.warning("[yfinance] BLOCKED ticker '%s' — in FALSE_TICKERS", ticker)
-            return True
-    except ImportError:
-        pass
+    from app.collectors.explicit_fetch_guard import is_blocked_for_explicit_fetch
+
+    if is_blocked_for_explicit_fetch(ticker):
+        logger.warning(
+            "[yfinance] BLOCKED ticker '%s' — slang/acronym with no listing", ticker,
+        )
+        return True
     return False
 
 

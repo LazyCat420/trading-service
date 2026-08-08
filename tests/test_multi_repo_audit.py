@@ -154,26 +154,39 @@ class TestP2ToolSchemaSync(unittest.TestCase):
     """Verify tool_schemas.json is synchronized across repos."""
 
     def test_tool_schemas_match(self):
-        """tool_schemas.json must be identical in lazy-agent-service and trading-service."""
-        # The tool-server repo was renamed lazy-tool-service -> lazy-agent-service
-        # to match GitHub. Accept either so a checkout predating the rename still
-        # runs; the new name wins.
-        lazy_path = next(
-            (p for p in (
-                os.path.join(TRADING_SERVICE_ROOT, "..", d, "tool_schemas.json")
-                for d in ("lazy-agent-service", "lazy-tool-service")
-            ) if os.path.exists(p)),
-            os.path.join(TRADING_SERVICE_ROOT, "..", "lazy-agent-service",
-                         "tool_schemas.json"),
-        )
-        trading_path = os.path.join(
-            TRADING_SERVICE_ROOT, "tool_schemas.json"
-        )
+        """tool_schemas.json must be identical in lazy-agent-service and trading-service.
 
-        if not os.path.exists(lazy_path):
-            self.skipTest("lazy-tool-service/tool_schemas.json not found")
+        Locates the sibling repo through `tool_governance.catalog_path`, which
+        walks up rather than checking only the immediate parent. The old
+        single-level lookup skipped this whole class from a git worktree
+        (`sun/.worktrees/<name>/..` is `.worktrees/`, not `sun/`), and a
+        skipped invariant is indistinguishable from a passing one in a summary
+        line — which is how it was found on 2026-08-08.
+        """
+        from app.tools.tool_governance import catalog_path
+
+        lazy_path = None
+        for ancestor in ("..", "../.."):
+            for d in ("lazy-agent-service", "lazy-tool-service"):
+                p = os.path.join(TRADING_SERVICE_ROOT, ancestor, d, "tool_schemas.json")
+                if os.path.exists(p):
+                    lazy_path = p
+                    break
+            if lazy_path:
+                break
+
+        trading_path = os.path.join(TRADING_SERVICE_ROOT, "tool_schemas.json")
+
+        if lazy_path is None:
+            self.skipTest("lazy-agent-service/tool_schemas.json not found")
         if not os.path.exists(trading_path):
-            self.skipTest("trading-service/tool_schemas.json not found")
+            # Gitignored here, so a worktree has none — compare the sibling
+            # against whatever the service would actually load instead of
+            # skipping, which is the check this test is for.
+            resolved = catalog_path()
+            if resolved is None:
+                self.skipTest("no catalog reachable from this checkout")
+            trading_path = str(resolved)
 
         with open(lazy_path, "rb") as f:
             lazy_hash = hashlib.md5(f.read()).hexdigest()
@@ -202,10 +215,15 @@ class TestP2ToolSchemaSync(unittest.TestCase):
         Comparing against `load_split()` rather than re-running the build keeps
         this read-only — it must not silently repair the artifact it is guarding.
         """
-        flat_path = os.path.join(TRADING_SERVICE_ROOT, "tool_schemas.json")
-        if not os.path.exists(flat_path):
-            # Gitignored in this repo, so a fresh worktree simply has no copy.
-            self.skipTest("trading-service/tool_schemas.json not found")
+        from app.tools.tool_governance import catalog_path
+
+        # Gitignored here, so a worktree has no local copy — fall through to
+        # the catalog the service would actually load rather than skipping.
+        # A skipped staleness check reads exactly like a passing one.
+        resolved = catalog_path()
+        if resolved is None:
+            self.skipTest("no catalog reachable from this checkout")
+        flat_path = str(resolved)
 
         sys.path.insert(0, os.path.join(TRADING_SERVICE_ROOT, "scripts"))
         try:

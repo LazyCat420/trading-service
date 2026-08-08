@@ -144,7 +144,85 @@ def check_deployment(rep: Report, host: str, container: str) -> None:
 
 
 # ── 2. Does the live system still behave as diagnosed? ─────────────────────
-async def check_live(rep: Report, rounds: int) -> None:
+
+#: The production /chat helper cannot be imported on the host: it pulls in the
+#: lazycat SDK, which only the container has. Until 2026-08-08 this check was
+#: written as a host-side import and the script died on it at 6 of 7 —
+#: an abort is not a failure, but it is not a pass either, and a verifier that
+#: exits non-zero for an environmental reason trains a reader to ignore its
+#: exit code. Every other deployment check already runs in the container; so
+#: does this one now, which additionally makes it the *deployed* helper being
+#: measured rather than this checkout's copy.
+CHAT_PROBE = r"""
+import asyncio, json
+from app.services.prism_agent_caller import chat_toolless
+
+async def main():
+    out = await chat_toolless(
+        provider="vllm", model=__MODEL__,
+        system_prompt=__SYSTEM__, user_prompt=__USER__,
+        max_tokens=4096, timeout_seconds=180.0,
+    )
+    print("JSON:" + json.dumps({
+        "chars": len((out.get("response") or "").strip()),
+        "execution_ms": out.get("execution_ms"),
+        "model_used": out.get("model_used"),
+    }))
+
+asyncio.run(main())
+"""
+
+
+async def check_chat_helper(rep: Report, host: str, container: str,
+                            model: str) -> None:
+    """The production /chat helper itself, exercised inside the container."""
+    claim = "The production /chat helper returns content"
+
+    src = (CHAT_PROBE
+           .replace("__MODEL__", json.dumps(model))
+           .replace("__SYSTEM__", json.dumps(PROBE["system_prompt"]))
+           .replace("__USER__", json.dumps(PROBE["user_prompt"])))
+
+    def _run():
+        return subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=10", host,
+             f"sudo docker exec -i {container} python -"],
+            input=src, capture_output=True, text=True, timeout=300,
+        )
+
+    try:
+        proc = await asyncio.to_thread(_run)
+    except Exception as e:  # noqa: BLE001
+        rep.add(claim, WARN, f"could not reach {host}: {e}")
+        return
+
+    line = next(
+        (ln for ln in proc.stdout.splitlines() if ln.startswith("JSON:")), None
+    )
+    if not line:
+        rep.add(claim, FAIL,
+                f"probe produced no result: {(proc.stderr or proc.stdout)[-300:]}")
+        return
+
+    got = json.loads(line[5:])
+    if got["chars"]:
+        rep.add(claim, PASS, f"{got['chars']} chars in {got['execution_ms']}ms "
+                             f"via {got['model_used']}")
+    else:
+        rep.add(claim, FAIL, "empty response — this is the transport every "
+                             "tool-less role now uses")
+
+    claim = "…and it reports its own elapsed time"
+    if isinstance(got.get("execution_ms"), int) and got["execution_ms"] > 0:
+        rep.add(claim, PASS, "execution_ms is populated, so gatekeeper shadow rows "
+                             "will record a real primary latency")
+    else:
+        rep.add(claim, FAIL, f"execution_ms={got.get('execution_ms')!r} — every "
+                             "shadow row would book the primary at 0ms")
+
+
+async def check_live(rep: Report, rounds: int, host: str, container: str,
+                     skip_remote: bool) -> None:
     from app.config import settings
     from scripts.jetson_benchmark import call_agent, cycle_is_running, live_model
 
@@ -194,35 +272,15 @@ async def check_live(rep: Report, rounds: int) -> None:
                 "box no longer refuses it; the fix is now unfalsifiable here and "
                 "the diagnosis needs re-deriving before it is trusted again.")
 
-    # The production helper itself, not a copy of its payload.
-    from app.services.prism_agent_caller import chat_toolless
-
-    claim = "The production /chat helper returns content"
-    try:
-        out = await chat_toolless(
-            provider="vllm", model=model,
-            system_prompt=PROBE["system_prompt"], user_prompt=PROBE["user_prompt"],
-            max_tokens=4096, timeout_seconds=180.0,
-        )
-    except Exception as e:  # noqa: BLE001
-        rep.add(claim, FAIL, f"chat_toolless raised: {e}")
-        return
-
-    text = out.get("response") or ""
-    if text.strip():
-        rep.add(claim, PASS, f"{len(text)} chars in {out.get('execution_ms')}ms "
-                             f"via {out.get('model_used')}")
+    # The production helper itself, not a copy of its payload — and the
+    # deployed copy, not this checkout's.
+    if skip_remote:
+        rep.add("The production /chat helper returns content", INFO,
+                "skipped (--skip-remote): the helper imports the lazycat SDK, "
+                "which only the container has, so this check runs there or not "
+                "at all")
     else:
-        rep.add(claim, FAIL, "empty response — this is the transport every "
-                             "tool-less role now uses")
-
-    claim = "…and it reports its own elapsed time"
-    if isinstance(out.get("execution_ms"), int) and out["execution_ms"] > 0:
-        rep.add(claim, PASS, "execution_ms is populated, so gatekeeper shadow rows "
-                             "will record a real primary latency")
-    else:
-        rep.add(claim, FAIL, f"execution_ms={out.get('execution_ms')!r} — every "
-                             "shadow row would book the primary at 0ms")
+        await check_chat_helper(rep, host, container, model)
 
 
 def _median(xs: list[int]) -> int:
@@ -311,7 +369,8 @@ async def main() -> int:
     if args.skip_live:
         rep.add("Live behaviour", INFO, "skipped (--skip-live)")
     else:
-        await check_live(rep, args.rounds)
+        await check_live(rep, args.rounds, args.host, args.container,
+                         args.skip_remote)
 
     print("\n── Recorded state ──")
     check_database(rep)

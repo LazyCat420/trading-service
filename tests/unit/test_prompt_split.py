@@ -179,10 +179,37 @@ async def test_max_tokens_is_measured_not_constant():
     assert max_tokens == 8192
 
     # And a payload large enough to eat the window must reduce it.
+    #
+    # THE PAYLOAD MUST BE VARIED TEXT. This assertion was red on master for an
+    # unknown period with `"x" * 400_000`, annotated "~100k tokens against a
+    # 128k default window". It is not: BPE merges a run of identical characters
+    # into 8-char tokens, so o200k_base scores that string at **exactly 50,000
+    # tokens** — 400k chars of realistic prose is ~188,600. The payload fit the
+    # window with 60k to spare, `context_gate` correctly declined to squeeze,
+    # and the test condemned working code for it. Measured 2026-08-08.
+    from app.services.context_gate import measure_payload
     from app.v3.agent_runner import _safe_max_tokens
+
+    filler = "".join(
+        f"paragraph {i} concerning the quarterly filing and its footnotes. "
+        for i in range(9_000)
+    )
+
+    # The probe checks its own premise first. A payload that silently stopped
+    # being oversized would otherwise make the real assertion below vacuous —
+    # which is precisely the failure being fixed here.
+    measured = measure_payload(
+        [{"role": "system", "content": filler}, {"role": "user", "content": "y" * 40_000}],
+        None, "", 128_000,
+    )
+    assert measured.total_input_tokens > 128_000 - 8192, (
+        f"the probe is no longer oversized ({measured.total_input_tokens:,} tokens "
+        "against a 128k window) — it cannot test a squeeze it does not trigger"
+    )
+
     squeezed = _safe_max_tokens(
         agent_name="v3_junior_analyst",
-        system_prompt="x" * 400_000,   # ~100k tokens against a 128k default window
+        system_prompt=filler,
         user_prompt="y" * 40_000,
         tool_whitelist=None,
     )

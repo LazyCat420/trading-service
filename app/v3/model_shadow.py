@@ -82,6 +82,24 @@ def _ensure_shadow_table() -> None:
                 EXCEPTION WHEN others THEN NULL;
                 END $$;
             """)
+            # Which bot the comparison came from (2026-08-08, open item 1e).
+            # `bot_id` was accepted by `_run_and_record` and by both call
+            # sites, and dropped here — advertised at three levels, honoured at
+            # none, the same shape as the `endpoint_override` that sat dead in
+            # three signatures for months.
+            #
+            # The 22 pre-existing rows are backfilled to 'unknown' rather than
+            # left NULL: NULL reads as "not recorded yet" and would make the
+            # column look broken for as long as those rows survive, whereas
+            # 'unknown' says the row predates the column. `cycle_id` was always
+            # recorded, so those rows remain traceable by join if it matters.
+            db.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE model_shadow_runs ADD COLUMN IF NOT EXISTS bot_id TEXT;
+                    UPDATE model_shadow_runs SET bot_id = 'unknown' WHERE bot_id IS NULL;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
+            """)
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_model_shadow_agent
                 ON model_shadow_runs (agent_name, created_at)
@@ -155,16 +173,19 @@ def _record(row: dict) -> None:
             db.execute(
                 """
                 INSERT INTO model_shadow_runs (
-                    cycle_id, ticker, agent_name, endpoint,
+                    cycle_id, ticker, agent_name, endpoint, bot_id,
                     primary_model, primary_provider, primary_elapsed_ms,
                     primary_tokens, primary_loops, primary_text,
                     shadow_model, shadow_provider, shadow_elapsed_ms,
                     shadow_tokens, shadow_loops, shadow_outcome,
                     shadow_error, shadow_text, system_prompt, user_prompt
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     row["cycle_id"], row["ticker"], row["agent_name"], row["endpoint"],
+                    # 'unknown' rather than NULL when a caller omits it, so the
+                    # column never has two spellings for the same absence.
+                    row.get("bot_id") or "unknown",
                     row.get("primary_model"), row.get("primary_provider"),
                     row.get("primary_elapsed_ms") or 0, row.get("primary_tokens") or 0,
                     row.get("primary_loops") or 0, (row.get("primary_text") or "")[:_MAX_TEXT],
@@ -220,7 +241,7 @@ async def _run_and_record(
 
     base = {
         "cycle_id": cycle_id, "ticker": ticker, "agent_name": agent_name,
-        "endpoint": endpoint,
+        "endpoint": endpoint, "bot_id": bot_id,
         "primary_model": primary.get("model_used"),
         "primary_provider": primary.get("provider"),
         "primary_elapsed_ms": primary.get("elapsed_ms"),

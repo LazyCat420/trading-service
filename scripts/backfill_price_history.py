@@ -25,6 +25,7 @@ import logging
 import time
 
 from app.db.connection import get_db
+from app.collectors.explicit_fetch_guard import is_blocked_for_explicit_fetch
 from app.collectors.yfinance_collector import collect_price_history
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,16 @@ PACE_SECONDS = 1.2
 # transient failure — congress data reaches back to 2012 and a lot of those
 # symbols simply do not exist anymore. Retrying them every run wastes hours, so
 # they get parked as 'empty' and skipped unless --retry-failed is passed.
-TERMINAL_STATUSES = ("done", "empty")
+#
+# 'blocked' is NOT terminal in the same sense and is recorded separately
+# (2026-08-08). `collect_price_history` returns 0 both when the vendor has
+# nothing and when the guard refuses to ask, and this script wrote "no data
+# returned" for both. 50 real companies — Agilent, Allstate, AppLovin,
+# Alexandria Real Estate, DuPont — were parked as *absent* when they had in
+# fact been *refused*, and 'empty' being terminal meant no later run would ever
+# find out. A refusal recorded as a result is the failure shape this codebase
+# keeps paying for; the journal must say which one happened.
+TERMINAL_STATUSES = ("done", "empty", "blocked")
 
 
 def _ensure_progress_table():
@@ -120,22 +130,43 @@ def _record(ticker: str, status: str, rows_written: int = 0, error: str | None =
         )
 
 
-async def backfill(limit: int | None = None, retry_failed: bool = False) -> dict:
+async def backfill(limit: int | None = None, retry_failed: bool = False,
+                   tickers: list[str] | None = None) -> dict:
     _ensure_progress_table()
 
-    universe = _load_universe(limit)
-    done = _already_done(retry_failed)
-    todo = [t for t in universe if t not in done]
+    if tickers:
+        # An explicit list bypasses BOTH the universe query and the progress
+        # journal. The caller has named these, and the journal is exactly what
+        # a targeted run is usually there to correct — a symbol wrongly parked
+        # as 'empty' can only be reached by ignoring the parking.
+        universe = [t.upper().strip() for t in tickers if t.strip()]
+        done: set[str] = set()
+        todo = universe
+        logger.info("[backfill] explicit list of %d ticker(s) — journal ignored",
+                    len(todo))
+    else:
+        universe = _load_universe(limit)
+        done = _already_done(retry_failed)
+        todo = [t for t in universe if t not in done]
 
     logger.info(
         "[backfill] universe=%d already_done=%d todo=%d (~%.0f min)",
         len(universe), len(done), len(todo), len(todo) * PACE_SECONDS / 60,
     )
 
-    stats = {"done": 0, "empty": 0, "failed": 0, "rows": 0}
+    stats = {"done": 0, "empty": 0, "blocked": 0, "failed": 0, "rows": 0}
 
     for i, ticker in enumerate(todo, 1):
         try:
+            # Ask the guard BEFORE the fetch, so a refusal is journalled as a
+            # refusal. `collect_price_history` returns 0 for both, and reading
+            # that as "no data returned" is what parked 50 real companies as
+            # absent for good.
+            if is_blocked_for_explicit_fetch(ticker):
+                _record(ticker, "blocked", 0, "refused by the explicit-fetch guard")
+                stats["blocked"] += 1
+                continue
+
             # period="max" — grab the entire history in one request. Refetching
             # narrower windows later would cost another full pass over the
             # universe for data that never changes.
@@ -172,6 +203,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument(
+        "--tickers",
+        help="comma-separated symbols to backfill, ignoring the progress "
+             "journal. Use this to repair symbols wrongly parked as 'empty'.",
+    )
     args = parser.parse_args()
 
-    asyncio.run(backfill(limit=args.limit, retry_failed=args.retry_failed))
+    asyncio.run(backfill(
+        limit=args.limit,
+        retry_failed=args.retry_failed,
+        tickers=args.tickers.split(",") if args.tickers else None,
+    ))

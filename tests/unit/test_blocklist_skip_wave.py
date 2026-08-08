@@ -58,8 +58,25 @@ def test_runtime_ban_does_not_block_an_explicit_fetch():
 
 
 def test_static_entries_still_block_explicit_fetches():
-    assert _is_blocked_ticker("YOLO")
-    assert _is_blocked_ticker("yolo")
+    """Updated deliberately 2026-08-08 — it used to assert `YOLO`.
+
+    `YOLO` is the AdvisorShares Pure Cannabis ETF: a real, currently listed
+    instrument. The test was pinning the defect as correct, which is the shape
+    open item 7 records — a test that asserts the behaviour rather than the
+    contract cannot see the behaviour is wrong.
+
+    The contract is now "slang with no listing", so the assertion moves to a
+    token that is not a symbol anywhere. 124 of the slang list's 324 entries
+    turned out to be listed instruments; see
+    `app/collectors/explicit_fetch_guard.py`.
+    """
+    assert _is_blocked_ticker("CEO")
+    assert _is_blocked_ticker("ceo")
+
+    assert not _is_blocked_ticker("YOLO"), (
+        "YOLO is a listed ETF — refusing an explicit fetch for it is the "
+        "defect, not the guard working"
+    )
 
 
 def test_extraction_hard_block_still_honours_runtime_bans():

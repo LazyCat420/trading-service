@@ -3,6 +3,29 @@ Research Queue Service — Autonomous Worklist Scheduling plane.
 
 Manages explicit queues (lead_queue, deep_dive_queue, monitor_queue, exit_review_queue)
 and constructs balanced cycle worklists for agent processing.
+
+THE ORPHAN PATH (added 2026-08-08, open item 14). `pop_worklist` moves rows to
+`processing` and `complete_item` moves them to `completed`; a worker that dies
+between the two used to strand its items at `processing` forever. Worse, the
+dedupe in `enqueue_item` only looked at `pending`, so a stranded item did not
+block a new one — the failure surfaced as **silent duplicates rather than a
+visible stall**, which is the harder of the two to notice.
+
+This is open item 5 in a new place: `pipeline_state` could strand a cycle at
+`running`, and the fix there was to judge a real heartbeat rather than a start
+time. The same fix applies, with the same caveat made explicit: `updated_at` is
+a true heartbeat only for a worker that calls `heartbeat()`. For one that does
+not, it is the claim time, and `RECLAIM_AFTER_SECONDS` must then exceed the
+longest legitimate run or a live worker's item is requeued underneath it.
+
+**The guard is armed by `pop_worklist`, so a queue nothing pops neither strands
+nor reclaims.** That is the state today — the 7 items in `deep_dive_queue` have
+no consumer. The first consumer to land gets the orphan path already in place,
+which is the whole reason for doing this before it rather than after.
+
+A permanently poisonous item would otherwise requeue forever and silently: past
+`MAX_ATTEMPTS` a reclaim moves it to `failed` instead, so an item that cannot be
+processed becomes a visible terminal state rather than an invisible loop.
 """
 
 import json
@@ -15,6 +38,19 @@ from app.db.connection import get_db
 from app.schemas.dossier_schemas import QueueItem, QueueType
 
 logger = logging.getLogger(__name__)
+
+#: How long a row may sit at `processing` without a write before a reclaim
+#: takes it back. Deliberately generous: a research run decomposes, fans out to
+#: subagents and synthesizes, and the cost of the two errors is asymmetric — too
+#: short requeues an item underneath a live worker and duplicates real work, too
+#: long only delays recovery of an item nobody is holding. Workers that call
+#: `heartbeat()` are judged on a real heartbeat and can be reclaimed sooner.
+RECLAIM_AFTER_SECONDS = 1800
+
+#: After this many claims an item is failed rather than requeued. Without it a
+#: worker that dies on one specific item recreates the stall it was meant to
+#: fix, one reclaim at a time, with nothing to see in the queue depth.
+MAX_ATTEMPTS = 3
 
 
 class ResearchQueueService:
@@ -29,18 +65,26 @@ class ResearchQueueService:
         priority: int = 0,
         payload: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Enqueues a ticker item. Returns item ID. Deduplicates pending items for same ticker and queue."""
+        """Enqueues a ticker item. Returns item ID.
+
+        Deduplicates against `pending` **and** `processing`. An item a worker is
+        holding is still queued from the caller's point of view, and the
+        `pending`-only check meant a stranded row produced a silent duplicate
+        instead of a visible stall (open item 14).
+        """
         ticker = ticker.upper().strip()
 
         with get_db() as db:
             # Dedupe check
             existing = db.execute(
-                "SELECT id FROM v3_research_queues "
-                "WHERE ticker = %s AND queue_type = %s AND status = 'pending'",
+                "SELECT id, status FROM v3_research_queues "
+                "WHERE ticker = %s AND queue_type = %s "
+                "AND status IN ('pending', 'processing')",
                 [ticker, queue_type.value],
             ).fetchone()
             if existing:
-                logger.info("[queue] Ticker %s already pending in %s, skipping dedupe", ticker, queue_type.value)
+                logger.info("[queue] Ticker %s already %s in %s, skipping dedupe",
+                            ticker, existing[1], queue_type.value)
                 return existing[0]
 
             item_id = f"qitem-{uuid.uuid4().hex[:12]}"
@@ -146,17 +190,113 @@ class ResearchQueueService:
         Pulls a balanced worklist from active queues up to the total ticker budget.
         Priority order: exit_review_queue > monitor_queue > deep_dive_queue > lead_queue.
 
-        Claims what it returns: every returned row moves to `processing`. Use
-        `peek_worklist` for anything observational.
+        Claims what it returns: every returned row moves to `processing` and its
+        `attempts` counter increments. Use `peek_worklist` for anything
+        observational.
+
+        **Reclaims stale claims first.** This is where the orphan path is armed:
+        a queue nothing pops neither strands nor reclaims, so the guard costs
+        nothing until there is a consumer and is already in place when one
+        arrives.
         """
+        cls.reclaim_stale()
+
         with get_db() as db:
             worklist = cls._select(db, budget)
             for item in worklist:
                 db.execute(
-                    "UPDATE v3_research_queues SET status = 'processing', updated_at = NOW() WHERE id = %s",
+                    "UPDATE v3_research_queues "
+                    "SET status = 'processing', attempts = attempts + 1, updated_at = NOW() "
+                    "WHERE id = %s",
                     [item["id"]],
                 )
         return worklist
+
+    @classmethod
+    def heartbeat(cls, item_id: str) -> bool:
+        """Stamps a claim as still live. Returns False if the row is no longer
+        `processing` — i.e. it was reclaimed or completed underneath the caller.
+
+        A worker that ignores the return value is a worker that keeps working on
+        an item somebody else now owns, which is the duplicate this whole path
+        exists to prevent. Without a caller, `updated_at` on a `processing` row
+        is the claim time, and `RECLAIM_AFTER_SECONDS` is sized for that case.
+        """
+        with get_db() as db:
+            row = db.execute(
+                "UPDATE v3_research_queues SET updated_at = NOW() "
+                "WHERE id = %s AND status = 'processing' RETURNING id",
+                [item_id],
+            ).fetchone()
+        if row is None:
+            logger.warning("[queue] heartbeat for %s found no processing row — "
+                           "the claim was reclaimed or completed elsewhere", item_id)
+        return row is not None
+
+    @classmethod
+    def reset_item(cls, item_id: str, reason: str = "worker handed it back") -> None:
+        """Explicitly returns a claimed item to `pending`.
+
+        For the case a worker can see: it caught an exception and knows it will
+        not finish. Cheaper and far more legible than waiting out
+        `RECLAIM_AFTER_SECONDS`.
+        """
+        with get_db() as db:
+            db.execute(
+                "UPDATE v3_research_queues SET status = 'pending', updated_at = NOW() "
+                "WHERE id = %s AND status = 'processing'",
+                [item_id],
+            )
+        logger.info("[queue] Reset %s to pending (%s)", item_id, reason)
+
+    @classmethod
+    def reclaim_stale(cls, timeout_seconds: int = RECLAIM_AFTER_SECONDS) -> Dict[str, List[str]]:
+        """Returns claims nobody is holding, and fails the ones that keep dying.
+
+        Judged on `updated_at`, never on `created_at`: the same heartbeat
+        judgement that closed open item 5, where a `started_at > 30min` rule
+        both skipped healthy cycles and force-reset live ones.
+
+        Counts come from `RETURNING`, not `rowcount` — the pooled cursor this
+        service uses does not carry one, and reading it silently reports zero
+        (`5cec538`).
+        """
+        requeued: List[str] = []
+        failed: List[str] = []
+        try:
+            with get_db() as db:
+                # Past MAX_ATTEMPTS first, so an item at the limit is failed by
+                # this pass rather than requeued by it and failed by the next.
+                failed = [r[0] for r in db.execute(
+                    "UPDATE v3_research_queues SET status = 'failed', updated_at = NOW() "
+                    "WHERE status = 'processing' "
+                    "AND updated_at < NOW() - make_interval(secs => %s) "
+                    "AND attempts >= %s RETURNING id",
+                    [timeout_seconds, MAX_ATTEMPTS],
+                ).fetchall()]
+
+                requeued = [r[0] for r in db.execute(
+                    "UPDATE v3_research_queues SET status = 'pending', updated_at = NOW() "
+                    "WHERE status = 'processing' "
+                    "AND updated_at < NOW() - make_interval(secs => %s) "
+                    "AND attempts < %s RETURNING id",
+                    [timeout_seconds, MAX_ATTEMPTS],
+                ).fetchall()]
+        except Exception as e:  # noqa: BLE001
+            # A reclaim that raises must not take the pop with it: the worst
+            # case without it is the stall this replaces, and the worst case
+            # with it is no worklist at all.
+            logger.warning("[queue] reclaim_stale failed: %s", e)
+            return {"requeued": [], "failed": []}
+
+        if requeued:
+            logger.warning("[queue] Reclaimed %d stale claim(s) after %ds: %s",
+                           len(requeued), timeout_seconds, requeued)
+        if failed:
+            logger.error("[queue] Failed %d item(s) after %d attempts — these were "
+                         "claimed and abandoned repeatedly: %s",
+                         len(failed), MAX_ATTEMPTS, failed)
+        return {"requeued": requeued, "failed": failed}
 
     @classmethod
     def complete_item(cls, item_id: str) -> None:
@@ -169,7 +309,13 @@ class ResearchQueueService:
 
     @classmethod
     def get_queue_summary(cls) -> Dict[str, int]:
-        """Returns count of pending items per queue type."""
+        """Returns count of pending items per queue type.
+
+        Pending only — this is the depth a pop would draw from, and
+        `worklist_shadow` stores it as `queue_depth`. Use `get_status_counts`
+        to see claims and failures; a summary that reported them together would
+        make a stalled queue read as a busy one.
+        """
         with get_db() as db:
             rows = db.execute(
                 "SELECT queue_type, COUNT(*) FROM v3_research_queues WHERE status = 'pending' GROUP BY queue_type"
@@ -178,3 +324,21 @@ class ResearchQueueService:
         for q_type, count in rows:
             summary[q_type] = count
         return summary
+
+    @classmethod
+    def get_status_counts(cls) -> Dict[str, Dict[str, int]]:
+        """`{queue_type: {status: n}}` across every status.
+
+        The observability half of the orphan path: a growing `processing` count
+        with a flat `completed` count is the stall, and nothing could see it
+        before.
+        """
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT queue_type, status, COUNT(*) FROM v3_research_queues "
+                "GROUP BY queue_type, status"
+            ).fetchall()
+        out: Dict[str, Dict[str, int]] = {qt.value: {} for qt in QueueType}
+        for q_type, status, count in rows:
+            out.setdefault(q_type, {})[status] = count
+        return out
