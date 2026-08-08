@@ -2,47 +2,38 @@ import asyncio
 import logging
 import json
 from app.db.connection import get_db, safe_jsonb
+from app.agents.whiteboard_sections import sort_key as _section_sort_key
+from app.agents.whiteboard_sections import (
+    ANNOTATIONS_ONLY,
+    SKIP,
+    render_mode,
+)
 
 logger = logging.getLogger(__name__)
 
-# Cap on the summarize() output injected into agent system prompts.
+# Cap on the summarize() output.
+#
+# UNCHANGED at 8,000 on purpose. The obvious response to "93% of boards
+# overflow" is to raise this, and the measurement says that is the wrong lever:
+# across 331 boards a 16,000-char cap still delivers only 10.9% of boards whole
+# and 60,000 is needed for 96%, because the median board holds 26,354 chars.
+# Dropping the duplicates instead (see `whiteboard_sections`) fits 331 of 331
+# boards inside this existing cap. The block got smaller, not bigger.
 _MAX_SUMMARY_CHARS = 8000
 # Per-section cap inside the summary. Without it, one fat section (the raw
 # tournament_result JSON runs 7-8KB) eats the whole global budget and the
 # global truncation silently drops every section after it.
+#
+# It does not bite on the collaboration sections this method now leads with:
+# every section measured over 1800 chars was a desk-carried artifact.
 _MAX_SECTION_CHARS = 1800
-# Injection order: decision-relevant sections first so the global cap can only
-# ever cost the tail. The old ORDER BY section ASC (alphabetical) meant
-# risk_flags and tournament_result — the sections the board most needs — were
-# always the first casualties of truncation. The v3 debate sections
-# (bull_argument, bear_rebuttal, debate_judge, valuation_report, signals) were
-# missing from this list entirely, so they sorted dead last and fell past the
-# 8000-char cap on every fat board — measured 08-04: the judge graded a debate
-# whose bull/bear claims were cut from its summary on 9 of 9 big-cycle tickers.
-_SECTION_PRIORITY = [
-    "final_decision",
-    "tournament_result",
-    "debate_judge",
-    "regime_classification",
-    "risk_flags",
-    "bull_argument",
-    "bear_rebuttal",
-    "signals",
-    "quant_report",
-    "fundamental_report",
-    "valuation_report",
-    "desk_note",
-    "consensus",
-    "trade_plan",
-    "market_context",
-]
 
-
-def _section_sort_key(section: str):
-    try:
-        return (0, _SECTION_PRIORITY.index(section), "")
-    except ValueError:
-        return (1, 0, section)  # unknown sections: after known ones, alphabetical
+# Section ordering and inclusion live in `whiteboard_sections`, which ranks by
+# CLASS (collaboration before duplicate) rather than by a hand-maintained list
+# of names. The list that used to live here went stale three times: the v3
+# debate sections were missing from it (fixed 08-04), and `bull_defense`,
+# `delta_report` and `trade_decision` were still missing on 08-08 — 73
+# `bull_defense` entries written, 0 ever delivered.
 
 class Whiteboard:
     """Central hub for inter-agent communication via a shared mutable document.
@@ -212,11 +203,19 @@ class Whiteboard:
             entry_id, author_agent, content_raw, version, edited_by = row
             content = safe_jsonb(content_raw) or {}
             
-            # Fetch annotations
+            # Annotations for this SECTION, across every version of it — same
+            # reason as in summarize(): an annotation written against v1 is
+            # still the dispute someone recorded, and dropping it when the
+            # author revises the entry silently empties the disagreement
+            # channel. Matching on the current entry id alone orphaned 20 of
+            # 518 measured notes.
             ann_rows = db.execute(
-                "SELECT author_agent, note, created_at FROM whiteboard_annotations "
-                "WHERE entry_id = %s ORDER BY created_at ASC",
-                [entry_id]
+                "SELECT a.author_agent, a.note, a.created_at "
+                "FROM whiteboard_annotations a "
+                "JOIN whiteboard_entries e ON e.id = a.entry_id "
+                "WHERE e.cycle_id = %s AND e.ticker = %s AND e.section = %s "
+                "ORDER BY a.created_at ASC",
+                [cycle_id, ticker, section]
             ).fetchall()
             
             annotations = [{"author": r[0], "note": r[1], "timestamp": r[2].isoformat() if r[2] else None} for r in ann_rows]
@@ -263,11 +262,25 @@ class Whiteboard:
 
         return True
 
-    async def summarize(self, ticker: str, cycle_id: str) -> str:
-        """Returns the full whiteboard state as a dense string for LLM injection."""
+    async def summarize(
+        self, ticker: str, cycle_id: str, *, for_agent_prompt: bool = False
+    ) -> str:
+        """The whiteboard as a dense string.
+
+        `for_agent_prompt=True` is the block injected into every v3 agent's
+        context. It drops the sections the SharedDesk already delivers by its
+        own path — see `whiteboard_sections.wanted_in_summary`. Measured
+        2026-08-08: those duplicates were 87% of everything this method
+        delivered, and they pushed the whiteboard's OWN payload past the cap on
+        93% of boards. `market_context` — written 312 times, mandatory in the
+        junior analyst's prompt — reached 0 of 39 downstream readers.
+
+        Default False: an explicit `whiteboard_read`/`whiteboard_summarize`
+        call asked for the board and gets the board.
+        """
         ticker = ticker.upper().strip()
         cycle_id = cycle_id.strip() if cycle_id else "default_cycle"
-        
+
         with get_db() as db:
             rows = db.execute(
                 "SELECT id, section, author_agent, content, version, edited_by FROM whiteboard_entries "
@@ -279,6 +292,33 @@ class Whiteboard:
                 return "" # Return empty so it doesn't take up tokens if there's no whiteboard
 
             rows = sorted(rows, key=lambda r: _section_sort_key(r[1]))
+
+            # Every annotation for this board in ONE query, keyed by SECTION
+            # rather than by entry id.
+            #
+            # Two fixes in one. It used to run a SELECT per section inside the
+            # render loop (15 round-trips per prompt build, on a pooled
+            # connection held for the whole render). And it used to match the
+            # CURRENT entry id only, so annotating an entry that was later
+            # rewritten orphaned the note permanently — 20 of 518 measured, and
+            # it grows with every rewrite, on a channel whose whole purpose is
+            # that "unwritten disagreement reads as consensus". `market_context`
+            # and `risk_flags` both reach v4 in production.
+            #
+            # The thread follows the section, so a dispute survives the author
+            # revising what it disputed. Nothing is mutated to achieve it: the
+            # annotation still points at the exact version it was written
+            # against, which is what makes the history honest.
+            ann_by_section: dict[str, list[tuple]] = {}
+            for sec, author, note in db.execute(
+                "SELECT e.section, a.author_agent, a.note "
+                "FROM whiteboard_annotations a "
+                "JOIN whiteboard_entries e ON e.id = a.entry_id "
+                "WHERE e.cycle_id = %s AND e.ticker = %s AND e.section = ANY(%s) "
+                "ORDER BY a.created_at ASC",
+                [cycle_id, ticker, [r[1] for r in rows]],
+            ).fetchall():
+                ann_by_section.setdefault(sec, []).append((author, note))
 
             # Shadow mode: the desk's compressed context is NOT the only way the
             # debate reaches the Board — the orchestrator also writes
@@ -301,7 +341,14 @@ class Whiteboard:
 
             for r in rows:
                 entry_id, section, author_agent, content_raw, version, edited_by = r
-                content = safe_jsonb(content_raw) or {}
+                ann_rows = ann_by_section.get(section, ())
+                mode = render_mode(
+                    section,
+                    for_agent_prompt=for_agent_prompt,
+                    has_annotations=bool(ann_rows),
+                )
+                if mode == SKIP:
+                    continue
 
                 # entry_id is printed so agents can whiteboard_annotate straight
                 # from this summary — prompts say "don't spend a turn re-reading",
@@ -310,29 +357,41 @@ class Whiteboard:
                 lines.append(f"\n## {section.upper()} (v{version}, entry_id={entry_id})")
                 lines.append(f"Authors: {', '.join(edited_by)}")
 
-                # Try to compress the output slightly to save tokens
-                if isinstance(content, dict) and "text" in content and len(content) == 1:
-                    body = content["text"]
-                else:
-                    body = json.dumps(content, indent=2)
-                if len(body) > _MAX_SECTION_CHARS:
-                    body = (
-                        body[:_MAX_SECTION_CHARS]
-                        + f"\n[... '{section}' truncated — whiteboard_read('{section}') for full content ...]"
+                if mode == ANNOTATIONS_ONLY:
+                    # The desk already delivered this artifact's body in its own
+                    # block; only the notes teammates left on it are unique to
+                    # the whiteboard. Say where the body went, so the header is
+                    # not read as an empty section.
+                    lines.append(
+                        f"(full text in the SharedDesk context above — "
+                        f"{len(ann_rows)} teammate note(s) on it:)"
                     )
-                lines.append(body)
+                else:
+                    # Try to compress the output slightly to save tokens
+                    content = safe_jsonb(content_raw) or {}
+                    if isinstance(content, dict) and "text" in content and len(content) == 1:
+                        body = content["text"]
+                    else:
+                        body = json.dumps(content, indent=2)
+                    if len(body) > _MAX_SECTION_CHARS:
+                        body = (
+                            body[:_MAX_SECTION_CHARS]
+                            + f"\n[... '{section}' truncated — whiteboard_read('{section}') for full content ...]"
+                        )
+                    lines.append(body)
 
-                ann_rows = db.execute(
-                    "SELECT author_agent, note FROM whiteboard_annotations "
-                    "WHERE entry_id = %s ORDER BY created_at ASC",
-                    [entry_id]
-                ).fetchall()
-                
                 if ann_rows:
                     lines.append("\n### Annotations:")
                     for ann in ann_rows:
                         lines.append(f"- [{ann[0]}]: {ann[1]}")
-                        
+
+            # Every section was skipped (an agent-prompt board carrying only
+            # desk-duplicated sections with no annotations on them). Return ""
+            # rather than a header promising a whiteboard and then showing an
+            # empty one — the caller injects nothing when this is empty.
+            if len(lines) == 1:
+                return ""
+
             lines.append("========================\n")
             summary = "\n".join(lines)
             # The summary is injected verbatim into every agent's system

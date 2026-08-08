@@ -837,7 +837,14 @@ async def run_v3_agent(
         # Current whiteboard summary (changes per agent within a cycle)
         try:
             from app.agents.whiteboard import whiteboard
-            wb_summary = await whiteboard.summarize(ticker=desk.ticker, cycle_id=cycle_id)
+            # for_agent_prompt=True drops the sections the SharedDesk already
+            # delivers in its own _KEEP block above. Those duplicates were 87%
+            # of this block and pushed the whiteboard's unique payload —
+            # market_context, signals, and the annotations — off the end of the
+            # 8,000-char cap on 93% of boards.
+            wb_summary = await whiteboard.summarize(
+                ticker=desk.ticker, cycle_id=cycle_id, for_agent_prompt=True
+            )
             if wb_summary:
                 dynamic_sections.append((6, wb_summary))
         except Exception as wb_err:

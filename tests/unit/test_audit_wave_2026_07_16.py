@@ -134,7 +134,13 @@ class TestReservedWhiteboardSections:
 
     @pytest.mark.asyncio
     async def test_collab_section_not_blocked_by_guard(self):
-        from app.tools.whiteboard_tools import _ORCHESTRATOR_SECTIONS
+        # `_ORCHESTRATOR_SECTIONS` (a hand-listed frozenset) became
+        # `_is_reserved` on 2026-08-08: the list named 11 sections against the
+        # desk's 13 artifact types, so valuation_report, bull_defense and
+        # delta_report were writable by any agent holding the tool. The
+        # guarantee under test is unchanged — collaboration sections are what
+        # agents are FOR — so this asserts it through the new entry point.
+        from app.tools.whiteboard_tools import _is_reserved
 
-        assert "market_context" not in _ORCHESTRATOR_SECTIONS
-        assert "consensus" not in _ORCHESTRATOR_SECTIONS
+        assert not _is_reserved("market_context")
+        assert not _is_reserved("consensus")

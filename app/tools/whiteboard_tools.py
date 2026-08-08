@@ -6,16 +6,25 @@ from app.agents.whiteboard import whiteboard
 
 logger = logging.getLogger(__name__)
 
-# Sections whose whiteboard writes drive the orchestrator's agent chain
-# (triage, debate dispatch, synth latch). Only the orchestrator itself may
-# author these: an agent writing e.g. 'final_decision' via this tool would
-# flip the synth-dispatch latch early and permanently suppress the board's
-# real decision.
-_ORCHESTRATOR_SECTIONS = frozenset({
-    "regime_classification", "desk_note", "fundamental_report", "quant_report",
-    "bull_argument", "bear_rebuttal", "debate_judge", "tournament_result",
-    "final_decision", "trade_decision", "task_queue",
-})
+def _is_reserved(section: str) -> bool:
+    """Sections an agent may NOT author — the pipeline owns them.
+
+    Writes to these drive the orchestrator's agent chain (triage, debate
+    dispatch, synth latch): an agent writing 'final_decision' through this tool
+    would flip the synth-dispatch latch early and permanently suppress the
+    board's real decision.
+
+    DERIVED, not listed. The hand-maintained list this replaced named 11
+    sections while the desk defines 13 artifact types, so `valuation_report`,
+    `bull_defense` and `delta_report` were writable by any agent holding the
+    tool — the guard's whole purpose, missed for three sections because a new
+    artifact type does not join a list in another file. Anything the desk
+    carries, plus the control sections, is reserved; collaboration sections are
+    what agents are for.
+    """
+    from app.agents.whiteboard_sections import CONTROL, COLLABORATION, classify
+
+    return classify(section) != COLLABORATION
 
 @registry.register(
     name="whiteboard_write",
@@ -54,7 +63,7 @@ async def whiteboard_write(ticker: str, section: str, content: str, author: str 
         # back to the agent's self-identification so whiteboard entries stay
         # attributable ("who claimed this?" was unanswerable for bridge writes).
         author_agent = author.strip()[:64]
-    if section in _ORCHESTRATOR_SECTIONS:
+    if _is_reserved(section):
         logger.warning(
             "[WhiteboardTool] BLOCKED write to reserved section '%s' by agent '%s' (%s)",
             section, author_agent, ticker,
@@ -83,7 +92,11 @@ async def whiteboard_write(ticker: str, section: str, content: str, author: str 
 
 @registry.register(
     name="whiteboard_read",
-    description="Read a section of the team's shared whiteboard for a given ticker. Pipeline artifact sections (written by the desk as it works): 'desk_note', 'fundamental_report', 'quant_report', 'valuation_report', 'bull_argument', 'bear_rebuttal', 'debate_judge', 'tournament_result', 'regime_classification', 'final_decision'. Collaboration sections written during research: 'market_context', 'risk_flags', 'signals'. Board-written only late in the cycle (empty before the decision): 'consensus', 'trade_plan'. Omit section to get the full whiteboard summary.",
+    # 'consensus' and 'trade_plan' were REMOVED from this list on 2026-08-08.
+    # They were advertised as readable and are written 13 and 6 times in 14
+    # days: 377 reads against them, 376 empty. An advertised surface that does
+    # not exist costs an agent turn every time it is believed.
+    description="Read a section of the team's shared whiteboard for a given ticker. Pipeline artifact sections (written by the desk as it works, and ALREADY in your context — read only to expand one the summary marked truncated): 'desk_note', 'fundamental_report', 'quant_report', 'valuation_report', 'bull_argument', 'bear_rebuttal', 'bull_defense', 'debate_judge', 'tournament_result', 'regime_classification', 'final_decision'. Collaboration sections, which ONLY exist here: 'market_context' (junior analyst), 'risk_flags' (fundamental analyst), 'signals' (quant analyst) — each is written by its author partway through the cycle, so a read before that author has run returns empty and is not an error. Omit section to get the full whiteboard summary.",
     parameters={
         "type": "object",
         "properties": {
@@ -114,7 +127,29 @@ async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
                                "message": "No section given; returning the full whiteboard summary."})
         res = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section=section)
         if res is None:
-            return json.dumps({"status": "empty", "message": f"Section '{section}' is empty for {ticker}."})
+            # "not written yet" rather than "empty": 41% of all whiteboard
+            # reads come back with nothing, and most are an ORDERING fact, not
+            # an absence of opinion — the fundamental analyst is told to read
+            # `signals`, which the quant writes later. A model that cannot tell
+            # "nobody said anything" from "too early to ask" retries, and
+            # `signals`/`risk_flags` alone account for 453 empty reads.
+            from app.agents.whiteboard_sections import COLLABORATION, classify
+
+            hint = (
+                " Its author has not run yet this cycle — this is expected, not"
+                " an error, and re-reading will not change it."
+                if classify(section) == COLLABORATION else
+                " If the desk has produced it, it is already in your context."
+            )
+            # `status` stays "empty" deliberately. The 41%-empty measurement
+            # reads this field out of `agent_traces.tool_result_summary`, and
+            # renaming it would split the series at the exact moment the fix
+            # lands — the reading that says whether this worked. The model gets
+            # the distinction from `message`, which is what it acts on.
+            return json.dumps({
+                "status": "empty",
+                "message": f"Section '{section}' has not been written for {ticker}.{hint}",
+            })
         return json.dumps({"status": "success", "data": res})
     except Exception as e:
         logger.error("[WhiteboardTool] Read failed: %s", e)
