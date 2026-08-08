@@ -185,18 +185,22 @@ def test_pop_worklist_claims_and_peek_does_not():
     shadow called it, the shadow would drain the queue it is measuring while
     no worker is serving it.
     """
-    rows = [
+    selection = [
         [],  # exit_review
         [],  # monitor
         [],  # deep_dive
         [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")],
     ]
+    # `pop_worklist` reclaims stale claims before selecting (open item 14), and
+    # that is two RETURNING statements ahead of the four queue SELECTs. `peek`
+    # must still take neither — it is read-only by contract.
+    reclaim = [[], []]
 
-    pop_cursor = FakeCursor(results=list(rows))
+    pop_cursor = FakeCursor(results=reclaim + list(selection))
     with patch("app.services.research_queue_service.get_db", fake_get_db(pop_cursor)):
         popped = ResearchQueueService.pop_worklist(budget=4)
 
-    peek_cursor = FakeCursor(results=list(rows))
+    peek_cursor = FakeCursor(results=list(selection))
     with patch("app.services.research_queue_service.get_db", fake_get_db(peek_cursor)):
         peeked = ResearchQueueService.peek_worklist(budget=4)
 
@@ -205,6 +209,203 @@ def test_pop_worklist_claims_and_peek_does_not():
     # ...different side effects.
     assert "UPDATE" in pop_cursor.sql_verbs(), "pop must claim what it returns"
     assert "UPDATE" not in peek_cursor.sql_verbs(), "peek must not mutate the queue"
+
+
+# ───────────────────────────── the orphan path ──────────────────────────────
+#
+# Open item 14: `pop_worklist` → `processing` → `complete_item` had no requeue,
+# no timeout and no reset, so a worker dying between the two stranded its items
+# permanently — and because `enqueue_item` deduped only against `pending`, the
+# symptom was silent duplicates rather than a visible stall.
+#
+# Every test below calls the service. None re-implements the branch it is
+# checking, which is the shape that let a blocked trade read as a kept one for
+# weeks (open item 7).
+
+
+def _reclaim_statements(cursor):
+    return [sql for sql, _ in cursor.statements if sql.upper().startswith("UPDATE")]
+
+
+def test_a_dead_worker_gets_its_claim_back():
+    """The item this whole path exists for: claimed, abandoned, returned."""
+    cursor = FakeCursor(results=[
+        [],                 # nothing past MAX_ATTEMPTS
+        [("qitem-dead",)],  # one stale claim requeued
+    ])
+
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        out = ResearchQueueService.reclaim_stale()
+
+    assert out["requeued"] == ["qitem-dead"]
+    assert out["failed"] == []
+    assert any("status = 'pending'" in s for s in _reclaim_statements(cursor)), \
+        "a reclaimed item must go back to pending, not to some other status"
+
+
+def test_reclaim_judges_the_heartbeat_and_never_the_start_time():
+    """Open item 5's lesson, in a new place.
+
+    `started_at > 30min` failed both ways there: it skipped healthy cycles and
+    force-reset live ones. A reclaim that judged `created_at` would requeue an
+    item purely for having been enqueued a while ago, however recently it was
+    claimed.
+    """
+    cursor = FakeCursor(results=[[], []])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        ResearchQueueService.reclaim_stale()
+
+    stmts = _reclaim_statements(cursor)
+    assert stmts, "reclaim must issue statements"
+    for s in stmts:
+        assert "updated_at <" in s, f"staleness must be judged on updated_at: {s}"
+        assert "created_at" not in s, f"reclaim must not judge created_at: {s}"
+
+
+def test_an_item_that_keeps_dying_is_failed_rather_than_requeued_forever():
+    """Otherwise the reclaim recreates the stall it replaced, one pass at a
+    time, with nothing visible in the queue depth."""
+    from app.services.research_queue_service import MAX_ATTEMPTS
+
+    cursor = FakeCursor(results=[
+        [("qitem-poison",)],  # past MAX_ATTEMPTS
+        [],
+    ])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        out = ResearchQueueService.reclaim_stale()
+
+    assert out["failed"] == ["qitem-poison"]
+    assert out["requeued"] == []
+
+    fail_stmt = _reclaim_statements(cursor)[0]
+    assert "status = 'failed'" in fail_stmt
+    assert "attempts >=" in fail_stmt
+    # The fail pass must run BEFORE the requeue pass, or an item at the limit is
+    # requeued by this call and only failed by the next one.
+    assert cursor.statements[0][1][-1] == MAX_ATTEMPTS
+    assert "attempts <" in _reclaim_statements(cursor)[1]
+
+
+def test_reclaim_counts_with_returning_because_the_cursor_has_no_rowcount():
+    """`PooledCursor` carries no `rowcount`; reading it reports zero silently
+    (`5cec538`). `FakeCursor` exposes none either, so a regression here raises
+    rather than passing quietly."""
+    cursor = FakeCursor(results=[[], []])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        ResearchQueueService.reclaim_stale()
+
+    for s in _reclaim_statements(cursor):
+        assert "RETURNING" in s.upper(), f"count with RETURNING, not rowcount: {s}"
+
+
+def test_pop_arms_the_orphan_path_and_counts_the_attempt():
+    """The guard is armed by pop, so a queue nothing pops neither strands nor
+    reclaims — which is exactly today's state."""
+    cursor = FakeCursor(results=[
+        [], [],                                   # the reclaim
+        [], [], [],                               # three empty queues
+        [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")],
+    ])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        ResearchQueueService.pop_worklist(budget=4)
+
+    stmts = [sql for sql, _ in cursor.statements]
+    assert "status = 'pending'" in stmts[1], \
+        "pop must reclaim stale claims before it selects, not after"
+    # `SET status`, not just `status` — the reclaim's WHERE clause also names
+    # `processing`, and matching it here would test the wrong statement.
+    claim = [s for s in stmts if "SET status = 'processing'" in s]
+    assert claim, "pop must claim what it returns"
+    assert "attempts = attempts + 1" in claim[0], \
+        "an unincremented attempt makes MAX_ATTEMPTS unreachable"
+
+
+def test_a_failing_reclaim_does_not_take_the_worklist_with_it():
+    """Worst case without the reclaim is the stall it replaces; worst case with
+    a reclaim that propagates is no worklist at all."""
+    selection = [
+        [], [], [],
+        [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")],
+    ]
+    cursor = FakeCursor(results=list(selection))
+    calls = {"n": 0}
+
+    @contextmanager
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:          # the reclaim's connection
+            raise RuntimeError("pool exhausted")
+        yield cursor
+
+    with patch("app.services.research_queue_service.get_db", flaky):
+        popped = ResearchQueueService.pop_worklist(budget=4)
+
+    assert [i["ticker"] for i in popped] == ["NVDA"]
+
+
+def test_enqueue_dedupes_against_a_claim_not_only_against_pending():
+    """The bug's actual symptom. A stranded `processing` row did not block a new
+    enqueue, so the queue grew duplicates instead of showing a stall."""
+    cursor = FakeCursor(results=[("qitem-held", "processing")])
+
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        item_id = ResearchQueueService.enqueue_item(
+            ticker="NVDA",
+            queue_type=QueueType.LEAD_QUEUE,
+            reason="second sighting",
+            source_agent="ScoutAgent",
+        )
+
+    assert item_id == "qitem-held"
+    assert "INSERT" not in cursor.sql_verbs(), \
+        "an item a worker is holding is still queued; enqueuing a second is the duplicate"
+
+    # The two assertions above pass on the BROKEN code too: `FakeCursor` returns
+    # its programmed row whatever the WHERE clause says, so they cannot see the
+    # predicate. Verified by sabotage — reverting the dedupe to `pending`-only
+    # left them green. The check has to be on the SQL the service emitted.
+    sql = cursor.statements[0][0]
+    assert "'processing'" in sql, \
+        f"the dedupe must consider claimed rows, not only pending ones: {sql}"
+
+
+def test_heartbeat_tells_a_worker_its_claim_was_taken_away():
+    """A worker that ignores this keeps working on an item somebody else now
+    owns — the duplicate the orphan path exists to prevent."""
+    live = FakeCursor(results=[("qitem-1",)])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(live)):
+        assert ResearchQueueService.heartbeat("qitem-1") is True
+
+    lost = FakeCursor(results=[None])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(lost)):
+        assert ResearchQueueService.heartbeat("qitem-1") is False
+
+
+def test_reset_only_takes_back_an_item_that_is_actually_claimed():
+    """A reset that also fired on `completed` would resurrect finished work."""
+    cursor = FakeCursor(results=[None])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        ResearchQueueService.reset_item("qitem-1", reason="agent raised")
+
+    sql = cursor.statements[0][0]
+    assert "status = 'pending'" in sql
+    assert "AND status = 'processing'" in sql
+
+
+def test_status_counts_can_see_a_stall_that_queue_depth_cannot():
+    """`get_queue_summary` is pending-only by contract — `worklist_shadow`
+    stores it as `queue_depth`. A growing `processing` count against a flat
+    `completed` count IS the stall, and nothing could see it before."""
+    cursor = FakeCursor(results=[[
+        ("deep_dive_queue", "processing", 7),
+        ("deep_dive_queue", "completed", 0),
+    ]])
+    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+        counts = ResearchQueueService.get_status_counts()
+
+    assert counts["deep_dive_queue"]["processing"] == 7
+    assert "WHERE" not in cursor.statements[0][0].upper(), \
+        "a status summary that filters by status cannot report the stall"
 
 
 # ──────────────────────────── the question ledger ────────────────────────────

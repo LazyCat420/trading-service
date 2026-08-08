@@ -288,6 +288,113 @@ class TestRefusalsAreVisibleInProduction:
         assert head.count("logger.info") >= 2
 
 
+class TestTheRowCanSayWhichBotItCameFrom:
+    """Open item 1e, closed 2026-08-08.
+
+    `bot_id` was accepted by `maybe_shadow_gatekeeper`'s dispatch, accepted by
+    `_run_and_record`, and then dropped by `_record` — advertised at three
+    levels, honoured at none, so `GROUP BY bot_id` returned nothing on all 22
+    existing rows. The dispatch half was already right; only the write was not,
+    which is why the test below goes all the way to the SQL.
+    """
+
+    def test_the_dispatch_resolves_the_bot_inside_the_guard(self):
+        """It must NOT come from the caller. `active_bot_id` is not bound until
+        ~250 lines later in the cycle, and arguments evaluate OUTSIDE this
+        function's `try` — that UnboundLocalError once discarded the
+        gatekeeper's nine tickers and ran the cycle on hardcoded AAPL."""
+        import inspect
+
+        sig = inspect.signature(maybe_shadow_gatekeeper)
+        assert "bot_id" not in sig.parameters, (
+            "resolving the bot id at the call site puts it outside the guard — "
+            "see 2026-08-06, cycle-v3-1786072624"
+        )
+        _fired, calls = _dispatch(GOOD)
+        assert calls[0]["bot_id"] == "bot-test"
+
+    def test_the_insert_actually_writes_it(self):
+        """The half that was broken. Asserted against the emitted SQL and its
+        parameters, because a dispatch that carries the value proves nothing
+        about a writer that discards it."""
+        from unittest.mock import MagicMock
+
+        from app.v3 import model_shadow
+
+        cur = MagicMock()
+        cur.execute = MagicMock()
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake_db():
+            yield cur
+
+        with patch("app.db.connection.get_db", fake_db), \
+             patch.object(model_shadow, "_ensure_shadow_table", lambda: None):
+            model_shadow._record({
+                "cycle_id": "cycle-test", "ticker": "WATCHLIST",
+                "agent_name": "v3_portfolio_manager", "endpoint": "jetson",
+                "bot_id": "cycle-backend", "shadow_outcome": "SUCCESS",
+            })
+
+        sql, params = cur.execute.call_args[0]
+        assert "bot_id" in sql, "the column is not in the INSERT column list"
+        assert "cycle-backend" in params, \
+            "the column is named but the value never reaches the parameters"
+        assert sql.count("%s") == len(params), \
+            "placeholder/parameter mismatch — this INSERT would raise in production"
+
+    def test_the_runner_carries_it_from_the_dispatch_to_the_row(self):
+        """The middle level. `_run_and_record` accepted `bot_id` and built the
+        `base` dict without it, so the value died between two functions that
+        both advertised it. Exercised through the failure path — a shadow that
+        errors still writes a row, and that row needs attribution just as much.
+        """
+        import asyncio
+
+        from app.v3 import model_shadow
+
+        rows = []
+        with patch.object(model_shadow, "_record", side_effect=rows.append):
+            asyncio.run(model_shadow._run_and_record(
+                endpoint="nonexistent-endpoint",
+                agent_name="v3_portfolio_manager", ticker="WATCHLIST",
+                cycle_id="cycle-test", bot_id="cycle-backend",
+                system_prompt="sys", user_prompt="usr",
+                max_tokens=4096, timeout_seconds=5.0, primary={},
+            ))
+
+        assert len(rows) == 1, "a failed shadow must still be recorded"
+        assert rows[0]["shadow_outcome"] == "AGENT_ERROR"
+        assert rows[0]["bot_id"] == "cycle-backend"
+
+    def test_a_missing_bot_id_is_written_as_unknown_not_null(self):
+        """One spelling for one absence. NULL would read as 'not recorded yet'
+        and make the column look broken for as long as such a row survives."""
+        from contextlib import contextmanager
+        from unittest.mock import MagicMock
+
+        from app.v3 import model_shadow
+
+        cur = MagicMock()
+
+        @contextmanager
+        def fake_db():
+            yield cur
+
+        with patch("app.db.connection.get_db", fake_db), \
+             patch.object(model_shadow, "_ensure_shadow_table", lambda: None):
+            model_shadow._record({
+                "cycle_id": "c", "ticker": "T", "agent_name": "a",
+                "endpoint": "jetson", "shadow_outcome": "SUCCESS",
+            })
+
+        _sql, params = cur.execute.call_args[0]
+        assert "unknown" in params
+        assert None not in params[:5]
+
+
 @pytest.mark.parametrize("status,expected", [
     ("SUCCESS", True), ("EMPTY_RESPONSE", False), ("HARNESS_ERROR", False),
 ])

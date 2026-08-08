@@ -162,8 +162,10 @@ def maybe_shadow_gatekeeper(
 
     So the signature no longer accepts anything the caller has to compute. The
     bot id is resolved INSIDE the guard, where a failure can only cost the
-    shadow. `_record` drops it anyway (open item 1e) — it was a required
-    argument for a value the table has no column for.
+    shadow. **It is now also stored** — `model_shadow_runs.bot_id` was added
+    2026-08-08, closing open item 1e; until then this argument was dropped by
+    `_record` and the value was carried three levels only to be discarded at
+    the fourth.
 
     Returns True if a shadow was dispatched, so a test can tell "declined" from
     "threw and was swallowed" — the shipped version was an inline `try` whose
