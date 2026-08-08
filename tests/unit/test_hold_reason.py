@@ -97,6 +97,116 @@ def test_delta_tier_writes_trade_decision_directly():
     assert classify_hold(desk, "HOLD")["hold_reason"] == AVOID
 
 
+# ── The call sites ───────────────────────────────────────────────────────
+#
+# The test above passed from the day it was written, and the delta route STILL
+# never produced a label: `classify_hold` handled the shape, but the only call
+# site sat ~1,600 lines below the delta tier's `return result`. Measured
+# 2026-08-08 — 1 of the 3 HOLDs since the deploy carried a label, and 52
+# `v3_delta_done_*` decisions lifetime could never have carried one.
+#
+# **A guarded callee does not protect its call site.** Everything below is
+# about the call sites, because nothing above could see them.
+
+
+def _pipeline_exits():
+    """Every `return result` in `run_v3_pipeline`, with its preceding source."""
+    import ast
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "app" / "v3" / "orchestrator.py"
+    src = path.read_text()
+    tree = ast.parse(src)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == "run_v3_pipeline"
+    )
+    returns = sorted(
+        n.lineno for n in ast.walk(fn)
+        if isinstance(n, ast.Return)
+        and isinstance(n.value, ast.Name)
+        and n.value.id == "result"
+    )
+    lines = src.splitlines()
+    out = []
+    prev = fn.lineno
+    for lineno in returns:
+        out.append((lineno, "\n".join(lines[prev:lineno])))
+        prev = lineno
+    return out
+
+
+def test_every_decision_exit_is_accounted_for():
+    """Three exits today: glance, delta, full panel. A fourth appearing without
+    a decision here is the thing that silently loses coverage."""
+    assert len(_pipeline_exits()) == 3, (
+        "run_v3_pipeline gained or lost a `return result`. Decide explicitly "
+        "whether the new exit carries a WATCH/AVOID label and record it here."
+    )
+
+
+def test_the_delta_and_full_panel_exits_attach_the_label():
+    """The two exits where an agent actually decided."""
+    exits = _pipeline_exits()
+    labelled = [ln for ln, body in exits if "_attach_hold_reason(" in body]
+    assert len(labelled) == 2, (
+        f"expected the delta and full-panel exits to attach a hold reason, "
+        f"got {len(labelled)} of {len(exits)} at lines {labelled}"
+    )
+
+
+def test_the_glance_exit_deliberately_does_not():
+    """A glance skip is an age/news heuristic that ran before any agent, so
+    `classify_hold` would return WATCH — 'thesis constructive, not entering
+    yet' — a claim nobody made. Same error the 07-25 audit fixed by stamping
+    TRIAGE_SKIP, and it would pollute the low-band concentration check that is
+    the only test of whether the split works."""
+    first_exit_line, first_exit_body = _pipeline_exits()[0]
+
+    assert "v3_glance" in first_exit_body, "the first exit is no longer the glance tier"
+    assert "_attach_hold_reason(" not in first_exit_body, (
+        "the glance tier must not carry a WATCH/AVOID label"
+    )
+    assert "DELIBERATELY NO" in first_exit_body, (
+        "the omission must be stated, not left to look like the oversight it "
+        "used to be"
+    )
+
+
+def test_the_helper_attaches_and_emits():
+    """Behaviour, not structure: the helper puts the label on the result and
+    emits it, and a classification failure never costs the decision."""
+    from app.v3.orchestrator import _attach_hold_reason
+
+    emitted = []
+    result = {"action": "HOLD"}
+    _attach_hold_reason(
+        result,
+        desk=_desk(trade_decision={"thesis_direction": "BEARISH"}),
+        ticker="NVDA",
+        emit=lambda *a, **kw: emitted.append((a, kw)),
+    )
+    assert result["hold_reason"] == AVOID
+    assert emitted and emitted[0][0][1] == "v3_hold_reason_NVDA"
+    assert emitted[0][1]["data"]["hold_reason"] == AVOID
+
+
+def test_a_broken_classifier_never_costs_the_decision():
+    """Non-fatal by construction — a label must never abort a ticker."""
+    from unittest.mock import patch
+
+    from app.v3 import orchestrator
+
+    result = {"action": "HOLD"}
+    with patch("app.v3.hold_reason.classify_hold", side_effect=RuntimeError("boom")):
+        orchestrator._attach_hold_reason(
+            result, desk=_desk(), ticker="NVDA", emit=lambda *a, **kw: None,
+        )
+    assert "hold_reason" not in result
+    assert result["action"] == "HOLD"
+
+
 # ── Composition and the default ──────────────────────────────────────────
 
 def test_signals_accumulate():

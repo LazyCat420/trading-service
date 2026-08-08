@@ -624,6 +624,18 @@ async def run_v3_pipeline(
             result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
             result["triage_tier"] = triage_tier
             result["escalated"] = False
+            # DELIBERATELY NO `_attach_hold_reason` HERE. This HOLD is an
+            # age/news heuristic that ran before any agent, and `classify_hold`
+            # would return WATCH — "thesis constructive, not entering yet" — a
+            # claim nobody made. It is the same error the 07-25 audit fixed by
+            # stamping TRIAGE_SKIP: an unreasoned HOLD read as a board opinion.
+            # Labelling it would also pollute the only test of whether the
+            # split works (does AVOID concentrate in the low band?) with rows
+            # carrying confidence 0 and no thesis at all.
+            #
+            # It was unlabelled before this commit too — but by accident,
+            # because the single call site sat below an early return. Stated
+            # here so the next coverage sweep does not "fix" it.
             return result
 
         # ── Delta tier: ONE cheap agent re-looks the prior thesis vs what
@@ -754,6 +766,10 @@ async def run_v3_pipeline(
                 result["triage_tier"] = "v3_delta"
                 result["escalated"] = False
                 result["policy_action"] = policy_action
+                # The label has to be attached HERE too — this return is ~1,600
+                # lines above the full-panel call site, and a delta HOLD is
+                # still a HOLD that means one of two different things.
+                _attach_hold_reason(result, desk=desk, ticker=ticker, emit=emit)
                 try:
                     _persist_policy_action(cycle_id, ticker, policy_action)
                 except Exception as pe:
@@ -2362,26 +2378,7 @@ async def run_v3_pipeline(
     elapsed_s = time.monotonic() - t_pipeline
     result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
 
-    # HOLD REASON — split the HOLD that means two different things (WATCH vs
-    # AVOID). Reads only artifacts already on the desk, adds no cycle cost, and
-    # deliberately does NOT change `action`, `confidence` or any policy gate:
-    # it is a label emitted alongside the decision. See app/v3/hold_reason.py.
-    try:
-        from app.v3.hold_reason import classify_hold
-        _hold = classify_hold(desk, result.get("action"))
-        if _hold:
-            result["hold_reason"] = _hold["hold_reason"]
-            result["hold_reason_signals"] = _hold["signals"]
-            emit(
-                "analyzing", f"v3_hold_reason_{ticker}",
-                f"🔍 {ticker}: HOLD classified as {_hold['hold_reason']}"
-                + (f" ({', '.join(_hold['signals'])})" if _hold["signals"] else ""),
-                status="ok",
-                data=_hold,
-            )
-    except Exception as e:
-        # Non-fatal by construction: a label must never cost a decision.
-        logger.warning("[V3] %s: hold classification failed (non-fatal): %s", ticker, e)
+    _attach_hold_reason(result, desk=desk, ticker=ticker, emit=emit)
 
     emit(
         "analyzing", f"v3_done_{ticker}",
@@ -2434,6 +2431,47 @@ async def run_v3_pipeline(
     result["triage_tier"] = triage_tier
 
     return result
+
+
+def _attach_hold_reason(result: dict, *, desk: SharedDesk, ticker: str, emit) -> None:
+    """Split the HOLD that means two different things (WATCH vs AVOID).
+
+    Reads only artifacts already on the desk, adds no cycle cost, and
+    deliberately does NOT change `action`, `confidence` or any policy gate: it
+    is a label emitted alongside the decision. See `app/v3/hold_reason.py`.
+
+    **CALLED FROM BOTH DECISION EXITS.** `classify_hold` shipped 2026-08-08
+    already reading the delta tier's `trade_decision` shape — but the only call
+    site was in the full-panel flow, ~1,600 lines below the delta tier's
+    `return result`. So the route the callee was specifically written to handle
+    was the one route that never reached it: measured 2026-08-08, **1 of the 3
+    HOLDs since the deploy carried a label**, and 52 `v3_delta_done_*` decisions
+    lifetime could never have carried one.
+
+    That is the same seam and the same shape as the 2026-07-25 audit, which
+    found this early return skipping the no-shorting guard and every policy
+    gate. A guarded callee does not protect its call site; the fix is a helper
+    that both exits call, not a second copy of the block.
+    """
+    try:
+        from app.v3.hold_reason import classify_hold
+
+        hold = classify_hold(desk, result.get("action"))
+        if not hold:
+            return
+        result["hold_reason"] = hold["hold_reason"]
+        result["hold_reason_signals"] = hold["signals"]
+        emit(
+            "analyzing", f"v3_hold_reason_{ticker}",
+            f"🔍 {ticker}: HOLD classified as {hold['hold_reason']}"
+            + (f" ({', '.join(hold['signals'])})" if hold["signals"] else ""),
+            status="ok",
+            data=hold,
+        )
+    except Exception as e:  # noqa: BLE001
+        # Non-fatal by construction: a label must never cost a decision.
+        logger.warning("[V3] %s: hold classification failed (non-fatal): %s", ticker, e)
+
 
 def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> None:
     """Record the enforced policy label on the trade row (PG + Mongo mirror).
