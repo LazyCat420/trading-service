@@ -658,6 +658,34 @@ async def run_v3_agent(
             if score_block:
                 dynamic_sections.append((_KEEP, score_block))
 
+        # THE OTHER NAMES THIS CYCLE (app/v3/cycle_candidates.py).
+        #
+        # Given to the BEAR and to the deciding agents, and to nobody else.
+        #
+        # The bear, because on a long-only one-position book a bear thesis has
+        # no executable form: "do not own this" and "own this" are the only two
+        # readings, so every bear case lands as HOLD however well argued. 273 of
+        # 333 HOLDs in 30 days were the agent's own verdict before any gate ran.
+        # Giving the bear the alternatives turns an absolute question it answers
+        # cheaply ("is this a buy?" — no) into a relative one it cannot ("would
+        # you rather own one of these?").
+        #
+        # The deciders, because a preference is only actionable if whoever
+        # writes the action can see what it is a preference FOR.
+        #
+        # NOT the bull, and not the analysts. Same reasoning as the score block
+        # above: they are meant to reach an independent read of THIS name, and
+        # a bull handed a list of rivals is being invited to argue relatively
+        # when its job is to make the strongest case for one thing.
+        if agent_name in (
+            "v3_bear_agent",
+            "v3_board_of_directors",
+            "v3_decision_synthesizer",
+        ):
+            candidate_block = desk.cycle_metadata.get("cycle_candidates_context", "")
+            if candidate_block:
+                dynamic_sections.append((_KEEP, candidate_block))
+
         # The framed propositions for THIS desk (app/v3/debate_frame.py), to
         # every participant in the debate INCLUDING the judge — a judge ruling
         # on different questions than the debaters argued is worse than no

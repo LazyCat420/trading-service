@@ -49,6 +49,10 @@ async def run_v3_pipeline(
     research_focus: str = "",
     trigger_type: str = "manual",
     active_directives: list[dict] | None = None,
+    #: The cycle's other candidate names (app/v3/cycle_candidates.py). Defaults
+    #: to None so every existing caller — tests, the scheduler, the watch desk
+    #: — keeps working and simply gets no cross-ticker block.
+    cycle_candidates: list[dict] | None = None,
 
     agent_locale: str = "default",
     prism_overrides: dict | None = None,
@@ -356,6 +360,26 @@ async def run_v3_pipeline(
     except Exception as e:
         logger.warning("[V3] %s: deterministic baseline failed (non-fatal): "
                        "%s (%s)", ticker, e, type(e).__name__)
+
+    # The cycle's OTHER names — the desk's first cross-ticker surface
+    # (app/v3/cycle_candidates.py). Built by the caller before the gatekeeper
+    # ran, so it costs nothing here and cannot race the concurrent fan-out.
+    #
+    # Empty for a Watch Desk wake, which names its ticker explicitly and
+    # bypasses discovery: no pool exists, and the renderer returns "" rather
+    # than a header promising alternatives it cannot list.
+    try:
+        from app.v3.cycle_candidates import build_candidate_block
+
+        candidate_block = build_candidate_block(cycle_candidates, self_ticker=ticker)
+        if candidate_block:
+            desk.cycle_metadata["cycle_candidates_context"] = candidate_block
+            logger.info(
+                "[V3] %s: cross-ticker candidates injected — %d alternatives",
+                ticker, len(cycle_candidates or []) - 1,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[V3] %s: candidate block failed (non-fatal): %s", ticker, e)
 
     # Recorded third-party opinion cards (2026-07-27). Unlike every other
     # block built here this one returns "" when there is no coverage, and that

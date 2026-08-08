@@ -492,6 +492,17 @@ class PipelineService:
         collect_flag = bool(kwargs.get("collect", True))
         trade_flag = bool(kwargs.get("trade", True))
 
+        # The cycle's cross-ticker candidate pool (app/v3/cycle_candidates.py).
+        # DECLARED HERE, UNCONDITIONALLY. `top_scorers` is assigned in exactly
+        # one place, deep inside the dynamic-selection branch, so referencing it
+        # at the per-ticker call site would raise UnboundLocalError on every
+        # explicit-ticker run — and arguments evaluate at the CALL, outside any
+        # `try`. That exact shape once discarded the gatekeeper's nine selected
+        # tickers and ran a whole cycle on hardcoded AAPL (2026-08-06,
+        # cycle-v3-1786072624). An empty list is the correct value for a Watch
+        # Desk wake, which bypasses discovery and has no pool.
+        cycle_candidates: list[dict] = []
+
         def _persist_summary(status: str, tickers_final, results=None, error: str | None = None,
                              report_generated: bool = False):
             """Write the cycle_run_summaries row. Counts come from the per-ticker
@@ -1131,7 +1142,18 @@ class PipelineService:
                             if len(bucketed) >= 20:
                                 break
                         top_scorers = bucketed
-                        
+
+                        # The cross-ticker surface every desk in this cycle
+                        # sees. Built HERE — before the gatekeeper runs and
+                        # therefore before any ticker pipeline starts — so it
+                        # cannot race the concurrent per-ticker fan-out below.
+                        try:
+                            from app.v3.cycle_candidates import build_candidate_set
+                            cycle_candidates = build_candidate_set(top_scorers, _meta)
+                        except Exception as _e:  # noqa: BLE001
+                            logger.warning(
+                                "[PipelineService] candidate set failed (non-fatal): %s", _e)
+
                         logger.info(f"[PipelineService] Scoring Engine top picks: {[s['ticker'] for s in top_scorers]}")
                         
                         # Phase 4B: Fetch past verdicts for top 20 (latest per ticker)
@@ -1595,7 +1617,7 @@ class PipelineService:
                 # the desk believed it held nothing, and the HRP sizing branch
                 # (which needs >=2 tickers in the book) never once ran.
                 from app.services.bot_manager import get_active_bot_id
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, bot_id=get_active_bot_id(), emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives)
+                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, bot_id=get_active_bot_id(), emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives, cycle_candidates=cycle_candidates)
 
                 # Execute Trade — gated by the cycle's trade flag and confidence threshold
                 action = result.get("action", "HOLD")
