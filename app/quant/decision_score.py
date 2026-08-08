@@ -830,6 +830,35 @@ def compute_decision_score(ticker: str) -> dict:
                 "not_scoreable_reason": f"scorer error: {type(e).__name__}"}
 
 
+def compute_calibrated_confidence(
+    baseline_confidence: int | float,
+    board_confidence: float | int | None = None
+) -> float:
+    """Compute calibrated confidence by combining deterministic baseline with board LLM score.
+
+    Addresses scale compression where LLM outputs cluster in a narrow 55-74 window with
+    zero rank correlation to baseline confidence.
+
+    Args:
+        baseline_confidence: Deterministic baseline confidence (28-84).
+        board_confidence: Optional LLM board verbalized confidence (0-100).
+
+    Returns:
+        Calibrated confidence float (0.0 - 100.0).
+    """
+    base = float(baseline_confidence or 0.0)
+    if board_confidence is None:
+        return round(max(0.0, min(100.0, base)), 1)
+    
+    board = float(board_confidence)
+    if not (0.0 <= board <= 100.0):
+        return round(max(0.0, min(100.0, base)), 1)
+
+    # 55% deterministic baseline, 45% LLM board confidence
+    calibrated = 0.55 * base + 0.45 * board
+    return round(max(0.0, min(100.0, calibrated)), 1)
+
+
 def _fmt_gate(g: dict) -> str:
     mark = {"PASS": "PASS", "FAIL": "FAIL", "UNKNOWN": "??"}[g["verdict"]]
     return f"  [{mark:4}] {g['name']}: {g['detail']}"
