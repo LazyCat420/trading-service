@@ -2362,6 +2362,27 @@ async def run_v3_pipeline(
     elapsed_s = time.monotonic() - t_pipeline
     result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
 
+    # HOLD REASON — split the HOLD that means two different things (WATCH vs
+    # AVOID). Reads only artifacts already on the desk, adds no cycle cost, and
+    # deliberately does NOT change `action`, `confidence` or any policy gate:
+    # it is a label emitted alongside the decision. See app/v3/hold_reason.py.
+    try:
+        from app.v3.hold_reason import classify_hold
+        _hold = classify_hold(desk, result.get("action"))
+        if _hold:
+            result["hold_reason"] = _hold["hold_reason"]
+            result["hold_reason_signals"] = _hold["signals"]
+            emit(
+                "analyzing", f"v3_hold_reason_{ticker}",
+                f"🔍 {ticker}: HOLD classified as {_hold['hold_reason']}"
+                + (f" ({', '.join(_hold['signals'])})" if _hold["signals"] else ""),
+                status="ok",
+                data=_hold,
+            )
+    except Exception as e:
+        # Non-fatal by construction: a label must never cost a decision.
+        logger.warning("[V3] %s: hold classification failed (non-fatal): %s", ticker, e)
+
     emit(
         "analyzing", f"v3_done_{ticker}",
         f"✅ {ticker}: V3 Pipeline complete → "
