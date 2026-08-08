@@ -830,32 +830,69 @@ def compute_decision_score(ticker: str) -> dict:
                 "not_scoreable_reason": f"scorer error: {type(e).__name__}"}
 
 
+_BASELINE_WEIGHT = 0.55
+_BOARD_WEIGHT = 0.45
+
+
 def compute_calibrated_confidence(
-    baseline_confidence: int | float,
+    baseline_confidence: int | float | None,
     board_confidence: float | int | None = None
-) -> float:
-    """Compute calibrated confidence by combining deterministic baseline with board LLM score.
+) -> float | None:
+    """Blend the deterministic baseline confidence with the Board's stated one.
 
-    Addresses scale compression where LLM outputs cluster in a narrow 55-74 window with
-    zero rank correlation to baseline confidence.
+    WHAT THIS IS FOR — and what it is NOT for.
 
-    Args:
-        baseline_confidence: Deterministic baseline confidence (28-84).
-        board_confidence: Optional LLM board verbalized confidence (0-100).
+    The Board's stated confidence is severely COMPRESSED. Measured over the 96
+    paired rows in `decision_scores` (2026-08-08):
 
-    Returns:
-        Calibrated confidence float (0.0 - 100.0).
+        baseline_confidence   mean 63.1   sd 14.78   range   0-84
+        board_confidence      mean 65.5   sd  4.65   range  55-74
+        blend (.55/.45)       mean 64.2   sd  8.24   range 31-79
+
+    The board number occupies an 19-point window and, per
+    `decision-scores` measurement, has rho = -0.059 against the baseline — it
+    is very nearly a constant. Blending restores spread (sd 4.65 -> 8.24) by
+    letting the deterministic read carry the variance.
+
+    THIS IS AN OBSERVABILITY FIELD. It must NOT be fed to the policy gate's
+    confidence floor. Two reasons, both measured:
+
+      1. The floor of 70 was calibrated against the STATED number (conf <70:
+         n=130, mean -1.91%; >=70: n=698, mean +3.76%). A blended input is a
+         different distribution, so the floor's evidence does not transfer.
+      2. Substituting it moves 29 -> 24 of those 96 rows over the floor. That
+         is ~17% FEWER executable decisions, on a desk whose live complaint is
+         that board confidence already collapsed below the floor — and there
+         is no evidence for the direction, because `decision_scores` still has
+         ZERO resolved outcomes to say which number is right.
+
+    Returns None — never a number — when the inputs cannot support a blend:
+
+      * `baseline_confidence` of 0 is the UNSCOREABLE SENTINEL every degraded
+        path writes (see `_is_unscoreable` in outcome_tracker; real scores
+        bottom out at 15). Blending it produced 0.55*0 + 0.45*70 = 31.5, which
+        is the observed minimum above — a crashed pipeline wearing the costume
+        of a cautious read. A failure must not read as a low-confidence
+        decision.
+      * A board confidence outside 0-100 is not a confidence. The previous
+        form fell back to the bare baseline here, which silently returned a
+        DIFFERENT quantity under the same name.
     """
-    base = float(baseline_confidence or 0.0)
-    if board_confidence is None:
+    if baseline_confidence is None:
+        return None
+    try:
+        base = float(baseline_confidence)
+        board = None if board_confidence is None else float(board_confidence)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(base) or math.isinf(base) or base <= 0.0:
+        return None
+    if board is None:
         return round(max(0.0, min(100.0, base)), 1)
-    
-    board = float(board_confidence)
-    if not (0.0 <= board <= 100.0):
-        return round(max(0.0, min(100.0, base)), 1)
+    if math.isnan(board) or math.isinf(board) or not (0.0 <= board <= 100.0):
+        return None
 
-    # 55% deterministic baseline, 45% LLM board confidence
-    calibrated = 0.55 * base + 0.45 * board
+    calibrated = _BASELINE_WEIGHT * base + _BOARD_WEIGHT * board
     return round(max(0.0, min(100.0, calibrated)), 1)
 
 

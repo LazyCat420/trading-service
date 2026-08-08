@@ -10,10 +10,14 @@ threw away ~75% of the fleet's verdicts (249 of 332 in a typical week) and
 starved every outcome-based metric of samples. A HOLD is a checkable claim —
 "no meaningful move over the horizon" — and it resolves against the same ±1%
 band the directional calls use. HOLDs get their own outcome labels
-(HOLD_CORRECT / HOLD_MISS) so the directional win-rate cohort (WIN/LOSS) is
-untouched: folding "price stayed flat" into win rate would let low volatility
-masquerade as directional skill. HOLD outcomes feed calibration and a separate
-hold-accuracy metric in decision_audit instead.
+(HOLD_CORRECT / HOLD_AVOIDED_DECLINE / HOLD_MISS) so the directional win-rate
+cohort (WIN/LOSS) is untouched: folding "price stayed flat" into win rate would
+let low volatility masquerade as directional skill. HOLD outcomes feed
+calibration and a separate hold-accuracy metric in decision_audit instead.
+
+The HOLD labels are direction-aware (see ``_classify``): on a long-only book
+only an upside move is forgone, so a decline the desk sat out is
+HOLD_AVOIDED_DECLINE and counts as correct.
 """
 
 import logging
@@ -37,9 +41,32 @@ def _classify(action: str, pnl_pct: float) -> str:
     Directional calls keep the historical WIN/LOSS/FLAT taxonomy. HOLD claims
     get distinct labels on purpose: every existing consumer filters on
     WIN/LOSS, so HOLD rows are invisible to them unless they opt in.
+
+    HOLD IS GRADED WITH DIRECTION (2026-08-08). The rule here used to be
+    ``abs(pnl_pct) >= 1% -> HOLD_MISS``, which is direction-BLIND, and this
+    book is long-only: the desk can buy, so the only thing a HOLD forgoes is
+    an UPSIDE move. A name the desk held through a *decline* was held
+    correctly — there was no short to place.
+
+    Measured over the 154 graded HOLD_MISS rows on record: 85 rose (genuine
+    missed buys) and 69 fell (declines correctly avoided). Grading those 69 as
+    misses put hold accuracy at 28% when it is really 60% — and it scored an
+    agent that dodged a drawdown identically to one that slept through a
+    rally.
+
+    The third label is deliberate: ``HOLD_MISS`` is NOT redefined to mean
+    something new mid-history. It keeps meaning "a move the desk should have
+    caught", and the rows that never met that description are relabelled by
+    the backfill in ``app/db/migrations.py`` from the ``pnl_pct`` already
+    stored on each row. Both halves must ship together — a forward-only change
+    would leave ``HOLD_MISS`` meaning one thing before the deploy and another
+    after, with nothing in the row to say which.
     """
     if action == "HOLD":
-        return "HOLD_CORRECT" if abs(pnl_pct) < WIN_THRESHOLD_PCT else "HOLD_MISS"
+        if abs(pnl_pct) < WIN_THRESHOLD_PCT:
+            return "HOLD_CORRECT"
+        # Long-only: a decline the desk sat out is a hold that was RIGHT.
+        return "HOLD_MISS" if pnl_pct > 0 else "HOLD_AVOIDED_DECLINE"
     if pnl_pct >= WIN_THRESHOLD_PCT:
         return "WIN"
     if pnl_pct <= LOSS_THRESHOLD_PCT:
@@ -339,13 +366,15 @@ def resolve_pending_outcomes() -> dict:
     """
     Find unresolved decision_outcomes older than RESOLVE_AFTER_DAYS,
     look up current price, compute PnL, and classify: WIN/LOSS/FLAT for
-    directional calls, HOLD_CORRECT/HOLD_MISS for hold claims.
+    directional calls, HOLD_CORRECT/HOLD_AVOIDED_DECLINE/HOLD_MISS for hold
+    claims.
 
     Returns summary stats.
     """
     resolved = 0
     errors = 0
-    stats = {"wins": 0, "losses": 0, "flats": 0, "holds_correct": 0, "holds_miss": 0}
+    stats = {"wins": 0, "losses": 0, "flats": 0, "holds_correct": 0,
+             "holds_miss": 0, "holds_avoided_decline": 0}
 
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
@@ -389,11 +418,24 @@ def resolve_pending_outcomes() -> dict:
                         pnl_pct = ((exit_price - entry_price) / entry_price) * 100
 
                     outcome = _classify(action, pnl_pct)
+                    # .get, not [outcome]: this lookup sits BEFORE the UPDATE,
+                    # so an unmapped label would raise into the row handler and
+                    # the row would never be written — left unresolved to be
+                    # retried, and re-skipped, on every future batch. A missing
+                    # counter is a reporting gap; a missing UPDATE is a lost
+                    # outcome.
                     key = {
                         "WIN": "wins", "LOSS": "losses", "FLAT": "flats",
                         "HOLD_CORRECT": "holds_correct", "HOLD_MISS": "holds_miss",
-                    }[outcome]
-                    stats[key] += 1
+                        "HOLD_AVOIDED_DECLINE": "holds_avoided_decline",
+                    }.get(outcome)
+                    if key:
+                        stats[key] += 1
+                    else:
+                        logger.warning(
+                            "[OUTCOME] %s: unmapped outcome label %r — resolving "
+                            "the row anyway, but it is uncounted", outcome_id, outcome,
+                        )
 
                     db.execute(
                         """UPDATE decision_outcomes
@@ -410,9 +452,11 @@ def resolve_pending_outcomes() -> dict:
 
         if resolved > 0:
             logger.info(
-                "[OUTCOME] Resolved %d outcomes: %dW / %dL / %dF / %dHC / %dHM (errors: %d)",
+                "[OUTCOME] Resolved %d outcomes: %dW / %dL / %dF / %dHC / "
+                "%dHAD / %dHM (errors: %d)",
                 resolved, stats["wins"], stats["losses"], stats["flats"],
-                stats["holds_correct"], stats["holds_miss"], errors,
+                stats["holds_correct"], stats["holds_avoided_decline"],
+                stats["holds_miss"], errors,
             )
     except Exception as e:
         logger.error("[OUTCOME] Batch resolution failed: %s", e)

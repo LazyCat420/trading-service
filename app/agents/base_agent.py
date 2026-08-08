@@ -212,7 +212,8 @@ def get_ticker_outcome_context(ticker: str) -> str:
                 "SELECT outcome, entry_price, exit_price, pnl_pct, confidence, resolved_at "
                 "FROM decision_outcomes "
                 "WHERE ticker = %s "
-                "  AND outcome IN ('WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_MISS') "
+                "  AND outcome IN ('WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', "
+                "                  'HOLD_AVOIDED_DECLINE', 'HOLD_MISS') "
                 "ORDER BY resolved_at DESC NULLS LAST LIMIT 5",
                 [ticker],
             ).fetchall()

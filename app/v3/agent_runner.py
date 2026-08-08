@@ -955,10 +955,37 @@ async def run_v3_agent(
                 )
 
         if tool_whitelist:
+            # State the turn budget as a NUMBER the agent can count against.
+            #
+            # The failure this addresses is narration, not slowness: an agent
+            # spends its last turn writing "I'll now complete the analysis and
+            # emit the desk_note JSON" instead of emitting it. The harness then
+            # returns that announcement as `final_text`, parsing fails, and the
+            # whole run's research is spent — the salvage pass at the bottom of
+            # this function exists entirely to claw those back.
+            #
+            # Scope note: this is cheap insurance, not a fix for a large loss.
+            # Measured over all 2,412 recorded analyst runs, non-SUCCESS is
+            # 4.3% (2.3-7.6% per agent) — NOT the 22-36% that motivated the
+            # original plan item. Do not expect a visible move in the artifact
+            # rate from this; judge it on the salvage-pass invocation count.
+            from app.agents.tool_whitelists import get_agent_budget_turns
+            _budget = get_agent_budget_turns(agent_name, True)
             user_prompt += (
                 "You have access to a specific subset of tools for your domain. "
                 "Use them only if you need deeper research beyond the pre-collected data. "
-                "Do not redundantly fetch data already provided.\n\n"
+                "Do not redundantly fetch data already provided.\n"
+                f"\n### TURN BUDGET: {_budget}\n"
+                f"You get at most {_budget} turns for this task, and a turn is "
+                "spent whether you call a tool or write prose.\n"
+                "- Budget your research so the LAST turn is the JSON artifact.\n"
+                "- NEVER spend a turn announcing what you are about to do. "
+                "Text like \"I'll now complete the analysis and emit the JSON\" "
+                "is a wasted turn, and if it is your last one the entire run is "
+                "discarded — write the JSON instead of describing it.\n"
+                "- If the budget runs short, emit the artifact from what you "
+                "already have and record the gap in your findings. A partial "
+                "report is worth far more than a complete one you never sent.\n\n"
             )
         else:
             user_prompt += (

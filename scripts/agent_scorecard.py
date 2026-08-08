@@ -559,7 +559,8 @@ def main() -> int:
     else:
         wins = sum(1 for r in rows if r["outcome"] == "WIN")
         losses = sum(1 for r in rows if r["outcome"] == "LOSS")
-        flats = sum(1 for r in rows if r["outcome"] in ("FLAT", "HOLD_CORRECT", "HOLD_MISS"))
+        flats = sum(1 for r in rows if r["outcome"] in (
+            "FLAT", "HOLD_CORRECT", "HOLD_AVOIDED_DECLINE", "HOLD_MISS"))
 
     print(f"\n{'='*104}")
     print(f"AGENT SCORECARD — {len(rows)} {source_label} since {args.since} "

@@ -131,10 +131,14 @@ async def active_experiment():
 async def hold_outcomes():
     """HOLD calibration cohort + directional splits, kept strictly separate.
 
-    HOLD_CORRECT/HOLD_MISS grade whether the ticker stayed inside the ±band
-    over the horizon — calibration evidence, never directional skill. The
-    directional win rate here excludes HOLDs and FLATs (basis ex_flat_ex_hold),
-    matching decision_audit's score v4.
+    The HOLD labels grade what the hold FORWENT over the horizon — calibration
+    evidence, never directional skill. On this long-only book only an upside
+    move is forgone, so the accuracy numerator is HOLD_CORRECT (stayed inside
+    the ±band) PLUS HOLD_AVOIDED_DECLINE (fell, so there was nothing to buy);
+    only HOLD_MISS (rose past the band) is a miss.
+
+    The directional win rate here excludes HOLDs and FLATs (basis
+    ex_flat_ex_hold), matching decision_audit's score v4.
     """
     try:
         with get_db() as db:
@@ -158,8 +162,11 @@ async def hold_outcomes():
         wins = counts.get("WIN", 0)
         losses = counts.get("LOSS", 0)
         holds_correct = counts.get("HOLD_CORRECT", 0)
+        # Long-only: a hold through a fall forwent nothing, so it is right.
+        holds_avoided = counts.get("HOLD_AVOIDED_DECLINE", 0)
         holds_miss = counts.get("HOLD_MISS", 0)
-        hold_resolved = holds_correct + holds_miss
+        holds_right = holds_correct + holds_avoided
+        hold_resolved = holds_right + holds_miss
 
         pending_holds = 0
         pending_directional = 0
@@ -191,8 +198,11 @@ async def hold_outcomes():
             "hold": {
                 "resolved": hold_resolved,
                 "correct": holds_correct,
+                "avoided_decline": holds_avoided,
+                "right": holds_right,
                 "miss": holds_miss,
-                "accuracy": round(holds_correct / hold_resolved, 3) if hold_resolved else None,
+                "accuracy": round(holds_right / hold_resolved, 3) if hold_resolved else None,
+                "accuracy_basis": "direction_aware_long_only",
                 "pending": pending_holds,
                 "first_resolution_eta": eta,
             },

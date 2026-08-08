@@ -184,6 +184,12 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                 losses = [r for r in resolved if r[3] == "LOSS"]
                 flats = [r for r in resolved if r[3] == "FLAT"]
                 holds_correct = [r for r in resolved if r[3] == "HOLD_CORRECT"]
+                # Long-only: a hold through a DECLINE was right, and is graded
+                # HOLD_AVOIDED_DECLINE by outcome_tracker._classify. Counted
+                # with the correct holds, and reported separately below so the
+                # "held flat" and "dodged a drop" populations stay legible.
+                holds_avoided = [r for r in resolved if r[3] == "HOLD_AVOIDED_DECLINE"]
+                holds_right = holds_correct + holds_avoided
                 holds_miss = [r for r in resolved if r[3] == "HOLD_MISS"]
                 # FLAT = position closed without a meaningful move — no verdict
                 # on the call, so it belongs in neither numerator nor denominator.
@@ -193,9 +199,9 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                 # flat" into win rate would let low volatility read as skill.
                 # They join the CALIBRATION cohort below: a stated confidence is
                 # a stated confidence regardless of the claim's direction.
-                hold_claims = holds_correct + holds_miss
+                hold_claims = holds_right + holds_miss
                 claims = decided + hold_claims
-                _CORRECT = {"WIN", "HOLD_CORRECT"}
+                _CORRECT = {"WIN", "HOLD_CORRECT", "HOLD_AVOIDED_DECLINE"}
 
                 win_rate = len(wins) / len(decided) if decided else 0.5
                 avg_win_pnl = sum(r[2] for r in wins) / len(wins) if wins else 0
@@ -294,7 +300,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                 median_age_days = ages[len(ages) // 2] if ages else None
 
                 hold_accuracy = (
-                    len(holds_correct) / len(hold_claims) if hold_claims else None
+                    len(holds_right) / len(hold_claims) if hold_claims else None
                 )
 
                 outcome_stats = {
@@ -304,7 +310,10 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                     "losses": len(losses),
                     "flats": len(flats),
                     "holds_correct": len(holds_correct),
+                    "holds_avoided_decline": len(holds_avoided),
+                    "holds_right": len(holds_right),
                     "holds_miss": len(holds_miss),
+                    "hold_accuracy_basis": "direction_aware_long_only",
                     "hold_accuracy": round(hold_accuracy, 3) if hold_accuracy is not None else None,
                     "win_rate": round(win_rate, 3),
                     "win_rate_basis": "ex_flat_ex_hold",
@@ -350,8 +359,15 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
                     })
                 if hold_accuracy is not None and len(hold_claims) >= 10 and hold_accuracy < 0.5:
                     issues.append({
-                        "issue": f"HOLD calls miss: {hold_accuracy:.0%} of holds stayed inside the ±1% band "
-                                 f"({len(holds_correct)}/{len(hold_claims)}) — the desk is holding through real moves",
+                        # Say what the numerator IS. It is no longer "stayed
+                        # inside the ±1% band" — it is that plus the holds that
+                        # sat out a fall, which on a long-only book were right.
+                        # The failure being flagged is specifically the desk
+                        # holding through RALLIES it could have bought.
+                        "issue": f"HOLD calls miss: only {hold_accuracy:.0%} of holds were right "
+                                 f"({len(holds_right)}/{len(hold_claims)} = {len(holds_correct)} flat "
+                                 f"+ {len(holds_avoided)} avoided a fall) — the desk is holding "
+                                 f"through {len(holds_miss)} rallies it could have bought",
                         "severity": "warning",
                     })
 

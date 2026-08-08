@@ -77,7 +77,12 @@ MIN_TRACES_FOR_CONTAMINATION = 30
 # Confidence-weighted outcome values. FLAT is a half-win: the call was not wrong,
 # it just did not pay.
 _DIRECTIONAL_WEIGHTS = {"WIN": 1.0, "FLAT": 0.5, "LOSS": 0.0}
-_HOLD_WEIGHTS = {"HOLD_CORRECT": 1.0, "HOLD_MISS": 0.0}
+# HOLD_AVOIDED_DECLINE scores 1.0: on a long-only book a hold through a fall is
+# a hold that was RIGHT (see outcome_tracker._classify). Adding the key is not
+# optional cosmetics — `_weighted` SKIPS any outcome it has no weight for, so
+# an unlisted label would silently leave the hold component's n, and every
+# maturity check that reads it, short by those rows.
+_HOLD_WEIGHTS = {"HOLD_CORRECT": 1.0, "HOLD_AVOIDED_DECLINE": 1.0, "HOLD_MISS": 0.0}
 
 # How much the hold component contributes to the combined score. Below 0.5
 # because a HOLD is a weaker claim than a directional call — "nothing much

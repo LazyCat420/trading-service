@@ -1,9 +1,14 @@
 """HOLD outcome tracking (score_version v4).
 
 HOLDs were never outcome-tracked, which discarded ~75% of fleet verdicts.
-They now resolve as HOLD_CORRECT/HOLD_MISS claims that feed calibration and a
-hold-accuracy metric — but must stay OUT of the directional win rate, where
-"price stayed flat" would let low volatility masquerade as skill.
+They now resolve as HOLD_CORRECT / HOLD_AVOIDED_DECLINE / HOLD_MISS claims that
+feed calibration and a hold-accuracy metric — but must stay OUT of the
+directional win rate, where "price stayed flat" would let low volatility
+masquerade as skill.
+
+HOLD grading is DIRECTION-AWARE (2026-08-08): the book is long-only, so only a
+rally is forgone. A hold through a decline is HOLD_AVOIDED_DECLINE and counts
+as correct.
 
 Unit tests use mocks — no NAS DB connection needed.
 """
@@ -42,14 +47,52 @@ class TestClassify:
         assert _classify("HOLD", 0.4) == "HOLD_CORRECT"
         assert _classify("HOLD", -0.99) == "HOLD_CORRECT"
 
-    def test_hold_outside_band_is_miss_either_direction(self):
+    def test_hold_through_a_rally_is_a_miss(self):
+        """The only thing a HOLD forgoes on a long-only book: upside."""
         assert _classify("HOLD", 1.0) == "HOLD_MISS"
-        assert _classify("HOLD", -2.5) == "HOLD_MISS"
+        assert _classify("HOLD", 12.0) == "HOLD_MISS"
+
+    def test_hold_through_a_decline_is_correct_not_a_miss(self):
+        """This assertion used to read `== "HOLD_MISS"`.
+
+        Grading a hold on |pnl| is direction-BLIND, and this desk can only buy
+        — there was no short to place, so sitting out a fall was RIGHT. On the
+        154 graded HOLD_MISS rows on record, 69 had fallen; calling them misses
+        put hold accuracy at 28% when it is 60%.
+        """
+        assert _classify("HOLD", -1.0) == "HOLD_AVOIDED_DECLINE"
+        assert _classify("HOLD", -2.5) == "HOLD_AVOIDED_DECLINE"
+        assert _classify("HOLD", -33.0) == "HOLD_AVOIDED_DECLINE"
+
+    def test_the_band_edges_land_on_exactly_one_label(self):
+        """No pnl may fall through the classifier unlabelled or double-labelled."""
+        assert _classify("HOLD", 0.999) == "HOLD_CORRECT"
+        assert _classify("HOLD", -0.999) == "HOLD_CORRECT"
+        assert _classify("HOLD", 1.0) == "HOLD_MISS"
+        assert _classify("HOLD", -1.0) == "HOLD_AVOIDED_DECLINE"
+        assert _classify("HOLD", 0.0) == "HOLD_CORRECT"
+
+    def test_every_hold_label_has_a_weight_in_the_scorecard(self):
+        """`scorecard._weighted` SKIPS outcomes it has no weight for, so a label
+        the scorecard has not learned about leaves the hold component's n short
+        instead of failing. Enumerate from the classifier, not by hand."""
+        from app.autoresearch.scorecard import _HOLD_WEIGHTS
+
+        produced = {_classify("HOLD", p) for p in
+                    (0.0, 0.5, -0.5, 1.0, 5.0, -1.0, -5.0)}
+        assert produced == {"HOLD_CORRECT", "HOLD_MISS", "HOLD_AVOIDED_DECLINE"}
+        assert produced <= set(_HOLD_WEIGHTS), (
+            f"scorecard._HOLD_WEIGHTS is missing {produced - set(_HOLD_WEIGHTS)}"
+        )
+        assert _HOLD_WEIGHTS["HOLD_AVOIDED_DECLINE"] == 1.0
 
     def test_directional_taxonomy_unchanged(self):
+        """Directional grading was ALREADY direction-aware — only HOLD changed."""
         assert _classify("BUY", 1.2) == "WIN"
         assert _classify("BUY", -1.2) == "LOSS"
         assert _classify("SELL", 0.2) == "FLAT"
+        assert _classify("SELL", 1.2) == "WIN"
+        assert _classify("SELL", -1.2) == "LOSS"
 
 
 class TestHoldScoring:

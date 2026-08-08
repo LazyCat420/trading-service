@@ -18,7 +18,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/challenger", tags=["Challenger"])
 
-_CORRECT = ("WIN", "HOLD_CORRECT")
+# HOLD_AVOIDED_DECLINE joins _CORRECT: this book is long-only, so a hold
+# through a fall forwent nothing (outcome_tracker._classify). Leaving it out of
+# BOTH tuples was the sharper bug — a champion that dodged a drawdown scored
+# neither right nor wrong, so those rows silently left the comparison.
+_CORRECT = ("WIN", "HOLD_CORRECT", "HOLD_AVOIDED_DECLINE")
 _INCORRECT = ("LOSS", "HOLD_MISS")
 
 # ticker_metadata.sector mixes vendor taxonomies (GICS from one collector,

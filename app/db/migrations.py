@@ -4208,3 +4208,52 @@ def _create_persistent_research_tables(conn):
         except Exception:
             pass
 
+
+    # ── Backfill: direction-aware HOLD grading (2026-08-08) ─────────────────
+    #
+    # `outcome_tracker._classify` used to grade a HOLD on |pnl| alone, which is
+    # direction-blind. This book is long-only — the desk can buy, so the only
+    # thing a HOLD forgoes is an UPSIDE move — and a name held through a
+    # DECLINE was held correctly. Of the 154 graded HOLD_MISS rows on record,
+    # 69 had fallen.
+    #
+    # This relabels those rows to HOLD_AVOIDED_DECLINE. It INVENTS NOTHING:
+    # `pnl_pct` is already stored on every row, so the new label is derived
+    # from the same number the original grade was derived from.
+    #
+    # It ships WITH the _classify change on purpose. Without it, HOLD_MISS
+    # would mean "any 1% move" on rows written before the deploy and "a 1% RISE"
+    # on rows written after, with nothing in the row to distinguish them —
+    # every hold-accuracy consumer would then be averaging two different
+    # metrics and could not tell.
+    #
+    # The threshold is a LITERAL rather than an import of WIN_THRESHOLD_PCT:
+    # these rows were graded under a 1.0% band, and if that constant is ever
+    # retuned, re-deriving history under the NEW band would rewrite grades
+    # that were correct when they were made. Historical repair is frozen.
+    #
+    # Idempotent: after the first run no HOLD_MISS row has pnl_pct <= -1.0,
+    # so every subsequent boot matches zero rows.
+    #
+    # NOTE: on the production database this was already applied by hand on
+    # 2026-08-08 (a parallel session ran the same UPDATE), so this statement
+    # will match 0 rows there and that is EXPECTED — not evidence it failed.
+    # It stays because an ad-hoc UPDATE is not in the codebase: without this,
+    # a fresh environment or a restored backup would carry the old labels
+    # while the code assumed the new ones.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE decision_outcomes
+                   SET outcome = 'HOLD_AVOIDED_DECLINE'
+                 WHERE action = 'HOLD'
+                   AND outcome = 'HOLD_MISS'
+                   AND pnl_pct IS NOT NULL
+                   AND pnl_pct <= -1.0
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
