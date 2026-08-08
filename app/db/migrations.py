@@ -4146,6 +4146,21 @@ def _create_persistent_research_tables(conn):
                 "CREATE INDEX IF NOT EXISTS idx_research_queues_stale "
                 "ON v3_research_queues (status, updated_at)"
             )
+            # `model_shadow_runs.bot_id` (open item 1e). `model_shadow.py`'s own
+            # `_ensure_shadow_table` also adds this, but that runs lazily on the
+            # FIRST `_record()` call — so after the 2026-08-08 deploy the column
+            # did not exist until a shadow happened to fire, and a schema check
+            # taken straight after the deploy read MISSING. That is the wrong
+            # answer to "did the migration land", and this file is where that
+            # question is supposed to be answerable. Both paths are idempotent;
+            # this one runs at boot.
+            cur.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE model_shadow_runs ADD COLUMN IF NOT EXISTS bot_id TEXT;
+                    UPDATE model_shadow_runs SET bot_id = 'unknown' WHERE bot_id IS NULL;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
+            """)
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ticker_dossiers_state "
                 "ON ticker_dossiers (lifecycle_state)"
