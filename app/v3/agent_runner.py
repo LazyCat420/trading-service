@@ -686,6 +686,20 @@ async def run_v3_agent(
             if candidate_block:
                 dynamic_sections.append((_KEEP, candidate_block))
 
+        # THE BEAR'S ANSWER to that list (app/v3/substitute.py), to the two
+        # deciding agents only. NEVER SHED: a preference is only actionable if
+        # whoever writes the action can see what it is a preference FOR, and
+        # the bear's own artifact reaches the board as a prose summary in which
+        # a single ticker is easy to lose. It renders "" until the bear has
+        # run, and "" for a declension — see `substitute_block` for why an
+        # honest "none is better" must NOT be reported as corroboration.
+        if agent_name in ("v3_board_of_directors", "v3_decision_synthesizer"):
+            from app.v3.substitute import substitute_context
+
+            sub_block = substitute_context(desk)
+            if sub_block:
+                dynamic_sections.append((_KEEP, sub_block))
+
         # The framed propositions for THIS desk (app/v3/debate_frame.py), to
         # every participant in the debate INCLUDING the judge — a judge ruling
         # on different questions than the debaters argued is worse than no
@@ -1349,6 +1363,19 @@ async def run_v3_agent(
         # real exits on any cycle whose portfolio lookup failed).
         if artifact_type in ("final_decision", "trade_decision"):
             artifact = guard_unshortable_sell(artifact, desk=desk, bot_id=bot_id)
+
+        # THE BEAR'S SUBSTITUTE (app/v3/substitute.py). Normalised HERE, at the
+        # one point that has both the artifact and the desk that carries the
+        # pool the bear was shown — the membership check cannot be done in
+        # `artifact_validators` because that dispatch takes no desk.
+        #
+        # Runs before `append_artifact`, so the deciders read the normalised
+        # field and never the model's raw spelling of it. Never raises: a
+        # substitute is a label, and a label must not cost a bear case.
+        if artifact_type == "bear_rebuttal":
+            from app.v3.substitute import apply_substitute
+
+            artifact = apply_substitute(artifact, desk=desk)
 
         # SHADOW (2026-07-25): mark the one board override measured to lose
         # money — board turning bearish over a fundamental desk that reported

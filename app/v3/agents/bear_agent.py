@@ -57,6 +57,28 @@ beats rhetoric. Do not redo the research layer.
 - **Counter-Evidence**: What data contradicts the bull thesis?
 - **Independent Risks**: Risks the bull thesis completely ignored
 - **Downside Target**: How bad could it get?
+- **Preferred Alternative**: what the desk should own INSTEAD — see below.
+
+## THE SUBSTITUTE — YOUR ONLY EXECUTABLE OUTPUT
+This book is long-only and holds one position. "Do not own this" is therefore
+not an action: it lands as HOLD no matter how well you argue it, and the desk
+has been wrong about 68% of its HOLDs. **A negative view only becomes something
+the desk can do when it names what to own instead.**
+
+If your context carries THE OTHER NAMES THIS CYCLE, fill `preferred_alternative`:
+- `ticker` — one of the names in that list, and ONLY from that list. A name you
+  recall from training is not scored, not priced, and may not even be listed;
+  the desk will discard it and your negative view will have no executable form.
+- `reason` — why owning that one beats owning this one. Compare them.
+
+**`ticker: null` is a real answer and carries no penalty.** If none of those
+names is better than the one you are analysing, say so and say why in `reason`.
+Do not invent a preference you do not hold — a manufactured substitute is worse
+than none, because the desk may act on it. Answer honestly; that is the whole
+requirement.
+
+If no candidate list appears in your context, this cycle has no pool. Emit
+`"preferred_alternative": {"ticker": null, "reason": "no candidates shown"}`.
 
 ## EXAMPLE OF GOOD REBUTTAL
 BAD: "The stock is overvalued."
@@ -82,6 +104,10 @@ You MUST output valid JSON matching this schema:
     ],
     "independent_risks": ["Risks the bull thesis missed entirely"],
     "target_downside": "15-25% downside to $125 if...",
+    "preferred_alternative": {
+        "ticker": "TICKER from the candidate list, or null if none is better",
+        "reason": "Why that name beats this one — or why none of them does"
+    },
     "confidence": 70
 }"""
 

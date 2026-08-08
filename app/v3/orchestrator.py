@@ -369,14 +369,23 @@ async def run_v3_pipeline(
     # bypasses discovery: no pool exists, and the renderer returns "" rather
     # than a header promising alternatives it cannot list.
     try:
-        from app.v3.cycle_candidates import build_candidate_block
+        from app.v3.cycle_candidates import build_candidate_block, shown_tickers
+        from app.v3.substitute import POOL_KEY
 
         candidate_block = build_candidate_block(cycle_candidates, self_ticker=ticker)
         if candidate_block:
             desk.cycle_metadata["cycle_candidates_context"] = candidate_block
+            # The SAME rows, from the same filter, under the same condition —
+            # so "the bear was asked for a substitute" and "the block rendered"
+            # are one fact rather than two that can drift. `substitute.py`
+            # rejects any name outside this list, and a validator rejecting a
+            # ticker the agent was genuinely shown is unfixable from inside the
+            # prompt.
+            pool = shown_tickers(cycle_candidates, self_ticker=ticker)
+            desk.cycle_metadata[POOL_KEY] = pool
             logger.info(
                 "[V3] %s: cross-ticker candidates injected — %d alternatives",
-                ticker, len(cycle_candidates or []) - 1,
+                ticker, len(pool),
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("[V3] %s: candidate block failed (non-fatal): %s", ticker, e)
@@ -2485,9 +2494,20 @@ def _attach_hold_reason(result: dict, *, desk: SharedDesk, ticker: str, emit) ->
             return
         result["hold_reason"] = hold["hold_reason"]
         result["hold_reason_signals"] = hold["signals"]
+        result["hold_reason_basis"] = hold.get("basis")
+        # The substitute travels WITH the label. An AVOID whose named
+        # alternative is only reachable by re-reading the bear's artifact is an
+        # AVOID nothing downstream can act on, which is the defect this whole
+        # change exists to fix.
+        result["hold_substitute"] = hold.get("substitute_ticker")
+        sub_note = (
+            f" -> {hold['substitute_ticker']}" if hold.get("substitute_ticker")
+            else ""
+        )
         emit(
             "analyzing", f"v3_hold_reason_{ticker}",
-            f"🔍 {ticker}: HOLD classified as {hold['hold_reason']}"
+            f"🔍 {ticker}: HOLD classified as {hold['hold_reason']}{sub_note}"
+            f" [{hold.get('basis')}]"
             + (f" ({', '.join(hold['signals'])})" if hold["signals"] else ""),
             status="ok",
             data=hold,

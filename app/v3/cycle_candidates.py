@@ -80,19 +80,37 @@ def build_candidate_set(
     return out
 
 
+def shown_rows(candidates: list[dict] | None, *, self_ticker: str = "") -> list[dict]:
+    """The rows this desk is actually shown — THE ONE DEFINITION OF THE POOL.
+
+    `build_candidate_block` renders from this and `shown_tickers` counts from
+    it, so the set a validator checks a named substitute against cannot drift
+    from the set the agent was given. A second copy of this filter is exactly
+    the defect where a bear names a ticker it was shown and the validator
+    rejects it — a rejection the agent can neither see nor fix.
+
+    `self_ticker` is excluded — the agent already has its own name's full score
+    block, and listing it twice invites the model to compare a detailed read
+    against a one-line summary of itself.
+    """
+    me = (self_ticker or "").upper().strip()
+    return [c for c in (candidates or [])
+            if isinstance(c, dict) and c.get("ticker") and c["ticker"] != me]
+
+
+def shown_tickers(candidates: list[dict] | None, *, self_ticker: str = "") -> list[str]:
+    """The tickers of `shown_rows`, in the order the agent reads them."""
+    return [str(c["ticker"]) for c in shown_rows(candidates, self_ticker=self_ticker)]
+
+
 def build_candidate_block(candidates: list[dict] | None, *, self_ticker: str = "") -> str:
     """The injectable briefing section, or "" when there is nothing to show.
 
     Returns "" rather than a header with an empty table: a block that says
     "here are the alternatives" and then lists none actively misleads, and the
     caller can simply not inject it.
-
-    `self_ticker` is excluded — the agent already has its own name's full score
-    block, and listing it twice invites the model to compare a detailed read
-    against a one-line summary of itself.
     """
-    rows = [c for c in (candidates or [])
-            if c.get("ticker") and c["ticker"] != (self_ticker or "").upper()]
+    rows = shown_rows(candidates, self_ticker=self_ticker)
     if not rows:
         return ""
 

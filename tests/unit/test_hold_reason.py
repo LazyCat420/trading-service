@@ -254,3 +254,119 @@ def test_bull_defense_is_not_read_as_a_bear_win():
     substring check on the wrong field could still trip. Pin the real one."""
     desk = _desk(debate_judge={"winning_side": "bull_defense"})
     assert classify_hold(desk, "HOLD")["hold_reason"] == WATCH
+
+
+# ── The substitute axis (reworked 2026-08-08) ────────────────────────────
+#
+# AVOID now means "the bear named something better", not "the desk feels
+# negative". The three signals still travel in `signals` on every call: they
+# are the ONLY axis on routes where no bear runs (the delta tier is one
+# agent), and keeping both measurable is what makes this reversible.
+
+def _with_substitute(status, ticker=None, **kw):
+    from app.v3.substitute import _META_KEY
+
+    meta = {_META_KEY: {"status": status, "ticker": ticker, "pool_size": 3}}
+    meta.update(kw.pop("cycle_metadata", {}))
+    return _desk(cycle_metadata=meta, **kw)
+
+
+def test_a_named_substitute_is_avoid():
+    from app.v3.substitute import NAMED
+
+    result = classify_hold(_with_substitute(NAMED, "PLTR"), "HOLD")
+    assert result["hold_reason"] == AVOID
+    assert result["basis"] == "substitute:named"
+    assert result["substitute_ticker"] == "PLTR"
+
+
+def test_a_declined_substitute_is_watch():
+    from app.v3.substitute import DECLINED
+
+    result = classify_hold(_with_substitute(DECLINED), "HOLD")
+    assert result["hold_reason"] == WATCH
+    assert result["basis"] == "substitute:declined"
+    assert result["substitute_ticker"] is None
+
+
+def test_the_substitute_outranks_the_signals_in_BOTH_directions():
+    """The whole point of the rework. A bear that won the debate but found
+    nothing better is a WATCH — the desk is negative and has no better use for
+    the capital — and a bear that named one is an AVOID with no signal at all.
+    A test checking only one direction would pass on code that ignored the
+    substitute entirely."""
+    from app.v3.substitute import DECLINED, NAMED
+
+    declined = classify_hold(
+        _with_substitute(
+            DECLINED,
+            cycle_metadata={"decision_score": {"band": "AVOID"}},
+            debate_judge={"winning_side": "bear"},
+            final_decision={"thesis_direction": "BEARISH"},
+        ),
+        "HOLD",
+    )
+    assert declined["hold_reason"] == WATCH
+    assert len(declined["signals"]) == 3, "the old axis must stay measurable"
+
+    named = classify_hold(_with_substitute(NAMED, "ABNB"), "HOLD")
+    assert named["hold_reason"] == AVOID
+    assert named["signals"] == [], "AVOID here is the substitute, not a signal"
+
+
+@pytest.mark.parametrize("status", ["OFF_POOL", "UNANSWERED", "NOT_ASKED"])
+def test_engagement_failures_fall_back_to_the_signals(status):
+    """A name the desk cannot price, an ignored question, and an absent pool
+    are not answers. Labelling from them would read a broken response as a
+    considered one."""
+    assert classify_hold(_with_substitute(status), "HOLD")["hold_reason"] == WATCH
+    result = classify_hold(
+        _with_substitute(status, debate_judge={"winning_side": "bear"}), "HOLD"
+    )
+    assert result["hold_reason"] == AVOID
+    assert result["basis"] == "negative_signal"
+
+
+def test_an_unexercised_wake_is_distinguishable_from_a_declining_bear():
+    """Five of the last six cycles were Watch Desk wakes, which have no
+    candidate pool at all. If NOT_ASKED and DECLINED both read as a bare WATCH,
+    an unexercised feature looks identical to a working one."""
+    from app.v3.substitute import DECLINED, NOT_ASKED
+
+    asked = classify_hold(_with_substitute(DECLINED), "HOLD")
+    never = classify_hold(_with_substitute(NOT_ASKED), "HOLD")
+    assert asked["hold_reason"] == never["hold_reason"] == WATCH
+    assert asked["substitute_status"] != never["substitute_status"]
+
+
+def test_a_route_with_no_bear_still_classifies():
+    """The delta tier is one agent and never runs a bear, so the substitute
+    record is absent entirely — not a status, no key at all."""
+    result = classify_hold(_desk(trade_decision={"thesis_direction": "SELL"}), "HOLD")
+    assert result["hold_reason"] == AVOID
+    assert result["basis"] == "negative_signal"
+    assert result["substitute_status"] is None
+
+
+@pytest.mark.parametrize("junk", ["not-a-dict", 42, [], None, {}, {"status": None}])
+def test_a_malformed_substitute_record_does_not_raise(junk):
+    from app.v3.substitute import _META_KEY
+
+    desk = _desk(cycle_metadata={_META_KEY: junk})
+    assert classify_hold(desk, "HOLD")["hold_reason"] == WATCH
+
+
+def test_the_substitute_reaches_the_result_not_just_the_label():
+    """An AVOID whose named alternative is only reachable by re-reading the
+    bear's artifact is an AVOID nothing downstream can act on."""
+    from app.v3.orchestrator import _attach_hold_reason
+    from app.v3.substitute import NAMED
+
+    result = {"action": "HOLD"}
+    _attach_hold_reason(
+        result, desk=_with_substitute(NAMED, "PLTR"), ticker="TSLA",
+        emit=lambda *a, **kw: None,
+    )
+    assert result["hold_reason"] == AVOID
+    assert result["hold_substitute"] == "PLTR"
+    assert result["hold_reason_basis"] == "substitute:named"

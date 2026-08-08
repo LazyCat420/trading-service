@@ -482,6 +482,38 @@ BEAR_REBUTTAL_SCHEMA: dict = {
             "type": "string",
             "description": "Expected downside if the bear thesis plays out",
         },
+        # THE SUBSTITUTE (app/v3/substitute.py). Deliberately NOT in
+        # `required`: a Watch Desk wake names its ticker explicitly, bypasses
+        # discovery, and has no candidate pool at all — so the bear is never
+        # shown alternatives and requiring the field would stamp a validation
+        # warning on every wake for not answering a question nobody asked.
+        # Whether the answer was owed is decided against the pool at
+        # normalisation time, which is the only place that knows.
+        "preferred_alternative": {
+            "type": "object",
+            "description": (
+                "If your thesis is negative: which of THE OTHER NAMES THIS "
+                "CYCLE the desk should own instead, or ticker=null if none of "
+                "them is better. null is a real answer — do not invent a "
+                "preference. The ticker MUST be one you were shown."
+            ),
+            "properties": {
+                "ticker": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "A ticker from the candidate list, or null for "
+                        "'none of them is better'"
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "Why that name is the better thing to own — or, when "
+                        "ticker is null, why none of them is"
+                    ),
+                },
+            },
+        },
         "confidence": {
             "type": "integer",
             "minimum": 0,
