@@ -224,6 +224,82 @@ async def hold_outcomes():
         return {"error": str(e)}
 
 
+@router.get("/provider-failures")
+async def provider_failures(days: int = 2):
+    """Every failed LLM call for the trading project, by class, agent and day.
+
+    Reads prism's own request ledger (`prism.requests` in Mongo) — the one
+    store that records every call with `agent`, `operation`, `errorMessage`
+    and token counts. Until 2026-08-09 this data existed and nothing surfaced
+    it: 1,520 failures over 14 days (an 80-minute box outage, a permanently
+    rejected embedder class, 300s stalls) were discoverable only by ad-hoc
+    Mongo queries, while `execution_errors` filed the same events under
+    cycle_id='system-log'.
+
+    ⚠ `createdAt` in prism.requests is an ISO STRING, not a date — every
+    filter here compares strings. A date-typed `$gte` matches nothing and
+    returns an empty report that reads as "no failures", which is the exact
+    failure mode this endpoint exists to prevent.
+
+    Class names are the leading error text, truncated — grouping by full
+    message would split one cause across a thousand buckets.
+    """
+    days = max(1, min(int(days), 30))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%S.000Z"
+    )
+    try:
+        from app.db.mongo import get_mongo_client
+
+        req = get_mongo_client()["prism"]["requests"]
+        base = {"createdAt": {"$gte": cutoff}, "project": "vllm-trading-bot"}
+
+        by_class = list(req.aggregate([
+            {"$match": {**base, "success": False}},
+            {"$project": {
+                "klass": {"$substrCP": [{"$ifNull": ["$errorMessage", "(no errorMessage)"]}, 0, 60]},
+                "agent": "$agent",
+            }},
+            {"$group": {"_id": {"k": "$klass", "a": "$agent"}, "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}},
+            {"$limit": 50},
+        ]))
+        by_day = list(req.aggregate([
+            {"$match": {**base, "success": False}},
+            {"$project": {"day": {"$substrCP": ["$createdAt", 0, 10]}}},
+            {"$group": {"_id": "$day", "n": {"$sum": 1}}},
+            {"$sort": {"_id": 1}},
+        ]))
+        totals = list(req.aggregate([
+            {"$match": base},
+            {"$group": {"_id": "$success", "n": {"$sum": 1}}},
+        ]))
+        counts = {str(t["_id"]): t["n"] for t in totals}
+        ok = counts.get("True", 0)
+        failed = counts.get("False", 0)
+        # status='pending' rows have success=None: started, never finished —
+        # a third state, reported as its own number, never pooled into failed.
+        stranded = counts.get("None", 0)
+
+        return {
+            "window_days": days,
+            "ok": ok,
+            "failed": failed,
+            "stranded_pending": stranded,
+            "failure_rate": round(failed / (ok + failed), 4) if (ok + failed) else None,
+            "by_class": [
+                {"class": r["_id"]["k"], "agent": r["_id"].get("a"), "n": r["n"]}
+                for r in by_class
+            ],
+            "by_day": [{"day": r["_id"], "n": r["n"]} for r in by_day],
+            "source": "prism.requests (string-date filtered)",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.warning("[EvalTrust] provider-failures failed: %s", e)
+        return {"error": str(e)}
+
+
 @router.get("/goodhart")
 async def goodhart_status():
     """Grounding-judge health over the recent window — the Goodhart tripwire.

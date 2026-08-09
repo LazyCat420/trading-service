@@ -197,3 +197,57 @@ class TestEveryRuleIsUsable:
             TRUNCATED_JSON, PROSE_REPORT, WRONG_SHAPE,
         ]
         assert len({r.directive for r in rules}) == len(rules)
+
+
+# ── PROVIDER_ERROR (added 2026-08-09) ────────────────────────────────────
+
+# VERBATIM — the harness apology the V3 Delta Analyst received on GEN,
+# cycle-v3-1786297004, after Gold Spark's queue starved its call for 300s.
+PROVIDER_APOLOGY = (
+    "⚠️ Error: The model provider encountered an error on iteration 1: "
+    "Provider stream stalled: no data received for 300s. The conversation "
+    "history up to this point has been preserved. You can retry your "
+    "request, or try a different model/provider if this persists."
+)
+
+
+def test_provider_apology_classifies_as_provider_error():
+    from app.v3.output_rules import PROVIDER_ERROR
+
+    assert classify_output(PROVIDER_APOLOGY) is PROVIDER_ERROR
+
+
+def test_provider_error_never_quotes_the_buffer_back():
+    """The buffer is prism's apology, not the model's work — quoting it back
+    re-creates the bear-argues-with-its-own-error-message shape from Ch.29."""
+    from app.v3.output_rules import PROVIDER_ERROR
+
+    assert PROVIDER_ERROR.quote_previous is False
+    assert PROVIDER_ERROR.exhausted is False
+
+
+def test_markdown_bold_variant_still_matches():
+    # prism's UI renders "⚠️ **Error:**" — the classifier must not depend on
+    # the exact decoration around the i18n sentence.
+    text = (
+        "⚠️ **Error:** The model provider encountered an error on iteration 2: "
+        "`API error: 502`. The conversation history up to this point has been "
+        "preserved."
+    )
+    from app.v3.output_rules import PROVIDER_ERROR
+
+    assert classify_output(text) is PROVIDER_ERROR
+
+
+def test_an_analysis_that_mentions_a_provider_error_is_not_one():
+    """Position guard: the marker deep in a long reply is the model WORKING
+    (e.g. summarising an incident), not the transport failing."""
+    filler = "The desk reviewed infrastructure reliability this week. " * 20
+    text = (
+        filler
+        + "Notably, the model provider encountered an error on iteration 1 "
+        + "during Saturday's cycle, which the team traced to queue saturation."
+    )
+    from app.v3.output_rules import PROVIDER_ERROR
+
+    assert classify_output(text) is not PROVIDER_ERROR

@@ -65,6 +65,13 @@ _EMPTY_SENTINEL_PREFIX = "Agent failed: empty response from "
 # a direct-SDK path still can, and it is unambiguous when it appears.
 _SDK_EXHAUSTION_SENTINEL = "Max iterations reached without a final answer."
 
+# Prism's harness apology, injected into the conversation when a provider
+# pass throws (locales/en/harness.json "providerError"). Matched only near
+# the START of the buffer: an analysis that merely QUOTES a provider error it
+# read somewhere is the model working, not the transport failing.
+_PROVIDER_ERROR_MARKER = "the model provider encountered an error on iteration"
+_PROVIDER_ERROR_WINDOW = 300
+
 # A tool call the model wrote as PROSE because nothing was left to execute it.
 # Kept identical in shape to base_agent's copy of the same idea; the length cap
 # that used to guard it is gone (see PSEUDO_TOOL_CALL below).
@@ -124,6 +131,24 @@ EMPTY_RESPONSE = OutputRule(
     directive=(
         "Your previous call returned no content at all. Answer now with the "
         "artifact and nothing else."
+    ),
+    quote_previous=False,
+)
+
+PROVIDER_ERROR = OutputRule(
+    name="PROVIDER_ERROR",
+    # The buffer is prism's harness apology (locales/en/harness.json
+    # "providerError"), injected when the PROVIDER pass threw — a 300s stall,
+    # a 502 from the shim, a dead box. The model never answered, so like
+    # EMPTY_RESPONSE the buffer must not be quoted back (2026-08-09: the bear
+    # spent a cycle arguing with its own error message). Until this rule
+    # existed these failures were counted as the MODEL narrating — 12 stalls
+    # and ~90 fetch-failures over two days booked against agent behaviour
+    # when the request never reached a GPU.
+    directive=(
+        "Your previous call failed in the transport layer before the model "
+        "could answer — nothing you wrote was lost because nothing was "
+        "written. Answer now with the artifact and nothing else."
     ),
     quote_previous=False,
 )
@@ -239,6 +264,12 @@ def classify_output(text: str | None, *, wrong_shape: bool = False) -> OutputRul
 
     if stripped == _SDK_EXHAUSTION_SENTINEL:
         return PSEUDO_TOOL_CALL
+
+    # Before every content probe: a buffer that OPENS with prism's provider
+    # apology is a transport failure wearing a reply's clothes. Checked by
+    # position, not mere presence — see _PROVIDER_ERROR_MARKER.
+    if _PROVIDER_ERROR_MARKER in stripped[:_PROVIDER_ERROR_WINDOW].lower():
+        return PROVIDER_ERROR
 
     # Checked before the JSON probes: `wrong_shape` means parsing SUCCEEDED, so
     # the buffer does contain balanced JSON and every probe below would
