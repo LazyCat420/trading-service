@@ -116,7 +116,9 @@ class PipelineStateDB:
         # (MONGO_STORE_BACKEND=pipeline_events:dual|mongo). Best-effort — a Mongo
         # failure must NEVER break the Postgres append above.
         try:
-            from datetime import datetime
+            # Never re-import datetime inside this function: a local import
+            # makes the name local to the WHOLE scope, and the ts-less
+            # fallback above then raises before any row is written.
             from app.db import mongo_store
             if mongo_store.writes_mongo("pipeline_events"):
                 docs = []

@@ -321,6 +321,40 @@ class PipelineService:
             logger.warning("[PipelineService] Failed to append event: %s", e)
 
     @classmethod
+    async def _preflight_price_history(cls, ticker: str) -> bool:
+        """True when `ticker` has — or can fetch on demand — usable price history.
+
+        A fresh gatekeeper pick has no price rows YET: its collectors run
+        after this check, so probing alone drops exactly the tickers the
+        gatekeeper just found interesting (MGNI, 2026-08-09: dropped at
+        cycle start, while its own 6-month backfill landed minutes later).
+        An empty probe therefore triggers the same yfinance backfill the
+        precollect step runs, and only a ticker that is STILL empty is
+        reported unusable.
+
+        `has_price_history` DB errors propagate (its fail-open contract is
+        the caller's to honour); only the backfill itself is best-effort.
+        """
+        from app.quant.technical_baseline import has_price_history
+
+        if has_price_history(ticker):
+            return True
+        try:
+            from app.collectors.yfinance_collector import collect_price_history
+
+            bars = await collect_price_history(ticker, period="6mo")
+            logger.info(
+                "[PipelineService] %s: pre-flight backfilled %s price bar(s) "
+                "on demand.", ticker, bars,
+            )
+        except Exception as bf_err:  # noqa: BLE001 — backfill is best-effort
+            logger.warning(
+                "[PipelineService] %s: on-demand price backfill failed: %s",
+                ticker, bf_err,
+            )
+        return has_price_history(ticker)
+
+    @classmethod
     async def start_cycle(cls, tickers: list[str], **kwargs):
         # Read from DB for dedup — in-memory _state can be stale after
         # force-reset or container restart.
@@ -1568,18 +1602,18 @@ class PipelineService:
                 # price_history rows; MSBT reached INIT with zero rows too.
                 #
                 # This is the SAME probe the policy gate uses, moved to the
-                # front. It does not replace that gate — the gate stays, because
-                # this check cannot see a ticker whose rows vanish mid-cycle,
-                # and because paths that skip this loop still need it.
+                # front — plus an on-demand backfill for tickers the probe
+                # finds empty (_preflight_price_history). It does not replace
+                # that gate — the gate stays, because this check cannot see a
+                # ticker whose rows vanish mid-cycle, and because paths that
+                # skip this loop still need it.
                 #
                 # Fails OPEN on any probe error, matching the gate's own
                 # contract: has_price_history RAISES on DB failure precisely so
                 # an unreachable Postgres cannot answer "no rows" for every
                 # ticker and halt all analysis.
                 try:
-                    from app.quant.technical_baseline import has_price_history
-
-                    if not has_price_history(ticker_name):
+                    if not await cls._preflight_price_history(ticker_name):
                         logger.warning(
                             "[PipelineService] %s: SKIPPED before analysis — no "
                             "usable price history. Every technical claim would "
