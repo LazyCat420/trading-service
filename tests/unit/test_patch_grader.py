@@ -83,6 +83,19 @@ def test_preexisting_failure_does_not_block_green():
     assert b.is_green
 
 
+def test_dead_suite_cannot_reach_green():
+    """A passing repro with no suite verdict is not evidence of no regression.
+
+    This is the collapsed-environment case found by fault injection on
+    2026-08-09: a linked worktree without the venv errored 63 files at
+    collection, the node-id diff came back empty, and the bundle scored 1.0.
+    """
+    b = ScoreBundle(applied=True, compiles=True, repro_passed=True,
+                    suite_ran=False, tests_passed=0, new_failures=[])
+    assert b.score == 0.60
+    assert not b.is_green
+
+
 # ── Scope gate ──────────────────────────────────────────────────────────────
 
 
@@ -153,6 +166,21 @@ def test_check_api_preserved_allows_an_added_function(repo: Path):
     assert check_api_preserved(repo, ["app/collectors/demo.py"]) == []
 
 
+def test_check_api_preserved_sees_deletion_in_a_committed_ref(repo: Path):
+    """Grading a committed ref: HEAD *is* the patch, so the base must be
+    explicit or a deletion compares the patch against itself and vanishes."""
+    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    (repo / "app/collectors/demo.py").write_text("def fetch():\n    return 2\n")
+    subprocess.run(["git", "commit", "-qam", "delete collect_all"], cwd=repo,
+                   check=True)
+    # Against worktree HEAD (the patch itself): the deletion is invisible.
+    assert check_api_preserved(repo, ["app/collectors/demo.py"]) == []
+    # Against the explicit base: caught.
+    removed = check_api_preserved(repo, ["app/collectors/demo.py"], base_ref=base)
+    assert removed == ["app/collectors/demo.py::collect_all"]
+
+
 # ── pytest output parsing ───────────────────────────────────────────────────
 
 
@@ -174,3 +202,19 @@ def test_parse_failures_on_a_clean_run():
     failures, passed, failed = _parse_failures("733 passed in 48.2s\n")
     assert failures == set()
     assert (passed, failed) == (733, 0)
+
+
+def test_parse_failures_reads_collection_errors():
+    """A suite that dies at import must yield node ids, not just counts —
+    counts with an empty failure set diff to 'no regressions'."""
+    output = textwrap.dedent("""\
+        =========================== short test summary info ====
+        ERROR tests/unit/test_a.py - ModuleNotFoundError: No module named 'lazycat'
+        ERROR tests/unit/test_b.py - ModuleNotFoundError: No module named 'lazycat'
+        !!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!
+        15 warnings, 2 errors in 7.57s
+        """)
+    failures, passed, failed = _parse_failures(output)
+    assert failures == {"tests/unit/test_a.py", "tests/unit/test_b.py"}
+    assert passed == 0
+    assert failed == 2

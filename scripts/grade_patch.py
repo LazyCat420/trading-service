@@ -43,7 +43,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.cognition.evolution.coral.grader import (       # noqa: E402
-    DEFAULT_SUITE, REPRO_TIMEOUT_S, _run_pytest, capture_baseline, grade,
+    DEFAULT_SUITE, REPRO_TIMEOUT_S, BaselineUnavailable, _run_pytest,
+    capture_baseline, grade,
 )
 from app.cognition.evolution.coral.worktree import (     # noqa: E402
     NotAGitCheckout, assert_git_available, attempt_worktree, git,
@@ -159,8 +160,14 @@ def main() -> int:
     # ── baseline + grade ─────────────────────────────────────────────
     print(f"  baseline: capturing {'/'.join(suite)} at {args.base} "
           f"(cached per commit, ~3.5 min the first time)")
-    baseline = capture_baseline(suite=suite)
-    print(f"  baseline: {len(baseline.get('failures') or [])} pre-existing failure(s)")
+    try:
+        baseline = capture_baseline(suite=suite, ref=base_sha)
+    except BaselineUnavailable as e:
+        print(f"\nREFUSED — no usable baseline, so nothing can be scored: {e}",
+              file=sys.stderr)
+        return 2
+    print(f"  baseline: {len(baseline.get('failures') or [])} pre-existing failure(s), "
+          f"{baseline.get('passed')} passing")
 
     with attempt_worktree("grade", ref=args.ref) as wt:
         bundle = grade(
@@ -169,6 +176,7 @@ def main() -> int:
             repro_test=args.repro,
             baseline=baseline,
             suite=suite,
+            base_ref=base_sha,
         )
 
     print("\n" + "=" * 62)

@@ -59,10 +59,24 @@ def _python() -> str:
     """The interpreter to grade with — the checkout's venv if there is one.
 
     ``sys.executable`` is wrong when the runner is launched from somewhere else;
-    the suite must run against the same dependencies the service ships.
+    the suite must run against the same dependencies the service ships. The venv
+    is untracked, so a linked worktree does not have one — resolve it from the
+    main checkout in that case, or 63 test files die on `No module named
+    'lazycat'` at collection and the suite signal is destroyed.
     """
     venv = PROJECT_ROOT / ".venv" / "bin" / "python"
-    return str(venv) if venv.exists() else sys.executable
+    if venv.exists():
+        return str(venv)
+    try:
+        common = Path(git("rev-parse", "--git-common-dir", cwd=PROJECT_ROOT))
+        if not common.is_absolute():
+            common = PROJECT_ROOT / common
+        main_venv = common.resolve().parent / ".venv" / "bin" / "python"
+        if main_venv.exists():
+            return str(main_venv)
+    except RuntimeError:
+        pass
+    return sys.executable
 
 
 def _run_pytest(cwd: Path, targets: list[str], timeout: int,
@@ -89,8 +103,11 @@ def _run_pytest(cwd: Path, targets: list[str], timeout: int,
     }
     try:
         proc = subprocess.run(
+            # -rfE: collection ERRORs must appear in the short summary too, or
+            # a suite that dies at import produces counts with no node ids and
+            # the baseline diff sees nothing.
             [_python(), "-m", "pytest", *targets,
-             "-q", f"--tb={tb}", "-rf", "-p", "no:cacheprovider"],
+             "-q", f"--tb={tb}", "-rfE", "-p", "no:cacheprovider"],
             cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env,
         )
     except subprocess.TimeoutExpired:
@@ -117,10 +134,18 @@ def _assertion_excerpt(output: str, *, max_chars: int = 1200) -> str:
 
 
 def _parse_failures(output: str) -> tuple[set[str], int, int]:
-    """Extract ``(failing node ids, passed, failed)`` from pytest -q output."""
+    """Extract ``(failing node ids, passed, failed)`` from pytest -q output.
+
+    Counts are read from the final summary line only ("1 failed, 732 passed
+    ... in 50.57s"). Scanning the whole output double-counts: an interrupted
+    collection prints "63 errors during collection" AND "63 errors in 7.57s".
+    """
     failures = {m.group(1) for m in _FAILED_RE.finditer(output)}
     passed = failed = 0
-    for count, kind in _COUNT_RE.findall(output):
+    summary_lines = [ln for ln in output.splitlines()
+                     if re.search(r"\bin\s+[\d.]+s\b", ln) and _COUNT_RE.search(ln)]
+    counts_source = summary_lines[-1] if summary_lines else output
+    for count, kind in _COUNT_RE.findall(counts_source):
         if kind == "passed":
             passed = int(count)
         else:
@@ -132,13 +157,16 @@ def _parse_failures(output: str) -> tuple[set[str], int, int]:
 
 
 def capture_baseline(*, suite: tuple[str, ...] = DEFAULT_SUITE,
-                     refresh: bool = False) -> dict:
-    """Run the suite on unmodified HEAD and cache which tests fail.
+                     refresh: bool = False, ref: str = "HEAD") -> dict:
+    """Run the suite at unmodified ``ref`` and cache which tests fail.
 
-    Keyed by HEAD sha: a baseline from a different commit would let a patch
-    inherit credit for failures someone else already fixed.
+    Keyed by the resolved sha: a baseline from a different commit would let a
+    patch inherit credit for failures someone else already fixed. ``ref``
+    matters when grading a committed branch against an explicit base — the
+    baseline must describe the base being graded against, not whatever this
+    checkout happens to have checked out.
     """
-    head = git("rev-parse", "HEAD")
+    head = git("rev-parse", ref)
     _BASELINE_DIR.mkdir(parents=True, exist_ok=True)
     cache = _BASELINE_DIR / f"{head}.json"
 
@@ -155,16 +183,18 @@ def capture_baseline(*, suite: tuple[str, ...] = DEFAULT_SUITE,
     # candidates for edits nobody in this loop made.
     from app.cognition.evolution.coral.worktree import attempt_worktree
 
-    with attempt_worktree("baseline") as wt:
+    with attempt_worktree("baseline", ref=head) as wt:
         rc, output = _run_pytest(wt, list(suite), SUITE_TIMEOUT_S)
     failures, passed, failed = _parse_failures(output)
 
-    # A baseline that timed out or collected nothing is worse than no baseline:
-    # every pre-existing failure would then look new, so every candidate would be
-    # scored as a regression and nothing could ever go green. Fail loudly.
-    if rc == 5 or (passed == 0 and failed == 0):
+    # A baseline that timed out, collected nothing, or passed nothing is worse
+    # than no baseline. With passed == 0 the run is indistinguishable from a
+    # broken environment (a missing venv makes half the suite error at import),
+    # and a baseline recorded from that state scores garbage as green. Fail
+    # loudly.
+    if rc == 5 or passed == 0:
         raise BaselineUnavailable(
-            f"baseline run produced no usable result (rc={rc}). "
+            f"baseline run produced no usable result (rc={rc}, passed=0). "
             f"Last output: {output[-500:]}"
         )
     baseline = {
@@ -212,11 +242,18 @@ def check_compiles(worktree: Path, files: list[str]) -> tuple[bool, str]:
     return True, ""
 
 
-def check_api_preserved(worktree: Path, files: list[str]) -> list[str]:
-    """Public symbols present at HEAD and missing after the patch."""
+def check_api_preserved(worktree: Path, files: list[str],
+                        base_ref: str = "HEAD") -> list[str]:
+    """Public symbols present at ``base_ref`` and missing after the patch.
+
+    ``base_ref`` must be the pre-patch state. The default of HEAD is only
+    correct when the patch sits *uncommitted* in the worktree (the old loop's
+    shape). When grading a committed ref the worktree's HEAD IS the patch, and
+    comparing it to itself sees no deletion ever — pass the base sha instead.
+    """
     removed: list[str] = []
     for rel in files:
-        before = git("show", f"HEAD:{rel}", cwd=worktree, check=False)
+        before = git("show", f"{base_ref}:{rel}", cwd=worktree, check=False)
         if not before:
             continue
         after_path = worktree / rel
@@ -237,6 +274,7 @@ def grade(
     repro_test: str | None,
     baseline: dict,
     suite: tuple[str, ...] = DEFAULT_SUITE,
+    base_ref: str = "HEAD",
 ) -> ScoreBundle:
     """Score an already-applied patch inside ``worktree``.
 
@@ -255,7 +293,8 @@ def grade(
         bundle.duration_s = round(time.monotonic() - started, 1)
         return bundle
 
-    bundle.api_removed = check_api_preserved(worktree, changed_files)
+    bundle.api_removed = check_api_preserved(worktree, changed_files,
+                                             base_ref=base_ref)
 
     if repro_test:
         rc, output = _run_pytest(worktree, [repro_test], REPRO_TIMEOUT_S, tb="short")
@@ -280,6 +319,21 @@ def grade(
     bundle.baseline_failed = len(baseline_failures)
     bundle.new_failures = sorted(failures - baseline_failures)
     bundle.fixed_failures = sorted(baseline_failures - failures)
+
+    # A suite that passes nothing where the baseline passed plenty did not run
+    # in any meaningful sense — the environment broke (missing venv, dead
+    # import), and the node-id diff over an all-error run can come back empty.
+    # Scoring that as "no regressions" is how a dead suite grades 1.0.
+    baseline_passed = int(baseline.get("passed") or 0)
+    if bundle.suite_ran and passed == 0 and baseline_passed > 0:
+        bundle.suite_ran = False
+        bundle.detail = (
+            f"suite collapsed: 0 passed here vs {baseline_passed} at baseline "
+            f"— environment failure, not a graded result. Last output:\n"
+            + output[-400:]
+        )
+        bundle.duration_s = round(time.monotonic() - started, 1)
+        return bundle
 
     if not bundle.suite_ran:
         bundle.detail = "suite collected no tests — grading is not meaningful"

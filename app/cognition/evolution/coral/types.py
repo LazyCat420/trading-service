@@ -25,9 +25,11 @@ class ScoreBundle:
 
         0.00  the patch did not apply, or the file no longer compiles
         0.25  compiles, but the reproduction test still fails
-        0.60  reproduction test passes, but the suite regressed or public
-              symbols were deleted
-        1.00  reproduction test passes, nothing regressed, nothing deleted
+        0.60  reproduction test passes, but the suite regressed, public
+              symbols were deleted, or the suite produced no usable verdict
+              (collapsed environment) — not ready either way
+        1.00  reproduction test passes, suite ran, nothing regressed,
+              nothing deleted
 
     A regression is measured against a *captured baseline*, not against zero
     failures — this repo has a pre-existing failing test, and a grader that
@@ -68,6 +70,12 @@ class ScoreBundle:
         if not self.repro_passed:
             return 0.25
         if self.regressed:
+            return 0.60
+        if not self.suite_ran:
+            # A passing repro with no suite verdict is not green. This is the
+            # collapsed-suite case (environment failure): the node-id diff over
+            # an all-error run is empty, so without this rung a dead suite
+            # grades 1.0.
             return 0.60
         return 1.0
 
