@@ -29,6 +29,7 @@ from app.v3.guardrails import (
 )
 from app.utils.text_utils import sanitize_ascii
 from app.v3.artifacts import ARTIFACT_SCHEMAS, validate_artifact
+from app.v3.output_rules import classify_output, record_rule_firing
 from app.v3.quality_scorer import score_artifact
 
 logger = logging.getLogger(__name__)
@@ -1072,10 +1073,10 @@ async def run_v3_agent(
         # max_tokens/length check here was dead: run_agent never set those.)
         if stop_reason == "max_iterations":
             logger.warning(
-                "[V3Runner] %s exhausted its turn budget for %s — "
-                "artifact parsing will fail. Consider raising its "
-                "AGENT_BUDGET_OVERRIDES entry.",
-                agent_name, desk.ticker,
+                "[V3Runner] %s hit its turn wall for %s (%d chars of %s) — "
+                "artifact parsing will fail.",
+                agent_name, desk.ticker, len(final_text or ""),
+                classify_output(final_text).name,
             )
 
         # Parse the artifact from the agent's output
@@ -1092,7 +1093,9 @@ async def run_v3_agent(
         # the whole ticker down, which the 2026-07-26 audit deliberately
         # designed against.
         fragment: dict | None = None
+        wrong_shape = False
         if artifact is not None and _is_wrong_shape(artifact_type, artifact):
+            wrong_shape = True
             logger.warning(
                 "[V3Runner] %s: parsed output is not a %s — it carries none of "
                 "its fields (keys=%s). Treating as unparseable so the repair "
@@ -1110,11 +1113,21 @@ async def run_v3_agent(
         # One tool-less retry that shows the model its own output and asks only
         # for the JSON recovers it, so re-running every agent from scratch (or
         # tripping the breaker) is not the first resort.
+        # Name the failure class BEFORE deciding whether repair can run, so the
+        # counter sees the tool-less agents' failures too. A rate computed only
+        # over the repairable population would be the "number computed
+        # correctly over the wrong set" defect: it would read as a class rate
+        # while excluding every agent that has no tool whitelist.
+        rule = None
+        repaired: bool | None = None
+        if artifact is None:
+            rule = classify_output(final_text, wrong_shape=wrong_shape)
+
         if artifact is None and final_text and bool(tool_whitelist):
             logger.warning(
-                "[V3Runner] %s: unparseable output for %s (%d chars) — "
-                "attempting tool-less artifact repair",
-                agent_name, desk.ticker, len(final_text),
+                "[V3Runner] %s: %s for %s (%d chars) — attempting tool-less "
+                "artifact repair",
+                agent_name, rule.name, desk.ticker, len(final_text),
             )
             try:
                 # Hand back the agent's OWN findings, not just its last
@@ -1141,12 +1154,32 @@ async def run_v3_agent(
                         )
                     _findings = "\n".join(_lines) + "\n\n"
 
+                # The rule's directive is the injected correction — the analog
+                # of a stream rule that sits dormant until the model goes
+                # off-script and then says the ONE thing that fits what it
+                # actually did. The generic "could not be parsed" that used to
+                # sit here was shown to every class equally: it told a model
+                # that had returned nothing to fix its previous reply, and a
+                # model whose JSON was truncated to start writing JSON.
+                _previous = ""
+                if rule.quote_previous:
+                    # TRUNCATED_JSON is quoted from the TAIL: its head is
+                    # perfectly good JSON and the cut is at the end, so a
+                    # head-only excerpt shows the model none of the damage.
+                    _excerpt = (
+                        f"...{final_text[-2000:]}"
+                        if rule.name == "TRUNCATED_JSON" and len(final_text) > 2000
+                        else final_text[:2000]
+                    )
+                    _previous = (
+                        f"## PREVIOUS ATTEMPT ({rule.name})\n{_excerpt}\n\n"
+                    )
+
                 repair_prompt = (
                     f"{user_prompt}\n\n"
                     f"{_findings}"
-                    f"## PREVIOUS ATTEMPT (UNPARSEABLE)\n"
-                    f"Your previous reply could not be parsed as the "
-                    f"required artifact:\n\n{final_text[:2000]}\n\n"
+                    f"{_previous}"
+                    f"{rule.directive}\n\n"
                     f"Do NOT call any tools — you have none available "
                     f"now. Using the analysis you already performed, "
                     f"reply with ONLY the '{artifact_type}' JSON "
@@ -1183,10 +1216,12 @@ async def run_v3_agent(
                 )
                 repair_text = repair_result.get("response", "")
                 artifact = _parse_artifact(repair_text, artifact_type, agent_name)
+                repaired = artifact is not None
                 if artifact is not None:
                     logger.info(
-                        "[V3Runner] %s: artifact repair succeeded for %s",
-                        agent_name, desk.ticker,
+                        "[V3Runner] %s: artifact repair succeeded for %s "
+                        "(rule %s)",
+                        agent_name, desk.ticker, rule.name,
                     )
                 token_usage += repair_result.get("tokens_used", 0)
                 # Recompute on BOTH repair outcomes: recomputing only on
@@ -1195,11 +1230,37 @@ async def run_v3_agent(
                 # retries undercounted on 08-04).
                 elapsed_ms = int((time.monotonic() - t_start) * 1000)
             except Exception as e:
+                repaired = False
                 logger.warning(
                     "[V3Runner] %s: artifact repair failed for %s: %s: %s",
                     agent_name, desk.ticker, type(e).__name__, e,
                 )
                 elapsed_ms = int((time.monotonic() - t_start) * 1000)
+
+        # One row per classified failure, whatever happened next. `repaired`
+        # stays None when the repair pass never ran (a tool-less agent has
+        # nothing to re-ask without tools), which keeps "we could not try" from
+        # reading as "we tried and failed" — the same distinction the bear's
+        # NOT_ASKED draws against DECLINED.
+        if rule is not None:
+            record_rule_firing(
+                rule,
+                agent_name=agent_name,
+                ticker=desk.ticker,
+                cycle_id=cycle_id,
+                chars=len(final_text or ""),
+                repaired=repaired,
+            )
+            emit(
+                "analyzing",
+                f"v3_output_rule_{desk.ticker}",
+                f"📐 {desk.ticker}: {agent_name} → {rule.name}"
+                + (
+                    " (repaired)" if repaired
+                    else " (repair failed)" if repaired is False
+                    else " (no repair path)"
+                ),
+            )
 
         # Repair did not land (or could not run — it needs a tool-enabled
         # agent). Put the fragment back and let the collapse branches grade it.

@@ -37,7 +37,21 @@ def test_the_repair_prompt_consumes_the_transcript():
     assert "WHAT YOU ALREADY FOUND" in src
     # …and it must still carry the failed attempt, so the model can see what
     # shape was rejected.
-    assert "PREVIOUS ATTEMPT (UNPARSEABLE)" in src
+    #
+    # 2026-08-09: this used to grep for the literal header
+    # "PREVIOUS ATTEMPT (UNPARSEABLE)", which broke the moment the header
+    # started naming the failure class instead ("PREVIOUS ATTEMPT
+    # (NARRATED_NO_ARTIFACT)"). A source-string assertion cannot tell a
+    # renamed header from a deleted one — see the standing note about tests
+    # that assert only that `inspect.getsource` contains a string. The
+    # behaviour it was reaching for is asserted on the real prompt in
+    # tests/unit/test_output_rule_repair.py; what belongs HERE is that the
+    # quoting block still exists at all.
+    assert "PREVIOUS ATTEMPT" in src
+    assert "rule.quote_previous" in src, (
+        "the failed attempt must still be quoted back, for the classes where "
+        "the buffer is actually the model's own output"
+    )
 
 
 def test_transcript_is_declared_outside_the_retry_wrapper():
