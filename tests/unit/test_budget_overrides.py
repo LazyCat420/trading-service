@@ -44,3 +44,60 @@ def test_budget_table_stays_in_sync():
 
     for agent_name, expected in AGENT_BUDGET_OVERRIDES.items():
         assert get_agent_budget_turns(agent_name, enable_tools=True) == expected
+
+
+def test_delta_analyst_has_a_real_budget():
+    """v3_delta_analyst was the THIRD agent to silently inherit the 9999
+    default (after v3_bull_defense on 08-05 and the near-miss the PM comment
+    records): it carries a 4-tool whitelist, so enable_tools is True, and
+    with no override entry its prompt printed "TURN BUDGET: 9999" in
+    production (seen live on GEN, cycle-v3-1786297004, 2026-08-09)."""
+    from app.agents.tool_whitelists import get_agent_budget_turns
+
+    assert get_agent_budget_turns("v3_delta_analyst", enable_tools=True) == 5
+
+
+def test_every_whitelisted_v3_agent_has_a_budget_entry():
+    """The structural fix for the missing-entry trap: SCAN the v3 agent
+    modules for a TOOL_WHITELIST and require an AGENT_BUDGET_OVERRIDES entry
+    for each. Three agents have fallen into the gap one at a time; this makes
+    the fourth a CI failure instead of a production discovery.
+
+    An agent module without a TOOL_WHITELIST is exempt: enable_tools=False
+    routes it to the single-turn path and the default is unreachable.
+    """
+    import ast
+    from pathlib import Path
+
+    from app.agents.tool_whitelists import AGENT_BUDGET_OVERRIDES
+
+    agents_dir = (
+        Path(__file__).resolve().parents[2] / "app" / "v3" / "agents"
+    )
+    missing = []
+    for mod in sorted(agents_dir.glob("*.py")):
+        if mod.name == "__init__.py":
+            continue
+        tree = ast.parse(mod.read_text())
+        has_whitelist = False
+        agent_name = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if getattr(tgt, "id", "") == "TOOL_WHITELIST":
+                        try:
+                            has_whitelist = bool(ast.literal_eval(node.value))
+                        except Exception:
+                            has_whitelist = True  # non-literal → assume tools
+                    if getattr(tgt, "id", "") == "AGENT_NAME":
+                        try:
+                            agent_name = ast.literal_eval(node.value)
+                        except Exception:
+                            pass
+        if has_whitelist and agent_name and agent_name not in AGENT_BUDGET_OVERRIDES:
+            missing.append(f"{agent_name} ({mod.name})")
+
+    assert not missing, (
+        "Tool-carrying v3 agents with NO budget entry — they will run with "
+        f"the 9999 default: {missing}"
+    )

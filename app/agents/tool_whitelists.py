@@ -365,6 +365,14 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     # at 49 and 94 chars, "no parseable artifact". A tool-carrying agent needs at
     # least one turn to call and one to answer; 3 matches the rest of the debate.
     "v3_bull_defense": 3,
+    # 5: the delta doctrine is ONE cheap pass over what changed (4 tools);
+    # a couple of gap-fill calls plus the artifact turn. THIRD victim of the
+    # missing-entry trap (bull_defense 08-05, the PM comment below) — it ran
+    # with the 9999 default and printed "TURN BUDGET: 9999" into its own
+    # prompt until 2026-08-09. The invariant test in
+    # tests/unit/test_tool_whitelists.py now scans for whitelisted agents
+    # missing an entry, so the fourth victim fails CI instead of shipping.
+    "v3_delta_analyst": 5,
     "v3_debate_judge": 3,        # No tools — pure reasoning
     "v3_regime_engine": 5,
     "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk
