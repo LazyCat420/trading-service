@@ -30,6 +30,8 @@ EXTRA_SSH_SYNC() {
   info "Appending concurrency overrides to remote .env..."
   ssh "$DEPLOY_SSH_HOST" "echo '' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'PRISM_URL=http://10.0.0.16:5591/prism-proxy' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  ssh "$DEPLOY_SSH_HOST" "echo 'PROVIDER_VLLM_1_URL=http://10.0.0.16:5591/vllm-shim/jetson' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  ssh "$DEPLOY_SSH_HOST" "echo 'PROVIDER_VLLM_2_URL=http://10.0.0.16:5591/vllm-shim/gold-spark' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'LAZY_TOOL_SERVICE_URL=http://10.0.0.16:5591' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'LAZY_TOOL_SERVICE_PORT=5591' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'V2_TICKER_CONCURRENCY=4' >> '${DEPLOY_COMPOSE_DIR}/.env'"

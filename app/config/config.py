@@ -62,11 +62,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "vllm-trading-bot"
 
     # ── Prism VLLM Providers (Source of Truth from vault-service/projects.json) ──
-    PROVIDER_VLLM_1_URL: str = _config.get("PROVIDER_VLLM_1_URL", "http://10.0.0.30:8000")
+    PROVIDER_VLLM_1_URL: str = _config.get("PROVIDER_VLLM_1_URL", "http://10.0.0.16:5591/vllm-shim/jetson")
     PROVIDER_VLLM_1_NICKNAME: str = _config.get("PROVIDER_VLLM_1_NICKNAME", "Jetson")
     PROVIDER_VLLM_1_CONCURRENCY: int = int(_config.get("PROVIDER_VLLM_1_CONCURRENCY", "8") or "8")
 
-    PROVIDER_VLLM_2_URL: str = _config.get("PROVIDER_VLLM_2_URL", "http://10.0.0.141:8000")
+    PROVIDER_VLLM_2_URL: str = _config.get("PROVIDER_VLLM_2_URL", "http://10.0.0.16:5591/vllm-shim/gold-spark")
     PROVIDER_VLLM_2_NICKNAME: str = _config.get("PROVIDER_VLLM_2_NICKNAME", "Gold Spark")
     PROVIDER_VLLM_2_CONCURRENCY: int = Field(default=int(_config.get("PROVIDER_VLLM_2_CONCURRENCY", "16") or "16"), validation_alias="DGX_MAX_CONCURRENT")
 
