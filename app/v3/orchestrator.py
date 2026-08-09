@@ -928,7 +928,34 @@ async def run_v3_pipeline(
         sec = event.get("section")
         auth = event.get("author")
         logger.info("[V3] Whiteboard event trigger: section '%s' updated by '%s'", sec, auth)
-        
+
+        # ── The transcript ────────────────────────────────────────────────
+        # Every artifact completion passes through here, which makes this the
+        # one place a chat line can be emitted without threading an emit call
+        # through eleven agent call sites. The debate was otherwise invisible
+        # live: `debate_pitch`/`clash`/`vote`/`verdict` are emitted only from
+        # the tournament path and fired ZERO times in the 7 days to
+        # 2026-08-08, so what each agent actually said reached the operator
+        # only after the whole ticker finished and the desk row was written.
+        try:
+            from app.v3.agent_chat import chat_line_for, emit_agent_message
+
+            _line = chat_line_for(sec, event.get("content"))
+            if _line:
+                emit_agent_message(
+                    emit,
+                    speaker=_line["speaker"],
+                    ticker=ticker,
+                    text=_line["text"],
+                    role=_line["role"],
+                    stance=_line["stance"],
+                    confidence=_line["confidence"],
+                    extra=_line["extra"],
+                )
+        except Exception as _chat_err:  # noqa: BLE001 — an observer never blocks
+            logger.debug("[V3] chat line not emitted: %s", _chat_err)
+
+
         if sec == "regime_classification":
             content = event.get("content") or {}
             if "regime" not in content:

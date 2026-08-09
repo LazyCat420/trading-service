@@ -1005,6 +1005,46 @@ async def run_v3_agent(
             f"data points for other agents and future cycles.\n\n"
         )
 
+        # ── The operator's channel ────────────────────────────────────────
+        # A human watching the cycle can address an agent mid-run from the
+        # Trading Agent Chat widget. Placed AFTER the output directive so it
+        # cannot be read as a licence to stop emitting the artifact, and
+        # BEFORE "Begin your analysis now" so it is the last instruction the
+        # agent reads. Consumed exactly once — see app/v3/agent_chat.py for
+        # why a directive must not become standing policy.
+        try:
+            from app.v3.agent_chat import (
+                directive_block, mark_directives_consumed, pending_directives,
+            )
+
+            _directives = pending_directives(
+                cycle_id=cycle_id, ticker=desk.ticker, agent_name=agent_name,
+            )
+            _block = directive_block(_directives)
+            if _block:
+                user_prompt += _block
+                mark_directives_consumed(
+                    [d["id"] for d in _directives], consumed_by=agent_name,
+                )
+                logger.info(
+                    "[V3Runner] %s: %d operator directive(s) injected for %s",
+                    agent_name, len(_directives), desk.ticker,
+                )
+                emit(
+                    "analyzing", f"v3_directive_{desk.ticker}",
+                    f"📨 {desk.ticker}: {agent_name} received "
+                    f"{len(_directives)} operator directive(s)",
+                    data={"kind": "agent_message", "ticker": desk.ticker,
+                          "speaker": agent_name, "role": "system",
+                          "message": "Operator directive received: "
+                                     + " | ".join(
+                                         (d.get("directive") or "")[:160]
+                                         for d in _directives
+                                     )},
+                )
+        except Exception as _dir_err:  # noqa: BLE001 — never block a run
+            logger.debug("[V3Runner] directive injection skipped: %s", _dir_err)
+
         # Append custom peer instructions if requested
         if custom_instructions:
             user_prompt += (
