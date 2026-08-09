@@ -616,6 +616,60 @@ class VLLMEndpoint:
     requests_waiting: int = 0
     last_model_sync: float = 0.0
 
+#: Metric NAME → (VLLMEndpoint attribute, converter). Names are matched
+#: EXACTLY against the token before '{' or whitespace — never by prefix.
+#:
+#: WHY EXACT. The old loop used line.startswith(name), and vLLM ships metric
+#: FAMILIES that share a prefix: `vllm:num_requests_waiting` is followed by
+#: `vllm:num_requests_waiting_by_reason{reason="capacity"}` and
+#: `{reason="deferred"}`. All three matched, and the LAST line parsed —
+#: deferred, which is 0 in steady state — overwrote the true queue depth on
+#: every 5s poll. Measured live 2026-08-09: box waiting=17, controller read 0.
+#: With waiting pinned at 0 the AdaptiveConcurrencyController's backpressure
+#: clamp could never fire: the service sat at its MAX ceiling instead of
+#: dropping to MIN while it — plus prism's own memory ops and scheduled
+#: agents — piled 22 in flight against Gold Spark's 6 slots. Queued calls
+#: waited 5+ minutes at zero bytes, prism's 300s idle watchdog killed them
+#: ("Provider stream stalled"), and at 02:14 the same pile-up preceded the
+#: box refusing TCP entirely for 80 minutes.
+_VLLM_METRIC_MAP = {
+    "vllm:gpu_cache_usage_perc": ("cache_usage", float),
+    "vllm:kv_cache_usage_perc": ("cache_usage", float),
+    "vllm_gpu_cache_usage_perc": ("cache_usage", float),
+    "vllm:num_requests_running": ("requests_running", lambda v: int(float(v))),
+    "vllm_num_requests_running": ("requests_running", lambda v: int(float(v))),
+    "vllm:num_requests_waiting": ("requests_waiting", lambda v: int(float(v))),
+    "vllm_num_requests_waiting": ("requests_waiting", lambda v: int(float(v))),
+}
+
+
+def parse_vllm_metrics(text: str) -> dict:
+    """Parse a vLLM Prometheus /metrics payload into endpoint attributes.
+
+    Returns only the attributes present in the payload, converted; a line
+    whose value fails conversion is skipped rather than poisoning the rest.
+    Line order must not matter — see _VLLM_METRIC_MAP for the incident where
+    it did.
+    """
+    out: dict = {}
+    for line in text.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        # The metric NAME is everything before the label block or the value.
+        name = line.split("{", 1)[0].split(None, 1)[0]
+        entry = _VLLM_METRIC_MAP.get(name)
+        if entry is None:
+            continue
+        attr, conv = entry
+        parts = line.split()
+        if len(parts) >= 2:
+            try:
+                out[attr] = conv(parts[-1])
+            except Exception:
+                pass
+    return out
+
+
 class PrismLLMShim:
     """Shim class that mimics the old VLLM client interface."""
     def __init__(self):
@@ -885,15 +939,6 @@ class PrismLLMShim:
     async def _poll_all_metrics(self):
         import httpx
         import asyncio
-        _METRIC_MAP = {
-            "vllm:gpu_cache_usage_perc": ("cache_usage", float),
-            "vllm:kv_cache_usage_perc": ("cache_usage", float),
-            "vllm_gpu_cache_usage_perc": ("cache_usage", float),
-            "vllm:num_requests_running": ("requests_running", lambda v: int(float(v))),
-            "vllm_num_requests_running": ("requests_running", lambda v: int(float(v))),
-            "vllm:num_requests_waiting": ("requests_waiting", lambda v: int(float(v))),
-            "vllm_num_requests_waiting": ("requests_waiting", lambda v: int(float(v))),
-        }
         while True:
             for ep in self._endpoints.values():
                 if not ep.enabled or not ep.url:
@@ -905,18 +950,8 @@ class PrismLLMShim:
                             # Reset values before parsing new ones
                             ep.requests_running = 0
                             ep.requests_waiting = 0
-                            for line in r.text.splitlines():
-                                if line.startswith("#") or not line.strip():
-                                    continue
-                                for metric_prefix, (attr, conv) in _METRIC_MAP.items():
-                                    if line.startswith(metric_prefix):
-                                        parts = line.split()
-                                        if len(parts) >= 2:
-                                            try:
-                                                setattr(ep, attr, conv(parts[-1]))
-                                            except Exception:
-                                                pass
-                                        break
+                            for attr, value in parse_vllm_metrics(r.text).items():
+                                setattr(ep, attr, value)
                 except Exception as e:
                     logger.debug("[PrismLLMShim] Failed to poll metrics from %s: %s", ep.name, e)
             await asyncio.sleep(5.0)

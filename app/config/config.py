@@ -88,8 +88,18 @@ class Settings(BaseSettings):
     BATCH_CIRCUIT_BREAKER_THRESHOLD: int = 5  # consecutive failed batches → disable endpoint 60s (raised from 3: burst patterns hit 3 too easily)
 
     # ── Adaptive Concurrency (caller-side LLM throttling) ──
-    ADAPTIVE_MIN_CONCURRENCY: int = 8   # floor when KV cache pressure is high (>80%)
-    ADAPTIVE_MAX_CONCURRENCY: int = 24   # ceiling when cache pressure is low (<60%)
+    # 4/8, matching what deploy.sh has appended to the remote .env all along —
+    # these code defaults previously said 8/24, so a LOCAL run (which reads no
+    # such override) throttled at 3x the production ceiling against the same
+    # boxes. Gold Spark runs exactly 6 requests (measured 2026-08-09; the
+    # 1M-token max_model_len makes each KV allocation huge), and the box is
+    # SHARED with prism's own workload (memory ops, scheduled agents), so our
+    # ceiling must leave headroom, and the MIN — the value the backpressure
+    # clamp drops to — must sit under 6 or clamping cannot drain the queue.
+    # Note the clamp only works at all with parse_vllm_metrics reading the
+    # queue exactly; see _VLLM_METRIC_MAP in prism_agent_caller.py.
+    ADAPTIVE_MIN_CONCURRENCY: int = 4   # floor when the queue backs up / cache is tight
+    ADAPTIVE_MAX_CONCURRENCY: int = 8   # ceiling when the box reads healthy
 
     # ── Pipeline ──
     MAX_ANALYSIS_TICKERS: int = 30  # hard cap on tickers per cycle

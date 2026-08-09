@@ -38,7 +38,12 @@ EXTRA_SSH_SYNC() {
   ssh "$DEPLOY_SSH_HOST" "echo 'ADAPTIVE_MIN_CONCURRENCY=4' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'ADAPTIVE_MAX_CONCURRENCY=8' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'JETSON_MAX_CONCURRENT=6' >> '${DEPLOY_COMPOSE_DIR}/.env'"
-  ssh "$DEPLOY_SSH_HOST" "echo 'DGX_MAX_CONCURRENT=8' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  # 6, not 8: Gold Spark runs exactly 6 requests (measured 2026-08-09 —
+  # num_requests_running pinned at 6 while 16+ waited on reason="capacity";
+  # the 1M-token max_model_len makes each KV allocation huge). A declared
+  # capacity above the real one feeds _total_capacity() a number the box
+  # cannot honour.
+  ssh "$DEPLOY_SSH_HOST" "echo 'DGX_MAX_CONCURRENT=6' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'ANALYSIS_WORKER_TIMEOUT_SECONDS=1800' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   # Stamp the deployed commit so cycle_main's worker identity reads
   # "<host>/<sha>" instead of "<host>/unknown-build". Any process pointed at
