@@ -38,7 +38,7 @@ def _no_live_cycle_check():
 async def test_a_pinned_host_that_is_down_yields_no_targets_not_a_substitute():
     """The whole point of the worker. If this ever returns Gold Spark, the
     backfill has silently become a tax on the trading cycle."""
-    with patch("app.scraper.engines.vision_engine._vision_targets",
+    with patch("app.services.vllm_hosts.vllm_targets",
                new=AsyncMock(return_value=[SPARK])):
         targets = await ne._chat_targets(only=("jetson",))
     assert targets == [], "a pin must remove hosts, not reorder them"
@@ -46,7 +46,7 @@ async def test_a_pinned_host_that_is_down_yields_no_targets_not_a_substitute():
 
 @pytest.mark.asyncio
 async def test_no_target_within_the_pin_fails_soft_without_calling_any_host():
-    with patch("app.scraper.engines.vision_engine._vision_targets",
+    with patch("app.services.vllm_hosts.vllm_targets",
                new=AsyncMock(return_value=[SPARK])), \
          patch("httpx.AsyncClient") as client:
         facts, provider = await ne.extract_article_facts_with_source(

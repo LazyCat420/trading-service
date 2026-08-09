@@ -197,20 +197,21 @@ async def _chat_targets(only: tuple[str, ...] | None = None
                         ) -> list[tuple[str, str, str]]:
     """Usable (provider, model, base_url) targets in _ENDPOINT_ORDER.
 
-    Host discovery is the vision engine's — one source of truth for which local
-    hosts serve chat completions — but the ORDER is this module's, because OCR
-    and fact-extraction want different boxes. Unknown keys in the env override
-    are ignored rather than fatal, and any host the order does not name is
-    appended, so a typo degrades to "wrong preference" instead of "no hosts".
+    Host discovery is `app.services.vllm_hosts`' — one source of truth for
+    which local hosts serve chat completions — but the ORDER is this module's,
+    because different work wants different boxes. Unknown keys in the env
+    override are ignored rather than fatal, and any host the order does not
+    name is appended, so a typo degrades to "wrong preference" instead of
+    "no hosts".
 
     `only` is a HARD pin: hosts it does not name are removed, not demoted, and
     an empty result is the correct answer. The backfill worker needs that —
     "the Jetson is down" must stop low-priority backlog work, never quietly
     redirect it onto the box the trading cycle is using.
     """
-    from app.scraper.engines.vision_engine import _vision_targets
+    from app.services.vllm_hosts import vllm_targets
 
-    targets = await _vision_targets()
+    targets = await vllm_targets()
     if only is not None:
         allowed = {_PROVIDER_BY_ENDPOINT[k] for k in only
                    if k in _PROVIDER_BY_ENDPOINT}

@@ -114,12 +114,16 @@ class HttpEngine(BaseEngine):
             if "application/json" in content_type:
                 try:
                     json_data = response.json()
+                    # Same rule as the HTML branch below: a JSON error body is
+                    # not a successful scrape, though it stays in `data` for
+                    # callers that want to read the error.
+                    ok = 200 <= response.status_code < 300
                     return ScrapeResult(
                         url=url,
-                        success=True,
+                        success=ok,
                         content=response.text,
                         data=json_data if isinstance(json_data, dict) else {"items": json_data},
-                        error=None,
+                        error=None if ok else f"HTTP {response.status_code}",
                         engine_used="http",
                         scraped_at=datetime.utcnow(),
                         status_code=response.status_code,
@@ -144,12 +148,23 @@ class HttpEngine(BaseEngine):
             if not extracted_text:
                 extracted_text = _clean_html_fallback(html)
 
+            # `success` must reflect the status. This returned True for ANY
+            # status, so a 410 came back as
+            #   success=True, status_code=410,
+            #   content="This content has been permanently removed."
+            # AutoEngine re-checked the status itself and was unaffected, but a
+            # direct `engine="http"` caller had only its own length guard
+            # between an error page and the article body — and an error page
+            # with more boilerplate than that guard allows would be stored as
+            # the article. Callers that want the body of a non-2xx response
+            # still get it in `content`.
+            ok = 200 <= response.status_code < 300
             return ScrapeResult(
                 url=url,
-                success=True,
+                success=ok,
                 content=extracted_text,
                 data=data,
-                error=None,
+                error=None if ok else f"HTTP {response.status_code}",
                 engine_used="http",
                 scraped_at=datetime.utcnow(),
                 status_code=response.status_code,

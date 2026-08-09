@@ -4,7 +4,16 @@ auto_engine.py — Orchestrated fallback scraping engine
 Runs a sequential pipeline:
   1. http: Fast, plain GET.
   2. playwright: Headless JS execution.
-  3. vision: Screen screenshot OCR (last resort).
+
+A third phase — screenshot + VLM OCR — was removed on 2026-08-09. It could
+not succeed: it imported the trading app's LLM config layer, which
+scraper-service's deploy.sh deliberately does not ship, so every call raised
+``ImportError`` and every failed scrape paid ~16s to reach it. Its own
+measured benchmarks also undercut the case for repairing it — on a genuine
+bot-wall (the pages http and playwright cannot get) OCR correctly returned
+"no content", because a bot-wall renders as a bot-wall in a screenshot too.
+Host discovery, the one piece worth keeping, moved to
+``app.services.vllm_hosts``.
 """
 
 import logging
@@ -13,9 +22,9 @@ from typing import Any
 
 from app.scraper.core.base_engine import BaseEngine
 from app.scraper.core.base_result import ScrapeResult
+from app.scraper.core.failure_cache import PERMANENT_STATUSES, failure_cache
 from app.scraper.engines.http_engine import HttpEngine
 from app.scraper.engines.playwright_engine import PlaywrightEngine
-from app.scraper.engines.vision_engine import VisionEngine
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +70,6 @@ class AutoEngine(BaseEngine):
     def __init__(self):
         self.http_engine = HttpEngine()
         self.playwright_engine = PlaywrightEngine()
-        self.vision_engine = VisionEngine()
 
     def is_blocked_content(self, text: str) -> bool:
         """Check if retrieved text contains block signatures indicating captcha or bot shield."""
@@ -73,11 +81,37 @@ class AutoEngine(BaseEngine):
                 return True
         return False
 
+    def _dead(self, url: str, reason: str) -> ScrapeResult:
+        """A result for a URL known to be permanently gone."""
+        return ScrapeResult(
+            url=url, success=False, content=None, data={},
+            error=f"URL is permanently unavailable ({reason})",
+            engine_used="auto (skipped)", scraped_at=datetime.utcnow(),
+        )
+
     async def fetch(self, url: str, options: dict[str, Any]) -> ScrapeResult:
+        # Phase 0: have we already established this URL is gone? Skipping is
+        # the whole point — one 410 article was re-walked 157 times over 12
+        # days because nothing remembered the answer.
+        cached = failure_cache.check(url)
+        if cached:
+            logger.info("[auto] Skipping %s — known dead (%s)", url, cached)
+            return self._dead(url, cached)
+
         # Phase 1: HTTP
         logger.info(f"[auto] Trying HTTP engine for {url}")
         res = await self.http_engine.fetch(url, options)
-        
+
+        # A 404/410 is a fact about the URL, not a transient miss. Escalating
+        # to a browser cannot conjure a deleted page, so stop here and
+        # remember it. Transient failures (5xx, timeouts, bot-walls) fall
+        # through to Playwright as before — those do recover.
+        if res.status_code in PERMANENT_STATUSES:
+            reason = f"HTTP {res.status_code}"
+            failure_cache.record(url, reason)
+            logger.info("[auto] %s returned %s — not retrying", url, reason)
+            return self._dead(url, reason)
+
         # If success, status code is valid, length is sufficient, and not blocked
         if res.success and res.content and len(res.content) > 150:
             if res.status_code in [200, 201, 202] and not self.is_blocked_content(res.content):
@@ -104,16 +138,10 @@ class AutoEngine(BaseEngine):
         else:
             logger.info(f"[auto] Playwright engine failed: {res.error}")
 
-        # Phase 3: Vision Engine (last resort fallback)
-        logger.info(f"[auto] Escalating to Vision engine for {url}")
-        res = await self.vision_engine.fetch(url, options)
-        
-        if res.success:
-            logger.info(f"[auto] Vision engine succeeded for {url}")
-            res.engine_used = "auto (vision)"
-            return res
-        else:
-            logger.info(f"[auto] Vision engine failed: {res.error}")
+        # Playwright is the last phase. A 404/410 that only surfaces here (a
+        # soft redirect to a "gone" page, say) is still permanent.
+        if res.status_code in PERMANENT_STATUSES:
+            failure_cache.record(url, f"HTTP {res.status_code}")
 
         # If all fail, return the last result
         res.engine_used = "auto (failed)"

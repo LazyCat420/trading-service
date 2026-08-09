@@ -12,18 +12,19 @@ from app.scraper.api.schemas import BatchRequest, ScrapeRequest, ScrapeResponse
 from app.scraper.engines.http_engine import HttpEngine
 from app.scraper.engines.playwright_engine import PlaywrightEngine
 from app.scraper.engines.crawl4ai_engine import Crawl4aiEngine
-from app.scraper.engines.vision_engine import VisionEngine
 from app.scraper.engines.auto_engine import AutoEngine
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Engine registry — instantiate once
+# Engine registry — instantiate once.
+# "vision" (screenshot + VLM OCR) was removed on 2026-08-09: it depended on
+# the trading app's LLM config layer, which this image does not ship, so it
+# raised ImportError on every call. See auto_engine's module docstring.
 ENGINES = {
     "http": HttpEngine(),
     "playwright": PlaywrightEngine(),
     "crawl4ai": Crawl4aiEngine(),
-    "vision": VisionEngine(),
     "auto": AutoEngine(),
 }
 
@@ -36,7 +37,7 @@ async def scrape_url(req: ScrapeRequest):
       - http: Fast, plain HTTP + BeautifulSoup (default)
       - playwright: Headless Chromium for JS-rendered pages
       - crawl4ai: Advanced crawling with stealth + markdown output
-      - vision: Screenshot + VLM OCR (slowest, most powerful)
+      - auto: http, then playwright on failure
     """
     engine = ENGINES.get(req.engine)
     if not engine:

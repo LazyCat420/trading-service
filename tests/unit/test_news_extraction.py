@@ -199,17 +199,17 @@ _BOTH_HOSTS = [
 
 
 @pytest.mark.asyncio
-async def test_endpoint_order_overrides_the_vision_engines_order():
+async def test_endpoint_order_overrides_the_discovery_order():
     """Host DISCOVERY is shared with vision OCR; host ORDER is not. OCR wants
     Gold Spark (the Jetson editorialises on images); extraction wants whatever
     the A/B picked. A shared list would couple the two decisions."""
-    with patch("app.scraper.engines.vision_engine._vision_targets",
+    with patch("app.services.vllm_hosts.vllm_targets",
                new=AsyncMock(return_value=list(_BOTH_HOSTS))), \
          patch.object(ne, "_ENDPOINT_ORDER", ("jetson", "dgx_spark")):
         targets = await ne._chat_targets()
     assert [t[0] for t in targets] == ["vllm", "vllm-2"]
 
-    with patch("app.scraper.engines.vision_engine._vision_targets",
+    with patch("app.services.vllm_hosts.vllm_targets",
                new=AsyncMock(return_value=list(_BOTH_HOSTS))), \
          patch.object(ne, "_ENDPOINT_ORDER", ("dgx_spark", "jetson")):
         targets = await ne._chat_targets()
@@ -220,7 +220,7 @@ async def test_endpoint_order_overrides_the_vision_engines_order():
 async def test_an_unknown_endpoint_key_degrades_to_preference_not_to_no_hosts():
     """A typo in NEWS_EXTRACT_ENDPOINTS must cost ordering, never availability —
     extraction that silently has no hosts reads as "the feature is off"."""
-    with patch("app.scraper.engines.vision_engine._vision_targets",
+    with patch("app.services.vllm_hosts.vllm_targets",
                new=AsyncMock(return_value=list(_BOTH_HOSTS))), \
          patch.object(ne, "_ENDPOINT_ORDER", ("jetsonn", "typo")):
         targets = await ne._chat_targets()
