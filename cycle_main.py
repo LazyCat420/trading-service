@@ -95,13 +95,13 @@ def drain_schedule_refreshes():
     with get_db() as db:
         with db.transaction():
             rows = db.execute(
-                "SELECT id, payload FROM system_commands "
+                "SELECT id, payload FROM v3_system_commands "
                 "WHERE status = 'pending' AND command_type = 'REFRESH_SCHEDULE' "
                 "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
             ).fetchall()
             for cmd_id, _ in rows:
                 db.execute(
-                    "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    "UPDATE v3_system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = %s",
                     [cmd_id],
                 )
 
