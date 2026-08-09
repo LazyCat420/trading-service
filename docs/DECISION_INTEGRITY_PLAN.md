@@ -4,6 +4,35 @@
 **Trigger:** "why are all 10 cases HOLDs? doesn't that mean something is wrong
 with how we make decisions?"
 
+> **⚠ CLOSED — do not plan from this file. Reviewed 2026-08-09.**
+>
+> Every item A1–A6, B1–B2 and C1 is shipped; only C2's first half (the
+> `technicals` collector, still 5/503 fresh) remains, and it is a data-pipeline
+> job. A proposed follow-up checklist derived from this plan in August 2026
+> re-proposed **seven items that were already in the code** — including
+> `decision_provenance`, guardrail telemetry and the `shared_desk` ↔
+> `trade_results` reconciliation, all of which shipped here in July.
+>
+> **Two things this plan could not have known, both later measured:**
+>
+> - Its §2 A1–A6 ranking predates the direction-aware `HOLD_MISS` work
+>   (2026-08-08). Hold accuracy is **60.5%**, not the figures any downstream
+>   summary of this plan carries.
+> - Its §3 rule 3 — *"two records of the same decision must reconcile, or the
+>   mismatch is an alert"* — is **only half satisfied**. B1's checks exist at
+>   `scripts/verify_audit_phases.py:189-238` and nothing calls them.
+>
+> **Live status, the ranked backlog, and what each remaining fix has to prove
+> live in `trading-client/documentation/chapters/`** (served at
+> `http://10.0.0.16:8888/documentation`), chapter 31, *"Reviewing a plan that
+> was mostly already built"*. Per the standing rule, trading plans and findings
+> are chapters there and nowhere else — this file is kept for the reasoning in
+> §3 and §5, which still holds, not as a work list.
+>
+> §5's brainstorm is the part that aged best: the **distribution-collapse
+> canary** proposed there was never built, and it is the control that would have
+> caught the 07-31 confidence collapse three days before a human did.
+
 > **Implementation notes (what changed vs. this plan):**
 >
 > - **The "all 10 are HOLDs" premise was itself slightly wrong.** The true set
