@@ -598,6 +598,24 @@ class PipelineService:
                 logger.error("[PipelineService] Failed to persist cycle summary: %s", sum_err)
                 return None
 
+        def _started_at_or_fallback(summary: dict):
+            """Never hand NULL to cycle_benchmarks.started_at.
+
+            29 rows carried a NULL start, and `ORDER BY started_at DESC` sorts
+            NULLs FIRST in Postgres — so `/run-cycle/audit/latest` was pinned to
+            a 2026-05-27 cycle for eleven weeks while fresh rows sat below it.
+            The column is now NOT NULL, which makes a missing value an INSERT
+            error swallowed by the caller's `except` — i.e. silently no
+            benchmark row. Fall back through the values we do have instead, so
+            the write is fail-closed on a real timestamp rather than on nothing.
+            """
+            from datetime import datetime, timezone
+            return (
+                summary.get("started_at")
+                or summary.get("ended_at")
+                or datetime.now(timezone.utc)
+            )
+
         def _persist_benchmarks(summary: dict, results) -> None:
             """Revive cycle_benchmarks/cycle_ticker_benchmarks (the DevOps
             Performance panel). Their V2 writer died in the V3 purge, freezing
@@ -663,7 +681,7 @@ class PipelineService:
                             total_tokens = EXCLUDED.total_tokens, cache_hit_pct = EXCLUDED.cache_hit_pct,
                             status = EXCLUDED.status""",
                         [
-                            cycle_id, summary.get("started_at"), summary.get("ended_at"),
+                            cycle_id, _started_at_or_fallback(summary), summary.get("ended_at"),
                             total_ms, ticker_count,
                             int(total_ms / ticker_count) if total_ms and ticker_count else None,
                             phase_ms["collecting"], phase_ms["analyzing"], phase_ms["trading"],

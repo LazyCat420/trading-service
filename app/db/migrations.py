@@ -4257,3 +4257,50 @@ def _create_persistent_research_tables(conn):
             conn.rollback()
         except Exception:
             pass
+
+    # ── Backfill: NULL cycle start times (2026-08-09) ───────────────────────
+    #
+    # `ORDER BY started_at DESC LIMIT 1` is the standard "newest cycle" query,
+    # and Postgres sorts NULLs FIRST on DESC. 29 rows in cycle_benchmarks and 2
+    # in cycle_run_summaries carried a NULL start, so every such query was
+    # pinned to a 2026-05-27 row for eleven weeks while fresh rows sat below it
+    # — `/run-cycle/audit/latest` fed that stale cycle into live agent chat
+    # context. The call sites now carry NULLS LAST, but that only fixes the
+    # queries that exist today; this closes the hole at the source.
+    #
+    # The start is reconstructed from the cycle's first pipeline_event, clamped
+    # by LEAST(..., finished_at) because some old rows recorded events after
+    # the summary was finalised and an unclamped backfill would invent a start
+    # LATER than the finish. LEAST ignores NULLs, so a cycle with no events
+    # falls back to finished_at on its own.
+    for _tbl in ("cycle_benchmarks", "cycle_run_summaries"):
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {_tbl} t
+                       SET started_at = LEAST(pe.first_ts, t.finished_at)
+                      FROM (SELECT cycle_id, MIN(timestamp) AS first_ts
+                              FROM pipeline_events GROUP BY cycle_id) pe
+                     WHERE pe.cycle_id = t.cycle_id
+                       AND t.started_at IS NULL
+                       AND t.finished_at IS NOT NULL
+                """)
+                # Cycles with no surviving events at all: the finish is the
+                # only timestamp left, and it beats NULL for ordering.
+                cur.execute(f"""
+                    UPDATE {_tbl}
+                       SET started_at = finished_at
+                     WHERE started_at IS NULL AND finished_at IS NOT NULL
+                """)
+                # Only NOT NULL once nothing recoverable is left. If a row has
+                # neither timestamp there is nothing to derive, so leave the
+                # column nullable rather than fail the whole migration.
+                cur.execute(f"SELECT count(*) FROM {_tbl} WHERE started_at IS NULL")
+                if cur.fetchone()[0] == 0:
+                    cur.execute(f"ALTER TABLE {_tbl} ALTER COLUMN started_at SET NOT NULL")
+                conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass

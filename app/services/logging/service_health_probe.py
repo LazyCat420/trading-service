@@ -200,23 +200,15 @@ async def run_all_probes() -> list[dict]:
 
 
 async def run_probes_and_log(cycle_id: str) -> list[dict]:
-    """Run probes and log results to the cycle audit system."""
-    results = await run_all_probes()
+    """Run probes and emit the results as an SSE event.
 
-    # Log to cycle auditor
-    try:
-        from app.services.logging.cycle_auditor import auditor
-        auditor.record(
-            cycle_id=cycle_id,
-            audit_type="service_health",
-            details={
-                "probes": results,
-                "healthy_count": sum(1 for r in results if r["status"] == "healthy"),
-                "total_count": len(results),
-            },
-        )
-    except Exception as e:
-        logger.debug("[HealthProbe] Failed to write audit record: %s", e)
+    This used to also write a `service_health` row via `CycleAuditor`. That
+    write never happened: it called `auditor.record(...)`, a method the class
+    never had, so every call landed in the `except` and logged at debug. The
+    auditor is gone (its content is carried by `pipeline_events`); the dead
+    write went with it rather than being "fixed" into a second copy.
+    """
+    results = await run_all_probes()
 
     # Emit SSE event to trading-client
     try:

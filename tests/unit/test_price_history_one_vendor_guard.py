@@ -97,7 +97,6 @@ KNOWN_UNPINNED: dict[str, int] = {
     "app/processors/quant_processor.py": 8,
     "app/services/boot_service.py": 2,
     "app/services/cycle_scheduler.py": 1,
-    "app/services/logging/cycle_auditor.py": 1,
     "app/tools/market_tools.py": 1,
     "app/trading/backtest_data.py": 2,
     "app/trading/paper_trader.py": 3,
