@@ -207,8 +207,26 @@ class AutoEngine(BaseEngine):
         if res.status_code in PERMANENT_STATUSES:
             failure_cache.record(url, f"HTTP {res.status_code}")
 
-        # If all fail, return the last result
+        # Every phase failed, so say so. This used to return the last result
+        # untouched — and Playwright sets success=True whenever it fetched
+        # *something*, so a bot-wall that `is_blocked_content` had just
+        # correctly REFUSED came back as:
+        #
+        #   success=True, engine_used="auto (failed)",
+        #   content="Before we continue... Press & Hold to confirm you are
+        #            a human (and not a bot)."
+        #
+        # Measured on seekingalpha.com: 5 of 6 URLs. Callers check `success`,
+        # so the interstitial was stored as the article body — the exact
+        # outcome the block signatures exist to prevent, leaking out of the
+        # one path that does not consult them.
         res.engine_used = "auto (failed)"
+        if res.success:
+            res.success = False
+            res.error = res.error or (
+                "no engine returned usable content (blocked, empty or "
+                "too short)"
+            )
         return res
 
     async def health_check(self) -> bool:

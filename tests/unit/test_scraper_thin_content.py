@@ -271,3 +271,44 @@ async def test_a_served_200_teaser_still_counts(cache):
             await engine.fetch(IBD, {})
 
     assert cache.should_skip_domain("www.investors.com") is not None
+
+
+# ── "auto (failed)" must not be a success ────────────────────────────────────
+
+BOT_WALL = ("Before we continue...\nPress & Hold to confirm you are\n"
+            "a human (and not a bot).\nPress & Hold")
+
+
+@pytest.mark.asyncio
+async def test_a_refused_bot_wall_is_not_returned_as_a_success(cache):
+    """Measured on seekingalpha.com: 5 of 6 URLs. is_blocked_content REFUSED
+    the interstitial, every phase fell through — and the final fallback handed
+    back Playwright's result untouched, success=True, with the bot-wall as the
+    article body. Callers check `success`, so it was stored."""
+    engine = AutoEngine()
+    walled = ScrapeResult(
+        url=TITAN_THIN, success=True, content=BOT_WALL, data={}, error=None,
+        engine_used="playwright", scraped_at=datetime.utcnow(), status_code=None,
+    )
+    with patch.object(engine.http_engine, "fetch", AsyncMock(return_value=walled)), \
+         patch.object(engine.playwright_engine, "fetch", AsyncMock(return_value=walled)), \
+         patch("app.scraper.engines.auto_engine.failure_cache", cache):
+        res = await engine.fetch(TITAN_THIN, {})
+
+    assert engine.is_blocked_content(BOT_WALL) is True, "precondition: it IS detected"
+    assert res.success is False, "a refused page must never come back as a success"
+    assert res.engine_used == "auto (failed)"
+    assert res.error
+
+
+@pytest.mark.asyncio
+async def test_the_failure_path_keeps_a_real_success_intact(cache):
+    """The inverse — the fix must not turn working scrapes into failures."""
+    engine = AutoEngine()
+    with patch.object(engine.http_engine, "fetch",
+                      AsyncMock(return_value=_ok(TITAN_GOOD, 3266))), \
+         patch("app.scraper.engines.auto_engine.failure_cache", cache):
+        res = await engine.fetch(TITAN_GOOD, {})
+
+    assert res.success is True
+    assert res.engine_used == "auto (http)"
