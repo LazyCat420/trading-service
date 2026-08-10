@@ -63,7 +63,22 @@ DEFAULT_PROVIDER = "vllm-2"
 # Chapter 36's 9-ticker window, and the peak the sweep has to reproduce.
 CONTROL_FROM = "2026-08-09T18:05:00"
 CONTROL_TO = "2026-08-09T19:55:00"
-CONTROL_PEAK = (13, 17)  # published 14-19 across windows; this window sits at 15
+CONTROL_PEAK = (11, 15)  # was (13,17) against the mirrored reading; corrected: 13
+
+# The DISCRIMINATING control. The window above cannot fail: its traffic is
+# desynchronized, so mirroring the agent intervals moves each one by a
+# different amount and the peak barely shifts (15 -> 13, inside any sane
+# tolerance). It passed in the broken state AND the fixed state, which makes it
+# a check of nothing.
+#
+# This window is a synchronized fan-out — ~17 agent-iteration STARTS per 30s
+# across 76 conversations. Mirroring stacks those starts into an instant that
+# precedes all of them, and the peak inflates 68 vs 39. Any regression back to
+# the single-convention reading fails here loudly.
+BURST_FROM = "2026-08-10T07:25:55"
+BURST_TO = "2026-08-10T08:16:12"
+BURST_PEAK = (35, 43)   # corrected 39; the mirrored reading gives 68
+BURST_BROKEN = 60       # anything at or above this is the old mirrored bug
 
 
 def _parse_iso(s: str) -> datetime:
@@ -103,17 +118,47 @@ def fetch(frm: str, to: str, provider: str | None):
     )
 
 
+def _is_agent_row(d) -> bool:
+    """True when `createdAt` is the START of this row's work, not the end.
+
+    Prism has TWO writers of createdAt and they disagree:
+
+      RequestLogger.log()          stamps at insert, which runs AFTER the work
+                                   -> createdAt is the END.  (chat, memory:*,
+                                   and the /agent error row)
+      RequestLogger.insertPending() stamps before `start = performance.now()`
+                                   in BaseAgenticHarness.createPassState
+                                   -> createdAt is the START, and
+                                   completePending never rewrites it.
+                                   (every agent:* iteration row)
+
+    totalTime always runs FORWARD from whichever instant that writer chose.
+    """
+    return str(d.get("operation") or "").startswith("agent:")
+
+
 def analyse(docs) -> dict:
     intervals = []
     for d in docs:
         created = d.get("createdAt")
         if not created:
             continue
-        end = _parse_iso(created).timestamp()
+        stamp = _parse_iso(created).timestamp()
         # totalTime is SECONDS. A missing value yields a zero-width interval,
         # which contributes nothing rather than silently reading as instant.
         dur = float(d.get("totalTime") or 0.0)
-        intervals.append((end - dur, end, dur, d))
+        # Applying the END convention to an agent row mirrors its interval
+        # backwards in time. That is not a rounding error: it moves a burst of
+        # simultaneous STARTS into the minute before it happened, and stacks
+        # them into a peak that never existed. Measured 2026-08-10 — a reported
+        # peak of 68 sat at 08:10:10 while all 68 rows straddling it carried
+        # createdAt of 08:10:12..08:12:53, every one of them beginning AFTER
+        # the instant they were reported to be running. Corrected: 39.
+        if _is_agent_row(d):
+            start, end = stamp, stamp + dur
+        else:
+            start, end = stamp - dur, stamp
+        intervals.append((start, end, dur, d))
 
     if not intervals:
         return {"requests": 0}
@@ -203,7 +248,29 @@ def self_test() -> int:
         print(f"SELF-TEST FAILED — peak {peak} outside {lo}-{hi}; the sweep does not "
               "reproduce the published reconstruction.")
         return 1
-    print("SELF-TEST PASSED — the sweep reproduces chapter 36's reconstruction.")
+    print("  ok — but this window agrees under BOTH conventions, so on its own")
+    print("       it proves nothing. The burst control below is the real check.\n")
+
+    blo, bhi = BURST_PEAK
+    print(f"discriminating control: the 2026-08-10 fan-out burst, expected {blo}-{bhi}")
+    print(f"  {BURST_FROM} .. {BURST_TO}  provider={DEFAULT_PROVIDER}\n")
+    bres = analyse(fetch(BURST_FROM, BURST_TO, DEFAULT_PROVIDER))
+    if not bres.get("requests"):
+        print("SELF-TEST FAILED — no rows in the burst window.")
+        return 1
+    bpeak = bres["peak_overlap"]
+    print(f"  requests {bres['requests']}   peak overlap {bpeak}   "
+          f"offered load {bres['offered_load']}")
+    print()
+    if bpeak >= BURST_BROKEN:
+        print(f"SELF-TEST FAILED — peak {bpeak} >= {BURST_BROKEN}. That is the "
+              "mirrored reading: agent rows are being treated as if createdAt "
+              "were their END. See _is_agent_row().")
+        return 1
+    if not (blo <= bpeak <= bhi):
+        print(f"SELF-TEST FAILED — peak {bpeak} outside {blo}-{bhi}.")
+        return 1
+    print("SELF-TEST PASSED — both controls, including the one that can fail.")
     return 0
 
 
