@@ -689,6 +689,13 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
 
 # Feeds are independent hosts, so they can be fetched in parallel; the
 # scraper's own per-domain rate limiter still paces anything that shares one.
+#
+# Raising this past 5 buys nothing. `scraper_client` holds ONE semaphore of 5
+# for every call it makes (scraper_client.py:50-53), so each feed's article
+# bodies queue behind the same global limit. Measured on the container over a
+# full 27-feed pass: concurrency 5 -> 105.0s, 10 -> 98.1s, 16 -> 102.8s. The
+# knob that would actually move it is that client semaphore, which also gates
+# the body upgrade and every other scrape, so it is not free to raise.
 FEED_CONCURRENCY = int(os.getenv("NEWS_FEED_CONCURRENCY", "5"))
 
 

@@ -149,3 +149,26 @@ async def test_no_sleep_between_feeds():
         elapsed = asyncio.get_event_loop().time() - elapsed
 
     assert elapsed < 1.0, f"collect_all slept for {elapsed:.1f}s with no real work to do"
+
+
+def test_feed_concurrency_does_not_exceed_the_client_semaphore():
+    """`scraper_client` holds ONE semaphore of 5 for every call it makes, so a
+    higher feed concurrency queues behind it and buys nothing. Measured over a
+    full 27-feed pass on the container: 5 -> 105.0s, 10 -> 98.1s, 16 -> 102.8s.
+
+    This guards against someone raising NEWS_FEED_CONCURRENCY expecting a
+    speedup — the knob that would move it is the client semaphore, which also
+    gates the article-body upgrade and every other scrape.
+    """
+    import inspect
+    import re
+
+    from app.services import scraper_client as sc
+
+    src = inspect.getsource(sc.ScraperServiceClient._get_semaphore)
+    m = re.search(r"asyncio\.Semaphore\((\d+)\)", src)
+    assert m, "could not read the client semaphore limit"
+    assert nc.FEED_CONCURRENCY <= int(m.group(1)), (
+        f"FEED_CONCURRENCY={nc.FEED_CONCURRENCY} exceeds the client's "
+        f"semaphore of {m.group(1)} — the extra parallelism cannot be used"
+    )
