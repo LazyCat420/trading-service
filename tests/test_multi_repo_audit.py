@@ -165,17 +165,28 @@ class TestP2ToolSchemaSync(unittest.TestCase):
         """
         from app.tools.tool_governance import catalog_path
 
+        from tests_paths import primary_checkout, tool_schemas_path
+
+        # Search from the PRIMARY checkout as well: inside a worktree the repo
+        # root is `<sun>/trading-service/.worktrees/<name>`, so the sibling repo
+        # is three levels up, not one or two. Walking from the primary makes the
+        # depth irrelevant.
         lazy_path = None
-        for ancestor in ("..", "../.."):
-            for d in ("lazy-agent-service", "lazy-tool-service"):
-                p = os.path.join(TRADING_SERVICE_ROOT, ancestor, d, "tool_schemas.json")
-                if os.path.exists(p):
-                    lazy_path = p
+        for base in (TRADING_SERVICE_ROOT, primary_checkout()):
+            for ancestor in ("..", "../.."):
+                for d in ("lazy-agent-service", "lazy-tool-service"):
+                    p = os.path.join(base, ancestor, d, "tool_schemas.json")
+                    if os.path.exists(p):
+                        lazy_path = p
+                        break
+                if lazy_path:
                     break
             if lazy_path:
                 break
 
-        trading_path = os.path.join(TRADING_SERVICE_ROOT, "tool_schemas.json")
+        trading_path = tool_schemas_path() or os.path.join(
+            TRADING_SERVICE_ROOT, "tool_schemas.json"
+        )
 
         if lazy_path is None:
             self.skipTest("lazy-agent-service/tool_schemas.json not found")

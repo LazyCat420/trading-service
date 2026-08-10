@@ -27,6 +27,18 @@ def _safe_add_column(conn, table: str, column: str, dtype: str):
 
 def run_migrations(conn):
     """Auto-migrations for existing databases to match the current schema_pg.sql."""
+    # ── congress_trades.bioguide_id ──
+    # FIRST, deliberately. `schema_pg.sql` declares this column in the
+    # `congress_trades` CREATE TABLE and then indexes it at line 1062, but
+    # `CREATE TABLE IF NOT EXISTS` is a no-op against a table that predates the
+    # column — so on any database created before it was added, that index
+    # statement fails. Until 2026-08-10 `_init_schema` ran the whole file as one
+    # batch, so that single failure discarded every statement after it. The
+    # isolated test database sat at 161 tables against production's 214 for
+    # exactly this reason, which is why `TRADING_BOT_TEST_DB` could never be
+    # turned on. Adding the column here is what lets the index succeed.
+    _safe_add_column(conn, "congress_trades", "bioguide_id", "TEXT")
+
     # ── Layout Presets (cross-browser sync)
     try:
         with conn.cursor() as cur:

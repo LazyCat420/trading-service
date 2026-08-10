@@ -2195,7 +2195,20 @@ async def run_v3_pipeline(
                         ),
                         "action": None,
                         "confidence": 0,
-                        "decision_provenance": DecisionProvenance.BOARD_DEGRADED_FALLBACK.value,
+                        # A timeout and a board that failed for any other
+                        # reason are different diagnoses and the enum has
+                        # always had a member for each — but nothing ever
+                        # wrote TIMEOUT_ABORT, so every timed-out board was
+                        # recorded as a generic degrade and the distinction
+                        # the enum advertised did not exist in the data.
+                        # `outcome` already carries it; both values are in
+                        # _DEGRADED_PROVENANCE, so scoring is unchanged and
+                        # only the diagnosis gets sharper.
+                        "decision_provenance": (
+                            DecisionProvenance.TIMEOUT_ABORT.value
+                            if outcome == PhaseOutcome.TIMED_OUT
+                            else DecisionProvenance.BOARD_DEGRADED_FALLBACK.value
+                        ),
                         "degrade_outcome": outcome.value,
                         "risk_flags": ["board_degraded_no_decision"],
                     })

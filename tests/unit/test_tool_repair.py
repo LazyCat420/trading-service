@@ -235,20 +235,19 @@ def test_bare_tool_name(name, bare):
 # ── The allow-list must stay honest ──────────────────────────────────────
 
 
-_SCHEMA_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "tool_schemas.json",
-)
+from tests_paths import tool_schemas_path
+
+#: Resolves through to the primary checkout when this is a worktree — the file
+#: is gitignored, so a worktree never has its own copy and every check below
+#: used to skip. See tests/paths.py.
+_SCHEMA_PATH = tool_schemas_path()
 
 
 def _schemas():
-    """tool_schemas.json is gitignored and absent from fresh worktrees.
-
-    Skipping rather than failing is deliberate — a missing schema file is a
-    known worktree trap, not a code defect — but the skip says which it is.
-    """
-    if not os.path.exists(_SCHEMA_PATH):
-        pytest.skip(f"tool_schemas.json not present at {_SCHEMA_PATH}")
+    """Skip only when the artifact has never been BUILT, not when it is merely
+    absent from this worktree (tests/paths.py resolves that case)."""
+    if not _SCHEMA_PATH:
+        pytest.skip("tool_schemas.json has never been built — run scripts/build_tool_schemas.py")
     with open(_SCHEMA_PATH) as fh:
         raw = json.load(fh)
     out = {}
@@ -415,8 +414,8 @@ def test_the_repair_actually_satisfies_the_real_validator():
       · schema path   — junk keys dropped, leaving `ticker` unset
       · TypeError path — nothing dropped, so the validator never ran
     """
-    if not os.path.exists(_SCHEMA_PATH):
-        pytest.skip("tool_schemas.json not present")
+    if not _SCHEMA_PATH:
+        pytest.skip("tool_schemas.json has never been built — run scripts/build_tool_schemas.py")
 
     from lazycat.tool_registry import ToolRegistry
 

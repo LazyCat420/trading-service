@@ -256,3 +256,57 @@ def test_veto_override_without_mitigation_blocks_as_unmitigated():
     desk.final_decision["override_justification"] = "Stale filing, fresh 8-K contradicts."
     desk.final_decision.pop("stop_loss")
     assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK"
+
+
+# ── The confidence floor boundary, pinned exactly ────────────────────
+#
+# `_apply_policy_gates` blocks on `confidence < floor`, so a decision AT the
+# floor executes. That is deliberate: `ANALYSIS_CONFIDENCE_THRESHOLD` is
+# documented in app/config/config.py:159 as the "minimum confidence to execute
+# trades", and 70 is a *measured* floor, not a round number. A 2026-08-10 plan
+# proposed changing this to require exceeding the floor; that is a behaviour
+# change to a calibrated threshold, not a bug fix, and it would move every
+# decision that lands exactly on 70 from EXECUTE to HOLD.
+#
+# Pinned here so the boundary cannot drift by one in either direction without a
+# failing test and a deliberate decision.
+
+
+def _floor() -> int:
+    """Read the floor the gate itself reads, not a copy of the number.
+
+    A test that hardcoded 70 would still pass if the parameter store started
+    serving something else — it would just stop testing the boundary.
+    """
+    from app.services.parameter_store import get_param
+
+    return int(get_param("ANALYSIS_CONFIDENCE_THRESHOLD"))
+
+
+def test_confidence_exactly_at_the_floor_executes():
+    desk = _desk()
+    desk.final_decision["confidence"] = _floor()
+    assert _apply_policy_gates(desk) == "EXECUTE_BUY", (
+        "a decision AT the floor must execute — the gate is `< floor`, and the "
+        "floor is documented as the MINIMUM confidence to trade"
+    )
+
+
+def test_one_below_the_floor_blocks():
+    desk = _desk()
+    desk.final_decision["confidence"] = _floor() - 1
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+
+
+def test_the_boundary_is_a_boundary():
+    """Guards against a gate that returns the same verdict on both sides.
+
+    Asserting the two cases separately would still pass if the gate stopped
+    discriminating entirely (both EXECUTE, or both HOLD). This compares them.
+    """
+    at, below = _desk(), _desk()
+    at.final_decision["confidence"] = _floor()
+    below.final_decision["confidence"] = _floor() - 1
+    assert _apply_policy_gates(at) != _apply_policy_gates(below), (
+        "the floor no longer discriminates between one point either side of it"
+    )

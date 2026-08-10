@@ -60,7 +60,19 @@ def real_test_db_engine():
 
 @pytest.fixture
 def real_db(real_test_db_engine):
-    """Yield a real database connection pool and truncate tables on exit."""
+    """Yield a real cursor on the test database, truncating tables on exit.
+
+    > [!WARNING]
+    > This does NOT patch `get_db`. The autouse `patch_get_db` mock stays in
+    > force, so the CODE UNDER TEST still talks to a MagicMock while this cursor
+    > talks to Postgres. A test that requests only `real_db` and then asserts on
+    > what the production code persisted is asserting against the mock and will
+    > report a pass it did not earn — `test_pipeline_events_db_persistence` did
+    > exactly that, and could not pass in either state.
+    >
+    > Use **`patch_real_get_db`** below whenever the code under test does its own
+    > database access. Use `real_db` only when the test itself issues every query.
+    """
     if not real_test_db_engine:
         pytest.skip("Test database not enabled. Set TRADING_BOT_TEST_DB=1 to enable.")
 

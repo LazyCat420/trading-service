@@ -35,8 +35,11 @@ import os
 
 import pytest
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_CATALOG = os.path.join(_REPO_ROOT, "tool_schemas.json")
+from tests_paths import tool_schemas_path
+
+#: Resolves through to the primary checkout when this is a worktree; the file is
+#: gitignored, so a worktree has no copy of its own. See tests/paths.py.
+_CATALOG = tool_schemas_path()
 
 
 def _contract(params: dict | None) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -81,11 +84,8 @@ def _reload_every_tool_module() -> list[str]:
 
 
 @pytest.mark.skipif(
-    not os.path.exists(_CATALOG),
-    reason=(
-        "tool_schemas.json is gitignored, so it is absent from a fresh worktree. "
-        "Symlink it: ln -s ../../tool_schemas.json tool_schemas.json"
-    ),
+    not _CATALOG,
+    reason="tool_schemas.json has never been built — run scripts/build_tool_schemas.py",
 )
 def test_no_tool_drifts_between_catalog_and_decorator(caplog):
     """No trading-owned tool may declare different parameters in the two places.
@@ -116,7 +116,7 @@ def test_no_tool_drifts_between_catalog_and_decorator(caplog):
     )
 
 
-@pytest.mark.skipif(not os.path.exists(_CATALOG), reason="tool_schemas.json absent (gitignored)")
+@pytest.mark.skipif(not _CATALOG, reason="tool_schemas.json has never been built")
 def test_registry_holds_at_least_the_known_catalog_size():
     """Vacuity guard: an empty registry would pass every assertion above."""
     from app.tools.registry import registry
@@ -127,7 +127,7 @@ def test_registry_holds_at_least_the_known_catalog_size():
     )
 
 
-@pytest.mark.skipif(not os.path.exists(_CATALOG), reason="tool_schemas.json absent (gitignored)")
+@pytest.mark.skipif(not _CATALOG, reason="tool_schemas.json has never been built")
 def test_save_trading_chart_publishes_the_fields_the_client_renders():
     """The four narrative fields must be reachable by the model, not just by Python.
 
@@ -141,7 +141,7 @@ def test_save_trading_chart_publishes_the_fields_the_client_renders():
     assert not missing, f"catalog drops the fields the client renders: {sorted(missing)}"
 
 
-@pytest.mark.skipif(not os.path.exists(_CATALOG), reason="tool_schemas.json absent (gitignored)")
+@pytest.mark.skipif(not _CATALOG, reason="tool_schemas.json has never been built")
 def test_get_sec_filings_accepts_the_symbol_alias():
     """The 2026-07-29 alias fix has to exist where the model can see it."""
     catalog = {t["name"]: t for t in json.load(open(_CATALOG, encoding="utf-8"))}

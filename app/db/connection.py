@@ -322,8 +322,101 @@ def get_db():
         cursor.close()
 
 
+def split_sql_statements(sql: str) -> list[str]:
+    """Split a SQL script into individual statements.
+
+    `schema_pg.sql` contains no dollar-quoted bodies (no functions, no `DO`
+    blocks), so splitting on `;` outside string literals and comments is exact
+    for this file. Asserted by `tests/unit/test_schema_init_is_resilient.py`,
+    which fails if a `$$` block is ever added — at which point this needs a real
+    lexer, not a bigger regex.
+    """
+    statements: list[str] = []
+    buf: list[str] = []
+    in_single = in_double = in_line_comment = in_block_comment = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        nxt = sql[i + 1] if i + 1 < len(sql) else ""
+
+        if in_line_comment:
+            buf.append(ch)
+            if ch == "\n":
+                in_line_comment = False
+        elif in_block_comment:
+            buf.append(ch)
+            if ch == "*" and nxt == "/":
+                buf.append(nxt)
+                i += 1
+                in_block_comment = False
+        elif in_single:
+            buf.append(ch)
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            buf.append(ch)
+            if ch == '"':
+                in_double = False
+        elif ch == "-" and nxt == "-":
+            buf.append(ch)
+            in_line_comment = True
+        elif ch == "/" and nxt == "*":
+            buf.append(ch)
+            in_block_comment = True
+        elif ch == "'":
+            buf.append(ch)
+            in_single = True
+        elif ch == '"':
+            buf.append(ch)
+            in_double = True
+        elif ch == ";":
+            statements.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+
+    tail = "".join(buf).strip()
+    if tail:
+        statements.append(tail)
+    return [s for s in statements if s and not _is_only_comments(s)]
+
+
+def _is_only_comments(stmt: str) -> bool:
+    for line in stmt.splitlines():
+        line = line.strip()
+        if line and not line.startswith("--"):
+            return False
+    return True
+
+
 def _init_schema(db_url: str):
-    """Run schema_pg.sql to create all tables."""
+    """Run schema_pg.sql to create all tables, one statement at a time.
+
+    STATEMENT-AT-A-TIME IS THE WHOLE POINT
+    --------------------------------------
+    This used to be a single `cur.execute(sql)` over the entire 320-statement
+    file. Postgres treats that as one batch, so the FIRST failure discards every
+    statement after it — silently, because the caller logs the error and boot
+    continues by design.
+
+    That is not hypothetical. `CREATE TABLE IF NOT EXISTS` is a no-op against an
+    existing table, so any table that has drifted from the file keeps its old
+    columns; `schema_pg.sql:1062` then does
+    `CREATE INDEX ... ON congress_trades(bioguide_id)` and fails, because that
+    column arrived later than the table did. On the isolated test database
+    (`:5433/trading_bot_test`) this truncated the schema at **161 tables against
+    production's 214** — and because every `real_db` test is gated behind
+    `TRADING_BOT_TEST_DB`, which nobody could turn on while the schema was half
+    built, the whole persistence-testing surface had been unusable for as long
+    as the drift existed.
+
+    Now each statement runs on its own and a failure is recorded rather than
+    fatal, so the tail of the file still executes and the log names exactly what
+    could not be applied. The function still raises if NOTHING applied — a
+    database that rejected every statement is a connection or permission
+    problem, not drift, and should not be mistaken for success.
+    """
     schema_path = os.path.join(os.path.dirname(__file__), "schema_pg.sql")
     if not os.path.exists(schema_path):
         logger.warning(f"[DB] Schema file not found: {schema_path}")
@@ -332,15 +425,42 @@ def _init_schema(db_url: str):
     with open(schema_path, encoding="utf-8") as f:
         sql = f.read()
 
-    try:
-        with psycopg.connect(db_url, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                # Execute the full schema as one block
-                cur.execute(sql)
-            logger.info("[DB] Schema initialized from schema_pg.sql")
-    except Exception as e:
-        logger.error(f"[DB] Schema init error: {e}")
-        raise
+    statements = split_sql_statements(sql)
+    applied = 0
+    failures: list[tuple[str, str]] = []
+
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        for stmt in statements:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(stmt)
+                applied += 1
+            except Exception as e:
+                # First line only: these are 50-line CREATE TABLEs and the
+                # first line names the object.
+                failures.append((stmt.splitlines()[0][:120], str(e).splitlines()[0]))
+
+    if failures:
+        logger.error(
+            "[DB] schema_pg.sql: %d/%d statements applied, %d FAILED. The "
+            "database is now missing exactly these objects — each is drift "
+            "between the file and the live schema, not a transient error:",
+            applied, len(statements), len(failures),
+        )
+        for head, err in failures[:20]:
+            logger.error("[DB]   %s  ->  %s", head, err)
+        if len(failures) > 20:
+            logger.error("[DB]   … and %d more", len(failures) - 20)
+    else:
+        logger.info(
+            "[DB] Schema initialized from schema_pg.sql (%d statements)", applied
+        )
+
+    if applied == 0 and statements:
+        raise RuntimeError(
+            f"schema_pg.sql: every one of {len(statements)} statements failed — "
+            "this is a connection or permission problem, not schema drift"
+        )
 
 
 def _seed_and_migrate():

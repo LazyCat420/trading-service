@@ -410,13 +410,25 @@ class PipelineService:
         elif cls._cycle_task and not cls._cycle_task.done():
             return {"status": "deduplicated", "message": "Cycle task still running"}
 
-        # Reset the SDK kill switch so requests can flow on the new cycle
+        # Reset BOTH kill switches so requests can flow on the new cycle.
+        #
+        # There are two, on two different objects, and this reset used to clear
+        # only one of them:
+        #   * `prism_client`  — lazycat.llm.PrismClient, the SDK's switch
+        #   * `llm`           — app.services.prism_agent_caller.PrismLLMShim,
+        #                       whose own `_killed` flag makes `chat()` and
+        #                       `chat_with_tools()` raise CancelledError
+        #
+        # `request_stop()` arms both (it calls `llm.abort_active_requests()`),
+        # but only `force_reset()` ever cleared the shim's. So after a STOP, the
+        # shim stayed armed and the NEXT cycle died on its first LLM call with a
+        # CancelledError raised from inside the agent loop — which reads as "the
+        # cycle was cancelled", not "a flag was never reset". The only escape
+        # was Force Reset or a container restart.
         try:
-            from lazycat.llm import PrismClient
-            # Assuming trading-service uses a singleton prism_client from somewhere
-            # Let's import it from prism_agent_caller
-            from app.services.prism_agent_caller import prism_client
+            from app.services.prism_agent_caller import llm, prism_client
             prism_client.reset_kill_switch()
+            llm.reset_kill_switch()
         except Exception as e:
             logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
 
