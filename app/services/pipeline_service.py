@@ -846,7 +846,7 @@ class PipelineService:
                             from app.collectors.news_collector import collect_all
                             from app.services.scraper_client import scraper_client
                             scraper_client.reset_failures()
-                            total_scraped = await collect_all(limit_feeds=10, emit_cb=discovery_emit)
+                            total_scraped = await collect_all(emit_cb=discovery_emit)
                             # A sweep where every scraper-service call errored is an
                             # outage, not an empty result — don't stamp it ✅ ok.
                             if scraper_client.failures and not total_scraped:

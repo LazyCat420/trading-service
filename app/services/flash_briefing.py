@@ -153,7 +153,7 @@ async def generate_flash_briefing(report_type: str | None = None) -> str | None:
     try:
         from app.collectors.news_collector import collect_all
         logger.info("[FLASH] Fetching fresh articles before generating briefing...")
-        await collect_all(limit_feeds=10)
+        await collect_all()
     except ImportError:
         logger.info("[FLASH] news_collector not available, skipping article fetch")
 

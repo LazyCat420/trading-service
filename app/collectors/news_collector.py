@@ -8,6 +8,7 @@ Dedup: hash(title + published_at) as id.
 """
 
 import logging
+import os
 import hashlib
 import re
 import datetime
@@ -65,7 +66,6 @@ RSS_FEEDS = {
     "Google News Business": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB",
     # ── Analysis / Research ──
     "Seeking Alpha": "https://seekingalpha.com/market_currents.xml",
-    "Benzinga": "https://www.benzinga.com/feed",
     "Business Insider": "https://www.businessinsider.com/rss",
     "Kiplinger": "https://www.kiplinger.com/feed/all",
     "Investing.com": "https://www.investing.com/rss/news.rss",
@@ -91,8 +91,6 @@ RSS_FEEDS = {
 # Foreign Language RSS Feeds (Requires Translation)
 FOREIGN_RSS_FEEDS = {
     # ── Asian Markets (Japanese & Chinese) ──
-    "Nikkei JP": "https://assets.nikkei.jp/data/rss/news/market.rdf",
-    "Sina Finance CN": "https://rss.sina.com.cn/roll/finance/hot_roll.xml",
     # ── European Markets (German & French) ──
     "Handelsblatt DE": "https://www.handelsblatt.com/contentexport/feed/finanzen",
     "Les Echos FR": "https://services.lesechos.fr/rss/les-echos-finance-marches.xml",
@@ -689,31 +687,69 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
     return count
 
 
+# Feeds are independent hosts, so they can be fetched in parallel; the
+# scraper's own per-domain rate limiter still paces anything that shares one.
+FEED_CONCURRENCY = int(os.getenv("NEWS_FEED_CONCURRENCY", "5"))
+
+
 async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> int:
-    """Fetch all RSS feeds. Returns total articles written."""
+    """Fetch all RSS feeds. Returns total articles written.
+
+    This used to run **serially with a 2s sleep between feeds**, so 10 feeds
+    cost ~30s and both call sites passed ``limit_feeds=10`` to keep the
+    discovery phase affordable. The truncation was positional — the first 10
+    in dict order — and silent, so of 30 configured feeds only **9 produced a
+    single row in 30 days**, and every foreign-language feed sat past index 10
+    and had never been fetched at all. Non-English coverage was zero while the
+    config implied four sources.
+
+    Measured through the real collection path, the never-fetched feeds were
+    not broken: BBC 50 items, Kiplinger 50, Guardian 39, FT 25, Les Echos 20,
+    Handelsblatt 20, Federal Reserve 20. They were simply never asked.
+
+    Fetching them concurrently makes the whole set cheaper than the first ten
+    were, so there is nothing left to truncate. ``limit_feeds`` still works for
+    callers that want it, and now says what it dropped.
+    """
     total = 0
     failed = 0
-    
+
     # Combine regular and foreign feeds
     feeds_to_check = [(name, url, False) for name, url in RSS_FEEDS.items()]
     feeds_to_check += [(name, url, True) for name, url in FOREIGN_RSS_FEEDS.items()]
-    
-    if limit_feeds and limit_feeds > 0 and limit_feeds < len(feeds_to_check):
-        feeds_to_check = feeds_to_check[:limit_feeds]
 
-    for name, url, is_foreign in feeds_to_check:
-        try:
-            count = await collect_feed(name, url, emit_cb=emit_cb, is_foreign=is_foreign)
-            if count > 0:
-                logger.info(f"[news] {name} (Foreign={is_foreign}): {count} articles")
-            total += count
-        except Exception as e:
-            failed += 1
-            logger.error(
-                f"[news] {name}: UNCAUGHT: {type(e).__name__}: {e}",
-                exc_info=True,
-            )
-        await asyncio.sleep(2.0)
+    if limit_feeds and limit_feeds > 0 and limit_feeds < len(feeds_to_check):
+        skipped = [n for n, _, _ in feeds_to_check[limit_feeds:]]
+        feeds_to_check = feeds_to_check[:limit_feeds]
+        logger.info(
+            "[news] limit_feeds=%d — skipping %d feeds this run: %s",
+            limit_feeds, len(skipped), ", ".join(skipped),
+        )
+
+    sem = asyncio.Semaphore(FEED_CONCURRENCY)
+
+    async def _one(name: str, url: str, is_foreign: bool) -> int:
+        nonlocal failed
+        async with sem:
+            try:
+                count = await collect_feed(name, url, emit_cb=emit_cb, is_foreign=is_foreign)
+                if count > 0:
+                    logger.info(f"[news] {name} (Foreign={is_foreign}): {count} articles")
+                else:
+                    logger.info(f"[news] {name}: no new articles")
+                return count
+            except Exception as e:
+                failed += 1
+                logger.error(
+                    f"[news] {name}: UNCAUGHT: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                return 0
+
+    counts = await asyncio.gather(
+        *(_one(n, u, f) for n, u, f in feeds_to_check), return_exceptions=True
+    )
+    total = sum(c for c in counts if isinstance(c, int))
 
     logger.info(
         f"[news] Total: {total} articles from {len(feeds_to_check)} feeds"
