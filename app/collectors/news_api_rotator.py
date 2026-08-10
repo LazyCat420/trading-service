@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,21 @@ from app.services.request_utils import SmartClient
 from app.utils.text_utils import is_truncated_content
 
 logger = logging.getLogger(__name__)
+
+# ── Body upgrade (see _upgrade_bodies) ──────────────────────────────────────
+# The bar an article has to clear to be worth storing as one. Shared with the
+# scraper's own thin-content gate so the trigger and the gate cannot drift
+# apart: asking for a body the scraper would then refuse is pure waste.
+try:
+    from app.scraper.core.content_quality import MIN_ARTICLE_CHARS as MIN_BODY_CHARS
+except Exception:  # noqa: BLE001 — keep the collector importable standalone
+    MIN_BODY_CHARS = 900
+
+# Caps, because a run carries up to 10 providers x 10 articles and every
+# upgrade is a network fetch. Tunable without a deploy.
+UPGRADE_LIMIT = int(os.getenv("NEWS_BODY_UPGRADE_LIMIT", "25"))
+UPGRADE_CONCURRENCY = int(os.getenv("NEWS_BODY_UPGRADE_CONCURRENCY", "4"))
+UPGRADE_BUDGET_S = float(os.getenv("NEWS_BODY_UPGRADE_BUDGET_S", "45"))
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +164,93 @@ def build_providers_from_settings() -> list[ProviderConfig]:
 # ---------------------------------------------------------------------------
 
 
+async def _upgrade_bodies(articles: list[NewsArticle]) -> dict[str, str]:
+    """Fetch real article bodies for the provider blurbs that need one.
+
+    The body scrape used to fire only when the API summary was under **150**
+    chars. Providers return 300-500, so it never fired — while an article
+    needs ~900 to be worth reading. Measured over 30 days:
+
+        source          rows   under 900   avg chars
+        finnhub       11,102        98%          303
+        alphavantage   4,658        99%          471
+        polygon        3,060       100%          457
+
+    and scraping a sample of those blurbs upgraded **17 of 24 (70%)** into
+    real articles — 494 -> 6,058 chars, 482 -> 12,458. So ~13k articles a
+    month were stored as headlines because nothing asked for the body.
+
+    Raising the trigger alone would have been a bad trade. `_persist_articles`
+    awaited each scrape **serially, inside an open DB transaction**, and a run
+    carries up to 10 providers x 10 articles: ~100 sequential fetches per
+    ticker, with a database connection pinned for the duration. So the
+    upgrades happen here instead — before the DB is touched, bounded three
+    ways:
+
+      * a cap on how many articles are attempted (shortest summary first,
+        since that is where the most is gained),
+      * a concurrency limit, so the per-domain rate limiter is respected
+        rather than fought,
+      * a wall-clock budget, after which whatever finished is used.
+
+    Whatever the caps drop is logged. A cap that is not reported reads as
+    "we covered everything".
+    """
+    from app.collectors.news_collector import _scrape_article_body_via_service
+
+    if not UPGRADE_LIMIT:
+        return {}
+
+    # One attempt per URL even when several articles share it.
+    candidates: dict[str, int] = {}
+    for a in articles:
+        s = a.summary or ""
+        if a.url and (len(s) < MIN_BODY_CHARS or "..." in s):
+            candidates[a.url] = min(candidates.get(a.url, len(s)), len(s))
+    if not candidates:
+        return {}
+
+    # Shortest summary first — the blurbs with the least in them already.
+    ordered = sorted(candidates, key=lambda u: candidates[u])
+    attempted, dropped = ordered[:UPGRADE_LIMIT], ordered[UPGRADE_LIMIT:]
+    if dropped:
+        logger.info(
+            "[rotator] body upgrade: attempting %d of %d candidates "
+            "(cap=%d); %d left with their provider blurb",
+            len(attempted), len(candidates), UPGRADE_LIMIT, len(dropped),
+        )
+
+    sem = asyncio.Semaphore(UPGRADE_CONCURRENCY)
+    bodies: dict[str, str] = {}
+
+    async def _one(url: str) -> None:
+        async with sem:
+            try:
+                body = await _scrape_article_body_via_service(url)
+            except Exception as e:  # noqa: BLE001 — one URL must not stop the run
+                logger.debug("[rotator] body upgrade failed for %s: %s", url, e)
+                return
+            if body and len(body) >= MIN_BODY_CHARS:
+                bodies[url] = body
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*(_one(u) for u in attempted), return_exceptions=True),
+            timeout=UPGRADE_BUDGET_S,
+        )
+    except asyncio.TimeoutError:
+        logger.info(
+            "[rotator] body upgrade hit its %.0fs budget — %d of %d upgraded, "
+            "the rest keep their provider blurb",
+            UPGRADE_BUDGET_S, len(bodies), len(attempted),
+        )
+
+    if bodies:
+        logger.info("[rotator] body upgrade: %d of %d attempts returned an article",
+                    len(bodies), len(attempted))
+    return bodies
+
+
 async def _persist_articles(
     articles: list[NewsArticle], requested_tickers: list[str] | None = None,
 ) -> int:
@@ -162,9 +265,13 @@ async def _persist_articles(
     from app.collectors.news_collector import (
         _detect_tickers_in_text,
         _get_article_id,
-        _scrape_article_body_via_service,
         rank_tickers_for_fanout,
     )
+
+    # Fetch the bodies BEFORE opening the transaction. This used to happen one
+    # article at a time inside the `with get_db()` block below, which pinned a
+    # database connection for the length of up to ~100 sequential HTTP fetches.
+    bodies = await _upgrade_bodies(articles)
 
     with get_db() as db:
         count = 0
@@ -174,15 +281,11 @@ async def _persist_articles(
                 continue
 
             api_summary = article.summary or ""
-            summary = ""
-            if article.url and (len(api_summary) < 150 or "..." in api_summary):
-                try:
-                    body = await _scrape_article_body_via_service(article.url)
-                    if body:
-                        summary = body
-                except Exception as e:
-                    logger.warning("[rotator] Failed to scrape body for %s: %s", article.url, e)
+            summary = bodies.get(article.url or "", "")
 
+            # No body, or one too short to be an article: keep the provider's
+            # blurb, exactly as before. An upgrade that fails must never leave
+            # the article worse off than not attempting one.
             if (not summary or len(summary) < 150) and len(api_summary) >= 150:
                 summary = api_summary
 
