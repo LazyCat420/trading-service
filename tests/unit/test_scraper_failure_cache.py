@@ -118,7 +118,9 @@ async def test_a_dead_url_does_not_blacklist_its_domain():
     async def _fetch(url, options):
         if url == DEAD_URL:
             return _result(410)
-        return ScrapeResult(url=url, success=True, content="y" * 400, data={},
+        # Article-length: the thin-content gate treats a short body as a
+        # teaser, and this test is about URL-vs-domain scope, not length.
+        return ScrapeResult(url=url, success=True, content="y" * 2000, data={},
                             error=None, engine_used="http",
                             scraped_at=datetime.utcnow(), status_code=200)
 

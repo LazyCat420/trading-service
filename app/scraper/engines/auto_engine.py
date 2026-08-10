@@ -22,6 +22,7 @@ from typing import Any
 
 from app.scraper.core.base_engine import BaseEngine
 from app.scraper.core.base_result import ScrapeResult
+from app.scraper.core import content_quality
 from app.scraper.core.failure_cache import PERMANENT_STATUSES, failure_cache
 from app.scraper.engines.http_engine import HttpEngine
 from app.scraper.engines.playwright_engine import PlaywrightEngine
@@ -89,6 +90,15 @@ class AutoEngine(BaseEngine):
             engine_used="auto (skipped)", scraped_at=datetime.utcnow(),
         )
 
+    def _thin(self, url: str, res: ScrapeResult) -> ScrapeResult:
+        """A 200 that carried a headline and a lede, and nothing else."""
+        return ScrapeResult(
+            url=url, success=False, content=res.content, data=res.data or {},
+            error=content_quality.thin_reason(res.content),
+            engine_used="auto (thin)", scraped_at=datetime.utcnow(),
+            status_code=res.status_code,
+        )
+
     async def fetch(self, url: str, options: dict[str, Any]) -> ScrapeResult:
         # Phase 0: have we already established this URL is gone? Skipping is
         # the whole point — one 410 article was re-walked 157 times over 12
@@ -97,6 +107,20 @@ class AutoEngine(BaseEngine):
         if cached:
             logger.info("[auto] Skipping %s — known dead (%s)", url, cached)
             return self._dead(url, cached)
+
+        # Phase 0b: does this site ever give us an article? A domain that has
+        # returned nothing but a headline every time, and a real article never,
+        # is not worth a request — measured, not hardcoded, and re-tested once
+        # a day so a site that stops paywalling comes back on its own.
+        domain = content_quality.domain_of(url)
+        skip = failure_cache.should_skip_domain(domain)
+        if skip:
+            logger.info("[auto] Skipping %s — %s", url, skip)
+            return ScrapeResult(
+                url=url, success=False, content=None, data={},
+                error=f"domain yields no articles ({skip})",
+                engine_used="auto (skipped)", scraped_at=datetime.utcnow(),
+            )
 
         # Phase 1: HTTP
         logger.info(f"[auto] Trying HTTP engine for {url}")
@@ -115,6 +139,15 @@ class AutoEngine(BaseEngine):
         # If success, status code is valid, length is sufficient, and not blocked
         if res.success and res.content and len(res.content) > 150:
             if res.status_code in [200, 201, 202] and not self.is_blocked_content(res.content):
+                # A 200 is not an article. Escalating to Playwright cannot
+                # unlock a paywall either, so judge the body here: a headline
+                # plus a lede is a failure, and one the domain is charged for.
+                if content_quality.is_thin(res.content):
+                    failure_cache.record_quality(domain, good=False)
+                    logger.info("[auto] %s — %s", url,
+                                content_quality.thin_reason(res.content))
+                    return self._thin(url, res)
+                failure_cache.record_quality(domain, good=True)
                 logger.info(f"[auto] HTTP engine succeeded for {url}")
                 res.engine_used = "auto (http)"
                 return res
@@ -130,6 +163,12 @@ class AutoEngine(BaseEngine):
         
         if res.success and res.content and len(res.content) > 150:
             if not self.is_blocked_content(res.content):
+                if content_quality.is_thin(res.content):
+                    failure_cache.record_quality(domain, good=False)
+                    logger.info("[auto] %s — %s", url,
+                                content_quality.thin_reason(res.content))
+                    return self._thin(url, res)
+                failure_cache.record_quality(domain, good=True)
                 logger.info(f"[auto] Playwright engine succeeded for {url}")
                 res.engine_used = "auto (playwright)"
                 return res

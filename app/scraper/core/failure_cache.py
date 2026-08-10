@@ -57,6 +57,8 @@ import threading
 import time
 from collections import OrderedDict
 
+from app.scraper.core import content_quality
+
 logger = logging.getLogger(__name__)
 
 # HTTP statuses that mean "this URL is gone, and asking again will not help".
@@ -141,6 +143,16 @@ class SqliteFailureStore:
                     conn.execute(
                         "CREATE INDEX IF NOT EXISTS dead_urls_expires_at "
                         "ON dead_urls(expires_at)"
+                    )
+                    # Per-domain quality, so "this site only ever returns a
+                    # header" is learned rather than hardcoded — and unlearned
+                    # by itself when the site changes.
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS domain_quality ("
+                        "  domain TEXT PRIMARY KEY,"
+                        "  thin_streak INTEGER NOT NULL DEFAULT 0,"
+                        "  good_count INTEGER NOT NULL DEFAULT 0,"
+                        "  last_thin_at REAL NOT NULL DEFAULT 0)"
                     )
                 self.enabled = True
                 return
@@ -261,6 +273,50 @@ class SqliteFailureStore:
             self._handle(e, "len")
             return 0
 
+    # ── per-domain quality ───────────────────────────────────────────────────
+
+    def record_quality(self, domain: str, good: bool, now: float) -> None:
+        """Note one response from ``domain``.
+
+        A good response clears the thin streak outright: a domain that ever
+        produces a real article must never be skipped, which is what keeps the
+        bimodal sites (stocktitan, tradingview, cnbc) alive.
+        """
+        if not self.enabled or not domain:
+            return
+        try:
+            with self._lock, self._connect() as conn:
+                if good:
+                    conn.execute(
+                        "INSERT INTO domain_quality(domain, thin_streak, good_count, last_thin_at) "
+                        "VALUES (?,0,1,0) ON CONFLICT(domain) DO UPDATE SET "
+                        "thin_streak=0, good_count=domain_quality.good_count+1",
+                        (domain,),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO domain_quality(domain, thin_streak, good_count, last_thin_at) "
+                        "VALUES (?,1,0,?) ON CONFLICT(domain) DO UPDATE SET "
+                        "thin_streak=domain_quality.thin_streak+1, last_thin_at=excluded.last_thin_at",
+                        (domain, now),
+                    )
+        except Exception as e:  # noqa: BLE001
+            self._handle(e, "record_quality")
+
+    def quality_of(self, domain: str) -> tuple[int, int, float] | None:
+        """``(thin_streak, good_count, last_thin_at)`` for ``domain``."""
+        if not self.enabled or not domain:
+            return None
+        try:
+            with self._lock, self._connect() as conn:
+                return conn.execute(
+                    "SELECT thin_streak, good_count, last_thin_at FROM domain_quality "
+                    "WHERE domain = ?", (domain,)
+                ).fetchone()
+        except Exception as e:  # noqa: BLE001
+            self._handle(e, "quality_of")
+            return None
+
     def __bool__(self) -> bool:
         """A store object always exists; emptiness is not absence.
 
@@ -337,6 +393,34 @@ class FailureCache:
                 self._remember(url, reason, expires_at)
                 return reason
         return None
+
+    # ── per-domain quality ───────────────────────────────────────────────────
+
+    def record_quality(self, domain: str, good: bool) -> None:
+        """Note whether ``domain`` just produced a real article or a teaser."""
+        if self.store is not None:
+            self.store.record_quality(domain, good, _now())
+
+    def should_skip_domain(self, domain: str) -> str | None:
+        """Reason to skip ``domain`` entirely, or None to go ahead.
+
+        Only a domain that has produced a thin body every time and a real
+        article NEVER is skipped, and only for SKIP_TTL_S — after which one
+        probe is allowed through, so a site that stops paywalling recovers on
+        its own without anyone editing a list.
+        """
+        if self.store is None or not domain:
+            return None
+        row = self.store.quality_of(domain)
+        if not row:
+            return None
+        thin_streak, good_count, last_thin_at = row
+        if good_count > 0 or thin_streak < content_quality.SKIP_AFTER_THIN:
+            return None
+        if _now() - last_thin_at >= content_quality.SKIP_TTL_S:
+            return None  # let one request through to re-test the site
+        return (f"{domain} returned a headline/teaser on its last "
+                f"{thin_streak} responses and has never returned an article")
 
     def clear(self) -> None:
         self._entries.clear()
