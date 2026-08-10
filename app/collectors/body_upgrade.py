@@ -33,6 +33,7 @@ inside one, pinning a connection for the length of ~100 sequential fetches.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -65,6 +66,9 @@ UPGRADE_CONCURRENCY = int(os.getenv("NEWS_BODY_UPGRADE_CONCURRENCY", "4"))
 # what one ticker runs out of time for is picked up by the next — increasingly
 # from the cache below rather than the network.
 UPGRADE_BUDGET_S = float(os.getenv("NEWS_BODY_UPGRADE_BUDGET_S", "20"))
+# How long we will WAIT FOR A SLOT before calling it starvation. Separate
+# from the fetch budget on purpose: queue time is another pass's fetches.
+UPGRADE_QUEUE_WAIT_S = float(os.getenv("NEWS_BODY_UPGRADE_QUEUE_WAIT_S", "30"))
 
 # Collection runs ONCE PER TICKER and each ticker sees largely the same
 # articles, so without a memory an 80-ticker cycle re-scrapes the same ~56 URLs
@@ -94,6 +98,30 @@ def _body_cache_put(url: str, body: str) -> None:
     _BODY_CACHE.move_to_end(url)
     while len(_BODY_CACHE) > _BODY_CACHE_MAX:
         _BODY_CACHE.popitem(last=False)
+
+
+# Upgrade passes must not race each other for the scraper pool.
+#
+# finnhub's pass and the rotator's pass run in the same cycle and both funnel
+# into scraper_client's process-wide Semaphore(5). Whichever starts first holds
+# every slot, and the other's wall-clock budget expires while its coroutines are
+# still queued — so it returns nothing, having issued no request. Measured
+# 2026-08-10: finnhub 97.9% upgraded, alphavantage and polygon 0% on every wide
+# cycle. Waiting longer does not fix it; the winner can hold the pool for
+# minutes. Taking turns does: each pass gets the full pool, and — the part that
+# matters — its budget clock starts when it acquires the lock, not when it was
+# queued behind someone else's fetches.
+_UPGRADE_LOCKS: dict[object, asyncio.Lock] = {}
+
+
+def _upgrade_lock() -> asyncio.Lock:
+    """One lock per event loop, created lazily so it binds to the live loop."""
+    loop = asyncio.get_running_loop()
+    lock = _UPGRADE_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _UPGRADE_LOCKS[loop] = lock
+    return lock
 
 
 def needs_upgrade(summary: str | None) -> bool:
@@ -144,36 +172,86 @@ async def upgrade_bodies(candidates: list[tuple[str | None, str | None]]) -> dic
         )
 
     sem = asyncio.Semaphore(UPGRADE_CONCURRENCY)
+    # The budget has to bound FETCHING, not QUEUEING. `_scrape_article_body_via_service`
+    # funnels into scraper_client's process-wide Semaphore(5), which a concurrent
+    # pass can hold for minutes — so a plain wall-clock budget expires while every
+    # coroutine is still queued and the pass returns nothing. Measured 2026-08-10:
+    # finnhub upgraded 97.9% while alphavantage/polygon got 0% on every wide cycle,
+    # having never issued a request. `started` is set by the first coroutine that
+    # actually acquires a slot; the fetch budget runs from there.
+    # NOT set on acquiring `sem` — that one is ours and is never contended. The
+    # queue that starves us is inside the scraper client, so the only honest
+    # signal that we are being served is a body actually coming back.
+    progress = asyncio.Event()
+    failures = 0
 
     async def _one(url: str) -> None:
+        nonlocal failures
         async with sem:
             try:
                 body = await _scrape_article_body_via_service(url)
             except Exception as e:  # noqa: BLE001 — one URL must not stop the run
+                failures += 1
                 logger.debug("[body_upgrade] failed for %s: %s", url, e)
                 return
             if body and len(body) >= MIN_BODY_CHARS:
                 bodies[url] = body
                 _body_cache_put(url, body)
+                progress.set()
 
     # Count only what THIS pass fetched. `bodies` already carries the cache
     # hits, so measuring against it reported "50 of 26 attempts" — a number
     # that cannot be read, in the one line that says whether this is working.
     before = len(bodies)
+    starved = False
+    queued_s = 0.0
+
+    # Take turns. Waiting here is NOT charged to the fetch budget — that was the
+    # whole defect.
+    lock = _upgrade_lock()
+    waited_from = time.monotonic()
     try:
-        await asyncio.wait_for(
-            asyncio.gather(*(_one(u) for u in attempted), return_exceptions=True),
-            timeout=UPGRADE_BUDGET_S,
-        )
+        await asyncio.wait_for(lock.acquire(), timeout=UPGRADE_QUEUE_WAIT_S)
     except asyncio.TimeoutError:
-        logger.info(
-            "[body_upgrade] hit its %.0fs budget — %d of %d fetched, "
-            "the rest keep their blurb",
-            UPGRADE_BUDGET_S, len(bodies) - before, len(attempted),
+        queued_s = time.monotonic() - waited_from
+        logger.warning(
+            "[body_upgrade] waited %.0fs for another upgrade pass and gave up; "
+            "%d article(s) keep their provider blurb",
+            queued_s, len(attempted),
         )
+        return bodies
+    queued_s = time.monotonic() - waited_from
+
+    task = asyncio.ensure_future(
+        asyncio.gather(*(_one(u) for u in attempted), return_exceptions=True)
+    )
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=UPGRADE_BUDGET_S)
+    except asyncio.TimeoutError:
+        starved = not progress.is_set()
+        task.cancel()
+    finally:
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(task, return_exceptions=True)
+        lock.release()
 
     fetched = len(bodies) - before
-    if fetched:
-        logger.info("[body_upgrade] %d of %d fetches returned an article",
-                    fetched, len(attempted))
+    # Report unconditionally. This line used to sit under `if fetched:`, so the
+    # single outcome worth alarming on — nothing was upgraded — was the one that
+    # printed nothing, and a whole source sat at 0% for a day reading as "no
+    # candidates". A cap must log what it dropped or it reads as full coverage.
+    if fetched == 0 and attempted:
+        logger.warning(
+            "[body_upgrade] upgraded 0 of %d articles (%s) — every one keeps its "
+            "provider blurb. %d fetch error(s).",
+            len(attempted),
+            "starved: never acquired a scraper slot within "
+            f"{UPGRADE_QUEUE_WAIT_S:.0f}s, another pass holds the pool"
+            if starved else f"fetches exceeded the {UPGRADE_BUDGET_S:.0f}s budget",
+            failures,
+        )
+    else:
+        logger.info("[body_upgrade] %d of %d fetches returned an article%s",
+                    fetched, len(attempted),
+                    " (queue-starved for part of the run)" if starved else "")
     return bodies

@@ -160,12 +160,18 @@ async def get_finnhub_news(ticker: str) -> str:
     #
     # Widen rather than return nothing (a quiet small-cap still deserves
     # context), but say plainly how old the window had to get.
+    # `summary` only. The retired column lost its writer in 8528bb0
+    # (2026-06-19). The 640 rows that survive it are 51-62 days stale and
+    # 76% are SHORTER than the summary they masked: 56 rows across 36
+    # tickers were being served at 703 chars against 2,783 available, and
+    # 19 of those fell under the grounded extractor's 400-char floor purely
+    # because of the COALESCE. Its job is done by grounded_facts.
     with get_db() as db:
         def _fetch(days: int):
             return db.execute(
                 """
                 SELECT id, title, publisher, published_at,
-                       COALESCE(llm_summary, summary)
+                       summary
                 FROM news_articles
                 WHERE ticker = %s
                   AND published_at > NOW() - make_interval(days => %s)
@@ -201,9 +207,9 @@ async def get_finnhub_news(ticker: str) -> str:
                 f"There is no fresh catalyst here.\n"
             )
 
-    # Grounded facts instead of raw scrape text where available. Measured on
-    # the live DB, llm_summary was empty for 100% of recent articles, so the
-    # COALESCE served raw `summary` — ~2.3k chars of scrape (often leading
+    # Grounded facts instead of raw scrape text where available. The COALESCE
+    # that used to sit above is gone (it was NOT empty for 100% of rows —
+    # 640 survive), so this is raw `summary` — ~2.3k chars of scrape (often leading
     # with nav chrome) per article, 15 articles per call. Facts compress that
     # ~5-8x and every quote is offset-verified against the source. Fail-open:
     # articles without facts fall back to (truncated) raw text.

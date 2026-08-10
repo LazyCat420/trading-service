@@ -82,7 +82,18 @@ class Whiteboard:
                 else:
                     cb(event)
             except Exception as ex:
-                logger.warning("[Whiteboard] Dynamic subscriber callback failed: %s", ex)
+                # This handler hid a dead agent chain for 13 days. A subscriber
+                # that dies here takes the rest of its callback with it, so the
+                # ticker silently stops being analysed — name it, or the next
+                # one costs another fortnight.
+                logger.exception(
+                    "[Whiteboard] %s/%s: subscriber failed on section '%s' — the "
+                    "agent chain for this ticker is now DEAD: %s",
+                    event.get("cycle_id") if isinstance(event, dict) else "?",
+                    event_ticker or "?",
+                    event.get("section") if isinstance(event, dict) else "?",
+                    ex,
+                )
 
     async def write_section(
         self, ticker: str, cycle_id: str, section: str, content: dict | str, author_agent: str

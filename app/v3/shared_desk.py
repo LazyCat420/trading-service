@@ -183,6 +183,13 @@ _VALID_ARTIFACT_TYPES = frozenset({
     "trade_decision",
     "tournament_result",
     "delta_report",
+    # The triage override writes this when research_degraded() fires. It was
+    # never in this set, so append_artifact raised ValueError, the whiteboard
+    # swallowed the raise, and EVERY analyst dispatch below that line was dead
+    # code — the desk stayed at INIT and the ticker was lost with a decision
+    # row that claimed a full pipeline ran. 22 attempts 2026-07-28..08-10, 0
+    # completions. See tests/unit/test_desk_phase_transition.py.
+    "degradation_note",
 })
 
 # Artifacts that carry a tradeable action, and therefore must always declare

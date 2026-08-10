@@ -3622,6 +3622,31 @@ def _build_cycle_metadata(
     return metadata
 
 
+
+def _stages_completed(desk) -> list[str]:
+    """What this desk ACTUALLY reached, from its artifacts and phase.
+
+    This used to be a hardcoded four-element list, so a desk stuck at INIT with
+    only a junior-analyst note claimed research, debate and decision had all
+    run. Three tickers per wide cycle were lost that way and every downstream
+    reader — reports, audits, the reconciliation check — believed them.
+    """
+    stages: list[str] = []
+    have = {a.get("artifact_type") for a in (getattr(desk, "artifacts", None) or [])
+            if isinstance(a, dict)}
+    if "regime_classification" in have:
+        stages.append("regime_classification")
+    if have & {"fundamental_report", "quant_report", "valuation_report"}:
+        stages.append("research")
+    if have & {"bull_argument", "bear_rebuttal", "bull_defense", "debate_judge"}:
+        stages.append("debate")
+    decision = next((a for a in (getattr(desk, "artifacts", None) or [])
+                     if isinstance(a, dict) and a.get("artifact_type") == "final_decision"), None)
+    # A DEGRADED sentinel is not a decision — it is the record of not making one.
+    if decision and (decision.get("content") or {}).get("action") is not None:
+        stages.append("decision")
+    return stages
+
 def _build_v1_compatible_result(
     desk: SharedDesk,
     elapsed_s: float = 0.0,
@@ -3693,11 +3718,15 @@ def _build_v1_compatible_result(
         pass
 
     # Build v2_metadata for backward compatibility with the frontend's debate view
+    # "passed" is a VERDICT, and a debate that never happened has none.
+    # Defaulting to it meant a ticker lost before any analyst ran still
+    # reported a clean integrity check to every downstream reader.
+    _debated = "debate" in _stages_completed(desk)
     v2_debate = {
         "judge_action": action,
         "judge_confidence": confidence,
-        "winning_side": "split",
-        "integrity_status": "passed",
+        "winning_side": "split" if _debated else "none",
+        "integrity_status": "passed" if _debated else "not_run",
         "transcript": ""
     }
 
@@ -3744,7 +3773,8 @@ def _build_v1_compatible_result(
         "rationale": rationale,
         "config_used": "v3_agentic_pipeline",
         "triage_tier": "v3_full",
-        "escalated": True,  # V3 always runs full pipeline
+        # Not "always": a desk that never dispatched an analyst did not escalate.
+        "escalated": bool(_stages_completed(desk)) and "research" in _stages_completed(desk),
         "agent_results": _extract_agent_results(desk),
         "estimate": {
             "stop_loss": stop_loss,
@@ -3770,7 +3800,7 @@ def _build_v1_compatible_result(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "v2_metadata": {
             "debate": v2_debate,
-            "stages_completed": ["regime_classification", "research", "debate", "decision"],
+            "stages_completed": _stages_completed(desk),
         },
         "v3_metadata": {
             "pipeline_version": "v3",
