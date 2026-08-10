@@ -185,6 +185,27 @@ async def build_evidence_packet(
 
             # -- 1.2 Unstructured facts (News, Reddit, YouTube)
             try:
+                # `llm_summary` has had no writer since 8528bb0 ("rip out V2
+                # python processors") and is NULL for all 37,808 rows. Its
+                # replacement is `grounded_facts`. Selecting it here was not
+                # merely dead — it was actively wrong:
+                #
+                #   c not in ("llm_summary")
+                #
+                # is a SUBSTRING test, because parentheses without a comma are
+                # not a tuple. "summary" IS a substring of "llm_summary", so
+                # BOTH columns were rewritten to the same expression and the
+                # query asked for `best_summary` twice while never selecting
+                # plain `summary`:
+                #
+                #   SELECT id, title, publisher, url, published_at,
+                #          COALESCE(llm_summary, summary) as best_summary,
+                #          COALESCE(llm_summary, summary) as best_summary
+                #
+                # It survived only because llm_summary is always NULL, which
+                # makes best_summary identical to summary. Populate that column
+                # and the evidence packet's `summary` silently becomes
+                # something else.
                 cols = [
                     "id",
                     "title",
@@ -192,16 +213,8 @@ async def build_evidence_packet(
                     "url",
                     "published_at",
                     "summary",
-                    "llm_summary",
                 ]
-                q_cols = ", ".join(
-                    [
-                        c
-                        if c not in ("llm_summary")
-                        else "COALESCE(llm_summary, summary) as best_summary"
-                        for c in cols
-                    ]
-                )
+                q_cols = ", ".join(cols)
                 news_rows = db.execute(
                     f"SELECT {q_cols} FROM news_articles WHERE ticker = %s ORDER BY published_at DESC LIMIT 5",
                     [ticker],
