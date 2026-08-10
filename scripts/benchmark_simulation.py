@@ -1,155 +1,62 @@
-"""
-Benchmark Simulation — Run trading cycles under different simulated market scenarios
-and evaluate decision accuracy and confidence.
+"""RETIRED 2026-08-10 — this script wiped the live portfolio and measured nothing.
+
+Use `scripts/bench_stage.py` instead. It runs one stage of the cycle on one
+ticker against a READ-ONLY database session.
+
+WHY IT WAS RETIRED (three independent reasons, any one of them sufficient)
+=========================================================================
+
+1. **It deleted live trading data, four times per run.** Before each scenario
+   it called `reset_bot_profile(get_active_bot_id())` — on the ACTIVE bot,
+   against the production database. That function is not a sandbox reset; it
+   `DELETE`s `positions`, `orders`, `trade_fills`, `position_lots`,
+   `lot_closures` and `portfolio_snapshots` for that bot and resets
+   `cash_balance`, `total_pnl`, `total_trades` and `win_rate`. There were four
+   scenarios, so a single invocation wiped the real portfolio four times.
+
+2. **Its scenario knobs were inert, so its scorecard was noise.** Each scenario
+   set `settings.SIMULATION_TREND` and `settings.SIMULATION_NEWS_SENTIMENT`.
+   Those two settings have exactly one writer — this script — and ZERO readers
+   anywhere in the codebase outside their declaration in
+   `app/config/config.py:164-165`. Nothing consumed them. So all four scenarios
+   ran the identical real cycle against the identical live market data, and
+   were then scored against four DIFFERENT expected actions (BUY / SELL / HOLD
+   / SELL). The maximum achievable "accuracy" was 1/4 by construction, and the
+   number it printed described nothing.
+
+3. **It was a second claimant on production.** It called `run_single_cycle()`,
+   which calls `PipelineService.start_cycle()` in-process against the shared
+   Postgres. Any process that can reach that database is an equal claimant for
+   the cycle — the failure mode that caused the 2026-08-05 outage. It also ran
+   THIS checkout's code rather than the deployed image, so it verified the
+   wrong artifact (the same reason `scripts/observe_cycle.py` carries a warning
+   not to go back to in-process cycles).
+
+It also wrote its scorecard to a hardcoded absolute path under a specific
+user's `.gemini` directory, which is why nobody ever saw the output.
+
+WHAT REPLACES IT
+================
+`scripts/bench_stage.py` — one stage, one ticker, read-only session, median of
+N runs, and a contract check per stage that can actually fail. For a real
+end-to-end run use `scripts/observe_cycle.py --tickers <ONE>` (queues a
+`START_V3_CYCLE` for the deployed container, `trade=False`), which is the path
+that verifies the artifact that is actually deployed.
 """
 
 import sys
-import os
-import asyncio
-import time
-import json
-import logging
 
-# Ensure path is importable
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+_MESSAGE = __doc__
 
-from app.config import settings
-from cycle_main import run_single_cycle
-from app.db.connection import get_db
-from app.services.bot_manager import get_active_bot_id, reset_bot_profile
 
-# Configure logger
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("benchmark_sim")
+def main() -> int:
+    print(_MESSAGE, file=sys.stderr)
+    print(
+        "REFUSING TO RUN. Use:  python3 scripts/bench_stage.py --all-context --ticker AAPL",
+        file=sys.stderr,
+    )
+    return 2
 
-SCENARIOS = [
-    {
-        "name": "Bullish Trend + Positive News",
-        "trend": "bullish",
-        "news_sentiment": "positive",
-        "expected_action": "BUY"
-    },
-    {
-        "name": "Bearish Trend + Negative News",
-        "trend": "bearish",
-        "news_sentiment": "negative",
-        "expected_action": "SELL"
-    },
-    {
-        "name": "Neutral Trend + Neutral News",
-        "trend": "neutral",
-        "news_sentiment": "neutral",
-        "expected_action": "HOLD"
-    },
-    {
-        "name": "Volatile Trend + Negative News",
-        "trend": "volatile",
-        "news_sentiment": "negative",
-        "expected_action": "SELL"
-    }
-]
-
-async def run_benchmark(ticker: str = "NVDA"):
-    # Force simulation mode
-    settings.EXECUTION_MODE = "simulation"
-    
-    logger.info("==============================================================")
-    logger.info("WORLD SIMULATOR BENCHMARK START | Ticker: %s", ticker)
-    logger.info("==============================================================")
-    
-    results_summary = []
-    
-    for idx, sc in enumerate(SCENARIOS):
-        logger.info("\n--- Scenario %d/%d: %s ---", idx + 1, len(SCENARIOS), sc["name"])
-        
-        # Reset bot profile to clean up portfolio holdings and cash balance
-        try:
-            active_bot = get_active_bot_id()
-            logger.info("Resetting bot profile '%s' for a clean slate...", active_bot)
-            reset_bot_profile(active_bot)
-        except Exception as reset_err:
-            logger.warning("Failed to reset bot profile: %s", reset_err)
-            
-        # Configure simulation parameters
-        settings.SIMULATION_TREND = sc["trend"]
-        settings.SIMULATION_NEWS_SENTIMENT = sc["news_sentiment"]
-        
-        cycle_id = f"sim-{sc['trend']}-{sc['news_sentiment']}-{int(time.time())}"
-        
-        # Run a single cycle
-        try:
-            # We run the cycle for the specified ticker
-            cycle_summary = await run_single_cycle(tickers=[ticker], cycle_id=cycle_id)
-            
-            # Fetch decision from database
-            with get_db() as db:
-                row = db.execute(
-                    "SELECT result_json FROM analysis_results WHERE cycle_id = %s AND ticker = %s",
-                    [cycle_id, ticker]
-                ).fetchone()
-                
-            if row:
-                decision_data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-                action = decision_data.get("action", "HOLD")
-                confidence = decision_data.get("confidence", 0)
-                rationale = decision_data.get("rationale", "")
-            else:
-                action = "NO_DECISION"
-                confidence = 0
-                rationale = "No decision record found in analysis_results."
-                
-            status = "PASS" if action == sc["expected_action"] else "FAIL"
-            
-            results_summary.append({
-                "scenario": sc["name"],
-                "trend": sc["trend"],
-                "news_sentiment": sc["news_sentiment"],
-                "expected": sc["expected_action"],
-                "actual": action,
-                "confidence": confidence,
-                "status": status,
-                "rationale": rationale[:200] + "..."
-            })
-            
-            logger.info("Scenario complete. Result Action: %s | Expected: %s | Status: %s", action, sc["expected_action"], status)
-            
-        except Exception as e:
-            logger.exception("Failed to run scenario %s", sc["name"])
-            results_summary.append({
-                "scenario": sc["name"],
-                "trend": sc["trend"],
-                "news_sentiment": sc["news_sentiment"],
-                "expected": sc["expected_action"],
-                "actual": "ERROR",
-                "confidence": 0,
-                "status": "ERROR",
-                "rationale": str(e)
-            })
-            
-    # Print final scorecard
-    print("\n" + "=" * 80)
-    print("                    WORLD SIMULATOR BENCHMARK SCORECARD")
-    print("=" * 80)
-    print(f"{'Scenario Name':<35} | {'Trend':<10} | {'Sentiment':<10} | {'Expected':<8} | {'Actual':<8} | {'Status':<6}")
-    print("-" * 80)
-    
-    passed_count = 0
-    for r in results_summary:
-        print(f"{r['scenario']:<35} | {r['trend']:<10} | {r['news_sentiment']:<10} | {r['expected']:<8} | {r['actual']:<8} | {r['status']:<6}")
-        if r['status'] == "PASS":
-            passed_count += 1
-            
-    print("=" * 80)
-    print(f"Accuracy: {passed_count}/{len(results_summary)} ({passed_count/len(results_summary)*100:.1f}%)")
-    print("=" * 80 + "\n")
-    
-    # Save scorecard to scratch for reference
-    scratch_dir = "/home/lazycat/.gemini/antigravity-ide/brain/3b34cc5f-f299-4df3-a1de-e6e7752f438c"
-    os.makedirs(scratch_dir, exist_ok=True)
-    with open(os.path.join(scratch_dir, "benchmark_scorecard.json"), "w") as f:
-        json.dump(results_summary, f, indent=2)
-    logger.info("Scorecard saved to benchmark_scorecard.json")
 
 if __name__ == "__main__":
-    ticker = sys.argv[1] if len(sys.argv) > 1 else "NVDA"
-    asyncio.run(run_benchmark(ticker))
+    sys.exit(main())

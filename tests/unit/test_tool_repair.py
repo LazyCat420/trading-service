@@ -260,6 +260,23 @@ def _schemas():
     return out
 
 
+#: `get_sec_filings` is the one allow-listed tool that does NOT require
+#: `ticker`, and that is deliberate (2026-08-10). Its executor resolves the
+#: subject itself — explicit arg, then the declared `symbol` alias, then
+#: `current_ticker()` — because 30% of calls (14 of 47 over 7 days) were being
+#: rejected with `Malformed arguments: missing ['ticker']` before reaching the
+#: function: the SDK drops undeclared keys and only then checks `required`, so
+#: agents carrying the old EDGAR-style schema (action/cik/limit/symbol) lost
+#: every key and failed the check. That relaxation lived on the decorator from
+#: 2026-07-29 but the catalog overrode it until 2026-08-10.
+#:
+#: It stays on the repair allow-list because the pre-tool hook runs with an
+#: explicit `ticker=` from the caller, whereas `current_ticker()` can be unset
+#: on the in-process path (`run_v3_agent` calls `set_tool_context` without a
+#: ticker). The hook is the belt; the executor's fallback is the braces.
+_TICKER_OPTIONAL_BY_DESIGN = {"get_sec_filings"}
+
+
 def test_every_allow_listed_tool_exists_and_requires_a_ticker():
     """Guards a typo, and a tool whose schema stopped requiring `ticker`.
 
@@ -271,10 +288,19 @@ def test_every_allow_listed_tool_exists_and_requires_a_ticker():
     assert not missing, f"allow-listed tools absent from tool_schemas.json: {missing}"
 
     not_required = sorted(
-        t for t in REPAIRABLE_TICKER_TOOLS
+        t for t in REPAIRABLE_TICKER_TOOLS - _TICKER_OPTIONAL_BY_DESIGN
         if "ticker" not in (schemas[t].get("required") or [])
     )
     assert not not_required, f"allow-listed but ticker not required: {not_required}"
+
+    # The exemption is not a blanket: an exempt tool must still ACCEPT a
+    # ticker, or the repair injects a key the executor will drop.
+    for tool in sorted(_TICKER_OPTIONAL_BY_DESIGN):
+        props = (schemas[tool].get("properties") or {})
+        assert "ticker" in props, (
+            f"{tool} is exempt from requiring `ticker` but no longer declares "
+            "one — the repair hook would inject a key the SDK drops"
+        )
 
 
 def test_no_state_changing_tool_is_allow_listed():
@@ -289,12 +315,20 @@ def test_no_state_changing_tool_is_allow_listed():
 
 
 def test_the_allow_list_is_a_strict_subset_of_ticker_requiring_tools():
-    """Nothing is repaired that the schema would not have rejected anyway."""
+    """Nothing is repaired that the schema would not have rejected anyway.
+
+    `_TICKER_OPTIONAL_BY_DESIGN` is excluded and justified where it is defined;
+    the exclusion is one named tool, not a predicate, so a second tool cannot
+    drift into it silently.
+    """
     schemas = _schemas()
     requires_ticker = {
         n for n, p in schemas.items() if "ticker" in (p.get("required") or [])
     }
-    assert REPAIRABLE_TICKER_TOOLS < requires_ticker
+    assert (REPAIRABLE_TICKER_TOOLS - _TICKER_OPTIONAL_BY_DESIGN) < requires_ticker
+    assert len(_TICKER_OPTIONAL_BY_DESIGN) == 1, (
+        "the exemption list grew; each entry needs its own written reason"
+    )
 
 
 # ── Reachability: a hook with no caller is not a feature ─────────────────
@@ -390,11 +424,24 @@ def test_the_repair_actually_satisfies_the_real_validator():
     reg.load_from_json(_SCHEMA_PATH)
     assert reg.schemas, "registry loaded no schemas — the oracle is blind"
     # Guard the oracle itself: if this lookup breaks, every verdict below
-    # becomes a vacuous ACCEPTED.
-    assert reg._schema_params("get_sec_filings")[1] == {"ticker"}
+    # becomes a vacuous ACCEPTED. The exemplar must be a tool that still
+    # REQUIRES ticker — `get_sec_filings` deliberately no longer does (see
+    # _TICKER_OPTIONAL_BY_DESIGN), and using it here would make this guard
+    # assert the absence of the thing it is guarding.
+    assert reg._schema_params("get_technical_indicators")[1] == {"ticker"}
+
+    # The one tool whose executor resolves its own subject: the SDK must NOT
+    # reject it for a missing ticker. Asserted here rather than trusted,
+    # because this is the whole point of the 2026-08-10 catalog fix and the
+    # previous published schema silently undid it.
+    assert reg._schema_params("get_sec_filings")[1] == set()
+    assert _sdk_verdict(reg, "get_sec_filings", {"symbol": "HCA"})[0], (
+        "the declared `symbol` alias must survive filtering and satisfy the "
+        "validator on its own — this is the 30%-rejection fix"
+    )
 
     cases = [
-        ("get_sec_filings", {"action": "facts", "form_type": "10-K"}, "HCA", True),
+        ("get_technical_indicators", {"period": "6mo"}, "HCA", True),
         ("whiteboard_write", {"author": "v3_junior_analyst",
                               "section": "market_context",
                               "content": '{"market_context":{"ticker":"SOFI"}}'},

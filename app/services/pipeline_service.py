@@ -705,6 +705,27 @@ class PipelineService:
             except Exception as bench_err:
                 logger.warning("[PipelineService] cycle_benchmarks write failed (non-fatal): %s", bench_err)
 
+        # ── Stamp the cycle id onto this task's logging context ──
+        # `DbLoggingHandler.emit` reads `record.cycle_id`, falling back to
+        # `get_trace_id()` and then to the literal string "system-log". Until
+        # this line, `set_trace_id` was called in exactly ONE place in the
+        # whole service (`app/autoresearch/core.py:106`) — never on the cycle
+        # path. So every WARNING/ERROR a cycle produced landed in
+        # `execution_errors` and `cycle_audit_log` under
+        # `cycle_id = 'system-log'`, and no error count could be normalised
+        # per cycle. That is why the four defects fixed on 2026-08-10 were
+        # invisible to a per-cycle audit.
+        #
+        # This runs INSIDE the cycle task, not in `start_cycle`, on purpose:
+        # `asyncio.create_task` copies the caller's context at creation, so a
+        # set here is private to this cycle and is inherited by every task and
+        # `asyncio.to_thread` call spawned beneath it. A set in `start_cycle`
+        # would leak the id into the caller (the command poller / HTTP
+        # handler), which outlives the cycle and would then mis-attribute
+        # everything after it.
+        from app.utils.trace import set_trace_id
+        set_trace_id(cycle_id)
+
         try:
             # ── Set prism_client.url ONCE for the entire cycle ──
             # This prevents a race condition where concurrent agent calls

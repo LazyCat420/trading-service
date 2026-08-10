@@ -16,7 +16,6 @@ Tests cover:
 
 import sys
 import os
-import asyncio
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -60,9 +59,19 @@ class TestBuildToolListText:
 
 
 class TestSelectToolsForTask:
-    """Test the core tool selection logic."""
+    """Test the core tool selection logic.
 
-    def test_skips_selection_when_pool_is_small(self):
+    These are `async def` on purpose. They used to be sync bodies calling
+    `asyncio.get_event_loop().run_until_complete(...)`, which made all three
+    order-dependent (open item 37): any earlier test in the run that calls
+    `asyncio.run()` leaves `set_event_loop(None)` behind, and the next
+    `get_event_loop()` raises `RuntimeError: There is no current event loop`
+    instead of lazily creating one. The file passed alone and failed in the
+    full suite. `asyncio_mode = auto` (pytest.ini) awaits these directly, so
+    no test here ever touches the global loop.
+    """
+
+    async def test_skips_selection_when_pool_is_small(self):
         """If pool <= max_tools, return full pool without LLM call."""
         from app.agents.tool_selector import select_tools_for_task
 
@@ -72,29 +81,25 @@ class TestSelectToolsForTask:
         ]
 
         # Should return full pool without hitting LLM
-        result = asyncio.get_event_loop().run_until_complete(
-            select_tools_for_task(
-                task_description="test task",
-                available_tool_schemas=schemas,
-                max_tools=5,
-            )
+        result = await select_tools_for_task(
+            task_description="test task",
+            available_tool_schemas=schemas,
+            max_tools=5,
         )
         assert len(result) == 2
         assert result == schemas
 
-    def test_returns_empty_for_empty_pool(self):
+    async def test_returns_empty_for_empty_pool(self):
         from app.agents.tool_selector import select_tools_for_task
 
-        result = asyncio.get_event_loop().run_until_complete(
-            select_tools_for_task(
-                task_description="test task",
-                available_tool_schemas=[],
-            )
+        result = await select_tools_for_task(
+            task_description="test task",
+            available_tool_schemas=[],
         )
         assert result == []
 
     @patch("app.agents.tool_selector.llm")
-    def test_force_includes_charting_tool(self, mock_llm):
+    async def test_force_includes_charting_tool(self, mock_llm):
         """Quant/Technical agents must always force-include save_trading_chart if in the pool."""
         from app.agents.tool_selector import select_tools_for_task
 
@@ -110,13 +115,11 @@ class TestSelectToolsForTask:
             "total_tokens": 100,
         })
 
-        result = asyncio.get_event_loop().run_until_complete(
-            select_tools_for_task(
-                task_description="analyze AAPL",
-                available_tool_schemas=schemas,
-                agent_name="v3_quant_analyst",
-                max_tools=5,
-            )
+        result = await select_tools_for_task(
+            task_description="analyze AAPL",
+            available_tool_schemas=schemas,
+            agent_name="v3_quant_analyst",
+            max_tools=5,
         )
 
         selected_names = [s["function"]["name"] for s in result]
