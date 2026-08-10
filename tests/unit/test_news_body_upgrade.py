@@ -299,3 +299,30 @@ async def test_the_cap_covers_a_whole_run(monkeypatch):
         bodies = await nar._upgrade_bodies(arts)
 
     assert len(bodies) == 56
+
+
+@pytest.mark.asyncio
+async def test_cache_hits_are_not_counted_as_fetches(caplog):
+    """It reported "50 of 26 attempts" on the second ticker, because `bodies`
+    already carried the cache hits. That line is the only signal that says
+    whether the upgrade is working, so it has to be readable."""
+    import logging as _logging
+    arts = [_article(f"https://x.test/{i}", "b" * 400) for i in range(5)]
+    with _patch_scraper(AsyncMock(return_value="w" * 3000)):
+        await nar._upgrade_bodies(arts)                       # populate cache
+        caplog.clear()                                        # ignore that pass
+        with caplog.at_level(_logging.INFO, logger="app.collectors.news_api_rotator"):
+            await nar._upgrade_bodies(arts)                   # all cached
+
+    msgs = [r.getMessage() for r in caplog.records]
+    assert not [m for m in msgs if "fetches returned" in m], \
+        f"nothing was fetched, so nothing should be reported: {msgs}"
+    assert any("served from cache" in m for m in msgs), msgs
+
+
+@pytest.mark.asyncio
+async def test_the_budget_bounds_the_per_ticker_cost(monkeypatch):
+    """This runs per ticker inside the data phase, and the six collectors for
+    a ticker run concurrently — so an unbounded upgrade sets the whole phase's
+    duration. Measured at 42.5s with a 45s budget against a ~10s phase."""
+    assert nar.UPGRADE_BUDGET_S <= 20, "the per-ticker bound is the point"

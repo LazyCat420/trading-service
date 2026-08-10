@@ -59,7 +59,19 @@ except Exception:  # noqa: BLE001 — keep the collector importable standalone
 # the first live run).
 UPGRADE_LIMIT = int(os.getenv("NEWS_BODY_UPGRADE_LIMIT", "60"))
 UPGRADE_CONCURRENCY = int(os.getenv("NEWS_BODY_UPGRADE_CONCURRENCY", "4"))
-UPGRADE_BUDGET_S = float(os.getenv("NEWS_BODY_UPGRADE_BUDGET_S", "45"))
+
+# The real bound, because this runs per ticker inside the data phase. Measured
+# on the container at a 45s budget: 42.5s for the first ticker and 41.4s for
+# the second, against a data phase that was ~10s before. The six collectors
+# for a ticker run concurrently, so the news upgrade was setting the whole
+# phase's duration — a 4x increase per ticker.
+#
+# 20s is the deliberate trade. It covers ~44 of a typical 56 candidates at the
+# measured 2.2 URLs/s, and nothing is permanently lost: articles are shared
+# across tickers and deduplicated in the DB, so what one ticker runs out of
+# time for is picked up by the next ticker or the next cycle, increasingly
+# from the body cache rather than the network.
+UPGRADE_BUDGET_S = float(os.getenv("NEWS_BODY_UPGRADE_BUDGET_S", "20"))
 
 # `collect_from_all_apis([ticker])` runs ONCE PER TICKER (data_report.py:274),
 # and because the providers are queried generically each ticker sees largely
@@ -285,6 +297,11 @@ async def _upgrade_bodies(articles: list[NewsArticle]) -> dict[str, str]:
                 bodies[url] = body
                 _body_cache_put(url, body)
 
+    # Count only what THIS pass fetched. `bodies` already carries the cache
+    # hits, so measuring against it reported "50 of 26 attempts" on the second
+    # ticker — a number that cannot be read, in the one line that says whether
+    # the feature is working.
+    before = len(bodies)
     try:
         await asyncio.wait_for(
             asyncio.gather(*(_one(u) for u in attempted), return_exceptions=True),
@@ -292,14 +309,15 @@ async def _upgrade_bodies(articles: list[NewsArticle]) -> dict[str, str]:
         )
     except asyncio.TimeoutError:
         logger.info(
-            "[rotator] body upgrade hit its %.0fs budget — %d of %d upgraded, "
+            "[rotator] body upgrade hit its %.0fs budget — %d of %d fetched, "
             "the rest keep their provider blurb",
-            UPGRADE_BUDGET_S, len(bodies), len(attempted),
+            UPGRADE_BUDGET_S, len(bodies) - before, len(attempted),
         )
 
-    if bodies:
-        logger.info("[rotator] body upgrade: %d of %d attempts returned an article",
-                    len(bodies), len(attempted))
+    fetched = len(bodies) - before
+    if fetched:
+        logger.info("[rotator] body upgrade: %d of %d fetches returned an article",
+                    fetched, len(attempted))
     return bodies
 
 
