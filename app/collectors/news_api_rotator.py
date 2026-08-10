@@ -38,73 +38,16 @@ from app.utils.text_utils import is_truncated_content
 
 logger = logging.getLogger(__name__)
 
-# ── Body upgrade (see _upgrade_bodies) ──────────────────────────────────────
-# The bar an article has to clear to be worth storing as one. Shared with the
-# scraper's own thin-content gate so the trigger and the gate cannot drift
-# apart: asking for a body the scraper would then refuse is pure waste.
-try:
-    from app.scraper.core.content_quality import MIN_ARTICLE_CHARS as MIN_BODY_CHARS
-except Exception:  # noqa: BLE001 — keep the collector importable standalone
-    MIN_BODY_CHARS = 900
-
-# Caps, because a run carries up to 10 providers x 10 articles and every
-# upgrade is a network fetch. Tunable without a deploy.
-#
-# Sized to cover a whole run rather than a fraction of it. Measured on the
-# deployed container: a SINGLE-ticker call produced **56** candidates — the
-# providers are queried on a general query, not per ticker — so a cap of 25
-# left 31 articles on their blurb every time. And because the shortest
-# summaries go first, what got skipped was exactly the 400-500 char band that
-# is the bulk of the problem (alphavantage 0/41 and polygon 0/23 upgraded in
-# the first live run).
-UPGRADE_LIMIT = int(os.getenv("NEWS_BODY_UPGRADE_LIMIT", "60"))
-UPGRADE_CONCURRENCY = int(os.getenv("NEWS_BODY_UPGRADE_CONCURRENCY", "4"))
-
-# The real bound, because this runs per ticker inside the data phase. Measured
-# on the container at a 45s budget: 42.5s for the first ticker and 41.4s for
-# the second, against a data phase that was ~10s before. The six collectors
-# for a ticker run concurrently, so the news upgrade was setting the whole
-# phase's duration — a 4x increase per ticker.
-#
-# 20s is the deliberate trade. It covers ~44 of a typical 56 candidates at the
-# measured 2.2 URLs/s, and nothing is permanently lost: articles are shared
-# across tickers and deduplicated in the DB, so what one ticker runs out of
-# time for is picked up by the next ticker or the next cycle, increasingly
-# from the body cache rather than the network.
-UPGRADE_BUDGET_S = float(os.getenv("NEWS_BODY_UPGRADE_BUDGET_S", "20"))
-
-# `collect_from_all_apis([ticker])` runs ONCE PER TICKER (data_report.py:274),
-# and because the providers are queried generically each ticker sees largely
-# the SAME articles. Without a memory, an 80-ticker cycle re-scrapes the same
-# ~56 URLs 80 times — measured at 23.0s per ticker. This drops the cost to
-# near zero after the first ticker of a cycle.
-#
-# Successes only, in-process, small and short-lived: bodies are large, and a
-# stale body is worse than a re-fetch. Dead URLs are already remembered by the
-# scraper's own failure cache, so this is the other half of the same idea.
-_BODY_CACHE_TTL_S = float(os.getenv("NEWS_BODY_CACHE_TTL_S", "3600"))
-_BODY_CACHE_MAX = int(os.getenv("NEWS_BODY_CACHE_MAX", "512"))
-_BODY_CACHE: OrderedDict[str, tuple[float, str]] = OrderedDict()
-
-
-def _body_cache_get(url: str) -> str | None:
-    hit = _BODY_CACHE.get(url)
-    if hit is None:
-        return None
-    expires_at, body = hit
-    if time.time() >= expires_at:
-        del _BODY_CACHE[url]
-        return None
-    _BODY_CACHE.move_to_end(url)
-    return body
-
-
-def _body_cache_put(url: str, body: str) -> None:
-    _BODY_CACHE[url] = (time.time() + _BODY_CACHE_TTL_S, body)
-    _BODY_CACHE.move_to_end(url)
-    while len(_BODY_CACHE) > _BODY_CACHE_MAX:
-        _BODY_CACHE.popitem(last=False)
-
+# ── Body upgrade ────────────────────────────────────────────────────────────
+# Moved to app/collectors/body_upgrade.py so the finnhub collector shares it:
+# both had the same hole, and one set of caps is the point.
+from app.collectors.body_upgrade import (  # noqa: E402
+    MIN_BODY_CHARS,
+    UPGRADE_BUDGET_S,
+    UPGRADE_CONCURRENCY,
+    UPGRADE_LIMIT,
+    upgrade_bodies,
+)
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -218,107 +161,8 @@ def build_providers_from_settings() -> list[ProviderConfig]:
 
 
 async def _upgrade_bodies(articles: list[NewsArticle]) -> dict[str, str]:
-    """Fetch real article bodies for the provider blurbs that need one.
-
-    The body scrape used to fire only when the API summary was under **150**
-    chars. Providers return 300-500, so it never fired — while an article
-    needs ~900 to be worth reading. Measured over 30 days:
-
-        source          rows   under 900   avg chars
-        finnhub       11,102        98%          303
-        alphavantage   4,658        99%          471
-        polygon        3,060       100%          457
-
-    and scraping a sample of those blurbs upgraded **17 of 24 (70%)** into
-    real articles — 494 -> 6,058 chars, 482 -> 12,458. So ~13k articles a
-    month were stored as headlines because nothing asked for the body.
-
-    Raising the trigger alone would have been a bad trade. `_persist_articles`
-    awaited each scrape **serially, inside an open DB transaction**, and a run
-    carries up to 10 providers x 10 articles: ~100 sequential fetches per
-    ticker, with a database connection pinned for the duration. So the
-    upgrades happen here instead — before the DB is touched, bounded three
-    ways:
-
-      * a cap on how many articles are attempted (shortest summary first,
-        since that is where the most is gained),
-      * a concurrency limit, so the per-domain rate limiter is respected
-        rather than fought,
-      * a wall-clock budget, after which whatever finished is used.
-
-    Whatever the caps drop is logged. A cap that is not reported reads as
-    "we covered everything".
-    """
-    from app.collectors.news_collector import _scrape_article_body_via_service
-
-    if not UPGRADE_LIMIT:
-        return {}
-
-    # One attempt per URL even when several articles share it.
-    candidates: dict[str, int] = {}
-    bodies: dict[str, str] = {}
-    cached = 0
-    for a in articles:
-        s = a.summary or ""
-        if not a.url or (len(s) >= MIN_BODY_CHARS and "..." not in s):
-            continue
-        # Already fetched for an earlier ticker this cycle.
-        hit = _body_cache_get(a.url)
-        if hit is not None:
-            bodies[a.url] = hit
-            cached += 1
-            continue
-        candidates[a.url] = min(candidates.get(a.url, len(s)), len(s))
-    if cached:
-        logger.info("[rotator] body upgrade: %d served from cache", cached)
-    if not candidates:
-        return bodies
-
-    # Shortest summary first — the blurbs with the least in them already.
-    ordered = sorted(candidates, key=lambda u: candidates[u])
-    attempted, dropped = ordered[:UPGRADE_LIMIT], ordered[UPGRADE_LIMIT:]
-    if dropped:
-        logger.info(
-            "[rotator] body upgrade: attempting %d of %d candidates "
-            "(cap=%d); %d left with their provider blurb",
-            len(attempted), len(candidates), UPGRADE_LIMIT, len(dropped),
-        )
-
-    sem = asyncio.Semaphore(UPGRADE_CONCURRENCY)
-
-    async def _one(url: str) -> None:
-        async with sem:
-            try:
-                body = await _scrape_article_body_via_service(url)
-            except Exception as e:  # noqa: BLE001 — one URL must not stop the run
-                logger.debug("[rotator] body upgrade failed for %s: %s", url, e)
-                return
-            if body and len(body) >= MIN_BODY_CHARS:
-                bodies[url] = body
-                _body_cache_put(url, body)
-
-    # Count only what THIS pass fetched. `bodies` already carries the cache
-    # hits, so measuring against it reported "50 of 26 attempts" on the second
-    # ticker — a number that cannot be read, in the one line that says whether
-    # the feature is working.
-    before = len(bodies)
-    try:
-        await asyncio.wait_for(
-            asyncio.gather(*(_one(u) for u in attempted), return_exceptions=True),
-            timeout=UPGRADE_BUDGET_S,
-        )
-    except asyncio.TimeoutError:
-        logger.info(
-            "[rotator] body upgrade hit its %.0fs budget — %d of %d fetched, "
-            "the rest keep their provider blurb",
-            UPGRADE_BUDGET_S, len(bodies) - before, len(attempted),
-        )
-
-    fetched = len(bodies) - before
-    if fetched:
-        logger.info("[rotator] body upgrade: %d of %d fetches returned an article",
-                    fetched, len(attempted))
-    return bodies
+    """Adapter: NewsArticle objects -> the shared (url, summary) upgrade."""
+    return await upgrade_bodies([(a.url, a.summary) for a in articles])
 
 
 async def _persist_articles(

@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.collectors import body_upgrade as bu
 from app.collectors import news_api_rotator as nar
 from app.collectors.news_api_rotator import NewsArticle
 
@@ -54,7 +55,7 @@ async def test_a_provider_blurb_is_upgraded_to_the_real_article():
 @pytest.mark.asyncio
 async def test_the_old_150_threshold_would_have_skipped_it():
     """Guards the actual defect: 457 > 150, so nothing was ever requested."""
-    assert 150 < 457 < nar.MIN_BODY_CHARS
+    assert 150 < 457 < bu.MIN_BODY_CHARS
     arts = [_article("https://x.test/a", "b" * 457)]
     scraper = AsyncMock(return_value="w" * 4834)
     with _patch_scraper(scraper):
@@ -110,7 +111,7 @@ async def test_one_url_is_attempted_once_even_across_several_articles():
 
 @pytest.mark.asyncio
 async def test_attempts_are_capped(monkeypatch):
-    monkeypatch.setattr(nar, "UPGRADE_LIMIT", 10)
+    monkeypatch.setattr(bu, "UPGRADE_LIMIT", 10)
     arts = [_article(f"https://x.test/{i}", "b" * 300) for i in range(100)]
     scraper = AsyncMock(return_value="w" * 3000)
     with _patch_scraper(scraper):
@@ -122,7 +123,7 @@ async def test_attempts_are_capped(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_shortest_summaries_are_attempted_first(monkeypatch):
     """Priority is where the most is gained — a 160-char blurb over a 880."""
-    monkeypatch.setattr(nar, "UPGRADE_LIMIT", 2)
+    monkeypatch.setattr(bu, "UPGRADE_LIMIT", 2)
     arts = [
         _article("https://x.test/long", "b" * 880),
         _article("https://x.test/short", "b" * 160),
@@ -143,8 +144,8 @@ async def test_the_shortest_summaries_are_attempted_first(monkeypatch):
 @pytest.mark.asyncio
 async def test_concurrency_is_limited(monkeypatch):
     """The per-domain rate limiter should be respected, not fought."""
-    monkeypatch.setattr(nar, "UPGRADE_CONCURRENCY", 3)
-    monkeypatch.setattr(nar, "UPGRADE_LIMIT", 50)
+    monkeypatch.setattr(bu, "UPGRADE_CONCURRENCY", 3)
+    monkeypatch.setattr(bu, "UPGRADE_LIMIT", 50)
     live = 0
     peak = 0
 
@@ -166,8 +167,8 @@ async def test_concurrency_is_limited(monkeypatch):
 @pytest.mark.asyncio
 async def test_a_slow_scraper_cannot_stall_the_collection(monkeypatch):
     """Whatever finished inside the budget is used; the rest keep their blurb."""
-    monkeypatch.setattr(nar, "UPGRADE_BUDGET_S", 0.05)
-    monkeypatch.setattr(nar, "UPGRADE_CONCURRENCY", 8)
+    monkeypatch.setattr(bu, "UPGRADE_BUDGET_S", 0.05)
+    monkeypatch.setattr(bu, "UPGRADE_CONCURRENCY", 8)
 
     async def _scrape(url):
         await asyncio.sleep(5)
@@ -198,7 +199,7 @@ async def test_one_failing_url_does_not_lose_the_others():
 
 @pytest.mark.asyncio
 async def test_the_upgrade_can_be_switched_off(monkeypatch):
-    monkeypatch.setattr(nar, "UPGRADE_LIMIT", 0)
+    monkeypatch.setattr(bu, "UPGRADE_LIMIT", 0)
     scraper = AsyncMock(return_value="w" * 3000)
     with _patch_scraper(scraper):
         bodies = await nar._upgrade_bodies([_article("https://x.test/a", "b" * 300)])
@@ -212,16 +213,16 @@ def test_the_trigger_and_the_scrapers_gate_are_the_same_number():
     two drifting apart is exactly how the 150/900 band opened up."""
     from app.scraper.core.content_quality import MIN_ARTICLE_CHARS
 
-    assert nar.MIN_BODY_CHARS == MIN_ARTICLE_CHARS
+    assert bu.MIN_BODY_CHARS == MIN_ARTICLE_CHARS
 
 
 # ── The body cache: collect_from_all_apis runs once per TICKER ───────────────
 
 @pytest.fixture(autouse=True)
 def _clear_body_cache():
-    nar._BODY_CACHE.clear()
+    bu._BODY_CACHE.clear()
     yield
-    nar._BODY_CACHE.clear()
+    bu._BODY_CACHE.clear()
 
 
 @pytest.mark.asyncio
@@ -254,7 +255,7 @@ async def test_a_cached_body_is_still_returned_when_it_is_the_only_candidate():
 @pytest.mark.asyncio
 async def test_an_expired_body_is_refetched(monkeypatch):
     """A stale body is worse than a re-fetch."""
-    monkeypatch.setattr(nar, "_BODY_CACHE_TTL_S", 0.05)
+    monkeypatch.setattr(bu, "_BODY_CACHE_TTL_S", 0.05)
     arts = [_article("https://x.test/a", "b" * 400)]
     scraper = AsyncMock(return_value="w" * 3000)
     with _patch_scraper(scraper):
@@ -267,12 +268,12 @@ async def test_an_expired_body_is_refetched(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_cache_is_bounded(monkeypatch):
-    monkeypatch.setattr(nar, "_BODY_CACHE_MAX", 3)
+    monkeypatch.setattr(bu, "_BODY_CACHE_MAX", 3)
     with _patch_scraper(AsyncMock(return_value="w" * 3000)):
         for i in range(6):
             await nar._upgrade_bodies([_article(f"https://x.test/{i}", "b" * 400)])
 
-    assert len(nar._BODY_CACHE) == 3
+    assert len(bu._BODY_CACHE) == 3
 
 
 @pytest.mark.asyncio
@@ -292,7 +293,7 @@ async def test_the_cap_covers_a_whole_run(monkeypatch):
     """A live single-ticker call produced 56 candidates; a cap of 25 left 31
     on their blurb every time, and shortest-first meant the 400-500 band —
     the bulk of the problem — was what got skipped."""
-    assert nar.UPGRADE_LIMIT >= 56
+    assert bu.UPGRADE_LIMIT >= 56
     arts = [_article(f"https://x.test/{i}", "b" * 450) for i in range(56)]
     scraper = AsyncMock(return_value="w" * 3000)
     with _patch_scraper(scraper):
@@ -311,7 +312,7 @@ async def test_cache_hits_are_not_counted_as_fetches(caplog):
     with _patch_scraper(AsyncMock(return_value="w" * 3000)):
         await nar._upgrade_bodies(arts)                       # populate cache
         caplog.clear()                                        # ignore that pass
-        with caplog.at_level(_logging.INFO, logger="app.collectors.news_api_rotator"):
+        with caplog.at_level(_logging.INFO, logger="app.collectors.body_upgrade"):
             await nar._upgrade_bodies(arts)                   # all cached
 
     msgs = [r.getMessage() for r in caplog.records]
@@ -325,4 +326,55 @@ async def test_the_budget_bounds_the_per_ticker_cost(monkeypatch):
     """This runs per ticker inside the data phase, and the six collectors for
     a ticker run concurrently — so an unbounded upgrade sets the whole phase's
     duration. Measured at 42.5s with a 45s budget against a ~10s phase."""
-    assert nar.UPGRADE_BUDGET_S <= 20, "the per-ticker bound is the point"
+    assert bu.UPGRADE_BUDGET_S <= 20, "the per-ticker bound is the point"
+
+
+# ── The finnhub path: the largest source, and it had no upgrade at all ───────
+
+@pytest.mark.asyncio
+async def test_finnhub_articles_get_their_bodies_upgraded():
+    """finnhub is the biggest source in the corpus — 11,102 rows over 30 days,
+    98% stored at ~303 chars. Body scraping was removed from its collector "to
+    fix 120s timeouts" and deferred to deep_read_top_articles(), which has NO
+    CALLERS, so the deferral never happened."""
+    arts = [{"url": "https://x.test/fh", "summary": "b" * 303,
+             "headline": "H", "source": "finnhub", "datetime": 0}]
+    with _patch_scraper(AsyncMock(return_value="w" * 5000)):
+        bodies = await bu.upgrade_bodies(
+            [(a.get("url", ""), a.get("summary", "")) for a in arts]
+        )
+
+    assert bodies["https://x.test/fh"] == "w" * 5000
+
+
+def test_the_deferral_target_still_has_no_callers():
+    """If deep_read_top_articles ever gets wired up, this upgrade and it will
+    both be fetching bodies — worth noticing rather than doing twice."""
+    import ast
+    import pathlib
+
+    # AST, not grep: a text search matched this module's own prose about the
+    # function and "found a caller" that was a sentence.
+    root = pathlib.Path(__file__).resolve().parents[2] / "app"
+    calls = []
+    for path in root.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = getattr(fn, "id", None) or getattr(fn, "attr", None)
+            if name == "deep_read_top_articles":
+                calls.append(f"{path.name}:{node.lineno}")
+    assert not calls, "deep_read_top_articles now has callers: " + ", ".join(calls)
+
+
+@pytest.mark.asyncio
+async def test_a_finnhub_article_keeps_its_blurb_when_the_upgrade_fails():
+    with _patch_scraper(AsyncMock(return_value="")):
+        bodies = await bu.upgrade_bodies([("https://x.test/fh", "b" * 303)])
+
+    assert bodies == {}, "the caller falls back to the API summary"

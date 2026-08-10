@@ -802,6 +802,21 @@ async def collect_finnhub_news(
             if len(unique_articles) >= max_articles:
                 break
 
+        # Body scraping was removed from this phase to fix 120s timeouts, and a
+        # comment deferred it to `deep_read_top_articles()` during analysis.
+        # That function has NO CALLERS, so the deferral never happened: finnhub
+        # is the largest source in the corpus — 11,102 rows over 30 days — and
+        # 98% of them were stored at ~303 chars, a headline and a sentence.
+        #
+        # This is the bounded form of what caused those timeouts: capped,
+        # concurrent, budgeted, cached across tickers, and run before the
+        # database is touched. Same helper, same limits as the API rotator.
+        from app.collectors.body_upgrade import upgrade_bodies
+
+        bodies = await upgrade_bodies(
+            [(a.get("url", ""), a.get("summary", "")) for a in unique_articles]
+        )
+
         async def process_article(article):
             headline = article.get("headline", "").strip()
             summary = article.get("summary", "").strip()
@@ -809,9 +824,9 @@ async def collect_finnhub_news(
             source = article.get("source", "finnhub")
             ts = article.get("datetime", 0)
 
-            # NOTE: Body scraping removed from collection phase to fix 120s timeouts.
-            # Full article bodies are fetched lazily via deep_read_top_articles()
-            # during the analysis phase. Store with API summary for now.
+            # A real body when one could be had; otherwise exactly what was
+            # stored before. An upgrade that fails must not lose the article.
+            summary = bodies.get(url, "") or summary
             if not summary:
                 summary = headline  # Use headline as minimal fallback
 
