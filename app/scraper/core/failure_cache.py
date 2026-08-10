@@ -83,13 +83,38 @@ DEFAULT_STORE_PATH = os.getenv("SCRAPER_FAILURE_CACHE_PATH", "/app/logs/failure_
 _now = time.time
 
 
+# SQLite's way of saying "someone else is writing, try again" — a TRANSIENT
+# condition, and the normal state of affairs when two workers boot together.
+_TRANSIENT_MARKERS = ("database is locked", "database table is locked",
+                      "database is busy")
+
+
+def _is_transient(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and any(
+        m in str(exc).lower() for m in _TRANSIENT_MARKERS
+    )
+
+
 class SqliteFailureStore:
     """Cross-process store of dead URLs, shared by the container's workers.
 
-    Optional by design. Any sqlite error — unwritable path, locked file, a
-    corrupt db — disables the store and leaves the in-process cache doing its
-    job. A scrape must never fail because its cache could not be written.
+    Optional by design: an unwritable path or a corrupt file disables the store
+    and leaves the in-process cache doing its job. A scrape must never fail
+    because its cache could not be written.
+
+    But **a lock is not a corruption.** The first version disabled the store on
+    *any* exception, and the deployed container immediately proved why that is
+    wrong: both workers boot at once, one lost the race to create the schema,
+    got ``database is locked``, and switched itself off for the life of the
+    process. The shared cache shared nothing, and the measurement was
+    unchanged at 2 fetches. Transient errors are now retried and never
+    disable the store — the same distinction between permanent and transient
+    that this module draws for HTTP statuses.
     """
+
+    # A cold start with two workers racing on schema creation.
+    _INIT_ATTEMPTS = 5
+    _INIT_BACKOFF_S = 0.25
 
     def __init__(self, path: str):
         self.path = path
@@ -100,30 +125,51 @@ class SqliteFailureStore:
             parent = os.path.dirname(path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with self._connect() as conn:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS dead_urls ("
-                    "  url TEXT PRIMARY KEY,"
-                    "  reason TEXT NOT NULL,"
-                    "  expires_at REAL NOT NULL)"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS dead_urls_expires_at "
-                    "ON dead_urls(expires_at)"
-                )
-            self.enabled = True
-        except Exception as e:  # noqa: BLE001 — degrade, never raise
+        except Exception as e:  # noqa: BLE001 — a bad path is permanent
             self._disable(e)
+            return
+
+        for attempt in range(self._INIT_ATTEMPTS):
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS dead_urls ("
+                        "  url TEXT PRIMARY KEY,"
+                        "  reason TEXT NOT NULL,"
+                        "  expires_at REAL NOT NULL)"
+                    )
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS dead_urls_expires_at "
+                        "ON dead_urls(expires_at)"
+                    )
+                self.enabled = True
+                return
+            except Exception as e:  # noqa: BLE001
+                if _is_transient(e) and attempt < self._INIT_ATTEMPTS - 1:
+                    time.sleep(self._INIT_BACKOFF_S * (attempt + 1))
+                    continue
+                self._disable(e)
+                return
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=5.0)
-        # WAL lets the two workers read while the other writes; without it a
-        # concurrent write returns "database is locked" and we lose the entry.
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = sqlite3.connect(self.path, timeout=10.0)
+        # busy_timeout FIRST. The original set journal_mode before it, so the
+        # WAL switch itself ran with no busy handler and returned "database is
+        # locked" the instant the other worker held the file.
+        conn.execute("PRAGMA busy_timeout=10000")
+        try:
+            # WAL lets the two workers read while the other writes. Switching
+            # journal_mode needs a brief exclusive lock and sqlite does NOT
+            # invoke the busy handler for it, so a loser here is expected and
+            # harmless — the mode is a property of the file, and whoever won
+            # already set it.
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass
         return conn
 
     def _disable(self, exc: Exception) -> None:
+        """Turn the store off for good. Only for PERMANENT faults."""
         self.enabled = False
         if not self._warned:
             self._warned = True
@@ -131,6 +177,13 @@ class SqliteFailureStore:
                 "[failure_cache] shared store unavailable at %s (%s) — "
                 "falling back to in-process memory only", self.path, exc,
             )
+
+    def _handle(self, exc: Exception, op: str) -> None:
+        """Disable on a permanent fault; ride out a transient one."""
+        if _is_transient(exc):
+            logger.debug("[failure_cache] %s contended (%s) — keeping store", op, exc)
+            return
+        self._disable(exc)
 
     def record(self, url: str, reason: str, expires_at: float) -> None:
         if not self.enabled:
@@ -144,7 +197,7 @@ class SqliteFailureStore:
                     (url, reason, expires_at),
                 )
         except Exception as e:  # noqa: BLE001
-            self._disable(e)
+            self._handle(e, "record")
 
     def check(self, url: str) -> tuple[str, float] | None:
         """Return ``(reason, expires_at)`` for a live entry, else None."""
@@ -163,7 +216,7 @@ class SqliteFailureStore:
                 return None
             return reason, expires_at
         except Exception as e:  # noqa: BLE001
-            self._disable(e)
+            self._handle(e, "check")
             return None
 
     def forget(self, url: str) -> None:
@@ -173,7 +226,7 @@ class SqliteFailureStore:
             with self._lock, self._connect() as conn:
                 conn.execute("DELETE FROM dead_urls WHERE url = ?", (url,))
         except Exception as e:  # noqa: BLE001
-            self._disable(e)
+            self._handle(e, "forget")
 
     def prune(self) -> int:
         """Drop expired rows. Returns how many went."""
@@ -184,7 +237,7 @@ class SqliteFailureStore:
                 cur = conn.execute("DELETE FROM dead_urls WHERE expires_at <= ?", (_now(),))
                 return cur.rowcount or 0
         except Exception as e:  # noqa: BLE001
-            self._disable(e)
+            self._handle(e, "prune")
             return 0
 
     def clear(self) -> None:
@@ -194,7 +247,7 @@ class SqliteFailureStore:
             with self._lock, self._connect() as conn:
                 conn.execute("DELETE FROM dead_urls")
         except Exception as e:  # noqa: BLE001
-            self._disable(e)
+            self._handle(e, "clear")
 
     def __len__(self) -> int:
         if not self.enabled:
@@ -205,7 +258,7 @@ class SqliteFailureStore:
                     "SELECT count(*) FROM dead_urls WHERE expires_at > ?", (_now(),)
                 ).fetchone()[0]
         except Exception as e:  # noqa: BLE001
-            self._disable(e)
+            self._handle(e, "len")
             return 0
 
     def __bool__(self) -> bool:

@@ -183,6 +183,69 @@ def test_wal_mode_is_actually_set(store_path):
     assert mode.lower() == "wal"
 
 
+# ── A lock is not a corruption ───────────────────────────────────────────────
+
+def test_a_transient_lock_does_not_disable_the_store(store_path):
+    """The defect the deployed container caught. Both workers boot together,
+    one loses the schema-creation race, gets "database is locked" — and the
+    first version switched itself off for the life of the process, so the
+    shared cache shared nothing and the measurement stayed at 2 fetches."""
+    store = SqliteFailureStore(store_path)
+    store._handle(sqlite3.OperationalError("database is locked"), "record")
+
+    assert store.enabled is True, "a lock is transient; it must not disable the store"
+
+
+def test_a_real_fault_still_disables_the_store(store_path):
+    """The other half — without this, the test above passes for both states."""
+    store = SqliteFailureStore(store_path)
+    store._handle(sqlite3.DatabaseError("file is not a database"), "check")
+
+    assert store.enabled is False
+
+
+def test_init_survives_a_contended_cold_start(store_path):
+    """Every worker must come up enabled even when they all boot at once."""
+    stores = []
+
+    def _boot(_):
+        stores.append(SqliteFailureStore(store_path))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_boot, range(8)))
+
+    disabled = [s for s in stores if not s.enabled]
+    assert not disabled, f"{len(disabled)} of {len(stores)} workers came up disabled"
+
+
+def test_busy_timeout_is_set_before_the_wal_switch(store_path):
+    """Ordering was the bug: journal_mode ran with no busy handler, so it
+    returned "database is locked" the instant another worker held the file."""
+    store = SqliteFailureStore(store_path)
+    conn = store._connect()
+    try:
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] >= 10000
+    finally:
+        conn.close()
+
+
+def test_a_worker_that_lost_the_wal_race_still_reads_and_writes(store_path):
+    """Losing the journal_mode switch is harmless — the mode belongs to the
+    file, and the winner already set it."""
+    first = SqliteFailureStore(store_path)
+    first.record(DEAD, "HTTP 410", time.time() + 3600)
+
+    holder = first._connect()          # hold a connection open
+    try:
+        late = SqliteFailureStore(store_path)
+        assert late.enabled is True
+        assert late.check(DEAD)[0] == "HTTP 410"
+        late.record("https://example.com/other", "HTTP 404", time.time() + 3600)
+        assert late.check("https://example.com/other")[0] == "HTTP 404"
+    finally:
+        holder.close()
+
+
 def test_an_empty_store_is_truthy(store_path):
     """The bug this fix nearly shipped with. `__len__` on the store made a
     FRESH store falsy, so `if self.store:` skipped the write and the first
