@@ -8,9 +8,10 @@ Usage:
     data = await collect_earnings("NVDA")
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
+
+from app.utils.async_utils import run_in_executor_with_context
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,7 @@ async def collect_earnings(ticker: str) -> dict | None:
     Returns dict with beat_count, miss_count, streak, etc.
     """
     try:
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: _fetch_earnings(ticker))
+        data = await run_in_executor_with_context(_fetch_earnings, ticker)
         if data:
             logger.info(
                 "earnings_collector: %s beats=%d misses=%d streak=%s",

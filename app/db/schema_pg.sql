@@ -2591,3 +2591,26 @@ CREATE TABLE IF NOT EXISTS watch_events (
     consumed_at  TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_watch_events_ticker ON watch_events (ticker, fired_at DESC);
+
+-- The system-command queue. `research_governor`, `boot_service` and
+-- `watch_desk` SELECT, INSERT and UPDATE this table, and until 2026-08-10
+-- NOTHING IN THIS REPOSITORY CREATED IT — it existed in production because
+-- someone made it by hand, and was simply absent from the isolated test
+-- database, so every test touching the governor or the watch desk failed with
+-- UndefinedTable and read as a code bug. Shape copied from the production
+-- table via scripts/generate_schema_manifest.py.
+CREATE TABLE IF NOT EXISTS v3_system_commands (
+    id                TEXT PRIMARY KEY,
+    command_type      TEXT NOT NULL,
+    payload           JSONB DEFAULT '{}'::jsonb,
+    status            TEXT DEFAULT 'pending',
+    progress          INTEGER DEFAULT 0,
+    progress_message  TEXT,
+    result            JSONB,
+    error_message     TEXT,
+    created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    stop_confirmed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS v3_system_commands_status_idx ON v3_system_commands (status);

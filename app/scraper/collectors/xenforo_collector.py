@@ -22,6 +22,7 @@ from bs4 import BeautifulSoup
 
 from app.scraper.core.rate_limiter import rate_limiter
 from app.scraper.core.session_manager import session_manager
+from app.utils.async_utils import run_in_executor_with_context
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +282,7 @@ class XenForoCollector:
                 with DDGS() as ddgs:
                     return list(ddgs.text(ddg_query, max_results=20))
 
-            loop = asyncio.get_running_loop()
-            ddg_results = await loop.run_in_executor(None, run_ddg)
+            ddg_results = await run_in_executor_with_context(run_ddg)
 
             if ddg_results:
                 thread_urls = []

@@ -9,6 +9,7 @@ from app.services.pipeline_state import PipelineStateDB
 from app.services.parameter_store import get_param
 from app.v3.orchestrator import run_v3_pipeline
 from app.telemetry import send_system_log
+from app.utils.async_utils import submit_with_context
 from app.utils.tz import ensure_aware
 from app.utils.us_ticker_resolver import (
     is_us_tradeable,
@@ -23,6 +24,47 @@ logger = logging.getLogger(__name__)
 class _ExplicitTickersPinned(Exception):
     """Control-flow sentinel: an explicit ticker list was requested, so the
     discovery/scoring/freshness/gatekeeper funnel is skipped entirely."""
+
+
+def admit_gatekeeper_selection(
+    selected: list[str] | None,
+    all_pool: dict[str, dict] | None,
+) -> tuple[list[str], list[str]]:
+    """Admit only the gatekeeper picks it was actually shown. Returns (kept, dropped).
+
+    The gatekeeper is a SUBSETTER: it is handed a ranked candidate pool and
+    chooses from it. Anything it names that is not in that pool was invented,
+    and an invented symbol is not a harmless typo — it is resolved, collected,
+    analysed, decided on, and traded, all against a company nobody selected.
+
+    **Fail-closed.** This lived inline as `if selected and all_pool:`, which
+    skipped the check entirely when the pool was empty — the exact state in
+    which the model has the least grounding, since it was shown nothing and so
+    anything it names is invented by construction. An empty pool admits
+    nothing.
+
+    That fail-open was not reachable in the caller as written: the gatekeeper
+    only runs when `active_ticker_dicts` is non-empty, and that list is built
+    by iterating `all_pool`, so a pool that is empty ends the funnel long
+    before this point. The guard is a property of the *rule*, not of today's
+    call graph — the coupling that makes it safe is 400 lines long and
+    invisible from here, and a check that depends on it is a check that
+    silently stops holding when the funnel is rearranged.
+
+    Extracted from the inline block so this can be tested against real inputs
+    rather than asserted against its own source text.
+    """
+    picks = [t for t in (selected or []) if t]
+    pool = all_pool or {}
+    kept = [t for t in picks if t in pool]
+    dropped = [t for t in picks if t not in pool]
+    if dropped:
+        logger.warning(
+            "[PipelineService] Gatekeeper named %d ticker(s) outside the candidate "
+            "pool (dropped): %s — pool held %d",
+            len(dropped), sorted(set(dropped)), len(pool),
+        )
+    return kept, dropped
 
 
 # no_trade_reason vocabulary. These strings are simultaneously (a) persisted
@@ -307,7 +349,7 @@ class PipelineService:
         if loop is None:
             cls._append_events_safe(cycle_id, [event])
         else:
-            loop.run_in_executor(None, cls._append_events_safe, cycle_id, [event])
+            submit_with_context(cls._append_events_safe, cycle_id, [event])
 
     @staticmethod
     def _append_events_safe(cycle_id: str, events: list[dict]):
@@ -904,6 +946,22 @@ class PipelineService:
 
                     discovery_emit("scraper_start", "📡 Starting news scraper sweep... This will take 1-2 minutes.", "running")
                     await run_scraper_sync()
+                # The pool of tickers the gatekeeper is SHOWN, and therefore the
+                # only tickers it is allowed to pick. Bound here, before the
+                # try, because the admission check ~460 lines below reads it
+                # from OUTSIDE this block: the assignment lives inside
+                # `try:` + `with get_db()`, so any failure before it — a
+                # database connect timeout is enough — left the name unbound
+                # and `if selected and all_pool:` raised UnboundLocalError at
+                # the moment the gatekeeper's picks were being admitted. The
+                # enclosing handler catches that as "Portfolio screener
+                # failed, falling back to AAPL", so a SUCCESSFUL gatekeeper run
+                # that chose nine tickers was discarded under a log line
+                # blaming the screener. Same shape as the `bot_id` bug
+                # documented at the maybe_shadow_gatekeeper call site.
+                # An empty pool now means "admit nothing", which is what the
+                # check below enforces.
+                all_pool: dict[str, dict] = {}
                 # Find trending tickers from the last 24h (News, Reddit, YouTube) that aren't in the static watchlist
                 try:
                     from app.db.connection import get_db
@@ -1035,7 +1093,7 @@ class PipelineService:
                         except Exception as e:
                             logger.warning("[PipelineService] Discovery-table merge failed (non-fatal): %s", e)
 
-                        all_pool = {t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers}
+                        all_pool.update({t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers})
                         all_pool.update(trending_discovered)
                         
                         # 4. Fetch Last Analysis Date for all
@@ -1497,13 +1555,8 @@ class PipelineService:
                     selected = parsed.get("selected_tickers", [])
                     rationale = parsed.get("rationale", "")
                     
-                    # Validate: drop any tickers not in the known pool
-                    if selected and all_pool:
-                        valid_selected = [t for t in selected if t in all_pool]
-                        invalid = set(selected) - set(valid_selected)
-                        if invalid:
-                            logger.warning("[PipelineService] Gatekeeper hallucinated tickers (dropped): %s", invalid)
-                        selected = valid_selected
+                    # Validate: drop any tickers not in the known pool.
+                    selected, _rejected = admit_gatekeeper_selection(selected, all_pool)
 
                     # Enforce the mega-cap rule in code (it was prompt-only —
                     # "MAXIMUM ONE MEGA-CAP" — with zero enforcement, and NVDA

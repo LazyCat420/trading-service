@@ -8,9 +8,10 @@ Usage:
     data = await collect_options("NVDA")
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
+
+from app.utils.async_utils import run_in_executor_with_context
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,7 @@ async def collect_options(ticker: str) -> dict | None:
     Stores formatted text in context via return value.
     """
     try:
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: _fetch_options(ticker))
+        data = await run_in_executor_with_context(_fetch_options, ticker)
         if data:
             logger.info(
                 "options_collector: %s pc_ratio=%.2f",

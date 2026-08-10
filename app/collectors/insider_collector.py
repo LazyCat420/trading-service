@@ -8,9 +8,10 @@ Usage:
     data = await collect_insider("NVDA")
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
+
+from app.utils.async_utils import run_in_executor_with_context
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,7 @@ async def collect_insider(ticker: str) -> dict | None:
     Returns dict with buy_count, sell_count, net_signal, etc.
     """
     try:
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: _fetch_insider(ticker))
+        data = await run_in_executor_with_context(_fetch_insider, ticker)
         if data:
             logger.info(
                 "insider_collector: %s buys=%d sells=%d",

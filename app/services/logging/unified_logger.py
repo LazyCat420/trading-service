@@ -54,13 +54,39 @@ class DbLoggingHandler(logging.Handler):
             if record.name.startswith(("psycopg", "app.db", "yfinance")):
                 return
 
-            cycle_id = getattr(record, "cycle_id", get_trace_id())
-            # If we don't have a cycle_id, use a fallback
-            if not cycle_id:
-                cycle_id = "system-log"
+            # Attribution, in precedence order. An explicit extra={...} on the
+            # log call always wins: a caller who names the phase knows
+            # something the ambient scope does not.
+            #
+            # Until 2026-08-10 `phase` and `ticker` had ONE rung — the record
+            # attribute — and nothing in app/ has ever passed
+            # extra={"phase": ...}, so the sentinel below was not a fallback,
+            # it was the only outcome. All 77 rows of the first correctly
+            # attributed cycle still read phase='unknown', ticker='system'.
+            cycle_id = getattr(record, "cycle_id", None) or get_trace_id()
+            phase = getattr(record, "phase", None)
+            ticker = getattr(record, "ticker", None)
 
-            phase = getattr(record, "phase", "unknown")
-            ticker = getattr(record, "ticker", "system")
+            if not cycle_id or not phase or not ticker:
+                # Imported lazily: this handler is attached to the ROOT logger
+                # at boot, and app.tools pulls in the tool layer.
+                try:
+                    from app.tools.tool_context import (
+                        current_cycle_id_or_none,
+                        current_phase,
+                        current_ticker,
+                    )
+                    # NOT current_cycle_id(): it warns when it finds nothing,
+                    # and that warning re-enters this handler.
+                    cycle_id = cycle_id or current_cycle_id_or_none()
+                    phase = phase or current_phase()
+                    ticker = ticker or current_ticker()
+                except Exception:
+                    pass
+
+            cycle_id = cycle_id or "system-log"
+            phase = phase or "unknown"
+            ticker = ticker or "system"
             error_type = getattr(record, "error_type", record.levelname)
             
             # Format message

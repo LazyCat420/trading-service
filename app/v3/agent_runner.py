@@ -15,6 +15,7 @@ run_agent_loop() infrastructure. It handles:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -441,6 +442,44 @@ async def _persist_quant_signals(desk: Any, cycle_id: str, artifact: dict) -> No
     )
 
 
+def _scoped_to_the_agent(fn):
+    """Open a (cycle, phase, ticker) scope around an agent run, and close it.
+
+    Everything an agent does — its tool calls, its warnings, the errors raised
+    beneath it — is attributed to the triple opened here. The scope CLOSES on
+    the way out, so a nested run cannot outlive itself and blank the caller's
+    context; that is the whole reason `tool_context()` exists alongside
+    `set_tool_context()`.
+
+    `phase` names the stage for telemetry and defaults to the agent's own
+    name, which is right for every caller except the debate, where one agent
+    argues in several stages — `bull_argument` and `bull_defense` are the same
+    agent — so `_run_agent_with_circuit_breaker` passes the stage explicitly.
+
+    A DECORATOR, not a wrapper function, deliberately: several tests read
+    `inspect.getsource(run_v3_agent)` to pin invariants about the body (the
+    quant persistence guard, for one), and `getsource` follows the
+    `__wrapped__` that `functools.wraps` sets. Splitting the body into a
+    differently-named inner function instead would have left those guards
+    silently inspecting an 18-line wrapper and passing on nothing.
+    """
+    @functools.wraps(fn)
+    async def _wrapper(desk, agent_module, *, phase: str = "", **kwargs):
+        from app.tools.tool_context import tool_context
+
+        agent_name = getattr(agent_module, "AGENT_NAME", None)
+        with tool_context(
+            agent_name=agent_name,
+            cycle_id=kwargs.get("cycle_id") or "",
+            ticker=getattr(desk, "ticker", None),
+            phase=phase or agent_name,
+        ):
+            return await fn(desk, agent_module, **kwargs)
+
+    return _wrapper
+
+
+@_scoped_to_the_agent
 async def run_v3_agent(
     desk: SharedDesk,
     agent_module: Any,
@@ -480,13 +519,12 @@ async def run_v3_agent(
     Returns:
         PhaseOutcome indicating success or failure type.
     """
-    # Scope any in-process tool execution (whiteboard, peer requests) to this
-    # agent + cycle; the HTTP bridge path sets the same context from headers.
-    from app.tools.tool_context import set_tool_context
-
-    set_tool_context(
-        agent_name=getattr(agent_module, "AGENT_NAME", None), cycle_id=cycle_id
-    )
+    # In-process tool execution (whiteboard, peer requests) is already scoped
+    # by `run_v3_agent` above — agent, cycle, ticker AND phase, with teardown.
+    # This used to call set_tool_context() here with agent + cycle only, which
+    # is why `tool_usage_stats.ticker` was NULL on the in-process path and
+    # every execution_errors row read phase='unknown'.
+    # The HTTP bridge path sets the same context from request headers.
     from app.utils.pipeline_utils import noop as _noop
     if emit is None:
         emit = _noop

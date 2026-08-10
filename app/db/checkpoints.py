@@ -47,6 +47,20 @@ CREATE TABLE IF NOT EXISTS cycle_checkpoints (
 """
 
 
+def ensure_checkpoints_table() -> None:
+    """Create `cycle_checkpoints`, callable without a CheckpointManager.
+
+    The DDL used to be reachable only through `CheckpointManager._ensure_table`,
+    an instance method — so no build step could run it, and `cycle_checkpoints`
+    was one of the tables missing from the isolated test database. It is the
+    entry point `scripts/init_test_db.py` registers.
+    """
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        db.execute(_CREATE_TABLE_SQL)
+
+
 class CheckpointManager:
     """Manages cycle checkpoint persistence in PostgreSQL.
 
@@ -64,11 +78,8 @@ class CheckpointManager:
         if self._table_ensured:
             return
         try:
-            from app.db.connection import get_db
-
-            with get_db() as db:
-                db.execute(_CREATE_TABLE_SQL)
-                self._table_ensured = True
+            ensure_checkpoints_table()
+            self._table_ensured = True
         except Exception as e:
             logger.warning("[CHECKPOINT] Table creation failed: %s", e)
 

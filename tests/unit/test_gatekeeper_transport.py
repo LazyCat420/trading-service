@@ -36,7 +36,12 @@ def _gatekeeper_source() -> str:
     """
     src = inspect.getsource(pipeline_service)
     start = src.index("Here are {stock_count} candidate stocks")
-    end = src.index("Gatekeeper hallucinated tickers", start)
+    # Closed at the admission step that follows the gatekeeper call. This used
+    # to anchor on the log string "Gatekeeper hallucinated tickers", which
+    # vanished when that check was extracted into
+    # `admit_gatekeeper_selection` — a log message is not a landmark, since
+    # rewording one silently moves the window this guard reads.
+    end = src.index("admit_gatekeeper_selection(selected, all_pool)", start)
     block = src[start:end]
     # Comment lines are stripped: this block deliberately DOCUMENTS the failed
     # `endpoint_override="jetson"` attempt, and a guard that reads its own

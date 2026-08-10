@@ -104,8 +104,14 @@ async def run_v3_pipeline(
         status="running",
     )
     try:
+        from app.tools.tool_context import tool_context
         from app.v3.data_report import build_ticker_data_report
-        data_report = await build_ticker_data_report(ticker, emit=emit, cycle_id=cycle_id)
+        # Pre-collect runs before any agent, so nothing else would scope it —
+        # and it is the noisiest stage in the cycle (six collectors, every
+        # vendor refusal logged as a warning) as well as the slowest measured
+        # one. Its warnings are worth attributing to a named stage.
+        with tool_context(cycle_id=cycle_id, ticker=ticker, phase="precollect"):
+            data_report = await build_ticker_data_report(ticker, emit=emit, cycle_id=cycle_id)
         emit(
             "analyzing", f"v3_precollect_ok_{ticker}",
             f"📥 {ticker}: Market & news pre-collection complete",
@@ -3290,6 +3296,7 @@ async def _run_agent_with_circuit_breaker(
             timeout_seconds=timeout,
             custom_instructions=custom_instructions,
             parent_agent=parent_agent,
+            phase=phase_name,
         )
 
         # If failed and retryable, try once more
@@ -3310,6 +3317,7 @@ async def _run_agent_with_circuit_breaker(
                     custom_instructions=custom_instructions,
                     parent_agent=parent_agent,
                     is_retry=True,
+                    phase=phase_name,
                 )
 
     return outcome
