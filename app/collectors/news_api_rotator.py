@@ -25,6 +25,7 @@ import logging
 import os
 import random
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -48,9 +49,49 @@ except Exception:  # noqa: BLE001 — keep the collector importable standalone
 
 # Caps, because a run carries up to 10 providers x 10 articles and every
 # upgrade is a network fetch. Tunable without a deploy.
-UPGRADE_LIMIT = int(os.getenv("NEWS_BODY_UPGRADE_LIMIT", "25"))
+#
+# Sized to cover a whole run rather than a fraction of it. Measured on the
+# deployed container: a SINGLE-ticker call produced **56** candidates — the
+# providers are queried on a general query, not per ticker — so a cap of 25
+# left 31 articles on their blurb every time. And because the shortest
+# summaries go first, what got skipped was exactly the 400-500 char band that
+# is the bulk of the problem (alphavantage 0/41 and polygon 0/23 upgraded in
+# the first live run).
+UPGRADE_LIMIT = int(os.getenv("NEWS_BODY_UPGRADE_LIMIT", "60"))
 UPGRADE_CONCURRENCY = int(os.getenv("NEWS_BODY_UPGRADE_CONCURRENCY", "4"))
 UPGRADE_BUDGET_S = float(os.getenv("NEWS_BODY_UPGRADE_BUDGET_S", "45"))
+
+# `collect_from_all_apis([ticker])` runs ONCE PER TICKER (data_report.py:274),
+# and because the providers are queried generically each ticker sees largely
+# the SAME articles. Without a memory, an 80-ticker cycle re-scrapes the same
+# ~56 URLs 80 times — measured at 23.0s per ticker. This drops the cost to
+# near zero after the first ticker of a cycle.
+#
+# Successes only, in-process, small and short-lived: bodies are large, and a
+# stale body is worse than a re-fetch. Dead URLs are already remembered by the
+# scraper's own failure cache, so this is the other half of the same idea.
+_BODY_CACHE_TTL_S = float(os.getenv("NEWS_BODY_CACHE_TTL_S", "3600"))
+_BODY_CACHE_MAX = int(os.getenv("NEWS_BODY_CACHE_MAX", "512"))
+_BODY_CACHE: OrderedDict[str, tuple[float, str]] = OrderedDict()
+
+
+def _body_cache_get(url: str) -> str | None:
+    hit = _BODY_CACHE.get(url)
+    if hit is None:
+        return None
+    expires_at, body = hit
+    if time.time() >= expires_at:
+        del _BODY_CACHE[url]
+        return None
+    _BODY_CACHE.move_to_end(url)
+    return body
+
+
+def _body_cache_put(url: str, body: str) -> None:
+    _BODY_CACHE[url] = (time.time() + _BODY_CACHE_TTL_S, body)
+    _BODY_CACHE.move_to_end(url)
+    while len(_BODY_CACHE) > _BODY_CACHE_MAX:
+        _BODY_CACHE.popitem(last=False)
 
 
 # ---------------------------------------------------------------------------
@@ -203,12 +244,23 @@ async def _upgrade_bodies(articles: list[NewsArticle]) -> dict[str, str]:
 
     # One attempt per URL even when several articles share it.
     candidates: dict[str, int] = {}
+    bodies: dict[str, str] = {}
+    cached = 0
     for a in articles:
         s = a.summary or ""
-        if a.url and (len(s) < MIN_BODY_CHARS or "..." in s):
-            candidates[a.url] = min(candidates.get(a.url, len(s)), len(s))
+        if not a.url or (len(s) >= MIN_BODY_CHARS and "..." not in s):
+            continue
+        # Already fetched for an earlier ticker this cycle.
+        hit = _body_cache_get(a.url)
+        if hit is not None:
+            bodies[a.url] = hit
+            cached += 1
+            continue
+        candidates[a.url] = min(candidates.get(a.url, len(s)), len(s))
+    if cached:
+        logger.info("[rotator] body upgrade: %d served from cache", cached)
     if not candidates:
-        return {}
+        return bodies
 
     # Shortest summary first — the blurbs with the least in them already.
     ordered = sorted(candidates, key=lambda u: candidates[u])
@@ -221,7 +273,6 @@ async def _upgrade_bodies(articles: list[NewsArticle]) -> dict[str, str]:
         )
 
     sem = asyncio.Semaphore(UPGRADE_CONCURRENCY)
-    bodies: dict[str, str] = {}
 
     async def _one(url: str) -> None:
         async with sem:
@@ -232,6 +283,7 @@ async def _upgrade_bodies(articles: list[NewsArticle]) -> dict[str, str]:
                 return
             if body and len(body) >= MIN_BODY_CHARS:
                 bodies[url] = body
+                _body_cache_put(url, body)
 
     try:
         await asyncio.wait_for(

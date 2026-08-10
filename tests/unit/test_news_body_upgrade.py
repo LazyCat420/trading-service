@@ -213,3 +213,89 @@ def test_the_trigger_and_the_scrapers_gate_are_the_same_number():
     from app.scraper.core.content_quality import MIN_ARTICLE_CHARS
 
     assert nar.MIN_BODY_CHARS == MIN_ARTICLE_CHARS
+
+
+# ── The body cache: collect_from_all_apis runs once per TICKER ───────────────
+
+@pytest.fixture(autouse=True)
+def _clear_body_cache():
+    nar._BODY_CACHE.clear()
+    yield
+    nar._BODY_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_the_same_article_is_not_rescraped_for_the_next_ticker():
+    """`collect_from_all_apis([ticker])` runs per ticker (data_report.py:274)
+    and the providers are queried generically, so each ticker sees largely the
+    SAME articles. Measured at 23.0s per ticker — an 80-ticker cycle would
+    re-scrape the same ~56 URLs 80 times."""
+    arts = [_article("https://x.test/shared", "b" * 400)]
+    scraper = AsyncMock(return_value="w" * 3000)
+    with _patch_scraper(scraper):
+        first = await nar._upgrade_bodies(arts)     # ticker 1
+        second = await nar._upgrade_bodies(arts)    # ticker 2
+
+    assert scraper.await_count == 1, "the second ticker must not refetch"
+    assert first == second
+
+
+@pytest.mark.asyncio
+async def test_a_cached_body_is_still_returned_when_it_is_the_only_candidate():
+    """Early-return path: nothing left to scrape must not mean nothing to use."""
+    arts = [_article("https://x.test/only", "b" * 400)]
+    with _patch_scraper(AsyncMock(return_value="w" * 3000)):
+        await nar._upgrade_bodies(arts)
+        again = await nar._upgrade_bodies(arts)
+
+    assert again["https://x.test/only"] == "w" * 3000
+
+
+@pytest.mark.asyncio
+async def test_an_expired_body_is_refetched(monkeypatch):
+    """A stale body is worse than a re-fetch."""
+    monkeypatch.setattr(nar, "_BODY_CACHE_TTL_S", 0.05)
+    arts = [_article("https://x.test/a", "b" * 400)]
+    scraper = AsyncMock(return_value="w" * 3000)
+    with _patch_scraper(scraper):
+        await nar._upgrade_bodies(arts)
+        await asyncio.sleep(0.06)
+        await nar._upgrade_bodies(arts)
+
+    assert scraper.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_the_cache_is_bounded(monkeypatch):
+    monkeypatch.setattr(nar, "_BODY_CACHE_MAX", 3)
+    with _patch_scraper(AsyncMock(return_value="w" * 3000)):
+        for i in range(6):
+            await nar._upgrade_bodies([_article(f"https://x.test/{i}", "b" * 400)])
+
+    assert len(nar._BODY_CACHE) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_failed_scrape_is_not_cached():
+    """Caching a miss would suppress the retry that fixes it."""
+    arts = [_article("https://x.test/a", "b" * 400)]
+    scraper = AsyncMock(return_value="")
+    with _patch_scraper(scraper):
+        await nar._upgrade_bodies(arts)
+        await nar._upgrade_bodies(arts)
+
+    assert scraper.await_count == 2, "a failure must stay retryable"
+
+
+@pytest.mark.asyncio
+async def test_the_cap_covers_a_whole_run(monkeypatch):
+    """A live single-ticker call produced 56 candidates; a cap of 25 left 31
+    on their blurb every time, and shortest-first meant the 400-500 band —
+    the bulk of the problem — was what got skipped."""
+    assert nar.UPGRADE_LIMIT >= 56
+    arts = [_article(f"https://x.test/{i}", "b" * 450) for i in range(56)]
+    scraper = AsyncMock(return_value="w" * 3000)
+    with _patch_scraper(scraper):
+        bodies = await nar._upgrade_bodies(arts)
+
+    assert len(bodies) == 56
