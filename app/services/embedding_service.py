@@ -25,9 +25,40 @@ logger = logging.getLogger(__name__)
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIM = 384
 MAX_EMBED_TOKENS = 2048  # embeddinggemma positional embedding limit
-DEFAULT_CHUNK_SIZE = 512  # tokens (~2048 chars)
+DEFAULT_CHUNK_SIZE = 512  # tokens
 DEFAULT_CHUNK_OVERLAP = 51  # ~10% overlap
-CHARS_PER_TOKEN = 3  # Conservative approximation to avoid 2049 token crash
+
+# Chars per token for the embedder, MEASURED — not assumed.
+#
+# 2026-08-09, binary search against the live embeddinggemma box (find the
+# largest input it accepts before returning "maximum context length is 2048
+# tokens"), per content type:
+#
+#     English prose            11,312 chars    5.52 chars/token
+#     dense JSON / tickers      3,851 chars    1.88 chars/token   <- the desk
+#     base64-ish / hashes       2,303 chars    1.12 chars/token
+#
+# Every guard in this stack previously assumed 3. The desk's own content —
+# JSON blocks, ticker tables, numeric series — runs at 1.88, so a "conservative
+# 3" was optimistic by 60% and the resulting budgets overflowed. Verified: a
+# dense-JSON input at 6,144 chars (the old budget), at 4,944, and at 4,900 all
+# get rejected outright when sent straight to the embedder.
+#
+# 1.8 sits just under the measured dense-JSON figure. It deliberately does NOT
+# cover base64/hash text, which is not content this service embeds; the
+# vllm-shim's token-feedback rescale is the backstop for that (it measures the
+# real overflow instead of guessing, so it cannot be fooled by density).
+#
+# Why err tight: a truncated embedding degrades one memory's recall, while a
+# rejected one stores nothing at all. That asymmetry is why this is a clamp
+# and not a best guess. Chunked paths are unaffected either way — a 512-token
+# chunk is ~921 chars here, far below the budget.
+CHARS_PER_TOKEN = 1.8
+
+#: The single character budget for one embedding input. Import this rather
+#: than recomputing ``MAX_EMBED_TOKENS * CHARS_PER_TOKEN`` locally — three
+#: separate derivations of this number is what open item 33 was about.
+EMBED_CHAR_BUDGET = int(MAX_EMBED_TOKENS * CHARS_PER_TOKEN)
 
 
 import threading
@@ -88,13 +119,20 @@ class EmbeddingService:
         # Truncate texts that exceed the embedding model's token limit
         # embeddinggemma has a 2048-token positional embedding table;
         # inputs beyond that cause a fatal GPU index-out-of-bounds crash.
-        max_chars = MAX_EMBED_TOKENS * CHARS_PER_TOKEN
+        max_chars = EMBED_CHAR_BUDGET
         truncated_texts = []
         for t in texts:
             if len(t) > max_chars:
+                # Say what was actually done, not what it is hoped to achieve.
+                # This line used to claim "(~2048 tokens)" while cutting to
+                # 6,144 chars — which is ~3,270 tokens of dense JSON, i.e. the
+                # sentence asserted the very thing it failed to do, and read
+                # in the logs as a guard working (open item 33).
                 logger.warning(
-                    "[EmbeddingService] Truncating text from %d to %d chars (~%d tokens) to fit embedding model limit",
-                    len(t), max_chars, MAX_EMBED_TOKENS,
+                    "[EmbeddingService] Truncating text from %d to %d chars "
+                    "(budget = %d tokens x %.2f measured chars/token) to fit "
+                    "the embedding model limit",
+                    len(t), max_chars, MAX_EMBED_TOKENS, CHARS_PER_TOKEN,
                 )
                 t = t[:max_chars]
             truncated_texts.append(t)
@@ -188,7 +226,9 @@ class EmbeddingService:
         """Split text into overlapping chunks respecting sentence boundaries.
 
         Uses recursive character splitting with sentence-boundary awareness.
-        Each chunk is approximately max_tokens tokens (~max_tokens*4 chars).
+        Each chunk is approximately max_tokens tokens, converted at the
+        measured CHARS_PER_TOKEN for this embedder (see the module header —
+        it is 1.8, not the 3 or 4 the older comments assumed).
 
         Args:
             text: Input text to chunk.
@@ -201,8 +241,11 @@ class EmbeddingService:
         if not text or not text.strip():
             return []
 
-        max_chars = max_tokens * CHARS_PER_TOKEN
-        overlap_chars = overlap_tokens * CHARS_PER_TOKEN
+        # int(): CHARS_PER_TOKEN is a measured float now, and these feed slice
+        # indices further down — a float there is a TypeError, not a rounding
+        # question.
+        max_chars = int(max_tokens * CHARS_PER_TOKEN)
+        overlap_chars = int(overlap_tokens * CHARS_PER_TOKEN)
 
         # If text fits in one chunk, return as-is
         if len(text) <= max_chars:

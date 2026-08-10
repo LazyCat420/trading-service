@@ -893,10 +893,32 @@ async def run_v3_agent(
         # custom_instructions (peer-request text) is appended to the user
         # prompt AFTER this guard runs — it must be counted in _fixed_chars or a
         # long peer query can push the real message past the embed limit.
-        # Divisor 3, not 4: embeddinggemma splits digits ~1 char/token, so
-        # quant-heavy text lands at ~2.5-3 chars/token — a 6.5k-char block
-        # that passed the //4 gate could weigh 2,200+ real tokens and blow
-        # the 2048 embed limit anyway.
+        #
+        # DIVISOR 3 IS KNOWN TO BE WRONG, AND IS KEPT DELIBERATELY.
+        #
+        # Measured 2026-08-09 by binary search against the live embedder, the
+        # desk's dense JSON runs **1.88 chars/token**, not the ~2.5-3 this
+        # comment used to assume — so the true budget is ~2,966 chars, not
+        # 4,944, and blocks that pass this gate can still overflow the
+        # embedder. `EmbeddingService.CHARS_PER_TOKEN` carries the measurement.
+        #
+        # Tightening it here was tried and REVERTED, because this gate does not
+        # do what its name suggests. Overflow does not reject anything; it
+        # routes the whole dynamic block into the SYSTEM prompt (see the
+        # relocation branch below), which prism does not embed — and that
+        # *skips KV-cache reuse*. Production prefix-cache hit rate is ~84% on a
+        # box whose measured failure mode is prefill thrash, so making
+        # relocation more frequent costs more than the overflow does.
+        #
+        # And the overflow now costs much less than when this guard was
+        # written: the vllm-shim clamps and token-feedback-rescales oversized
+        # embeddings (`lazy-agent-service@39f62f6`), so an overflowing embed is
+        # truncated rather than rejected. The failure this defended against —
+        # "prism stores nothing" — has been fixed at the seam that can actually
+        # measure the overflow.
+        #
+        # So: an honest number here would make things worse. Revisit only with
+        # a measurement of relocation frequency against cache hit rate.
         _EMBED_CHAR_BUDGET = (_EMBED_TOKEN_LIMIT - 400) * 3
         _fixed_chars = (
             len(user_prompt) + len(custom_instructions or "") + _USER_SCAFFOLD_CHARS
