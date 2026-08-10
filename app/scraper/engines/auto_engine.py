@@ -29,6 +29,17 @@ from app.scraper.engines.playwright_engine import PlaywrightEngine
 
 logger = logging.getLogger(__name__)
 
+
+def _served_ok(status_code: int | None) -> bool:
+    """Did the site actually serve this page, rather than refuse it?
+
+    Playwright reports no status, so ``None`` counts as served. An explicit
+    non-2xx does not: a 429 cooldown page is short, and counting it as "this
+    domain only serves headers" would let our own request rate earn a working
+    site a 24-hour skip.
+    """
+    return status_code is None or 200 <= status_code < 300
+
 BLOCK_SIGNATURES = [
     "please enable javascript",
     "please enable cookies",
@@ -56,6 +67,15 @@ BLOCK_SIGNATURES = [
     "access denied",
     "temporarily blocked",
     "rate limit exceeded",
+    # Verbatim from stocktitan.net under load. A cooldown page is short, so
+    # without these it read as "this domain only serves headers" and counted
+    # toward the domain skip — punishing a working site for our own request
+    # rate. Rate limiting is the most transient block there is.
+    "too many requests",
+    "you're loading pages faster",
+    "you are loading pages faster",
+    "please wait about",
+    "automatic cooldown",
     # Bloomberg serves its corporate boilerplate footer — the same 279 chars for
     # every URL — in place of the article when it refuses us. It trips no other
     # signature and clears the length gate, so without this it is stored as the
@@ -164,7 +184,12 @@ class AutoEngine(BaseEngine):
         if res.success and res.content and len(res.content) > 150:
             if not self.is_blocked_content(res.content):
                 if content_quality.is_thin(res.content):
-                    failure_cache.record_quality(domain, good=False)
+                    # Only a page the site actually SERVED counts against it.
+                    # Playwright reports no status, so None is accepted; an
+                    # explicit non-2xx (429, 503) is a transient refusal, and
+                    # counting it would let a rate limit earn a 24h skip.
+                    if _served_ok(res.status_code):
+                        failure_cache.record_quality(domain, good=False)
                     logger.info("[auto] %s — %s", url,
                                 content_quality.thin_reason(res.content))
                     return self._thin(url, res)

@@ -199,3 +199,75 @@ def test_quality_tracking_is_a_noop_without_a_store():
 def test_domain_of_handles_a_malformed_url():
     assert content_quality.domain_of("not a url") == ""
     assert content_quality.domain_of("https://www.investors.com/x") == "www.investors.com"
+
+
+# ── A rate limit is not a paywall ────────────────────────────────────────────
+
+RATE_LIMIT_PAGE = (
+    "Just a moment 429 Too Many Requests You're loading pages faster than our "
+    "rate limits allow. This is a brief, automatic cooldown, not a block. "
+    "Please wait about 4 minutes before continuing. Back to Previous Page Home Page"
+)
+
+
+def test_a_rate_limit_page_is_detected_as_blocked():
+    """Verbatim from stocktitan.net under our own probing. Short enough to
+    read as a teaser, which would have counted toward the domain skip."""
+    assert AutoEngine().is_blocked_content(RATE_LIMIT_PAGE) is True
+
+
+@pytest.mark.asyncio
+async def test_our_own_rate_limiting_cannot_earn_a_domain_a_skip(cache):
+    """The whole failure mode: probe a working site too fast, get 429s, and
+    the gate writes it off for 24h. stocktitan is 4/6 usable — it must not be
+    skippable by our request rate."""
+    engine = AutoEngine()
+    limited = ScrapeResult(
+        url=TITAN_GOOD, success=True, content=RATE_LIMIT_PAGE, data={},
+        error=None, engine_used="http", scraped_at=datetime.utcnow(),
+        status_code=429,
+    )
+    with patch.object(engine.http_engine, "fetch", AsyncMock(return_value=limited)), \
+         patch.object(engine.playwright_engine, "fetch", AsyncMock(return_value=limited)), \
+         patch("app.scraper.engines.auto_engine.failure_cache", cache):
+        for _ in range(content_quality.SKIP_AFTER_THIN + 3):
+            await engine.fetch(TITAN_GOOD, {})
+
+    assert cache.should_skip_domain("www.stocktitan.net") is None, \
+        "a rate limit must never count toward the domain skip"
+
+
+@pytest.mark.asyncio
+async def test_a_non_2xx_thin_body_does_not_count_against_the_domain(cache):
+    """Playwright reports no status, so None must still count; an explicit
+    5xx/429 must not."""
+    engine = AutoEngine()
+    refused = ScrapeResult(
+        url=TITAN_THIN, success=True, content="short body " * 20, data={},
+        error=None, engine_used="playwright", scraped_at=datetime.utcnow(),
+        status_code=503,
+    )
+    failed_http = ScrapeResult(
+        url=TITAN_THIN, success=False, content=None, data={}, error="boom",
+        engine_used="http", scraped_at=datetime.utcnow(), status_code=503,
+    )
+    with patch.object(engine.http_engine, "fetch", AsyncMock(return_value=failed_http)), \
+         patch.object(engine.playwright_engine, "fetch", AsyncMock(return_value=refused)), \
+         patch("app.scraper.engines.auto_engine.failure_cache", cache):
+        for _ in range(content_quality.SKIP_AFTER_THIN + 2):
+            await engine.fetch(TITAN_THIN, {})
+
+    assert cache.should_skip_domain("www.stocktitan.net") is None
+
+
+@pytest.mark.asyncio
+async def test_a_served_200_teaser_still_counts(cache):
+    """The other side — without this the guard above would disarm the skip."""
+    engine = AutoEngine()
+    with patch.object(engine.http_engine, "fetch",
+                      AsyncMock(return_value=_ok(IBD, 526))), \
+         patch("app.scraper.engines.auto_engine.failure_cache", cache):
+        for _ in range(content_quality.SKIP_AFTER_THIN):
+            await engine.fetch(IBD, {})
+
+    assert cache.should_skip_domain("www.investors.com") is not None
