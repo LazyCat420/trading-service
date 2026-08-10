@@ -74,30 +74,77 @@ def test_every_whitelisted_v3_agent_has_a_budget_entry():
     agents_dir = (
         Path(__file__).resolve().parents[2] / "app" / "v3" / "agents"
     )
+    def _assigned_names(node):
+        """Both assignment forms. Only ast.Assign was matched until
+        2026-08-10, so `TOOL_WHITELIST: list[str] = [...]` — an ast.AnnAssign
+        — was invisible, and five of the thirteen agents (bull, bear,
+        bull_defense, board_of_directors, decision) were silently exempt from
+        the very check this test exists to make. test_cycle_candidates.py
+        already handled both; this one did not.
+        """
+        if isinstance(node, ast.Assign):
+            return [getattr(t, "id", "") for t in node.targets]
+        if isinstance(node, ast.AnnAssign) and node.value is not None:
+            return [getattr(node.target, "id", "")]
+        return []
+
     missing = []
+    scanned = 0
+    with_whitelist = 0
     for mod in sorted(agents_dir.glob("*.py")):
         if mod.name == "__init__.py":
             continue
         tree = ast.parse(mod.read_text())
+        scanned += 1
         has_whitelist = False
         agent_name = None
         for node in tree.body:
-            if isinstance(node, ast.Assign):
-                for tgt in node.targets:
-                    if getattr(tgt, "id", "") == "TOOL_WHITELIST":
-                        try:
-                            has_whitelist = bool(ast.literal_eval(node.value))
-                        except Exception:
-                            has_whitelist = True  # non-literal → assume tools
-                    if getattr(tgt, "id", "") == "AGENT_NAME":
-                        try:
-                            agent_name = ast.literal_eval(node.value)
-                        except Exception:
-                            pass
+            for name in _assigned_names(node):
+                if name == "TOOL_WHITELIST":
+                    try:
+                        has_whitelist = bool(ast.literal_eval(node.value))
+                    except Exception:
+                        has_whitelist = True  # non-literal → assume tools
+                if name == "AGENT_NAME":
+                    try:
+                        agent_name = ast.literal_eval(node.value)
+                    except Exception:
+                        pass
+        if has_whitelist:
+            with_whitelist += 1
         if has_whitelist and agent_name and agent_name not in AGENT_BUDGET_OVERRIDES:
             missing.append(f"{agent_name} ({mod.name})")
+
+    # Floors, so the guard cannot go quiet again. It read 8 of 13 agents for
+    # however long the AnnAssign hole was open and reported success the whole
+    # time; a count that has to be met turns that into a failure.
+    assert scanned >= 13, f"only found {scanned} v3 agent modules — wrong path?"
+    assert with_whitelist >= 10, (
+        f"only {with_whitelist} of {scanned} agents parsed as tool-carrying; "
+        "the TOOL_WHITELIST matcher has stopped seeing a declaration form"
+    )
 
     assert not missing, (
         "Tool-carrying v3 agents with NO budget entry — they will run with "
         f"the 9999 default: {missing}"
     )
+
+
+def test_the_whitelist_matcher_sees_both_assignment_forms():
+    """Negative control for the scan above. The plain-assignment form was
+    always matched; the annotated one was not, and that is what let five
+    agents through."""
+    import ast
+
+    for src in (
+        "TOOL_WHITELIST = ['a']\n",
+        "TOOL_WHITELIST: list[str] = ['a']\n",
+    ):
+        tree = ast.parse(src)
+        names = []
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                names += [getattr(t, "id", "") for t in node.targets]
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                names.append(getattr(node.target, "id", ""))
+        assert "TOOL_WHITELIST" in names, f"matcher missed: {src!r}"

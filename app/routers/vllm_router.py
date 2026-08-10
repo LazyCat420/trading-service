@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from typing import Any, List, Dict, Optional, Tuple
-from fastapi import APIRouter, HTTPException, Query, Body, Request
+from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -30,26 +30,7 @@ class ChatRequest(BaseModel):
     model_override: Optional[str] = None
     endpoint_override: Optional[str] = None
     history: Optional[List[Dict[str, Any]]] = None
-    images: Optional[List[str]] = None
     tools: Optional[List[Dict[str, Any]]] = None
-
-
-
-class ChatStreamRequest(BaseModel):
-    system: str
-    user: str
-    temperature: float = 0.3
-    max_tokens: int = 8192
-    enable_thinking: bool = False
-    agent_name: str = "user_chat"
-    ticker: str = ""
-    model_override: Optional[str] = None
-    endpoint_override: Optional[str] = None
-    history: Optional[List[Dict[str, Any]]] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    images: Optional[List[str]] = None
-    bypass_prism: bool = False
-
 
 
 class ChatWithToolsRequest(BaseModel):
@@ -150,7 +131,6 @@ async def vllm_chat(req: ChatRequest):
             model_override=req.model_override,
             endpoint_override=req.endpoint_override,
             history=req.history,
-            images=req.images,
             tools=req.tools
         )
         return {"text": response_text, "total_tokens": total_tokens, "elapsed_ms": elapsed_ms}
@@ -159,34 +139,11 @@ async def vllm_chat(req: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/v1/vllm/chat_stream")
-async def vllm_chat_stream(req: ChatStreamRequest, request: Request):
-    async def event_generator():
-        try:
-
-                async for chunk in llm.chat_stream(
-                    system=req.system,
-                    user=req.user,
-                    temperature=req.temperature,
-                    max_tokens=req.max_tokens,
-                    enable_thinking=req.enable_thinking,
-                    agent_name=req.agent_name,
-                    ticker=req.ticker,
-                    model_override=req.model_override,
-                    endpoint_override=req.endpoint_override,
-                    history=req.history,
-                    tools=req.tools,
-                    images=req.images,
-                    bypass_prism=req.bypass_prism
-                ):
-                    if await request.is_disconnected():
-                        logger.info("[vLLM Router] Client disconnected from chat_stream, aborting.")
-                        break
-                    yield chunk + "\n"
-        except Exception as e:
-            logger.exception("Error in /vllm/chat_stream generator")
-            yield f"ERROR: {str(e)}\n"
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+# /api/v1/vllm/chat_stream was deleted on 2026-08-10. It called
+# llm.chat_stream(), which PrismLLMShim has never defined, so every request
+# raised AttributeError inside the generator — where a blanket except turned it
+# into a 200 carrying "ERROR: ..." as its body. It had no callers; the client's
+# streaming chat goes through prism.agent_chat_stream instead.
 
 
 @router.post("/api/v1/vllm/chat_with_tools")

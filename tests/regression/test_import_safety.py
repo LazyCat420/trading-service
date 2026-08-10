@@ -116,17 +116,26 @@ class TestImportSafety:
         )
 
     def test_critical_pipeline_files_parseable(self):
-        """All critical pipeline files must parse without SyntaxError."""
+        """All critical pipeline files must parse without SyntaxError.
+
+        The list used to name four files and `continue` past any that were
+        missing. Two of them lived under app/pipeline/, which was deleted, so
+        half this check silently became a no-op and the name kept promising
+        four. A missing entry is now a failure: either the file matters and
+        must exist, or it does not and belongs off the list.
+        """
         critical_files = [
             os.path.join("tools", "quant_tools.py"),
             os.path.join("tools", "finance_tools.py"),
-            os.path.join("pipeline", "analysis", "curation_pass.py"),
-            os.path.join("pipeline", "analysis", "purge_pass.py"),
         ]
         errors = []
         for relpath in critical_files:
             filepath = os.path.join(APP_DIR, relpath)
             if not os.path.isfile(filepath):
+                errors.append(
+                    f"  {relpath}: listed as critical but does not exist — "
+                    "remove it from the list or restore the file"
+                )
                 continue
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
@@ -134,7 +143,7 @@ class TestImportSafety:
             except SyntaxError as e:
                 errors.append(f"  {relpath}: {e}")
 
-        assert not errors, f"Syntax errors in critical files:\n" + "\n".join(errors)
+        assert not errors, "Syntax errors in critical files:\n" + "\n".join(errors)
 
     def test_collector_datetime_imports(self):
         """All collector files that use datetime must import it."""

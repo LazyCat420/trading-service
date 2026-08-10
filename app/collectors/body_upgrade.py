@@ -14,7 +14,9 @@ and nothing asked for the rest. Measured over 30 days before this existed:
 providers return more than that, so it never fired. `news_collector`'s finnhub
 path removed body scraping outright "to fix 120s timeouts" and left a comment
 deferring the work to `deep_read_top_articles()` — a function with **no
-callers**, so the deferral never happened.
+callers**, so the deferral never happened. That function, and the whole
+deep-read path behind it, were deleted on 2026-08-10; this module is the only
+body upgrade there is.
 
 Those 120s timeouts were real, and this is the bounded form of what caused
 them. Every caller gets the same three bounds and the same cross-ticker cache,

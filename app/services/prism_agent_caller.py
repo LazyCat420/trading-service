@@ -741,11 +741,14 @@ class PrismLLMShim:
         model_override: str | None = None,
         endpoint_override: str | None = None,
         history: list[dict] | None = None,
-        images: list[str] | None = None,
         tools: list[dict] | None = None,
         actor_label: str | None = None,
         stream_callback: Any = None,
     ) -> tuple[str, int, int]:
+        # No `images` parameter. One was declared here and never forwarded to
+        # call_prism_agent, so a caller that passed images got a text-only
+        # answer that read as a considered one. Removed 2026-08-10: a
+        # parameter this method cannot honour is worse than its absence.
         import asyncio
         self.start_metrics_polling()
         if self._killed:

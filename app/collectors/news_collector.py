@@ -13,7 +13,6 @@ import hashlib
 import re
 import datetime
 import asyncio
-import time
 from app.db.connection import get_db
 from app.processors.ticker_extractor import get_ticker_symbols
 from app.utils.text_utils import is_truncated_content, is_scrape_artifact
@@ -846,10 +845,11 @@ async def collect_finnhub_news(
                 break
 
         # Body scraping was removed from this phase to fix 120s timeouts, and a
-        # comment deferred it to `deep_read_top_articles()` during analysis.
-        # That function has NO CALLERS, so the deferral never happened: finnhub
-        # is the largest source in the corpus — 11,102 rows over 30 days — and
-        # 98% of them were stored at ~303 chars, a headline and a sentence.
+        # comment deferred it to a `deep_read_top_articles()` that had no
+        # callers, so the deferral never happened: finnhub is the largest
+        # source in the corpus — 11,102 rows over 30 days — and 98% of them
+        # were stored at ~303 chars, a headline and a sentence. That function
+        # has since been deleted; this is the only body upgrade there is.
         #
         # This is the bounded form of what caused those timeouts: capped,
         # concurrent, budgeted, cached across tickers, and run before the
@@ -1034,9 +1034,10 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     pass
 
             api_summary = content.get("description", "") or content.get("summary", "")
-            # NOTE: Body scraping removed from collection phase to fix 120s timeouts.
-            # Full article bodies are fetched lazily via deep_read_top_articles()
-            # during the analysis phase. Store with API summary for now.
+            # NOTE: Body scraping removed from collection phase to fix 120s
+            # timeouts. Unlike the finnhub path above, yfinance articles get no
+            # body upgrade at all — the lazy deep-read this comment used to
+            # promise never existed. Stored at the API summary.
             summary = api_summary
             if not summary:
                 summary = title  # Use title as minimal fallback
@@ -1124,146 +1125,3 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
     except Exception as e:
         logger.info(f"[news] yfinance {ticker} error: {e}")
         return 0
-
-
-_GARBAGE_STRINGS = [
-    "Accessibility Menu", "Skip to main content", "Skip to Content", "Sign in / Join",
-    "Premium Investing Services", "Stock Advisor", "Rule Breakers", "Join Stock Advisor",
-    "Subscribe Now", "Motley Fool", "Accept All Cookies", "Cookie Settings", "Privacy Policy",
-    "We and our partners", "consent to the use", "strictly necessary", "Toggle navigation",
-    "Open Navigation", "Close Navigation", "Full Screen Menu", "Site Navigation", "Main Navigation",
-]
-
-
-def _clean_deep_read(text: str) -> str | None:
-    """Strip known garbage strings from deep-read content."""
-    if not text:
-        return None
-
-    original_len = len(text)
-    cleaned = text
-
-    for g in _GARBAGE_STRINGS:
-        cleaned = cleaned.replace(g, "")
-
-    lines = cleaned.split("\n")
-    start_cut = 0
-    for line in lines:
-        stripped = line.strip()
-        if len(stripped) < 20 and start_cut < 10:
-            start_cut += 1
-        else:
-            break
-    lines = lines[start_cut:]
-    cleaned = "\n".join(lines).strip()
-
-    if original_len > 0 and len(cleaned) < original_len * 0.5:
-        return None
-
-    if len(cleaned) < 100:
-        return None
-
-    return cleaned
-
-
-async def deep_read_article(url: str, max_chars: int = 15000) -> str | None:
-    """Deep-read a news article URL for full article body."""
-    # Method 0: Adaptive Scraper
-    try:
-        from app.collectors.adaptive_scraper import run_adaptive
-
-        adaptive_text = await run_adaptive(url)
-        if adaptive_text and len(adaptive_text) > 100:
-            cleaned = _clean_deep_read(adaptive_text[:max_chars])
-            if cleaned:
-                logger.info(f"[news] adaptive-read: {len(cleaned)} chars from {url[:50]}")
-                return cleaned
-        logger.info("[news] deep-read: adaptive scraper failed, trying crawl4ai...")
-    except Exception as e:
-        logger.info(f"[news] adaptive-read error for {url[:50]}: {e}")
-
-    # Method 1: crawl4ai via scraper-service
-    try:
-        from app.services.scraper_client import scraper_client
-        res = await scraper_client.scrape(url, engine="crawl4ai", options={"max_chars": max_chars})
-        if res and res.get("success") and res.get("content"):
-            text = res["content"]
-            if len(text) > 100 and "oops" not in text.lower()[:50]:
-                cleaned = _clean_deep_read(text)
-                if cleaned:
-                    logger.info(f"[news] deep-read (crawl4ai): {len(cleaned)} chars from {url[:50]}")
-                    return cleaned
-            logger.info("[news] deep-read: crawl4ai got placeholder, trying vision...")
-    except Exception as e:
-        logger.info(f"[news] deep-read crawl4ai error for {url[:50]}: {e}")
-
-    # Method 2: Vision pipeline via scraper-service (gated: the standalone
-    # scraper image has no vLLM OCR stack, so this fallback is guaranteed to
-    # fail there — see VISION_DEEP_READ_ENABLED).
-    from app.config import settings
-    if not getattr(settings, "VISION_DEEP_READ_ENABLED", False):
-        return None
-    try:
-        from app.services.scraper_client import scraper_client
-        res = await scraper_client.scrape(url, engine="vision", options={"max_chars": max_chars})
-        if res and res.get("success") and res.get("content"):
-            text = res["content"]
-            if text and len(text) > 100:
-                cleaned = _clean_deep_read(text[:max_chars])
-                if cleaned:
-                    logger.info(f"[news] vision deep-read: {len(cleaned)} chars from {url[:50]}")
-                    return cleaned
-    except Exception as e:
-        logger.info(f"[news] vision deep-read error for {url[:50]}: {e}")
-
-    return None
-
-
-async def deep_read_top_articles(
-    ticker: str, limit: int = 3, max_chars: int = 15000
-) -> list[dict]:
-    """Deep-read the top N most recent articles for a ticker."""
-    with get_db() as db:
-        articles = db.execute(
-            """
-            SELECT id, title, url, summary FROM news_articles
-            WHERE ticker = %s AND url != '' AND url IS NOT NULL
-            ORDER BY published_at DESC
-            LIMIT %s
-        """,
-            [ticker.upper(), limit * 2],
-        ).fetchall()
-
-        results = []
-        for row in articles:
-            if len(results) >= limit:
-                break
-
-            article_id, title, url, summary = row
-
-            if summary and len(summary) > 200:
-                results.append({"title": title, "url": url, "full_text": summary})
-                continue
-
-            full_text = await deep_read_article(url, max_chars)
-            if full_text:
-                # Never store a bot-wall/captcha page as the article body — this
-                # UPDATE was the main path that wrote block pages into summaries.
-                if is_scrape_artifact(full_text):
-                    db.execute(
-                        "UPDATE news_articles SET quality_status = 'discarded', "
-                        "quality_reason = 'scrape_artifact_deep_read' WHERE id = %s",
-                        [article_id],
-                    )
-                    logger.info(f"[news] Deep-read {ticker}: scrape artifact for {url} — flagged, not stored")
-                    continue
-                db.execute(
-                    "UPDATE news_articles SET summary = %s WHERE id = %s",
-                    [full_text, article_id],
-                )
-                results.append({"title": title, "url": url, "full_text": full_text})
-
-            await asyncio.sleep(5)
-
-        logger.info(f"[news] Deep-read {ticker}: {len(results)} articles with full text")
-        return results

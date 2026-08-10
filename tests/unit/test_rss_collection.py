@@ -361,44 +361,6 @@ class TestCollectAll:
 
 
 # ---------------------------------------------------------------------------
-# Test: _clean_deep_read
-# ---------------------------------------------------------------------------
-
-
-class TestCleanDeepRead:
-    """_clean_deep_read garbage filter."""
-
-    def test_strips_known_garbage(self):
-        from app.collectors.news_collector import _clean_deep_read
-
-        text = "Accept All Cookies\nThis is the real article content that is long enough to pass the minimum threshold check and provide meaningful information."
-        result = _clean_deep_read(text)
-        assert result is not None
-        assert "Accept All Cookies" not in result
-
-    def test_rejects_mostly_garbage(self):
-        from app.collectors.news_collector import _clean_deep_read
-
-        # More than 50% garbage
-        garbage = "Cookie Settings " * 50
-        text = garbage + "Short real content"
-        result = _clean_deep_read(text)
-        assert result is None
-
-    def test_rejects_too_short(self):
-        from app.collectors.news_collector import _clean_deep_read
-
-        result = _clean_deep_read("Short")
-        assert result is None
-
-    def test_returns_none_for_empty(self):
-        from app.collectors.news_collector import _clean_deep_read
-
-        assert _clean_deep_read("") is None
-        assert _clean_deep_read(None) is None
-
-
-# ---------------------------------------------------------------------------
 # Test: News API Rotator provider config
 # ---------------------------------------------------------------------------
 

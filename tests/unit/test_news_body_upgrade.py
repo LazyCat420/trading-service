@@ -347,29 +347,84 @@ async def test_finnhub_articles_get_their_bodies_upgraded():
     assert bodies["https://x.test/fh"] == "w" * 5000
 
 
-def test_the_deferral_target_still_has_no_callers():
-    """If deep_read_top_articles ever gets wired up, this upgrade and it will
-    both be fetching bodies — worth noticing rather than doing twice."""
+# Deleted on 2026-08-10 with the functions themselves. The deep-read path was
+# never called in production: `scraper_scripts`, the table its adaptive scraper
+# wrote to, held exactly one row after three months — `example.com` mapped to
+# "() => 'mocked script'", 0 successes, 0 failures, left there by a unit test
+# that wrote to the production database.
+DEAD_DEEP_READ_SYMBOLS = (
+    "deep_read_top_articles",
+    "deep_read_article",
+    "run_adaptive",
+)
+
+
+def test_the_deep_read_path_does_not_come_back():
+    """The predecessor of this test asserted the deferral target had no
+    callers. That was a real check right up until the target was deleted —
+    after which "nothing calls a function that does not exist" is true for
+    every possible edit, and the guard would have passed forever without
+    reading anything.
+
+    So assert the stronger and still-falsifiable thing: these names are not
+    defined OR called anywhere. If someone reintroduces the deep-read path,
+    upgrade_bodies and it will both be fetching article bodies, which is the
+    duplication the original guard was watching for.
+    """
     import ast
     import pathlib
 
     # AST, not grep: a text search matched this module's own prose about the
     # function and "found a caller" that was a sentence.
-    root = pathlib.Path(__file__).resolve().parents[2] / "app"
-    calls = []
-    for path in root.rglob("*.py"):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+    root = pathlib.Path(__file__).resolve().parents[2]
+    roots = [root / "app", root / "scripts", root / "cycle_main.py"]
+
+    scanned = 0
+    hits = []
+    for base in roots:
+        paths = [base] if base.is_file() else sorted(base.rglob("*.py"))
+        for path in paths:
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
                 continue
-            fn = node.func
-            name = getattr(fn, "id", None) or getattr(fn, "attr", None)
-            if name == "deep_read_top_articles":
-                calls.append(f"{path.name}:{node.lineno}")
-    assert not calls, "deep_read_top_articles now has callers: " + ", ".join(calls)
+            scanned += 1
+            for node in ast.walk(tree):
+                name = None
+                if isinstance(node, ast.Call):
+                    name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = node.name
+                if name in DEAD_DEEP_READ_SYMBOLS:
+                    hits.append(f"{path.name}:{node.lineno} {name}")
+
+    # Without this floor a bad root path scans nothing and the assertion below
+    # passes on an empty set — the exact way a guard goes quiet.
+    assert scanned > 200, (
+        f"only scanned {scanned} files; the scan roots are wrong, which would "
+        "make this test vacuous rather than passing"
+    )
+    assert not hits, (
+        "the deleted deep-read path is back — it duplicates upgrade_bodies: "
+        + ", ".join(hits)
+    )
+
+
+def test_the_deep_read_guard_can_actually_fail():
+    """Negative control for the scan above: feed it a module that does call
+    one of the dead names and confirm it is seen. A guard nobody has watched
+    fail is a guard nobody knows is wired up."""
+    import ast
+
+    tree = ast.parse("async def f():\n    return await deep_read_article('u')\n")
+    found = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and (getattr(n.func, "id", None) or getattr(n.func, "attr", None))
+        in DEAD_DEEP_READ_SYMBOLS
+    ]
+    assert found, "the matcher cannot see a plain call — the real scan is vacuous"
 
 
 @pytest.mark.asyncio

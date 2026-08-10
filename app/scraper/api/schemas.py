@@ -12,7 +12,11 @@ from pydantic import BaseModel, Field
 
 class ScrapeRequest(BaseModel):
     url: str
-    engine: Literal["http", "playwright", "crawl4ai", "vision", "auto"] = "http"
+    # Must match the ENGINES registry in routes/scrape.py. "vision" was
+    # retired on 2026-08-09 but left in this Literal, so a vision request
+    # validated cleanly and then came back 200 with success=false — a
+    # rejection shaped exactly like a scrape that found nothing.
+    engine: Literal["http", "playwright", "crawl4ai", "auto"] = "http"
     extract: dict[str, str] | None = None   # {field_name: css_selector}
     options: dict[str, Any] = Field(default_factory=dict)
 
