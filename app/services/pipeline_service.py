@@ -26,6 +26,45 @@ class _ExplicitTickersPinned(Exception):
     discovery/scoring/freshness/gatekeeper funnel is skipped entirely."""
 
 
+# How many tickers the gatekeeper is asked for when the caller names no number.
+DEFAULT_GATEKEEPER_MAX_TICKERS = 15
+
+
+def _resolve_gatekeeper_max_tickers(requested: int | None) -> int:
+    """Resolve the caller's max-ticker request into the number the prompt uses.
+
+    Was `max_tickers or 15`, which is correct for None and wrong for 0: the UI
+    tooltip offered "0 or empty = unlimited", 0 is falsy, and it silently became
+    15. So the control accepted a value it did not honour and never said so.
+
+    **0 still resolves to the default, and that is deliberate — it is not
+    unlimited.** Making it unlimited would hand the gatekeeper the entire
+    screened candidate pool, and at roughly 180s per ticker across twelve agents
+    an unbounded pool is a cost event, not a preference. Removing the promise is
+    the safe half of this fix; the UI no longer offers it. What changes here is
+    that 0 is now resolved deliberately and logged, instead of being swallowed
+    by a falsy check.
+    """
+    if requested is None:
+        return DEFAULT_GATEKEEPER_MAX_TICKERS
+    try:
+        requested = int(requested)
+    except (TypeError, ValueError):
+        logger.warning(
+            "[PipelineService] max_tickers=%r is not a number — using %d",
+            requested, DEFAULT_GATEKEEPER_MAX_TICKERS,
+        )
+        return DEFAULT_GATEKEEPER_MAX_TICKERS
+    if requested <= 0:
+        logger.warning(
+            "[PipelineService] max_tickers=%d is not 'unlimited' — the gatekeeper "
+            "is being asked for %d. Name a positive number to change it.",
+            requested, DEFAULT_GATEKEEPER_MAX_TICKERS,
+        )
+        return DEFAULT_GATEKEEPER_MAX_TICKERS
+    return requested
+
+
 def admit_gatekeeper_selection(
     selected: list[str] | None,
     all_pool: dict[str, dict] | None,
@@ -1398,7 +1437,7 @@ class PipelineService:
                         snapshot_table = "\n".join(md_lines)
                         # -----------------------
                     
-                    max_tickers = max_tickers or 15
+                    max_tickers = _resolve_gatekeeper_max_tickers(max_tickers)
                     min_tickers = min(5, max_tickers)
                     system_prompt = SYSTEM_PROMPT.replace("{min_tickers}", str(min_tickers)).replace("{max_tickers}", str(max_tickers))
                     stock_count = len(pm_stocks)
