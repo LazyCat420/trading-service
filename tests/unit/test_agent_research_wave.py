@@ -61,8 +61,13 @@ def test_trigger_null_value_trailing_gets_default():
 
 
 def test_trigger_null_value_metric_type_gets_placeholder():
+    # Was written against sma_100_drop, which order_triggers can never evaluate
+    # — `technicals` has no sma_100 column — so this asserted that a trigger
+    # guaranteed never to fire was normalized into a live watch row. The
+    # placeholder rule it is actually testing belongs to a metric type the
+    # monitor can read; see test_dynamic_trigger_registry for the drop path.
     a = validate_trade_decision_artifact(
-        {"action": "HOLD", "dynamic_trigger": {"type": "sma_100_drop", "value": None}}
+        {"action": "HOLD", "dynamic_trigger": {"type": "sma_50_drop", "value": None}}
     )
     # order_triggers only needs non-null to evaluate; sma_* compares vs the live metric
     assert a["dynamic_trigger"]["value"] == 0.0

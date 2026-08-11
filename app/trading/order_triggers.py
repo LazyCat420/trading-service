@@ -27,6 +27,75 @@ logger = logging.getLogger(__name__)
 # so an old-thesis setup can sit active for weeks. Expire ones older than this.
 DYNAMIC_TRIGGER_TTL_DAYS = 14
 
+# The `technicals` columns a dynamic trigger is allowed to read.
+#
+# `dynamic_trigger_type` is free text an agent writes into the decision
+# artifact, and the checker below used to split it and interpolate the result
+# straight into `SELECT {col} FROM technicals`. `sma_100_drop` is what made
+# that visible: no `sma_100` column has ever existed, so one active ACHR row
+# logged 319 "column sma_100 does not exist" errors between 19:07 and 00:30 on
+# 2026-08-10 — one per scheduler pass — for a trigger that could never fire.
+#
+# This set is now the only thing that can put a column name in that query.
+# It lists what the checker can actually reach: the branch below is entered
+# only for `sma_`/`rsi_` prefixes, so ema_12/ema_26 are deliberately absent
+# rather than silently widened.
+_TRIGGER_METRIC_COLUMNS = frozenset({"sma_20", "sma_50", "sma_200", "rsi_14"})
+
+# Trigger rows already reported as unevaluatable, so the 1-minute scheduler
+# says it once per process instead of once per pass. Without this, replacing
+# the SQL error with a warning would just trade one 1,440-lines/day storm for
+# another.
+_INERT_TRIGGERS_SEEN: set[str] = set()
+
+
+def dynamic_trigger_is_evaluable(setup: str) -> bool:
+    """Can check_price_triggers() below actually evaluate this setup?
+
+    The one source of truth for that question, imported by
+    app.v3.artifact_validators so a setup the checker cannot read is never
+    written as a live trigger row at all. It mirrors the ladder in
+    check_price_triggers exactly; test_dynamic_trigger_registry pins the two
+    together, because a predicate that drifts from the checker either revives
+    dead rows or silently drops working ones.
+    """
+    setup = (setup or "").strip()
+    if not setup:
+        return False
+    if setup == "trailing_drop":
+        return True
+    if not setup.startswith(("sma_", "rsi_")):
+        return False
+    parts = setup.split("_")
+    metric_col = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else ""
+    if metric_col not in _TRIGGER_METRIC_COLUMNS:
+        return False
+    if parts[0] == "rsi":
+        return "oversold" in setup or "overbought" in setup
+    return any(word in setup for word in ("drop", "below", "rise", "above"))
+
+
+def _note_inert_trigger(trigger_id: str, ticker: str, setup: str, why: str) -> None:
+    """Report a dynamic trigger that cannot fire, once per trigger per process.
+
+    46% of active dynamic triggers (68 of 147, measured 2026-08-10) are in this
+    state: the agents invent setup names — sma_50_reclaim, sma_50_breakout,
+    sma_200_break, support_retest — that the comparison ladder below matches
+    none of, so the trigger sits active for its full 14-day TTL and silently
+    never evaluates. They were invisible because only the one with a bad
+    COLUMN raised anything. Naming them is not the same as arming them: every
+    one of these rows is a BUY, and giving the unmatched names a meaning would
+    arm 68 dormant buy triggers in a single deploy.
+    """
+    if trigger_id in _INERT_TRIGGERS_SEEN:
+        return
+    _INERT_TRIGGERS_SEEN.add(trigger_id)
+    logger.warning(
+        "[TRIGGER] INERT %s for %s: setup %r %s — it cannot fire and will sit "
+        "active until the %d-day TTL sweep retires it.",
+        trigger_id, ticker, setup, why, DYNAMIC_TRIGGER_TTL_DAYS,
+    )
+
 
 def _expire_stale_dynamic_triggers(db) -> None:
     """Deactivate dynamic triggers older than the TTL (stale-thesis sweep). Cheap
@@ -289,14 +358,23 @@ async def check_triggers(bot_id: str) -> list[dict]:
                 if dynamic_trigger_type.startswith("sma_") or dynamic_trigger_type.startswith("rsi_"):
                     # Extract metric name, e.g., 'sma_200' from 'sma_200_drop'
                     parts = dynamic_trigger_type.split("_")
-                    if len(parts) >= 2:
-                        metric_col = f"{parts[0]}_{parts[1]}"
+                    metric_col = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else ""
+                    if metric_col not in _TRIGGER_METRIC_COLUMNS:
+                        # Refused before the query, not after: an agent-authored
+                        # string must never reach the SQL, and a column that does
+                        # not exist is a dead trigger rather than an error to
+                        # re-raise every 60 seconds.
+                        _note_inert_trigger(
+                            trigger_id, ticker, dynamic_trigger_type,
+                            f"reads {metric_col or '?'}, which is not a technicals column",
+                        )
+                    else:
                         with get_db() as db:
                             tech_row = db.execute(
                                 f"SELECT {metric_col} FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
                                 [ticker],
                             ).fetchone()
-                            
+
                         if tech_row and tech_row[0] is not None:
                             metric_val = float(tech_row[0])
                             if parts[0] == "rsi":
@@ -314,10 +392,24 @@ async def check_triggers(bot_id: str) -> list[dict]:
                                     if not threshold:
                                         threshold = 70.0
                                     triggered = metric_val >= threshold
+                                else:
+                                    _note_inert_trigger(
+                                        trigger_id, ticker, dynamic_trigger_type,
+                                        "is an RSI setup naming neither oversold nor overbought",
+                                    )
                             elif "drop" in dynamic_trigger_type or "below" in dynamic_trigger_type:
                                 triggered = current_price < metric_val
                             elif "rise" in dynamic_trigger_type or "above" in dynamic_trigger_type:
                                 triggered = current_price > metric_val
+                            else:
+                                # sma_50_reclaim, sma_50_breakout, sma_200_break…
+                                # The column resolves, so this used to run a query
+                                # and then quietly compare nothing.
+                                _note_inert_trigger(
+                                    trigger_id, ticker, dynamic_trigger_type,
+                                    "names no direction the checker understands "
+                                    "(expected drop/below or rise/above)",
+                                )
 
                 elif dynamic_trigger_type == "trailing_drop":
                     # Initialize or update highest_price
@@ -332,6 +424,17 @@ async def check_triggers(bot_id: str) -> list[dict]:
                     if highest_price and highest_price > 0:
                         trail_price = highest_price * (1 - dynamic_trigger_value)
                         triggered = current_price <= trail_price
+
+                else:
+                    # support_retest, resistance_breakout, buy_at_support,
+                    # price_cross_above… roughly half the inert population. The
+                    # checker only ever understood sma_/rsi_/trailing_drop, so
+                    # these never reached a comparison at all.
+                    _note_inert_trigger(
+                        trigger_id, ticker, dynamic_trigger_type,
+                        "is not an sma_/rsi_/trailing_drop setup, the only "
+                        "families the checker evaluates",
+                    )
 
         if triggered:
             logger.warning(

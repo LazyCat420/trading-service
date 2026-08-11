@@ -202,12 +202,15 @@ _AGENT_META = {
     "junior_analyst":       {"label": "Junior Analyst",       "icon": "📋", "layer": 2},
     "fundamental_analyst":  {"label": "Fundamental Analyst",  "icon": "📊", "layer": 2},
     "quant_analyst":        {"label": "Quant Analyst",        "icon": "📈", "layer": 2},
+    "valuation_analyst":    {"label": "Valuation Analyst",    "icon": "💰", "layer": 2},
     "bull_agent":           {"label": "Bull Agent",           "icon": "🐂", "layer": 3},
     "bear_agent":           {"label": "Bear Agent",           "icon": "🐻", "layer": 3},
+    "bull_defense":         {"label": "Bull Defense",         "icon": "🛡️",  "layer": 3},
     "tournament_debate":    {"label": "Tournament Debate",    "icon": "🏆", "layer": 3},
     "debate_judge":         {"label": "Debate Judge",         "icon": "⚖️",  "layer": 3},
     "board_of_directors":   {"label": "Board of Directors",   "icon": "👔", "layer": 4},
     "decision_synthesizer": {"label": "Decision Synthesizer", "icon": "📝", "layer": 5},
+    "contradiction_shadow": {"label": "Contradiction Shadow", "icon": "🔍", "layer": 6},
 }
 
 def _canonical_agent(name: str) -> str:
@@ -224,12 +227,23 @@ _PIPELINE_EDGES = [
     ("regime_engine", "quant_analyst", "regime_classification"),
     ("junior_analyst", "fundamental_analyst", "desk_note"),
     ("fundamental_analyst", "quant_analyst", "fundamental_report"),
+    ("junior_analyst", "valuation_analyst", "desk_note"),
+    ("valuation_analyst", "bull_agent", "valuation_report"),
+    ("valuation_analyst", "bear_agent", "valuation_report"),
     ("junior_analyst", "bull_agent", "desk_note"),
     ("fundamental_analyst", "bull_agent", "fundamental_report"),
     ("quant_analyst", "bull_agent", "quant_report"),
     ("junior_analyst", "bear_agent", "desk_note"),
     ("fundamental_analyst", "bear_agent", "fundamental_report"),
     ("quant_analyst", "bear_agent", "quant_report"),
+    # The debate is four turns, not three: the Bull answers the Bear before
+    # the judge rules (orchestrator._queue_agent, bull_defense ← bull+bear,
+    # debate_judge ← bull_defense). The judge still reads the opening bull and
+    # bear summaries directly via get_compressed_context(include_debate=True),
+    # so those edges are real too and both are kept.
+    ("bull_agent", "bull_defense", "bull_argument"),
+    ("bear_agent", "bull_defense", "bear_rebuttal"),
+    ("bull_defense", "debate_judge", "bull_defense"),
     ("bull_agent", "debate_judge", "bull_argument"),
     ("bear_agent", "debate_judge", "bear_rebuttal"),
     ("debate_judge", "board_of_directors", "debate_judge"),
@@ -241,6 +255,10 @@ _PIPELINE_EDGES = [
     ("quant_analyst", "tournament_debate", "quant_report"),
     ("tournament_debate", "board_of_directors", "tournament_result"),
     ("board_of_directors", "decision_synthesizer", "final_decision"),
+    # Runs after the decision is on the desk. It never changes one — it is
+    # graphed so the post-decision dissent check is visible as a stage rather
+    # than as a floating node with no explanation.
+    ("decision_synthesizer", "contradiction_shadow", "final_decision"),
 ]
 
 
@@ -816,74 +834,125 @@ def get_ticker_detail(cycle_id: str, ticker: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Mermaid node ids. Every agent that can appear in the graph belongs here:
+# the fallback below keeps an unknown agent visible, but a named id keeps the
+# diagram readable.
+_SHORT_IDS = {
+    "regime_engine": "RE",
+    "junior_analyst": "JA",
+    "fundamental_analyst": "FA",
+    "quant_analyst": "QA",
+    "valuation_analyst": "VAL",
+    "bull_agent": "BULL",
+    "bear_agent": "BEAR",
+    "bull_defense": "DEF",
+    "tournament_debate": "TOURN",
+    "debate_judge": "JUDGE",
+    "board_of_directors": "BOD",
+    "decision_synthesizer": "DS",
+    "contradiction_shadow": "SHADOW",
+}
+
+_FAILED_OUTCOMES = ("AGENT_ERROR", "TIMED_OUT")
+
+
+def _assign_short_ids(agent_ids) -> dict[str, str]:
+    """Give every agent in the graph exactly one Mermaid id.
+
+    Node ids and the edge guard MUST come from this one map. The previous code
+    derived node ids with a `[:6].upper()` fallback but guarded edges against
+    `short_ids.get(name)` with no default, so any agent missing from the table
+    contributed `None` to the guard list and could never match its own
+    fallback id — its edges were dropped from the diagram while still being
+    returned in the JSON. That silently un-drew every `tournament_debate` edge.
+    """
+    assigned: dict[str, str] = {}
+    used: set[str] = set()
+    for aid in agent_ids:
+        base = _SHORT_IDS.get(aid) or (
+            "".join(c for c in aid.upper()[:8] if c.isalnum() or c == "_") or "AGENT"
+        )
+        sid, n = base, 2
+        while sid in used:
+            sid, n = f"{base}_{n}", n + 1
+        used.add(sid)
+        assigned[aid] = sid
+    return assigned
+
+
+def _node_caption(rows: list[dict]) -> str:
+    """Caption one agent's telemetry rows.
+
+    A cycle runs each agent once per ticker, so an unfiltered graph holds
+    several rows per agent. The old dedup kept whichever row sorted first and
+    presented its numbers as the cycle's: on cycle-v3-1786401874 that showed
+    `fundamental_analyst 199.3s ✅ Q:87` from MA while hiding the AGENT_ERROR
+    the same agent took on F. Fold the rows instead and say how many there
+    were, so a failure anywhere in the wave is visible on the node.
+    """
+    durations = sorted((r.get("elapsed_ms") or 0) for r in rows)
+    median_ms = durations[len(durations) // 2]
+    failures = sum(1 for r in rows if r.get("outcome") in _FAILED_OUTCOMES)
+    degraded = sum(1 for r in rows if r.get("outcome") not in ("SUCCESS", *_FAILED_OUTCOMES))
+    scores = sorted(s for r in rows if (s := r.get("quality_score", -1) or -1) >= 0)
+
+    if len(rows) == 1:
+        timing = f"{durations[0] / 1000:.1f}s"
+    else:
+        timing = f"×{len(rows)} · med {median_ms / 1000:.1f}s"
+
+    if failures and len(rows) > 1:
+        status = f"❌ {failures}/{len(rows)} failed"
+    elif failures:
+        status = "❌"
+    elif degraded:
+        status = "⚠️"
+    else:
+        status = "✅"
+
+    quality = f" Q:{scores[len(scores) // 2]}" if scores else ""
+    return f"{timing} {status}{quality}"
+
+
+def _node_fill(rows: list[dict]) -> str:
+    """Fill colour for a folded node — the worst state in the group wins."""
+    if any(r.get("outcome") in _FAILED_OUTCOMES for r in rows):
+        return "#dc2626"
+    if any(r.get("outcome") == "DATA_GAP" for r in rows):
+        return "#d97706"
+    if any(r.get("outcome") != "SUCCESS" for r in rows):
+        return "#6366f1"
+    scores = [s for r in rows if (s := r.get("quality_score", -1) or -1) >= 0]
+    if not scores:
+        return "#059669"
+    worst = min(scores)
+    return "#059669" if worst >= 70 else "#d97706" if worst >= 40 else "#dc2626"
+
+
 def _build_mermaid(nodes: list[dict], edges: list[dict]) -> str:
     """Build a Mermaid flowchart string from nodes and edges."""
     lines = ["graph TD"]
 
-    # Short IDs for Mermaid
-    short_ids = {
-        "regime_engine": "RE",
-        "junior_analyst": "JA",
-        "fundamental_analyst": "FA",
-        "quant_analyst": "QA",
-        "bull_agent": "BULL",
-        "bear_agent": "BEAR",
-        "debate_judge": "JUDGE",
-        "board_of_directors": "BOD",
-        "decision_synthesizer": "DS",
-    }
-
-    # Deduplicate nodes by agent_name (take first occurrence per agent)
-    seen_agents: dict[str, dict] = {}
+    # One entry per agent, in first-seen order, keeping every row.
+    grouped: dict[str, list[dict]] = {}
     for node in nodes:
-        aid = node["id"]
-        if aid not in seen_agents:
-            seen_agents[aid] = node
+        grouped.setdefault(node["id"], []).append(node)
 
-    # Build node definitions
-    for node in seen_agents.values():
-        aid = node["id"]
-        sid = short_ids.get(aid, aid[:6].upper())
-        elapsed_s = node["elapsed_ms"] / 1000
-        icon = node.get("icon", "")
-        label = node.get("label", aid)
-        outcome_icon = "✅" if node["outcome"] == "SUCCESS" else "❌" if node["outcome"] in ("AGENT_ERROR", "TIMED_OUT") else "⚠️"
+    short_ids = _assign_short_ids(grouped)
 
-        # Show quality score if available
-        qs = node.get("quality_score", -1)
-        quality_label = f" Q:{qs}" if qs >= 0 else ""
-        lines.append(
-            f'    {sid}["{icon} {label}<br/>{elapsed_s:.1f}s {outcome_icon}{quality_label}"]'
-        )
+    for aid, rows in grouped.items():
+        first = rows[0]
+        icon = first.get("icon", "")
+        label = first.get("label", aid)
+        lines.append(f'    {short_ids[aid]}["{icon} {label}<br/>{_node_caption(rows)}"]')
 
-    # Build edges
     for edge in edges:
-        src = short_ids.get(edge["from"], edge["from"][:6].upper())
-        dst = short_ids.get(edge["to"], edge["to"][:6].upper())
-        if src in [short_ids.get(n) for n in seen_agents] and dst in [short_ids.get(n) for n in seen_agents]:
+        src = short_ids.get(edge["from"])
+        dst = short_ids.get(edge["to"])
+        if src and dst:
             lines.append(f"    {src} --> {dst}")
 
-    # Style nodes by quality + outcome (quality takes priority for SUCCESS nodes)
-    for node in seen_agents.values():
-        aid = node["id"]
-        sid = short_ids.get(aid, aid[:6].upper())
-        qs = node.get("quality_score", -1)
-
-        if node["outcome"] in ("AGENT_ERROR", "TIMED_OUT"):
-            lines.append(f"    style {sid} fill:#dc2626,color:#fff")
-        elif node["outcome"] == "SUCCESS" and qs >= 0:
-            # Color by quality score
-            if qs >= 70:
-                lines.append(f"    style {sid} fill:#059669,color:#fff")  # Green — good
-            elif qs >= 40:
-                lines.append(f"    style {sid} fill:#d97706,color:#fff")  # Yellow — weak
-            else:
-                lines.append(f"    style {sid} fill:#dc2626,color:#fff")  # Red — dead end
-        elif node["outcome"] == "SUCCESS":
-            lines.append(f"    style {sid} fill:#059669,color:#fff")
-        elif node["outcome"] == "DATA_GAP":
-            lines.append(f"    style {sid} fill:#d97706,color:#fff")
-        else:
-            lines.append(f"    style {sid} fill:#6366f1,color:#fff")
+    for aid, rows in grouped.items():
+        lines.append(f"    style {short_ids[aid]} fill:{_node_fill(rows)},color:#fff")
 
     return "\n".join(lines)

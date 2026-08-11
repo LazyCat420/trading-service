@@ -307,6 +307,31 @@ def validate_trade_decision_artifact(artifact: dict) -> dict:
         artifact["dynamic_trigger"] = None
         return artifact
 
+    # A setup order_triggers cannot evaluate is a dead watch row, whether or
+    # not the model supplied a threshold. The `value is None` branch below
+    # already dropped the valueless ones for exactly this reason — but agents
+    # invent setup names freely (sma_50_reclaim, support_retest,
+    # resistance_breakout) and usually DO attach a price, so those sailed
+    # through and registered as active triggers that never evaluate. 68 of the
+    # 147 active dynamic triggers were in that state on 2026-08-10.
+    #
+    # Dropping them changes no trading behaviour: they could not fire before
+    # and cannot fire now. It only stops the desk from believing it has a watch
+    # in place that does not exist.
+    try:
+        from app.trading.order_triggers import dynamic_trigger_is_evaluable
+
+        if not dynamic_trigger_is_evaluable(t_type):
+            _note(
+                artifact,
+                f"dynamic_trigger type '{t_type}' cannot be evaluated by "
+                "order_triggers — trigger dropped rather than registered inert",
+            )
+            artifact["dynamic_trigger"] = None
+            return artifact
+    except ImportError:  # pragma: no cover — validator must never hard-fail
+        pass
+
     value = trigger.get("value")
     if value is not None:
         try:

@@ -81,13 +81,49 @@ _FORBIDDEN = frozenset({
 })
 
 
-def _canary_check(agent_name: str, tool_name: str) -> None:
+# The marker a Prism policy denial leaves in `error_message` — set by
+# base_agent._on_tool_result from the tool result's structured `error` field
+# (`{"success": false, "error": "POLICY_DENIED", ...}`). Over the 7 days to
+# 2026-08-10 it was the ONLY distinct error_message recorded against any tool
+# in _FORBIDDEN: the DENY policy has held for every attempt on record.
+_POLICY_DENIED = "POLICY_DENIED"
+
+
+def _forbidden_call_executed(error_message: str, was_blocked: bool) -> bool:
+    """Did a forbidden tool actually RUN, or was it stopped before running?
+
+    Fail-loud by design: only the two shapes that positively prove the call
+    was stopped return False. Anything unrecognised counts as executed and
+    keeps its ERROR, because a denial marker nobody has seen yet must not
+    silence the alarm it was written for.
+    """
+    if was_blocked:  # ToolLoopDetector refused the call — it never dispatched.
+        return False
+    return _POLICY_DENIED not in (error_message or "")
+
+
+def _canary_check(
+    agent_name: str,
+    tool_name: str,
+    *,
+    error_message: str = "",
+    was_blocked: bool = False,
+    cycle_id: str = "",
+    ticker: str = "",
+) -> None:
     """Log loudly when an agent calls something outside its whitelist.
 
     Deliberately does NOT block the call: this module is telemetry, and a
     telemetry path that can abort a cycle is worse than the drift it detects.
     The enforcement lives in the Prism persona pin; this makes a breach
     *visible* the moment it happens instead of at the next manual audit.
+
+    An ATTEMPT is not a BREACH. Until 2026-08-10 this logged ERROR the moment
+    a forbidden tool was *called*, without reading what came back — so the 14
+    denied calls in cycle-v3-1786401874 were reported as 14 policy failures
+    while the DENY policy was in fact holding on every one of them. The
+    outcome now decides the severity, and the alarm means what its own comment
+    below says it means.
     """
     try:
         if not agent_name or not str(agent_name).startswith("v3_"):
@@ -112,6 +148,17 @@ def _canary_check(agent_name: str, tool_name: str) -> None:
             return
 
         if tool in _FORBIDDEN:
+            if not _forbidden_call_executed(error_message, was_blocked):
+                # The guard did its job. Worth a line — an agent still reached
+                # for the tool, which is drift in the persona's prompt — but
+                # not a security regression, and not something to page on.
+                logger.info(
+                    "[ToolCanary] FORBIDDEN TOOL ATTEMPTED: %s called %r — the "
+                    "DENY policy HELD and the call never executed.",
+                    agent_name, tool,
+                )
+                return
+
             # The DENY policy registered in app/v3/prism_registration.py should
             # have made this call impossible. Reaching here means the policy is
             # NOT holding — the persona lost it (a re-registration without
@@ -119,16 +166,23 @@ def _canary_check(agent_name: str, tool_name: str) -> None:
             # reconstructing them). Record it where it can be alerted on, not
             # only in a log line.
             logger.error(
-                "[ToolCanary] FORBIDDEN TOOL EXECUTED: %s called %r. The DENY "
-                "policy in app/v3/prism_registration.py did NOT hold — verify "
-                "the CUSTOM_%s persona still carries its `policies` array.",
-                agent_name, tool, agent_name.upper(),
+                "[ToolCanary] FORBIDDEN TOOL EXECUTED: %s called %r for %s "
+                "(cycle=%s) and it RAN. The DENY policy in "
+                "app/v3/prism_registration.py did NOT hold — verify the "
+                "CUSTOM_%s persona still carries its `policies` array.",
+                agent_name, tool, ticker or "?", cycle_id or "?", agent_name.upper(),
             )
             try:
                 from app.v3.invariants import record_violation
 
+                # cycle_id/ticker are plain kwargs on record_violation and were
+                # simply never passed: every row landed with NULLs and every
+                # log line read "VIOLATED for ? (cycle=?)", so a breach could
+                # not be tied to the cycle that produced it.
                 record_violation(
                     "FORBIDDEN_TOOL_EXECUTED",
+                    cycle_id=cycle_id,
+                    ticker=ticker,
                     agent=agent_name,
                     tool=tool,
                 )
@@ -173,7 +227,14 @@ def record_tool_call(
     # nobody queries. A unit test catches config drift at CI time; this
     # catches a Prism-side persona re-sync at RUNTIME, which is the path the
     # original hole actually came through.
-    _canary_check(agent_name, tool_name)
+    _canary_check(
+        agent_name,
+        tool_name,
+        error_message=error_message,
+        was_blocked=was_blocked,
+        cycle_id=cycle_id,
+        ticker=ticker,
+    )
 
     try:
         from app.db.connection import get_db

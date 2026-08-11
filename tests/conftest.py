@@ -20,8 +20,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # The container gets the lazycat SDK via PYTHONPATH=/app/lazycat-sdk (docker-compose.yml);
 # mirror that locally from the sibling checkout so tests import the same code.
-_sdk_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lazycat-sdk"))
-if os.path.isdir(_sdk_dir) and _sdk_dir not in sys.path:
+#
+# Walk up rather than hardcoding "../..": a git worktree sits two levels deeper
+# (trading-service/.worktrees/wt-x/), so the fixed relative path resolved to
+# trading-service/.worktrees/lazycat-sdk, the SDK never loaded, and the suite
+# reported 173 failures and 90 errors in files the branch had not touched —
+# every one of them a missing `lazycat` import. Worktree-first is the standing
+# workflow here, so the harness has to survive being run from one.
+_sdk_dir = ""
+for _ancestor in [os.path.abspath(os.path.join(os.path.dirname(__file__), *([".."] * _n)))
+                  for _n in range(1, 6)]:
+    _candidate = os.path.join(_ancestor, "lazycat-sdk")
+    if os.path.isdir(_candidate):
+        _sdk_dir = _candidate
+        break
+if _sdk_dir and _sdk_dir not in sys.path:
     sys.path.insert(0, _sdk_dir)
 
 # Configure yfinance cache location early to prevent race conditions and permission errors in tests

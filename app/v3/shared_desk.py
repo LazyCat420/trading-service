@@ -687,8 +687,30 @@ class SharedDesk:
                 )
 
             if self.bull_defense:
+                # The two scalars only, deliberately. The defense artifact also
+                # carries defense_points / concessions /
+                # independent_risks_answered, and on cycle-v3-1786401874 those
+                # ran to ~8k chars for META — roughly 2k tokens added to the
+                # judge AND the board, the two agents whose non-sheddable
+                # context was already logging 6.6-11.1k against a 2,048-token
+                # embedder that cycle. They are also largely a restatement of
+                # `summary`, which already opens "I concede…". The verdict and
+                # the number are what summary does NOT state outright, they
+                # cost ~15 tokens, and the bull and bear sections above have
+                # carried their confidence all along.
                 summary = self.bull_defense.get("summary", "")
-                sections.append(f"## Bull Final Defense\n{summary}")
+                conf = self.bull_defense.get("final_confidence", 0)
+                survives = self.bull_defense.get("thesis_survives")
+                if isinstance(survives, str):
+                    survives = survives.strip().lower() in ("true", "yes")
+                verdict = (
+                    "thesis SURVIVES" if survives
+                    else "thesis DOES NOT survive" if survives is not None
+                    else "verdict unstated"
+                )
+                sections.append(
+                    f"## Bull Final Defense ({verdict}, confidence: {conf}%)\n{summary}"
+                )
 
             tournament = getattr(self, "tournament_result", None)
             if tournament and include_verdicts:

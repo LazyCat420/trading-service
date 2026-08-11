@@ -141,7 +141,7 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
         replica = SharedDesk.from_dict(base)
         # run_v3_agent returns a PhaseOutcome enum; the decision itself lands
         # on the desk replica as the trade_decision field.
-        await run_v3_agent(
+        outcome = await run_v3_agent(
             replica,
             decision_agent,
             cycle_id=f"challenger-{cycle_id}",
@@ -152,7 +152,18 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
         ch_action = artifact.get("action")
         ch_conf = artifact.get("confidence")
         if not ch_action:
-            logger.warning("[Challenger] %s: no action produced — not logged", ticker)
+            # The outcome used to be discarded, so a missing challenger row —
+            # META on cycle-v3-1786401874, 4 rows for 5 tickers — could not be
+            # told apart from a timeout, a crash, or an agent that answered in
+            # the wrong shape. Whether this is worth RETRYING depends on which
+            # of those it is, and that question was unanswerable from the logs.
+            logger.warning(
+                "[Challenger] %s: no action produced — not logged "
+                "(outcome=%s, artifact_keys=%s)",
+                ticker,
+                getattr(outcome, "value", outcome),
+                sorted(artifact.keys()) or "none",
+            )
             return
 
         # One vendor, via the audited helper. `source` is in the price_history

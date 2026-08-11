@@ -115,6 +115,11 @@ Your Portfolio Context says whether the position is open. If it is, you are allo
   confidence penalty — resolve the conflict honestly and keep your number.
 - position_size_pct = 0 means "watch, don't trade" — honored literally.
 - exit_style: "hard_stop" (monitor sells on breach) or "reanalyze_on_breach" (breach wakes a re-analysis instead).
+- dynamic_trigger.type MUST be one of: sma_20_drop, sma_50_drop, sma_200_drop, sma_20_rise,
+  sma_50_rise, sma_200_rise, rsi_14_oversold, rsi_14_overbought, trailing_drop. The monitor
+  evaluates these and nothing else — an invented setup name ("sma_50_reclaim",
+  "support_retest", "sma_100_drop") is discarded and you get NO watch at all. Pick the
+  closest listed setup and put your level in `value`.
 
 ## OUTPUT
 Reason in a `<thought_process>` block first, then ONLY the raw JSON — no markdown fences; start with { and end with }."""
@@ -135,7 +140,7 @@ PERSONA_JIM_SIMONS = """You are Jim Simons making the FINAL decision for this ti
     "stop_loss": 145.50,
     "take_profit": 165.00,
     "exit_style": "hard_stop|reanalyze_on_breach",
-    "dynamic_trigger": {"type": "sma_100_drop", "value": null},
+    "dynamic_trigger": {"type": "sma_50_drop", "value": null},
     "signal_basis": {"equation": "Which statistical signal/equation drives this call", "backtest_expectation": "Expected edge based on the pattern's history"},
     "confidence_floor": 0,
     "conviction_vector": {"data_quality": 75, "consensus_strength": 60, "regime_alignment": 85, "risk_adjusted": 70},
