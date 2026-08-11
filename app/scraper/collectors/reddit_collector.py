@@ -427,10 +427,127 @@ class RedditCollector:
             logger.error(f"[reddit] RSS search error: {e}")
             return []
 
+    async def scrape_post_details(self, permalink: str) -> dict[str, Any]:
+        """Scrape details and comments for a specific post (YARS feature).
+
+        Uses RSS Atom feed (permalink.rss) which remains accessible without OAuth.
+        Returns a dict containing post title, selftext, author, score, and list of comments.
+        """
+        import feedparser
+
+        clean_permalink = permalink.strip()
+        if not clean_permalink.startswith("/"):
+            clean_permalink = f"/{clean_permalink}"
+        if clean_permalink.endswith("/"):
+            clean_permalink = clean_permalink[:-1]
+
+        url = f"https://www.reddit.com{clean_permalink}.rss?limit=100"
+        domain = "www.reddit.com"
+        _strip = re.compile(r"<[^>]+>")
+
+        try:
+            async with rate_limiter.acquire(domain):
+                r = await session_manager.client.get(url, headers=_get_reddit_headers(), timeout=15.0)
+
+            if r.status_code != 200:
+                logger.warning(f"[reddit] Post RSS details failed for {clean_permalink}: HTTP {r.status_code}")
+                return {}
+
+            feed = feedparser.parse(r.text)
+            if not feed.entries:
+                return {}
+
+            post_entry = feed.entries[0]
+            title = getattr(post_entry, "title", "") or ""
+            selftext = _strip.sub(" ", getattr(post_entry, "summary", "") or "").strip()
+            author = getattr(post_entry, "author", "") or ""
+
+            comments = []
+            for entry in feed.entries[1:]:
+                body = _strip.sub(" ", getattr(entry, "summary", "") or "").strip()
+                if body and body not in ("[deleted]", "[removed]"):
+                    comments.append({
+                        "author": getattr(entry, "author", ""),
+                        "body": body,
+                        "updated": getattr(entry, "updated", ""),
+                    })
+
+            return {
+                "permalink": clean_permalink,
+                "title": title,
+                "selftext": selftext,
+                "author": author,
+                "num_comments": len(comments),
+                "comments": comments,
+            }
+        except Exception as e:
+            logger.error(f"[reddit] Error scraping post details for {clean_permalink}: {e}")
+            return {}
+
+    async def scrape_user_data(self, username: str, limit: int = 25) -> dict[str, Any]:
+        """Scrape user submissions and comments via public Atom feeds (YARS feature).
+
+        Returns user post history and recent comments without requiring API keys.
+        """
+        import feedparser
+
+        clean_user = username.lstrip("u/").strip()
+        domain = "www.reddit.com"
+        _strip = re.compile(r"<[^>]+>")
+
+        submitted_url = f"https://www.reddit.com/user/{clean_user}/submitted.rss?limit={limit}"
+        comments_url = f"https://www.reddit.com/user/{clean_user}/comments.rss?limit={limit}"
+
+        user_posts = []
+        user_comments = []
+
+        try:
+            # Submissions
+            async with rate_limiter.acquire(domain):
+                r_sub = await session_manager.client.get(submitted_url, headers=_get_reddit_headers(), timeout=15.0)
+            if r_sub.status_code == 200:
+                feed_sub = feedparser.parse(r_sub.text)
+                for entry in feed_sub.entries[:limit]:
+                    user_posts.append({
+                        "title": getattr(entry, "title", ""),
+                        "link": getattr(entry, "link", ""),
+                        "updated": getattr(entry, "updated", ""),
+                        "content": _strip.sub(" ", getattr(entry, "summary", "") or "").strip(),
+                    })
+
+            # Comments
+            async with rate_limiter.acquire(domain):
+                r_com = await session_manager.client.get(comments_url, headers=_get_reddit_headers(), timeout=15.0)
+            if r_com.status_code == 200:
+                feed_com = feedparser.parse(r_com.text)
+                for entry in feed_com.entries[:limit]:
+                    user_comments.append({
+                        "title": getattr(entry, "title", ""),
+                        "link": getattr(entry, "link", ""),
+                        "updated": getattr(entry, "updated", ""),
+                        "body": _strip.sub(" ", getattr(entry, "summary", "") or "").strip(),
+                    })
+
+            return {
+                "username": clean_user,
+                "submissions_count": len(user_posts),
+                "comments_count": len(user_comments),
+                "submissions": user_posts,
+                "comments": user_comments,
+            }
+        except Exception as e:
+            logger.error(f"[reddit] Error scraping user data for u/{clean_user}: {e}")
+            return {"username": clean_user, "submissions": [], "comments": []}
+
     async def _fetch_subreddit(
         self, subreddit: str, sort: str, time_filter: str, limit: int
     ) -> list[dict]:
-        """Fetch posts from a single subreddit using public JSON API, with RSS fallback."""
+        """Fetch posts from a single subreddit using RSS-first mode to bypass 403 bot-walls."""
+        posts = await self._fetch_subreddit_rss(subreddit, sort, time_filter, limit)
+        if posts:
+            return posts
+
+        # Fallback to .json if RSS returns no items
         domain = "www.reddit.com"
         url = f"https://www.reddit.com/r/{subreddit}/{sort}.json"
         params = {"t": time_filter, "limit": limit}
@@ -438,23 +555,16 @@ class RedditCollector:
         try:
             async with rate_limiter.acquire(domain):
                 r = await session_manager.client.get(
-                    url, params=params, headers=_get_reddit_headers(), timeout=30.0
+                    url, params=params, headers=_get_reddit_headers(), timeout=15.0
                 )
-
-            if r.status_code == 429:
-                logger.warning(f"[reddit] r/{subreddit} JSON rate limited. Trying RSS fallback...")
-                return await self._fetch_subreddit_rss(subreddit, sort, time_filter, limit)
-
-            if r.status_code != 200:
-                logger.warning(f"[reddit] r/{subreddit} JSON HTTP {r.status_code}. Trying RSS fallback...")
-                return await self._fetch_subreddit_rss(subreddit, sort, time_filter, limit)
-
-            data = r.json()
-            children = data.get("data", {}).get("children", [])
-            return [c.get("data", {}) for c in children if c.get("data")]
+            if r.status_code == 200:
+                data = r.json()
+                children = data.get("data", {}).get("children", [])
+                return [c.get("data", {}) for c in children if c.get("data")]
+            return []
         except Exception as e:
-            logger.warning(f"[reddit] r/{subreddit} JSON error: {e}. Trying RSS fallback...")
-            return await self._fetch_subreddit_rss(subreddit, sort, time_filter, limit)
+            logger.warning(f"[reddit] r/{subreddit} JSON fallback error: {e}")
+            return []
 
     async def _fetch_subreddit_rss(
         self, subreddit: str, sort: str, time_filter: str, limit: int

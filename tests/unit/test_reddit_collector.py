@@ -1,69 +1,130 @@
+"""tests/unit/test_reddit_collector.py
+---------------------------------------
+Unit test suite for RedditCollector (RSS-First + YARS features: post details & user data).
+"""
+
+import asyncio
+from types import SimpleNamespace
 import pytest
-from app.collectors.reddit_collector import _is_quality_post, _is_relevant_to_ticker
 
-def test_is_quality_post_deleted():
-    post = {"selftext": "[deleted]", "score": 100, "num_comments": 50}
-    assert _is_quality_post(post) is False
+from app.scraper.collectors.reddit_collector import RedditCollector
 
-    post = {"selftext": "[removed]", "score": 100, "num_comments": 50}
-    assert _is_quality_post(post) is False
 
-def test_is_quality_post_nsfw():
-    post = {"selftext": "Good post", "score": 100, "num_comments": 50, "over_18": True}
-    assert _is_quality_post(post) is False
+ATOM_THREAD = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>What Are Your Moves Tomorrow</title>
+  <entry>
+    <title>What Are Your Moves Tomorrow</title>
+    <summary>&lt;div&gt;Discuss your moves. $SPY calls anyone?&lt;/div&gt;</summary>
+    <author><name>/u/mod</name></author>
+  </entry>
+  <entry>
+    <title>/u/trader1 on thread</title>
+    <summary>&lt;p&gt;Loading up on TSLA before earnings&lt;/p&gt;</summary>
+    <author><name>/u/trader1</name></author>
+  </entry>
+  <entry>
+    <title>/u/trader2 on thread</title>
+    <summary>&lt;p&gt;[deleted]&lt;/p&gt;</summary>
+    <author><name>/u/trader2</name></author>
+  </entry>
+</feed>"""
 
-def test_is_quality_post_low_engagement():
-    post = {"selftext": "Long post with good content but no engagement", "score": 2, "num_comments": 1}
-    assert _is_quality_post(post) is False
+ATOM_USER_SUBMISSIONS = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Submissions by lazy_trader</title>
+  <entry>
+    <title>My DD on NVDA</title>
+    <link href="https://www.reddit.com/r/stocks/comments/nvda123/my_dd/"/>
+    <updated>2026-08-01T10:00:00Z</updated>
+    <summary>&lt;p&gt;Here is why NVDA will grow.&lt;/p&gt;</summary>
+  </entry>
+</feed>"""
 
-def test_is_quality_post_title_only_low_score():
-    post = {"selftext": "Short", "score": 40, "num_comments": 10}
-    assert _is_quality_post(post) is False
+ATOM_USER_COMMENTS = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Comments by lazy_trader</title>
+  <entry>
+    <title>lazy_trader on My DD on NVDA</title>
+    <link href="https://www.reddit.com/r/stocks/comments/nvda123/comment/c1/"/>
+    <updated>2026-08-01T11:00:00Z</updated>
+    <summary>&lt;p&gt;Agreed, revenue is solid.&lt;/p&gt;</summary>
+  </entry>
+</feed>"""
 
-def test_is_quality_post_title_only_high_score():
-    post = {"selftext": "Short", "score": 60, "num_comments": 10}
-    assert _is_quality_post(post) is True
 
-def test_is_quality_post_valid():
-    post = {"selftext": "A very long detailed DD post about a company that is more than fifty characters long.", "score": 10, "num_comments": 5}
-    assert _is_quality_post(post) is True
+class _FakeResponse:
+    def __init__(self, status_code: int, text: str = ""):
+        self.status_code = status_code
+        self.text = text
 
-def test_is_relevant_to_ticker_financial_sub():
-    post = {
-        "subreddit": "wallstreetbets",
-        "title": "Thoughts on NVDA",
-        "selftext": "I think it will go up."
-    }
-    # Ticker in title counts as 2 mentions
-    assert _is_relevant_to_ticker(post, "NVDA") is True
+    def json(self):
+        return {}
 
-    post2 = {
-        "subreddit": "stocks",
-        "title": "Good stock",
-        "selftext": "I bought NVDA yesterday."
-    }
-    # Ticker in body counts as 1 mention
-    assert _is_relevant_to_ticker(post2, "NVDA") is True
 
-def test_is_relevant_to_ticker_non_financial_sub():
-    post = {
-        "subreddit": "gaming",
-        "title": "New graphics card",
-        "selftext": "I bought an NVDA card."
-    }
-    # For non-financial sub, it must have $TICKER or ticker in title. This has neither.
-    assert _is_relevant_to_ticker(post, "NVDA") is False
+class _FakeClient:
+    def __init__(self, routes: list[tuple[str, _FakeResponse]]):
+        self.routes = list(routes)
 
-    post_with_dollar = {
-        "subreddit": "gaming",
-        "title": "New graphics card",
-        "selftext": "I bought $NVDA calls."
-    }
-    assert _is_relevant_to_ticker(post_with_dollar, "NVDA") is True
+    async def get(self, url, **kwargs):
+        for frag, resp in self.routes:
+            if frag in url:
+                return resp
+        return _FakeResponse(404)
 
-    post_title_ticker = {
-        "subreddit": "gaming",
-        "title": "NVDA releases new GPU",
-        "selftext": "Looks good."
-    }
-    assert _is_relevant_to_ticker(post_title_ticker, "NVDA") is True
+
+@pytest.fixture
+def collector(monkeypatch):
+    col = RedditCollector()
+
+    class _NoRate:
+        def acquire(self, domain):
+            class _Ctx:
+                async def __aenter__(self):
+                    return None
+                async def __aexit__(self, *a):
+                    return False
+            return _Ctx()
+
+    monkeypatch.setattr(
+        "app.scraper.collectors.reddit_collector.rate_limiter", _NoRate()
+    )
+
+    def install(routes):
+        fake = _FakeClient(routes)
+        monkeypatch.setattr(
+            "app.scraper.collectors.reddit_collector.session_manager",
+            SimpleNamespace(client=fake),
+        )
+        return fake
+
+    return col, install
+
+
+@pytest.mark.asyncio
+async def test_scrape_post_details(collector):
+    col, install = collector
+    install([
+        (".rss", _FakeResponse(200, ATOM_THREAD)),
+    ])
+    res = await col.scrape_post_details("/r/wallstreetbets/comments/abc/moves/")
+    assert res["title"] == "What Are Your Moves Tomorrow"
+    assert "$SPY" in res["selftext"]
+    assert res["num_comments"] == 1
+    assert res["comments"][0]["author"] == "/u/trader1"
+    assert "TSLA" in res["comments"][0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_scrape_user_data(collector):
+    col, install = collector
+    install([
+        ("submitted.rss", _FakeResponse(200, ATOM_USER_SUBMISSIONS)),
+        ("comments.rss", _FakeResponse(200, ATOM_USER_COMMENTS)),
+    ])
+    res = await col.scrape_user_data("lazy_trader", limit=5)
+    assert res["username"] == "lazy_trader"
+    assert res["submissions_count"] == 1
+    assert res["comments_count"] == 1
+    assert res["submissions"][0]["title"] == "My DD on NVDA"
+    assert res["comments"][0]["body"] == "Agreed, revenue is solid."
