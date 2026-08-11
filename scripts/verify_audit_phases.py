@@ -188,53 +188,32 @@ def main() -> int:
 
     # ── shared_desk <-> trade_results reconciliation ─────────────────────
     # These two records of the same decision silently diverged for 19 days
-    # (10 desks, all HOLD). A standing check turns that into an alert.
-    with get_db() as db:
-        tr_rows = db.execute(
-            "SELECT ticker, action, decision_provenance FROM trade_results "
-            "WHERE cycle_id = %s",
-            [cycle_id],
-        ).fetchall()
-    tr = {r[0]: {"action": r[1], "provenance": r[2]} for r in tr_rows}
-    mismatches = []
-    for t, d in desks.items():
-        art = d.get("trade_decision") or d.get("final_decision") or {}
-        desk_act = art.get("action")
-        saved = tr.get(t)
-        if saved is None and desk_act:
-            mismatches.append(f"{t}: desk={desk_act} but NO trade_results row")
-        elif saved and not desk_act:
-            mismatches.append(f"{t}: trade_results={saved['action']} but desk has no action")
-        elif saved and desk_act and str(saved["action"]).upper() != str(desk_act).upper():
-            mismatches.append(f"{t}: desk={desk_act} != trade_results={saved['action']}")
+    # (10 desks, all HOLD). The comparison itself now lives in
+    # app/v3/reconciliation so the runtime runs the SAME code at the end of
+    # every cycle — this script was its only caller, which is why the
+    # divergence went unnoticed. Do not re-inline it here: a check that keeps
+    # a second copy of what it verifies cannot see the first one drift.
+    from app.v3.reconciliation import reconcile_cycle
+
+    rec = reconcile_cycle(cycle_id, desks=desks)
     check("shared_desk reconciles with trade_results",
-          NA if not tr and not any(acts.values()) else (PASS if not mismatches else FAIL),
-          f"{len(tr)} saved rows vs {len(desks)} desks; "
-          + (f"MISMATCH: {mismatches}" if mismatches else "all agree"))
+          NA if not rec.saved_rows and not any(acts.values())
+          else (PASS if not rec.action_mismatches else FAIL),
+          f"{rec.saved_rows} saved rows vs {rec.desks_seen} desks; "
+          + (f"MISMATCH: {rec.action_mismatches}" if rec.action_mismatches else "all agree"))
 
     # Provenance must reconcile too. Comparing only the ACTION let the two
     # stores disagree about whether an agent decided at all — which is exactly
     # the laundering this field exists to stop, and it is how the field shipped
     # to the desk while trade_results (what the UI and freshness gate read)
     # stayed blind to it.
-    prov_mismatch = []
-    for t, d in desks.items():
-        art = d.get("trade_decision") or d.get("final_decision") or {}
-        desk_prov = art.get("decision_provenance")
-        saved = tr.get(t)
-        if not saved or not desk_prov:
-            continue
-        if saved["provenance"] != desk_prov:
-            prov_mismatch.append(
-                f"{t}: desk={desk_prov} != trade_results={saved['provenance']}"
-            )
-    have_prov = [t for t in tr if tr[t]["provenance"]]
     check("decision_provenance reaches trade_results (not just the desk)",
-          NA if not tr else (PASS if have_prov and not prov_mismatch else FAIL),
-          f"{len(have_prov)}/{len(tr)} saved rows carry provenance"
-          + (f"; MISMATCH: {prov_mismatch}" if prov_mismatch else "")
+          NA if not rec.saved_rows
+          else (PASS if rec.rows_with_provenance and not rec.provenance_mismatches else FAIL),
+          f"{rec.rows_with_provenance}/{rec.saved_rows} saved rows carry provenance"
+          + (f"; MISMATCH: {rec.provenance_mismatches}" if rec.provenance_mismatches else "")
           + ("; NONE stamped — the UI still cannot tell a degrade from a verdict"
-             if tr and not have_prov else ""))
+             if rec.saved_rows and not rec.rows_with_provenance else ""))
 
     # ── report ───────────────────────────────────────────────────────────
     width = max(len(n) for n, _, _ in _results) + 2

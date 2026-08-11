@@ -111,6 +111,58 @@ def _expire_stale_dynamic_triggers(db) -> None:
         logger.warning("[TRIGGER] stale dynamic-trigger sweep failed: %s", e)
 
 
+def retire_inert_dynamic_triggers(db) -> int:
+    """Deactivate active dynamic triggers the checker can never evaluate.
+
+    Companion to the TTL sweep above, and the same shape: cheap, idempotent,
+    once per pass. The difference is the reason — a stale trigger had a thesis
+    that expired, an inert one never worked at all.
+
+    68 of 147 active dynamic triggers were in this state on 2026-08-10 (46%),
+    naming setups like `sma_50_reclaim`, `sma_50_breakout` and `support_retest`
+    that the comparison ladder in check_price_triggers matches nothing in. Each
+    sat active for its full 14-day TTL while the desk believed it held a watch.
+
+    Retiring them changes no trading behaviour: they could not fire before and
+    cannot now. Nothing is ARMED here — the decision on 2026-08-11 was to retire
+    the 68 rather than teach the checker to read them, because every one is a
+    BUY and interpreting them would have started real trades.
+
+    Evaluability comes from `dynamic_trigger_is_evaluable`, the same predicate
+    the validator uses, so a setup can never be refused at write time and kept
+    alive here, or the reverse.
+    """
+    try:
+        rows = db.execute(
+            "SELECT id, ticker, dynamic_trigger_type FROM price_triggers "
+            "WHERE trigger_type = 'dynamic' AND active = TRUE"
+        ).fetchall()
+    except Exception as e:  # noqa: BLE001 — a sweep must never break the checker
+        logger.warning("[TRIGGER] inert-trigger sweep could not read: %s", e)
+        return 0
+
+    dead = [(r[0], r[1], r[2]) for r in rows if not dynamic_trigger_is_evaluable(r[2])]
+    if not dead:
+        return 0
+
+    try:
+        db.execute(
+            "UPDATE price_triggers SET active = FALSE WHERE id = ANY(%s)",
+            [[d[0] for d in dead]],
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[TRIGGER] inert-trigger sweep could not retire: %s", e)
+        return 0
+
+    setups = sorted({d[2] or "?" for d in dead})
+    logger.warning(
+        "[TRIGGER] retired %d inert dynamic trigger(s) that could never fire — "
+        "setups: %s. They were never armed and no trade behaviour changes.",
+        len(dead), ", ".join(setups[:8]) + ("…" if len(setups) > 8 else ""),
+    )
+    return len(dead)
+
+
 def deactivate_sell_side_triggers(bot_id: str, ticker: str) -> int:
     """Deactivate standing stop_loss/take_profit trigger rows for a ticker.
 
@@ -281,6 +333,7 @@ async def check_triggers(bot_id: str) -> list[dict]:
     """
     with get_db() as db:
         _expire_stale_dynamic_triggers(db)
+        retire_inert_dynamic_triggers(db)
         triggers = db.execute(
             """
             SELECT id, ticker, trigger_type, trigger_price, action,

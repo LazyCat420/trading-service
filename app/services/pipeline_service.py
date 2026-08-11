@@ -2259,6 +2259,20 @@ class PipelineService:
                     inv_err,
                 )
 
+            # The reconciliation contract from DECISION_INTEGRITY_PLAN §3 rule 3
+            # finally gets a caller. It was CLI-only, so the divergence it was
+            # built to catch ran for 19 days unnoticed. Records and warns; it
+            # does not block — see app/v3/reconciliation for why the first
+            # mismatch may be a human rather than a defect.
+            try:
+                from app.v3.reconciliation import reconcile_and_report
+
+                reconcile_and_report(cycle_id)
+            except Exception as rec_err:  # noqa: BLE001 — an observer never aborts a cycle
+                logger.debug(
+                    "[PipelineService] reconciliation failed (non-fatal): %s", rec_err,
+                )
+
             cls._state.update({
                 "status": "done",
                 "progress": "V3 cycle complete",

@@ -131,6 +131,15 @@ class DecisionProvenance(str, Enum):
     """
     BOARD_REASONED = "board_reasoned"                    # the board genuinely decided
     BOARD_DEGRADED_FALLBACK = "board_degraded_fallback"  # board failed; default HOLD stood in
+    # NEVER WRITTEN, DELIBERATELY — do not "fix" this by adding a writer.
+    # The no-trade gate (orchestrator.py:1321) skips the DEBATE; the board then
+    # decides for itself, so the decision's provenance is genuinely
+    # BOARD_REASONED. Stamping it NO_TRADE_GATE_SKIP would drop a real board
+    # opinion out of `--reasoned-only` accuracy scoring — the enum's own
+    # docstring above says everything but BOARD_REASONED is excluded by
+    # default. The gate is recorded as `cycle_metadata["debate_skipped_by_gate"]`
+    # instead, which is the honest shape: the debate was skipped, the decision
+    # was not.
     NO_TRADE_GATE_SKIP = "no_trade_gate_skip"            # unheld + unanimously bearish → debate skipped
     COERCED_UNSHORTABLE = "coerced_unshortable"          # SELL on an unheld ticker rewritten to HOLD
     TIMEOUT_ABORT = "timeout_abort"                      # phase timed out; desk aborted
