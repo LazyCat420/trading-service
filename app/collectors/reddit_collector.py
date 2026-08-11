@@ -75,27 +75,40 @@ def _is_quality_post(post: dict, min_score: int = 3, min_comments: int = 2) -> b
     Filters out memes, low-effort, deleted, and below-threshold posts.
     Returns True if the post is worth considering for storage.
     """
-    score = post.get("score", 0)
-    comments = post.get("num_comments", 0)
-    body = post.get("body", post.get("selftext", ""))
+    score = post.get("score")
+    comments = post.get("num_comments")
+    body = (post.get("body") or post.get("selftext") or "").strip()
     body_len = len(body)
 
     # Skip removed/deleted posts
     if body in ("[removed]", "[deleted]"):
         return False
 
+    # Skip untitled posts -- an RSS entry that failed to parse arrives with an
+    # empty title and is worthless to an agent.
+    if not (post.get("title") or "").strip():
+        return False
+
     # Skip NSFW
     if post.get("over_18"):
         return False
 
-    # Minimum engagement thresholds
-    if score < min_score:
+    # Engagement thresholds apply only where engagement is KNOWN. Reddit's RSS
+    # feed carries no score or comment count (the .json API that did is
+    # 403-walled), so those arrive as None -- a threshold against them would
+    # pass every post regardless of merit.
+    if score is not None and score < min_score:
         return False
-    if comments < min_comments:
+    if comments is not None and comments < min_comments:
         return False
 
-    # Title-only posts with no substance -- skip unless very high engagement
-    if body_len < 50 and score < 50:
+    # Substance. With a real score, a short post can be redeemed by heavy
+    # engagement. Without one, the body is the only evidence there is, so the
+    # bar is higher and there is no redemption clause.
+    if score is None:
+        if body_len < 80 and not post.get("image_urls"):
+            return False
+    elif body_len < 50 and score < 50:
         return False
 
     return True
@@ -345,11 +358,16 @@ def _store_post(
     flair = post.get("flair", post.get("link_flair_text", ""))
     awards = post.get("awards", post.get("total_awards_received", 0))
 
-    # Comment velocity (rough: comments / hours since posted)
-    age_hours = max(
-        (datetime.datetime.now(datetime.UTC) - created_utc).total_seconds() / 3600, 0.1
-    )
-    comment_velocity = num_comments / age_hours
+    # Comment velocity (rough: comments / hours since posted). RSS carries no
+    # comment count, so num_comments is None on that path and there is no
+    # velocity to compute -- dividing would raise inside the except below and
+    # silently drop the post.
+    comment_velocity = None
+    if num_comments is not None:
+        age_hours = max(
+            (datetime.datetime.now(datetime.UTC) - created_utc).total_seconds() / 3600, 0.1
+        )
+        comment_velocity = round(num_comments / age_hours, 2)
 
     try:
         db.execute(
@@ -373,7 +391,7 @@ def _store_post(
                 flair,
                 None,
                 awards,
-                round(comment_velocity, 2),
+                comment_velocity,
                 created_utc,
             ],
         )

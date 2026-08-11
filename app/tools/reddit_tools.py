@@ -100,8 +100,19 @@ def _label(score: float) -> str:
 
 
 def _aggregate_ticker_sentiment(posts: list[dict]) -> tuple[str, float]:
-    """Aggregate sentiment across a ticker's posts, weighting each post by its
-    Reddit upvote score (a proxy for how much the community saw it)."""
+    """UNUSED as of 2026-08-11 -- kept only as the record of a retired approach.
+
+    Do not wire this back into an agent-facing payload. Two independent faults:
+
+    1. `_score_text_sentiment` counts lexicon words and cannot read an
+       argument. "The bear case that NVDA will crash is completely wrong"
+       scores -1.00, maximally bearish, on the strength of "bear" + "crash".
+    2. The upvote weighting below never worked. Posts arrive over RSS, which
+       publishes no score, so every weight was identical and this "weighted
+       average" was a plain mean.
+
+    Callers now receive the posts and judge them directly.
+    """
     weighted_sum = 0.0
     weight_total = 0.0
     for p in posts:
@@ -119,18 +130,30 @@ def _aggregate_ticker_sentiment(posts: list[dict]) -> tuple[str, float]:
     return _label(score), score
 
 
-def _top_post(posts: list[dict]) -> dict:
-    """Highest-upvoted post for a ticker, as a compact citation."""
+def _sample_posts(posts: list[dict], n: int = 3) -> list[dict]:
+    """The posts themselves, as citations the caller can read and judge.
+
+    Ordered by upvote score where it is known. Posts collected over RSS carry
+    no score (reddit's .json API 403s), in which case this is simply the order
+    the feed returned -- there is no engagement signal to sort on, and
+    inventing one would rank on a constant.
+    """
     if not posts:
-        return {}
-    best = max(posts, key=lambda p: p.get("score", 0) or 0)
-    return {
-        "title": best.get("title", "")[:200],
-        "url": best.get("url") or f"https://reddit.com{best.get('permalink', '')}",
-        "subreddit": best.get("subreddit", ""),
-        "score": best.get("score", 0),
-        "num_comments": best.get("num_comments", 0),
-    }
+        return []
+    ranked = sorted(posts, key=lambda p: (p.get("score") is not None, p.get("score") or 0), reverse=True)
+    out = []
+    for p in ranked[:n]:
+        body = (p.get("selftext") or "").strip()
+        out.append({
+            "title": (p.get("title") or "")[:200],
+            "excerpt": body[:400],
+            "url": p.get("url") or f"https://reddit.com{p.get('permalink', '')}",
+            "subreddit": p.get("subreddit", ""),
+            # None means "reddit did not publish this", not "zero".
+            "score": p.get("score"),
+            "num_comments": p.get("num_comments"),
+        })
+    return out
 
 
 @registry.register(
@@ -138,11 +161,13 @@ def _top_post(posts: list[dict]) -> dict:
     description=(
         "Scan the retail-trading subreddits (WSB, r/stocks, r/options, ...) and "
         "return the most-mentioned stock tickers right now, ranked by weighted "
-        "mention count, each with a bull/bear sentiment read and its top post. "
-        "Use for a market-wide 'what is retail talking about' pulse or to surface "
-        "candidate tickers. Tickers are validated against yfinance so junk like "
-        "'YOLO'/'CEO' is filtered out. This makes many outbound requests and can "
-        "take 30-120s; keep 'per_subreddit' modest."
+        "mention count, each with a sample of the actual posts (title + excerpt "
+        "+ link) so you can read what is being argued and judge it yourself. "
+        "No sentiment label is computed for you. Use for a market-wide 'what is "
+        "retail talking about' pulse or to surface candidate tickers. Tickers "
+        "are validated against yfinance so junk like 'YOLO'/'CEO' is filtered "
+        "out. This makes many outbound requests and can take 30-120s; keep "
+        "'per_subreddit' modest."
     ),
     parameters={
         "type": "object",
@@ -211,19 +236,25 @@ async def get_reddit_trending_stocks(
         logger.error("[RedditTools] Reddit scan failed: %s", e, exc_info=True)
         return json.dumps({"status": "error", "message": f"Reddit scan failed: {e}"})
 
+    # No sentiment label is emitted here. The only scorer available is a
+    # keyword tally over a meme lexicon, and it inverts on ordinary sentences:
+    # "the bear case that NVDA will crash is completely wrong" scores -1.00
+    # (maximally bearish) because it counts "bear" and "crash" and cannot see
+    # the negation. A caller that can read the post does not need a number
+    # derived this way, and a wrong number competes with its own reading.
+    # The posts themselves are returned instead -- ranked by mentions, judged
+    # by whoever asked.
     stocks = []
     for entry in raw[:limit]:
         posts = entry.get("posts", []) or []
-        sentiment, sent_score = _aggregate_ticker_sentiment(posts)
         stocks.append({
             "rank": len(stocks) + 1,
             "ticker": entry.get("ticker"),
             # Weighted mention count from the collector (title x3 / body x2 / comment x1).
+            # A count of observed mentions -- not a sentiment judgment.
             "mention_score": entry.get("score", 0),
             "post_count": len(posts),
-            "sentiment": sentiment,
-            "sentiment_score": sent_score,
-            "top_post": _top_post(posts),
+            "posts": _sample_posts(posts),
         })
 
     return json.dumps({
@@ -231,5 +262,10 @@ async def get_reddit_trending_stocks(
         "generated_at": int(time.time()),
         "subreddits": subs,
         "count": len(stocks),
+        "note": (
+            "Ranked by weighted mention count. Reddit publishes no engagement "
+            "metrics to the feed these are collected from, so per-post score "
+            "and comment counts are null. Read the posts to judge sentiment."
+        ),
         "stocks": stocks,
     })

@@ -35,14 +35,15 @@ class RedditPost:
     id: str
     title: str
     body: str
-    score: int
+    # None when sourced from RSS, which carries no engagement data.
+    score: int | None
     url: str
     subreddit: str
     created_at: datetime
     author: str
-    num_comments: int
+    num_comments: int | None
     flair: str | None = None
-    upvote_ratio: float = 0.0
+    upvote_ratio: float | None = None
     awards: int = 0
     permalink: str = ""
     image_urls: list[str] = field(default_factory=list)
@@ -52,19 +53,34 @@ def _is_quality_post(post: dict, min_score: int = 3, min_comments: int = 2) -> b
     """Fast deterministic filter — no LLM needed.
     Ported from trading-service. Filters removed/deleted, NSFW, low-effort.
     """
-    body = post.get("selftext", "")
+    body = (post.get("selftext") or "").strip()
     if body in ("[removed]", "[deleted]"):
+        return False
+    # An RSS entry that failed to parse arrives with an empty title.
+    if not (post.get("title") or "").strip():
         return False
     # Allow NSFW/over_18 posts since this is used for cannabis research
     # if post.get("over_18"):
     #     return False
-    if post.get("score", 0) < min_score:
+
+    # Engagement thresholds apply only where engagement is KNOWN. RSS carries
+    # no score or comment count (reddit's .json API 403s), so those arrive as
+    # None -- thresholding them would pass every post regardless of merit.
+    score = post.get("score")
+    comments = post.get("num_comments")
+    if score is not None and score < min_score:
         return False
-    if post.get("num_comments", 0) < min_comments:
+    if comments is not None and comments < min_comments:
         return False
-    # Allow image/gallery posts even if body is short
+
+    # Substance. Allow image/gallery posts even if the body is short. With a
+    # real score a short post can be redeemed by heavy engagement; without one
+    # the body is the only evidence, so the bar is higher.
     has_image = _has_image_content(post)
-    if min_score > 0 and len(body) < 50 and post.get("score", 0) < 50 and not has_image:
+    if score is None:
+        if len(body) < 80 and not has_image:
+            return False
+    elif min_score > 0 and len(body) < 50 and score < 50 and not has_image:
         return False
     return True
 
@@ -122,7 +138,13 @@ def _extract_image_urls(post: dict) -> list[str]:
 
 
 def _post_to_dataclass(post: dict, subreddit: str) -> RedditPost:
-    """Convert raw Reddit API post dict to RedditPost dataclass."""
+    """Convert raw Reddit API post dict to RedditPost dataclass.
+
+    The engagement fields stay None on the RSS path: those keys are present
+    with value None, so ``.get(key, default)`` returns None and the default is
+    never consulted. Do not coerce them to 0 -- "unknown" and "zero upvotes"
+    are different claims, and only one of them is true.
+    """
     created_utc = post.get("created_utc", 0)
     return RedditPost(
         id=post.get("id", hashlib.md5(post.get("title", "").encode()).hexdigest()[:12]),
@@ -181,19 +203,25 @@ def _parse_rss_entry(entry: dict, subreddit: str) -> dict:
         if src:
             image_urls.append(src)
             
+    # Reddit's RSS/Atom feed carries no engagement data -- score, comment count
+    # and upvote ratio exist only in the .json API, which 403s from here. These
+    # stay None rather than taking a plausible default: once written, a
+    # fabricated number is indistinguishable from a measured one, and every
+    # downstream filter and sort would rank against a constant.
     return {
         "id": post_id,
         "title": entry.get("title", ""),
         "selftext": body,
-        "score": 100,  # Default to pass min_score quality filter
-        "num_comments": 10,  # Default to pass min_comments quality filter
+        "score": None,
+        "num_comments": None,
         "url": entry.get("link", ""),
         "subreddit": subreddit,
         "created_utc": created_utc,
         "author": author,
         "link_flair_text": None,
-        "upvote_ratio": 1.0,
+        "upvote_ratio": None,
         "total_awards_received": 0,
+        "_source": "rss",
         "permalink": entry.get("link", "").replace("https://www.reddit.com", "").replace("https://reddit.com", ""),
         "image_urls": image_urls
     }

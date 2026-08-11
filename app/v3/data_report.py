@@ -378,22 +378,41 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     youtube_md = "No recent YouTube transcripts found."
     
     with get_db() as db:
-        # Reddit formatting
+        # Reddit formatting.
+        #
+        # What this section deliberately does NOT carry: score, upvote_ratio and
+        # comment_count. Reddit's .json API is 403-walled, so posts arrive over
+        # RSS, which publishes none of those -- they were previously stored as
+        # constants (100/1.0/10) and the old ORDER BY score DESC therefore
+        # ranked on a value that was identical for every row. sentiment_score
+        # and summary are dropped too: nothing has written either since
+        # 2026-06-20, and format_db_section silently skips NULLs, so they read
+        # as absent data rather than as dead columns.
+        #
+        # What replaces them is the post body -- the actual argument, which RSS
+        # does carry. The desk's agents can weigh a claim on its merits; a
+        # keyword-derived score would only invent a precision that competes
+        # with their own reading. Ranked by recency, which is real parsed data.
+        # 5 posts x 280 chars renders to ~1.9k, just under _SOCIAL_FLOOR_CHARS.
+        # Reddit is second of three social sections, so a larger section eats
+        # the remaining budget and truncates YouTube to nothing (measured: 10
+        # posts at 400 chars renders 4,516 against a 4,900 total cap).
         reddit_rows = db.execute(
             """
-            SELECT subreddit, title, score, upvote_ratio, comment_count, sentiment_score, summary
+            SELECT subreddit, title, LEFT(body, 280), created_utc
             FROM reddit_posts
             WHERE ticker = %s
               AND collected_at > NOW() - INTERVAL '30 days'
-            ORDER BY score DESC LIMIT 10
+            ORDER BY created_utc DESC LIMIT 5
             """,
             [ticker]
         ).fetchall()
         if reddit_rows:
             reddit_md = format_db_section(
-                "Top Reddit Posts", 
-                reddit_rows, 
-                ["Subreddit", "Title", "Score", "UpvoteRatio", "Comments", "Sentiment", "Summary"]
+                "Recent Reddit Posts (newest first; Reddit publishes no "
+                "engagement metrics to the feed this is collected from)",
+                reddit_rows,
+                ["Subreddit", "Title", "Post", "Posted"]
             )
             
         # YouTube formatting

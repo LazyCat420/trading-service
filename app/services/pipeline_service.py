@@ -1121,10 +1121,24 @@ class PipelineService:
                                         or tkr in FALSE_TICKERS
                                         or not is_us_tradeable(tkr)):
                                     continue
+                                # discovered_tickers.score carries two different
+                                # scales: reddit/youtube write a 0.0-1.0
+                                # confidence, institutional writes a raw fund
+                                # count. int() collapsed the whole 0-1 cohort to
+                                # 0 -- silencing every reddit and youtube
+                                # discovery (measured 2026-08-11: reddit
+                                # 0.69-1.0, reddit-purge 0.07-0.17, youtube 0.8,
+                                # all -> 0) while institutional's 19-22
+                                # saturated the cap.
+                                _s = float(disc_score or 0)
+                                if _s <= 1.0:
+                                    mentions = max(1, round(_s * 10))
+                                else:
+                                    mentions = min(int(_s), 10)
                                 trending_discovered[tkr] = {
                                     "label": f"Discovery ({disc_src})",
                                     "source_count": 1,
-                                    "total_mentions": min(int(disc_score or 1), 10),
+                                    "total_mentions": mentions,
                                 }
                                 added += 1
                             if added:
