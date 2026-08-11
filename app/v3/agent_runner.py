@@ -1948,13 +1948,15 @@ def _parse_artifact(
     # Delegate to the shared util — it already covers what the old 4-strategy
     # ladder did here (direct parse, fenced blocks, balanced-brace scan) plus
     # placeholder filtering and the malformed-text fallback.
+    _why = ""
     try:
         from app.utils.text_utils import parse_json_response
         parsed = parse_json_response(text)
         if isinstance(parsed, dict) and parsed:
             return _unwrap_structured_output(parsed, artifact_type, agent_name)
-    except Exception:
-        pass
+        _why = "every strategy returned empty"
+    except Exception as e:  # noqa: BLE001 — the reason is the payload here
+        _why = f"{type(e).__name__}: {e}"
 
     # Log WHAT came back, not just how much (2026-08-05). The char count alone
     # made this undiagnosable: a 49-char failure and an 11,248-char failure are
@@ -1963,10 +1965,35 @@ def _parse_artifact(
     # the gatekeeper's empty-response sentinel earlier today. Head AND tail,
     # because a truncated artifact looks fine at the front and dies at the end.
     _preview = (text or "").strip()
+
+    # WHY it failed, not just what came back. Every decode error on this path
+    # was being discarded — six `except json.JSONDecodeError: continue` sites
+    # in lazycat.llm_json plus a bare `except Exception: pass` here — so a
+    # complete, well-formed-LOOKING artifact that python refused could not be
+    # explained after the fact. Diagnosing v3_quant_analyst's TSM failure on
+    # 2026-08-11 dead-ended exactly here: 3,682 chars opening `{"summary":` and
+    # closing `"tags":[...]}`, no truncation, and nothing anywhere recorded
+    # which character python choked on. The raw text is not stored either
+    # (llm_audit_logs only keeps v3_decision), so the evidence was gone.
+    #
+    # Re-parsing here costs one json.loads on an already-failed buffer and
+    # turns "unparseable" into a position and a reason.
+    _detail = _why
+    try:
+        import json as _json
+        _json.loads(_preview)
+    except ValueError as decode_err:
+        pos = getattr(decode_err, "pos", None)
+        _detail = f"{_why} | json.loads: {decode_err}"
+        if isinstance(pos, int):
+            _detail += " | at: " + sanitize_ascii(repr(_preview[max(0, pos - 80):pos + 80]))
+    except Exception:  # noqa: BLE001 — diagnostics must never raise
+        pass
+
     logger.warning(
-        "[V3Runner] Failed to parse artifact from %s output (%d chars)\n"
+        "[V3Runner] Failed to parse artifact from %s output (%d chars) — %s\n"
         "  HEAD: %s\n  TAIL: %s",
-        agent_name, len(text),
+        agent_name, len(text), _detail or "reason unknown",
         sanitize_ascii(_preview[:600]),
         sanitize_ascii(_preview[-300:]) if len(_preview) > 900 else "(shown above)",
     )
