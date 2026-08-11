@@ -30,7 +30,17 @@ from app.v3.guardrails import (
 )
 from app.utils.text_utils import sanitize_ascii
 from app.v3.artifacts import ARTIFACT_SCHEMAS, validate_artifact
-from app.v3.output_rules import classify_output, record_rule_firing
+from app.v3.output_rules import (
+    CANCELLED as REASON_CANCELLED,
+    FAILURE_REASONS,
+    RUNNER_EXCEPTION,
+    SCHEMA_INVALID,
+    TIMEOUT as REASON_TIMEOUT,
+    UNCLASSIFIED,
+    classify_output,
+    record_rule_firing,
+)
+from app.v3.telemetry import sanitize_error_message
 from app.v3.quality_scorer import score_artifact
 
 logger = logging.getLogger(__name__)
@@ -531,6 +541,14 @@ async def run_v3_agent(
 
     agent_name = agent_module.AGENT_NAME
     artifact_type = agent_module.ARTIFACT_TYPE
+
+    # The only attempt identity this function can honestly report. The retry
+    # itself lives in the orchestrator's circuit breaker
+    # (`_run_agent_with_circuit_breaker`), which re-calls this function with
+    # is_retry=True; it retries at most once, so the domain really is {1, 2}.
+    # Derived here rather than passed in, so the caller cannot disagree with
+    # the flag that already drives the AGENT_ERROR→DATA_GAP degrade below.
+    attempt_no = 2 if is_retry else 1
 
     # Check for custom agent override execution
     if hasattr(agent_module, "run_custom_agent"):
@@ -1398,10 +1416,22 @@ async def run_v3_agent(
                 f"❌ {desk.ticker}: V3 {agent_name} — no valid artifact produced",
                 status="error",
             )
+            # The class is whatever `classify_output` already decided at the
+            # top of this branch — reusing `rule.name` is what makes this row
+            # joinable to its `output_rule:` firing instead of a second opinion
+            # about the same buffer.
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
                               outcome.value,
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
-                              model_used=model_used, provider=provider_used)
+                              model_used=model_used, provider=provider_used,
+                              attempt_no=attempt_no,
+                              failure_reason=rule.name if rule else UNCLASSIFIED.name,
+                              error_message=(
+                                  f"no parseable {artifact_type} from {len(final_text or '')} "
+                                  f"chars of output"
+                                  + (f" (repair failed, rule {rule.name})" if repaired is False and rule
+                                     else "")
+                              ))
             return outcome
 
         # Decision artifacts: empty VALUES are as fatal as missing keys. The
@@ -1475,7 +1505,13 @@ async def run_v3_agent(
                 )
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
-                                  model_used=model_used, provider=provider_used)
+                                  model_used=model_used, provider=provider_used,
+                                  attempt_no=attempt_no,
+                                  failure_reason=SCHEMA_INVALID,
+                                  error_message=(
+                                      f"{artifact_type} missing required fields: "
+                                      f"{', '.join(missing_required)}"
+                                  ))
                 return PhaseOutcome.AGENT_ERROR
 
             # ANALYST artifacts (2026-07-26 audit): the branch above was scoped
@@ -1530,7 +1566,14 @@ async def run_v3_agent(
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
                                   outcome.value,
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
-                                  model_used=model_used, provider=provider_used)
+                                  model_used=model_used, provider=provider_used,
+                                  attempt_no=attempt_no,
+                                  failure_reason=SCHEMA_INVALID,
+                                  error_message=(
+                                      f"{artifact_type} collapsed — missing required fields: "
+                                      f"{', '.join(missing_required)}; kept keys: "
+                                      f"{', '.join(sorted(artifact)[:10]) if isinstance(artifact, dict) else '?'}"
+                                  ))
                 # On the retry we keep going so the salvaged research still
                 # reaches the desk — but tagged, never as a clean SUCCESS.
                 if outcome is PhaseOutcome.AGENT_ERROR:
@@ -1829,11 +1872,17 @@ async def run_v3_agent(
         # and make the failure invisible to the exact query that found this bug.
         degraded = bool(artifact.get("_degraded"))
         if not degraded:
+            # attempt_no on the SUCCESS row too, not just the failures: the
+            # case this column exists for is a run that FAILED and then worked
+            # (ASIC/v3_junior_analyst, cycle-v3-1786455000, quality -1 then
+            # 88). Stamping only the failure would leave the row that actually
+            # produced the artifact claiming to be a first attempt.
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                               artifact_size_bytes=artifact_size_bytes,
                               cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
-                              model_used=model_used, provider=provider_used)
+                              model_used=model_used, provider=provider_used,
+                              attempt_no=attempt_no)
 
             # Benchmark a second box on this exact prompt, off the critical
             # path. Dispatched only on a NON-degraded success: shadowing a run
@@ -1886,7 +1935,10 @@ async def run_v3_agent(
             status="error",
         )
         _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "TIMED_OUT",
-                          sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars)
+                          sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                          attempt_no=attempt_no,
+                          failure_reason=REASON_TIMEOUT,
+                          error_message=f"exceeded the {timeout_seconds:.0f}s agent timeout")
         return PhaseOutcome.TIMED_OUT
 
     except asyncio.CancelledError:
@@ -1901,7 +1953,10 @@ async def run_v3_agent(
             f"🛑 {desk.ticker}: V3 {agent_name} CANCELLED after {elapsed_ms}ms",
             status="error",
         )
-        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "CANCELLED")
+        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "CANCELLED",
+                          attempt_no=attempt_no,
+                          failure_reason=REASON_CANCELLED,
+                          error_message="cancelled — stop requested")
         raise  # Re-raise so orchestrator and pipeline_service see the cancellation
 
     except Exception as e:
@@ -1916,7 +1971,12 @@ async def run_v3_agent(
             f"💥 {desk.ticker}: V3 {agent_name} CRASHED — {str(e)[:100]}",
             status="error",
         )
-        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "AGENT_ERROR")
+        # `e` used to end here: the row said AGENT_ERROR and the only copy of
+        # WHY was a log line in a container that gets replaced on every deploy.
+        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "AGENT_ERROR",
+                          attempt_no=attempt_no,
+                          failure_reason=RUNNER_EXCEPTION,
+                          error_message=f"{type(e).__name__}: {e}")
         return PhaseOutcome.AGENT_ERROR
 
     finally:
@@ -2015,8 +2075,29 @@ def _record_telemetry(
     prompt_tokens: int = 0,
     model_used: str | None = None,
     provider: str | None = None,
+    attempt_no: int = 1,
+    error_message: str = "",
+    failure_reason: str | None = None,
 ) -> None:
-    """Record telemetry for a V3 agent run."""
+    """Record telemetry for a V3 agent run.
+
+    `failure_reason` names the failure class. It is NOT a free-form string and
+    NOT a second taxonomy: it must come from `app/v3/output_rules.py` — either
+    an `OutputRule.name` (so the row joins the matching `output_rule:` firing
+    in `v3_guardrail_firings`) or one of the runner reasons for failures where
+    no buffer was ever classified. See the namespace note in that module.
+    """
+    if failure_reason and failure_reason not in FAILURE_REASONS:
+        # Loud but non-fatal: telemetry never aborts a cycle, but an unknown
+        # class silently entering the column is exactly how a second taxonomy
+        # starts, so it does not get to pass quietly.
+        logger.error(
+            "[V3Runner] failure_reason %r is not in the output_rules namespace "
+            "— recording it would fork the taxonomy. Storing UNCLASSIFIED.",
+            failure_reason,
+        )
+        failure_reason = UNCLASSIFIED.name
+
     entry = {
         "agent_name": agent_name,
         "ticker": desk.ticker,
@@ -2029,6 +2110,9 @@ def _record_telemetry(
         "artifact_size_bytes": artifact_size_bytes,
         "sys_prompt_chars": sys_prompt_chars,
         "user_prompt_chars": user_prompt_chars,
+        "attempt_no": attempt_no,
+        "error_message": sanitize_error_message(error_message),
+        "failure_reason": failure_reason,
         # KV-cache probe: last-request snapshot from the harness (see
         # base_agent run_agent return keys). cached_tokens == 0 on a
         # multi-iteration run means prefix caching did nothing for this agent.

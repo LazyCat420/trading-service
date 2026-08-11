@@ -103,7 +103,22 @@ _V3_TOOL_POLICIES = [
     for tool in _V3_DENIED_TOOLS
 ]
 
-# Common guidelines appended to all V3 agents
+# Common guidelines appended to all V3 agents.
+#
+# RULES 7 AND 8 ARE THE ONLY LEVER WE HAVE ON THE FORCE-ADDED TOOLS. The DENY
+# policies above stop a denied call from executing, but they cannot stop a
+# model from TRYING — and each attempt costs a loop. In cycle-v3-1786455000
+# agents spent 14 calls (12 execute_javascript, 2 execute_command) discovering
+# a rejection the prompt could have told them about; one of them was the
+# junior analyst's first ASIC attempt, which then answered with a 51-character
+# fallback and failed the loop outright. Since `enabled_tools` cannot hide
+# these tools (prism force-adds them — see _V3_DENIED_TOOLS), naming them here
+# is the intervention: the model reads this, the resolver does not.
+#
+# Rule 8 targets the other measured loss in the same cycle: 4 of 20
+# emit_structured_output calls were rejected with "'data' is required and must
+# be an object" — a 20% failure rate on the tool models reach for by default,
+# caused by a wrapper nothing in this prompt ever described.
 _V3_COMMON_GUIDELINES = """
 ## V3 Pipeline Rules
 1. You are a V3 agent in a linear pipeline. You MUST produce a valid JSON artifact.
@@ -112,6 +127,15 @@ _V3_COMMON_GUIDELINES = """
 4. Your output will be parsed as JSON. Do NOT wrap it in markdown code blocks.
 5. Every claim must cite which tool or data source it came from.
 6. Do NOT hallucinate data. If data is missing, say so explicitly.
+7. The platform advertises tools beyond the ones listed for your role. These
+   are DENIED by policy and every call is rejected before it runs, wasting a
+   turn you cannot get back: execute_command, execute_javascript,
+   execute_skill, write_file, query_datastore. Do not call them. For any
+   calculation use execute_python, which IS permitted and sandboxed.
+8. If you emit your artifact with emit_structured_output, the artifact must be
+   wrapped in a top-level "data" object — {"data": {...your artifact...}}.
+   Calling it with the artifact's own fields at the top level is rejected with
+   "'data' is required and must be an object" and your work is lost.
 """
 
 

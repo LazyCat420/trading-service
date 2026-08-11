@@ -77,6 +77,27 @@ def _ensure_telemetry_table() -> None:
                 EXCEPTION WHEN others THEN NULL;
                 END $$;
             """)
+            # Failure diagnosis + attempt identity (2026-08-11). Until this
+            # landed the table recorded THAT a run failed and nothing about
+            # why: the crash path threw `str(e)` away entirely, so an
+            # AGENT_ERROR row was indistinguishable from a timeout, a schema
+            # rejection, or a model that returned nothing.
+            #
+            # attempt_no has NO DEFAULT, deliberately. The circuit breaker has
+            # retried since long before this column existed, so every
+            # historical row is of unknown attempt identity — defaulting them
+            # to 1 would assert 79 rows were first attempts when one of them
+            # (ASIC/v3_junior_analyst, cycle-v3-1786455000) demonstrably was
+            # not. NULL means "written before attempts were recorded"; readers
+            # must treat it as unknown, not as 1.
+            db.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS error_message TEXT;
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS failure_reason TEXT;
+                    ALTER TABLE v3_agent_telemetry ADD COLUMN IF NOT EXISTS attempt_no INTEGER;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
+            """)
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_v3_telemetry_model
                 ON v3_agent_telemetry (model_used, created_at)
@@ -189,6 +210,12 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                 "user_prompt_chars": entry.get("user_prompt_chars", 0),
                 "model_used": entry.get("model_used") or None,
                 "provider": entry.get("provider") or None,
+                # None, not "" / 0: these three are nullable on purpose, and an
+                # empty string would read as "we looked and there was no
+                # error" on a SUCCESS row rather than "not applicable".
+                "error_message": entry.get("error_message") or None,
+                "failure_reason": entry.get("failure_reason") or None,
+                "attempt_no": entry.get("attempt_no"),
             }
             for entry in entries
         ]
@@ -200,13 +227,15 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                         (cycle_id, ticker, agent_name, phase, outcome,
                          elapsed_ms, loops_used, token_usage, quality_score,
                          artifact_size_bytes, cached_tokens, prompt_tokens,
-                         sys_prompt_chars, user_prompt_chars, model_used, provider)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         sys_prompt_chars, user_prompt_chars, model_used, provider,
+                         error_message, failure_reason, attempt_no)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [r["cycle_id"], r["ticker"], r["agent_name"], r["phase"], r["outcome"],
                      r["elapsed_ms"], r["loops_used"], r["token_usage"], r["quality_score"],
                      r["artifact_size_bytes"], r["cached_tokens"], r["prompt_tokens"],
-                     r["sys_prompt_chars"], r["user_prompt_chars"], r["model_used"], r["provider"]],
+                     r["sys_prompt_chars"], r["user_prompt_chars"], r["model_used"], r["provider"],
+                     r["error_message"], r["failure_reason"], r["attempt_no"]],
                 )
         try:
             import uuid as _uuid
@@ -237,6 +266,44 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
         # next save.
         logger.warning("[V3Telemetry] Failed to persist telemetry: %s", e)
         raise
+
+
+#: Long enough to keep a real exception line intact, short enough that a
+#: runaway model buffer cannot turn one failed run into a megabyte row.
+_ERROR_MESSAGE_MAX = 512
+
+
+def sanitize_error_message(raw_error: str | None, max_length: int = _ERROR_MESSAGE_MAX) -> str:
+    """Flatten an exception or diagnostic into one storable, readable line.
+
+    Three jobs, in order:
+
+    1. **Keep the useful line.** A formatted traceback's last line is the
+       exception; its first is the word "Traceback". Storing the head throws
+       away the only part that names the failure, so a multi-line traceback is
+       reduced to its FINAL line rather than to a generic placeholder.
+    2. **Flatten.** Newlines and control characters make a row unreadable in a
+       tooltip and unsearchable with a LIKE, so every run of whitespace (and
+       any C0 control byte) collapses to a single space.
+    3. **Cap.** Truncation is marked with an ellipsis so a clipped message is
+       never mistaken for a complete short one.
+    """
+    if not raw_error:
+        return ""
+
+    text = str(raw_error)
+    if text.lstrip().startswith("Traceback"):
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if lines:
+            text = lines[-1]
+
+    # Control characters (including \n, \r, \t) → space, then collapse runs.
+    text = "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in text)
+    text = " ".join(text.split()).strip()
+
+    if len(text) > max_length:
+        text = text[: max(0, max_length - 1)].rstrip() + "…"
+    return text
 
 
 _GUARDRAIL_TABLE_ENSURED = False

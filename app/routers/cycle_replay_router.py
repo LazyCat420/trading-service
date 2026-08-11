@@ -616,6 +616,16 @@ def get_ticker_detail(cycle_id: str, ticker: str):
     Returns the full SharedDesk snapshot, all tool calls, and
     per-agent artifacts.
     """
+    # Same guard `list_cycles` uses, for the same reason and now a stronger
+    # one: the agent SELECT below names error_message / failure_reason /
+    # attempt_no, and this table's DDL lives in app/v3/telemetry.py rather than
+    # the boot migrations — so on a fresh deploy the columns exist only once
+    # something has ensured them. Without this, hitting this endpoint before
+    # the first cycle of the release would 500 on a missing column. Idempotent
+    # and globally cached after the first call.
+    from app.v3.telemetry import _ensure_telemetry_table
+    _ensure_telemetry_table()
+
     ticker = ticker.upper().strip()
     try:
         with get_db() as db:
@@ -642,13 +652,20 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                     desk_data = {}
 
             # Get agent telemetry
+            # ORDER BY created_at cannot order ATTEMPTS. Both rows of a retried
+            # agent are flushed together at the end of the run (17µs apart for
+            # ASIC/v3_junior_analyst in cycle-v3-1786455000), so attempt_no is
+            # the tiebreak that puts a first attempt before its retry. NULLS
+            # FIRST keeps pre-2026-08-11 rows, which have no attempt identity
+            # at all, in their original arrival order.
             agent_rows = db.execute(
                 """
                 SELECT agent_name, phase, outcome, elapsed_ms,
-                       loops_used, token_usage, created_at
+                       loops_used, token_usage, created_at,
+                       error_message, failure_reason, attempt_no
                 FROM v3_agent_telemetry
                 WHERE cycle_id = %s AND ticker = %s
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, attempt_no ASC NULLS FIRST
                 """,
                 [cycle_id, ticker],
             ).fetchall()
@@ -669,6 +686,12 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                     "loops_used": row[4] or 0,
                     "token_usage": row[5] or 0,
                     "started_at": row[6].isoformat() if row[6] else None,
+                    "error_message": row[7] or "",
+                    "failure_reason": row[8] or "",
+                    # None, not 1: a row written before attempts were recorded
+                    # has UNKNOWN attempt identity, and the UI must be able to
+                    # tell that apart from a known first attempt.
+                    "attempt_no": row[9],
                 })
 
             # Get tool calls

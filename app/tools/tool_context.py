@@ -179,16 +179,52 @@ def _running_pipeline_cycle_id() -> str | None:
     return None
 
 
-def current_cycle_id() -> str:
+def resolve_cycle_id(candidate: str | None = None) -> str | None:
+    """The best available cycle id, or None. Never warns, never invents one.
+
+    THE ONE RESOLUTION ORDER. Until 2026-08-11 there were two: `current_cycle_id`
+    below walked ContextVar → live pipeline → env, while `current_cycle_id_or_none`
+    read the ContextVar and stopped. Both are called "the current cycle", and on
+    the HTTP tool bridge they disagreed — which is how 431 scraper warnings and
+    45 body_upgrade warnings from ONE cycle were filed under 'system-log' while
+    `tool_usage_stats` recorded the same calls against the real cycle id.
+
+    The bridge is where it bites: lazy-tool forwards a Prism conversation UUID
+    as the cycle id, `_UUID_RE` correctly refuses it, and the ContextVar is
+    therefore never set. `registry.py` calls `current_cycle_id()` and recovers
+    via the live-pipeline rung; `DbLoggingHandler` MUST call
+    `current_cycle_id_or_none()` (the warning in `current_cycle_id` is itself a
+    log record and would re-enter the handler), so it fell to 'system-log'.
+
+    Resolving here, at the bridge, sets the ContextVar itself — so both readers
+    see the same answer and neither had to be taught a new fallback.
+
+    `candidate` is an untrusted id from a request; a UUID is refused by the same
+    rule as everywhere else, then the normal rungs apply.
+    """
+    if candidate:
+        cid = str(candidate).strip()
+        if cid and not _UUID_RE.match(cid):
+            return cid
     ctx = _cycle_id_var.get()
     if ctx:
         return ctx
     live = _running_pipeline_cycle_id()
     if live:
         return live
-    env = os.getenv("CYCLE_ID")
-    if env:
-        return env
+    return os.getenv("CYCLE_ID") or None
+
+
+def current_cycle_id() -> str:
+    """The scoped cycle id with every fallback, warning if there is none.
+
+    A thin wrapper over `resolve_cycle_id` so the fallback ORDER has exactly one
+    definition. Callers that cannot tolerate the warning (the DB log handler)
+    use `current_cycle_id_or_none` or `resolve_cycle_id` instead.
+    """
+    resolved = resolve_cycle_id()
+    if resolved:
+        return resolved
     logger.warning(
         "[ToolContext] No cycle context for tool call — falling back to 'default_cycle'"
     )

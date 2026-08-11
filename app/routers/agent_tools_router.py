@@ -86,19 +86,49 @@ async def execute_tool(
     LocalToolRouter calls this endpoint for python-bridge tools.
     """
     from app.tools.registry import registry
-    from app.tools.tool_context import set_tool_context
+    from app.tools.tool_context import resolve_cycle_id, tool_context
 
     # Scope context-sensitive tools (whiteboard_*, peer requests) to the real
     # cycle/agent. lazy-tool forwards x-agent / x-conversation-id — the latter
-    # is often a Prism conversation UUID, which set_tool_context ignores; the
-    # live pipeline singleton then supplies the actual cycle id.
-    set_tool_context(
+    # is often a Prism conversation UUID, which is refused as a cycle id.
+    #
+    # RESOLVE IT HERE. The previous version passed `payload.cycle_id` straight
+    # to `set_tool_context` and relied on the note that "the live pipeline
+    # singleton then supplies the actual cycle id" — true for readers that call
+    # `current_cycle_id()`, false for the one that matters most. The UUID was
+    # refused, the ContextVar stayed unset, and `DbLoggingHandler` (which reads
+    # `current_cycle_id_or_none()` and cannot call the warning form without
+    # re-entering itself) filed every log line from every tool executed on this
+    # endpoint under 'system-log'. In cycle-v3-1786455000 that was 484 rows —
+    # 431 `[scraper_client]` + 45 `[body_upgrade]` warnings raised inside
+    # `get_finnhub_news` — against 405 correctly attributed ones, while
+    # `tool_usage_stats` recorded the same calls against the real cycle.
+    #
+    # V3 agents run inside prism-service, so EVERY one of their tool calls
+    # arrives here; this endpoint is the single place that decides whether an
+    # entire cycle's tool-side logging is attributable.
+    resolved_cycle_id = resolve_cycle_id(payload.cycle_id)
+
+    # Scoped, not imperative: this request has a beginning and an end, and
+    # `tool_context` restores what it replaced (uvicorn reuses tasks; a bare
+    # `set` leaks the last request's ticker into the next one's logs).
+    # `phase` is deliberately NOT a pipeline stage — the bridge cannot know
+    # whether the cycle is collecting or analyzing, and claiming one would be a
+    # guess. 'agent_tool' is the honest name for "a tool ran for an agent", and
+    # it is strictly more than the 'unknown' these rows carried before.
+    with tool_context(
         agent_name=payload.agent_name,
-        cycle_id=payload.cycle_id,
+        cycle_id=resolved_cycle_id,
         # Carried so tools can resolve their own subject and so the telemetry
         # row is attributable — `tool_usage_stats.ticker` was NULL on every row.
         ticker=payload.ticker,
-    )
+        phase="agent_tool",
+    ):
+        return await _execute_tool_scoped(payload, registry, resolved_cycle_id)
+
+
+async def _execute_tool_scoped(payload, registry, resolved_cycle_id: str | None):
+    """Repair, dispatch and return — all inside the caller's tool context."""
 
     # Repair a malformed call BEFORE the registry validates it.
     #
@@ -126,7 +156,9 @@ async def execute_tool(
             payload.tool_name, _arguments,
             ticker=payload.ticker or "",
             agent_name=payload.agent_name or "",
-            cycle_id=payload.cycle_id or "",
+            # The resolved id, not the raw payload: a repair recorded against a
+            # Prism conversation UUID cannot be found again from the cycle.
+            cycle_id=resolved_cycle_id or "",
         )
     except Exception as repair_err:  # noqa: BLE001 — never block a tool call
         logger.debug("[AgentTools] arg repair skipped (non-fatal): %s", repair_err)
@@ -148,7 +180,7 @@ async def execute_tool(
             skip_permission_check=True,
             agent_name=payload.agent_name or "",
             ticker=payload.ticker or "",
-            cycle_id=payload.cycle_id or "",
+            cycle_id=resolved_cycle_id or "",
             force_local=True,
         )
         return result

@@ -213,6 +213,57 @@ UNCLASSIFIED = OutputRule(
 )
 
 
+# ── The failure-reason namespace ────────────────────────────────────────
+#
+# THE ONE DEFINITION RULE, applied to failure NAMES. `v3_agent_telemetry` now
+# carries a `failure_reason` column, and the obvious way to fill it is a fresh
+# enum written next to the writer — which is how a codebase ends up with two
+# taxonomies that disagree about the same run. A second EMPTY_RESPONSE, decided
+# by a different code path from `classify_output`, would let a telemetry row
+# say EMPTY_RESPONSE while the `output_rule:EMPTY_RESPONSE` firing for the same
+# run said something else, and no query could tell you which one was lying.
+#
+# So the column reuses THESE names. Where a rule fired, `failure_reason` IS
+# `rule.name`, so it joins straight onto the `output_rule:` rows in
+# `v3_guardrail_firings` — one producer (`classify_output`), one vocabulary.
+#
+# The reasons below are the complement: failures where classification never ran
+# because there was no buffer to classify. They are deliberately disjoint from
+# every rule name, and `_assert_disjoint()` fails at import if anyone breaks
+# that — the moment the two sets overlap, the join above starts double-counting.
+RULE_NAMES = frozenset({
+    EMPTY_RESPONSE.name, PROVIDER_ERROR.name, PSEUDO_TOOL_CALL.name,
+    NARRATED_NO_ARTIFACT.name, TRUNCATED_JSON.name, PROSE_REPORT.name,
+    WRONG_SHAPE.name, UNCLASSIFIED.name,
+})
+
+#: The artifact PARSED — so no rule fired — but failed schema validation.
+SCHEMA_INVALID = "SCHEMA_INVALID"
+#: The run never came back: wall-clock timeout, operator stop, runner crash.
+TIMEOUT = "TIMEOUT"
+CANCELLED = "CANCELLED"
+RUNNER_EXCEPTION = "RUNNER_EXCEPTION"
+
+RUNNER_REASONS = frozenset({SCHEMA_INVALID, TIMEOUT, CANCELLED, RUNNER_EXCEPTION})
+
+FAILURE_REASONS = RULE_NAMES | RUNNER_REASONS
+
+
+def _assert_disjoint() -> None:
+    """Fail at import if the two halves of the namespace ever collide."""
+    overlap = RULE_NAMES & RUNNER_REASONS
+    if overlap:
+        raise AssertionError(
+            f"failure_reason namespace collision: {sorted(overlap)}. A name "
+            f"cannot be both an OutputRule class and a runner reason — "
+            f"v3_agent_telemetry.failure_reason joins v3_guardrail_firings on "
+            f"these strings."
+        )
+
+
+_assert_disjoint()
+
+
 def _json_is_truncated(text: str) -> bool:
     """True when an object opens and its braces never balance.
 
