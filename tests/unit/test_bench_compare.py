@@ -153,3 +153,50 @@ def test_a_stage_failing_in_both_runs_is_not_reported_as_a_pass(capsys):
     out = capsys.readouterr().out
     assert "still failing" in out
     assert "✅ wake_pool" not in out
+
+
+# ── Stage ORDER is decided by `group`, not by the command line ───────────
+
+def test_a_readback_stage_must_not_sit_in_a_group_that_runs_before_agents():
+    """`main` runs groups in a fixed order and filters by `Stage.group`:
+
+        for group in ("context", "compute", "gate", "agent"):
+            rows = [s for s in ordered if s.group == group]
+
+    So a "gate" stage ALWAYS runs before every agent, whatever order the
+    command line asks for. `substitute_ask` reads back what the bear left; it
+    shipped in the gate group and on its first live run could only report
+    `bear_ran=False` — it was structurally incapable of observing the thing it
+    exists to observe.
+
+    Pinned against the source so the next read-back stage does not repeat it.
+    """
+    import ast
+
+    src = _SRC.read_text()
+    tree = ast.parse(src)
+
+    # The group order `main` actually iterates.
+    orders = [
+        [e.value for e in node.elts if isinstance(e, ast.Constant)]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Tuple)
+        and [e.value for e in node.elts if isinstance(e, ast.Constant)][:1] == ["context"]
+    ]
+    assert orders, "could not find the group-order tuple in bench_stage.py"
+    order = orders[0]
+    assert order.index("agent") == len(order) - 1, (
+        f"agents are no longer last in the run order ({order}) — re-check every "
+        "stage that reads back an agent's output")
+
+    # substitute_ask must be registered in the agent group.
+    call = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "Stage"
+        and n.args and isinstance(n.args[0], ast.Constant)
+        and n.args[0].value == "substitute_ask")
+    group = call.args[1].value
+    assert group == "agent", (
+        f"substitute_ask is registered in group {group!r}. It reads back the "
+        f"bear's answer, and group order is {order} — anything before 'agent' "
+        "runs first and can only ever see bear_ran=False.")

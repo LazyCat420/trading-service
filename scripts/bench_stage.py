@@ -143,6 +143,39 @@ class Ctx:
         from app.v3.shared_desk import SharedDesk
 
         desk = SharedDesk(cycle_id=self.cycle_id, ticker=self.ticker)
+
+        # REAL cycle_metadata, not an empty dict. A bare desk reports
+        # `held=None` and carries no candidate pool, so every agent stage ran
+        # in a state no production desk is ever in — and the two agents that
+        # are SHOWN the pool (`v3_bear_agent`, `v3_board_of_directors`, see
+        # `agent_runner.py:742`) could never be observed using it.
+        #
+        # The ACTIVE bot, not `self.bot_id`: that defaults to "bench", a bot
+        # that owns nothing, so holdings-dependent context would be uniformly
+        # empty and every held-name behaviour would be invisible.
+        try:
+            from app.services.bot_manager import get_active_bot_id
+            from app.v3.orchestrator import _build_cycle_metadata
+            from app.v3.substitute import POOL_KEY
+            from app.v3.wake_pool import build_wake_pool, build_wake_pool_block
+
+            bot_id = get_active_bot_id() or self.bot_id
+            desk.cycle_metadata = _build_cycle_metadata(
+                ticker=self.ticker, bot_id=bot_id, trigger_type="bench")
+            if desk.cycle_metadata.get("held") is True and not desk.cycle_metadata.get(POOL_KEY):
+                rec = build_wake_pool(self.ticker, exclude_cycle_id=self.cycle_id)
+                block = build_wake_pool_block(rec, self_ticker=self.ticker)
+                if block:
+                    desk.cycle_metadata["cycle_candidates_context"] = block
+                    desk.cycle_metadata[POOL_KEY] = list(rec["tickers"])
+                self.notes.append(
+                    f"held desk; wake pool n={len(rec['tickers'])} ({rec['reason']})")
+            else:
+                self.notes.append(
+                    f"held={desk.cycle_metadata.get('held')!r}; no wake pool")
+        except Exception as e:  # noqa: BLE001
+            self.notes.append(f"cycle_metadata seed failed: {type(e).__name__}: {e}")
+
         self._desk = desk
         return desk
 
@@ -374,6 +407,90 @@ def build_registry() -> dict[str, Stage]:
         if out.get("artifacts_added", 0) < 1:
             return "outcome was SUCCESS but the desk gained no artifact"
         return ""
+
+    # ── Did the bear ANSWER the pool it was shown? ───────────────────
+    def _substitute_ask(c: Ctx):
+        """The end-to-end question the wake pool exists for.
+
+        `wake_pool` proves the block is BUILT. `agent_runner.py:742` shows it
+        reaches `v3_bear_agent` under `_KEEP` (never shed). This stage is the
+        only one that answers the remaining question: shown that block, does
+        the bear actually name a name?
+
+        RUN IT AFTER `bull` — `bench_stage bull bear substitute_ask -t <held>`
+        — because stages share one `Ctx.desk()` and the bear rebuts the bull.
+        This stage runs no model itself; it reads back what the bear left.
+        """
+        from app.v3.substitute import POOL_KEY, read_record
+
+        from app.v3.hold_reason import classify_hold
+
+        desk = c.desk()
+        rec = read_record(desk) or {}
+        # THE LAST LINK. A NAMED substitute is only worth having if it reaches
+        # the label — that is the whole chain Open Item 46 is about:
+        #   held re-look -> borrowed pool -> bear asked -> NAMED -> EXIT_SIGNALLED
+        # Reported here so nobody has to infer the final step from the first four.
+        label = classify_hold(desk, "HOLD") or {}
+        return {
+            "held": desk.cycle_metadata.get("held"),
+            "pool_size": len(desk.cycle_metadata.get(POOL_KEY) or []),
+            "bear_ran": bool(getattr(desk, "bear_rebuttal", None)),
+            "status": rec.get("status"),
+            "ticker": rec.get("ticker"),
+            "hold_reason": label.get("hold_reason"),
+            "basis": label.get("basis"),
+        }
+
+    def _substitute_contract(out: Any) -> str:
+        if not isinstance(out, dict):
+            return f"expected a dict, got {type(out).__name__}"
+        if out.get("held") is not True:
+            return ("NOT A TEST OF THIS STAGE: ticker is not held "
+                    f"(held={out.get('held')!r}) — re-run on a name the book owns")
+        if not out.get("pool_size"):
+            return "no pool on the desk — the bear had nothing to be asked about"
+        if not out.get("bear_ran"):
+            return ("the bear has not run on this desk — this stage reads back "
+                    "its answer, it does not produce one. Run: "
+                    "`bench_stage bull bear substitute_ask -t <held>`")
+        status = out.get("status")
+        if status in (None, "NOT_ASKED"):
+            return (f"status={status!r} with a pool of {out['pool_size']} on the "
+                    "desk — the bear was shown alternatives and the record still "
+                    "says it was not asked. THIS IS THE DEFECT THE WAKE POOL "
+                    "EXISTS TO FIX; the block is not reaching the prompt.")
+        if status == "UNANSWERED":
+            return ("status=UNANSWERED — the bear was asked and ignored the "
+                    "question. An engagement failure, not an answer.")
+        if status == "OFF_POOL":
+            return ("status=OFF_POOL — the bear named something it was not "
+                    "shown, which the desk cannot price.")
+        # NAMED and DECLINED are BOTH successes: "none is better" is a real
+        # answer, and treating it as failure would train the bear to invent a
+        # preference it does not hold.
+        #
+        # But the label must have MOVED. A held desk that still reads WATCH or
+        # AVOID after all of this is the original defect surviving the fix.
+        label = out.get("hold_reason")
+        if label in ("WATCH", "AVOID"):
+            return (f"the bear answered ({status}) but the label is still "
+                    f"{label!r} — the ENTRY vocabulary, on a name we own. This "
+                    "is Open Item 46 surviving its own fix.")
+        if status == "NAMED" and label != "EXIT_SIGNALLED":
+            return (f"substitute NAMED on a held desk but hold_reason={label!r}, "
+                    "expected EXIT_SIGNALLED")
+        return ""
+
+    # GROUP "agent", not "gate", and the group is what orders execution:
+    # `main` runs ("context","compute","gate","agent") in that order and filters
+    # `ordered` by group, so a gate stage ALWAYS runs before every agent no
+    # matter what the command line says. This stage READS BACK what the bear
+    # left, so in the gate group it could only ever report `bear_ran=False` —
+    # which is exactly what it did on its first live run. `needs_llm` stays
+    # False: it runs no model itself, so `--all-agents` will not sweep it up.
+    add(Stage("substitute_ask", "agent", _substitute_ask, _substitute_contract,
+              blurb="did the bear answer the pool? (run AFTER bull+bear, same invocation)"))
 
     for name, module_name, blurb in agent_specs:
         add(Stage(name, "agent", _make_agent(module_name), _agent_contract,
