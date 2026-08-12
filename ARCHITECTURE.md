@@ -82,3 +82,18 @@ The V3 pipeline orchestrator. Receives a list of tickers, runs them through the 
 4. **Use `/agent` not `/chat`** when calling prism-service
 5. **Use `v3_system_commands`** not `system_commands` for pipeline commands
 6. **Shared code extracts to `lazycat-sdk`** once built (Phase 8)
+7. **`cycle_metadata["held"]` is a TRI-STATE** — `True` / `False` / **absent**.
+   It is absent when the portfolio fetch raises at desk-build time (~1 desk in
+   149). Never coerce an absent value to "not held": that is the 07-23 defect
+   that sent three unheld SELLs to the executor as silent no-ops. Read the
+   structured `cycle_metadata["position"]["held"]` as the fallback, and **never
+   `cycle_metadata["portfolio_context"]`, which is a prose STRING** —
+   `.get("held")` on it raises `AttributeError` into a caller's blanket
+   `except` and disables the feature silently. See
+   `HANDOFF_open_item_46_2026-08-12.md`.
+8. **A HOLD means three different things, and the label must say which** — the
+   desk's entry vocabulary (`WATCH`/`AVOID`) is not comparable to its position
+   vocabulary (`KEEP`/`EXIT_SIGNALLED`), and `UNKNOWN_POSITION` is a real third
+   answer rather than a default. Before adding a branch for a sub-population,
+   **census its inputs on that sub-population**: all four of `classify_hold`'s
+   were absent on held desks, so the branch would have been a constant function.
