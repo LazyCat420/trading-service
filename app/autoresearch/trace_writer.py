@@ -9,6 +9,28 @@ tool path (base_agent's on_tool_result hook) instead of the dead V2 harness.
 One row per tool call, grouped by run_id = v3:<cycle>:<ticker>:<agent>, which
 mirrors the granularity the rubric was written for (per-trace scoring with
 tool_result_summary / latency / stop_reason).
+
+``tokens_before`` / ``tokens_after`` are written as 0 and that is DELIBERATE —
+checked again 2026-08-12. They cannot be filled honestly at this seam:
+
+  - The hook that calls this (base_agent's ``_on_tool_result``) fires from
+    inside the SDK's stream loop, and the harness only folds a request's usage
+    into ``total_tokens`` AFTER that stream closes
+    (``lazycat-sdk/lazycat/agent.py:370``). So at write time the counter has
+    not yet absorbed the turn this tool call belongs to.
+  - ``tokens_after`` is therefore unknowable here at all, and filling only
+    ``tokens_before`` makes ``tokens_after - tokens_before`` NEGATIVE — worse
+    for any consumer than two zeros.
+  - Token usage is a per-REQUEST quantity; this table is per TOOL CALL, and
+    several tool calls share one request. Splitting a request's tokens across
+    them would be attribution by proximity, not measurement.
+
+This is why ``eval_engine`` DROPPED its token-efficiency term rather than
+compute one from these columns (see ``eval_engine.py``: it "always awarded
+full marks … and made the whole table a rubber stamp"). Reinstating that term
+needs either per-request usage recorded against a per-request row, or a
+grouping key that ties tool calls to the request that issued them — not a
+value invented here.
 """
 
 import json
