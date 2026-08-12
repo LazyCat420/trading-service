@@ -396,6 +396,58 @@ async def run_v3_pipeline(
     except Exception as e:  # noqa: BLE001
         logger.warning("[V3] %s: candidate block failed (non-fatal): %s", ticker, e)
 
+    # NO POOL ON A NAME WE OWN — borrow the last full cycle's shortlist.
+    #
+    # Measured 2026-08-12: 31 of 33 held desks reached the bear with an EMPTY
+    # pool, so `substitute.read_substitute` recorded NOT_ASKED on 21 of the 23
+    # that produced an artifact, and the bear won 0 of 26 held debates against
+    # 54 of 78 (69%) unheld. The substitute axis — which `hold_reason` calls its
+    # PRIMARY axis — is unavailable on exactly the population where an exit is
+    # the decision. See `app/v3/wake_pool.py` for the full measurement.
+    #
+    # HELD-ONLY, deliberately. Unheld pool-less desks stay as the control: if
+    # held NAMED/DECLINED moves and the unheld pool-less rate does not, the pool
+    # is what did it. `held` is resolved at line ~139 by `_build_cycle_metadata`,
+    # well before this runs, so reading it here cannot race.
+    #
+    # `substitute_ask_skipped` is recorded on EVERY path including success, so a
+    # later reader can tell "no pool existed", "the pool was stale" and "the
+    # bear ignored the question" apart. Pooling those three into NOT_ASKED is
+    # what made this defect invisible for four days.
+    try:
+        from app.v3.substitute import POOL_KEY
+        from app.v3.wake_pool import build_wake_pool, build_wake_pool_block
+
+        if desk.cycle_metadata.get("held") is True and not desk.cycle_metadata.get(POOL_KEY):
+            record = build_wake_pool(ticker, exclude_cycle_id=cycle_id)
+            desk.cycle_metadata["substitute_ask_skipped"] = record.get("reason")
+            block = build_wake_pool_block(record, self_ticker=ticker)
+            if block:
+                # Written under the SAME key the live block uses so every reader
+                # — the bear's prompt, `candidate_context`, the whiteboard — sees
+                # one surface. A second key would be a second thing to remember.
+                desk.cycle_metadata["cycle_candidates_context"] = block
+                desk.cycle_metadata[POOL_KEY] = list(record["tickers"])
+                desk.cycle_metadata["wake_pool"] = {
+                    "source_cycle_id": record.get("cycle_id"),
+                    "age_hours": record.get("age_hours"),
+                    "n": len(record["tickers"]),
+                }
+                logger.info(
+                    "[V3] %s: HELD name with no pool — borrowed %d names from "
+                    "%s (%sh old)", ticker, len(record["tickers"]),
+                    record.get("cycle_id"), record.get("age_hours"),
+                )
+            else:
+                logger.info(
+                    "[V3] %s: HELD name with no pool and none borrowable (%s) "
+                    "— the bear cannot be asked for a substitute",
+                    ticker, record.get("reason"),
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[V3] %s: wake pool failed (non-fatal): %s: %s",
+                       ticker, type(e).__name__, e)
+
     # Recorded third-party opinion cards (2026-07-27). Unlike every other
     # block built here this one returns "" when there is no coverage, and that
     # is correct: a ticker nobody happened to discuss is not a gap in evidence,
@@ -809,6 +861,7 @@ async def run_v3_pipeline(
                 # lines above the full-panel call site, and a delta HOLD is
                 # still a HOLD that means one of two different things.
                 _attach_hold_reason(result, desk=desk, ticker=ticker, emit=emit)
+                _attach_exit_shadow(result, ticker=ticker)
                 _attach_confidence_shadow(result, ticker=ticker)
                 try:
                     _persist_policy_action(cycle_id, ticker, policy_action)
@@ -2486,6 +2539,7 @@ async def run_v3_pipeline(
     result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
 
     _attach_hold_reason(result, desk=desk, ticker=ticker, emit=emit)
+    _attach_exit_shadow(result, ticker=ticker)
     _attach_confidence_shadow(result, ticker=ticker)
 
     emit(
@@ -2570,6 +2624,11 @@ def _attach_hold_reason(result: dict, *, desk: SharedDesk, ticker: str, emit) ->
         result["hold_reason"] = hold["hold_reason"]
         result["hold_reason_signals"] = hold["signals"]
         result["hold_reason_basis"] = hold.get("basis")
+        # The position state the label was computed FROM, stored beside it.
+        # Without this a reader has to join back to `shared_desk` to find out
+        # which branch produced a label — and the whole point of the branch is
+        # that the two vocabularies are not comparable.
+        result["hold_reason_held"] = hold.get("held")
         # The substitute travels WITH the label. An AVOID whose named
         # alternative is only reachable by re-reading the bear's artifact is an
         # AVOID nothing downstream can act on, which is the defect this whole
@@ -2590,6 +2649,75 @@ def _attach_hold_reason(result: dict, *, desk: SharedDesk, ticker: str, emit) ->
     except Exception as e:  # noqa: BLE001
         # Non-fatal by construction: a label must never cost a decision.
         logger.warning("[V3] %s: hold classification failed (non-fatal): %s", ticker, e)
+
+
+#: What a hysteresis design would use for the EXIT side. Records only; nothing
+#: reads this to gate anything. See `_attach_exit_shadow`.
+_EXIT_FLOOR_SHADOW = 55
+
+
+def _attach_exit_shadow(result: dict, *, ticker: str) -> None:
+    """Record how close a HELD name came to an exit. GATES NOTHING.
+
+    `_apply_policy_gates` applies ONE floor to every action — `if confidence <
+    floor: HOLD_POLICY_BLOCKED_LOW_CONFIDENCE`, before the `if action == "BUY"`
+    branch below it. So it takes the same conviction to LEAVE a position as to
+    OPEN one, on a book where doing nothing is the default. Proper hysteresis
+    (a Schmitt trigger) requires the exit threshold to sit BELOW the entry
+    threshold; this is the opposite, and it is a ratchet.
+
+    WHAT THIS DOES **NOT** MEASURE, and the distinction matters: it does not
+    count SELLs the floor blocked, because there were **none** — zero SELL
+    actions across 149 desks in five days. A shadow of "which blocked SELLs
+    would a lower floor have released?" would answer a constant 0 and look like
+    evidence that the floor is harmless. The binding constraint is upstream:
+    the board never proposes an exit at all.
+
+    So it counts what IS non-constant — held names where the desk's own label
+    says an exit signal exists (`EXIT_SIGNALLED`) and the stated confidence
+    would have cleared an exit-side floor. That is the population a hysteresis
+    design would convert, and it is countable today.
+
+    Deliberately not a gate, for the same reason `_attach_confidence_shadow` is
+    not: the confidence SCALE is itself under review, and moving a threshold on
+    top of an unvalidated scale makes both unattributable.
+    """
+    try:
+        if str(result.get("action") or "").strip().upper() != "HOLD":
+            return
+        if result.get("hold_reason_held") is not True:
+            return
+
+        from app.services.parameter_store import get_param
+
+        try:
+            floor = float(get_param("ANALYSIS_CONFIDENCE_THRESHOLD"))
+        except Exception:  # noqa: BLE001
+            floor = 70.0
+
+        confidence = result.get("confidence")
+        confidence = float(confidence) if isinstance(
+            confidence, (int, float)) and not isinstance(confidence, bool) else None
+        signalled = result.get("hold_reason") == "EXIT_SIGNALLED"
+
+        result["exit_floor_shadow"] = {
+            "entry_floor": floor,
+            "exit_floor_if_asymmetric": _EXIT_FLOOR_SHADOW,
+            "confidence": confidence,
+            "exit_signalled": signalled,
+            # The whole point, in one boolean: the desk said an exit signal
+            # exists and was sure enough that an exit-side floor would have let
+            # it act — and it emitted HOLD anyway.
+            "would_have_cleared_exit_floor": bool(
+                signalled and confidence is not None
+                and confidence >= _EXIT_FLOOR_SHADOW
+            ),
+            "clears_entry_floor": bool(
+                confidence is not None and confidence >= floor),
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[V3] %s: exit shadow failed (non-fatal): %s: %s",
+                       ticker, type(e).__name__, e)
 
 
 def _attach_confidence_shadow(result: dict, *, ticker: str) -> None:
