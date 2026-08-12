@@ -122,9 +122,23 @@ def _open_item_46(since: str, until: str, desks) -> None:
     cross: Counter = Counter()
     leaks: list[str] = []
     shadow = Counter()
+    aborted = 0
     for cid, tk, rj_raw in rows:
         rj = _as_dict(rj_raw)
         if str(rj.get("action") or "").upper() != "HOLD":
+            continue
+        # A PIPELINE THAT ABORTED IS NOT A DECISION. It still writes
+        # `action: "HOLD"` into `analysis_results`, so counting these as
+        # unlabelled HOLDs inflates the denominator with failures and makes the
+        # label look like it is being dropped. Measured 2026-08-12: of 26
+        # unlabelled HOLDs since 08-08, **17 were aborts** and the other 9 all
+        # predate the label shipping. `_attach_hold_reason` is never reached on
+        # the abort path, and that is correct — see the 07-24 lesson that a
+        # failed agent must not read as a decision.
+        rationale = str(rj.get("rationale") or "")
+        if ("V3 Pipeline aborted" in rationale
+                or "Circuit breaker tripped" in rationale):
+            aborted += 1
             continue
         label = rj.get("hold_reason")
         # The desk's own record of the state it classified from, falling back to
@@ -144,6 +158,9 @@ def _open_item_46(since: str, until: str, desks) -> None:
                 bool(es.get("would_have_cleared_exit_floor")))
 
     print("\nOPEN ITEM 46 — is the HOLD label honest about the position?")
+    if aborted:
+        print(f"  aborted pipelines excluded ............. {aborted}"
+              f"   (action=HOLD, but no desk decided)")
     total = sum(cross.values())
     if not total:
         print("  VACUITY: no labelled HOLDs in this window — this proved nothing.")
