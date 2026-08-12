@@ -50,6 +50,45 @@ class EpisodicMemoryStore:
             logger.info(f"[EPISODIC] Wrote episode for {ticker} (Cycle {cycle_id})")
             return mem_id
 
+    def record_outcome(
+        self, cycle_id: str, ticker: str, outcome: str, outcome_score: float
+    ) -> int:
+        """Resolve the episode(s) this cycle wrote for this ticker.
+
+        Every episode was written with ``outcome="pending"`` and
+        ``outcome_score=0.0`` and nothing ever revised it — 572 pending rows
+        (plus 3,080 at the ``neutral`` default) against 2,394 resolved
+        ``decision_outcomes`` on 2026-08-12. So ``retrieve()``'s ranking read a
+        column where every row tied at 0, and the "Relevant Past Cycles" block
+        that every agent prompt carries showed a permanent ``Outcome Score:
+        0.0``.
+
+        Only rows still carrying an unresolved marker are updated. Both
+        resolvers are re-entrant — a batch can revisit a cycle, and a position
+        exit can land on a ticker whose 7-day claim already resolved — so an
+        already-graded episode must not be re-graded by a later event.
+
+        Returns rows updated.
+        """
+        from app.db.connection import get_db
+
+        with get_db() as db:
+            result = db.execute(
+                """
+                UPDATE episodic_memory
+                SET outcome = %s, outcome_score = %s
+                WHERE cycle_id = %s AND ticker = %s
+                  AND (outcome IS NULL OR outcome IN ('pending', 'neutral'))
+                """,
+                [outcome, outcome_score, cycle_id, ticker],
+            )
+            # PooledCursor doesn't proxy rowcount — read the real cursor's
+            # (same accessor as the retention delete in memory/store.py).
+            rc = getattr(result, "rowcount", None)
+            if rc is None:
+                rc = getattr(getattr(result, "_cursor", None), "rowcount", 0)
+            return rc if rc and rc > 0 else 0
+
     def retrieve(self, ticker: str, limit: int = 4) -> list[dict]:
         """Query past episodes by ticker, ranked by most successful outcomes."""
         from app.db.connection import get_db

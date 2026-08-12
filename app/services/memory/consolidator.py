@@ -110,11 +110,20 @@ async def run_ticker_consolidation(ticker: str, observations: list | None = None
             user_prompt += f"Summary: {c.get('summary')}\n\n"
 
     user_prompt += "=== NEW EPISODIC OBSERVATIONS ===\n"
+    # Two kinds of row land here and they must not be rendered alike. A
+    # decision-time row carries the ACTION in `outcome_label` ("BUY"), and this
+    # block used to print it as `Outcome: BUY (None)` — telling the model that
+    # deciding to buy WAS the outcome. Only `source_type='outcome'` rows, which
+    # the resolvers write once the 7-day move is known, carry a real one.
     for o in observations:
         user_prompt += f"Obs [{o['created_at']}]: {o.get('observation_text')}\n"
-        user_prompt += (
-            f"Outcome: {o.get('outcome_label')} ({o.get('outcome_score')})\n\n"
-        )
+        label = o.get("outcome_label")
+        if o.get("source_type") == "outcome":
+            score = o.get("outcome_score")
+            move = f"{float(score):+.2f}%" if score is not None else "unknown move"
+            user_prompt += f"RESOLVED OUTCOME: {label} ({move})\n\n"
+        else:
+            user_prompt += f"Action taken: {label} (outcome not yet resolved)\n\n"
 
     # Execute LLM call
     try:

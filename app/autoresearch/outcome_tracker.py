@@ -34,6 +34,124 @@ RESOLVE_AFTER_DAYS = 7
 WIN_THRESHOLD_PCT = 1.0
 LOSS_THRESHOLD_PCT = -1.0
 
+# The move that saturates an episode's -1.0..1.0 outcome_score. 10% over a
+# 7-day horizon against a 28.76pp sd of resolved pnl: well inside the
+# distribution, so ordinary outcomes stay rankable and only the tails clamp.
+EPISODE_SCORE_ANCHOR_PCT = 10.0
+
+# Actions that are not decisions. DEGRADED is what the orchestrator writes
+# when a desk produced no decision at all (see _is_unscoreable); it can never
+# carry an outcome, and recording one would teach the memory system a call
+# that was never made.
+_NON_DECISIONS = {"DEGRADED", "NONE", ""}
+
+# Outcome labels that are NOT outcomes. Same exclusion the rest of the service
+# already applies to this column — decision_audit.py:124/176/442,
+# confidence_calibration.py:51 and power_report.py:147 all drop these before
+# measuring anything. DEGRADED_ARTIFACT is a pipeline crash scored against a
+# price (358 rows), and it is the single largest label after WIN/LOSS: feeding
+# it to the memory system would teach the desk that crashing is a strategy
+# with a 3.2% mean return.
+_NON_OUTCOMES = {"DEGRADED_ARTIFACT", "CANCELED"}
+
+
+def _memory_store():
+    """The mandated write path for episodic observations.
+
+    Indirected through a function so the resolvers' memory writeback can be
+    substituted in tests without a database — and so the "no inline SQL for
+    memory outside the DAL" rule in app/db/README_memory_contracts.md holds
+    here too.
+    """
+    from app.services.memory.store import MemoryStore
+
+    return MemoryStore()
+
+
+def _episode_store():
+    from app.services.memory.episodic_memory import episodic_memory_store
+
+    return episodic_memory_store
+
+
+def write_outcome_to_memory(
+    *,
+    cycle_id: str,
+    ticker: str,
+    action: str,
+    outcome: str | None,
+    pnl_pct: float | None,
+    confidence: float | None = None,
+) -> None:
+    """Feed a RESOLVED decision back into the two memory tiers agents read.
+
+    Until this existed the loop was open at exactly this point. Both tiers are
+    written at decision time and neither was ever revised, so:
+
+    - the consolidator (which distils canonical memories) was handed
+      ``Outcome: BUY (None)`` — the ACTION under the label "outcome"; and
+    - `episodic_memory.outcome` sat at ``pending`` forever.
+
+    Two writes, deliberately different in kind:
+
+    1. A NEW episodic observation with ``source_type="outcome"`` — the
+       documented contract, and the shape of the four such rows already on the
+       table from June. It enters the consolidator's inbox as evidence, so a
+       resolved outcome can become a canonical memory. It does not overwrite
+       the decision-time row: what the desk believed and what happened are two
+       facts, and collapsing them loses the calibration.
+    2. An in-place resolution of the working-memory episode, whose ``pending``
+       marker exists for exactly this.
+
+    Never raises, and each sink is independent: this runs INSIDE the resolvers,
+    after the ``decision_outcomes`` UPDATE, and a lost outcome is worse than a
+    lost memory row. One broken sink must not silence the other.
+    """
+    # Fail closed on every input that would make the row a fabrication.
+    if not outcome or not cycle_id or not ticker:
+        return
+    if (action or "").upper() in _NON_DECISIONS:
+        return
+    if outcome.upper() in _NON_OUTCOMES:
+        return
+
+    pnl = float(pnl_pct) if pnl_pct is not None else 0.0
+
+    try:
+        _memory_store().add_episodic_observation({
+            "cycle_id": cycle_id,
+            "ticker": ticker,
+            "source_type": "outcome",
+            "observation_text": (
+                f"Resolved outcome for {ticker}: the desk said {action} at "
+                f"{confidence if confidence is not None else '?'}% confidence "
+                f"and the {RESOLVE_AFTER_DAYS}-day move was {pnl:+.2f}% "
+                f"({outcome})."
+            ),
+            "confidence_at_creation": (
+                float(confidence) / 100.0 if confidence else 0.0
+            ),
+            "outcome_label": outcome,
+            # Raw pnl, matching the rows already on the table and what the
+            # consolidator renders. The normalised form belongs to the episode
+            # tier below, whose column is documented as -1.0..1.0.
+            "outcome_score": pnl,
+        })
+    except Exception as e:  # noqa: BLE001 — never blocks resolution
+        logger.warning(
+            "[OUTCOME] %s/%s: outcome observation write failed: %s",
+            cycle_id[:12], ticker, e,
+        )
+
+    try:
+        score = max(-1.0, min(1.0, pnl / EPISODE_SCORE_ANCHOR_PCT))
+        _episode_store().record_outcome(cycle_id, ticker, outcome, score)
+    except Exception as e:  # noqa: BLE001 — never blocks resolution
+        logger.warning(
+            "[OUTCOME] %s/%s: episode resolution failed: %s",
+            cycle_id[:12], ticker, e,
+        )
+
 
 def _classify(action: str, pnl_pct: float) -> str:
     """Map a signed pnl move to an outcome label for the given action.
@@ -381,7 +499,8 @@ def resolve_pending_outcomes() -> dict:
         with get_db() as db:
             pending = db.execute(
                 """
-                SELECT id, ticker, action, entry_price, created_at
+                SELECT id, ticker, action, entry_price, created_at,
+                       cycle_id, confidence
                 FROM decision_outcomes
                 WHERE resolved_at IS NULL AND created_at < %s
                 ORDER BY created_at ASC
@@ -390,7 +509,8 @@ def resolve_pending_outcomes() -> dict:
                 [cutoff],
             ).fetchall()
 
-            for outcome_id, ticker, action, entry_price, created_at in pending:
+            for (outcome_id, ticker, action, entry_price, created_at,
+                 cycle_id, confidence) in pending:
                 try:
                     # Same one-vendor path as the entry price, or the P&L is a
                     # vendor spread rather than a return (see app/quant/returns.py).
@@ -446,6 +566,14 @@ def resolve_pending_outcomes() -> dict:
                     )
                     resolved += 1
 
+                    # AFTER the UPDATE, never before: the memory tiers must
+                    # only learn outcomes the ledger already committed to.
+                    write_outcome_to_memory(
+                        cycle_id=cycle_id, ticker=ticker, action=action,
+                        outcome=outcome, pnl_pct=round(pnl_pct, 2),
+                        confidence=confidence,
+                    )
+
                 except Exception as row_err:
                     errors += 1
                     logger.warning("[OUTCOME] Failed to resolve %s: %s", outcome_id, row_err)
@@ -475,11 +603,12 @@ def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float
     try:
         with get_db() as db:
             pending = db.execute(
-                "SELECT id, action, entry_price FROM decision_outcomes "
+                "SELECT id, action, entry_price, cycle_id, confidence "
+                "FROM decision_outcomes "
                 "WHERE ticker = %s AND resolved_at IS NULL",
                 [ticker],
             ).fetchall()
-            for outcome_id, action, entry_price in pending:
+            for outcome_id, action, entry_price, cycle_id, confidence in pending:
                 if not entry_price or not exit_price:
                     continue
                 if action == "BUY":
@@ -500,6 +629,11 @@ def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float
                      datetime.now(timezone.utc), outcome_id],
                 )
                 resolved += 1
+                write_outcome_to_memory(
+                    cycle_id=cycle_id, ticker=ticker, action=action,
+                    outcome=outcome, pnl_pct=round(pnl_pct, 2),
+                    confidence=confidence,
+                )
         if resolved:
             logger.info("[OUTCOME] Resolved %d outcome(s) for %s on position exit", resolved, ticker)
     except Exception as e:

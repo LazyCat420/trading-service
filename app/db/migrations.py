@@ -4270,6 +4270,68 @@ def _create_persistent_research_tables(conn):
         except Exception:
             pass
 
+    # ── Backfill: resolve the working-memory episodes (2026-08-12) ──────────
+    #
+    # `episodic_memory` rows are written once, at decision time, with
+    # `outcome='pending'` (orchestrator) or the `write_episode` default of
+    # `'neutral'`, and NOTHING ever revised them — 572 pending and 3,080
+    # neutral rows against 2,394 resolved `decision_outcomes` on 2026-08-12.
+    # `EpisodicMemoryStore.retrieve` claims to rank "by most successful
+    # outcomes" over a column where every row tied at 0, and the "Relevant
+    # Past Cycles" block in every agent prompt showed `Outcome Score: 0.0`
+    # forever.
+    #
+    # `outcome_tracker.write_outcome_to_memory` closes this going forward.
+    # This is the other half: 1,843 episodes on record already join a RESOLVED
+    # decision on (cycle_id, ticker). Without it the tier stays blank for the
+    # months of history the agents actually read back.
+    #
+    # It INVENTS NOTHING — `outcome` and `pnl_pct` are already stored on the
+    # decision row; only the join is new.
+    #
+    # Three deliberate constraints:
+    #
+    #  - DISTINCT ON, because 239 (cycle_id, ticker) pairs carry duplicate
+    #    decision rows (exact duplicates from before the dedup guard), and an
+    #    unqualified UPDATE ... FROM picks among them non-deterministically.
+    #    Newest resolution wins, deterministically.
+    #  - DEGRADED_ARTIFACT / CANCELED excluded — the same exclusion
+    #    decision_audit, confidence_calibration and power_report already apply
+    #    to this column. 225 of the joinable rows are DEGRADED_ARTIFACT:
+    #    pipeline crashes scored against a price, not outcomes.
+    #  - The /10.0 clamp matches `EPISODE_SCORE_ANCHOR_PCT` in the forward
+    #    path, so backfilled and live rows land on ONE scale. A literal rather
+    #    than an import for the same reason the HOLD backfill above uses one:
+    #    retuning the constant later must not silently rewrite history.
+    #
+    # Idempotent: after the first run no matched row is still pending/neutral.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE episodic_memory e
+                   SET outcome = d.outcome,
+                       outcome_score = GREATEST(-1.0, LEAST(1.0, d.pnl_pct / 10.0))
+                  FROM (
+                        SELECT DISTINCT ON (cycle_id, ticker)
+                               cycle_id, ticker, outcome, pnl_pct
+                          FROM decision_outcomes
+                         WHERE resolved_at IS NOT NULL
+                           AND pnl_pct IS NOT NULL
+                           AND outcome IS NOT NULL
+                           AND outcome NOT IN ('DEGRADED_ARTIFACT', 'CANCELED')
+                         ORDER BY cycle_id, ticker, resolved_at DESC
+                       ) d
+                 WHERE e.cycle_id = d.cycle_id
+                   AND e.ticker = d.ticker
+                   AND (e.outcome IS NULL OR e.outcome IN ('pending', 'neutral'))
+            """)
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # ── Backfill: NULL cycle start times (2026-08-09) ───────────────────────
     #
     # `ORDER BY started_at DESC LIMIT 1` is the standard "newest cycle" query,
