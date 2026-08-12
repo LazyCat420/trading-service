@@ -237,6 +237,90 @@ def build_registry() -> dict[str, Stage]:
     add(Stage("policy_gates", "gate", _policy_gates, _gate_contract,
               blurb="confidence floor / policy gate, probed at 95/75/69/40"))
 
+    # ── The position branch: does a HELD name reach the bear with a pool? ──
+    def _wake_pool(c: Ctx):
+        """Replays the orchestrator's guard verbatim, against LIVE holdings.
+
+        This is the stage the 2026-08-12 audit had no way to run. The wake pool
+        only fires on a HELD re-look, and a *discovery* cycle selects unheld
+        names — so a full cycle can confirm the label path and can never
+        exercise this one. Measured on cycle-v3-1786564552: 6 desks, 0 held.
+        """
+        from app.v3.orchestrator import _build_cycle_metadata
+        from app.v3.substitute import POOL_KEY
+        from app.v3.wake_pool import build_wake_pool, build_wake_pool_block
+
+        # THE ACTIVE BOT, not `c.bot_id`. That defaults to "bench" — a bot
+        # that owns nothing — so every ticker reads held=False and this stage
+        # would report a green "guard correctly did not fire" while testing
+        # nothing at all. Holdings ARE the subject here. (bot_id resolution has
+        # burned this repo before: when it broke in 07-24 it read False for
+        # every ticker including ones the desk genuinely owned.)
+        from app.services.bot_manager import get_active_bot_id
+        bot_id = get_active_bot_id() or c.bot_id
+        meta = _build_cycle_metadata(ticker=c.ticker, bot_id=bot_id,
+                                     trigger_type="bench")
+        held = meta.get("held")
+        fired = held is True and not meta.get(POOL_KEY)
+        out = {
+            "bot_id": bot_id,
+            "held": held,
+            "guard_fired": fired,
+            # Recorded because the whole defect class here is a prose key being
+            # read as a mapping: `portfolio_context.get("held")` raises on a str.
+            "portfolio_context_type": type(meta.get("portfolio_context")).__name__,
+            "position_is_structured": isinstance(meta.get("position"), dict),
+            "pool": [], "reason": None, "block_chars": 0,
+            "self_in_pool": False, "asks_for_substitute": False,
+        }
+        if fired:
+            rec = build_wake_pool(c.ticker, exclude_cycle_id=c.cycle_id)
+            block = build_wake_pool_block(rec, self_ticker=c.ticker)
+            out.update(
+                pool=rec["tickers"], reason=rec["reason"],
+                source_cycle=rec["cycle_id"], age_hours=rec["age_hours"],
+                block_chars=len(block),
+                self_in_pool=c.ticker.upper() in rec["tickers"],
+                asks_for_substitute=(
+                    "only actionable on this book if it names something better"
+                    in block),
+            )
+        return out
+
+    def _wake_pool_contract(out: Any) -> str:
+        if not isinstance(out, dict):
+            return f"expected a dict, got {type(out).__name__}"
+        # The prose/mapping trap, asserted rather than remembered.
+        if out.get("portfolio_context_type") != "str":
+            return ("portfolio_context is no longer a str — re-check every "
+                    "reader; `.get('held')` on it used to raise into a blanket "
+                    "except and drop the label silently")
+        if out.get("held") is not True:
+            # Not a failure: an unheld ticker SHOULD NOT fire the guard. Say so
+            # rather than passing silently, so nobody reads a green run on an
+            # unheld ticker as proof the pool works.
+            return ("NOT A TEST OF THIS STAGE: this ticker is not held "
+                    f"(held={out.get('held')!r}), so the guard correctly did not "
+                    "fire. Re-run with a ticker the book actually owns.")
+        # Only meaningful once we know the desk IS held — `position` is
+        # legitimately absent on an unheld desk.
+        if not out.get("position_is_structured"):
+            return "cycle_metadata['position'] is not a dict — the structured fallback is gone"
+        if not out.get("guard_fired"):
+            return "held ticker but the guard did not fire — the pool is unreachable"
+        if not out.get("pool"):
+            return (f"guard fired but no pool was borrowable (reason="
+                    f"{out.get('reason')!r}) — the bear still cannot be asked")
+        if out.get("self_in_pool"):
+            return "the ticker being re-looked at is in its own substitute pool"
+        if not out.get("asks_for_substitute"):
+            return ("the block renders but does not ask for a substitute — the "
+                    "two populations are answering different questions")
+        return ""
+
+    add(Stage("wake_pool", "gate", _wake_pool, _wake_pool_contract,
+              blurb="HELD name -> borrowed candidate pool (needs a held ticker)"))
+
     # ── LLM agents ───────────────────────────────────────────────────
     agent_specs = [
         ("regime", "regime_engine", "market regime label"),
@@ -356,6 +440,95 @@ def print_row(r: dict) -> None:
         print(f"        ↳ {f}", flush=True)
 
 
+def compare_runs(base: dict, now: dict) -> int:
+    """Diff two bench runs. Returns the number of CONTRACT regressions.
+
+    Two kinds of change, deliberately weighted very differently:
+
+    **Contract PASS -> FAIL is a hard failure.** It is a behavioural statement
+    that does not depend on how loaded the box was.
+
+    **A timing change is not, unless it is enormous AND both runs were clean.**
+    This box is shared: `pk-run.sh`-style budgets, parallel sessions, and a live
+    trading cycle all move wall-clock by more than any code change here would.
+    Measured on this repo: unit-test classes SHRINK on a busy box rather than
+    fail. A benchmark that fails on a 20% timing move on a loaded machine
+    trains people to ignore it, which is worse than not having it.
+
+    So timings are always PRINTED and only ever FAIL when both runs were taken
+    with no live cycle and the slowdown is past `_TIMING_FAIL_RATIO`.
+    """
+    _TIMING_FAIL_RATIO = 2.5
+    _TIMING_NOTE_RATIO = 1.4
+
+    def _ok(row: dict) -> bool:
+        """`run_stage` writes `status: "PASS"|"FAIL"`. There is NO `ok` key.
+
+        This read used to be `row.get("ok")`, which is None on every real row —
+        so PASS->FAIL could never fire and the bar was decorative. It passed 11
+        unit tests because they built their own `{"ok": ...}` fixtures: a test
+        that defines its own subject proves nothing.
+        `test_the_status_key_matches_what_run_stage_actually_emits` now pins it
+        against the producer.
+        """
+        return str(row.get("status") or "").upper() == "PASS"
+
+    b = {r["stage"]: r for r in base.get("results", [])}
+    n = {r["stage"]: r for r in now.get("results", [])}
+    clean = not base.get("live_cycle") and not now.get("live_cycle")
+
+    print("\n" + "=" * 72)
+    print(f"  COMPARE vs baseline   ticker {base.get('ticker')} -> {now.get('ticker')}")
+    if not clean:
+        print("  ⚠  one or both runs had a LIVE CYCLE — timing deltas below are")
+        print("     NOT datapoints and cannot fail this comparison.")
+    print("=" * 72)
+
+    regressions = 0
+    for stage in sorted(set(b) | set(n)):
+        ob, on = b.get(stage), n.get(stage)
+        if ob is None:
+            print(f"  +  {stage:<20s} NEW stage, not in the baseline")
+            continue
+        if on is None:
+            # Deliberately NOT a regression. A narrower run is a normal thing to
+            # do (`bench_stage wake_pool --compare ...`), and failing it would
+            # make the flag unusable for the quick checks it exists for. It is
+            # printed so a run that silently lost a stage is still visible.
+            print(f"  ·  {stage:<20s} not run in this comparison (narrower run)")
+            continue
+        was, is_ = _ok(ob), _ok(on)
+        tb, tn = ob.get("median_s") or 0.0, on.get("median_s") or 0.0
+        ratio = (tn / tb) if tb > 0 else 0.0
+        rt = f"{tb:.2f}s -> {tn:.2f}s" + (f"  ({ratio:.2f}x)" if ratio else "")
+
+        if was and not is_:
+            regressions += 1
+            print(f"  ❌ {stage:<20s} REGRESSION  PASS -> FAIL   {rt}")
+            print(f"        ↳ {on.get('detail') or on.get('reason') or ''}")
+        elif is_ and not was:
+            print(f"  ✅ {stage:<20s} FIXED       FAIL -> PASS   {rt}")
+        elif clean and ratio >= _TIMING_FAIL_RATIO:
+            regressions += 1
+            print(f"  ❌ {stage:<20s} {ratio:.2f}x SLOWER on a clean box   {rt}")
+        elif ratio >= _TIMING_NOTE_RATIO:
+            print(f"  ·  {stage:<20s} slower, not failed          {rt}")
+        elif is_:
+            print(f"  ✅ {stage:<20s} PASS                        {rt}")
+        else:
+            # Failing in BOTH runs is not a regression, but it is not a tick
+            # either — a green mark on a red stage is how a broken bar goes
+            # unnoticed.
+            print(f"  ❗ {stage:<20s} still failing (was failing too) {rt}")
+
+    print("=" * 72)
+    print(f"  {regressions} contract regression(s)")
+    if not clean:
+        print("  Re-run with no live cycle before trusting any timing number.")
+    print("=" * 72)
+    return regressions
+
+
 async def main() -> int:
     registry = build_registry()
 
@@ -376,6 +549,12 @@ async def main() -> int:
     ap.add_argument("--force", action="store_true",
                     help="run even while a real cycle is live (timings will be junk)")
     ap.add_argument("--json", dest="json_out", help="write the full result to this path")
+    ap.add_argument("--baseline", metavar="PATH",
+                    help="write this run as a baseline to compare future runs against")
+    ap.add_argument("--compare", metavar="PATH",
+                    help="run, then diff against a baseline. Exits non-zero on a "
+                         "CONTRACT regression (PASS->FAIL); timing only fails when "
+                         "both runs were taken with no live cycle")
     args = ap.parse_args()
 
     if args.list:
@@ -443,11 +622,31 @@ async def main() -> int:
     print(f"  {passed}/{len(results)} stages PASS   |   {total_s:.1f}s of measured work")
     print("=" * 72)
 
+    payload = {"ticker": ctx.ticker, "cycle_id": cycle_id,
+               "live_cycle": bool(live), "results": results}
+
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
-            json.dump({"ticker": ctx.ticker, "cycle_id": cycle_id,
-                       "live_cycle": live, "results": results}, f, indent=2)
+            json.dump(payload, f, indent=2)
         print(f"  wrote {args.json_out}")
+
+    if args.baseline:
+        with open(args.baseline, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        print(f"  wrote baseline {args.baseline}")
+        if live:
+            print("  ⚠  taken while a cycle was LIVE — its timings are recorded as")
+            print("     unclean and cannot fail a future --compare.")
+
+    if args.compare:
+        try:
+            with open(args.compare, encoding="utf-8") as f:
+                base = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"  could not read baseline {args.compare}: {e}")
+            return 2
+        if compare_runs(base, payload):
+            return 1
 
     return 0 if passed == len(results) else 1
 
