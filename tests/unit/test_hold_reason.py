@@ -10,19 +10,37 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.v3.hold_reason import AVOID, WATCH, classify_hold
+from app.v3.hold_reason import (
+    AVOID,
+    EXIT_SIGNALLED,
+    KEEP,
+    UNKNOWN_POSITION,
+    WATCH,
+    classify_hold,
+)
 
 
 def _desk(**kw):
-    """A desk carrying only the artifacts a test cares about."""
+    """A desk carrying only the artifacts a test cares about.
+
+    `held` defaults to False because every test written before 2026-08-12 was
+    written about a name the desk does NOT own — that was the module's whole
+    scope. It is injected rather than left absent because absent now means
+    UNKNOWN_POSITION, which is a real third answer and has its own tests.
+    A test that passes its own `cycle_metadata` keeps whatever `held` it sets.
+    """
     base = dict(
         debate_judge=None,
         final_decision=None,
         trade_decision=None,
-        decision_synthesis=None,
+        fundamental_report=None,
+        quant_report=None,
         cycle_metadata={},
     )
     base.update(kw)
+    meta = base.get("cycle_metadata")
+    if isinstance(meta, dict) and "held" not in meta:
+        base["cycle_metadata"] = {**meta, "held": False}
     return SimpleNamespace(**base)
 
 
@@ -243,10 +261,21 @@ def test_malformed_artifacts_do_not_raise(junk):
     assert result["hold_reason"] in (WATCH, AVOID)
 
 
-def test_missing_cycle_metadata_does_not_raise():
+def test_missing_cycle_metadata_fails_closed_rather_than_assuming_unheld():
+    """No `cycle_metadata` at all means the position state is UNKNOWN.
+
+    It must NOT read as WATCH. WATCH is a statement about a name the desk does
+    not own, and a desk that cannot say whether it owns the name has not earned
+    that statement — assuming "not held" from a failed lookup is the exact
+    shape that sent three unheld SELLs to the executor as silent no-ops
+    (07-23 audit).
+    """
     desk = SimpleNamespace(debate_judge=None, final_decision=None,
-                           trade_decision=None, decision_synthesis=None)
-    assert classify_hold(desk, "HOLD")["hold_reason"] == WATCH
+                           trade_decision=None)
+    result = classify_hold(desk, "HOLD")
+    assert result["hold_reason"] == UNKNOWN_POSITION
+    assert result["basis"] == "position_unknown"
+    assert result["held"] is None
 
 
 def test_bull_defense_is_not_read_as_a_bear_win():
@@ -370,3 +399,158 @@ def test_the_substitute_reaches_the_result_not_just_the_label():
     assert result["hold_reason"] == AVOID
     assert result["hold_substitute"] == "PLTR"
     assert result["hold_reason_basis"] == "substitute:named"
+
+
+# ── THE POSITION BRANCH (Open Item 46, 2026-08-12) ───────────────────────
+#
+# Measured before this shipped, over the label's whole life: 26 of 28 labelled
+# HOLDs on names the book OWNS read WATCH — "the thesis is constructive; the
+# desk is not entering here" — about capital already committed. The other 2
+# read AVOID, which is just as wrong. Both branches were answering the entry
+# question on a population where entry is not the question.
+
+
+def _held_desk(**kw):
+    meta = dict(kw.pop("cycle_metadata", {}) or {})
+    meta["held"] = True
+    return _desk(cycle_metadata=meta, **kw)
+
+
+def test_a_quiet_position_is_kept_not_watched():
+    """The base case, and the one that was wrong 26 times."""
+    result = classify_hold(_held_desk(), "HOLD")
+    assert result["hold_reason"] == KEEP
+    assert result["held"] is True
+    # KEEP is the ABSENCE of an exit signal, not a fresh underwrite. A reader
+    # who cannot tell those apart will read a failed desk as a considered one.
+    assert result["basis"] == "no_exit_signal"
+
+
+def test_a_bear_win_on_a_held_name_signals_an_exit_not_an_avoid():
+    result = classify_hold(
+        _held_desk(debate_judge={"winning_side": "bear"}), "HOLD")
+    assert result["hold_reason"] == EXIT_SIGNALLED
+    assert "debate:bear_won" in result["signals"]
+
+
+def test_a_named_substitute_on_a_held_name_signals_an_exit():
+    from app.v3.substitute import _META_KEY, NAMED
+
+    desk = _held_desk(cycle_metadata={
+        _META_KEY: {"status": NAMED, "ticker": "MSFT", "pool_size": 3}})
+    result = classify_hold(desk, "HOLD")
+    assert result["hold_reason"] == EXIT_SIGNALLED
+    assert result["substitute_ticker"] == "MSFT"
+    assert result["basis"] == "substitute:named"
+
+
+def test_declined_does_not_rescue_a_broken_thesis_on_a_held_name():
+    """The one place the two branches genuinely DISAGREE rather than rename.
+
+    On an unheld name, "no better name exists" is a real reason not to act. On
+    a held name it is not: exiting to CASH is always available on a long-only
+    book, so DECLINED says nothing about whether this position should still be
+    owned. A bear that won the debate and then declined to name a replacement
+    must still register as an exit signal.
+    """
+    from app.v3.substitute import _META_KEY, DECLINED
+
+    meta = {_META_KEY: {"status": DECLINED, "ticker": None, "pool_size": 3}}
+    kw = dict(debate_judge={"winning_side": "bear"})
+    unheld = classify_hold(_desk(cycle_metadata=dict(meta), **kw), "HOLD")
+    held = classify_hold(
+        _desk(cycle_metadata={**meta, "held": True}, **kw), "HOLD")
+    assert unheld["hold_reason"] == WATCH
+    assert held["hold_reason"] == EXIT_SIGNALLED
+
+
+def test_the_held_flag_can_be_passed_explicitly():
+    """A caller that already resolved the position must not have to fake
+    metadata to say so."""
+    assert classify_hold(_desk(), "HOLD", held=True)["hold_reason"] == KEEP
+    assert classify_hold(_held_desk(), "HOLD", held=False)["hold_reason"] == WATCH
+
+
+def test_held_falls_back_to_the_structured_position_copy():
+    """`cycle_metadata["position"]` is the structured copy the debate framer
+    reads. `portfolio_context` is PROSE and must never be parsed for this."""
+    desk = _desk(cycle_metadata={"position": {"held": True},
+                                 "portfolio_context": "CURRENTLY HOLDING NVDA"})
+    del desk.cycle_metadata["held"]
+    assert classify_hold(desk, "HOLD")["hold_reason"] == KEEP
+
+
+def test_a_prose_portfolio_context_alone_does_not_decide_the_branch():
+    """If the only evidence is the prose string, the answer is UNKNOWN.
+
+    The shipped plan proposed `cycle_metadata.get("portfolio_context", {})
+    .get("held")`. That raises AttributeError on a str, which the caller's
+    blanket except swallows — the label vanishes instead of failing loudly.
+    """
+    desk = _desk(cycle_metadata={
+        "portfolio_context": "CURRENTLY HOLDING NVDA: Entry $100"})
+    del desk.cycle_metadata["held"]
+    result = classify_hold(desk, "HOLD")
+    assert result["hold_reason"] == UNKNOWN_POSITION
+
+
+@pytest.mark.parametrize("junk", [None, "yes", 1, 0, "True", {}])
+def test_a_non_boolean_held_is_unknown_not_truthy(junk):
+    """`held` is a tri-state. Truthiness coercion is how "unknown" silently
+    became "not held" in the 07-23 audit."""
+    desk = _desk(cycle_metadata={"held": junk})
+    assert classify_hold(desk, "HOLD")["hold_reason"] == UNKNOWN_POSITION
+
+
+def test_the_two_vocabularies_never_overlap():
+    """A reader must be able to tell which question a label answered from the
+    label alone. If the sets ever intersect, the branch stops being visible."""
+    assert {WATCH, AVOID}.isdisjoint({KEEP, EXIT_SIGNALLED})
+    assert UNKNOWN_POSITION not in {WATCH, AVOID, KEEP, EXIT_SIGNALLED}
+
+
+# ── Signal 3's carriers must be artifacts that EXIST ─────────────────────
+
+def test_thesis_direction_carriers_exist_in_the_live_schemas():
+    """Signal 3 shipped reading three artifacts that never carried the field.
+
+    Measured 2026-08-12 over 149 desks: `final_decision` 0/141,
+    `trade_decision` 0/105, and `decision_synthesis` is not an artifact at all.
+    The field is DECLARED on `fundamental_report` and `quant_report`. Signal 3
+    therefore fired 0 times in 132 HOLDs.
+
+    A test that hand-builds a desk with `{"thesis_direction": "BEARISH"}`
+    cannot see that — it defines its own subject. This one asserts against the
+    real schemas, so a field that moves again fails the suite.
+    """
+    import json
+
+    from app.v3 import artifacts as A
+    from app.v3.hold_reason import _DIRECTION_CARRIERS
+
+    declared = set()
+    for name in dir(A):
+        if not name.endswith("_SCHEMA"):
+            continue
+        schema = getattr(A, name)
+        if not isinstance(schema, dict):
+            continue
+        if "thesis_direction" in json.dumps(schema.get("properties") or {}):
+            declared.add(name)
+
+    assert declared, "no schema declares thesis_direction — the signal is dead"
+    # At least one carrier the classifier reads must be one the schemas fill.
+    assert any(c in ("fundamental_report", "quant_report")
+               for c in _DIRECTION_CARRIERS), (
+        "the research artifacts are the only ones that carry thesis_direction; "
+        "dropping them puts signal 3 back to zero firings")
+    assert "decision_synthesis" not in _DIRECTION_CARRIERS, (
+        "decision_synthesis is not an artifact this desk ever produces")
+
+
+def test_a_bearish_research_artifact_now_fires_signal_three():
+    """The repair, from the caller's side rather than from the constant."""
+    desk = _desk(fundamental_report={"thesis_direction": "BEARISH"})
+    result = classify_hold(desk, "HOLD")
+    assert result["hold_reason"] == AVOID
+    assert "fundamental_report:bearish" in result["signals"]

@@ -58,6 +58,129 @@ def _as_dict(v):
     return {}
 
 
+def _open_item_46(since: str, until: str, desks) -> None:
+    """Is the HOLD label honest about position state, and can it discriminate?
+
+    Open Item 46. Before the held branch shipped, `hold_reason` answered "should
+    the desk ENTER?" for every HOLD — including the ones on names the book
+    already owned. Measured over the label's whole life: **26 of 28 labelled
+    HOLDs on held names read WATCH**, and the other 2 read AVOID, which is just
+    as wrong about capital already committed.
+
+    Two numbers here, and the second is the one that matters:
+
+      LEAK      any WATCH/AVOID on a held desk, or any KEEP/EXIT_SIGNALLED on
+                an unheld one. Target 0. This going to 0 only proves the label
+                is honest — it does NOT prove it says anything.
+
+      SPREAD    the held branch's label distribution. Replayed over the five
+                days before the change it would have been KEEP 31 /
+                EXIT_SIGNALLED 2, i.e. a CONSTANT FUNCTION, because every input
+                it discriminates on was missing on held desks: pool empty
+                31/33, bear won 0/26, band AVOID 0/33, signal 3 dead. If this
+                stays ~94% KEEP after the wake pool lands, the label is
+                cosmetic and must be reported as such.
+    """
+    _UNHELD = {"WATCH", "AVOID"}
+    _HELD = {"KEEP", "EXIT_SIGNALLED"}
+
+    held_by_key = {}
+    inputs = Counter()
+    for cid, tk, dd_raw in desks:
+        dd = _as_dict(dd_raw)
+        meta = _as_dict(dd.get("cycle_metadata"))
+        held = meta.get("held")
+        held_by_key[(cid, tk)] = held
+        if held is not True:
+            continue
+        # Input availability on the population the item is about. A label
+        # cannot discriminate on an input that is not there.
+        inputs["held desks"] += 1
+        inputs["  ...with a candidate pool"] += int(
+            bool(meta.get("cycle_candidate_tickers")))
+        inputs["  ...pool BORROWED by the wake fallback"] += int(
+            bool(meta.get("wake_pool")))
+        pa = _as_dict(_as_dict(dd.get("bear_rebuttal")).get("preferred_alternative"))
+        inputs["  ...bear NAMED or DECLINED"] += int(
+            pa.get("status") in ("NAMED", "DECLINED"))
+        judge = _as_dict(dd.get("debate_judge"))
+        winner = str(judge.get("winner") or judge.get("winning_side") or "").lower()
+        inputs["  ...bear won the debate"] += int(winner.startswith("bear"))
+        inputs["  ...decision_score band = AVOID"] += int(
+            str(_as_dict(meta.get("decision_score")).get("band") or "").upper()
+            == "AVOID")
+
+    from app.db.connection import get_db
+
+    with get_db() as db:
+        rows = _rows(db, """
+            SELECT cycle_id, upper(ticker), result_json
+              FROM analysis_results
+             WHERE created_at >= %s AND created_at < %s
+        """, [since, until])
+
+    cross: Counter = Counter()
+    leaks: list[str] = []
+    shadow = Counter()
+    for cid, tk, rj_raw in rows:
+        rj = _as_dict(rj_raw)
+        if str(rj.get("action") or "").upper() != "HOLD":
+            continue
+        label = rj.get("hold_reason")
+        # The desk's own record of the state it classified from, falling back to
+        # the desk for rows written before that field existed.
+        held = rj.get("hold_reason_held")
+        if not isinstance(held, bool):
+            held = held_by_key.get((cid, tk))
+        cross[(repr(held), str(label))] += 1
+        if held is True and label in _UNHELD:
+            leaks.append(f"{tk} {label} (we OWN it)")
+        if held is False and label in _HELD:
+            leaks.append(f"{tk} {label} (we do NOT own it)")
+        es = _as_dict(rj.get("exit_floor_shadow"))
+        if es:
+            shadow["stamped"] += 1
+            shadow["would have cleared an exit-side floor"] += int(
+                bool(es.get("would_have_cleared_exit_floor")))
+
+    print("\nOPEN ITEM 46 — is the HOLD label honest about the position?")
+    total = sum(cross.values())
+    if not total:
+        print("  VACUITY: no labelled HOLDs in this window — this proved nothing.")
+        return
+    for (held, label), n in sorted(cross.items()):
+        print(f"  held={held:6s} {label:18s} {n}")
+    print(f"  LEAK (wrong vocabulary for the state) ... {len(leaks)}/{total}"
+          f"   target 0")
+    for line in leaks[:8]:
+        print(f"    {line}")
+
+    held_labels = {l: n for (h, l), n in cross.items()
+                   if h == "True" and l in _HELD}
+    tot_held = sum(held_labels.values())
+    if tot_held:
+        top = max(held_labels.values())
+        print(f"  SPREAD on held desks ................... {held_labels}")
+        print(f"    dominant label share .............. {100.0*top/tot_held:.0f}%"
+              f"   (>=90% = a constant function, i.e. cosmetic)")
+    else:
+        print("  SPREAD on held desks ................... none labelled yet")
+
+    print("  INPUT AVAILABILITY on held desks (a label cannot discriminate")
+    print("  on an input that is not there):")
+    for k, v in inputs.items():
+        print(f"    {k:44s} {v}")
+
+    if shadow:
+        print(f"  exit-floor shadow stamped ............. {shadow['stamped']}"
+              f"   would-have-cleared: "
+              f"{shadow['would have cleared an exit-side floor']}")
+        print("  ^ records only; gates nothing. Counts held names whose own label")
+        print("    says an exit signal exists and whose confidence would clear an")
+        print("    exit-side floor. It does NOT count blocked SELLs — there are")
+        print("    none; the board never proposes one.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", default="2026-08-12")
@@ -180,6 +303,8 @@ def main() -> int:
     print(f"  decisions carrying a shadow .. {stamped}/{total_ar}")
     print("  read `would_clear_recalibrated` from analysis_results.result_json"
           " before arguing the cutover")
+
+    _open_item_46(a.since, a.until, desks)
 
     print("\nHEADLINE (confounded across all four — do not attribute it to one)")
     tot = sum(n for _, n in acted) or 0

@@ -67,8 +67,32 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+#: The UNHELD vocabulary — "should the desk enter?"
 WATCH = "WATCH"
 AVOID = "AVOID"
+
+#: The HELD vocabulary, added 2026-08-12. A `HOLD` on a name the book OWNS was
+#: being labelled `WATCH` — "the thesis is constructive; the desk is not
+#: entering *here*" — which is not a statement anyone can make about capital
+#: already committed. Measured over the label's whole life: **26 of 28 labelled
+#: HOLDs on held names read WATCH, and the other 2 read AVOID**, which is just
+#: as wrong ("do not enter" a position we are already in).
+#:
+#: `EXIT_SIGNALLED`, and NOT `SELL_PROPOSED`: nothing proposed a SELL. The
+#: emitted action was HOLD, and there were ZERO SELL actions across 149 desks
+#: in the five days this was measured. Naming a label after an event that has
+#: never occurred is how a reader ends up grepping for a proposal that does not
+#: exist.
+KEEP = "KEEP"
+EXIT_SIGNALLED = "EXIT_SIGNALLED"
+
+#: The third state, and it is not decoration. `cycle_metadata["held"]` is
+#: ABSENT when `_build_cycle_metadata`'s portfolio fetch raises — ~1 desk in
+#: 149. Defaulting that to the unheld branch is precisely how "holdings
+#: unknown" became "not held" in the 07-23 audit, and three unheld SELLs
+#: reached the executor as silent no-ops. This label fails closed instead: it
+#: says the classifier could not tell, which is a fact, rather than guessing.
+UNKNOWN_POSITION = "UNKNOWN_POSITION"
 
 #: Mirrors `debate_frame._BEARISH`. Duplicated as a NAMED constant rather than
 #: imported so that widening one module's notion of "bearish" cannot silently
@@ -78,6 +102,33 @@ _BEARISH = {"BEARISH", "SELL", "SHORT"}
 #: The composite band that states the deterministic layer's own verdict. Band
 #: names come from `app.quant.decision_score`.
 _AVOID_BAND = "AVOID"
+
+#: THE ARTIFACTS THAT ACTUALLY CARRY `thesis_direction`.
+#:
+#: Signal 3 shipped reading `final_decision`, `trade_decision` and
+#: `decision_synthesis`. Measured 2026-08-12 across 149 desks: `final_decision`
+#: carries the key on **0 of 141**, `trade_decision` on **0 of 105**, and
+#: `decision_synthesis` **is not an artifact that exists**. The field is
+#: declared on the RESEARCH artifacts — `fundamental_report` (111 of 111) and
+#: `quant_report` (105 of 105) — see `artifacts.py:118` and `:279`.
+#:
+#: So signal 3 fired **0 times in 132 HOLDs**: a discriminator wired to three
+#: carriers that never had the field. The decision-layer names are KEPT at the
+#: front of the list — if a decision artifact ever states a direction it is the
+#: desk's own word and outranks the research reads — but the research carriers
+#: now follow them so the signal can fire at all.
+#:
+#: BLAST RADIUS, measured before the change: 6 of 132 HOLDs gain the signal, all
+#: on UNHELD names, and exactly 1 label flips WATCH -> AVOID. This repairs a
+#: dead code path; it does not move the held branch, and it was never going to.
+#: `tests/unit/test_hold_reason.py::test_thesis_direction_carriers_exist` pins
+#: the list against the live schemas so it cannot silently rot again.
+_DIRECTION_CARRIERS = (
+    "final_decision",
+    "trade_decision",
+    "fundamental_report",
+    "quant_report",
+)
 
 
 def _artifact(desk: Any, name: str) -> dict:
@@ -98,16 +149,53 @@ def _debate_winner(desk: Any) -> str:
     ).strip().upper()
 
 
-def classify_hold(desk: Any, action: str | None) -> dict | None:
-    """Label a HOLD as WATCH or AVOID. Returns None for any other action.
+def resolve_held(desk: Any, held: bool | None = None) -> bool | None:
+    """True / False / None — is this a name the book OWNS?
+
+    `None` is a real answer and must survive: it means the portfolio fetch
+    raised at desk-build time and nobody knows. See `UNKNOWN_POSITION`.
+
+    NEVER reads `cycle_metadata["portfolio_context"]`. That key holds a
+    formatted PROSE STRING (`orchestrator.py:3661` and `:3689`), so
+    `portfolio_context.get("held")` raises `AttributeError` on a `str` — which
+    `_attach_hold_reason`'s blanket `except` would swallow, dropping the label
+    entirely instead of failing loudly. `cycle_metadata["position"]` is the
+    structured copy, written at `orchestrator.py:3682` for exactly this use.
+    """
+    if isinstance(held, bool):
+        return held
+    meta = getattr(desk, "cycle_metadata", None)
+    if not isinstance(meta, dict):
+        return None
+    flag = meta.get("held")
+    if isinstance(flag, bool):
+        return flag
+    position = meta.get("position")
+    if isinstance(position, dict) and isinstance(position.get("held"), bool):
+        return position["held"]
+    return None
+
+
+def classify_hold(desk: Any, action: str | None,
+                  held: bool | None = None) -> dict | None:
+    """Label a HOLD. Returns None for any other action.
 
     Returning None rather than a default is the point: BUY and SELL are
     executable and need no sub-label, and inventing one for them would put a
     meaningless value in a column that later reads as data.
+
+    THREE BRANCHES, because a HOLD means three different things:
+
+        held is False  WATCH / AVOID           "should we enter?"
+        held is True   KEEP / EXIT_SIGNALLED   "should we stay in?"
+        held is None   UNKNOWN_POSITION        the desk could not tell
+
+    `held` may be passed explicitly; otherwise it is resolved from the desk.
     """
     if str(action or "").strip().upper() != "HOLD":
         return None
 
+    held = resolve_held(desk, held)
     signals: list[str] = []
 
     # 1. The debate reached a bearish verdict. On a book that cannot short,
@@ -125,10 +213,10 @@ def classify_hold(desk: Any, action: str | None) -> dict | None:
     if isinstance(score, dict) and str(score.get("band") or "").upper() == _AVOID_BAND:
         signals.append("baseline:avoid_band")
 
-    # 3. The decision layer's own stated direction. Checked on both carriers
-    #    because the delta tier writes `final_decision` directly without the
-    #    synthesizer ever running.
-    for name in ("final_decision", "trade_decision", "decision_synthesis"):
+    # 3. A stated bearish direction. See `_DIRECTION_CARRIERS` — the decision
+    #    artifacts are checked first and the research artifacts, which are the
+    #    ones that actually declare the field, follow.
+    for name in _DIRECTION_CARRIERS:
         if _direction(_artifact(desk, name)) in _BEARISH:
             signals.append(f"{name}:bearish")
             break
@@ -148,11 +236,66 @@ def classify_hold(desk: Any, action: str | None) -> dict | None:
     sub = read_record(desk) or {}
     status = sub.get("status")
 
+    # ── THE POSITION BRANCH, which outranks everything below ────────────────
+    #
+    # Everything after this point answers "should the desk ENTER?". That is not
+    # a question about capital already committed, and answering it anyway is
+    # the whole of Open Item 46.
+    if held is None:
+        # Fail closed. Do NOT fall through to the unheld branch: guessing
+        # "not held" when holdings are unknown is the 07-23 defect.
+        return {
+            "hold_reason": UNKNOWN_POSITION,
+            "signals": signals,
+            "basis": "position_unknown",
+            "held": None,
+            "substitute_status": status,
+            "substitute_ticker": None,
+        }
+
+    if held is True:
+        # A NAMED substitute or any negative signal means the desk is carrying
+        # a position its own evidence argues against — and it emitted HOLD.
+        #
+        # DECLINED does NOT rescue a broken thesis here, and that is the one
+        # place the two branches genuinely disagree rather than just rename.
+        # On the unheld branch "nothing better exists" is a real reason not to
+        # act. On a held name it is not: exiting to CASH is always available on
+        # a long-only book, so "no better name" says nothing about whether this
+        # one should still be owned.
+        exit_signals = list(signals)
+        if status == NAMED:
+            exit_signals.append("substitute:named")
+        if exit_signals:
+            return {
+                "hold_reason": EXIT_SIGNALLED,
+                "signals": signals,
+                "basis": ("substitute:named" if status == NAMED
+                          else "negative_signal"),
+                "held": True,
+                "substitute_status": status,
+                "substitute_ticker": sub.get("ticker") if status == NAMED else None,
+            }
+        return {
+            "hold_reason": KEEP,
+            "signals": signals,
+            # Same honesty as `no_negative_signal` below: KEEP is the ABSENCE
+            # of an exit signal, not a positive verdict on the position. A desk
+            # whose agents all failed produces KEEP, and that must not read as
+            # "the desk re-underwrote this name today".
+            "basis": "no_exit_signal",
+            "held": True,
+            "substitute_status": status,
+            "substitute_ticker": None,
+        }
+
+    # ── held is False: the original entry vocabulary, unchanged ─────────────
     if status == NAMED:
         return {
             "hold_reason": AVOID,
             "signals": signals,
             "basis": "substitute:named",
+            "held": False,
             "substitute_status": status,
             "substitute_ticker": sub.get("ticker"),
         }
@@ -161,6 +304,7 @@ def classify_hold(desk: Any, action: str | None) -> dict | None:
             "hold_reason": WATCH,
             "signals": signals,
             "basis": "substitute:declined",
+            "held": False,
             "substitute_status": status,
             "substitute_ticker": None,
         }
@@ -174,6 +318,7 @@ def classify_hold(desk: Any, action: str | None) -> dict | None:
         # constructive verdict. A desk whose agents all failed produces WATCH,
         # and that must not read as "the desk likes this name".
         "basis": "negative_signal" if signals else "no_negative_signal",
+        "held": False,
         # Carried even on the fallback path so a reader can tell "no bear ran"
         # from "the bear was asked and broke" — the two look identical in the
         # label and are very different populations.
