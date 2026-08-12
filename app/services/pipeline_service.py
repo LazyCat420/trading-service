@@ -629,6 +629,11 @@ class PipelineService:
         # cycle-v3-1786072624). An empty list is the correct value for a Watch
         # Desk wake, which bypasses discovery and has no pool.
         cycle_candidates: list[dict] = []
+        #: `{ticker: times a bear named it}`, read once per cycle and used by the
+        #: scoring loop. Declared here for the same reason as the list above: it
+        #: is assigned inside the dynamic-selection branch only, and an
+        #: explicit-ticker run must still be able to read it.
+        substitute_demand: dict[str, int] = {}
 
         def _persist_summary(status: str, tickers_final, results=None, error: str | None = None,
                              report_generated: bool = False):
@@ -1148,6 +1153,35 @@ class PipelineService:
 
                         all_pool.update({t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers})
                         all_pool.update(trending_discovered)
+
+                        # THE BEAR'S NAMED ALTERNATIVE, CARRIED FORWARD.
+                        # `substitute.py` has asked every bear "what would you
+                        # rather own?" since 2026-08-08 and got a real ticker 41
+                        # times; until now nothing read the answer back, so the
+                        # one executable expression of a bearish thesis on a
+                        # long-only book — own that one INSTEAD — reached no
+                        # cycle. Merged here, before the last-analysis lookup,
+                        # because this is the last point where a name can still
+                        # enter `all_pool`, and `all_pool` is what
+                        # `admit_gatekeeper_selection` admits from.
+                        # Only NAMED is carried, and NAMED is by construction a
+                        # ticker the bear was SHOWN, hence already screened.
+                        try:
+                            from app.v3.substitute_demand import (
+                                merge_into_pool, recent_substitute_demand,
+                            )
+                            _demand = recent_substitute_demand()
+                            _carried = merge_into_pool(all_pool, _demand)
+                            substitute_demand = _demand
+                            if _carried:
+                                logger.info(
+                                    "[PipelineService] Bear substitutes carried into pool: "
+                                    "%d new (%s) from %d named",
+                                    len(_carried), ", ".join(_carried[:8]), len(_demand),
+                                )
+                        except Exception as _e:  # noqa: BLE001
+                            logger.warning(
+                                "[PipelineService] substitute carry failed (non-fatal): %s", _e)
                         
                         # 4. Fetch Last Analysis Date for all
                         if all_pool:
@@ -1273,7 +1307,19 @@ class PipelineService:
                             
                             if "Trending" in src:
                                 score += 15.0
-                            
+
+                            # A name a bear argued the desk should own INSTEAD
+                            # of something it was analysing. Weaker than a
+                            # trending boost on purpose — this is one agent's
+                            # stated preference, not corroborated attention —
+                            # but enough to survive the top-20 sector cap, which
+                            # is the only thing standing between a named
+                            # alternative and an actual look. Capped so a single
+                            # repeated name cannot dominate the screen.
+                            _sub_n = substitute_demand.get(t, 0)
+                            if _sub_n:
+                                score += min(6.0 + 3.0 * _sub_n, 18.0)
+
                             # Phase 4A: Multi-source cross-reference boost
                             sc = source_count_map.get(t, 0)
                             if sc >= 2:

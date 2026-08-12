@@ -783,6 +783,18 @@ class SharedDesk:
                 loser_best = self.debate_judge.get("strongest_point_of_loser", "")
                 if loser_best:
                     text += f"\n**Loser's best point:** {loser_best}"
+                # A verdict reached without the third turn is one side's brief,
+                # not a settled debate. Measured 2026-08-11: debates judged with
+                # no bull defense went to the bear 79% of the time against 50%
+                # when it ran, and the Board could not see the difference —
+                # the rendered verdict looked identical either way.
+                if not self.bull_defense:
+                    text += (
+                        "\n**INCOMPLETE DEBATE — no bull defense was produced.** "
+                        "The bear's rebuttal went unanswered by construction, so "
+                        "this verdict reflects an unopposed brief rather than a "
+                        "contested one. Weigh it accordingly."
+                    )
                 verdict_sections.append(text)
 
         # Regime

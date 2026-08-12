@@ -809,6 +809,7 @@ async def run_v3_pipeline(
                 # lines above the full-panel call site, and a delta HOLD is
                 # still a HOLD that means one of two different things.
                 _attach_hold_reason(result, desk=desk, ticker=ticker, emit=emit)
+                _attach_confidence_shadow(result, ticker=ticker)
                 try:
                     _persist_policy_action(cycle_id, ticker, policy_action)
                 except Exception as pe:
@@ -855,6 +856,10 @@ async def run_v3_pipeline(
     
     # Track execution counts to prevent infinite cascades / loops
     MAX_RUNS_PER_AGENT = 3
+    # The bull defense gets one retry before the debate is conceded — see the
+    # bull_defense branch. Must stay strictly below MAX_RUNS_PER_AGENT so the
+    # retry can actually be queued.
+    DEFENSE_MAX_ATTEMPTS = 2
     run_counts = {
         "regime_engine": 0,
         "junior_analyst": 0,
@@ -2090,15 +2095,38 @@ async def run_v3_pipeline(
                         content=desk.bull_defense,
                         author_agent="v3_bull_defense"
                     )
+                elif run_counts.get("bull_defense", 1) < DEFENSE_MAX_ATTEMPTS:
+                    # RETRY BEFORE FAILING OPEN (2026-08-11). Measured over 185
+                    # post-fix debates: when the defense turn is missing the bear
+                    # wins 79% of the time, against 50% when it runs — the
+                    # fail-open path silently restores the pre-fix two-turn
+                    # debate for 18% of desks. One retry costs one agent call;
+                    # conceding the debate costs the decision.
+                    logger.warning(
+                        "[V3] %s: bull_defense produced no artifact (%s) — "
+                        "retrying (attempt %d of %d) before conceding the debate",
+                        ticker, outcome, run_counts.get("bull_defense", 1),
+                        DEFENSE_MAX_ATTEMPTS,
+                    )
+                    emit("analyzing", f"v3_defense_retry_{ticker}",
+                         f"🔁 {ticker}: bull defense retry "
+                         f"{run_counts.get('bull_defense', 1)}/{DEFENSE_MAX_ATTEMPTS}",
+                         status="warn")
+                    _queue_agent("bull_defense", module, query=query, parent=parent)
                 else:
                     # Fail-open: the whiteboard write is what chains the judge,
                     # so a failed defense would otherwise strand the desk with
-                    # a debate and no verdict.
+                    # a debate and no verdict. Reached only after the retry above
+                    # also failed — recorded so the rate stays measurable.
                     logger.warning(
-                        "[V3] %s: bull_defense produced no artifact (%s) — "
-                        "chaining the judge on an incomplete debate",
-                        ticker, outcome,
+                        "[V3] %s: bull_defense produced no artifact (%s) after "
+                        "%d attempts — chaining the judge on an incomplete debate",
+                        ticker, outcome, run_counts.get("bull_defense", 1),
                     )
+                    desk.cycle_metadata["defense_failed_open"] = True
+                    emit("analyzing", f"v3_defense_failed_open_{ticker}",
+                         f"⚠️ {ticker}: debate judged without a bull defense",
+                         status="warn")
                     _queue_agent("debate_judge", debate_judge, parent="bear_rebuttal")
 
             elif name == "debate_judge":
@@ -2458,6 +2486,7 @@ async def run_v3_pipeline(
     result = _build_v1_compatible_result(desk, elapsed_s=elapsed_s)
 
     _attach_hold_reason(result, desk=desk, ticker=ticker, emit=emit)
+    _attach_confidence_shadow(result, ticker=ticker)
 
     emit(
         "analyzing", f"v3_done_{ticker}",
@@ -2561,6 +2590,32 @@ def _attach_hold_reason(result: dict, *, desk: SharedDesk, ticker: str, emit) ->
     except Exception as e:  # noqa: BLE001
         # Non-fatal by construction: a label must never cost a decision.
         logger.warning("[V3] %s: hold classification failed (non-fatal): %s", ticker, e)
+
+
+def _attach_confidence_shadow(result: dict, *, ticker: str) -> None:
+    """Record what a recalibrated confidence scale WOULD have said. Gates nothing.
+
+    Attached at both decision exits for the same reason `_attach_hold_reason`
+    is: the delta tier returns ~1,600 lines above the full panel, and a helper
+    wired into one exit measures one route.
+
+    Deliberately NOT a gate. `08-confidence-rebuild.md` requires stage 1 to
+    ship behind a parameter and alone in its window; this change already
+    carries three debate/substitute fixes, so the scale stays raw and only the
+    counterfactual is stored. Reading these rows is what decides the cutover.
+    """
+    try:
+        from app.quant.confidence_calibration import shadow_record
+        from app.services.parameter_store import get_param
+
+        floor = get_param("ANALYSIS_CONFIDENCE_THRESHOLD")
+        rec = shadow_record(result.get("confidence"), floor)
+        if rec:
+            rec["action"] = result.get("action")
+            result["confidence_shadow"] = rec
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[V3] %s: confidence shadow failed (non-fatal): %s", ticker, e)
 
 
 def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> None:

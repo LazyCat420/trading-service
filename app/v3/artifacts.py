@@ -774,6 +774,42 @@ FINAL_DECISION_SCHEMA: dict = {
             "type": "number",
             "description": "Suggested take-profit price",
         },
+        # Added 2026-08-11. The Board returned HOLD on 102 of 102 post-fix bear
+        # wins, so "the bear won" and "the Board held" were indistinguishable in
+        # the data and the reflex was invisible. OPTIONAL on purpose: a required
+        # field would turn a model that declines to answer into a degraded
+        # artifact, i.e. another HOLD — the defect it is meant to measure.
+        "bear_verdict_response": {
+            "type": "object",
+            "description": (
+                "How this decision answers the debate verdict. Populate whenever "
+                "the debate had a winner."
+            ),
+            "properties": {
+                "decisive_claim": {
+                    "type": "string",
+                    "description": (
+                        "The specific bear claim that decides this action — not a "
+                        "restatement of the verdict"
+                    ),
+                },
+                "claim_type": {
+                    "type": "string",
+                    "enum": ["thesis_broken", "size_or_timing", "unproven"],
+                    "description": (
+                        "thesis_broken justifies HOLD; size_or_timing calls for a "
+                        "smaller position or a trigger instead"
+                    ),
+                },
+                "overrode_bear": {
+                    "type": "boolean",
+                    "description": (
+                        "True when the bear won the debate and this decision acts "
+                        "anyway (BUY/SELL). A legitimate, expected outcome."
+                    ),
+                },
+            },
+        },
         "persona_used": {
             "type": "string",
             "description": (

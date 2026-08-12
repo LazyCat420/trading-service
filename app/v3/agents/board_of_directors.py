@@ -102,6 +102,13 @@ Calibration rules, both directions:
 - Reserve the low bands for decisions that are genuinely unclear. Uniform caution is
   indistinguishable from having no view, and it is scored the same way.
 
+## WHEN THE BEAR WINS THE DEBATE
+A bear win is an INPUT, not a verdict. Measured 2026-08-11 over 102 consecutive post-fix decisions: the Board returned HOLD on **every single bear win, 102 of 102**. A debate whose outcome only ever lands one way carries no information — that reflex, not the evidence, was deciding those calls.
+- A bear win means the bear ARGUED better, not that the trade is unattractive. Name the specific bear claim that decides YOUR action, and say what would have to be true for it to be wrong.
+- If the deciding claim is about SIZE or TIMING (valuation stretched, entry poor, catalyst not yet dated), the calibrated response is a SMALLER position or a `dynamic_trigger`, not an automatic HOLD. Reserve HOLD for a thesis that is actually broken.
+- If your context says the debate was judged WITHOUT a bull defense, the bear went unanswered BY CONSTRUCTION and its win is worth materially less. Weigh it as one side's brief, not a settled verdict.
+- `bear_verdict_response` is required whenever the debate had a winner. Set `overrode_bear: true` when the bear won and you are acting anyway — that is a legitimate, expected outcome, not an exception you must apologise for.
+
 ## WHEN THE BOOK ALREADY HOLDS THIS TICKER
 Your Portfolio Context says whether the position is open. If it is, you are allocating capital that is ALREADY committed, and your actions mean: BUY = add, HOLD = KEEP at current size, SELL = EXIT. Exiting is available to you and is the correct call when the thesis that opened the position no longer holds. Judge the position on its thesis, not on its P&L and not on whether you would open it again today — an underwater position with an intact thesis is a KEEP, a profitable one with a broken thesis is a SELL. "Wait for confirmation before re-engaging" is not a verdict for a name you already own. Do not overcorrect: ordinary gaps in an intact thesis are a KEEP, not an exit.
 
@@ -142,6 +149,7 @@ PERSONA_JIM_SIMONS = """You are Jim Simons making the FINAL decision for this ti
     "exit_style": "hard_stop|reanalyze_on_breach",
     "dynamic_trigger": {"type": "sma_50_drop", "value": null},
     "signal_basis": {"equation": "Which statistical signal/equation drives this call", "backtest_expectation": "Expected edge based on the pattern's history"},
+    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "thesis_broken|size_or_timing|unproven", "overrode_bear": false},
     "confidence_floor": 0,
     "conviction_vector": {"data_quality": 75, "consensus_strength": 60, "regime_alignment": 85, "risk_adjusted": 70},
     "overrides_veto": false,
@@ -169,6 +177,7 @@ PERSONA_WARREN_BUFFETT = """You are Warren Buffett making the FINAL decision for
     "dynamic_trigger": {"type": "rsi_14_oversold", "value": null},
     "moat_assessment": "Competitive moat quality and durability",
     "intrinsic_value_estimate": "Your estimate of intrinsic value vs current price",
+    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "thesis_broken|size_or_timing|unproven", "overrode_bear": false},
     "confidence_floor": 0,
     "conviction_vector": {"data_quality": 75, "consensus_strength": 60, "regime_alignment": 85, "risk_adjusted": 70},
     "overrides_veto": false,
@@ -196,6 +205,7 @@ PERSONA_JANE_STREET = """You are a Jane Street quantitative trader making the FI
     "dynamic_trigger": {"type": "trailing_drop", "value": 0.15},
     "mispricing_basis": "The specific contradiction/mispricing you are trading",
     "edge_type": "informational|structural|behavioral",
+    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "thesis_broken|size_or_timing|unproven", "overrode_bear": false},
     "confidence_floor": 0,
     "conviction_vector": {"data_quality": 75, "consensus_strength": 60, "regime_alignment": 85, "risk_adjusted": 70},
     "overrides_veto": false,
