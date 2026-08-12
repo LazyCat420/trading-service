@@ -1048,6 +1048,26 @@ async def run_v3_agent(
             # 4.3% (2.3-7.6% per agent) — NOT the 22-36% that motivated the
             # original plan item. Do not expect a visible move in the artifact
             # rate from this; judge it on the salvage-pass invocation count.
+            #
+            # BATCHING (added 2026-08-11). The block above tells the model what
+            # spends a turn but never told it that SEVERAL tool calls can share
+            # one. Measured over 30 days: tool calls per loop is ~1.0 for every
+            # agent (junior 5.91 calls / 5.95 loops = 0.99; quant 0.92; bull
+            # 0.73), i.e. each lookup buys its own LLM round-trip.
+            #
+            # That matters because tool execution is NOT the cost. Splitting
+            # agent wall-clock against summed tool elapsed_ms over the same 30
+            # days: tools are 0.0-11.5% of it (bear 1.5s of 359.2s; quant 0.9s
+            # of 272.7s; junior 18.5s of 160.6s). 88-100% is LLM time, so the
+            # only way to make an agent faster is to make it take fewer turns.
+            #
+            # The harness DOES honour batching — this is an existence proof,
+            # not a hope: 436 of 3,163 runs (13.8%) completed more tool calls
+            # than they used loops, up to 13 more. Per-agent it ranges from
+            # 27.7% (fundamental) to 0.9% (bull), which is the spread of a
+            # prompt habit, not a platform limit. If a future measurement shows
+            # calls/loop still pinned at 1.0 across every agent, this paragraph
+            # is inert and should be deleted rather than left as decoration.
             from app.agents.tool_whitelists import get_agent_budget_turns
             _budget = get_agent_budget_turns(agent_name, True)
             user_prompt += (
@@ -1057,6 +1077,13 @@ async def run_v3_agent(
                 f"\n### TURN BUDGET: {_budget}\n"
                 f"You get at most {_budget} turns for this task, and a turn is "
                 "spent whether you call a tool or write prose.\n"
+                "- ISSUE INDEPENDENT TOOL CALLS TOGETHER IN ONE TURN. Several "
+                "calls in a single turn cost ONE turn, not one each. If you "
+                "know you need two or three lookups and none of them depends "
+                "on another's result, request them all at once — asking one at "
+                "a time is the most common way this budget is wasted. Only "
+                "wait for a result when your next choice genuinely depends on "
+                "it.\n"
                 "- Budget your research so the LAST turn is the JSON artifact.\n"
                 "- NEVER spend a turn announcing what you are about to do. "
                 "Text like \"I'll now complete the analysis and emit the JSON\" "

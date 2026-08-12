@@ -119,6 +119,31 @@ _V3_TOOL_POLICIES = [
 # emit_structured_output calls were rejected with "'data' is required and must
 # be an object" — a 20% failure rate on the tool models reach for by default,
 # caused by a wrapper nothing in this prompt ever described.
+#
+# Rule 8 was extended on 2026-08-11 because it only ever described HALF the
+# defect. Re-measured over the 7 days to 2026-08-11: the same error is now 132
+# of 246 tool failures (54%) across 9 agents — quant 69, valuation 20, bear 14,
+# fundamental 14. Runs that hit it averaged +97s to +177s and ~1 extra turn
+# versus runs of the SAME agent that did not (quant 393.0s over n=67 vs 216.4s
+# over n=146). 429 of those runs still returned SUCCESS, so this is not a
+# correctness failure — it is a latency and turn-budget failure, which is
+# exactly why the prompt is the right place to fix it.
+#
+# The half rule 8 missed: `args_hash` on the failing calls shows only 14 of
+# them arrived as literally empty arguments (the "fields at the top level"
+# shape rule 8 already described). The rest carried varied hashes — the
+# arguments arrived, but `data` was a JSON *string* rather than an object. The
+# executor's guard is `!data || typeof data !== "object"`, so a stringified
+# payload is rejected with a message that says it is missing, and the model —
+# having no way to see the difference — re-sends the identical call until
+# base_agent's 3-strike repeat check aborts the agent.
+#
+# The executor fix (parse a stringified payload; name truncation as the cause)
+# belongs in tools-service `/compute/synthetic-output`, which this project does
+# not own and must not modify. Until that lands upstream, the prompt is the
+# only lever we control. `_unwrap_structured_output` in agent_runner.py already
+# recovers the stringified shape on the TEXT path; nothing can recover it on
+# the TOOL-CALL path, because the tool rejects the call before we ever see it.
 _V3_COMMON_GUIDELINES = """
 ## V3 Pipeline Rules
 1. You are a V3 agent in a linear pipeline. You MUST produce a valid JSON artifact.
@@ -132,10 +157,16 @@ _V3_COMMON_GUIDELINES = """
    turn you cannot get back: execute_command, execute_javascript,
    execute_skill, write_file, query_datastore. Do not call them. For any
    calculation use execute_python, which IS permitted and sandboxed.
-8. If you emit your artifact with emit_structured_output, the artifact must be
-   wrapped in a top-level "data" object — {"data": {...your artifact...}}.
-   Calling it with the artifact's own fields at the top level is rejected with
-   "'data' is required and must be an object" and your work is lost.
+8. If you emit your artifact with emit_structured_output, "data" must be a JSON
+   OBJECT, not a string, and not your artifact's fields at the top level:
+     RIGHT: {"data": {"verdict": "BUY", "confidence": 78}}
+     WRONG: {"verdict": "BUY", "confidence": 78}        (no "data" wrapper)
+     WRONG: {"data": "{'verdict': 'BUY'}"}             (data as a string)
+   Both wrong forms are rejected with the SAME message — "'data' is required
+   and must be an object" — so the error cannot tell you which one you sent.
+   Re-sending the identical call fails identically and costs another turn; if
+   you see that error, change the SHAPE. If your payload is long, shorten it:
+   a truncated JSON string fails this way too.
 """
 
 

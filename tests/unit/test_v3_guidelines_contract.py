@@ -39,6 +39,52 @@ def test_the_guidelines_explain_the_structured_output_envelope():
     )
 
 
+def test_the_guidelines_forbid_data_as_a_string():
+    """The half of the defect rule 8 originally missed.
+
+    Re-measured over the 7 days to 2026-08-11: "'data' is required and must be
+    an object" was 132 of 246 tool failures (54%) across 9 agents. Only 14 of
+    the failing calls carried an empty `args_hash` — the "fields at the top
+    level" shape the rule already described. The rest arrived with real
+    arguments whose `data` was a JSON *string*.
+
+    Both shapes are rejected with the SAME message, so the model cannot tell
+    them apart from the error and re-sends the identical call until
+    base_agent's 3-strike check aborts the agent. The prompt must therefore
+    name the string case explicitly — the error never will.
+    """
+    assert re.search(
+        r"not a string", _V3_COMMON_GUIDELINES, re.I
+    ), (
+        "rule 8 must say `data` cannot be a STRING. The executor's guard is "
+        "`!data || typeof data !== 'object'`, so a stringified payload is "
+        "rejected as if it were missing; only the prompt can explain that."
+    )
+
+
+def test_the_structured_output_examples_are_literal_json():
+    """A mangled example teaches the wrong shape.
+
+    The rule shows RIGHT/WRONG payloads. Because it lives inside a Python
+    string, an escaped example can render as `\\"` — a double backslash the
+    model would copy. Pin that the RIGHT example is parseable JSON exactly as
+    the model receives it.
+    """
+    import json
+
+    right = re.search(
+        r"RIGHT:\s*(\{.*?\})\s*\n", _V3_COMMON_GUIDELINES
+    )
+    assert right, "rule 8 must carry a RIGHT: example"
+    parsed = json.loads(right.group(1))
+    assert isinstance(parsed.get("data"), dict), (
+        "the RIGHT example must show `data` as a JSON object"
+    )
+    assert "\\\\" not in right.group(1), (
+        "the example renders a double backslash — it will teach bad escaping"
+    )
+
+
 def test_execute_python_is_offered_as_the_permitted_alternative():
     """A denial with no substitute just leaves the model stuck.
 
