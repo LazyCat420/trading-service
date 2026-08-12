@@ -211,10 +211,42 @@ that function.
   held+`NAMED` neutered, wake pool emptied, self-ticker exclusion removed,
   held-only guard dropped). A test that cannot be made to fail proves nothing.
 
-## Next step
+## Next step — CORRECTED 2026-08-12 after reading the July handoffs
 
-The cheapest highest-information experiment available: **run the probabilistic
-panel in SHADOW beside the current judge and score both by Brier** over ~6 weeks.
-One parameter and one logging call. It is the only item here that could change
-what the desk decides, and it tests the architecture argument rather than
-assuming it.
+An earlier draft of this file said "run the probabilistic panel in SHADOW —
+one parameter and one logging call". **Both halves of that were wrong**, and
+the corrections came from documents already in this repo:
+
+1. **`DEBATE_ENGINE = 3` is a measured retirement, not an oversight.**
+   `HANDOFF_tournament_retired_2026-07-29.md`: the tournament cost **28.2% of
+   ALL pipeline tokens** and **374 s/ticker**, and lost on every channel it was
+   scored on — selection indistinguishable from the free `quant
+   thesis_direction` (−0.822pp vs −0.771pp, both p≈0.35), 6.5× worse on the
+   removal channel that actually pays, chi2=16.63 p<0.0001 redundant with the
+   quant, and Brier **0.3090** against a base rate of **0.2266** (n=98). It was
+   retired on evidence. Do not reopen it as if it were an accident.
+
+2. **The panel is NOT the tournament, and is genuinely unmeasured.** The 0.3090
+   above scored the *tournament* — `probabilistic_panel.py` sits at
+   `DEBATE_ENGINE` 1 (and 2 for the ρ=1.0 control) and has **never been the
+   default**; `tournament_result` appears on **1 of 149 desks**. So the
+   experiment is real. But it is four analysts plus a revision round — the same
+   order of cost as the thing that was retired for costing 28.2% of tokens.
+   **It is not "one parameter and one logging call".** Budget it.
+
+3. **The decisive baseline is already specified, and is cheaper than the
+   panel.** `scripts/score_panel.py` names it: **self-consistency** — the same
+   model, the FULL packet, k independent samples, `p` = fraction bullish, no
+   debate and no partition — and states that "the literature's central finding
+   is that most debate systems lose to this at 2-3x the tokens. **This is the
+   one that decides whether the panel ships.**" It has never been run.
+
+**So the ordered next step is: run self-consistency FIRST.** It is strictly
+cheaper than the panel, it is the baseline the panel must beat to be worth
+having, and if it wins there is nothing to build. Only if the panel beats
+self-consistency — and then also beats the ρ=1.0 shared-evidence control, or
+the gain is ensembling rather than information asymmetry — is a debate engine
+worth its tokens.
+
+The scorer, the baselines and the control are all already written. What is
+missing is a run.

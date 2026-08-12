@@ -1,138 +1,82 @@
-# HANDOFF — Five self-contradictions in the V3 trading cycle (2026-08-03)
+# HANDOFF — index
 
-An audit asked "is there logic in the trading cycle that contradicts itself?".
-Five places were: a comment claimed one thing while the code did another, or two
-code paths answered the same question differently. All five are fixed. Each
-finding below was confirmed against the live DB before being touched.
+**This file is the entry point, not a session record.** It was itself a session
+record until 2026-08-12, dated 2026-08-03, and four sessions of work landed
+after it without touching it — so anyone who opened the obvious file got a
+picture five days stale. It is now an index, and the rule is:
 
-> Supersedes the 2026-08-03 component-efficacy handoff (that work is live and
-> unchanged; see `docs/AUDIT_COMPONENT_EFFICACY_2026-08-03.md`).
+> A session writes `HANDOFF_<topic>_<date>.md` and adds **one row** here.
+> Nothing is deleted for being old — a retired plan is the only record of *why*
+> it was retired, and "why not" is the expensive question.
 
-## What is live right now
+The **served** documentation for this service is
+`trading-client/documentation/chapters/`, at
+<http://10.0.0.16:8888/documentation>. These files are the in-repo handoffs:
+what a session did, in the repo it did it in. Read the chapters for the current
+state; read these for the reasoning behind a specific change.
 
-### 1. Cross-desk dissent is now the AGENT's call, not a silent number rewrite
+---
 
-**Was:** `_persist_trade_verdict` detected directional dissent *after* the desk
-decided and rewrote `confidence` to 60, commented "deliberately NOT the full
-downgrade-to-HOLD". `ANALYSIS_CONFIDENCE_THRESHOLD` is **70**, so every decision
-it touched was then blocked as `HOLD_POLICY_BLOCKED_LOW_CONFIDENCE` — a label
-that blamed the desk for a number the harness had written. And because no capped
-trade could execute, the outcome evidence the gate said it was gathering could
-never arrive. That is why the comment reads "only 1 of 7 flagged trades has
-resolved". Confirmed live: `NDAQ / cycle-v3-1785137616`, uncapped 62 → 60 →
-`HOLD_POLICY_BLOCKED_LOW_CONFIDENCE`.
+## Current
 
-**Now:** same detector, moved in front of the decision.
+| Date | Handoff | What it settled |
+|---|---|---|
+| 2026-08-12 | [`HANDOFF_open_item_46_2026-08-12.md`](HANDOFF_open_item_46_2026-08-12.md) | A `HOLD` on a name we OWN is not a decision about entering. Held-aware label, wake pool, dead signal repaired, exit ratchet measured. **Also corrects the "turn the panel on" recommendation** — read its Next step. |
+| 2026-08-03 | [`HANDOFF_self_contradictions_2026-08-03.md`](HANDOFF_self_contradictions_2026-08-03.md) | Five places where a comment claimed one thing and the code did another. All five fixed. |
 
-1. `compute_contradiction_shadow(desk)` runs in the orchestrator's
-   `board_of_directors` branch *before* `_run_board_of_directors`. At that point
-   the desk holds no `final_decision`/`trade_decision`, so it cannot mistake the
-   agent's own verdict for a corroborating source.
-2. `build_dissent_block()` renders it; `agent_runner` injects it for
-   `v3_board_of_directors` and `v3_decision_synthesizer` only, at `_KEEP`.
-3. The agent answers in `dissent_resolution` — which desk it overrules and why.
-4. `HOLD_POLICY_BLOCKED_UNRESOLVED_DISSENT` blocks a BUY/SELL that left it
-   unanswered. **Fail-closed.** A HOLD never needs a resolution.
+## The July wave — measurement integrity
 
-Confidence is never rewritten. See AGENTS.md §15 — **do not reintroduce a
-numeric cap here.**
+These are the ones still worth opening. Each was a measurement that changed a
+decision, and several are still the only record of *why* something is off.
 
-*Blast radius, measured:* under the live `DEBATE_ENGINE=3` the gate would have
-fired **0 times in 9** actionable decisions since 07-31. The 26% rate over 21
-days was almost entirely the retired tournament's action disagreeing with a
-research desk; fundamental-vs-quant alone is 3/176 ≈ 1.7%. In every case where
-the old cap blocked, this also blocks — so the worst case equals the old
-behaviour, correctly labelled.
+| Date | Handoff | What it settled |
+|---|---|---|
+| 07-31 | [`HANDOFF_measurement_integrity_2026-07-31.md`](HANDOFF_measurement_integrity_2026-07-31.md) | Measurement integrity and confidence calibration. |
+| 07-31 | [`HANDOFF_open_items_2026-07-31.md`](HANDOFF_open_items_2026-07-31.md) | The above, worked to completion. |
+| 07-30 | [`HANDOFF_quant_layer_session_2026-07-30.md`](HANDOFF_quant_layer_session_2026-07-30.md) | The quant-layer review that became a measurement problem. |
+| 07-30 | [`HANDOFF_vendor_integrity_2026-07-30.md`](HANDOFF_vendor_integrity_2026-07-30.md) | The one-vendor rule reached 3 call sites. |
+| 07-30 | [`HANDOFF_phase0_followthrough_2026-07-30.md`](HANDOFF_phase0_followthrough_2026-07-30.md) | Technicals repaired; the tournament premise re-checked. |
+| 07-29 | [`HANDOFF_return_series_integrity_2026-07-29.md`](HANDOFF_return_series_integrity_2026-07-29.md) | The return series the desk reasons from was wrong in three places. |
 
-### 2. The delta tier now writes a `trade_results` row
+> [!IMPORTANT]
+> **`HANDOFF_tournament_retired_2026-07-29.md` is load-bearing and gets
+> re-derived by every session that notices `DEBATE_ENGINE = 3`.**
+> The tournament was **measured** and retired: 28.2% of ALL pipeline tokens,
+> 374 s/ticker, selection indistinguishable from the free `quant
+> thesis_direction`, 6.5× worse on the removal channel, chi2 = 16.63 redundant
+> with the quant, Brier **0.3090** vs a base rate of **0.2266** (n=98). It is
+> not an accident and not an oversight. Read it before proposing a debate
+> engine.
+>
+> The **probabilistic panel** is a different engine (`DEBATE_ENGINE` 1, with 2
+> as the ρ=1.0 control) and has never been the default — so it *is* unmeasured.
+> But `scripts/score_panel.py` already names the baseline that decides it:
+> **self-consistency**, which is cheaper than the panel and has never been run.
+> Run that first.
 
-**Was:** `_persist_trade_verdict` was gated on `has_artifact("trade_decision")`.
-The delta tier publishes only `final_decision`, so it persisted **nothing** —
-measured **40 of 40** delta analyses over 21 days with zero trade rows, **5 of
-them holding real filled orders** (UNH, ALLY, AXP ×2, DIS). Invisible to P&L,
-the scorecard, `record_strategy` and the LLM judge. `_persist_policy_action`'s
-docstring justified this as "a path that never produced a trade decision" — true
-of glance, false of delta.
+## The July wave — harness and audit
 
-**Now:** `_persist_trade_verdict` is a module-level function taking the decision
-explicitly; the delta branch calls it. Glance still writes no row, correctly —
-it is a hardcoded HOLD@0 from before any agent ran.
+| Date | Handoff | What it settled |
+|---|---|---|
+| 07-30 | [`HANDOFF_hooks_followup_2026-07-30.md`](HANDOFF_hooks_followup_2026-07-30.md) | Invariants, hooks, cost accounting. |
+| 07-30 | [`HANDOFF_harness_hooks_2026-07-30.md`](HANDOFF_harness_hooks_2026-07-30.md) | Harness audit → invariant hooks. |
+| 07-29 | [`HANDOFF_harness_fixall_2026-07-29.md`](HANDOFF_harness_fixall_2026-07-29.md) | The fix wave: sensors repaired, gate hypothesis retired. |
+| 07-29 | [`HANDOFF_harness_audit_2026-07-29.md`](HANDOFF_harness_audit_2026-07-29.md) | Systematic cycle audit: what is actually broken. ⚠ Its "tournament discriminates at p=3.2e-09" claim is **refuted** by the tournament-retired handoff — that association measures the board *listening*, not the verdict being right. |
+| 07-29 | [`HANDOFF_fidelity_audit_2026-07-29.md`](HANDOFF_fidelity_audit_2026-07-29.md) | Agent fidelity, accounting, tool-selection audit. |
+| 07-29 | [`HANDOFF_tool_attribution_2026-07-29.md`](HANDOFF_tool_attribution_2026-07-29.md) | Tool attribution: half-fixed, the other half cross-repo. |
+| 07-29 | [`HANDOFF_simplification_and_panel_2026-07-29.md`](HANDOFF_simplification_and_panel_2026-07-29.md) | Simplification wave, confidence collapse, and the panel's design + scorer. |
+| 07-29 | [`HANDOFF_tournament_retired_2026-07-29.md`](HANDOFF_tournament_retired_2026-07-29.md) | See the callout above. |
+| 07-28 | [`HANDOFF_valuation_agent_2026-07-28.md`](HANDOFF_valuation_agent_2026-07-28.md) | Valuation Analyst, mined doctrine, opinion cards. |
 
-### 3. The implausible-level sanitizer runs before persistence on both paths
+---
 
-**Was:** the stop/target decimal-error check lived inside `_apply_policy_gates`,
-so it ran wherever that chain happened to be called — and the two callers
-disagreed. Full panel gated *before* building the result (drop reached the
-executor) but *after* `save_trade_result`/`save_desk` (DB kept the bad number).
-Delta gated *after* `_build_v1_compatible_result`, so the dropped level survived
-in `result["estimate"]["stop_loss"]`, which pipeline_service hands straight to
-`buy()` as a live stop order.
+## Where else to look
 
-**Now:** extracted to `_drop_implausible_levels(desk)` — a sanitizer, not a gate.
-Called at the top of `_persist_trade_verdict` (before the write) and again before
-Layer 6 (covers desks that stop at the Board). Idempotent.
-
-### 4. Policy-gate telemetry records a real `triage_tier`
-
-`_record_gate` stamped `cycle_metadata["triage_tier"]`, which **nothing ever
-wrote** — all 30 firings in 21 days recorded `null`, so the per-tier block rate
-its own comment promised was unanswerable. Now written at every assignment.
-
-### 5. One judge-confidence reader that handles both artifact shapes
-
-`debate_judge` has two live writers: the judge agent emits
-`winner`/`final_confidence` (the required schema, and with `DEBATE_ENGINE=3` the
-**live** path), while the tournament copy and skip markers emit
-`winning_side`/`confidence`. Two readers in `orchestrator.py` each knew only one
-shape. New `_judge_confidence()` reads both. This is why the synthesizer's "only
-when the verdict is low-confidence" deep-retrieval hook fired on every real judge
-verdict — 18 of them in 14 days were actually ≥60.
-
-## Open items
-
-- **`dissent_resolution` adoption is unproven in production.** The prompt asks
-  for it; no live cycle has produced one yet. Watch the first cycles where a
-  `v3_dissent_*` event fires: if the board consistently omits the field, every
-  dissented BUY blocks (same as the old behaviour, so no regression — but the
-  agentic upside goes unrealised). If so, the fix is prompt-side, not a new gate.
-- **`_persist_policy_action` still warns on glance-tier rows.** Expected and
-  correct; the docstring now says so explicitly.
-- **3 pre-existing ordering-dependent failures** in
-  `tests/integration/test_connection_pool_exhaustion.py` when the whole suite
-  runs (they pass in isolation). Some unit test leaks a patch on
-  `app.db.connection`. Not caused by this work; not fixed here.
-- The no-trade-available gate writes `risk_flags`, which silently arms the
-  unmitigated-risk gate — contradicting its own comment that it "does NOT skip
-  the Board". Left alone: all 7 boards that BUY'd after it emitted full
-  mitigation, so it has never bitten. Worth a comment, not a fix.
-
-## Gotchas
-
-- **`_persist_trade_verdict` had to be hoisted to module level.** The delta
-  branch runs at ~line 650, the closure was defined at ~line 1600 — a closure
-  defined later in the same function is not bound yet. Verified the hoist was a
-  pure move (body diff = 0 lines).
-- **The dissent block deliberately returns `""` when the desks agree.**
-  Announcing "no disagreement found" on every desk would teach the agent to read
-  one absent conflict as confirmation. Do not "fix" the silence.
-- **It also filters out `final_decision`/`trade_decision` as sources.** Those are
-  the decider's own view; listing them would read as independent corroboration.
-- `cycle_metadata` is persisted into `shared_desk.desk_data`, so both
-  `dissent_detected` and `triage_tier` survive for replay — which is what makes
-  the new gate measurable by `scripts/gate_ablation.py` (taught the new label).
-- **`git stash` is repo-wide across sun worktrees.** Do not use the
-  stash-and-retest trick here; use a second detached worktree at `master`.
-
-## Where the reasoning lives
-
-- `AGENTS.md` §15 — the dissent contract (detect → inject → answer → enforce).
-- `docs/trading-cycle-verification-checklist.md` §5 — what to check on a cycle.
-- Each fix carries its measurement inline in the code comment that replaced the
-  wrong one.
-
-## Tests
-
-`tests/unit/test_cycle_contradictions.py` (new, 30 cases) pins all five, each
-named for the contradiction it prevents. `tests/unit/test_stop_target_sanity.py`
-was retargeted to `_drop_implausible_levels` and gained ordering assertions for
-both triage tiers plus an explicit "glance is exempt and that is correct" case.
+- `ARCHITECTURE.md` — what this service owns, and the *Rules for Future
+  Development* that outlive any one session.
+- `AGENTS.md` — harness-level pipeline constraints. The source of truth for
+  what an agent call may do.
+- `docs/` — longer-form plans and one-off audits
+  (`JURY_VETO_SCORECARD_2026-07-29.md`, `PLAN_execution_realism_and_statistical_rigor.md`,
+  `trading-cycle-verification-checklist.md`).
+- `reports/` — generated cycle reports and `verified_fixes_history.md`.
