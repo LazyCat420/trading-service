@@ -1166,6 +1166,26 @@ def _fix_eth_cagr_data(conn):
                 "CREATE INDEX IF NOT EXISTS idx_system_commands_status "
                 "ON system_commands(status)"
             )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS v3_system_commands (
+                    id                TEXT PRIMARY KEY,
+                    command_type      TEXT NOT NULL,
+                    payload           JSONB DEFAULT '{}'::jsonb,
+                    status            TEXT DEFAULT 'pending',
+                    progress          INTEGER DEFAULT 0,
+                    progress_message  TEXT,
+                    result            JSONB,
+                    error_message     TEXT,
+                    created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    started_at        TIMESTAMPTZ,
+                    completed_at      TIMESTAMPTZ,
+                    stop_confirmed_at TIMESTAMP
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS v3_system_commands_status_idx "
+                "ON v3_system_commands(status)"
+            )
             conn.commit()
     except Exception:
         try:

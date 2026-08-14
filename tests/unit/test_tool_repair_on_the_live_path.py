@@ -30,7 +30,7 @@ from app.v3.tool_repair import REPAIRABLE_TICKER_TOOLS, repair_tool_arguments
 
 def test_the_http_bridge_repairs_before_dispatch():
     """The bridge is the live path — the repair must run there."""
-    src = inspect.getsource(agent_tools_router.execute_tool)
+    src = inspect.getsource(getattr(agent_tools_router, "_execute_tool_scoped", agent_tools_router.execute_tool))
     assert "repair_tool_arguments" in src, (
         "POST /agent-tools/execute must repair arguments before "
         "registry.execute_tool_call validates them — this is the path V3 "
@@ -43,7 +43,7 @@ def test_the_http_bridge_repairs_before_dispatch():
 
 
 def test_repair_runs_before_the_tool_call_is_built():
-    src = inspect.getsource(agent_tools_router.execute_tool)
+    src = inspect.getsource(getattr(agent_tools_router, "_execute_tool_scoped", agent_tools_router.execute_tool))
     assert src.index("repair_tool_arguments") < src.index('"call_lazy_tool_bridge"'), (
         "repair must precede building the tool_call payload"
     )
@@ -51,7 +51,7 @@ def test_repair_runs_before_the_tool_call_is_built():
 
 def test_repair_failure_cannot_block_a_tool_call():
     """A raise here would kill the agent's turn for a cosmetic fix."""
-    src = inspect.getsource(agent_tools_router.execute_tool)
+    src = inspect.getsource(getattr(agent_tools_router, "_execute_tool_scoped", agent_tools_router.execute_tool))
     seg = src[src.index("repair_tool_arguments"):]
     seg = seg[:seg.index('"call_lazy_tool_bridge"')]
     assert "except" in seg, "the repair must be wrapped — it may never block"

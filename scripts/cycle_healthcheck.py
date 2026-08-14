@@ -206,10 +206,14 @@ def phase5() -> None:
             rec(P, FAIL, f"{prov} reachable", f"{type(e).__name__}")
 
     try:
-        from app.v3.prism_registration import _V3_AGENT_MODULES
-        rec(P, PASS, "agent registry loads", f"{len(_V3_AGENT_MODULES)} agents")
+        from app.v3.prism_registration import _discover_v3_agent_modules
+        agent_mods = _discover_v3_agent_modules()
+        if agent_mods:
+            rec(P, PASS, "agent registry loads", f"{len(agent_mods)} agents")
+        else:
+            rec(P, FAIL, "agent registry loads", "no agents discovered")
     except Exception as e:
-        rec(P, WARN, "agent registry loads", str(e)[:70])
+        rec(P, FAIL, "agent registry loads", str(e)[:70])
 
 
 # ── Phase 6/7: verdicts and post-cycle, for a specific cycle ─────────────────
