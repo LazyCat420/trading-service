@@ -1562,7 +1562,9 @@ class PipelineService:
                     # This agent wants strict JSON and passes no tools, but
                     # `enable_tools=False` is a client-side flag: prism still
                     # attaches its whole MCP catalog server-side on /agent —
-                    # 275 tools / 91,255 tokens before a single prompt token.
+                    # ~83 tools / ~21k tokens before a single prompt token
+                    # (re-measured 2026-08-06 from prism's own context_budget;
+                    # the earlier 275/91k figure was stale — see open item 1).
                     # That was the empty responses. Measured on this exact
                     # call: ~21,940 total input tokens for a ~1,900-token
                     # prompt, and the model emitted 229–1,493 output tokens

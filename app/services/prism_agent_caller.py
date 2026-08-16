@@ -251,18 +251,18 @@ async def chat_toolless(
 
     Use this for any agent that passes `enable_tools=False`. The SDK's
     `call_agent` (i.e. `/agent`) attaches the full MCP catalog server-side —
-    measured 2026-08-04 at **275 tools = 91,255 tokens**, before any prompt —
-    and no request field removes it (`enabledTools`/`tools`/`toolsEnabled` and
-    three `project` values all returned 275/91,255) because tool attachment is
+    re-measured 2026-08-06 at **~83 tools ≈ 21k tokens**, before any prompt —
+    and no request field removes it (`enabledTools`/`tools`/`toolsEnabled`)
+    because tool attachment is
     server-side policy, not a request parameter. `enable_tools=False` is a
     CLIENT-side flag: it stops us sending schemas, it does not stop prism
     attaching them.
 
     Two consequences, both measured:
-      * 91,255 tokens is 1.4x Jetson's 65,536 window, so `/agent` can never
-        reach Jetson at all — it answers with a 0-token window and an empty
-        stream. Pinning an `/agent` caller to Jetson is a guaranteed failure
-        (2026-08-06: the gatekeeper was pinned there and failed 3/3).
+       * At ~21k tokens the catalog fits inside Jetson's 65,536 window
+         (38,179 output tokens remain — see open item 1). The earlier
+         91k claim was stale. The actual gatekeeper failures were from
+         prism injecting minP > 0 under speculative decoding (Fault A).
       * Even on Gold Spark's 1M window the catalog is charged against the
         request: the gatekeeper measured ~21,940 total input tokens for a
         ~1,900-token prompt, and returned empty content on the larger
