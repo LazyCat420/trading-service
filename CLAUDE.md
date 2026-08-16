@@ -31,8 +31,11 @@ python3 documentation/build_docs.py --check  # fail if the page is stale
 npm run deploy                               # the page serves the CONTAINER
 ```
 
-A new chapter must also be listed in `documentation/chapters/_parts.json`; the
-build fails otherwise, so a chapter cannot exist without navigation to it.
+Every chapter must name its part — in `documentation/chapters/_parts.json`
+(canonical; it also controls order) or via a front-matter `part:` line, which
+files it at the end of that part. Only a chapter with **neither** fails the
+build (measured 2026-08-16; this file used to claim any unmanifested chapter
+fails, which was false). Prefer the manifest.
 Update the documentation **in the same change as the code**:
 
 - shipped a fix → what it proved, with evidence, in *Current state*
