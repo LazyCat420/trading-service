@@ -97,14 +97,27 @@ def scrub_evolution_lessons(dry_run: bool = True) -> int:
                         "DELETE FROM evolution_lessons WHERE id = %s", [row_id]
                     )
 
-                    # Also remove stale embeddings
+                    # Also remove stale embeddings — from whichever store is
+                    # authoritative. embeddings is at backend `mongo` since
+                    # 2026-07-23: a PG-only DELETE here scrubbed a store nobody
+                    # reads and left the live Mongo docs poisoned.
                     try:
-                        db.execute(
-                            "DELETE FROM embeddings WHERE source_table = 'evolution_lessons' AND source_id = %s",
-                            [row_id],
-                        )
+                        from app.db import mongo_store
+
+                        if mongo_store.reads_mongo("embeddings"):
+                            mongo_store.get_doc_db()["embeddings"].delete_many(
+                                {"source_table": "evolution_lessons",
+                                 "source_id": {"$in": [row_id, str(row_id)]}}
+                            )
+                        if mongo_store.writes_pg("embeddings"):
+                            db.execute(
+                                "DELETE FROM embeddings WHERE source_table = 'evolution_lessons' AND source_id = %s",
+                                [row_id],
+                            )
                     except Exception:
-                        pass
+                        logger.warning(
+                            "[SCRUB] embeddings cleanup failed for id=%s", row_id
+                        )
 
                 logger.info(
                     "[SCRUB] evolution_lessons: Deleted %d poisoned entries",

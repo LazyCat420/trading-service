@@ -130,6 +130,18 @@ def ensure_indexes() -> None:
         except Exception as e:
             logger.warning("[mongo_store] index on %s failed (non-fatal): %s", coll, e)
 
+    def _drop_ttl(coll: str, field: str) -> None:
+        # Drop a TTL variant of a single-field index so a plain one can replace
+        # it (create_index on the same key with different options errors, it
+        # does not modify).
+        try:
+            for info in db[coll].list_indexes():
+                if "expireAfterSeconds" in info and list(info["key"]) == [field]:
+                    db[coll].drop_index(info["name"])
+                    logger.info("[mongo_store] dropped TTL index %s on %s", info["name"], coll)
+        except Exception as e:
+            logger.warning("[mongo_store] TTL drop on %s failed (non-fatal): %s", coll, e)
+
     # pipeline_events: read by cycle_id ordered by timestamp; id is the natural PK.
     _try("pipeline_events", "id", unique=True)
     _try("pipeline_events", [("cycle_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
@@ -139,12 +151,16 @@ def ensure_indexes() -> None:
              partialFilterExpression={"id": {"$type": _ID_TYPES}})
     _try("agent_audit_log", "request_id", unique=True,
          partialFilterExpression={"request_id": {"$type": "string"}})
-    # NOTE: PG does NOT actually age llm_audit_logs out (AUDIT_LOG_TTL_DAYS
-    # only rotates log *files*), so this TTL makes the mirror a 14-day window
-    # while PG keeps full history. Before flipping llm_audit_logs to full
-    # `mongo`, either drop this TTL or accept losing >14d of history — the
-    # dashboard/box_scorecard/strategy_auditor readers use older rows.
-    _try("llm_audit_logs", "created_at", expireAfterSeconds=14 * 86400)
+    # NO TTL on llm_audit_logs: PG keeps full history (AUDIT_LOG_TTL_DAYS only
+    # rotates log *files*), and the dashboard/box_scorecard/strategy_auditor
+    # readers use rows older than any short window. A 14-day TTL lived here
+    # until 2026-08-16 — with the table at mongo_read it silently truncated
+    # what those readers saw; the expired rows were re-backfilled from PG when
+    # it was removed. The index itself stays (created_at is a read key), and
+    # ensure_indexes drops the TTL variant if it finds one so a stale deploy
+    # cannot resurrect it.
+    _drop_ttl("llm_audit_logs", "created_at")
+    _try("llm_audit_logs", "created_at")
     # trade_results is written and read by (cycle_id, ticker) — same as
     # ticker_reports/analysis_results below.
     _try("trade_results", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
