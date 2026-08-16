@@ -17,6 +17,9 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
             Used by the Freshness Gate to compute deltas on the next cycle.
     """
     try:
+        # ONE timestamp for both stores (parity audit 2026-08-16: a second
+        # now() at mirror time drifted created_at on every live-mirrored row).
+        _saved_at = datetime.now(timezone.utc)
         with get_db() as db:
             with db.transaction():
                 # Delete existing record for this ticker and cycle to avoid duplicates
@@ -54,7 +57,7 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
                         result.get("action", "HOLD"),
                         result.get("confidence", 0),
                         result.get("rationale", ""),
-                        datetime.now(timezone.utc),
+                        _saved_at,
                         result.get("triage_tier", "standard"),
                         analysis_price,
                         analysis_rsi,
@@ -71,7 +74,11 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
                     "bot_id": result.get("bot_id", "cycle-backend"), "result_json": result,
                     "confidence": result.get("confidence", 0), "thesis_verdict": result.get("action", "HOLD"),
                     "thesis_confidence": result.get("confidence", 0), "thesis_summary": result.get("rationale", ""),
-                    "created_at": datetime.now(timezone.utc), "triage_tier": result.get("triage_tier", "standard"),
+                    # thesis_unchanged: the PG column carries DEFAULT FALSE from
+                    # migrations.py:1125 — omitting it here made every mirrored
+                    # doc read None where PG reads False.
+                    "thesis_unchanged": False,
+                    "created_at": _saved_at, "triage_tier": result.get("triage_tier", "standard"),
                     "analysis_price": analysis_price, "analysis_rsi": analysis_rsi,
                     "analysis_fund_count": analysis_fund_count,
                 })

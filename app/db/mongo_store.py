@@ -26,6 +26,7 @@ app/db/mongo.py stay where they are.
 
 import logging
 import os
+from contextlib import contextmanager
 from typing import Any, Iterable, Optional
 
 import pymongo
@@ -80,6 +81,33 @@ def writes_pg(table: str) -> bool:
     cutover — mongo_read keeps PG fresh for direct-PG readers like
     trading-client)."""
     return backend_for(table) in ("pg", "dual", "mongo_read")
+
+
+def pg_fallback_allowed(table: str) -> bool:
+    """May a reader that failed against Mongo fall back to SQL for this table?
+
+    Only while PG is still being written (pg/dual/mongo_read): there the
+    fallback is *correct*, just logged for soak visibility. At full `mongo`
+    the PG table is stale — a silent fallback would serve old data as if it
+    were current, which is worse than failing. Every `try Mongo → except →
+    SQL` reader must gate its except-branch on this and raise when False."""
+    return writes_pg(table)
+
+
+def handle_mongo_read_failure(table: str, context: str, exc: Exception) -> None:
+    """The one gate every `try Mongo → except → SQL` reader calls FIRST in its
+    except-branch, before touching SQL. While PG is fresh (pg/dual/mongo_read)
+    it logs and returns — the caller proceeds to its SQL path. At full `mongo`
+    it re-raises: PG is stale there, and silently serving old rows as current
+    is strictly worse than failing loudly."""
+    if pg_fallback_allowed(table):
+        logger.warning("%s: mongo read failed, PG fallback: %s", context, exc)
+        return
+    logger.critical(
+        "%s: mongo read failed and PG is STALE for %r (mode=mongo) — refusing the fallback",
+        context, table,
+    )
+    raise exc
 
 
 # ── Connection (own DB, shared client) ─────────────────────────────────────
@@ -236,6 +264,75 @@ def count_docs(collection: str, query: Optional[dict] = None) -> int:
 
 def distinct_values(collection: str, field: str, query: Optional[dict] = None) -> list:
     return get_doc_db()[collection].distinct(field, query or {})
+
+
+def delete_docs(collection: str, query: dict[str, Any],
+                session: Optional[Any] = None) -> int:
+    """Delete every doc matching `query`; returns the deleted count. The Mongo
+    analogue of `DELETE FROM t WHERE ...` for tables whose flag says Mongo is
+    (also) authoritative — callers still gate on writes_mongo()."""
+    if not query:
+        raise ValueError("delete_docs with an empty query would empty the collection; "
+                         "pass an explicit filter (or use {'_id': {'$exists': True}} deliberately)")
+    res = get_doc_db()[collection].delete_many(query, session=session)
+    return res.deleted_count
+
+
+def update_docs(collection: str, query: dict[str, Any], update: dict[str, Any],
+                upsert: bool = False, session: Optional[Any] = None) -> int:
+    """update_many with `$set`-style semantics; returns the modified count.
+    `update` may be a plain doc (wrapped in $set) or already contain
+    operators ($set/$inc/...)."""
+    if not any(k.startswith("$") for k in update):
+        update = {"$set": update}
+    res = get_doc_db()[collection].update_many(query, update, upsert=upsert, session=session)
+    return res.modified_count
+
+
+def find_one_and_update(collection: str, query: dict[str, Any], update: dict[str, Any],
+                        sort: Optional[list] = None, return_after: bool = True,
+                        upsert: bool = False, session: Optional[Any] = None) -> Optional[dict[str, Any]]:
+    """Atomically claim-and-mutate ONE doc — the Mongo equivalent of
+    `SELECT ... FOR UPDATE SKIP LOCKED` + UPDATE for queue tables
+    (v3_system_commands / system_commands claims): a doc matched by `query`
+    is mutated in the same atomic step, so two concurrent claimants can never
+    both see it in the claimable state. Returns the doc (post-update by
+    default) or None when nothing matched."""
+    if not any(k.startswith("$") for k in update):
+        update = {"$set": update}
+    return get_doc_db()[collection].find_one_and_update(
+        query, update, sort=sort, upsert=upsert,
+        return_document=pymongo.ReturnDocument.AFTER if return_after else pymongo.ReturnDocument.BEFORE,
+        session=session,
+    )
+
+
+@contextmanager
+def with_txn():
+    """Multi-document transaction on the rs0 replica set: yields a session to
+    pass as `session=` to the helpers above (and to raw collection ops). On a
+    clean exit the transaction commits; on an exception it aborts and the
+    exception propagates. This is the atomicity primitive for the money-ledger
+    and whiteboard phases — the same contract as PooledCursor.transaction()."""
+    client = get_mongo_client()
+    with client.start_session() as session:
+        with session.start_transaction():
+            yield session
+
+
+def dec128(value: Any) -> "Any":
+    """Money → bson.Decimal128 via str() (never through float arithmetic —
+    Decimal128(str(x)) preserves the printed value, which is the best a float
+    source can offer). The ledger phase maps every money field through this;
+    do NOT store money as float in new collections."""
+    from bson import Decimal128
+    from decimal import Decimal
+
+    if isinstance(value, Decimal128):
+        return value
+    if isinstance(value, Decimal):
+        return Decimal128(value)
+    return Decimal128(str(value))
 
 
 def mirror_pipeline_event(record: dict[str, Any]) -> None:

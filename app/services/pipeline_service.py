@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.pipeline_state import PipelineStateDB
+from app.db.mongo_store import handle_mongo_read_failure
 from app.services.parameter_store import get_param
 from app.v3.orchestrator import run_v3_pipeline
 from app.telemetry import send_system_log
@@ -742,7 +743,7 @@ class PipelineService:
                         ])
                         tokens_row = ((_agg[0].get("t") or 0),) if _agg else (0,)
                 except Exception as me:
-                    logger.warning("[PipelineService] mongo tokens read failed, PG fallback: %s", me)
+                    handle_mongo_read_failure("llm_audit_logs", "[PipelineService] mongo tokens read", me)
                     tokens_row = None
                 with get_db() as db:
                     if tokens_row is None:
@@ -1198,7 +1199,7 @@ class PipelineService:
                                         ])
                                     ]
                             except Exception as me:
-                                logger.warning("[PipelineService] mongo last-analysis read failed, PG fallback: %s", me)
+                                handle_mongo_read_failure("analysis_results", "[PipelineService] mongo last-analysis read", me)
                                 last_analysis_rows = None
                             if last_analysis_rows is None:
                                 placeholders = ','.join(['%s'] * len(all_pool))
@@ -1415,7 +1416,7 @@ class PipelineService:
                                     ])
                                 ]
                         except Exception as me:
-                            logger.warning("[PipelineService] mongo past-verdicts read failed, PG fallback: %s", me)
+                            handle_mongo_read_failure("trade_results", "[PipelineService] mongo past-verdicts read", me)
                             past_results_rows = None
                         if past_results_rows is None:
                             placeholders = ','.join(['%s'] * len(top_scorers))

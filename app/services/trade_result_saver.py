@@ -67,6 +67,10 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
 
         result_id = str(uuid.uuid4())
 
+        # ONE timestamp for both stores — a second now() at mirror time gave
+        # every live-mirrored row a created_at a few ms off its PG twin, which
+        # field-level parity verification (2026-08-16) flagged on 99/200 rows.
+        _saved_at = datetime.now(timezone.utc)
         with get_db() as db:
             with db.transaction():
                 # Upsert: remove existing for this ticker+cycle to avoid duplicates
@@ -113,7 +117,7 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                         consensus,
                         json.dumps(dynamic_trigger) if dynamic_trigger else None,
                         provenance,
-                        datetime.now(timezone.utc),
+                        _saved_at,
                     ],
                 )
 
@@ -145,7 +149,7 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
                     "regime": regime, "internal_consensus_score": consensus,
                     "dynamic_trigger": dynamic_trigger,
                     "decision_provenance": provenance,
-                    "created_at": datetime.now(timezone.utc),
+                    "created_at": _saved_at,
                 })
         except Exception:
             pass

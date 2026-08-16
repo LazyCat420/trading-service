@@ -6,6 +6,7 @@ from typing import Any
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
+from app.db.mongo_store import handle_mongo_read_failure
 from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response
 
@@ -79,7 +80,7 @@ async def run_post_cycle_evaluation(cycle_id: str):
                     for d in docs[:30]
                 ]
         except Exception as me:
-            logger.warning("[Evaluator] mongo events read failed, PG fallback: %s", me)
+            handle_mongo_read_failure("pipeline_events", "[Evaluator] mongo events read", me)
             rows = None
         if rows is None:
             with get_db() as db:

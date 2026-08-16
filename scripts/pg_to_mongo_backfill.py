@@ -17,7 +17,12 @@ row→document mapper. Add a table by adding one entry to TABLES.
 """
 import argparse
 import json
+import math
 import sys
+import time
+from collections import Counter
+from datetime import datetime, timezone
+from decimal import Decimal
 
 from app.db import connection
 from app.db import mongo_store
@@ -88,11 +93,15 @@ TABLES = {
         "id",
         _cycle_audit_doc,
     ),
+    # Keyed on request_id, NOT id: the live mirror wrote id-less docs keyed by
+    # request_id until 2026-08-16 (the PG serial doesn't exist at mirror time;
+    # the writer now uses RETURNING id). Upserting by request_id heals those
+    # docs in place — adding the id — instead of duplicating every row.
     "agent_audit_log": (
         "SELECT id, request_id, endpoint, agent_name, model_used, system_prompt_hash, context_build_ms, "
         "inference_ms, tokens_input, tokens_output, tokens_total, is_truncated, fallback_triggered, "
         "circuit_breaker_open, ticker, cycle_id, status, detail, created_at FROM agent_audit_log",
-        "id", _passthrough_doc,
+        "request_id", _passthrough_doc,
     ),
     "agent_tool_telemetry": (
         "SELECT id, cycle_id, agent_name, tool_name, args_hash, success, elapsed_ms, error_message, "
@@ -142,7 +151,71 @@ TABLES = {
 }
 
 
-def backfill(table: str, batch: int = 2000, verify_only: bool = False) -> int:
+def _normalize(v):
+    """Collapse representation differences that are not data differences:
+    Mongo stores datetimes as naive-UTC with millisecond precision; PG hands
+    back tz-aware microsecond datetimes and Decimals."""
+    if isinstance(v, datetime):
+        if v.tzinfo is not None:
+            v = v.astimezone(timezone.utc).replace(tzinfo=None)
+        return v.replace(microsecond=(v.microsecond // 1000) * 1000)
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
+
+
+def _values_equal(a, b) -> bool:
+    a, b = _normalize(a), _normalize(b)
+    if a is None and b is None:
+        return True
+    if isinstance(a, float) or isinstance(b, float):
+        try:
+            return math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=1e-9)
+        except (TypeError, ValueError):
+            return False
+    return a == b
+
+
+def verify_fields(table: str, sample: int) -> int:
+    """Field-level parity on a random sample — the count-only verify passed
+    for weeks while (for example) a TTL index was silently deleting rows, so
+    counts alone are not evidence of parity. Compares every mapped field of
+    `sample` random PG rows against the Mongo doc with the same natural key.
+
+    Note: ORDER BY random() is a full scan — fine for the sub-million-row
+    tables migrated so far; switch to TABLESAMPLE for the time-series tier."""
+    if table not in TABLES:
+        print(f"unknown table {table!r}; known: {', '.join(TABLES)}", file=sys.stderr)
+        return 2
+    select_sql, key_field, mapper = TABLES[table]
+    with connection.get_db() as db:
+        cur = db.execute(f"{select_sql} ORDER BY random() LIMIT %s", [sample])
+        rows = cur.fetchall()
+        cols = [c[0] for c in cur.description]
+    mismatches: Counter = Counter()
+    missing = 0
+    for r in rows:
+        expected = mapper(r, cols)
+        docs = mongo_store.find_docs(table, {key_field: expected[key_field]}, limit=1)
+        if not docs:
+            missing += 1
+            continue
+        doc = docs[0]
+        for k, v in expected.items():
+            if not _values_equal(v, doc.get(k)):
+                mismatches[k] += 1
+    checked = len(rows) - missing
+    print(f"[{table}] FIELD-VERIFY: sampled={len(rows)} compared={checked} "
+          f"missing-in-mongo={missing}")
+    for field, n in mismatches.most_common():
+        print(f"[{table}]   field {field!r}: {n} mismatch(es)")
+    ok = missing == 0 and not mismatches
+    print(f"[{table}] FIELD-VERIFY: {'OK' if ok else 'MISMATCH'}")
+    return 0 if ok else 1
+
+
+def backfill(table: str, batch: int = 2000, verify_only: bool = False,
+             rate_limit: float = 0.0) -> int:
     if table not in TABLES:
         print(f"unknown table {table!r}; known: {', '.join(TABLES)}", file=sys.stderr)
         return 2
@@ -172,12 +245,20 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False) -> int:
                 cols = [c[0] for c in cur.description]
             if not rows:
                 break
+            batch_started = time.monotonic()
             docs = [mapper(r, cols) for r in rows]
             # One bulk round-trip per batch (not one upsert per doc).
             mongo_store.bulk_upsert(table, docs, key_field=key_field)
             moved += len(docs)
             last_key = dict(zip(cols, rows[-1]))[key_field]
             print(f"[{table}] upserted {moved}/{pg_count}", end="\r", flush=True)
+            if rate_limit > 0:
+                # Hold sustained throughput at --rate-limit rows/sec so a big
+                # backfill cannot roll the oplog or starve the live service.
+                min_batch_seconds = len(docs) / rate_limit
+                sleep_for = min_batch_seconds - (time.monotonic() - batch_started)
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
         print()
 
     mongo_after = mongo_store.count_docs(table)
@@ -189,15 +270,26 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False) -> int:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("table", nargs="?", help="table to backfill")
+    ap.add_argument("table", nargs="?", help="table to backfill (or 'all' with --verify-fields)")
     ap.add_argument("--verify-only", action="store_true", help="count-compare only, no writes")
-    ap.add_argument("--batch", type=int, default=2000)
+    ap.add_argument("--verify-fields", type=int, metavar="N", default=0,
+                    help="field-level parity on N random rows per table, no writes")
+    ap.add_argument("--batch", type=int, default=2000, help="rows per bulk round-trip")
+    ap.add_argument("--rate-limit", type=float, default=0.0, metavar="ROWS_PER_SEC",
+                    help="cap sustained backfill throughput (0 = unlimited)")
     ap.add_argument("--list", action="store_true", help="list supported tables")
     args = ap.parse_args()
     if args.list or not args.table:
         print("supported tables:", ", ".join(TABLES))
         return 0
-    return backfill(args.table, batch=args.batch, verify_only=args.verify_only)
+    if args.verify_fields:
+        tables = list(TABLES) if args.table == "all" else [args.table]
+        worst = 0
+        for t in tables:
+            worst = max(worst, verify_fields(t, args.verify_fields))
+        return worst
+    return backfill(args.table, batch=args.batch, verify_only=args.verify_only,
+                    rate_limit=args.rate_limit)
 
 
 if __name__ == "__main__":

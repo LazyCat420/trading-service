@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from app.db import connection
+from app.db.mongo_store import handle_mongo_read_failure
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ class PipelineStateDB:
                                         )
                                     ]
                                 except Exception as me:
-                                    logger.warning("[PipelineStateDB] mongo results read failed, PG fallback: %s", me)
+                                    handle_mongo_read_failure("analysis_results", "[PipelineStateDB] mongo results read", me)
                             if ar_rows is None:
                                 ar_rows = db.execute(
                                     "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",

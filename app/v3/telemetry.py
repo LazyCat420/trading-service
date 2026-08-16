@@ -219,9 +219,14 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
             }
             for entry in entries
         ]
+        # RETURNING id, created_at: the mirror must carry PG's serial id and
+        # default timestamp, not invent its own. (Until 2026-08-16 it stamped
+        # a random uuid + its own now(), leaving the Mongo collection with an
+        # id-space disjoint from PG — unfindable by key, unverifiable.)
+        _keyed = []
         with get_db() as db:
             for r in _recs:
-                db.execute(
+                row = db.execute(
                     """
                     INSERT INTO v3_agent_telemetry
                         (cycle_id, ticker, agent_name, phase, outcome,
@@ -230,26 +235,22 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                          sys_prompt_chars, user_prompt_chars, model_used, provider,
                          error_message, failure_reason, attempt_no)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, created_at
                     """,
                     [r["cycle_id"], r["ticker"], r["agent_name"], r["phase"], r["outcome"],
                      r["elapsed_ms"], r["loops_used"], r["token_usage"], r["quality_score"],
                      r["artifact_size_bytes"], r["cached_tokens"], r["prompt_tokens"],
                      r["sys_prompt_chars"], r["user_prompt_chars"], r["model_used"], r["provider"],
                      r["error_message"], r["failure_reason"], r["attempt_no"]],
-                )
+                ).fetchone()
+                # row is None only under mocked cursors; a real INSERT..RETURNING
+                # always yields one row. Mirror only what PG confirmed.
+                if row is not None:
+                    _keyed.append({**r, "id": row[0], "created_at": row[1]})
         try:
-            import uuid as _uuid
-            from datetime import datetime, timezone
             from app.db import mongo_store
-            if _recs and mongo_store.writes_mongo("v3_agent_telemetry"):
-                # PG assigns a serial id + default created_at the mirror can't
-                # see; give Mongo docs their own id and a real timestamp so the
-                # collection has a usable key. (Post-cutover this id IS the id.)
-                _now = datetime.now(timezone.utc)
-                mongo_store.insert_docs(
-                    "v3_agent_telemetry",
-                    [{**r, "id": str(_uuid.uuid4()), "created_at": _now} for r in _recs],
-                )
+            if _keyed and mongo_store.writes_mongo("v3_agent_telemetry"):
+                mongo_store.insert_docs("v3_agent_telemetry", _keyed)
         except Exception as me:
             logger.warning("[V3Telemetry] Mongo mirror failed (non-fatal): %s", me)
         logger.info(

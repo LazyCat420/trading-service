@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.db.connection import get_db
+from app.db.mongo_store import handle_mongo_read_failure
 
 
 # ── PG→Mongo read flips (MONGO_STORE_BACKEND mongo_read/mongo) ─────────────
@@ -55,7 +56,7 @@ def _cycles_page(db, limit: int, offset: int) -> list[tuple]:
                 for d in docs
             ]
         except Exception as e:
-            logger.warning("[cycles] mongo page read failed, PG fallback: %s", e)
+            handle_mongo_read_failure("pipeline_events", "[cycles] mongo page read", e)
     return db.execute(
         """
         SELECT
@@ -84,7 +85,7 @@ def _cycles_total(db) -> int:
             )
             return len(vals)
         except Exception as e:
-            logger.warning("[cycles] mongo total read failed, PG fallback: %s", e)
+            handle_mongo_read_failure("pipeline_events", "[cycles] mongo total read", e)
     row = db.execute(
         """
         SELECT COUNT(DISTINCT cycle_id)
@@ -105,7 +106,7 @@ def _has_done_event(db, cycle_id: str) -> bool:
                 projection={"_id": 1}, limit=1,
             ))
         except Exception as e:
-            logger.warning("[cycles] mongo done-check failed, PG fallback: %s", e)
+            handle_mongo_read_failure("pipeline_events", "[cycles] mongo done-check", e)
     return db.execute(
         "SELECT 1 FROM pipeline_events WHERE cycle_id = %s AND step LIKE '%%done%%' LIMIT 1",
         [cycle_id],
@@ -123,7 +124,7 @@ def _trade_actions(db, cycle_id: str) -> list[tuple]:
             )
             return [(d.get("ticker"), d.get("action"), d.get("confidence")) for d in docs]
         except Exception as e:
-            logger.warning("[cycles] mongo actions read failed, PG fallback: %s", e)
+            handle_mongo_read_failure("trade_results", "[cycles] mongo actions read", e)
     return db.execute(
         "SELECT ticker, action, confidence FROM trade_results WHERE cycle_id = %s",
         [cycle_id],
@@ -137,7 +138,7 @@ def _distinct_trade_tickers(db, cycle_id: str) -> list[tuple]:
             return [(t,) for t in mongo_store.distinct_values(
                 "trade_results", "ticker", {"cycle_id": cycle_id}) if t]
         except Exception as e:
-            logger.warning("[cycles] mongo tickers read failed, PG fallback: %s", e)
+            handle_mongo_read_failure("trade_results", "[cycles] mongo tickers read", e)
     return db.execute(
         "SELECT DISTINCT ticker FROM trade_results WHERE cycle_id = %s",
         [cycle_id],
@@ -168,7 +169,7 @@ def _latest_trade_row(db, cycle_id: str, ticker: str):
                     d.get("persona_used"), d.get("created_at"),
                     d.get("decision_provenance"))
         except Exception as e:
-            logger.warning("[cycles] mongo trade-detail read failed, PG fallback: %s", e)
+            handle_mongo_read_failure("trade_results", "[cycles] mongo trade-detail read", e)
     return db.execute(
         """
         SELECT action, confidence, reasoning,

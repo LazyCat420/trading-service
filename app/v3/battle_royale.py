@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db.connection import get_db
+from app.db.mongo_store import handle_mongo_read_failure
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
                 )
             ]
     except Exception as me:
-        logger.warning("[BattleRoyale] mongo results read failed, PG fallback: %s", me)
+        handle_mongo_read_failure("analysis_results", "[BattleRoyale] mongo results read", me)
         rows = None
     if rows is None:
         with get_db() as db:
@@ -177,6 +178,8 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
 
     # Save to ticker_reports
     report_id = str(uuid.uuid4())
+    # ONE timestamp for both stores (parity audit 2026-08-16).
+    _saved_at = datetime.now(timezone.utc)
 
     try:
         with get_db() as db:
@@ -201,7 +204,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
                     report_content,
                     result_summary,
                     True,
-                    datetime.now(timezone.utc)
+                    _saved_at
                 ]
             )
         # Best-effort Mongo mirror — replace the cycle's summary row to match the
@@ -219,7 +222,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
                 mongo_store.upsert_doc("ticker_reports", {"cycle_id": cycle_id, "is_summary": True}, {
                     "id": report_id, "cycle_id": cycle_id, "ticker": "GLOBAL", "action": "HOLD",
                     "confidence": 0, "report_markdown": report_content, "result_summary": _summary,
-                    "is_summary": True, "created_at": datetime.now(timezone.utc),
+                    "is_summary": True, "created_at": _saved_at,
                 })
         except Exception as me:
             logger.warning("[BattleRoyale] Mongo mirror failed (non-fatal): %s", me)

@@ -177,14 +177,18 @@ def _persist_audit_event(event: dict):
     try:
         from app.db.connection import get_db
         with get_db() as db:
-            db.execute(
+            # RETURNING id: the serial only exists after the insert, and the
+            # mirror doc must carry it — 31,637 id-less docs accumulated in
+            # Mongo before 2026-08-16 because the mirror ran without it.
+            _pg_id = db.execute(
                 """INSERT INTO agent_audit_log
                    (request_id, endpoint, agent_name, model_used,
                     system_prompt_hash, context_build_ms, inference_ms,
                     tokens_input, tokens_output, tokens_total,
                     is_truncated, fallback_triggered, circuit_breaker_open,
                     ticker, cycle_id, status, detail, created_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   RETURNING id""",
                 [
                     event["request_id"],
                     event["endpoint"],
@@ -205,14 +209,16 @@ def _persist_audit_event(event: dict):
                     event["detail"],
                     event["created_at"],
                 ],
-            )
-        # Best-effort Mongo dual-write (natural key: request_id — the PG serial
-        # id doesn't exist yet at mirror time, so never send a null id).
+            ).fetchone()[0]
+        # Best-effort Mongo dual-write. Natural key stays request_id (it also
+        # heals older id-less docs in place), but the doc now carries the PG
+        # serial id so by-id reads and parity verification can find it.
         try:
             from datetime import datetime as _dt
             from app.db import mongo_store
             if mongo_store.writes_mongo("agent_audit_log"):
                 doc = {k: v for k, v in event.items() if k != "id"}
+                doc["id"] = _pg_id
                 ca = doc.get("created_at")
                 if isinstance(ca, str):
                     try:

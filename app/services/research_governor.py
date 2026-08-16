@@ -22,6 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from app.db.connection import get_db
+from app.db.mongo_store import handle_mongo_read_failure
 from app.services.parameter_store import get_param
 from app.validation.schedule_validator import ScheduleValidator
 
@@ -73,7 +74,7 @@ def _recently_researched(db, tickers: list[str]) -> list[str]:
                 {"ticker": {"$in": tickers}, "created_at": {"$gte": cutoff}},
             ) if t]
     except Exception as me:
-        logger.warning("[governor] mongo cooldown read failed, PG fallback: %s", me)
+        handle_mongo_read_failure("analysis_results", "[governor] mongo cooldown read", me)
     rows = db.execute(
         "SELECT DISTINCT ticker FROM analysis_results "
         "WHERE ticker = ANY(%s) AND created_at >= NOW() - make_interval(hours => %s)",
@@ -406,7 +407,7 @@ def list_scheduled_research() -> dict:
                     ])
                 ]
         except Exception as me:
-            logger.warning("[governor] mongo recent read failed, PG fallback: %s", me)
+            handle_mongo_read_failure("analysis_results", "[governor] mongo recent read", me)
             recent_rows = None
         if recent_rows is None:
             recent_rows = db.execute(

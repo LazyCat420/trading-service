@@ -24,6 +24,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
+from app.db.mongo_store import handle_mongo_read_failure
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ def run_freshness_gate(
                         ])
                     ]
             except Exception as me:
-                logger.warning("[FreshnessGate] mongo snapshot read failed, PG fallback: %s", me)
+                handle_mongo_read_failure("analysis_results", "[FreshnessGate] mongo snapshot read", me)
                 rows = None
             if rows is None:
                 with get_db() as db:

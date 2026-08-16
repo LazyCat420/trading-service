@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db.connection import get_db
+from app.db.mongo_store import handle_mongo_read_failure
 from app.utils.text_utils import format_db_section
 
 logger = logging.getLogger(__name__)
@@ -217,7 +218,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
                 recent = (docs[0].get("thesis_summary"), ca, is_recent)
             _mongo_hit = True
     except Exception as me:
-        logger.warning("[data_report] mongo thesis read failed, PG fallback: %s", me)
+        handle_mongo_read_failure("analysis_results", "[data_report] mongo thesis read", me)
         _mongo_hit = False
     if not _mongo_hit:
         with get_db() as db:
