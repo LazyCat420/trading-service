@@ -46,7 +46,11 @@ def main() -> int:
     import psycopg
     from dotenv import load_dotenv
 
-    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    # override=True: deploy.sh has already `set -a`-sourced deploy-kit/.env.deploy,
+    # whose DATABASE_URL is treesearch's `postgresql+asyncpg://` form — psycopg
+    # cannot parse it and the gate aborts every deploy. This service's own .env
+    # must win for its own preflight.
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         print("[deploy_preflight] DATABASE_URL not set — state UNKNOWABLE, failing closed")
