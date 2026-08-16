@@ -100,6 +100,19 @@ EXTRA_SSH_SYNC() {
   info "Syncing .agents folder to remote host..."
   tar -czC "${SCRIPT_DIR}/../" .agents | ssh "$DEPLOY_SSH_HOST" "sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/.agents' && sudo tar -xzC '${DEPLOY_COMPOSE_DIR}'"
   ssh "$DEPLOY_SSH_HOST" "sudo chown -R 1001:1001 '${DEPLOY_COMPOSE_DIR}/.agents'"
+
+  # Open item 45: the command-time cycle check proves the desk was idle when
+  # the deploy STARTED; the ~150s build lets the scheduler start a cycle in
+  # that window (killed cycle-v3-1786424970 on 2026-08-11). This hook is the
+  # last user-owned seam before lib.sh transfers the image and swaps the
+  # container, so re-check HERE. Non-zero exit aborts the deploy (set -e).
+  info "Live-cycle gate (deploy_preflight) — last check before the swap..."
+  local _preflight_py="${SCRIPT_DIR}/.venv/bin/python"
+  [ -x "$_preflight_py" ] || _preflight_py="python3"
+  if ! "$_preflight_py" "${SCRIPT_DIR}/scripts/deploy_preflight.py"; then
+    echo "ABORTING DEPLOY — see deploy_preflight output above." >&2
+    return 1
+  fi
 }
 
 source "${SCRIPT_DIR}/../deploy-kit/lib.sh"

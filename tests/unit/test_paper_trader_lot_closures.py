@@ -2,6 +2,23 @@ import pytest
 from unittest.mock import MagicMock, patch
 from app.trading.paper_trader import sell
 
+
+def _zero_execution_cost(ticker, price, side, notional):
+    """Identity fill: no spread, impact or commission.
+
+    These tests pin LOT BOOKKEEPING — FIFO matching, closure rows, realised
+    P&L arithmetic — not the execution-cost model. With the live cost model
+    the fill lands below the reference price (open item 39's 159.36 vs 160.0:
+    the assertions were written before costs shipped on 2026-07-26 and assert
+    gross-of-cost numbers). Zeroing the cost here keeps the expectations exact
+    and deterministic; the cost model has its own coverage.
+    """
+    return price, {
+        "total_bps": 0.0, "spread_bps": 0.0, "impact_bps": 0.0,
+        "commission_bps": 0.0, "commission_cash": 0.0,
+        "spread_source": "test-zero", "fully_modeled": True,
+    }
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lot_closures_created_on_sell(real_db):
@@ -31,7 +48,8 @@ async def test_lot_closures_created_on_sell(real_db):
         [now_iso]
     )
     
-    with patch("app.trading.paper_trader.get_db", new=fake_get_db):
+    with patch("app.trading.paper_trader.get_db", new=fake_get_db), \
+         patch("app.trading.paper_trader._apply_execution_cost", new=_zero_execution_cost):
         result = await sell("test-bot", "AAPL", qty_pct=1.0)
         
     assert result.get("error") is None, f"Sell failed: {result.get('error')}"
@@ -79,7 +97,8 @@ async def test_lot_closures_partial_sell(real_db):
         [now_iso]
     )
 
-    with patch("app.trading.paper_trader.get_db", new=fake_get_db):
+    with patch("app.trading.paper_trader.get_db", new=fake_get_db), \
+         patch("app.trading.paper_trader._apply_execution_cost", new=_zero_execution_cost):
         # Sell 50% of the position
         result = await sell("test-bot", "AAPL", qty_pct=0.5)
         

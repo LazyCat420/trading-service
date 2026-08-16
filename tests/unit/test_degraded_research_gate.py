@@ -160,13 +160,36 @@ class TestSearchRecency:
         assert out[0]["age_days"] is not None
 
     def test_window_widens_rather_than_returning_nothing(self):
-        """A thin ticker with only older coverage still gets an answer."""
+        """A thin ticker with only older coverage still gets an answer.
+
+        The date must be RELATIVE: a hardcoded "15 Aug 2025" sat inside the
+        365-day widen window until 2026-08-16, then aged out and failed the
+        suite on a calendar boundary with no code change.
+        """
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
         from app.tools.web_tools import _apply_recency
 
+        old_but_in_window = format_datetime(
+            datetime.now(timezone.utc) - timedelta(days=100))
         rows = [{"title": f"old {i}", "url": "https://x",
-                 "published": "Fri, 15 Aug 2025 14:34:00 GMT"} for i in range(3)]
+                 "published": old_but_in_window} for i in range(3)]
         out = _apply_recency(rows, 10)
         assert len(out) == 3
+
+    def test_the_archive_is_still_dropped_when_widened(self):
+        """Widening stops at a year — a decade-old transcript stays out."""
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
+        from app.tools.web_tools import _apply_recency
+
+        beyond_window = format_datetime(
+            datetime.now(timezone.utc) - timedelta(days=400))
+        rows = [{"title": f"ancient {i}", "url": "https://x",
+                 "published": beyond_window} for i in range(3)]
+        assert _apply_recency(rows, 10) == []
 
     def test_undated_results_are_kept_but_sort_last(self):
         from app.tools.web_tools import _apply_recency
