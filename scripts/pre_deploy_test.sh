@@ -51,6 +51,7 @@ if pytest \
     "${ROOT_DIR}/tests/unit/test_migration_ledger.py" \
     "${ROOT_DIR}/tests/unit/test_mongo_store.py" \
     "${ROOT_DIR}/tests/unit/test_pg_write_guard.py" \
+    "${ROOT_DIR}/tests/unit/test_pg_read_guard.py" \
     -q; then
     echo "✅ [Pre-Deploy Check] All tests passed successfully."
 else

@@ -69,6 +69,49 @@ _WRITE_TARGET_RE = re.compile(
 
 _DESTRUCTIVE_VERBS = ("DELETE", "TRUNCATE")
 
+# Read targets: every table named after FROM or a JOIN. Deliberately not
+# anchored, so a subquery, a CTE body or a join deep in a statement is caught
+# the same as a top-level FROM.
+#
+# `FROM` also appears in `DELETE FROM`, which the write regex already covers;
+# double-reporting one statement is harmless because the first match raises.
+_READ_TARGET_RE = re.compile(
+    r"\b(FROM|JOIN)\s+"
+    r"(?:ONLY\s+)?"
+    r'(?:"?[A-Za-z_][A-Za-z0-9_$]*"?\s*\.\s*)?'
+    r'"?([A-Za-z_][A-Za-z0-9_$]*)"?',
+    re.IGNORECASE,
+)
+
+# Names that can follow FROM without being a table. Without this the guard
+# fires on `FROM (SELECT ...)`, on set-returning functions, and on the
+# `EXTRACT(EPOCH FROM ...)` / `SUBSTRING(x FROM y)` function syntaxes -- all of
+# which are ordinary SQL, not a missed cutover.
+_NOT_A_TABLE = frozenset({
+    "select", "values", "lateral", "unnest", "generate_series",
+    "jsonb_array_elements", "json_array_elements", "jsonb_each", "json_each",
+    "regexp_split_to_table", "epoch", "year", "month", "day", "hour", "minute",
+    "second", "dow", "doy", "week", "quarter", "timezone", "current_date",
+    "current_timestamp", "now",
+})
+
+
+def _read_guard_enabled() -> bool:
+    """Is the read guard armed?
+
+    Off by default, and that is deliberate. Arming it converts "prove this read
+    came from Mongo" from forensics into a type error: any surviving Postgres
+    read path for a cut-over table raises with a stack trace naming its own
+    file and line, instead of quietly returning stale rows that look current.
+
+    It stays opt-in because it is a soak instrument. You want it on while a
+    wave is being proven, and you do not want it to be the thing that discovers
+    an unported reader during market hours. Turn it on per environment
+    (MONGO_GUARD_BLOCK_READS=1), close the wave, then leave it on for that
+    table's mode.
+    """
+    return os.getenv("MONGO_GUARD_BLOCK_READS", "").strip().lower() in ("1", "true", "yes")
+
 _guarded_cache: dict[str, str] | None = None
 
 
@@ -177,3 +220,49 @@ def check_pg_write(sql: str) -> None:
                 verb,
                 table,
             )
+
+    check_pg_read(sql)
+
+
+def check_pg_read(sql: str) -> None:
+    """Raise if ``sql`` READS Postgres for a table that has cut over to Mongo.
+
+    The counterpart to the write guard, and the reason it exists: after a table
+    reaches mode ``mongo`` its Postgres rows are frozen, so a surviving SELECT
+    does not fail — it returns stale data that looks current. ``embeddings``
+    demonstrates the cost. It has been at ``mongo`` since 2026-07-25, and 701
+    vectors written since then exist only in Mongo; any reader still pointed at
+    Postgres would silently serve a 2.4%-short index and nothing would raise.
+
+    Only ``mongo`` is guarded, never ``mongo_read`` — there Postgres is still
+    dual-written and reading it is legitimate, just not preferred.
+
+    Opt-in via MONGO_GUARD_BLOCK_READS=1; see ``_read_guard_enabled``.
+    """
+    if not _read_guard_enabled():
+        return
+    guarded = _guarded_tables()
+    if not guarded or not sql:
+        return
+
+    for match in _READ_TARGET_RE.finditer(sql):
+        table = match.group(2).lower()
+        if table in _NOT_A_TABLE:
+            continue
+        # Reading a dual-written table is fine; only a frozen one is a fault.
+        if guarded.get(table) != "mongo":
+            continue
+        if _allow_override():
+            logger.warning(
+                "[PG GUARD] read of '%s' allowed by MONGO_GUARD_ALLOW_PG "
+                "(table is at backend 'mongo')",
+                table,
+            )
+            continue
+        raise RuntimeError(
+            f"[PG GUARD] refusing to read '{table}' from Postgres: the table is "
+            "at backend 'mongo', so these rows are frozen and this query would "
+            "return stale data as if it were current. Read via "
+            "app.db.mongo_store instead. If this really is migration/teardown "
+            "tooling, set MONGO_GUARD_ALLOW_PG=1."
+        )
