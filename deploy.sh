@@ -22,6 +22,46 @@ PRE_BUILD() {
     set -a; source "$CENTRAL_ENV"; set +a
     info "Loaded deploy-kit/.env.deploy"
   fi
+
+  # .env.deploy is gitignored and SHARED by every repo's deploy, and the source
+  # above exports whatever MONGO_STORE_BACKEND it holds into this shell — where
+  # it used to beat the in-script default below. That made any deploy, for any
+  # reason, able to ship a table cutover nobody chose: on 2026-08-16 the file
+  # stood at 30 tables at `mongo` (money ledger + pipeline_state included) while
+  # the containers ran 13. At `mongo` a Postgres write RAISES, so shipping it
+  # ahead of the code breaks every write to those tables.
+  # The canonical map is app/db/mongo_backends.env, which is COMMITTED.
+  if [ -n "${MONGO_STORE_BACKEND:-}" ]; then
+    if [ "${MONGO_STORE_ALLOW_ENV_OVERRIDE:-}" = "1" ]; then
+      warn "MONGO_STORE_BACKEND taken from the environment (explicit override)"
+    else
+      warn "ignoring MONGO_STORE_BACKEND from the environment — app/db/mongo_backends.env wins"
+      warn "  (set MONGO_STORE_ALLOW_ENV_OVERRIDE=1 for this run to use the environment instead)"
+      unset MONGO_STORE_BACKEND
+    fi
+  fi
+}
+
+# Resolve the per-table Mongo backend map into MONGO_STORE_BACKEND.
+#
+# Precedence, deliberately: an explicitly opted-in environment value, else the
+# COMMITTED app/db/mongo_backends.env. Never a value that merely leaked in from
+# sourcing the shared, gitignored deploy-kit/.env.deploy — PRE_BUILD has already
+# dropped that. Kept as its own function so the precedence is unit-testable
+# without running a deploy (scripts/test_backend_map_resolution.sh).
+resolve_mongo_backend_map() {
+  local BACKEND_FILE="${SCRIPT_DIR}/app/db/mongo_backends.env"
+  if [ -n "${MONGO_STORE_BACKEND:-}" ]; then
+    info "Mongo backend map: from the environment (explicit override)"
+  else
+    [ -f "$BACKEND_FILE" ] || fail "app/db/mongo_backends.env is missing — it is the canonical backend map; refusing to deploy an unknown flag state"
+    MONGO_STORE_BACKEND="$(grep -E '^MONGO_STORE_BACKEND=' "$BACKEND_FILE" | tail -1 | cut -d= -f2-)"
+    [ -n "$MONGO_STORE_BACKEND" ] || fail "app/db/mongo_backends.env has no MONGO_STORE_BACKEND= line"
+  fi
+  local n_tables n_mongo
+  n_tables=$(printf '%s' "$MONGO_STORE_BACKEND" | tr ',' '\n' | grep -c ':')
+  n_mongo=$(printf '%s' "$MONGO_STORE_BACKEND" | tr ',' '\n' | grep -c ':mongo$')
+  info "Mongo backend map: ${n_tables} tables, ${n_mongo} at full mongo"
 }
 
 EXTRA_SSH_SYNC() {
@@ -72,13 +112,18 @@ EXTRA_SSH_SYNC() {
   # decision — see app/v3/model_shadow.py.
   ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_AGENTS=${MODEL_SHADOW_AGENTS:-v3_regime_engine,v3_portfolio_manager}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_ENDPOINT=${MODEL_SHADOW_ENDPOINT:-jetson}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
-  # Postgres→Mongo migration: per-table backend flags (pg|dual|mongo). This
-  # service overwrites its .env from the vault master (above), so runtime flags
-  # must be appended HERE, not via deploy-kit/.env.deploy (SKIP_ENV_DEPLOY=true).
-  # The default below IS the live state — a redeploy without MONGO_STORE_BACKEND
-  # exported must not regress any table's backend.
-  MONGO_STORE_DEFAULT="pipeline_events:mongo_read,execution_errors:dual,cycle_audit_log:dual,agent_audit_log:dual,llm_audit_logs:mongo_read,agent_traces:dual,agent_tool_telemetry:dual,v3_agent_telemetry:dual,trade_results:mongo_read,ticker_reports:mongo_read,analysis_results:mongo_read,context_blobs:dual,embeddings:mongo"
-  ssh "$DEPLOY_SSH_HOST" "echo 'MONGO_STORE_BACKEND=${MONGO_STORE_BACKEND:-$MONGO_STORE_DEFAULT}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  # Postgres→Mongo migration: per-table backend flags (pg|dual|mongo_read|mongo).
+  # This service overwrites its .env from the vault master (above), so runtime
+  # flags must be appended HERE, not via deploy-kit/.env.deploy
+  # (SKIP_ENV_DEPLOY=true).
+  #
+  # The map is read from the COMMITTED app/db/mongo_backends.env. It is not
+  # duplicated inline any more: an inline default that a sourced env file could
+  # silently beat is how a 30-table cutover came to be armed while the comment
+  # above it claimed to be the live state (ch.66 F1). PRE_BUILD has already
+  # dropped any environment value unless a human opted in for this run.
+  resolve_mongo_backend_map
+  ssh "$DEPLOY_SSH_HOST" "echo 'MONGO_STORE_BACKEND=${MONGO_STORE_BACKEND}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes' 2>/dev/null || sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes'"
   ssh "$DEPLOY_SSH_HOST" "sudo chown -R 1001:1001 '${DEPLOY_COMPOSE_DIR}/logs' '${DEPLOY_COMPOSE_ROOT}/notes'"
   ssh "$DEPLOY_SSH_HOST" "sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/data/charts' && sudo chmod 777 '${DEPLOY_COMPOSE_DIR}/data/charts'"
