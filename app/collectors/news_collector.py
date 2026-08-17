@@ -637,31 +637,52 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     if url_fanout_exceeded(db, item.get("url")):
                         continue
                     _qs, _qr = quality_at_write(item["title"], item["summary"])
-                    db.execute(
-                        """
-                        INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP, %s, %s, %s)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        [
-                            item["id"],
-                            item["ticker"],
-                            item["title"][:500],
-                            item["publisher"],
-                            item["url"],
-                            item["published_at"],
-                            item["summary"],
-                            item["content_hash"],
-                            _qs,
-                            _qr,
-                            # This feed never inherits a queried ticker: the
-                            # `is_general` branch stores ticker=NULL rather than
-                            # falling back, so a ticker here was detected AND
-                            # passed `_is_article_relevant_to_ticker`.
-                            "general" if item.get("is_general") else "detected",
-                        ],
-                    )
+                    from app.db import mongo_store
+                    now_dt = datetime.datetime.now(datetime.UTC)
+                    attr_val = "general" if item.get("is_general") else "detected"
+                    if mongo_store.writes_mongo("news_articles"):
+                        mongo_store.upsert_doc(
+                            "news_articles",
+                            {"id": item["id"]},
+                            {
+                                "id": item["id"],
+                                "ticker": item["ticker"],
+                                "title": item["title"][:500],
+                                "publisher": item["publisher"],
+                                "url": item["url"],
+                                "published_at": item["published_at"],
+                                "summary": item["summary"],
+                                "source": "rss",
+                                "content_hash": item["content_hash"],
+                                "collected_at": now_dt,
+                                "quality_status": _qs,
+                                "quality_reason": _qr,
+                                "ticker_attribution": attr_val,
+                            },
+                            insert_only=True,
+                        )
+                    if mongo_store.writes_pg("news_articles"):
+                        db.execute(
+                            """
+                            INSERT INTO news_articles
+                            (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP, %s, %s, %s)
+                            ON CONFLICT (id) DO NOTHING
+                            """,
+                            [
+                                item["id"],
+                                item["ticker"],
+                                item["title"][:500],
+                                item["publisher"],
+                                item["url"],
+                                item["published_at"],
+                                item["summary"],
+                                item["content_hash"],
+                                _qs,
+                                _qr,
+                                attr_val,
+                            ],
+                        )
                     count += 1
 
                 # Emit news scraped log for this unique item list

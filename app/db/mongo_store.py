@@ -62,8 +62,14 @@ _BACKENDS = _parse_backends()
 
 
 def backend_for(table: str) -> str:
-    """Backend mode for a table: 'pg' (default), 'dual', or 'mongo'."""
-    return _BACKENDS.get(table, "pg")
+    """Backend mode for a table: 'pg' (default), 'dual', 'mongo_read', or 'mongo'."""
+    if table in _BACKENDS:
+        return _BACKENDS[table]
+    if "*" in _BACKENDS:
+        return _BACKENDS["*"]
+    if "default" in _BACKENDS:
+        return _BACKENDS["default"]
+    return "pg" 
 
 
 def writes_mongo(table: str) -> bool:
@@ -125,6 +131,7 @@ _indexes_ready = False
 # Natural unique key per migrated collection. `id` keys are partial-unique
 # ($type-guarded) because older mirror docs may lack the field or carry null.
 _ID_UNIQUE_COLLECTIONS = (
+    "tool_usage_stats",
     "execution_errors",
     "cycle_audit_log",
     "llm_audit_logs",
@@ -134,6 +141,23 @@ _ID_UNIQUE_COLLECTIONS = (
     "trade_results",
     "ticker_reports",
     "analysis_results",
+    "decision_outcomes",
+    "v3_system_commands",
+    "system_commands",
+    "news_articles",
+    "reddit_posts",
+    "youtube_transcripts",
+    "cycle_benchmarks",
+    "cycle_ticker_benchmarks",
+    "bots",
+    "positions",
+    "position_lots",
+    "lot_closures",
+    "orders",
+    "trade_fills",
+    "portfolio_snapshots",
+    "pipeline_state",
+    "freshness_gate_config",
 )
 _ID_TYPES = ["string", "int", "long", "double"]
 
@@ -199,6 +223,13 @@ def ensure_indexes() -> None:
     _try("analysis_results", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
     _try("agent_tool_telemetry", [("agent_name", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
     _try("v3_agent_telemetry", [("agent_name", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    _try("tool_usage_stats", [("tool_name", pymongo.ASCENDING), ("called_at", pymongo.DESCENDING)])
+    _try("tool_usage_stats", "called_at")
+    _try("tool_usage_stats", [("agent_name", pymongo.ASCENDING), ("cycle_id", pymongo.ASCENDING)])
+    _try("agent_tool_optimization", [("agent_name", pymongo.ASCENDING), ("tool_name", pymongo.ASCENDING)], unique=True)
+    _try("decision_outcomes", "resolved_at")
+    _try("decision_outcomes", "created_at")
+    _try("decision_outcomes", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
     _indexes_ready = True
 
 

@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from app.services.pipeline_state import PipelineStateDB
@@ -708,7 +708,6 @@ class PipelineService:
             benchmark row. Fall back through the values we do have instead, so
             the write is fail-closed on a real timestamp rather than on nothing.
             """
-            from datetime import datetime, timezone
             return (
                 summary.get("started_at")
                 or summary.get("ended_at")
@@ -764,43 +763,86 @@ class PipelineService:
                             phase_ms[phase] = int(ms) if ms is not None else None
                     except Exception as ph_err:
                         logger.warning("[PipelineService] phase-ms derivation failed (non-fatal): %s", ph_err)
-                    db.execute(
-                        """INSERT INTO cycle_benchmarks
-                        (cycle_id, started_at, finished_at, total_ms, ticker_count, avg_ticker_ms,
-                         collect_ms, analyze_ms, trade_ms,
-                         steps_total, steps_skipped, steps_ok, steps_error, total_tokens, cache_hit_pct, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (cycle_id) DO UPDATE SET
-                            finished_at = EXCLUDED.finished_at, total_ms = EXCLUDED.total_ms,
-                            ticker_count = EXCLUDED.ticker_count, avg_ticker_ms = EXCLUDED.avg_ticker_ms,
-                            collect_ms = EXCLUDED.collect_ms, analyze_ms = EXCLUDED.analyze_ms,
-                            trade_ms = EXCLUDED.trade_ms,
-                            steps_total = EXCLUDED.steps_total, steps_skipped = EXCLUDED.steps_skipped,
-                            steps_ok = EXCLUDED.steps_ok, steps_error = EXCLUDED.steps_error,
-                            total_tokens = EXCLUDED.total_tokens, cache_hit_pct = EXCLUDED.cache_hit_pct,
-                            status = EXCLUDED.status""",
-                        [
-                            cycle_id, _started_at_or_fallback(summary), summary.get("ended_at"),
-                            total_ms, ticker_count,
-                            int(total_ms / ticker_count) if total_ms and ticker_count else None,
-                            phase_ms["collecting"], phase_ms["analyzing"], phase_ms["trading"],
-                            steps_total, skipped, ok, err,
-                            int(tokens_row[0]) if tokens_row else 0,
-                            round(skipped / steps_total * 100, 1) if steps_total else 0.0,
-                            summary.get("status"),
-                        ],
-                    )
-                    for r in (results or []):
-                        if not isinstance(r, dict) or not r.get("ticker"):
-                            continue
+                    try:
+                        from app.db import mongo_store
+                        if mongo_store.writes_mongo("cycle_benchmarks"):
+                            mongo_store.upsert_doc(
+                                "cycle_benchmarks",
+                                {"cycle_id": cycle_id},
+                                {
+                                    "cycle_id": cycle_id,
+                                    "started_at": _started_at_or_fallback(summary),
+                                    "finished_at": summary.get("ended_at"),
+                                    "total_ms": total_ms,
+                                    "ticker_count": ticker_count,
+                                    "avg_ticker_ms": int(total_ms / ticker_count) if total_ms and ticker_count else None,
+                                    "collect_ms": phase_ms["collecting"],
+                                    "analyze_ms": phase_ms["analyzing"],
+                                    "trade_ms": phase_ms["trading"],
+                                    "steps_total": steps_total,
+                                    "steps_skipped": skipped,
+                                    "steps_ok": ok,
+                                    "steps_error": err,
+                                    "total_tokens": int(tokens_row[0]) if tokens_row else 0,
+                                    "cache_hit_pct": round(skipped / steps_total * 100, 1) if steps_total else 0.0,
+                                    "status": summary.get("status"),
+                                }
+                            )
+                        if mongo_store.writes_mongo("cycle_ticker_benchmarks"):
+                            for r in (results or []):
+                                if not isinstance(r, dict) or not r.get("ticker"):
+                                    continue
+                                mongo_store.upsert_doc(
+                                    "cycle_ticker_benchmarks",
+                                    {"cycle_id": cycle_id, "ticker": r["ticker"]},
+                                    {
+                                        "cycle_id": cycle_id,
+                                        "ticker": r["ticker"],
+                                        "action": r.get("action"),
+                                        "confidence": r.get("confidence"),
+                                    }
+                                )
+                    except Exception as b_mongo_err:
+                        logger.debug("[PipelineService] Mongo cycle_benchmarks write failed (non-fatal): %s", b_mongo_err)
+
+                    if mongo_store.writes_pg("cycle_benchmarks"):
                         db.execute(
-                            """INSERT INTO cycle_ticker_benchmarks
-                            (cycle_id, ticker, action, confidence)
-                            VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (cycle_id, ticker) DO UPDATE SET
-                                action = EXCLUDED.action, confidence = EXCLUDED.confidence""",
-                            [cycle_id, r["ticker"], r.get("action"), r.get("confidence")],
+                            """INSERT INTO cycle_benchmarks
+                            (cycle_id, started_at, finished_at, total_ms, ticker_count, avg_ticker_ms,
+                             collect_ms, analyze_ms, trade_ms,
+                             steps_total, steps_skipped, steps_ok, steps_error, total_tokens, cache_hit_pct, status)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (cycle_id) DO UPDATE SET
+                                finished_at = EXCLUDED.finished_at, total_ms = EXCLUDED.total_ms,
+                                ticker_count = EXCLUDED.ticker_count, avg_ticker_ms = EXCLUDED.avg_ticker_ms,
+                                collect_ms = EXCLUDED.collect_ms, analyze_ms = EXCLUDED.analyze_ms,
+                                trade_ms = EXCLUDED.trade_ms,
+                                steps_total = EXCLUDED.steps_total, steps_skipped = EXCLUDED.steps_skipped,
+                                steps_ok = EXCLUDED.steps_ok, steps_error = EXCLUDED.steps_error,
+                                total_tokens = EXCLUDED.total_tokens, cache_hit_pct = EXCLUDED.cache_hit_pct,
+                                status = EXCLUDED.status""",
+                            [
+                                cycle_id, _started_at_or_fallback(summary), summary.get("ended_at"),
+                                total_ms, ticker_count,
+                                int(total_ms / ticker_count) if total_ms and ticker_count else None,
+                                phase_ms["collecting"], phase_ms["analyzing"], phase_ms["trading"],
+                                steps_total, skipped, ok, err,
+                                int(tokens_row[0]) if tokens_row else 0,
+                                round(skipped / steps_total * 100, 1) if steps_total else 0.0,
+                                summary.get("status"),
+                            ],
                         )
+                        for r in (results or []):
+                            if not isinstance(r, dict) or not r.get("ticker"):
+                                continue
+                            db.execute(
+                                """INSERT INTO cycle_ticker_benchmarks
+                                (cycle_id, ticker, action, confidence)
+                                VALUES (%s, %s, %s, %s)
+                                ON CONFLICT (cycle_id, ticker) DO UPDATE SET
+                                    action = EXCLUDED.action, confidence = EXCLUDED.confidence""",
+                                [cycle_id, r["ticker"], r.get("action"), r.get("confidence")],
+                            )
             except Exception as bench_err:
                 logger.warning("[PipelineService] cycle_benchmarks write failed (non-fatal): %s", bench_err)
 
@@ -1013,24 +1055,71 @@ class PipelineService:
                     from app.processors.ticker_extractor import FALSE_TICKERS
                     with get_db() as db:
                         # 1. Pull Trending from each source independently
-                        # Diversity wave 2026-07-23: limits were 10/10/5, which
-                        # let the same mega-caps own every discovery slot (14d
-                        # data: top-5 tickers absorbed 23% of ALL analyses).
-                        news_trends = db.execute("""
-                            SELECT ticker, COUNT(*) as mentions FROM news_articles
-                            WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 40
-                        """).fetchall()
-                        reddit_trends = db.execute("""
-                            SELECT ticker, COUNT(*) as mentions FROM reddit_posts
-                            WHERE ticker IS NOT NULL AND created_utc > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 30
-                        """).fetchall()
-                        youtube_trends = db.execute("""
-                            SELECT ticker, COUNT(*) as mentions FROM youtube_transcripts
-                            WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                            GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 15
-                        """).fetchall()
+                        from app.db import mongo_store
+                        now_utc = datetime.now(timezone.utc)
+                        since_24h = now_utc - timedelta(hours=24)
+
+                        news_trends, reddit_trends, youtube_trends = None, None, None
+                        if mongo_store.reads_mongo("news_articles"):
+                            try:
+                                news_trends = [
+                                    (d["_id"], d["mentions"])
+                                    for d in mongo_store.aggregate("news_articles", [
+                                        {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
+                                        {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+                                        {"$sort": {"mentions": -1}},
+                                        {"$limit": 40},
+                                    ])
+                                ]
+                            except Exception as me:
+                                mongo_store.handle_mongo_read_failure("news_articles", "discovery news", me)
+
+                        if mongo_store.reads_mongo("reddit_posts"):
+                            try:
+                                reddit_trends = [
+                                    (d["_id"], d["mentions"])
+                                    for d in mongo_store.aggregate("reddit_posts", [
+                                        {"$match": {"ticker": {"$ne": None}, "created_utc": {"$gt": since_24h}}},
+                                        {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+                                        {"$sort": {"mentions": -1}},
+                                        {"$limit": 30},
+                                    ])
+                                ]
+                            except Exception as me:
+                                mongo_store.handle_mongo_read_failure("reddit_posts", "discovery reddit", me)
+
+                        if mongo_store.reads_mongo("youtube_transcripts"):
+                            try:
+                                youtube_trends = [
+                                    (d["_id"], d["mentions"])
+                                    for d in mongo_store.aggregate("youtube_transcripts", [
+                                        {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
+                                        {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+                                        {"$sort": {"mentions": -1}},
+                                        {"$limit": 15},
+                                    ])
+                                ]
+                            except Exception as me:
+                                mongo_store.handle_mongo_read_failure("youtube_transcripts", "discovery youtube", me)
+
+                        if news_trends is None:
+                            news_trends = db.execute("""
+                                SELECT ticker, COUNT(*) as mentions FROM news_articles
+                                WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
+                                GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 40
+                            """).fetchall()
+                        if reddit_trends is None:
+                            reddit_trends = db.execute("""
+                                SELECT ticker, COUNT(*) as mentions FROM reddit_posts
+                                WHERE ticker IS NOT NULL AND created_utc > NOW() - INTERVAL '24 hours'
+                                GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 30
+                            """).fetchall()
+                        if youtube_trends is None:
+                            youtube_trends = db.execute("""
+                                SELECT ticker, COUNT(*) as mentions FROM youtube_transcripts
+                                WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
+                                GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 15
+                            """).fetchall()
                         
                         # 2. Phase 4A: Cross-reference — track source count per ticker
                         source_tracker: dict[str, dict] = {}  # ticker -> {"sources": set, "mentions": int}
@@ -2251,12 +2340,27 @@ class PipelineService:
                     import uuid as _uuid
                     from app.db.connection import get_db
                     job_id = f"job_{_uuid.uuid4().hex[:8]}"
-                    with get_db() as db:
-                        db.execute(
-                            "INSERT INTO system_commands (id, command_type, payload, status) "
-                            "VALUES (%s, 'AUTORESEARCH', %s, 'pending')",
-                            [job_id, json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary})],
+                    from app.db import mongo_store
+                    now_utc = datetime.now(timezone.utc)
+                    if mongo_store.writes_mongo("system_commands"):
+                        mongo_store.upsert_doc(
+                            "system_commands",
+                            {"id": job_id},
+                            {
+                                "id": job_id,
+                                "command_type": "AUTORESEARCH",
+                                "payload": {"cycle_id": cycle_id, "cycle_summary": cycle_summary},
+                                "status": "pending",
+                                "created_at": now_utc,
+                            }
                         )
+                    if mongo_store.writes_pg("system_commands"):
+                        with get_db() as db:
+                            db.execute(
+                                "INSERT INTO system_commands (id, command_type, payload, status) "
+                                "VALUES (%s, 'AUTORESEARCH', %s, 'pending')",
+                                [job_id, json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary})],
+                            )
                     logger.info(
                         "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
                     )

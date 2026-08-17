@@ -34,6 +34,20 @@ def _audit_recovery() -> dict:
 
 def _audit_execution_errors(cycle_id: str) -> list[dict]:
     try:
+        from app.db import mongo_store
+        if mongo_store.reads_mongo("execution_errors"):
+            try:
+                docs = mongo_store.find_docs(
+                    "execution_errors",
+                    {"cycle_id": cycle_id},
+                    sort=[("created_at", -1)],
+                    limit=5,
+                    projection={"phase": 1, "error_type": 1, "error_message": 1},
+                )
+                return [{"phase": d.get("phase"), "error_type": d.get("error_type"), "error_message": d.get("error_message")} for d in docs]
+            except Exception as me:
+                mongo_store.handle_mongo_read_failure("execution_errors", "_audit_execution_errors", me)
+
         with get_db() as db:
             rows = db.execute(
                 "SELECT phase, error_type, error_message FROM execution_errors WHERE cycle_id = %s ORDER BY created_at DESC LIMIT 5",

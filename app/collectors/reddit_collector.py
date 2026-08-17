@@ -370,31 +370,56 @@ def _store_post(
         comment_velocity = round(num_comments / age_hours, 2)
 
     try:
-        db.execute(
-            """
-            INSERT INTO reddit_posts
-            (id, ticker, subreddit, title, body, score, upvote_ratio,
-             comment_count, flair, sentiment_score, award_count,
-             comment_velocity, created_utc, collected_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (id) DO NOTHING
-        """,
-            [
-                post_id,
-                primary_ticker,
-                subreddit,
-                title,
-                body,
-                score,
-                upvote_ratio,
-                num_comments,
-                flair,
-                None,
-                awards,
-                comment_velocity,
-                created_utc,
-            ],
-        )
+        from app.db import mongo_store
+        now_dt = datetime.datetime.now(datetime.UTC)
+        if mongo_store.writes_mongo("reddit_posts"):
+            mongo_store.upsert_doc(
+                "reddit_posts",
+                {"id": post_id},
+                {
+                    "id": post_id,
+                    "ticker": primary_ticker,
+                    "subreddit": subreddit,
+                    "title": title,
+                    "body": body,
+                    "score": score,
+                    "upvote_ratio": upvote_ratio,
+                    "comment_count": num_comments,
+                    "flair": flair,
+                    "sentiment_score": None,
+                    "award_count": awards,
+                    "comment_velocity": comment_velocity,
+                    "created_utc": created_utc,
+                    "collected_at": now_dt,
+                },
+                insert_only=True,
+            )
+        if mongo_store.writes_pg("reddit_posts"):
+            db.execute(
+                """
+                INSERT INTO reddit_posts
+                (id, ticker, subreddit, title, body, score, upvote_ratio,
+                 comment_count, flair, sentiment_score, award_count,
+                 comment_velocity, created_utc, collected_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO NOTHING
+            """,
+                [
+                    post_id,
+                    primary_ticker,
+                    subreddit,
+                    title,
+                    body,
+                    score,
+                    upvote_ratio,
+                    num_comments,
+                    flair,
+                    None,
+                    awards,
+                    comment_velocity,
+                    created_utc,
+                ],
+            )
 
         # Write discovered tickers (filter through shared FALSE_TICKERS)
         for t in tickers_found:

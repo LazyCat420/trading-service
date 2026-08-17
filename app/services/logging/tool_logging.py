@@ -96,6 +96,7 @@ def log_tool_call(
                     )
                     return
 
+            now_utc = datetime.now(timezone.utc)
             db.execute(
                 """
                 INSERT INTO tool_usage_stats 
@@ -111,8 +112,24 @@ def log_tool_call(
                     execution_ms,
                     error_message,
                     service_source,
-                    datetime.now(timezone.utc)
+                    now_utc
                 )
             )
+            try:
+                from app.db import mongo_store
+                if mongo_store.writes_mongo("tool_usage_stats"):
+                    mongo_store.insert_docs("tool_usage_stats", [{
+                        "tool_name": canonical_name,
+                        "agent_name": agent_name or "",
+                        "ticker": ticker or "",
+                        "cycle_id": cycle_id or "",
+                        "success": bool(success),
+                        "execution_ms": execution_ms,
+                        "error_message": error_message,
+                        "service_source": service_source,
+                        "called_at": now_utc,
+                    }])
+            except Exception as mongo_err:
+                logger.debug("[ToolLogger] Mongo mirror failed (non-fatal): %s", mongo_err)
     except Exception as e:
         logger.debug("[ToolLogger] Failed to log tool execution for '%s': %s", canonical_name, e)

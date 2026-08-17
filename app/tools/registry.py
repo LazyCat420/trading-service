@@ -117,6 +117,7 @@ def _db_telemetry_callback(
             cycle_id = None
         ticker = current_ticker()
 
+        now_utc = datetime.now(timezone.utc)
         with get_db() as db:
             db.execute(
                 "INSERT INTO tool_usage_stats "
@@ -132,9 +133,25 @@ def _db_telemetry_callback(
                     execution_ms,
                     error_message,
                     "lazy-tool-service",
-                    datetime.now(timezone.utc),
+                    now_utc,
                 ],
             )
+        try:
+            from app.db import mongo_store
+            if mongo_store.writes_mongo("tool_usage_stats"):
+                mongo_store.insert_docs("tool_usage_stats", [{
+                    "tool_name": tool_name,
+                    "agent_name": agent_name,
+                    "ticker": ticker,
+                    "cycle_id": cycle_id,
+                    "success": bool(success),
+                    "execution_ms": execution_ms,
+                    "error_message": error_message,
+                    "service_source": "lazy-tool-service",
+                    "called_at": now_utc,
+                }])
+        except Exception as mongo_err:
+            logger.debug("[ToolRegistry] Mongo mirror failed (non-fatal): %s", mongo_err)
     except Exception as e:
         logger.debug(f"[ToolRegistry] Usage log failed (non-fatal): {e}")
 

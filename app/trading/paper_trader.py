@@ -760,6 +760,32 @@ async def buy(
                         cycle_id,
                     ],
                 )
+                try:
+                    from app.db import mongo_store
+                    if mongo_store.writes_mongo("positions"):
+                        if existing:
+                            mongo_store.upsert_doc(
+                                "positions",
+                                {"bot_id": bot_id, "ticker": ticker},
+                                {"id": old_id, "bot_id": bot_id, "ticker": ticker, "qty": new_qty, "avg_entry_price": new_avg, "stop_loss_pct": stop_pct, "take_profit_pct": tp_pct, "stop_source": stop_source, "exit_style": style, "updated_at": now}
+                            )
+                        else:
+                            mongo_store.upsert_doc(
+                                "positions",
+                                {"bot_id": bot_id, "ticker": ticker},
+                                {"id": pos_id, "bot_id": bot_id, "ticker": ticker, "qty": qty, "avg_entry_price": current_price, "stop_loss_pct": stop_pct, "take_profit_pct": tp_pct, "stop_source": stop_source, "exit_style": style, "opened_at": now}
+                            )
+                    if mongo_store.writes_mongo("bots"):
+                        db_doc = mongo_store.get_doc_db()
+                        db_doc["bots"].update_one({"bot_id": bot_id}, {"$inc": {"cash_balance": -amount, "total_trades": 1}})
+                    if mongo_store.writes_mongo("orders"):
+                        mongo_store.upsert_doc("orders", {"id": order_id}, {"id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "BUY", "qty": qty, "price": current_price, "signal": "pipeline", "created_at": now, "filled_at": now})
+                    if mongo_store.writes_mongo("trade_fills"):
+                        mongo_store.upsert_doc("trade_fills", {"fill_id": fill_id}, {"fill_id": fill_id, "order_id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "BUY", "fill_qty": qty, "fill_price": current_price, "fill_value": amount, "fees": round(amount * cost["total_bps"] / 10_000.0, 6), "decision_price": reference_price, "filled_at": now, "cycle_id": cycle_id})
+                    if mongo_store.writes_mongo("position_lots"):
+                        mongo_store.upsert_doc("position_lots", {"lot_id": lot_id}, {"lot_id": lot_id, "bot_id": bot_id, "ticker": ticker, "fill_id": fill_id, "opened_at": now, "original_qty": qty, "remaining_qty": qty, "entry_price": current_price, "status": "open", "cycle_id": cycle_id})
+                except Exception as m_buy_err:
+                    logger.debug("[paper] Mongo buy mirror write failed (non-fatal): %s", m_buy_err)
                 logger.info(
                     "[TRACE][BUY] COMMITTED OK — order_id=%s fill_id=%s lot_id=%s",
                     order_id,
@@ -1057,6 +1083,27 @@ async def sell(
                         cycle_id,
                     ],
                 )
+                try:
+                    from app.db import mongo_store
+                    if mongo_store.writes_mongo("positions"):
+                        if qty_to_sell >= total_qty - 0.0001:
+                            db_doc = mongo_store.get_doc_db()
+                            db_doc["positions"].delete_one({"bot_id": bot_id, "ticker": ticker})
+                        else:
+                            mongo_store.upsert_doc(
+                                "positions",
+                                {"bot_id": bot_id, "ticker": ticker},
+                                {"id": pos_id, "bot_id": bot_id, "ticker": ticker, "qty": new_pos_qty, "avg_entry_price": new_avg_price, "updated_at": now}
+                            )
+                    if mongo_store.writes_mongo("bots"):
+                        db_doc = mongo_store.get_doc_db()
+                        db_doc["bots"].update_one({"bot_id": bot_id}, {"$inc": {"cash_balance": proceeds, "total_pnl": total_realized_pnl, "total_trades": 1}})
+                    if mongo_store.writes_mongo("orders"):
+                        mongo_store.upsert_doc("orders", {"id": order_id}, {"id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "SELL", "qty": qty_to_sell, "price": current_price, "signal": "pipeline", "created_at": now, "filled_at": now, "realized_pnl": total_realized_pnl})
+                    if mongo_store.writes_mongo("trade_fills"):
+                        mongo_store.upsert_doc("trade_fills", {"fill_id": sell_fill_id}, {"fill_id": sell_fill_id, "order_id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "SELL", "fill_qty": qty_to_sell, "fill_price": current_price, "fill_value": proceeds, "fees": round(proceeds * sell_cost["total_bps"] / 10_000.0, 6), "decision_price": reference_price, "filled_at": now, "cycle_id": cycle_id})
+                except Exception as m_sell_err:
+                    logger.debug("[paper] Mongo sell mirror write failed (non-fatal): %s", m_sell_err)
 
                 # Update bot win_rate dynamically
                 db.execute(

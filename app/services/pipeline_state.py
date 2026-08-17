@@ -19,59 +19,86 @@ class PipelineStateDB:
     @classmethod
     def save_state(cls, state: dict):
         try:
-            with connection.get_db() as db:
-                db.execute(
-                    """
-                    INSERT INTO pipeline_state (
-                        singleton_id, status, cycle_id, started_at, finished_at,
-                        tickers, progress, error, phase, agent_locale,
-                        collect_flag, analyze_flag, trade_flag, requested_pipeline_version,
-                        effective_pipeline_version, execution_mode,
-                        updated_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s,
-                        %s::jsonb, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s,
-                        CURRENT_TIMESTAMP
-                    )
-                ON CONFLICT (singleton_id) DO UPDATE SET
-                    status = EXCLUDED.status,
-                    cycle_id = EXCLUDED.cycle_id,
-                    started_at = EXCLUDED.started_at,
-                    finished_at = EXCLUDED.finished_at,
-                    tickers = EXCLUDED.tickers,
-                    progress = EXCLUDED.progress,
-                    error = EXCLUDED.error,
-                    phase = EXCLUDED.phase,
-                    agent_locale = EXCLUDED.agent_locale,
-                    collect_flag = EXCLUDED.collect_flag,
-                    analyze_flag = EXCLUDED.analyze_flag,
-                    trade_flag = EXCLUDED.trade_flag,
-                    requested_pipeline_version = EXCLUDED.requested_pipeline_version,
-                    effective_pipeline_version = EXCLUDED.effective_pipeline_version,
-                    execution_mode = EXCLUDED.execution_mode,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                    [
-                        cls.SINGLETON_ID,
-                        state.get("status", "idle"),
-                        state.get("cycle_id"),
-                        state.get("started_at"),
-                        state.get("finished_at"),
-                        json.dumps(state.get("tickers", [])),
-                        state.get("progress", ""),
-                        state.get("error"),
-                        state.get("phase", ""),
-                        state.get("agent_locale", "default"),
-                        state.get("collect_flag"),
-                        state.get("analyze_flag"),
-                        state.get("trade_flag"),
-                        state.get("requested_pipeline_version"),
-                        state.get("effective_pipeline_version"),
-                        state.get("execution_mode"),
-                    ],
+            from app.db import mongo_store
+            now_utc = datetime.now(timezone.utc)
+            if mongo_store.writes_mongo("pipeline_state"):
+                mongo_store.upsert_doc(
+                    "pipeline_state",
+                    {"singleton_id": cls.SINGLETON_ID},
+                    {
+                        "singleton_id": cls.SINGLETON_ID,
+                        "status": state.get("status", "idle"),
+                        "cycle_id": state.get("cycle_id"),
+                        "started_at": state.get("started_at"),
+                        "finished_at": state.get("finished_at"),
+                        "tickers": state.get("tickers", []),
+                        "progress": state.get("progress", ""),
+                        "error": state.get("error"),
+                        "phase": state.get("phase", ""),
+                        "agent_locale": state.get("agent_locale", "default"),
+                        "collect_flag": state.get("collect_flag"),
+                        "analyze_flag": state.get("analyze_flag"),
+                        "trade_flag": state.get("trade_flag"),
+                        "requested_pipeline_version": state.get("requested_pipeline_version"),
+                        "effective_pipeline_version": state.get("effective_pipeline_version"),
+                        "execution_mode": state.get("execution_mode"),
+                        "updated_at": now_utc,
+                    }
                 )
+            if mongo_store.writes_pg("pipeline_state"):
+                with connection.get_db() as db:
+                    db.execute(
+                        """
+                        INSERT INTO pipeline_state (
+                            singleton_id, status, cycle_id, started_at, finished_at,
+                            tickers, progress, error, phase, agent_locale,
+                            collect_flag, analyze_flag, trade_flag, requested_pipeline_version,
+                            effective_pipeline_version, execution_mode,
+                            updated_at
+                        ) VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s::jsonb, %s, %s, %s, %s,
+                            %s, %s, %s, %s,
+                            %s, %s,
+                            CURRENT_TIMESTAMP
+                        )
+                    ON CONFLICT (singleton_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        cycle_id = EXCLUDED.cycle_id,
+                        started_at = EXCLUDED.started_at,
+                        finished_at = EXCLUDED.finished_at,
+                        tickers = EXCLUDED.tickers,
+                        progress = EXCLUDED.progress,
+                        error = EXCLUDED.error,
+                        phase = EXCLUDED.phase,
+                        agent_locale = EXCLUDED.agent_locale,
+                        collect_flag = EXCLUDED.collect_flag,
+                        analyze_flag = EXCLUDED.analyze_flag,
+                        trade_flag = EXCLUDED.trade_flag,
+                        requested_pipeline_version = EXCLUDED.requested_pipeline_version,
+                        effective_pipeline_version = EXCLUDED.effective_pipeline_version,
+                        execution_mode = EXCLUDED.execution_mode,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                        [
+                            cls.SINGLETON_ID,
+                            state.get("status", "idle"),
+                            state.get("cycle_id"),
+                            state.get("started_at"),
+                            state.get("finished_at"),
+                            json.dumps(state.get("tickers", [])),
+                            state.get("progress", ""),
+                            state.get("error"),
+                            state.get("phase", ""),
+                            state.get("agent_locale", "default"),
+                            state.get("collect_flag"),
+                            state.get("analyze_flag"),
+                            state.get("trade_flag"),
+                            state.get("requested_pipeline_version"),
+                            state.get("effective_pipeline_version"),
+                            state.get("execution_mode"),
+                        ],
+                    )
         except Exception as e:
             logger.error("[PipelineStateDB] Failed to save DB core state: %s", e)
 
@@ -142,14 +169,26 @@ class PipelineStateDB:
     @classmethod
     def get_state(cls, summary_only: bool = False) -> dict:
         try:
-            with connection.get_db() as db:
-                row = db.execute("SELECT * FROM pipeline_state WHERE singleton_id = %s", [cls.SINGLETON_ID]).fetchone()
-                if row:
-                    cols = [desc[0] for desc in db.description]
-                    d = dict(zip(cols, row))
-                    if isinstance(d.get("tickers"), str):
-                        d["tickers"] = json.loads(d["tickers"])
+            from app.db import mongo_store
+            d = None
+            if mongo_store.reads_mongo("pipeline_state"):
+                doc = mongo_store.find_doc("pipeline_state", {"singleton_id": cls.SINGLETON_ID})
+                if doc:
+                    d = dict(doc)
+                    d.pop("_id", None)
                     d.pop("singleton_id", None)
+
+            if d is None and not mongo_store.reads_mongo("pipeline_state"):
+                with connection.get_db() as db:
+                    row = db.execute("SELECT * FROM pipeline_state WHERE singleton_id = %s", [cls.SINGLETON_ID]).fetchone()
+                    if row:
+                        cols = [desc[0] for desc in db.description]
+                        d = dict(zip(cols, row))
+                        if isinstance(d.get("tickers"), str):
+                            d["tickers"] = json.loads(d["tickers"])
+                        d.pop("singleton_id", None)
+
+            if d:
 
                     # Enrich with events and results if summary_only is False and cycle_id exists
                     cycle_id = d.get("cycle_id")

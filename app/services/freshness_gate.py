@@ -226,18 +226,28 @@ def run_freshness_gate(
     news_counts = {}
     if tickers:
         try:
-            with get_db() as db:
-                for ticker in tickers:
-                    snap = analysis_snapshots.get(ticker)
-                    if snap and snap.get("created_at"):
-                        since = snap["created_at"]
-                        if since.tzinfo is None:
-                            since = since.replace(tzinfo=timezone.utc)
-                        count = db.execute(
-                            "SELECT COUNT(*) FROM news_articles WHERE ticker = %s AND published_at > %s",
-                            [ticker, since],
-                        ).fetchone()[0]
-                        news_counts[ticker] = count
+            from app.db import mongo_store
+            for ticker in tickers:
+                snap = analysis_snapshots.get(ticker)
+                if snap and snap.get("created_at"):
+                    since = snap["created_at"]
+                    if hasattr(since, "tzinfo") and since.tzinfo is None:
+                        since = since.replace(tzinfo=timezone.utc)
+                    c_val = None
+                    if mongo_store.reads_mongo("news_articles"):
+                        try:
+                            c_val = mongo_store.get_doc_db()["news_articles"].count_documents(
+                                {"ticker": ticker, "published_at": {"$gt": since}}
+                            )
+                        except Exception as me:
+                            mongo_store.handle_mongo_read_failure("news_articles", "freshness_gate news count", me)
+                    if c_val is None:
+                        with get_db() as db:
+                            c_val = db.execute(
+                                "SELECT COUNT(*) FROM news_articles WHERE ticker = %s AND published_at > %s",
+                                [ticker, since],
+                            ).fetchone()[0]
+                    news_counts[ticker] = c_val
                     else:
                         news_counts[ticker] = 0
         except Exception as e:

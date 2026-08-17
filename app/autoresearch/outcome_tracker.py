@@ -355,17 +355,32 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
             models_by_ticker: dict = {}
             import json as _mjson
             try:
-                m_rows = db.execute(
-                    """
-                    SELECT ticker, agent_name, model_used
-                    FROM v3_agent_telemetry
-                    WHERE cycle_id = %s AND model_used IS NOT NULL
-                    ORDER BY created_at
-                    """,
-                    [cycle_id],
-                ).fetchall()
-                for _t, _agent, _model in m_rows:
-                    models_by_ticker.setdefault(_t, {})[_agent] = _model
+                from app.db import mongo_store
+                if mongo_store.reads_mongo("v3_agent_telemetry"):
+                    try:
+                        docs = mongo_store.find_docs(
+                            "v3_agent_telemetry",
+                            {"cycle_id": cycle_id, "model_used": {"$ne": None}},
+                            sort=[("created_at", 1)],
+                            projection={"ticker": 1, "agent_name": 1, "model_used": 1},
+                        )
+                        for d in docs:
+                            models_by_ticker.setdefault(d.get("ticker"), {})[d.get("agent_name")] = d.get("model_used")
+                    except Exception as me:
+                        mongo_store.handle_mongo_read_failure("v3_agent_telemetry", "outcome_tracker model snapshot", me)
+
+                if not models_by_ticker and not mongo_store.reads_mongo("v3_agent_telemetry"):
+                    m_rows = db.execute(
+                        """
+                        SELECT ticker, agent_name, model_used
+                        FROM v3_agent_telemetry
+                        WHERE cycle_id = %s AND model_used IS NOT NULL
+                        ORDER BY created_at
+                        """,
+                        [cycle_id],
+                    ).fetchall()
+                    for _t, _agent, _model in m_rows:
+                        models_by_ticker.setdefault(_t, {})[_agent] = _model
             except Exception as e:  # noqa: BLE001 — provenance, never blocks
                 logger.debug("[OUTCOME] model snapshot failed: %s", e)
 
@@ -452,15 +467,33 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 # not JSONB.
                 _models = models_by_ticker.get(ticker)
                 models_used = _mjson.dumps(_models) if _models else None
+                now_utc = datetime.now(timezone.utc)
                 db.execute(
                     """INSERT INTO decision_outcomes
                     (id, cycle_id, ticker, action, confidence, entry_price,
                      created_at, skill_versions, overridden_from, models_used)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     [outcome_id, cycle_id, ticker, action, confidence,
-                     round(entry_price, 4), datetime.now(timezone.utc),
+                     round(entry_price, 4), now_utc,
                      skill_versions, overridden_from, models_used],
                 )
+                try:
+                    from app.db import mongo_store
+                    if mongo_store.writes_mongo("decision_outcomes"):
+                        mongo_store.upsert_doc(
+                            "decision_outcomes",
+                            {"id": outcome_id},
+                            {
+                                "id": outcome_id, "cycle_id": cycle_id, "ticker": ticker,
+                                "action": action, "confidence": confidence,
+                                "entry_price": round(entry_price, 4), "created_at": now_utc,
+                                "skill_versions": skill_versions, "overridden_from": overridden_from,
+                                "models_used": _models, "exit_price": None, "pnl_pct": None,
+                                "outcome": None, "resolved_at": None,
+                            },
+                        )
+                except Exception as me:
+                    logger.debug("[OUTCOME] Mongo mirror write failed (non-fatal): %s", me)
                 recorded += 1
 
         if recorded > 0 or skipped_degraded:
@@ -496,18 +529,37 @@ def resolve_pending_outcomes() -> dict:
 
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
+        from app.db import mongo_store
+        pending = []
+        if mongo_store.reads_mongo("decision_outcomes"):
+            try:
+                docs = mongo_store.find_docs(
+                    "decision_outcomes",
+                    {"resolved_at": None, "created_at": {"$lt": cutoff}},
+                    sort=[("created_at", 1)],
+                    limit=50,
+                )
+                pending = [
+                    (d["id"], d["ticker"], d["action"], d.get("entry_price"),
+                     d.get("created_at"), d.get("cycle_id"), d.get("confidence"))
+                    for d in docs
+                ]
+            except Exception as me:
+                mongo_store.handle_mongo_read_failure("decision_outcomes", "resolve_pending_outcomes read", me)
+
         with get_db() as db:
-            pending = db.execute(
-                """
-                SELECT id, ticker, action, entry_price, created_at,
-                       cycle_id, confidence
-                FROM decision_outcomes
-                WHERE resolved_at IS NULL AND created_at < %s
-                ORDER BY created_at ASC
-                LIMIT 50
-                """,
-                [cutoff],
-            ).fetchall()
+            if not pending and not mongo_store.reads_mongo("decision_outcomes"):
+                pending = db.execute(
+                    """
+                    SELECT id, ticker, action, entry_price, created_at,
+                           cycle_id, confidence
+                    FROM decision_outcomes
+                    WHERE resolved_at IS NULL AND created_at < %s
+                    ORDER BY created_at ASC
+                    LIMIT 50
+                    """,
+                    [cutoff],
+                ).fetchall()
 
             for (outcome_id, ticker, action, entry_price, created_at,
                  cycle_id, confidence) in pending:
@@ -557,13 +609,26 @@ def resolve_pending_outcomes() -> dict:
                             "the row anyway, but it is uncounted", outcome_id, outcome,
                         )
 
-                    db.execute(
-                        """UPDATE decision_outcomes
-                        SET exit_price = %s, pnl_pct = %s, outcome = %s, resolved_at = %s
-                        WHERE id = %s""",
-                        [round(exit_price, 4), round(pnl_pct, 2), outcome,
-                         datetime.now(timezone.utc), outcome_id],
-                    )
+                    now_res = datetime.now(timezone.utc)
+                    if mongo_store.writes_pg("decision_outcomes"):
+                        db.execute(
+                            """UPDATE decision_outcomes
+                            SET exit_price = %s, pnl_pct = %s, outcome = %s, resolved_at = %s
+                            WHERE id = %s""",
+                            [round(exit_price, 4), round(pnl_pct, 2), outcome,
+                             now_res, outcome_id],
+                        )
+                    if mongo_store.writes_mongo("decision_outcomes"):
+                        mongo_store.upsert_doc(
+                            "decision_outcomes",
+                            {"id": outcome_id},
+                            {
+                                "exit_price": round(exit_price, 4),
+                                "pnl_pct": round(pnl_pct, 2),
+                                "outcome": outcome,
+                                "resolved_at": now_res,
+                            },
+                        )
                     resolved += 1
 
                     # AFTER the UPDATE, never before: the memory tiers must

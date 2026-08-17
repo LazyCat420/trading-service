@@ -346,19 +346,45 @@ def _check_tool_failure_rates(cycle_id: str) -> list[str]:
     columns that table gets RIGHT (see the note in app/tools/registry.py). Its
     broken agent attribution is irrelevant here.
     """
-    from app.db.connection import get_db
+    from datetime import datetime, timezone, timedelta
+    from app.db import mongo_store
+    rows = []
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT tool_name, COUNT(*) n,
-                   ROUND(100.0 * COUNT(*) FILTER (WHERE NOT success) / COUNT(*)) fail_pct
-            FROM tool_usage_stats
-            WHERE called_at > NOW() - INTERVAL '24 hours'
-            GROUP BY 1 HAVING COUNT(*) >= %s
-            """,
-            [TOOL_FAIL_MIN_CALLS],
-        ).fetchall()
+    if mongo_store.reads_mongo("tool_usage_stats"):
+        try:
+            since = datetime.now(timezone.utc) - timedelta(hours=24)
+            pipeline = [
+                {"$match": {"called_at": {"$gte": since}}},
+                {"$group": {
+                    "_id": "$tool_name",
+                    "n": {"$sum": 1},
+                    "fails": {"$sum": {"$cond": ["$success", 0, 1]}},
+                }},
+                {"$match": {"n": {"$gte": TOOL_FAIL_MIN_CALLS}}},
+                {"$project": {
+                    "tool_name": "$_id",
+                    "n": 1,
+                    "fail_pct": {"$round": [{"$multiply": [100.0, {"$divide": ["$fails", "$n"]}]}]},
+                }}
+            ]
+            mongo_rows = mongo_store.aggregate("tool_usage_stats", pipeline)
+            rows = [(r["tool_name"], r["n"], r["fail_pct"]) for r in mongo_rows]
+        except Exception as e:
+            mongo_store.handle_mongo_read_failure("tool_usage_stats", "_check_tool_failure_rates", e)
+
+    if not rows and not mongo_store.reads_mongo("tool_usage_stats"):
+        from app.db.connection import get_db
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT tool_name, COUNT(*) n,
+                       ROUND(100.0 * COUNT(*) FILTER (WHERE NOT success) / COUNT(*)) fail_pct
+                FROM tool_usage_stats
+                WHERE called_at > NOW() - INTERVAL '24 hours'
+                GROUP BY 1 HAVING COUNT(*) >= %s
+                """,
+                [TOOL_FAIL_MIN_CALLS],
+            ).fetchall()
     out = []
     for name, n, pct in rows:
         if pct is not None and float(pct) > TOOL_FAIL_PCT_CEILING:

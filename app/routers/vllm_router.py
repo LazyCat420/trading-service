@@ -612,18 +612,40 @@ def _get_agent_recent_activity_summary(agent_name: str) -> str:
         }
         db_agent_name = aliases.get(agent_name, agent_name)
 
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT created_at, run_id, tool_name, tool_args, tool_result_summary, 
-                       why_tool_was_called, stop_reason
-                FROM agent_traces
-                WHERE agent_name ILIKE %s OR agent_name ILIKE %s
-                ORDER BY created_at DESC
-                LIMIT 5
-                """,
-                [f"%{db_agent_name}%", f"%{agent_name}%"]
-            ).fetchall()
+        rows = []
+        from app.db import mongo_store
+        if mongo_store.reads_mongo("agent_traces"):
+            try:
+                import re as _re
+                patt = _re.compile(f"{db_agent_name}|{agent_name}", _re.IGNORECASE)
+                docs = mongo_store.find_docs(
+                    "agent_traces",
+                    {"agent_name": {"$regex": patt}},
+                    sort=[("created_at", -1)],
+                    limit=5,
+                )
+                rows = [
+                    (d.get("created_at"), d.get("run_id"), d.get("tool_name"),
+                     d.get("tool_args"), d.get("tool_result_summary"),
+                     d.get("why_tool_was_called"), d.get("stop_reason"))
+                    for d in docs
+                ]
+            except Exception as me:
+                mongo_store.handle_mongo_read_failure("agent_traces", "vllm_router recent traces", me)
+
+        if not rows and not mongo_store.reads_mongo("agent_traces"):
+            with get_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT created_at, run_id, tool_name, tool_args, tool_result_summary, 
+                           why_tool_was_called, stop_reason
+                    FROM agent_traces
+                    WHERE agent_name ILIKE %s OR agent_name ILIKE %s
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                    """,
+                    [f"%{db_agent_name}%", f"%{agent_name}%"]
+                ).fetchall()
         
         if rows:
             summary_lines.append(f"### RECENT {agent_name.upper()} ACTIVITY TRACES:")

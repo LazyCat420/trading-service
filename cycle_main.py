@@ -88,22 +88,43 @@ def drain_schedule_refreshes():
     jobs — without this drain, schedules created after boot stay dormant
     until the next restart.
     """
+    from app.db import mongo_store
     from app.db.connection import get_db
     from app.services.cycle_scheduler import SchedulerService
 
     rows = []
-    with get_db() as db:
-        with db.transaction():
-            rows = db.execute(
-                "SELECT id, payload FROM v3_system_commands "
-                "WHERE status = 'pending' AND command_type = 'REFRESH_SCHEDULE' "
-                "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
-            ).fetchall()
-            for cmd_id, _ in rows:
-                db.execute(
-                    "UPDATE v3_system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    [cmd_id],
+    if mongo_store.reads_mongo("v3_system_commands"):
+        try:
+            import pymongo
+            db_doc = mongo_store.get_doc_db()
+            col = db_doc["v3_system_commands"]
+            now_utc = datetime.now(timezone.utc)
+            cursor = col.find({"status": "pending", "command_type": "REFRESH_SCHEDULE"}).sort("created_at", 1).limit(20)
+            for d in list(cursor):
+                cid = d.get("id") or str(d.get("_id"))
+                res = col.find_one_and_update(
+                    {"id": cid, "status": "pending"},
+                    {"$set": {"status": "completed", "completed_at": now_utc}},
+                    return_document=pymongo.ReturnDocument.AFTER
                 )
+                if res:
+                    rows.append((cid, res.get("payload")))
+        except Exception as me:
+            mongo_store.handle_mongo_read_failure("v3_system_commands", "drain_schedule_refreshes", me)
+
+    if not rows and not mongo_store.reads_mongo("v3_system_commands"):
+        with get_db() as db:
+            with db.transaction():
+                rows = db.execute(
+                    "SELECT id, payload FROM v3_system_commands "
+                    "WHERE status = 'pending' AND command_type = 'REFRESH_SCHEDULE' "
+                    "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
+                ).fetchall()
+                for cmd_id, _ in rows:
+                    db.execute(
+                        "UPDATE v3_system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                        [cmd_id],
+                    )
 
     for cmd_id, payload_val in rows:
         try:
@@ -125,22 +146,41 @@ async def poll_system_commands(shutdown: asyncio.Event):
     
     while not shutdown.is_set():
         try:
+            from app.db import mongo_store
             job_id, cmd_type, payload_val = None, None, None
-            with get_db() as db:
-                with db.transaction():
-                    row = db.execute(
-                        "SELECT id, command_type, payload FROM v3_system_commands "
-                        "WHERE status = 'pending' "
-                        "ORDER BY created_at ASC "
-                        "LIMIT 1 FOR UPDATE SKIP LOCKED"
-                    ).fetchone()
-                    
-                    if row:
-                        job_id, cmd_type, payload_val = row
-                        db.execute(
-                            "UPDATE v3_system_commands SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = %s", 
-                            [job_id]
-                        )
+            if mongo_store.reads_mongo("v3_system_commands"):
+                try:
+                    import pymongo
+                    db_doc = mongo_store.get_doc_db()
+                    doc = db_doc["v3_system_commands"].find_one_and_update(
+                        {"status": "pending", "command_type": {"$ne": "REFRESH_SCHEDULE"}},
+                        {"$set": {"status": "running", "started_at": datetime.now(timezone.utc), "worker_id": WORKER_ID}},
+                        sort=[("created_at", 1)],
+                        return_document=pymongo.ReturnDocument.AFTER,
+                    )
+                    if doc:
+                        job_id = doc.get("id") or str(doc.get("_id"))
+                        cmd_type = doc.get("command_type")
+                        payload_val = doc.get("payload")
+                except Exception as me:
+                    mongo_store.handle_mongo_read_failure("v3_system_commands", "poll_system_commands claim", me)
+
+            if not job_id and not mongo_store.reads_mongo("v3_system_commands"):
+                with get_db() as db:
+                    with db.transaction():
+                        row = db.execute(
+                            "SELECT id, command_type, payload FROM v3_system_commands "
+                            "WHERE status = 'pending' "
+                            "ORDER BY created_at ASC "
+                            "LIMIT 1 FOR UPDATE SKIP LOCKED"
+                        ).fetchone()
+                        
+                        if row:
+                            job_id, cmd_type, payload_val = row
+                            db.execute(
+                                "UPDATE v3_system_commands SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = %s", 
+                                [job_id]
+                            )
             
             if job_id:
                 try:
@@ -204,28 +244,51 @@ async def poll_system_commands(shutdown: asyncio.Event):
                             "[cycle_backend] Command %s SKIPPED (not executed): %s",
                             job_id, cmd_note,
                         )
-                    with get_db() as db:
-                        db.execute(
-                            "UPDATE v3_system_commands SET status = %s, completed_at = CURRENT_TIMESTAMP, "
-                            "result = %s, error_message = %s WHERE id = %s",
-                            [cmd_status, json.dumps(result), cmd_note, job_id]
+                    now_done = datetime.now(timezone.utc)
+                    if mongo_store.writes_mongo("v3_system_commands"):
+                        mongo_store.upsert_doc(
+                            "v3_system_commands",
+                            {"id": job_id},
+                            {
+                                "status": cmd_status,
+                                "completed_at": now_done,
+                                "result": result,
+                                "error_message": cmd_note,
+                            }
                         )
+                    if mongo_store.writes_pg("v3_system_commands"):
+                        with get_db() as db:
+                            db.execute(
+                                "UPDATE v3_system_commands SET status = %s, completed_at = CURRENT_TIMESTAMP, "
+                                "result = %s, error_message = %s WHERE id = %s",
+                                [cmd_status, json.dumps(result), cmd_note, job_id]
+                            )
                 except asyncio.CancelledError as e:
                     if shutdown.is_set():
                         raise
                     logger.error("[cycle_backend] Command %s cancelled internally: %s", job_id, e)
-                    with get_db() as db:
-                        db.execute(
-                            "UPDATE v3_system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
-                            [f"Cancelled internally: {e}", job_id]
-                        )
+                    now_err = datetime.now(timezone.utc)
+                    err_msg = f"Cancelled internally: {e}"
+                    if mongo_store.writes_mongo("v3_system_commands"):
+                        mongo_store.upsert_doc("v3_system_commands", {"id": job_id}, {"status": "error", "completed_at": now_err, "error_message": err_msg})
+                    if mongo_store.writes_pg("v3_system_commands"):
+                        with get_db() as db:
+                            db.execute(
+                                "UPDATE v3_system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
+                                [err_msg, job_id]
+                            )
                 except BaseException as e:
                     logger.error("[cycle_backend] Command %s failed: %s", job_id, e)
-                    with get_db() as db:
-                        db.execute(
-                            "UPDATE v3_system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
-                            [str(e), job_id]
-                        )
+                    now_err = datetime.now(timezone.utc)
+                    err_msg = str(e)
+                    if mongo_store.writes_mongo("v3_system_commands"):
+                        mongo_store.upsert_doc("v3_system_commands", {"id": job_id}, {"status": "error", "completed_at": now_err, "error_message": err_msg})
+                    if mongo_store.writes_pg("v3_system_commands"):
+                        with get_db() as db:
+                            db.execute(
+                                "UPDATE v3_system_commands SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = %s WHERE id = %s", 
+                                [err_msg, job_id]
+                            )
         except BaseException as e:
             if isinstance(e, asyncio.CancelledError):
                 raise

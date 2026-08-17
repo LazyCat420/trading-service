@@ -53,33 +53,33 @@ def get_tool_reputation(
 
     reputation: dict[str, dict] = {}
 
-    try:
-        with get_db() as db:
-            placeholders = ", ".join(["%s"] * len(tool_names))
-            db.execute(
-                f"""
-                SELECT
-                    tool_name,
-                    COUNT(*) AS total_calls,
-                    SUM(CASE WHEN success THEN 1 ELSE 0 END) AS success_count,
-                    SUM(CASE WHEN NOT success THEN 1 ELSE 0 END) AS failure_count,
-                    AVG(execution_ms) AS avg_latency_ms
-                FROM tool_usage_stats
-                WHERE tool_name IN ({placeholders})
-                  AND called_at > NOW() - INTERVAL '{int(window_hours)} hours'
-                  AND {PROBE_EXCLUSION_SQL}
-                GROUP BY tool_name
-                """,
-                tool_names,
-            )
-            rows = db.fetchall()
+    from datetime import datetime, timezone, timedelta
+    from app.db import mongo_store
 
-            for row in rows:
-                name, total, successes, failures, avg_ms = row
-                total = int(total)
-                successes = int(successes)
-                failures = int(failures)
-                avg_ms = float(avg_ms) if avg_ms else 0.0
+    if mongo_store.reads_mongo("tool_usage_stats"):
+        try:
+            since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+            pipeline = [
+                {"$match": {
+                    "tool_name": {"$in": tool_names},
+                    "called_at": {"$gte": since},
+                    "service_source": {"$ne": "probe"},
+                }},
+                {"$group": {
+                    "_id": "$tool_name",
+                    "total_calls": {"$sum": 1},
+                    "success_count": {"$sum": {"$cond": ["$success", 1, 0]}},
+                    "failure_count": {"$sum": {"$cond": ["$success", 0, 1]}},
+                    "avg_latency_ms": {"$avg": "$execution_ms"},
+                }},
+            ]
+            rows = mongo_store.aggregate("tool_usage_stats", pipeline)
+            for r in rows:
+                name = r["_id"]
+                total = int(r.get("total_calls") or 0)
+                successes = int(r.get("success_count") or 0)
+                failures = int(r.get("failure_count") or 0)
+                avg_ms = float(r.get("avg_latency_ms") or 0.0)
                 rate = successes / total if total > 0 else 1.0
 
                 if total < min_calls:
@@ -99,8 +99,58 @@ def get_tool_reputation(
                     "avg_latency_ms": round(avg_ms, 1),
                     "reliability_tier": tier,
                 }
-    except Exception as e:
-        logger.warning("[ToolOptimizer] Failed to query tool reputation (non-fatal): %s", e)
+        except Exception as e:
+            mongo_store.handle_mongo_read_failure("tool_usage_stats", "get_tool_reputation", e)
+
+    if not reputation and not mongo_store.reads_mongo("tool_usage_stats"):
+        try:
+            with get_db() as db:
+                placeholders = ", ".join(["%s"] * len(tool_names))
+                db.execute(
+                    f"""
+                    SELECT
+                        tool_name,
+                        COUNT(*) AS total_calls,
+                        SUM(CASE WHEN success THEN 1 ELSE 0 END) AS success_count,
+                        SUM(CASE WHEN NOT success THEN 1 ELSE 0 END) AS failure_count,
+                        AVG(execution_ms) AS avg_latency_ms
+                    FROM tool_usage_stats
+                    WHERE tool_name IN ({placeholders})
+                      AND called_at > NOW() - INTERVAL '{int(window_hours)} hours'
+                      AND {PROBE_EXCLUSION_SQL}
+                    GROUP BY tool_name
+                    """,
+                    tool_names,
+                )
+                rows = db.fetchall()
+
+                for row in rows:
+                    name, total, successes, failures, avg_ms = row
+                    total = int(total)
+                    successes = int(successes)
+                    failures = int(failures)
+                    avg_ms = float(avg_ms) if avg_ms else 0.0
+                    rate = successes / total if total > 0 else 1.0
+
+                    if total < min_calls:
+                        tier = "unknown"
+                    elif rate < REPUTATION_BROKEN_THRESHOLD:
+                        tier = "broken"
+                    elif rate < REPUTATION_UNRELIABLE_THRESHOLD:
+                        tier = "unreliable"
+                    else:
+                        tier = "reliable"
+
+                    reputation[name] = {
+                        "total_calls": total,
+                        "success_count": successes,
+                        "failure_count": failures,
+                        "success_rate": round(rate, 3),
+                        "avg_latency_ms": round(avg_ms, 1),
+                        "reliability_tier": tier,
+                    }
+        except Exception as e:
+            logger.warning("[ToolOptimizer] Failed to query tool reputation (non-fatal): %s", e)
 
     # Fill in tools with no data
     for name in tool_names:
@@ -189,39 +239,58 @@ async def optimize_agent_tools(
     highlighted_names = []
 
     try:
-        with get_db() as db:
-            # Query status of initial tools for this agent
-            placeholders = ", ".join(["%s"] * len(tool_map))
-            query = f"""
-                SELECT tool_name, status, unused_count
-                FROM agent_tool_optimization
-                WHERE agent_name = %s AND tool_name IN ({placeholders})
-            """
-            params = [agent_name] + list(tool_map.keys())
-            db.execute(query, params)
-            rows = db.fetchall()
+        from app.db import mongo_store
+        db_stats = {}
+        if mongo_store.reads_mongo("agent_tool_optimization"):
+            try:
+                docs = mongo_store.find_docs(
+                    "agent_tool_optimization",
+                    {"agent_name": agent_name, "tool_name": {"$in": list(tool_map.keys())}}
+                )
+                db_stats = {d["tool_name"]: (d.get("status", "active"), d.get("unused_count", 0)) for d in docs}
+            except Exception as me:
+                mongo_store.handle_mongo_read_failure("agent_tool_optimization", "optimize_agent_tools read", me)
 
-            db_stats = {row[0]: (row[1], row[2]) for row in rows}
+        if not db_stats and not mongo_store.reads_mongo("agent_tool_optimization"):
+            with get_db() as db:
+                placeholders = ", ".join(["%s"] * len(tool_map))
+                query = f"""
+                    SELECT tool_name, status, unused_count
+                    FROM agent_tool_optimization
+                    WHERE agent_name = %s AND tool_name IN ({placeholders})
+                """
+                params = [agent_name] + list(tool_map.keys())
+                db.execute(query, params)
+                rows = db.fetchall()
+                db_stats = {row[0]: (row[1], row[2]) for row in rows}
 
-            # Process status for each tool
-            for tool_name in tool_map.keys():
-                if tool_name in db_stats:
-                    status, unused_count = db_stats[tool_name]
-                    if status == "pruned":
-                        if tool_name != "generate_trading_chart":
-                            pruned_names.add(tool_name)
-                    elif status == "highlighted":
-                        highlighted_names.append(tool_name)
-                else:
-                    # Insert default active status for tools that don't have records yet
-                    db.execute(
-                        """
-                        INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status)
-                        VALUES (%s, %s, 0, 'active')
-                        ON CONFLICT (agent_name, tool_name) DO NOTHING
-                        """,
-                        (agent_name, tool_name)
-                    )
+                for tool_name in tool_map.keys():
+                    if tool_name not in db_stats:
+                        db.execute(
+                            """
+                            INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status)
+                            VALUES (%s, %s, 0, 'active')
+                            ON CONFLICT (agent_name, tool_name) DO NOTHING
+                            """,
+                            (agent_name, tool_name)
+                        )
+
+        # Process status for each tool
+        for tool_name in tool_map.keys():
+            if tool_name in db_stats:
+                status, unused_count = db_stats[tool_name]
+                if status == "pruned":
+                    if tool_name != "generate_trading_chart":
+                        pruned_names.add(tool_name)
+                elif status == "highlighted":
+                    highlighted_names.append(tool_name)
+            elif mongo_store.writes_mongo("agent_tool_optimization"):
+                mongo_store.upsert_doc(
+                    "agent_tool_optimization",
+                    {"agent_name": agent_name, "tool_name": tool_name},
+                    {"agent_name": agent_name, "tool_name": tool_name, "unused_count": 0, "status": "active"},
+                    insert_only=True,
+                )
 
     except Exception as e:
         logger.warning("[ToolOptimizer] Failed to optimize tools via DB (non-fatal): %s", e)
@@ -370,57 +439,80 @@ async def record_tool_optimization_usage(
         cleaned_used_names.add(clean_name)
 
     try:
-        with get_db() as db:
-            # Query existing stats
-            placeholders = ", ".join(["%s"] * len(offered_names))
-            query = f"""
-                SELECT tool_name, unused_count, status
-                FROM agent_tool_optimization
-                WHERE agent_name = %s AND tool_name IN ({placeholders})
-            """
-            params = [agent_name] + offered_names
-            db.execute(query, params)
-            rows = db.fetchall()
-            db_stats = {row[0]: (row[1], row[2]) for row in rows}
-
-            for tool_name in offered_names:
-                # Determine new stats
-                if tool_name in cleaned_used_names:
-                    # Tool was used! Reset counter
-                    new_unused_count = 0
-                    new_status = "active"
-                else:
-                    # Offered but not used
-                    old_unused_count, old_status = db_stats.get(tool_name, (0, "active"))
-                    new_unused_count = old_unused_count + 1
-                    
-                    if new_unused_count >= 4:
-                        new_status = "pruned"
-                    elif new_unused_count >= 2:
-                        new_status = "highlighted"
-                    else:
-                        new_status = old_status
-
-                # Upsert record
-                db.execute(
-                    """
-                    INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status, updated_at)
-                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (agent_name, tool_name)
-                    DO UPDATE SET
-                        unused_count = EXCLUDED.unused_count,
-                        status = EXCLUDED.status,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (agent_name, tool_name, new_unused_count, new_status)
+        from app.db import mongo_store
+        db_stats = {}
+        if mongo_store.reads_mongo("agent_tool_optimization"):
+            try:
+                docs = mongo_store.find_docs(
+                    "agent_tool_optimization",
+                    {"agent_name": agent_name, "tool_name": {"$in": offered_names}}
                 )
-                
-            logger.info(
-                "[ToolOptimizer] Updated tool optimization stats for agent %s. Offered: %d, Used: %d",
-                agent_name,
-                len(offered_names),
-                len(cleaned_used_names),
-            )
+                db_stats = {d["tool_name"]: (d.get("unused_count", 0), d.get("status", "active")) for d in docs}
+            except Exception as me:
+                mongo_store.handle_mongo_read_failure("agent_tool_optimization", "record_tool_optimization_usage read", me)
+
+        if not db_stats and not mongo_store.reads_mongo("agent_tool_optimization"):
+            with get_db() as db:
+                placeholders = ", ".join(["%s"] * len(offered_names))
+                query = f"""
+                    SELECT tool_name, unused_count, status
+                    FROM agent_tool_optimization
+                    WHERE agent_name = %s AND tool_name IN ({placeholders})
+                """
+                params = [agent_name] + offered_names
+                db.execute(query, params)
+                rows = db.fetchall()
+                db_stats = {row[0]: (row[1], row[2]) for row in rows}
+
+        from datetime import datetime, timezone
+        for tool_name in offered_names:
+            if tool_name in cleaned_used_names:
+                new_unused_count = 0
+                new_status = "active"
+            else:
+                old_unused_count, old_status = db_stats.get(tool_name, (0, "active"))
+                new_unused_count = old_unused_count + 1
+                if new_unused_count >= 4:
+                    new_status = "pruned"
+                elif new_unused_count >= 2:
+                    new_status = "highlighted"
+                else:
+                    new_status = old_status
+
+            if mongo_store.writes_pg("agent_tool_optimization"):
+                with get_db() as db:
+                    db.execute(
+                        """
+                        INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status, updated_at)
+                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (agent_name, tool_name)
+                        DO UPDATE SET
+                            unused_count = EXCLUDED.unused_count,
+                            status = EXCLUDED.status,
+                            updated_at = CURRENT_TIMESTAMP
+                        """,
+                        (agent_name, tool_name, new_unused_count, new_status)
+                    )
+
+            if mongo_store.writes_mongo("agent_tool_optimization"):
+                mongo_store.upsert_doc(
+                    "agent_tool_optimization",
+                    {"agent_name": agent_name, "tool_name": tool_name},
+                    {
+                        "agent_name": agent_name,
+                        "tool_name": tool_name,
+                        "unused_count": new_unused_count,
+                        "status": new_status,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                )
+
+        logger.info(
+            "[ToolOptimizer] Updated tool optimization stats for agent %s. Offered: %d, Used: %d",
+            agent_name,
+            len(offered_names),
+            len(cleaned_used_names),
+        )
 
     except Exception as e:
         logger.warning("[ToolOptimizer] Failed to update tool optimization stats in DB: %s", e)
@@ -440,6 +532,14 @@ async def record_run_usage_from_db(
         return
 
     try:
+        from app.db import mongo_store
+        if mongo_store.reads_mongo("tool_usage_stats"):
+            used_tool_names = mongo_store.distinct_values(
+                "tool_usage_stats", "tool_name", {"agent_name": agent_name, "cycle_id": cycle_id}
+            )
+            await record_tool_optimization_usage(agent_name, offered_tools, used_tool_names)
+            return
+
         with get_db() as db:
             db.execute(
                 """
@@ -471,21 +571,31 @@ def reset_all_pruned() -> int:
     Returns the number of rows reset.
     """
     try:
-        with get_db() as db:
-            # Count pruned rows BEFORE updating so we report the actual number reset
-            db.execute(
-                "SELECT COUNT(*) FROM agent_tool_optimization WHERE status = 'pruned'"
-            )
-            row = db.fetchone()
-            count = row[0] if row else 0
-
-            if count > 0:
-                db.execute(
-                    "UPDATE agent_tool_optimization SET status = 'active', unused_count = 0 "
-                    "WHERE status = 'pruned'"
+        from app.db import mongo_store
+        count = 0
+        if mongo_store.reads_mongo("agent_tool_optimization"):
+            try:
+                db_doc = mongo_store.get_doc_db()
+                res = db_doc["agent_tool_optimization"].update_many(
+                    {"status": "pruned"},
+                    {"$set": {"status": "active", "unused_count": 0}}
                 )
-            logger.info("[ToolOptimizer] Reset %d pruned tools → 'active'", count)
-            return count
+                count = res.modified_count
+            except Exception as me:
+                mongo_store.handle_mongo_read_failure("agent_tool_optimization", "reset_all_pruned", me)
+
+        if mongo_store.writes_pg("agent_tool_optimization"):
+            with get_db() as db:
+                db.execute("SELECT COUNT(*) FROM agent_tool_optimization WHERE status = 'pruned'")
+                row = db.fetchone()
+                pg_count = row[0] if row else 0
+                if pg_count > 0:
+                    db.execute("UPDATE agent_tool_optimization SET status = 'active', unused_count = 0 WHERE status = 'pruned'")
+                if not count:
+                    count = pg_count
+
+        logger.info("[ToolOptimizer] Reset %d pruned tools → 'active'", count)
+        return count
     except Exception as e:
         logger.warning("[ToolOptimizer] Failed to reset pruned tools: %s", e)
         return 0
@@ -519,19 +629,35 @@ async def mark_tools_as_used_by_prism(
         return
 
     try:
-        with get_db() as db:
+        from app.db import mongo_store
+        from datetime import datetime, timezone
+        if mongo_store.writes_pg("agent_tool_optimization"):
+            with get_db() as db:
+                for tool_name in offered_names:
+                    db.execute(
+                        """
+                        INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status, updated_at)
+                        VALUES (%s, %s, 0, 'active', CURRENT_TIMESTAMP)
+                        ON CONFLICT (agent_name, tool_name)
+                        DO UPDATE SET
+                            unused_count = 0,
+                            status = 'active',
+                            updated_at = CURRENT_TIMESTAMP
+                        """,
+                        (agent_name, tool_name)
+                    )
+        if mongo_store.writes_mongo("agent_tool_optimization"):
             for tool_name in offered_names:
-                db.execute(
-                    """
-                    INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status, updated_at)
-                    VALUES (%s, %s, 0, 'active', CURRENT_TIMESTAMP)
-                    ON CONFLICT (agent_name, tool_name)
-                    DO UPDATE SET
-                        unused_count = 0,
-                        status = 'active',
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (agent_name, tool_name)
+                mongo_store.upsert_doc(
+                    "agent_tool_optimization",
+                    {"agent_name": agent_name, "tool_name": tool_name},
+                    {
+                        "agent_name": agent_name,
+                        "tool_name": tool_name,
+                        "unused_count": 0,
+                        "status": "active",
+                        "updated_at": datetime.now(timezone.utc),
+                    }
                 )
         logger.info(
             "[ToolOptimizer] Marked %d tools as active for Prism-routed agent %s",

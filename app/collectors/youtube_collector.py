@@ -314,25 +314,45 @@ async def _process_video(
     if not thumbnail_url:
         thumbnail_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
-    db.execute(
-        """
-        INSERT INTO youtube_transcripts
-        (video_id, ticker, title, channel, raw_transcript,
-         thumbnail_url, published_at, duration_secs, collected_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (video_id) DO NOTHING
-    """,
-        [
-            row_video_id,
-            primary_ticker,
-            title,
-            channel_name,
-            raw_transcript,
-            thumbnail_url,
-            published_at,
-            duration,
-        ],
-    )
+    from app.db import mongo_store
+    now_dt = datetime.datetime.now(datetime.UTC)
+    if mongo_store.writes_mongo("youtube_transcripts"):
+        mongo_store.upsert_doc(
+            "youtube_transcripts",
+            {"video_id": row_video_id},
+            {
+                "video_id": row_video_id,
+                "ticker": primary_ticker,
+                "title": title,
+                "channel": channel_name,
+                "raw_transcript": raw_transcript,
+                "thumbnail_url": thumbnail_url,
+                "published_at": published_at,
+                "duration_secs": duration,
+                "collected_at": now_dt,
+            },
+            insert_only=True,
+        )
+    if mongo_store.writes_pg("youtube_transcripts"):
+        db.execute(
+            """
+            INSERT INTO youtube_transcripts
+            (video_id, ticker, title, channel, raw_transcript,
+             thumbnail_url, published_at, duration_secs, collected_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (video_id) DO NOTHING
+        """,
+            [
+                row_video_id,
+                primary_ticker,
+                title,
+                channel_name,
+                raw_transcript,
+                thumbnail_url,
+                published_at,
+                duration,
+            ],
+        )
 
     tickers = await _extract_tickers(raw_transcript[:5000])
     for t in tickers:

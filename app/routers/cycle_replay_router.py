@@ -183,6 +183,123 @@ def _latest_trade_row(db, cycle_id: str, ticker: str):
         [cycle_id, ticker],
     ).fetchone()
 
+def _cycle_tickers(db, cycle_id: str) -> list[str]:
+    if _mongo_reads("v3_agent_telemetry"):
+        try:
+            from app.db import mongo_store
+            vals = mongo_store.distinct_values("v3_agent_telemetry", "ticker", {"cycle_id": cycle_id})
+            return sorted([v for v in vals if v])
+        except Exception as e:
+            handle_mongo_read_failure("v3_agent_telemetry", "[cycles] mongo distinct tickers", e)
+    ticker_rows = db.execute(
+        "SELECT DISTINCT ticker FROM v3_agent_telemetry WHERE cycle_id = %s ORDER BY ticker",
+        [cycle_id],
+    ).fetchall()
+    return [t[0] for t in ticker_rows] if ticker_rows else []
+
+
+def _cycle_agent_rows(db, cycle_id: str, ticker: str = ""):
+    if _mongo_reads("v3_agent_telemetry"):
+        try:
+            from app.db import mongo_store
+            q = {"cycle_id": cycle_id}
+            if ticker:
+                q["ticker"] = ticker
+            docs = mongo_store.find_docs("v3_agent_telemetry", q, sort=[("created_at", 1), ("attempt_no", 1)])
+            return [
+                (d.get("agent_name"), d.get("phase"), d.get("outcome"), d.get("elapsed_ms"),
+                 d.get("loops_used"), d.get("token_usage"), d.get("created_at"),
+                 d.get("error_message"), d.get("failure_reason"), d.get("attempt_no"))
+                for d in docs
+            ]
+        except Exception as e:
+            handle_mongo_read_failure("v3_agent_telemetry", "[cycles] mongo agent rows", e)
+    if ticker:
+        return db.execute(
+            """
+            SELECT agent_name, phase, outcome, elapsed_ms,
+                   loops_used, token_usage, created_at,
+                   error_message, failure_reason, attempt_no
+            FROM v3_agent_telemetry
+            WHERE cycle_id = %s AND ticker = %s
+            ORDER BY created_at ASC, attempt_no ASC NULLS FIRST
+            """,
+            [cycle_id, ticker],
+        ).fetchall()
+    return db.execute(
+        """
+        SELECT agent_name, outcome, elapsed_ms
+        FROM v3_agent_telemetry
+        WHERE cycle_id = %s
+        ORDER BY created_at
+        """,
+        [cycle_id],
+    ).fetchall()
+
+
+def _cycle_agent_telemetry_for_flow(db, cycle_id: str, ticker: str = ""):
+    if _mongo_reads("v3_agent_telemetry"):
+        try:
+            from app.db import mongo_store
+            q = {"cycle_id": cycle_id}
+            if ticker:
+                q["ticker"] = ticker.upper()
+            docs = mongo_store.find_docs("v3_agent_telemetry", q, sort=[("created_at", 1)])
+            return [
+                (d.get("agent_name"), d.get("phase"), d.get("outcome"), d.get("elapsed_ms"),
+                 d.get("loops_used"), d.get("token_usage"), d.get("ticker"), d.get("created_at"),
+                 d.get("quality_score"))
+                for d in docs
+            ]
+        except Exception as e:
+            handle_mongo_read_failure("v3_agent_telemetry", "[cycles] mongo flow agent telemetry", e)
+    query = """
+        SELECT agent_name, phase, outcome, elapsed_ms,
+               loops_used, token_usage, ticker, created_at,
+               quality_score
+        FROM v3_agent_telemetry
+        WHERE cycle_id = %s
+    """
+    params = [cycle_id]
+    if ticker:
+        query += " AND ticker = %s"
+        params.append(ticker.upper())
+    query += " ORDER BY created_at ASC"
+    return db.execute(query, params).fetchall()
+
+
+def _cycle_tool_telemetry(db, cycle_id: str, ticker: str = ""):
+    if _mongo_reads("agent_tool_telemetry"):
+        try:
+            from app.db import mongo_store
+            q = {"cycle_id": cycle_id, "tool_name": {"$nin": ["", None]}}
+            if ticker:
+                q["$or"] = [{"ticker": ticker}, {"ticker": None}, {"ticker": ""}]
+            docs = mongo_store.find_docs("agent_tool_telemetry", q, sort=[("created_at", 1)])
+            return [
+                (d.get("agent_name"), d.get("tool_name"), d.get("success"),
+                 d.get("elapsed_ms"), d.get("was_blocked"), d.get("error_message"),
+                 d.get("created_at"))
+                for d in docs
+            ]
+        except Exception as e:
+            handle_mongo_read_failure("agent_tool_telemetry", "[cycles] mongo tool telemetry", e)
+    tool_query = """
+        SELECT agent_name, tool_name, success, elapsed_ms,
+               was_blocked, error_message, created_at
+        FROM agent_tool_telemetry
+        WHERE cycle_id = %s AND (ticker = %s OR ticker IS NULL OR ticker = '') AND tool_name != ''
+        ORDER BY created_at ASC
+    """ if ticker else """
+        SELECT agent_name, tool_name, success, elapsed_ms,
+               was_blocked, error_message, created_at
+        FROM agent_tool_telemetry
+        WHERE cycle_id = %s AND tool_name != ''
+        ORDER BY created_at ASC
+    """
+    tool_params = [cycle_id, ticker] if ticker else [cycle_id]
+    return db.execute(tool_query, tool_params).fetchall()
+
 router = APIRouter(prefix="/api/v1/cycles", tags=["cycle-replay"])
 logger = logging.getLogger(__name__)
 
@@ -295,27 +412,10 @@ def list_cycles(
                 cycle_id = row[0]
 
                 # Get tickers processed in this cycle
-                ticker_rows = db.execute(
-                    """
-                    SELECT DISTINCT ticker
-                    FROM v3_agent_telemetry
-                    WHERE cycle_id = %s
-                    ORDER BY ticker
-                    """,
-                    [cycle_id],
-                ).fetchall()
-                tickers = [t[0] for t in ticker_rows] if ticker_rows else []
+                tickers = _cycle_tickers(db, cycle_id)
 
                 # Get agent count and outcomes
-                agent_rows = db.execute(
-                    """
-                    SELECT agent_name, outcome, elapsed_ms
-                    FROM v3_agent_telemetry
-                    WHERE cycle_id = %s
-                    ORDER BY created_at
-                    """,
-                    [cycle_id],
-                ).fetchall()
+                agent_rows = _cycle_agent_rows(db, cycle_id)
 
                 agent_count = len(set(a[0] for a in agent_rows)) if agent_rows else 0
                 outcomes = {}
@@ -411,20 +511,7 @@ def get_cycle_flow(cycle_id: str, ticker: str = Query(default="")):
     try:
         with get_db() as db:
             # Fetch agent telemetry for this cycle
-            query = """
-                SELECT agent_name, phase, outcome, elapsed_ms,
-                       loops_used, token_usage, ticker, created_at,
-                       quality_score
-                FROM v3_agent_telemetry
-                WHERE cycle_id = %s
-            """
-            params = [cycle_id]
-            if ticker:
-                query += " AND ticker = %s"
-                params.append(ticker.upper())
-            query += " ORDER BY created_at ASC"
-
-            rows = db.execute(query, params).fetchall()
+            rows = _cycle_agent_telemetry_for_flow(db, cycle_id, ticker)
 
             if not rows:
                 return {
@@ -497,31 +584,8 @@ def get_cycle_timeline(cycle_id: str, ticker: str = Query(default="")):
     """
     try:
         with get_db() as db:
-            query = """
-                SELECT agent_name, phase, outcome, elapsed_ms,
-                       loops_used, token_usage, ticker, created_at
-                FROM v3_agent_telemetry
-                WHERE cycle_id = %s
-            """
-            params = [cycle_id]
-            if ticker:
-                query += " AND ticker = %s"
-                params.append(ticker.upper())
-            query += " ORDER BY created_at ASC"
-
-            rows = db.execute(query, params).fetchall()
-
-            # Also get tool calls for overlay
-            tool_query = """
-                SELECT agent_name, tool_name, success, elapsed_ms,
-                       was_blocked, created_at
-                FROM agent_tool_telemetry
-                WHERE cycle_id = %s AND tool_name != ''
-            """
-            tool_params = [cycle_id]
-            tool_query += " ORDER BY created_at ASC"
-
-            tool_rows = db.execute(tool_query, tool_params).fetchall()
+            rows = _cycle_agent_telemetry_for_flow(db, cycle_id, ticker)
+            tool_rows = _cycle_tool_telemetry(db, cycle_id, ticker)
 
             # Build timeline entries
             entries = []
@@ -659,17 +723,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
             # the tiebreak that puts a first attempt before its retry. NULLS
             # FIRST keeps pre-2026-08-11 rows, which have no attempt identity
             # at all, in their original arrival order.
-            agent_rows = db.execute(
-                """
-                SELECT agent_name, phase, outcome, elapsed_ms,
-                       loops_used, token_usage, created_at,
-                       error_message, failure_reason, attempt_no
-                FROM v3_agent_telemetry
-                WHERE cycle_id = %s AND ticker = %s
-                ORDER BY created_at ASC, attempt_no ASC NULLS FIRST
-                """,
-                [cycle_id, ticker],
-            ).fetchall()
+            agent_rows = _cycle_agent_rows(db, cycle_id, ticker)
 
             agents = []
             for row in agent_rows:
@@ -696,16 +750,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                 })
 
             # Get tool calls
-            tool_rows = db.execute(
-                """
-                SELECT agent_name, tool_name, success, elapsed_ms,
-                       was_blocked, error_message, created_at
-                FROM agent_tool_telemetry
-                WHERE cycle_id = %s AND (ticker = %s OR ticker IS NULL OR ticker = '') AND tool_name != ''
-                ORDER BY created_at ASC
-                """,
-                [cycle_id, ticker],
-            ).fetchall()
+            tool_rows = _cycle_tool_telemetry(db, cycle_id, ticker)
 
             tools = [
                 {
