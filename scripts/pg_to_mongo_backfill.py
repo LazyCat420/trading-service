@@ -29,6 +29,7 @@ import pymongo
 from app.db import connection
 from app.db import mongo_store
 from app.db import table_spec
+from app.db.table_spec import quote_ident
 
 
 def _pipeline_events_doc(row, cols):
@@ -206,7 +207,7 @@ def _paginate_clause(keys: list[str], first_page: bool) -> tuple[str, str]:
     Comparing the columns separately (`a > %s AND b > %s`) would silently skip
     rows whose first column matches but whose second is smaller.
     """
-    cols = ", ".join(keys)
+    cols = ", ".join(quote_ident(k) for k in keys)
     order = f"ORDER BY {cols} ASC"
     if first_page:
         return "", order
@@ -214,6 +215,36 @@ def _paginate_clause(keys: list[str], first_page: bool) -> tuple[str, str]:
     lhs = cols if len(keys) == 1 else f"({cols})"
     rhs = placeholders if len(keys) == 1 else f"({placeholders})"
     return f"WHERE {lhs} > {rhs}", order
+
+
+def _sweep(tables: list[str], run) -> int:
+    """Run `run(table)` over every table, surviving a failure on any one.
+
+    A single raising table used to abort the whole sweep and take every table
+    after it with it -- `cycle_schedules` (a reserved-word column) killed a
+    158-table run about fifteen tables in, and the run reported a traceback
+    rather than 157 results plus one failure. A sweep that stops early is worse
+    than one that reports errors, because the tables it never reached are
+    indistinguishable from the tables it found nothing wrong with.
+
+    Exit code is the worst seen; a raising table scores 2 (same as "no spec").
+    The failures are re-listed at the end so they cannot scroll away.
+    """
+    worst = 0
+    failed: list[tuple[str, str]] = []
+    for t in tables:
+        try:
+            worst = max(worst, run(t))
+        except Exception as exc:  # noqa: BLE001 - one table must not end the sweep
+            failed.append((t, f"{type(exc).__name__}: {exc}"))
+            print(f"[{t}] ERROR (sweep continues): {type(exc).__name__}: {exc}",
+                  file=sys.stderr)
+            worst = max(worst, 2)
+    if failed:
+        print(f"\n{len(failed)} of {len(tables)} table(s) raised:", file=sys.stderr)
+        for t, err in failed:
+            print(f"  {t}: {err}", file=sys.stderr)
+    return worst
 
 
 def known_tables() -> list[str]:
@@ -394,7 +425,7 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
         return 2
 
     with connection.get_db() as db:
-        pg_count = db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        pg_count = db.execute(f"SELECT count(*) FROM {quote_ident(table)}").fetchone()[0]
     mongo_before = mongo_store.count_docs(table)
     print(f"[{table}] postgres rows={pg_count}  mongo docs(before)={mongo_before}")
 
@@ -457,16 +488,13 @@ def main():
         return 0
     if args.verify_all:
         tables = known_tables() if args.table == "all" else [args.table]
-        worst = 0
-        for t in tables:
-            worst = max(worst, verify_all(t, batch=args.batch, examples=args.examples))
-        return worst
+        return _sweep(
+            tables,
+            lambda t: verify_all(t, batch=args.batch, examples=args.examples),
+        )
     if args.verify_fields:
         tables = known_tables() if args.table == "all" else [args.table]
-        worst = 0
-        for t in tables:
-            worst = max(worst, verify_fields(t, args.verify_fields))
-        return worst
+        return _sweep(tables, lambda t: verify_fields(t, args.verify_fields))
     return backfill(args.table, batch=args.batch, verify_only=args.verify_only,
                     rate_limit=args.rate_limit)
 

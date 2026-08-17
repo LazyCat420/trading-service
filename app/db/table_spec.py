@@ -37,6 +37,25 @@ from bson import Decimal128
 
 _LEDGER_PATH = os.path.join(os.path.dirname(__file__), "migration_ledger.json")
 
+
+def quote_ident(name: str) -> str:
+    """Quote a Postgres identifier for interpolation into generated SQL.
+
+    Every identifier this module emits comes from information_schema, so it is
+    already the real, lowercase name -- quoting is behaviour-preserving. It is
+    not optional, though: `cycle_schedules` has a column literally named
+    `analyze`, which Postgres classifies as fully reserved, so the unquoted
+    `SELECT id, ..., collect, analyze, trade, ... FROM cycle_schedules` is a
+    syntax error. That one table aborted the entire `--verify-fields all` sweep
+    for every other table behind it.
+
+    Embedded double quotes are doubled per the Postgres rule. A name containing
+    a NUL cannot be an identifier at all and is rejected rather than truncated.
+    """
+    if "\x00" in name:
+        raise ValueError(f"identifier contains a NUL byte: {name!r}")
+    return '"' + name.replace('"', '""') + '"'
+
 # Postgres types that arrive as text but are documents.
 _JSON_TYPES = {"json", "jsonb"}
 # Types that need a value transform on the way into BSON.
@@ -211,7 +230,7 @@ def spec_for(table: str, db) -> tuple[str, list[str], Callable]:
 
     money = uses_decimal128(table)
     types = {name: (dt, udt) for name, dt, udt in cols}
-    select_sql = f"SELECT {', '.join(names)} FROM {table}"
+    select_sql = f"SELECT {', '.join(quote_ident(n) for n in names)} FROM {quote_ident(table)}"
 
     def _mapper(row, row_cols):
         d = dict(zip(row_cols, row))
