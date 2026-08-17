@@ -1,0 +1,515 @@
+[
+  {
+    "table": "sec_13f_holdings_backup_20260804",
+    "rows": 143660,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/sec_13f_holdings_backup_20260804.dump",
+    "bytes": 4400301,
+    "sha256": "5a03e7254b13caf3c3197c77cec29a1ce8053192695eeaa5852b346f801771b6",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=sec_13f_holdings_backup_20260804 /home/lazycat/db-backups/purged-tables/sec_13f_holdings_backup_20260804.dump",
+    "archived_at": "2026-08-17T23:29:56.111089+00:00"
+  },
+  {
+    "table": "fundamentals_backup_20260727",
+    "rows": 4940,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/fundamentals_backup_20260727.dump",
+    "bytes": 256960,
+    "sha256": "56b4aec5c6ee3603c31cacba530a32770a4d9bf98ca0da3a4763adb02e38edbd",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=fundamentals_backup_20260727 /home/lazycat/db-backups/purged-tables/fundamentals_backup_20260727.dump",
+    "archived_at": "2026-08-17T23:29:57.444831+00:00"
+  },
+  {
+    "table": "decision_outcomes_backup_20260727",
+    "rows": 2215,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/decision_outcomes_backup_20260727.dump",
+    "bytes": 226736,
+    "sha256": "8a7d9ce24c700e8fa5de51d68676190f6d6269825588e279a0de370b6bdc219d",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=decision_outcomes_backup_20260727 /home/lazycat/db-backups/purged-tables/decision_outcomes_backup_20260727.dump",
+    "archived_at": "2026-08-17T23:29:58.781785+00:00"
+  },
+  {
+    "table": "decision_outcomes_backup_20260728",
+    "rows": 2246,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/decision_outcomes_backup_20260728.dump",
+    "bytes": 231212,
+    "sha256": "ccf7f0275abe4afbe8cd11a9f1869a927bdad8e89ca8560779a8e893e4e59386",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=decision_outcomes_backup_20260728 /home/lazycat/db-backups/purged-tables/decision_outcomes_backup_20260728.dump",
+    "archived_at": "2026-08-17T23:30:00.156302+00:00"
+  },
+  {
+    "table": "cognition_episodic_memories",
+    "rows": 2406,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cognition_episodic_memories.dump",
+    "bytes": 448599,
+    "sha256": "f5f3408c29b7c2d222013cc013445afe4521be176f33fdb63f376a47f599f25a",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cognition_episodic_memories /home/lazycat/db-backups/purged-tables/cognition_episodic_memories.dump",
+    "archived_at": "2026-08-17T23:30:01.512905+00:00"
+  },
+  {
+    "table": "cognition_memory_envelopes",
+    "rows": 2406,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cognition_memory_envelopes.dump",
+    "bytes": 154419,
+    "sha256": "86629e47e695829bc206734fddc0022c9d77fa746de5d20170fec82ebc48987b",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cognition_memory_envelopes /home/lazycat/db-backups/purged-tables/cognition_memory_envelopes.dump",
+    "archived_at": "2026-08-17T23:30:02.781885+00:00"
+  },
+  {
+    "table": "cognition_semantic_memories",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cognition_semantic_memories.dump",
+    "bytes": 2253,
+    "sha256": "806a0ee5087977d5b8fd888b14ce744aca55bc4fe1ecee4ba94a3816fa68d1f0",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cognition_semantic_memories /home/lazycat/db-backups/purged-tables/cognition_semantic_memories.dump",
+    "archived_at": "2026-08-17T23:30:04.142259+00:00"
+  },
+  {
+    "table": "cognition_procedural_memories",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cognition_procedural_memories.dump",
+    "bytes": 2393,
+    "sha256": "f0972abf3f366dfff3052c2e56dfb1c29a85d2aca96fb07f6166ab885152b525",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cognition_procedural_memories /home/lazycat/db-backups/purged-tables/cognition_procedural_memories.dump",
+    "archived_at": "2026-08-17T23:30:05.494946+00:00"
+  },
+  {
+    "table": "cognition_reflections",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cognition_reflections.dump",
+    "bytes": 2437,
+    "sha256": "7fc6e5235f80d997f0fefa3815683eae602596868d9d11cf07420af3848cc870",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cognition_reflections /home/lazycat/db-backups/purged-tables/cognition_reflections.dump",
+    "archived_at": "2026-08-17T23:30:06.703980+00:00"
+  },
+  {
+    "table": "cognition_reflective_memories",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cognition_reflective_memories.dump",
+    "bytes": 2352,
+    "sha256": "a5a7e369b449d379a57057ed9b6b46e64cae4d606fe6ceef9461674313b6fe2d",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cognition_reflective_memories /home/lazycat/db-backups/purged-tables/cognition_reflective_memories.dump",
+    "archived_at": "2026-08-17T23:30:07.901659+00:00"
+  },
+  {
+    "table": "context_telemetry",
+    "rows": 789,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/context_telemetry.dump",
+    "bytes": 20408,
+    "sha256": "3f464f8a153ac701a7e31ada078a150a14e522fa88ae9567533531edf565cb3b",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=context_telemetry /home/lazycat/db-backups/purged-tables/context_telemetry.dump",
+    "archived_at": "2026-08-17T23:30:09.116747+00:00"
+  },
+  {
+    "table": "agent_tasks",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/agent_tasks.dump",
+    "bytes": 3260,
+    "sha256": "fb22165c3737293732c1e43865ba2d68efde0400dac731851d0d200cd3034985",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=agent_tasks /home/lazycat/db-backups/purged-tables/agent_tasks.dump",
+    "archived_at": "2026-08-17T23:30:10.362047+00:00"
+  },
+  {
+    "table": "autofix_runs",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/autofix_runs.dump",
+    "bytes": 2958,
+    "sha256": "d6958e3eba5a197c02b81f0e44c798a0141408b468bf33b5c790b8ea10b62466",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=autofix_runs /home/lazycat/db-backups/purged-tables/autofix_runs.dump",
+    "archived_at": "2026-08-17T23:30:11.843478+00:00"
+  },
+  {
+    "table": "autoresearch_cycle_summaries",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/autoresearch_cycle_summaries.dump",
+    "bytes": 2701,
+    "sha256": "f51a35a0055e3fd165095ef4816cd98c486375e5286976b59ba73e5947843dee",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=autoresearch_cycle_summaries /home/lazycat/db-backups/purged-tables/autoresearch_cycle_summaries.dump",
+    "archived_at": "2026-08-17T23:30:13.164573+00:00"
+  },
+  {
+    "table": "ban_patterns",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/ban_patterns.dump",
+    "bytes": 1983,
+    "sha256": "8b2b4c7c9f74b35d2fa90a9bfb80d221da8dd72c3e5bea495b14c02b630ab7c1",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=ban_patterns /home/lazycat/db-backups/purged-tables/ban_patterns.dump",
+    "archived_at": "2026-08-17T23:30:14.573959+00:00"
+  },
+  {
+    "table": "critic_feedback",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/critic_feedback.dump",
+    "bytes": 3110,
+    "sha256": "0d05129f763575cd24e8ed271f51674c81641501a27257adfaf856b5de1180d7",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=critic_feedback /home/lazycat/db-backups/purged-tables/critic_feedback.dump",
+    "archived_at": "2026-08-17T23:30:17.478781+00:00"
+  },
+  {
+    "table": "cross_asset_correlations",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cross_asset_correlations.dump",
+    "bytes": 2090,
+    "sha256": "20363bea73c2eaf67b390b9458be850a1e7abc3f51af96980968728666c8729e",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cross_asset_correlations /home/lazycat/db-backups/purged-tables/cross_asset_correlations.dump",
+    "archived_at": "2026-08-17T23:30:18.760810+00:00"
+  },
+  {
+    "table": "cycle_checkpoints",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/cycle_checkpoints.dump",
+    "bytes": 3641,
+    "sha256": "95cb578e37971f5efe01e55c98c84c350f5341779147bf77972e447b91ed1d59",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=cycle_checkpoints /home/lazycat/db-backups/purged-tables/cycle_checkpoints.dump",
+    "archived_at": "2026-08-17T23:30:20.775897+00:00"
+  },
+  {
+    "table": "data_flags",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/data_flags.dump",
+    "bytes": 2509,
+    "sha256": "9ddb12d600ff3db4265e51c37ea7ec9bf9608ba01ffe79d697030679116332da",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=data_flags /home/lazycat/db-backups/purged-tables/data_flags.dump",
+    "archived_at": "2026-08-17T23:30:22.112846+00:00"
+  },
+  {
+    "table": "deleted_data",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/deleted_data.dump",
+    "bytes": 2134,
+    "sha256": "635e6354def3f20969249695a2d8788401cc174b04e3622f748c31675439b426",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=deleted_data /home/lazycat/db-backups/purged-tables/deleted_data.dump",
+    "archived_at": "2026-08-17T23:30:25.431754+00:00"
+  },
+  {
+    "table": "evolution_dead_ends",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/evolution_dead_ends.dump",
+    "bytes": 2411,
+    "sha256": "87a5d0b00dde41930835edc236b82922cb3ca1147d68ed1b31845e004d0c8fb6",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=evolution_dead_ends /home/lazycat/db-backups/purged-tables/evolution_dead_ends.dump",
+    "archived_at": "2026-08-17T23:30:26.739977+00:00"
+  },
+  {
+    "table": "fallback_data",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/fallback_data.dump",
+    "bytes": 3330,
+    "sha256": "8cb4107e3aa1c7591ab5e5401a00c75ac64b47cb8bc615874642a577e6c28702",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=fallback_data /home/lazycat/db-backups/purged-tables/fallback_data.dump",
+    "archived_at": "2026-08-17T23:30:28.016019+00:00"
+  },
+  {
+    "table": "hallucination_audit",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/hallucination_audit.dump",
+    "bytes": 1977,
+    "sha256": "5a9ea8eca9fdd94394ecc03e9495ff51f5a276004def075698f3e2e2552f51b0",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=hallucination_audit /home/lazycat/db-backups/purged-tables/hallucination_audit.dump",
+    "archived_at": "2026-08-17T23:30:29.287134+00:00"
+  },
+  {
+    "table": "janitor_run_log",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/janitor_run_log.dump",
+    "bytes": 2937,
+    "sha256": "93eb0e6ab33c09abdc2d2a9165601f59dfcc905d29fe98005f614f862bedc0e9",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=janitor_run_log /home/lazycat/db-backups/purged-tables/janitor_run_log.dump",
+    "archived_at": "2026-08-17T23:30:30.606678+00:00"
+  },
+  {
+    "table": "lens_scorecard",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/lens_scorecard.dump",
+    "bytes": 2872,
+    "sha256": "0c76da98690b1521ecbd018305fad2dc9ab8d625ee5d6b3f06823e2899f629d8",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=lens_scorecard /home/lazycat/db-backups/purged-tables/lens_scorecard.dump",
+    "archived_at": "2026-08-17T23:30:31.871441+00:00"
+  },
+  {
+    "table": "memory_usage_logs",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/memory_usage_logs.dump",
+    "bytes": 1896,
+    "sha256": "251bfd4679ca8b06c1b9836b91c8f5a45d8e02adbd974cfb06de888e8844047e",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=memory_usage_logs /home/lazycat/db-backups/purged-tables/memory_usage_logs.dump",
+    "archived_at": "2026-08-17T23:30:33.275056+00:00"
+  },
+  {
+    "table": "prompt_templates",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/prompt_templates.dump",
+    "bytes": 3091,
+    "sha256": "71fe08012a2274a4c26d1b11bdca0624d58c754060c415cf214bd4e5dd6ba8b8",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=prompt_templates /home/lazycat/db-backups/purged-tables/prompt_templates.dump",
+    "archived_at": "2026-08-17T23:30:34.563159+00:00"
+  },
+  {
+    "table": "prospective_memory",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/prospective_memory.dump",
+    "bytes": 2638,
+    "sha256": "7374309a088d6bce6d2172c5ed198298b3a4ac6d7a306ad6c28ef1016cd475fb",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=prospective_memory /home/lazycat/db-backups/purged-tables/prospective_memory.dump",
+    "archived_at": "2026-08-17T23:30:35.868665+00:00"
+  },
+  {
+    "table": "runtime_parameters",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/runtime_parameters.dump",
+    "bytes": 3537,
+    "sha256": "a19524958784730ef80674bd0ebc0a9ed7da23423b146ca71482eff4a12729bf",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=runtime_parameters /home/lazycat/db-backups/purged-tables/runtime_parameters.dump",
+    "archived_at": "2026-08-17T23:30:37.112119+00:00"
+  },
+  {
+    "table": "scraper_queue",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/scraper_queue.dump",
+    "bytes": 2866,
+    "sha256": "73026233df7dbd4c2358eeaebd7c955d9352431b7507a714ca0cbfda13f302cf",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=scraper_queue /home/lazycat/db-backups/purged-tables/scraper_queue.dump",
+    "archived_at": "2026-08-17T23:30:38.477730+00:00"
+  },
+  {
+    "table": "sector_rotation_signals",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/sector_rotation_signals.dump",
+    "bytes": 2463,
+    "sha256": "e8ba27ba101a729c6e0a425546fcf5fbf7f14c533f9415098b0468fa547bdb4d",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=sector_rotation_signals /home/lazycat/db-backups/purged-tables/sector_rotation_signals.dump",
+    "archived_at": "2026-08-17T23:30:39.743978+00:00"
+  },
+  {
+    "table": "source_quality_scores",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/source_quality_scores.dump",
+    "bytes": 2150,
+    "sha256": "5406abfd7522128e4e1175e4e511be67c70a33f44f59f80ac936de885642a36e",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=source_quality_scores /home/lazycat/db-backups/purged-tables/source_quality_scores.dump",
+    "archived_at": "2026-08-17T23:30:40.980174+00:00"
+  },
+  {
+    "table": "stable_harnesses",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/stable_harnesses.dump",
+    "bytes": 1953,
+    "sha256": "68da54a2e727a7bbf70c82fd8d5fa06574ef1aa63e7b6a9bba24d1f6cf763044",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=stable_harnesses /home/lazycat/db-backups/purged-tables/stable_harnesses.dump",
+    "archived_at": "2026-08-17T23:30:42.418519+00:00"
+  },
+  {
+    "table": "strategy_candidates",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/strategy_candidates.dump",
+    "bytes": 2929,
+    "sha256": "3ecdbc7c7588db89e2dad6bd3b851cd5c560ce23be5c4e5416e398d3706fa747",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=strategy_candidates /home/lazycat/db-backups/purged-tables/strategy_candidates.dump",
+    "archived_at": "2026-08-17T23:30:43.638370+00:00"
+  },
+  {
+    "table": "swarm_scorecards",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/swarm_scorecards.dump",
+    "bytes": 3292,
+    "sha256": "b6c3f9a944081b8f07d110f8bbae19ee2d9d054b0bfca8d6672a18a9c3dbffc7",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=swarm_scorecards /home/lazycat/db-backups/purged-tables/swarm_scorecards.dump",
+    "archived_at": "2026-08-17T23:30:45.021878+00:00"
+  },
+  {
+    "table": "taskboard_investigations",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/taskboard_investigations.dump",
+    "bytes": 4014,
+    "sha256": "50956a20c9a17131b8db64451c18eb89f73622bbc6097ee2456f356ba114dadc",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=taskboard_investigations /home/lazycat/db-backups/purged-tables/taskboard_investigations.dump",
+    "archived_at": "2026-08-17T23:30:46.344586+00:00"
+  },
+  {
+    "table": "ticker_collection_watermarks",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/ticker_collection_watermarks.dump",
+    "bytes": 2006,
+    "sha256": "da925bf253215100c639ada007f003e460a350279867a7afea49c900e7de59e3",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=ticker_collection_watermarks /home/lazycat/db-backups/purged-tables/ticker_collection_watermarks.dump",
+    "archived_at": "2026-08-17T23:30:47.644863+00:00"
+  },
+  {
+    "table": "ticker_correlations",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/ticker_correlations.dump",
+    "bytes": 2533,
+    "sha256": "3533a6ebdd3965036534a35641d1bb7b9a4760a352be9eda006c163f202976ad",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=ticker_correlations /home/lazycat/db-backups/purged-tables/ticker_correlations.dump",
+    "archived_at": "2026-08-17T23:30:49.016402+00:00"
+  },
+  {
+    "table": "ticker_user_notes",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/ticker_user_notes.dump",
+    "bytes": 1817,
+    "sha256": "71db986e702759251c5e7e46b1ae045f7550760509031eba7c398d1d5889e316",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=ticker_user_notes /home/lazycat/db-backups/purged-tables/ticker_user_notes.dump",
+    "archived_at": "2026-08-17T23:30:50.290890+00:00"
+  },
+  {
+    "table": "user_constraints",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/user_constraints.dump",
+    "bytes": 1857,
+    "sha256": "bfa1affd7754f16b601f4fd8f0c3b1e02eea0dd4283b0a9376232d85f77bc778",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=user_constraints /home/lazycat/db-backups/purged-tables/user_constraints.dump",
+    "archived_at": "2026-08-17T23:30:51.549623+00:00"
+  },
+  {
+    "table": "user_data",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/user_data.dump",
+    "bytes": 2123,
+    "sha256": "aa544801d372a807e648e293e9a9334f83abb5b82b3a8e9a23f1f1ef6fce5bda",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=user_data /home/lazycat/db-backups/purged-tables/user_data.dump",
+    "archived_at": "2026-08-17T23:30:52.882987+00:00"
+  },
+  {
+    "table": "user_feedback",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/user_feedback.dump",
+    "bytes": 2649,
+    "sha256": "6c3fe91dea2fd696649f9d610f1e0f521ab7ea7ae457d9ffa10d16be524f0383",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=user_feedback /home/lazycat/db-backups/purged-tables/user_feedback.dump",
+    "archived_at": "2026-08-17T23:30:54.277304+00:00"
+  },
+  {
+    "table": "user_notes",
+    "rows": 0,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/user_notes.dump",
+    "bytes": 1834,
+    "sha256": "95afd1149e4eb776ea89a417f51160ff0fe4f86fe5854933549bfef3d0c03ea9",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=user_notes /home/lazycat/db-backups/purged-tables/user_notes.dump",
+    "archived_at": "2026-08-17T23:30:57.532578+00:00"
+  },
+  {
+    "table": "agent_experiences",
+    "rows": 416,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/agent_experiences.dump",
+    "bytes": 57054,
+    "sha256": "914fa8a3eb0a9f06fe6be771d1cafa5d60712ca71762391ddfbab3297a6019ff",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=agent_experiences /home/lazycat/db-backups/purged-tables/agent_experiences.dump",
+    "archived_at": "2026-08-17T23:30:58.810868+00:00"
+  },
+  {
+    "table": "agent_loop_stats",
+    "rows": 748,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/agent_loop_stats.dump",
+    "bytes": 33941,
+    "sha256": "ede4b7b526b75f57e2855df2bf48214ea62c66b8b0bb1a9707eafd9a7fd9b6d0",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=agent_loop_stats /home/lazycat/db-backups/purged-tables/agent_loop_stats.dump",
+    "archived_at": "2026-08-17T23:31:00.088518+00:00"
+  },
+  {
+    "table": "best_per_ticker",
+    "rows": 348,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/best_per_ticker.dump",
+    "bytes": 71782,
+    "sha256": "92fcc08bc315c6c811cde9ab93fab1c331a1f504cb74055e7313d3fba7b3b450",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=best_per_ticker /home/lazycat/db-backups/purged-tables/best_per_ticker.dump",
+    "archived_at": "2026-08-17T23:31:01.438714+00:00"
+  },
+  {
+    "table": "company_narratives",
+    "rows": 293,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/company_narratives.dump",
+    "bytes": 466562,
+    "sha256": "3ad1a7fdec0b1fc4bd5b45a9e69bfe7ca451179dfe5ba20648452176fbf10cb9",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=company_narratives /home/lazycat/db-backups/purged-tables/company_narratives.dump",
+    "archived_at": "2026-08-17T23:31:03.022000+00:00"
+  },
+  {
+    "table": "debate_tool_cache",
+    "rows": 662,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/debate_tool_cache.dump",
+    "bytes": 455064,
+    "sha256": "993be5bcbfbe91f9694731fac089d22f6613b6064b64968c0da66c1918e5194f",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=debate_tool_cache /home/lazycat/db-backups/purged-tables/debate_tool_cache.dump",
+    "archived_at": "2026-08-17T23:31:04.537432+00:00"
+  },
+  {
+    "table": "evolution_attempts",
+    "rows": 16,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/evolution_attempts.dump",
+    "bytes": 8003,
+    "sha256": "1ec59130f4dd2396dd9a09502f85f5283d028dc4cf8ecb946f78d04e44648b84",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=evolution_attempts /home/lazycat/db-backups/purged-tables/evolution_attempts.dump",
+    "archived_at": "2026-08-17T23:31:05.876594+00:00"
+  },
+  {
+    "table": "hallucination_log",
+    "rows": 20,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/hallucination_log.dump",
+    "bytes": 3985,
+    "sha256": "ec9705107a2bfdea8201d3119548584a14cec46f662f2ae61ea149c01dc16d10",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=hallucination_log /home/lazycat/db-backups/purged-tables/hallucination_log.dump",
+    "archived_at": "2026-08-17T23:31:07.237222+00:00"
+  },
+  {
+    "table": "llm_attention_weights",
+    "rows": 1528,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/llm_attention_weights.dump",
+    "bytes": 59010,
+    "sha256": "a4f2f57d1bda42f1c4f9de034cb0c6c47af8b1271c78d48a6054c58f66407781",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=llm_attention_weights /home/lazycat/db-backups/purged-tables/llm_attention_weights.dump",
+    "archived_at": "2026-08-17T23:31:08.503248+00:00"
+  },
+  {
+    "table": "llm_traces",
+    "rows": 21454,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/llm_traces.dump",
+    "bytes": 40117665,
+    "sha256": "1c78c242416d692605a00d25e98c4fb33ea9c244a26e2e440b2cc06129ed0513",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=llm_traces /home/lazycat/db-backups/purged-tables/llm_traces.dump",
+    "archived_at": "2026-08-17T23:31:16.546386+00:00"
+  },
+  {
+    "table": "sec_13f_performance",
+    "rows": 14,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/sec_13f_performance.dump",
+    "bytes": 2245,
+    "sha256": "3e94b322b20916d5e2103d0b71fb65731d047fbcd6fbebfa5d8e6a9bfebc1766",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=sec_13f_performance /home/lazycat/db-backups/purged-tables/sec_13f_performance.dump",
+    "archived_at": "2026-08-17T23:31:18.510228+00:00"
+  },
+  {
+    "table": "simulation_transcripts",
+    "rows": 1,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/simulation_transcripts.dump",
+    "bytes": 6520,
+    "sha256": "1a314560b0c357048a416f30c944ce2b2e20f661129167f09e3c828a24868814",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=simulation_transcripts /home/lazycat/db-backups/purged-tables/simulation_transcripts.dump",
+    "archived_at": "2026-08-17T23:31:19.816263+00:00"
+  },
+  {
+    "table": "taskboard_findings",
+    "rows": 522,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/taskboard_findings.dump",
+    "bytes": 59338,
+    "sha256": "e5610607557fa0e4e1be39bf1bb969961d839b802f350b079ece37476c8a726c",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=taskboard_findings /home/lazycat/db-backups/purged-tables/taskboard_findings.dump",
+    "archived_at": "2026-08-17T23:31:21.133133+00:00"
+  },
+  {
+    "table": "ticker_health",
+    "rows": 430,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/ticker_health.dump",
+    "bytes": 20972,
+    "sha256": "a80fa0011eda24233680d20b2faf4217b4aa0b38955348f8c66bfdad45b88997",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=ticker_health /home/lazycat/db-backups/purged-tables/ticker_health.dump",
+    "archived_at": "2026-08-17T23:31:23.311601+00:00"
+  },
+  {
+    "table": "watchlist_curation_log",
+    "rows": 830,
+    "archive_file": "/home/lazycat/db-backups/purged-tables/watchlist_curation_log.dump",
+    "bytes": 82649,
+    "sha256": "7393703a22d0c7faed95be299d7fc590909dc7ff3b86271c6fc63d45a92e3ab2",
+    "restore": "pg_restore --dbname=$DATABASE_URL --table=watchlist_curation_log /home/lazycat/db-backups/purged-tables/watchlist_curation_log.dump",
+    "archived_at": "2026-08-17T23:31:24.832598+00:00"
+  }
+]
