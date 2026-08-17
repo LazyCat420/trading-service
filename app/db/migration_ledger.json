@@ -1,42 +1,56 @@
 {
-  "ledger_format_version": "1.0",
-  "generated_at": "2026-08-17T00:26:03.458733+00:00",
+  "ledger_format_version": "1.1",
+  "generated_at": "2026-08-17T21:44:20.652774+00:00",
   "manifest_table_count": 183,
+  "scope_table_count": 190,
+  "scope_basis_counts": {
+    "adopted": 4,
+    "manifest": 183,
+    "retired": 3
+  },
   "manifest_format_version": "1.0",
   "external_refs_caveat": "external_refs match on table NAME across sun repos, not on database. HTML-Notes/app/database.py is sqlite3 and the vendored mnemopi engine has its own store, so hits there are name collisions. Refs in postgres-service/scripts/schema_pg.sql are the ones that share this instance.",
+  "scanned_at": "HEAD",
+  "dirty_repos_ignored": [
+    "HTML-Notes",
+    "braindeadbot-client",
+    "lazy-agent-service",
+    "local-coding-agent",
+    "prism-service",
+    "trading-client",
+    "video-editor"
+  ],
+  "working_tree_fallback_repos": [],
   "database_reachable": true,
   "database_note": null,
   "live_table_count": 214,
   "shape_counts": {
-    "append": 38,
+    "append": 41,
     "upsert": 22,
-    "mutable": 70,
+    "mutable": 71,
     "reference": 12,
     "queue": 6,
     "money": 7,
     "timeseries": 3,
-    "unreferenced": 25
+    "unreferenced": 28
   },
   "disposition_counts": {
-    "archive-only": 25,
-    "migrate": 158
+    "absent": 1,
+    "archive-only": 28,
+    "migrate": 161
   },
-  "foreign_table_count": 32,
-  "unclassified_foreign_count": 8,
+  "foreign_table_count": 25,
+  "unclassified_foreign_count": 1,
   "unclassified_foreign_tables": [
-    "agent_registry",
-    "agent_tasks",
-    "autofix_runs",
-    "box_benchmark_runs",
-    "context_telemetry",
-    "fallback_data",
-    "llm_traces",
     "source_strain_records"
   ],
   "tables": [
     {
       "table": "agent_audit_log",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -57,7 +71,7 @@
         "script_refs": 2,
         "external_refs": 0
       },
-      "row_count": 74129,
+      "row_count": 75276,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -81,13 +95,16 @@
       "client_readers": [],
       "script_refs": [
         "trading-service/scripts/cycle_audit.py:259:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:103:select"
+        "trading-service/scripts/pg_to_mongo_backfill.py:107:select"
       ],
       "external_refs": []
     },
     {
       "table": "agent_directives",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -141,6 +158,9 @@
     {
       "table": "agent_experiences",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -186,6 +206,9 @@
     {
       "table": "agent_loop_stats",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -226,8 +249,64 @@
       ]
     },
     {
+      "table": "agent_registry",
+      "shape": "mutable",
+      "scope_basis": "adopted",
+      "scope_evidence": "trading-client/app/client_agents/base_agent.py:75:upsert",
+      "owner": "trading-client",
+      "key_field": "agent_id",
+      "natural_key": null,
+      "unique_constraints": [],
+      "numeric_policy": "float",
+      "mode_now": "pg",
+      "wave": null,
+      "signals": {
+        "select": 6,
+        "update": 2,
+        "upsert": 1
+      },
+      "ref_counts": {
+        "service_writers": 0,
+        "service_readers": 0,
+        "client_writers": 3,
+        "client_readers": 6,
+        "script_refs": 0,
+        "external_refs": 0
+      },
+      "row_count": 1,
+      "backfilled_at": null,
+      "field_verified_at": null,
+      "promoted_dual": null,
+      "promoted_mongo_read": null,
+      "promoted_mongo": null,
+      "archived_at": null,
+      "dropped_at": null,
+      "archive_file": null,
+      "disposition": "migrate",
+      "service_writers": [],
+      "service_readers": [],
+      "client_writers": [
+        "trading-client/app/client_agents/agent_pool.py:222:update",
+        "trading-client/app/client_agents/base_agent.py:102:update",
+        "trading-client/app/client_agents/base_agent.py:75:upsert"
+      ],
+      "client_readers": [
+        "trading-client/app/client_agents/agent_pool.py:109:select",
+        "trading-client/app/client_agents/agent_pool.py:218:select",
+        "trading-client/app/client_agents/base_agent.py:49:select",
+        "trading-client/app/routers/cognition.py:213:select",
+        "trading-client/app/routers/cognition.py:99:select",
+        "trading-client/app/routers/pipeline.py:211:select"
+      ],
+      "script_refs": [],
+      "external_refs": []
+    },
+    {
       "table": "agent_skills",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -249,7 +328,7 @@
         "script_refs": 2,
         "external_refs": 0
       },
-      "row_count": 155,
+      "row_count": 162,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -284,8 +363,60 @@
       "external_refs": []
     },
     {
+      "table": "agent_tasks",
+      "shape": "mutable",
+      "scope_basis": "adopted",
+      "scope_evidence": "trading-client/app/client_agents/base_agent.py:138:insert",
+      "owner": "trading-client",
+      "key_field": "task_id",
+      "natural_key": null,
+      "unique_constraints": [],
+      "numeric_policy": "float",
+      "mode_now": "pg",
+      "wave": null,
+      "signals": {
+        "insert": 1,
+        "select": 2,
+        "update": 2
+      },
+      "ref_counts": {
+        "service_writers": 0,
+        "service_readers": 0,
+        "client_writers": 3,
+        "client_readers": 2,
+        "script_refs": 0,
+        "external_refs": 0
+      },
+      "row_count": 0,
+      "backfilled_at": null,
+      "field_verified_at": null,
+      "promoted_dual": null,
+      "promoted_mongo_read": null,
+      "promoted_mongo": null,
+      "archived_at": null,
+      "dropped_at": null,
+      "archive_file": null,
+      "disposition": "migrate",
+      "service_writers": [],
+      "service_readers": [],
+      "client_writers": [
+        "trading-client/app/client_agents/base_agent.py:138:insert",
+        "trading-client/app/client_agents/base_agent.py:162:update",
+        "trading-client/app/client_agents/base_agent.py:175:update"
+      ],
+      "client_readers": [
+        "trading-client/app/routers/cognition.py:243:select",
+        "trading-client/app/routers/pipeline.py:229:select"
+      ],
+      "script_refs": [],
+      "external_refs": []
+    },
+    {
       "table": "agent_tool_optimization",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "agent_name, tool_name",
       "natural_key": null,
       "unique_constraints": [],
@@ -318,17 +449,17 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/services/tool_optimizer.py:219:insert_ignore",
-        "trading-service/app/services/tool_optimizer.py:407:upsert",
-        "trading-service/app/services/tool_optimizer.py:484:update",
-        "trading-service/app/services/tool_optimizer.py:526:upsert"
+        "trading-service/app/services/tool_optimizer.py:271:insert_ignore",
+        "trading-service/app/services/tool_optimizer.py:486:upsert",
+        "trading-service/app/services/tool_optimizer.py:593:update",
+        "trading-service/app/services/tool_optimizer.py:639:upsert"
       ],
       "service_readers": [
         "trading-service/app/db/migrations.py:1219:create_table",
         "trading-service/app/db/schema_pg.sql:2438:create_table",
-        "trading-service/app/services/tool_optimizer.py:197:select",
-        "trading-service/app/services/tool_optimizer.py:378:select",
-        "trading-service/app/services/tool_optimizer.py:477:select"
+        "trading-service/app/services/tool_optimizer.py:259:select",
+        "trading-service/app/services/tool_optimizer.py:459:select",
+        "trading-service/app/services/tool_optimizer.py:589:select"
       ],
       "client_writers": [],
       "client_readers": [],
@@ -338,6 +469,9 @@
     {
       "table": "agent_tool_telemetry",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -359,7 +493,7 @@
         "script_refs": 7,
         "external_refs": 0
       },
-      "row_count": 15100,
+      "row_count": 15424,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -378,10 +512,10 @@
         "trading-service/app/db/migrations.py:3590:create_index",
         "trading-service/app/db/migrations.py:3594:create_index",
         "trading-service/app/db/migrations.py:3598:create_index",
-        "trading-service/app/routers/cycle_replay_router.py:518:select",
-        "trading-service/app/routers/cycle_replay_router.py:703:select",
-        "trading-service/app/v3/guardrails.py:160:select",
-        "trading-service/app/v3/invariants.py:647:select"
+        "trading-service/app/routers/cycle_replay_router.py:290:select",
+        "trading-service/app/routers/cycle_replay_router.py:296:select",
+        "trading-service/app/v3/guardrails.py:175:select",
+        "trading-service/app/v3/invariants.py:673:select"
       ],
       "client_writers": [],
       "client_readers": [
@@ -393,7 +527,7 @@
         "trading-service/scripts/cycle_audit.py:193:select",
         "trading-service/scripts/cycle_healthcheck.py:262:select",
         "trading-service/scripts/cycle_healthcheck.py:266:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:108:select",
+        "trading-service/scripts/pg_to_mongo_backfill.py:112:select",
         "trading-service/scripts/tool_audit.py:110:select",
         "trading-service/scripts/tool_audit.py:128:select"
       ],
@@ -402,6 +536,9 @@
     {
       "table": "agent_traces",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -423,7 +560,7 @@
         "script_refs": 1,
         "external_refs": 3
       },
-      "row_count": 14375,
+      "row_count": 14699,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -444,12 +581,12 @@
         "trading-service/app/db/schema_pg.sql:2356:create_table",
         "trading-service/app/db/schema_pg.sql:2378:create_index",
         "trading-service/app/db/schema_pg.sql:2379:create_index",
-        "trading-service/app/routers/vllm_router.py:620:select"
+        "trading-service/app/routers/vllm_router.py:642:select"
       ],
       "client_writers": [],
       "client_readers": [],
       "script_refs": [
-        "trading-service/scripts/pg_to_mongo_backfill.py:115:select"
+        "trading-service/scripts/pg_to_mongo_backfill.py:119:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:2117:create_table",
@@ -460,6 +597,9 @@
     {
       "table": "analysis_results",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -469,9 +609,9 @@
       "signals": {
         "create_index": 4,
         "create_table": 3,
-        "delete": 4,
+        "delete": 3,
         "insert": 1,
-        "select": 46,
+        "select": 45,
         "update": 1
       },
       "ref_counts": {
@@ -479,10 +619,10 @@
         "service_readers": 19,
         "client_writers": 3,
         "client_readers": 12,
-        "script_refs": 20,
+        "script_refs": 18,
         "external_refs": 3
       },
-      "row_count": 5067,
+      "row_count": 5082,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -500,22 +640,22 @@
         "trading-service/app/autoresearch/auditors/decision_audit.py:153:select",
         "trading-service/app/autoresearch/auditors/triage_audit.py:43:select",
         "trading-service/app/autoresearch/auditors/triage_audit.py:77:select",
-        "trading-service/app/autoresearch/outcome_tracker.py:383:select",
+        "trading-service/app/autoresearch/outcome_tracker.py:398:select",
         "trading-service/app/db/migrations.py:2172:create_table",
         "trading-service/app/db/schema_pg.sql:1067:create_index",
         "trading-service/app/db/schema_pg.sql:1068:create_index",
         "trading-service/app/db/schema_pg.sql:625:create_table",
         "trading-service/app/services/debate_service.py:25:select",
         "trading-service/app/services/freshness_gate.py:209:select",
-        "trading-service/app/services/pipeline_service.py:1208:select",
-        "trading-service/app/services/pipeline_state.py:213:select",
+        "trading-service/app/services/pipeline_service.py:1297:select",
+        "trading-service/app/services/pipeline_state.py:273:select",
         "trading-service/app/services/research_governor.py:414:select",
         "trading-service/app/services/research_governor.py:79:select",
         "trading-service/app/services/verdict_service.py:94:select",
         "trading-service/app/v3/battle_royale.py:40:select",
         "trading-service/app/v3/data_report.py:229:select",
         "trading-service/app/v3/invariants.py:326:select",
-        "trading-service/app/v3/invariants.py:595:select"
+        "trading-service/app/v3/invariants.py:621:select"
       ],
       "client_writers": [
         "trading-client/app/client_agents/analyst_agent.py:178:update",
@@ -542,9 +682,7 @@
         "trading-client/scripts/dev_a_checklist.py:68:select",
         "trading-client/scripts/diagnose_crash.py:88:select",
         "trading-client/scripts/diagnose_cycle_v2.py:145:select",
-        "trading-client/scripts/reset_for_test.py:98:delete",
         "trading-client/tools/audit_analysis_results.py:16:select",
-        "trading-service/scripts/_archive/scratch_trigger_and_poll.py:97:select",
         "trading-service/scripts/cycle_audit.py:134:select",
         "trading-service/scripts/cycle_healthcheck.py:246:select",
         "trading-service/scripts/db_audit.py:29:select",
@@ -552,7 +690,7 @@
         "trading-service/scripts/hold_wall_report.py:118:select",
         "trading-service/scripts/hold_wall_report.py:316:select",
         "trading-service/scripts/hold_wall_report.py:321:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:144:select",
+        "trading-service/scripts/pg_to_mongo_backfill.py:141:select",
         "trading-service/scripts/run_audit.py:23:select",
         "trading-service/scripts/run_audit.py:28:select",
         "trading-service/scripts/smoke_test_cycle.py:159:select",
@@ -567,6 +705,9 @@
     {
       "table": "asset_prices",
       "shape": "timeseries",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "symbol, asset_class, date",
       "natural_key": null,
       "unique_constraints": [],
@@ -587,7 +728,7 @@
         "script_refs": 3,
         "external_refs": 2
       },
-      "row_count": 6636,
+      "row_count": 6668,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -639,8 +780,60 @@
       ]
     },
     {
+      "table": "autofix_runs",
+      "shape": "append",
+      "scope_basis": "adopted",
+      "scope_evidence": "trading-service/scripts/autofix/run_autofix.py:272:insert",
+      "owner": "trading-service",
+      "key_field": "id",
+      "natural_key": null,
+      "unique_constraints": [],
+      "numeric_policy": "float",
+      "mode_now": "pg",
+      "wave": null,
+      "signals": {
+        "insert": 1,
+        "select": 5
+      },
+      "ref_counts": {
+        "service_writers": 0,
+        "service_readers": 0,
+        "client_writers": 0,
+        "client_readers": 1,
+        "script_refs": 5,
+        "external_refs": 0
+      },
+      "row_count": 0,
+      "backfilled_at": null,
+      "field_verified_at": null,
+      "promoted_dual": null,
+      "promoted_mongo_read": null,
+      "promoted_mongo": null,
+      "archived_at": null,
+      "dropped_at": null,
+      "archive_file": null,
+      "disposition": "migrate",
+      "service_writers": [],
+      "service_readers": [],
+      "client_writers": [],
+      "client_readers": [
+        "trading-client/app/routers/autoresearch.py:325:select"
+      ],
+      "script_refs": [
+        "trading-service/scripts/autofix/run_autofix.py:272:insert",
+        "trading-service/scripts/autofix/run_autofix.py:292:select",
+        "trading-service/scripts/autofix/worth_report.py:122:select",
+        "trading-service/scripts/autofix/worth_report.py:146:select",
+        "trading-service/scripts/autofix/worth_report.py:171:select"
+      ],
+      "external_refs": []
+    },
+    {
       "table": "autoresearch_cycle_summaries",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": "cycle_id",
       "unique_constraints": [
@@ -688,6 +881,9 @@
     {
       "table": "autoresearch_reports",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -709,7 +905,7 @@
         "script_refs": 2,
         "external_refs": 5
       },
-      "row_count": 528,
+      "row_count": 536,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -764,6 +960,9 @@
     {
       "table": "balance_sheet",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, period_end",
       "natural_key": null,
       "unique_constraints": [],
@@ -784,7 +983,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 2633,
+      "row_count": 2647,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -817,6 +1016,9 @@
     {
       "table": "ban_patterns",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -863,6 +1065,9 @@
     {
       "table": "best_per_ticker",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -905,6 +1110,9 @@
     {
       "table": "bots",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "bot_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -938,7 +1146,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/db/connection.py:477:insert",
+        "trading-service/app/db/connection.py:483:insert",
         "trading-service/app/db/migrations.py:649:update",
         "trading-service/app/db/migrations.py:855:update",
         "trading-service/app/services/bot_manager.py:172:update",
@@ -951,14 +1159,14 @@
         "trading-service/app/services/bot_manager.py:570:update",
         "trading-service/app/services/bot_manager.py:656:delete",
         "trading-service/app/services/bot_manager.py:82:update",
-        "trading-service/app/trading/paper_trader.py:1014:update",
-        "trading-service/app/trading/paper_trader.py:1064:update",
+        "trading-service/app/trading/paper_trader.py:1040:update",
+        "trading-service/app/trading/paper_trader.py:1111:update",
         "trading-service/app/trading/paper_trader.py:236:insert",
         "trading-service/app/trading/paper_trader.py:705:update"
       ],
       "service_readers": [
         "trading-service/app/cognition/evaluation/strategy_auditor.py:379:select",
-        "trading-service/app/db/connection.py:471:select",
+        "trading-service/app/db/connection.py:477:select",
         "trading-service/app/db/migrations.py:2126:create_table",
         "trading-service/app/db/schema_pg.sql:582:create_table",
         "trading-service/app/services/bot_manager.py:124:select",
@@ -978,10 +1186,10 @@
         "trading-service/app/trading/portfolio.py:67:select"
       ],
       "client_writers": [
-        "trading-client/app/db/connection.py:333:insert"
+        "trading-client/app/db/connection.py:352:insert"
       ],
       "client_readers": [
-        "trading-client/app/db/connection.py:327:select",
+        "trading-client/app/db/connection.py:346:select",
         "trading-client/app/routers/portfolio.py:233:select",
         "trading-client/app/services/portfolio.py:311:select",
         "trading-client/app/services/portfolio.py:60:select"
@@ -1003,18 +1211,65 @@
         "trading-client/scripts/reset_bot_cash.py:17:select",
         "trading-client/scripts/reset_bot_cash.py:31:update",
         "trading-client/scripts/reset_bot_cash.py:43:select",
-        "trading-client/scripts/reset_everything.py:44:update",
-        "trading-client/scripts/reset_everything.py:57:select",
-        "trading-client/scripts/reset_for_test.py:119:select",
-        "trading-client/scripts/reset_for_test.py:59:update"
+        "trading-client/scripts/reset_everything.py:65:update",
+        "trading-client/scripts/reset_everything.py:78:select",
+        "trading-client/scripts/reset_for_test.py:136:select",
+        "trading-client/scripts/reset_for_test.py:68:update"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:484:create_table"
       ]
     },
     {
+      "table": "box_benchmark_runs",
+      "shape": "append",
+      "scope_basis": "adopted",
+      "scope_evidence": "trading-service/scripts/jetson_benchmark.py:486:insert",
+      "owner": "trading-service",
+      "key_field": "id",
+      "natural_key": null,
+      "unique_constraints": [],
+      "numeric_policy": "float",
+      "mode_now": "pg",
+      "wave": null,
+      "signals": {
+        "create_table": 1,
+        "insert": 1
+      },
+      "ref_counts": {
+        "service_writers": 0,
+        "service_readers": 0,
+        "client_writers": 0,
+        "client_readers": 0,
+        "script_refs": 2,
+        "external_refs": 0
+      },
+      "row_count": 93,
+      "backfilled_at": null,
+      "field_verified_at": null,
+      "promoted_dual": null,
+      "promoted_mongo_read": null,
+      "promoted_mongo": null,
+      "archived_at": null,
+      "dropped_at": null,
+      "archive_file": null,
+      "disposition": "migrate",
+      "service_writers": [],
+      "service_readers": [],
+      "client_writers": [],
+      "client_readers": [],
+      "script_refs": [
+        "trading-service/scripts/jetson_benchmark.py:471:create_table",
+        "trading-service/scripts/jetson_benchmark.py:486:insert"
+      ],
+      "external_refs": []
+    },
+    {
       "table": "canonical_memories",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1036,7 +1291,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 162,
+      "row_count": 164,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1068,6 +1323,9 @@
     {
       "table": "challenger_decisions",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1088,7 +1346,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 438,
+      "row_count": 448,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1116,6 +1374,9 @@
     {
       "table": "chat_history",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1138,7 +1399,7 @@
         "script_refs": 2,
         "external_refs": 2
       },
-      "row_count": 73,
+      "row_count": 75,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1184,6 +1445,9 @@
     {
       "table": "chat_sessions",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1264,6 +1528,9 @@
     {
       "table": "company_narratives",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -1303,6 +1570,9 @@
     {
       "table": "company_registry",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "symbol",
       "natural_key": null,
       "unique_constraints": [],
@@ -1323,7 +1593,7 @@
         "script_refs": 2,
         "external_refs": 1
       },
-      "row_count": 10522,
+      "row_count": 10689,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1360,6 +1630,9 @@
     {
       "table": "component_health_reports",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1405,6 +1678,9 @@
     {
       "table": "congress_members",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "bioguide_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1457,6 +1733,9 @@
     {
       "table": "congress_trades",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1503,7 +1782,7 @@
         "trading-service/app/collectors/congress_scanner.py:27:select",
         "trading-service/app/collectors/congress_scanner.py:304:select",
         "trading-service/app/collectors/congress_scanner.py:75:select",
-        "trading-service/app/db/connection.py:406:create_index",
+        "trading-service/app/db/connection.py:412:create_index",
         "trading-service/app/db/migrations.py:1932:create_table",
         "trading-service/app/db/schema_pg.sql:1060:create_index",
         "trading-service/app/db/schema_pg.sql:1061:create_index",
@@ -1557,6 +1836,9 @@
     {
       "table": "consolidation_reports",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1575,7 +1857,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 89,
+      "row_count": 92,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1599,6 +1881,9 @@
     {
       "table": "context_blobs",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "context_hash",
       "natural_key": null,
       "unique_constraints": [],
@@ -1619,7 +1904,7 @@
         "script_refs": 4,
         "external_refs": 1
       },
-      "row_count": 56450,
+      "row_count": 56464,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1630,7 +1915,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/services/rlm_audit.py:55:insert_ignore"
+        "trading-service/app/services/rlm_audit.py:65:insert_ignore"
       ],
       "service_readers": [
         "trading-service/app/cognition/evaluation/judge_agent.py:286:select",
@@ -1650,15 +1935,56 @@
         "trading-client/scripts/audit_script.py:29:select",
         "trading-client/tools/audit_hallucination.py:31:join",
         "trading-client/tools/audit_hallucination.py:45:join",
-        "trading-service/scripts/pg_to_mongo_backfill.py:148:select"
+        "trading-service/scripts/pg_to_mongo_backfill.py:145:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:500:create_table"
       ]
     },
     {
+      "table": "context_telemetry",
+      "shape": "unreferenced",
+      "scope_basis": "retired",
+      "scope_evidence": "last write 2026-06-25, zero code references",
+      "owner": "trading-service",
+      "key_field": "id",
+      "natural_key": null,
+      "unique_constraints": [],
+      "numeric_policy": "float",
+      "mode_now": "pg",
+      "wave": null,
+      "signals": {},
+      "ref_counts": {
+        "service_writers": 0,
+        "service_readers": 0,
+        "client_writers": 0,
+        "client_readers": 0,
+        "script_refs": 0,
+        "external_refs": 0
+      },
+      "row_count": 789,
+      "backfilled_at": null,
+      "field_verified_at": null,
+      "promoted_dual": null,
+      "promoted_mongo_read": null,
+      "promoted_mongo": null,
+      "archived_at": null,
+      "dropped_at": null,
+      "archive_file": null,
+      "disposition": "archive-only",
+      "service_writers": [],
+      "service_readers": [],
+      "client_writers": [],
+      "client_readers": [],
+      "script_refs": [],
+      "external_refs": []
+    },
+    {
       "table": "critic_feedback",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1698,6 +2024,9 @@
     {
       "table": "cross_asset_correlations",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "asset_a, asset_b, period",
       "natural_key": null,
       "unique_constraints": [],
@@ -1744,6 +2073,9 @@
     {
       "table": "cycle_audit_log",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1754,17 +2086,17 @@
         "create_index": 8,
         "create_table": 6,
         "insert": 1,
-        "select": 8
+        "select": 4
       },
       "ref_counts": {
         "service_writers": 1,
         "service_readers": 8,
         "client_writers": 0,
         "client_readers": 1,
-        "script_refs": 7,
+        "script_refs": 3,
         "external_refs": 6
       },
-      "row_count": 158397,
+      "row_count": 168073,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1794,11 +2126,7 @@
       "script_refs": [
         "trading-client/scripts/db_utils/audit_logs.py:39:select",
         "trading-client/scripts/db_utils/audit_logs.py:6:select",
-        "trading-service/scripts/debug/diagnose_pipeline.py:146:select",
-        "trading-service/scripts/debug/diagnose_pipeline.py:172:select",
-        "trading-service/scripts/debug/query_cycle_audit.py:12:select",
-        "trading-service/scripts/debug/query_cycle_audit.py:26:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:92:select"
+        "trading-service/scripts/pg_to_mongo_backfill.py:96:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:2032:create_table",
@@ -1812,6 +2140,9 @@
     {
       "table": "cycle_benchmarks",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "cycle_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1834,7 +2165,7 @@
         "script_refs": 4,
         "external_refs": 1
       },
-      "row_count": 670,
+      "row_count": 678,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -1845,7 +2176,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/services/pipeline_service.py:768:upsert"
+        "trading-service/app/services/pipeline_service.py:810:upsert"
       ],
       "service_readers": [
         "trading-service/app/cognition/evaluation/strategy_auditor.py:31:select",
@@ -1874,6 +2205,9 @@
     {
       "table": "cycle_checkpoints",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -1944,6 +2278,9 @@
     {
       "table": "cycle_context",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -1998,6 +2335,9 @@
     {
       "table": "cycle_directives",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2019,7 +2359,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 266,
+      "row_count": 231,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2050,6 +2390,9 @@
     {
       "table": "cycle_resume_state",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "cycle_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2096,6 +2439,9 @@
     {
       "table": "cycle_run_summaries",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "cycle_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2116,7 +2462,7 @@
         "script_refs": 6,
         "external_refs": 4
       },
-      "row_count": 355,
+      "row_count": 363,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2159,6 +2505,9 @@
     {
       "table": "cycle_schedules",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2170,12 +2519,12 @@
         "create_table": 3,
         "delete": 2,
         "insert": 2,
-        "select": 16,
+        "select": 17,
         "update": 10
       },
       "ref_counts": {
         "service_writers": 9,
-        "service_readers": 15,
+        "service_readers": 16,
         "client_writers": 5,
         "client_readers": 3,
         "script_refs": 1,
@@ -2206,6 +2555,7 @@
         "trading-service/app/autoresearch/auditors/schedule_audit.py:22:select",
         "trading-service/app/db/migrations.py:1982:create_table",
         "trading-service/app/db/schema_pg.sql:390:create_table",
+        "trading-service/app/db/table_spec.py:48:select",
         "trading-service/app/services/cycle_scheduler.py:120:select",
         "trading-service/app/services/cycle_scheduler.py:340:select",
         "trading-service/app/services/cycle_scheduler.py:546:select",
@@ -2241,6 +2591,9 @@
     {
       "table": "cycle_summaries",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": "cycle_id",
       "unique_constraints": [
@@ -2298,6 +2651,9 @@
     {
       "table": "cycle_ticker_benchmarks",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "cycle_id, ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -2318,7 +2674,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 10227,
+      "row_count": 10242,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2329,7 +2685,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/services/pipeline_service.py:797:upsert"
+        "trading-service/app/services/pipeline_service.py:839:upsert"
       ],
       "service_readers": [
         "trading-service/app/db/migrations.py:2765:create_table",
@@ -2349,6 +2705,9 @@
     {
       "table": "data_archive",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -2404,6 +2763,9 @@
     {
       "table": "data_flags",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2475,6 +2837,9 @@
     {
       "table": "data_source_status",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "source, ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -2494,7 +2859,7 @@
         "script_refs": 2,
         "external_refs": 1
       },
-      "row_count": 3425,
+      "row_count": 3447,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2532,6 +2897,9 @@
     {
       "table": "debate_history",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -2595,6 +2963,9 @@
     {
       "table": "debate_tool_cache",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -2637,6 +3008,9 @@
     {
       "table": "decision_evaluations",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "decision_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2658,7 +3032,7 @@
         "script_refs": 6,
         "external_refs": 1
       },
-      "row_count": 1048,
+      "row_count": 1072,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2715,6 +3089,9 @@
     {
       "table": "decision_outcomes",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2737,7 +3114,7 @@
         "script_refs": 19,
         "external_refs": 1
       },
-      "row_count": 2604,
+      "row_count": 2618,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2748,9 +3125,9 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/autoresearch/outcome_tracker.py:456:insert",
-        "trading-service/app/autoresearch/outcome_tracker.py:561:update",
-        "trading-service/app/autoresearch/outcome_tracker.py:625:update",
+        "trading-service/app/autoresearch/outcome_tracker.py:472:insert",
+        "trading-service/app/autoresearch/outcome_tracker.py:615:update",
+        "trading-service/app/autoresearch/outcome_tracker.py:690:update",
         "trading-service/app/db/migrations.py:4279:update"
       ],
       "service_readers": [
@@ -2762,9 +3139,9 @@
         "trading-service/app/autoresearch/eval_engine.py:286:select",
         "trading-service/app/autoresearch/eval_engine.py:297:select",
         "trading-service/app/autoresearch/eval_engine.py:393:select",
-        "trading-service/app/autoresearch/outcome_tracker.py:440:select",
-        "trading-service/app/autoresearch/outcome_tracker.py:504:select",
-        "trading-service/app/autoresearch/outcome_tracker.py:607:select",
+        "trading-service/app/autoresearch/outcome_tracker.py:455:select",
+        "trading-service/app/autoresearch/outcome_tracker.py:556:select",
+        "trading-service/app/autoresearch/outcome_tracker.py:672:select",
         "trading-service/app/autoresearch/scorecard.py:176:select",
         "trading-service/app/autoresearch/skill_optimizer.py:234:select",
         "trading-service/app/autoresearch/skill_optimizer.py:277:select",
@@ -2805,6 +3182,9 @@
     {
       "table": "decision_scores",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -2827,7 +3207,7 @@
         "script_refs": 1,
         "external_refs": 0
       },
-      "row_count": 275,
+      "row_count": 290,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2854,6 +3234,9 @@
     {
       "table": "deleted_data",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "source, item_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -2909,6 +3292,9 @@
     {
       "table": "discovered_channels",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "channel_handle",
       "natural_key": null,
       "unique_constraints": [],
@@ -2929,7 +3315,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 2966,
+      "row_count": 2982,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2959,6 +3345,9 @@
     {
       "table": "discovered_tickers",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, source",
       "natural_key": null,
       "unique_constraints": [],
@@ -2982,7 +3371,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 5242,
+      "row_count": 5248,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -2993,9 +3382,9 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/collectors/reddit_collector.py:406:insert_ignore",
-        "trading-service/app/collectors/reddit_collector.py:476:upsert",
-        "trading-service/app/collectors/youtube_collector.py:343:insert_ignore",
+        "trading-service/app/collectors/reddit_collector.py:431:insert_ignore",
+        "trading-service/app/collectors/reddit_collector.py:501:upsert",
+        "trading-service/app/collectors/youtube_collector.py:363:insert_ignore",
         "trading-service/app/services/cycle_scheduler.py:1753:upsert",
         "trading-service/app/validation/persistence.py:10:update",
         "trading-service/app/validation/persistence.py:26:update",
@@ -3009,7 +3398,7 @@
         "trading-service/app/db/migrations.py:732:alter_table",
         "trading-service/app/db/schema_pg.sql:674:create_table",
         "trading-service/app/services/discovery_mode.py:59:select",
-        "trading-service/app/services/pipeline_service.py:1116:select",
+        "trading-service/app/services/pipeline_service.py:1205:select",
         "trading-service/app/trading/watchlist.py:364:select",
         "trading-service/app/validation/persistence.py:40:select"
       ],
@@ -3029,6 +3418,9 @@
     {
       "table": "dossier_question_log",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -3051,7 +3443,7 @@
         "script_refs": 1,
         "external_refs": 0
       },
-      "row_count": 260,
+      "row_count": 287,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3082,6 +3474,9 @@
     {
       "table": "economic_calendar",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3102,7 +3497,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 462,
+      "row_count": 469,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3132,6 +3527,9 @@
     {
       "table": "embeddings",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3220,6 +3618,9 @@
     {
       "table": "episodic_memory",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3227,14 +3628,11 @@
       "mode_now": "pg",
       "wave": null,
       "signals": {
-        "create_index": 10,
-        "create_table": 5,
-        "delete": 1,
-        "drop_table": 2,
-        "insert": 24,
-        "join": 2,
-        "select": 43,
-        "update": 10
+        "create_index": 2,
+        "create_table": 3,
+        "insert": 1,
+        "select": 1,
+        "update": 1
       },
       "ref_counts": {
         "service_writers": 2,
@@ -3242,9 +3640,9 @@
         "client_writers": 0,
         "client_readers": 0,
         "script_refs": 0,
-        "external_refs": 91
+        "external_refs": 2
       },
-      "row_count": 3666,
+      "row_count": 3680,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3268,31 +3666,16 @@
       "client_readers": [],
       "script_refs": [],
       "external_refs": [
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:403:insert",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:780:select",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:785:select",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:832:update",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:842:select",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:849:select",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:866:update",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:886:update",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/consolidate.ts:906:select",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/helpers.ts:412:join",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/recall.ts:842:select",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/recall.ts:933:select",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:100:create_index",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:105:create_index",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:294:create_index",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:311:create_index",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:312:create_index",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:387:create_index",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:59:create_table",
-        "local-coding-agent/vendor/oh-my-pi/packages/mnemopi/src/core/beam/schema.ts:98:create_index"
+        "postgres-service/scripts/schema_pg.sql:805:create_table",
+        "postgres-service/scripts/schema_pg.sql:816:create_index"
       ]
     },
     {
       "table": "episodic_observations",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3314,7 +3697,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 813,
+      "row_count": 850,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3346,6 +3729,9 @@
     {
       "table": "etf_metadata",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -3392,6 +3778,9 @@
     {
       "table": "eval_scores",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3413,7 +3802,7 @@
         "script_refs": 0,
         "external_refs": 2
       },
-      "row_count": 11398,
+      "row_count": 11798,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3446,6 +3835,9 @@
     {
       "table": "evolution_attempts",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3485,6 +3877,9 @@
     {
       "table": "evolution_dead_ends",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3533,6 +3928,9 @@
     {
       "table": "evolution_lessons",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3554,7 +3952,7 @@
         "script_refs": 3,
         "external_refs": 2
       },
-      "row_count": 535,
+      "row_count": 543,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3593,6 +3991,9 @@
     {
       "table": "evolution_lessons_archive",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3635,6 +4036,9 @@
     {
       "table": "evolution_nodes",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3708,6 +4112,9 @@
     {
       "table": "evolution_repair_queue",
       "shape": "queue",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3764,6 +4171,9 @@
     {
       "table": "execution_errors",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3773,17 +4183,17 @@
       "signals": {
         "create_table": 3,
         "insert": 1,
-        "select": 11
+        "select": 6
       },
       "ref_counts": {
         "service_writers": 1,
         "service_readers": 3,
         "client_writers": 0,
         "client_readers": 0,
-        "script_refs": 10,
+        "script_refs": 5,
         "external_refs": 1
       },
-      "row_count": 149152,
+      "row_count": 158828,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3797,7 +4207,7 @@
         "trading-service/app/services/logging/unified_logger.py:136:insert"
       ],
       "service_readers": [
-        "trading-service/app/autoresearch/auditors/performance_audit.py:39:select",
+        "trading-service/app/autoresearch/auditors/performance_audit.py:53:select",
         "trading-service/app/db/migrations.py:2292:create_table",
         "trading-service/app/db/schema_pg.sql:788:create_table"
       ],
@@ -3806,14 +4216,9 @@
       "script_refs": [
         "trading-client/scripts/dev_a_checklist.py:99:select",
         "trading-client/scripts/diagnose_cycle_v2.py:58:select",
-        "trading-service/scripts/_archive/scratch_query_errors.py:9:select",
-        "trading-service/scripts/_archive/scratch_trigger_and_poll.py:78:select",
         "trading-service/scripts/autofix/worth_report.py:76:select",
         "trading-service/scripts/check_db.py:17:select",
-        "trading-service/scripts/debug/query_errors.py:12:select",
-        "trading-service/scripts/debug/query_errors.py:26:select",
-        "trading-service/scripts/debug/query_errors.py:45:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:86:select"
+        "trading-service/scripts/pg_to_mongo_backfill.py:90:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:640:create_table"
@@ -3822,6 +4227,9 @@
     {
       "table": "failure_buckets",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3841,7 +4249,7 @@
         "script_refs": 0,
         "external_refs": 2
       },
-      "row_count": 1029,
+      "row_count": 1044,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3868,8 +4276,49 @@
       ]
     },
     {
+      "table": "fallback_data",
+      "shape": "unreferenced",
+      "scope_basis": "retired",
+      "scope_evidence": "0 rows, zero code references",
+      "owner": "trading-service",
+      "key_field": "id",
+      "natural_key": null,
+      "unique_constraints": [],
+      "numeric_policy": "float",
+      "mode_now": "pg",
+      "wave": null,
+      "signals": {},
+      "ref_counts": {
+        "service_writers": 0,
+        "service_readers": 0,
+        "client_writers": 0,
+        "client_readers": 0,
+        "script_refs": 0,
+        "external_refs": 0
+      },
+      "row_count": 0,
+      "backfilled_at": null,
+      "field_verified_at": null,
+      "promoted_dual": null,
+      "promoted_mongo_read": null,
+      "promoted_mongo": null,
+      "archived_at": null,
+      "dropped_at": null,
+      "archive_file": null,
+      "disposition": "archive-only",
+      "service_writers": [],
+      "service_readers": [],
+      "client_writers": [],
+      "client_readers": [],
+      "script_refs": [],
+      "external_refs": []
+    },
+    {
       "table": "financial_history",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, period_type, period_end",
       "natural_key": null,
       "unique_constraints": [],
@@ -3890,7 +4339,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 5867,
+      "row_count": 5892,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3928,6 +4377,9 @@
     {
       "table": "flash_briefings",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -3947,7 +4399,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 171,
+      "row_count": 176,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -3978,6 +4430,9 @@
     {
       "table": "freshness_gate_config",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": "threshold_name",
       "unique_constraints": [
@@ -4025,6 +4480,9 @@
     {
       "table": "fund_alerts",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4075,6 +4533,9 @@
     {
       "table": "fundamentals",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, snapshot_date",
       "natural_key": null,
       "unique_constraints": [],
@@ -4098,7 +4559,7 @@
         "script_refs": 4,
         "external_refs": 1
       },
-      "row_count": 11339,
+      "row_count": 11641,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -4167,6 +4628,9 @@
     {
       "table": "generated_agent_prompts",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4223,6 +4687,9 @@
     {
       "table": "graph_node_events",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4244,7 +4711,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 982,
+      "row_count": 740,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -4275,6 +4742,9 @@
     {
       "table": "hallucination_audit",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4317,6 +4787,9 @@
     {
       "table": "hallucination_log",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4364,6 +4837,9 @@
     {
       "table": "insider_trades",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4384,7 +4860,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 196,
+      "row_count": 212,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -4415,6 +4891,9 @@
     {
       "table": "janitor_run_log",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4457,6 +4936,9 @@
     {
       "table": "layout_presets",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "name",
       "natural_key": null,
       "unique_constraints": [],
@@ -4508,6 +4990,9 @@
     {
       "table": "lens_scorecard",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4555,6 +5040,9 @@
     {
       "table": "llm_attention_weights",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4596,7 +5084,10 @@
     },
     {
       "table": "llm_audit_logs",
-      "shape": "mutable",
+      "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4607,20 +5098,19 @@
         "alter_table": 5,
         "create_index": 8,
         "create_table": 3,
-        "delete": 1,
         "insert": 1,
         "join": 4,
-        "select": 37
+        "select": 30
       },
       "ref_counts": {
         "service_writers": 1,
         "service_readers": 21,
         "client_writers": 0,
         "client_readers": 6,
-        "script_refs": 26,
+        "script_refs": 18,
         "external_refs": 5
       },
-      "row_count": 16912,
+      "row_count": 16926,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -4631,7 +5121,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/services/rlm_audit.py:92:insert"
+        "trading-service/app/services/rlm_audit.py:102:insert"
       ],
       "service_readers": [
         "trading-service/app/cognition/evaluation/judge_agent.py:235:select",
@@ -4673,7 +5163,6 @@
         "trading-client/scripts/db_utils/audit_logs.py:10:select",
         "trading-client/scripts/diagnose_cycle_v2.py:228:select",
         "trading-client/scripts/pipeline/auto_evaluate.py:18:select",
-        "trading-client/scripts/purge_penny_stocks.py:89:delete",
         "trading-client/scripts/run_audit.py:15:select",
         "trading-client/scripts/run_audit.py:26:select",
         "trading-client/scripts/run_audit.py:43:select",
@@ -4681,10 +5170,9 @@
         "trading-client/scripts/run_audit.py:8:select",
         "trading-client/tools/audit_hallucination.py:30:select",
         "trading-client/tools/audit_hallucination.py:44:select",
-        "trading-service/scripts/debug/diagnose_pipeline.py:100:select",
-        "trading-service/scripts/debug/diagnose_pipeline.py:127:select",
-        "trading-service/scripts/debug/query_llm_calls.py:12:select",
-        "trading-service/scripts/debug/query_llm_calls.py:26:select"
+        "trading-service/scripts/jetson_benchmark.py:162:select",
+        "trading-service/scripts/pg_to_mongo_backfill.py:129:select",
+        "trading-service/scripts/verify_shipped.py:305:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:1812:create_index",
@@ -4695,8 +5183,49 @@
       ]
     },
     {
+      "table": "llm_traces",
+      "shape": "unreferenced",
+      "scope_basis": "retired",
+      "scope_evidence": "last write 2026-06-25, zero code references (replay-only archive)",
+      "owner": "trading-service",
+      "key_field": "id",
+      "natural_key": null,
+      "unique_constraints": [],
+      "numeric_policy": "float",
+      "mode_now": "pg",
+      "wave": null,
+      "signals": {},
+      "ref_counts": {
+        "service_writers": 0,
+        "service_readers": 0,
+        "client_writers": 0,
+        "client_readers": 0,
+        "script_refs": 0,
+        "external_refs": 0
+      },
+      "row_count": 21454,
+      "backfilled_at": null,
+      "field_verified_at": null,
+      "promoted_dual": null,
+      "promoted_mongo_read": null,
+      "promoted_mongo": null,
+      "archived_at": null,
+      "dropped_at": null,
+      "archive_file": null,
+      "disposition": "archive-only",
+      "service_writers": [],
+      "service_readers": [],
+      "client_writers": [],
+      "client_readers": [],
+      "script_refs": [],
+      "external_refs": []
+    },
+    {
       "table": "lot_closures",
       "shape": "money",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "closure_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4706,7 +5235,6 @@
       "signals": {
         "create_index": 4,
         "create_table": 3,
-        "delete": 1,
         "insert": 1,
         "select": 4
       },
@@ -4715,7 +5243,7 @@
         "service_readers": 7,
         "client_writers": 0,
         "client_readers": 1,
-        "script_refs": 1,
+        "script_refs": 0,
         "external_refs": 3
       },
       "row_count": 20,
@@ -4729,14 +5257,14 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/trading/paper_trader.py:953:insert"
+        "trading-service/app/trading/paper_trader.py:979:insert"
       ],
       "service_readers": [
         "trading-service/app/db/migrations.py:2073:create_table",
         "trading-service/app/db/schema_pg.sql:496:create_table",
         "trading-service/app/db/schema_pg.sql:516:create_index",
         "trading-service/app/db/schema_pg.sql:517:create_index",
-        "trading-service/app/trading/paper_trader.py:1066:select",
+        "trading-service/app/trading/paper_trader.py:1113:select",
         "trading-service/app/trading/portfolio.py:428:select",
         "trading-service/app/trading/portfolio_drawdown.py:36:select"
       ],
@@ -4744,9 +5272,7 @@
       "client_readers": [
         "trading-client/app/services/portfolio.py:390:select"
       ],
-      "script_refs": [
-        "trading-client/scripts/reset_for_test.py:51:delete"
-      ],
+      "script_refs": [],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:423:create_table",
         "postgres-service/scripts/schema_pg.sql:443:create_index",
@@ -4756,6 +5282,9 @@
     {
       "table": "macro_indicators",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "indicator, date, country",
       "natural_key": null,
       "unique_constraints": [],
@@ -4823,6 +5352,9 @@
     {
       "table": "market_regime",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "date",
       "natural_key": null,
       "unique_constraints": [],
@@ -4842,7 +5374,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 100,
+      "row_count": 101,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -4874,6 +5406,9 @@
     {
       "table": "market_snapshots",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, fetched_at",
       "natural_key": null,
       "unique_constraints": [],
@@ -4893,7 +5428,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 1002,
+      "row_count": 1009,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -4924,6 +5459,9 @@
     {
       "table": "memory_usage_logs",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4963,6 +5501,9 @@
     {
       "table": "model_shadow_runs",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -4985,7 +5526,7 @@
         "script_refs": 3,
         "external_refs": 0
       },
-      "row_count": 112,
+      "row_count": 120,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5021,6 +5562,9 @@
     {
       "table": "monitored_subreddits",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": "subreddit",
       "unique_constraints": [
@@ -5074,6 +5618,9 @@
     {
       "table": "morning_briefings",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5120,6 +5667,9 @@
     {
       "table": "news_articles",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5133,7 +5683,7 @@
         "delete": 2,
         "insert": 1,
         "insert_ignore": 6,
-        "select": 70,
+        "select": 68,
         "update": 11
       },
       "ref_counts": {
@@ -5141,10 +5691,10 @@
         "service_readers": 39,
         "client_writers": 6,
         "client_readers": 30,
-        "script_refs": 23,
+        "script_refs": 21,
         "external_refs": 3
       },
-      "row_count": 87853,
+      "row_count": 89665,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5157,9 +5707,9 @@
       "service_writers": [
         "trading-service/app/collectors/news_api_rotator.py:263:insert_ignore",
         "trading-service/app/collectors/news_api_rotator.py:294:insert_ignore",
-        "trading-service/app/collectors/news_collector.py:1101:insert_ignore",
-        "trading-service/app/collectors/news_collector.py:642:insert_ignore",
-        "trading-service/app/collectors/news_collector.py:942:insert_ignore",
+        "trading-service/app/collectors/news_collector.py:1122:insert_ignore",
+        "trading-service/app/collectors/news_collector.py:667:insert_ignore",
+        "trading-service/app/collectors/news_collector.py:963:insert_ignore",
         "trading-service/app/services/logging/pending_review.py:121:update",
         "trading-service/app/services/logging/pending_review.py:75:update",
         "trading-service/app/services/logging/pending_review.py:92:update",
@@ -5186,7 +5736,7 @@
         "trading-service/app/services/discovery_mode.py:83:select",
         "trading-service/app/services/flash_briefing.py:167:select",
         "trading-service/app/services/flash_briefing.py:95:select",
-        "trading-service/app/services/freshness_gate.py:237:select"
+        "trading-service/app/services/freshness_gate.py:247:select"
       ],
       "client_writers": [
         "trading-client/app/routers/archive.py:230:insert_ignore",
@@ -5236,9 +5786,9 @@
         "trading-client/scripts/audit_data.py:50:select",
         "trading-client/scripts/check_sources.py:31:select",
         "trading-client/scripts/check_ticker_data.py:12:select",
-        "trading-client/scripts/reset_for_test.py:134:select",
+        "trading-client/scripts/reset_for_test.py:151:select",
         "trading-service/scripts/cycle_healthcheck.py:183:select",
-        "trading-service/scripts/debug/query_discards.py:6:select"
+        "trading-service/scripts/news_attribution_ab.py:164:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:172:create_table",
@@ -5249,6 +5799,9 @@
     {
       "table": "ontology_edges",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5271,7 +5824,7 @@
         "script_refs": 2,
         "external_refs": 3
       },
-      "row_count": 16556,
+      "row_count": 16602,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5320,6 +5873,9 @@
     {
       "table": "ontology_nodes",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5341,7 +5897,7 @@
         "script_refs": 2,
         "external_refs": 3
       },
-      "row_count": 13739,
+      "row_count": 13788,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5397,6 +5953,9 @@
     {
       "table": "orders",
       "shape": "money",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5406,7 +5965,7 @@
       "signals": {
         "create_index": 2,
         "create_table": 3,
-        "delete": 2,
+        "delete": 1,
         "insert": 3,
         "select": 12
       },
@@ -5415,10 +5974,10 @@
         "service_readers": 4,
         "client_writers": 0,
         "client_readers": 2,
-        "script_refs": 10,
+        "script_refs": 9,
         "external_refs": 2
       },
-      "row_count": 54,
+      "row_count": 55,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5431,7 +5990,7 @@
       "service_writers": [
         "trading-service/app/db/migrations.py:657:delete",
         "trading-service/app/services/bot_manager.py:531:insert",
-        "trading-service/app/trading/paper_trader.py:1022:insert",
+        "trading-service/app/trading/paper_trader.py:1048:insert",
         "trading-service/app/trading/paper_trader.py:712:insert"
       ],
       "service_readers": [
@@ -5454,7 +6013,6 @@
         "trading-client/scripts/debug_positions.py:107:select",
         "trading-client/scripts/debug_positions.py:198:select",
         "trading-client/scripts/debug_positions.py:95:select",
-        "trading-client/scripts/reset_for_test.py:38:delete",
         "trading-client/tools/audit_executions.py:27:select"
       ],
       "external_refs": [
@@ -5465,6 +6023,9 @@
     {
       "table": "pending_approvals",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5517,6 +6078,9 @@
     {
       "table": "pending_evolution_fixes",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5571,6 +6135,9 @@
     {
       "table": "pipeline_events",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5581,17 +6148,17 @@
         "create_index": 4,
         "create_table": 3,
         "insert": 3,
-        "select": 49
+        "select": 43
       },
       "ref_counts": {
         "service_writers": 3,
         "service_readers": 11,
         "client_writers": 0,
         "client_readers": 7,
-        "script_refs": 35,
+        "script_refs": 29,
         "external_refs": 3
       },
-      "row_count": 371701,
+      "row_count": 372727,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5602,7 +6169,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/services/pipeline_state.py:107:insert",
+        "trading-service/app/services/pipeline_state.py:134:insert",
         "trading-service/app/services/result_saver.py:111:insert",
         "trading-service/app/v3/battle_royale.py:262:insert"
       ],
@@ -5616,8 +6183,8 @@
         "trading-service/app/routers/cycle_replay_router.py:111:select",
         "trading-service/app/routers/cycle_replay_router.py:68:select",
         "trading-service/app/routers/cycle_replay_router.py:92:select",
-        "trading-service/app/services/pipeline_service.py:759:select",
-        "trading-service/app/services/pipeline_state.py:171:select"
+        "trading-service/app/services/pipeline_service.py:758:select",
+        "trading-service/app/services/pipeline_state.py:230:select"
       ],
       "client_writers": [],
       "client_readers": [
@@ -5660,6 +6227,9 @@
     {
       "table": "pipeline_profiler",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5709,6 +6279,9 @@
     {
       "table": "pipeline_state",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "singleton_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5718,9 +6291,8 @@
       "signals": {
         "create_index": 2,
         "create_table": 3,
-        "delete": 1,
-        "select": 51,
-        "update": 7,
+        "select": 37,
+        "update": 4,
         "upsert": 1
       },
       "ref_counts": {
@@ -5728,7 +6300,7 @@
         "service_readers": 9,
         "client_writers": 0,
         "client_readers": 5,
-        "script_refs": 47,
+        "script_refs": 29,
         "external_refs": 2
       },
       "row_count": 1,
@@ -5743,7 +6315,7 @@
       "disposition": "migrate",
       "service_writers": [
         "trading-service/app/services/boot_service.py:245:update",
-        "trading-service/app/services/pipeline_state.py:25:upsert"
+        "trading-service/app/services/pipeline_state.py:52:upsert"
       ],
       "service_readers": [
         "trading-service/.claude/hooks/_check_cycle_running.py:18:select",
@@ -5753,7 +6325,7 @@
         "trading-service/app/services/cycle_scheduler.py:1789:select",
         "trading-service/app/services/cycle_scheduler.py:228:select",
         "trading-service/app/services/news_backfill.py:135:select",
-        "trading-service/app/services/pipeline_state.py:146:select",
+        "trading-service/app/services/pipeline_state.py:198:select",
         "trading-service/app/services/watch_desk.py:729:select"
       ],
       "client_writers": [],
@@ -5773,18 +6345,18 @@
         "trading-client/scripts/diagnose_cycle_v2.py:34:select",
         "trading-client/scripts/explore_trades.py:7:select",
         "trading-client/scripts/quick_status.py:14:select",
-        "trading-client/scripts/reset_for_test.py:90:delete",
-        "trading-service/scripts/_archive/check_pipeline_state2.py:7:select",
-        "trading-service/scripts/_archive/fix_pipeline_state.py:8:update",
-        "trading-service/scripts/_archive/fix_state.py:4:update",
-        "trading-service/scripts/_archive/scratch_query_state.py:7:select",
-        "trading-service/scripts/_archive/scratch_trigger_and_poll.py:65:select",
         "trading-service/scripts/bench_stage.py:102:select",
         "trading-service/scripts/canary_loop.py:56:select",
         "trading-service/scripts/check_db.py:14:select",
         "trading-service/scripts/check_pipeline_state.py:9:select",
         "trading-service/scripts/clear_db.py:7:update",
-        "trading-service/scripts/cycle_audit.py:446:select"
+        "trading-service/scripts/cycle_audit.py:446:select",
+        "trading-service/scripts/cycle_healthcheck.py:126:select",
+        "trading-service/scripts/cycle_healthcheck.py:253:select",
+        "trading-service/scripts/db_audit.py:33:select",
+        "trading-service/scripts/db_audit.py:34:select",
+        "trading-service/scripts/deploy_preflight.py:64:select",
+        "trading-service/scripts/fix_db.py:5:update"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:1520:create_table",
@@ -5794,6 +6366,9 @@
     {
       "table": "portfolio_snapshots",
       "shape": "money",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5814,7 +6389,7 @@
         "script_refs": 3,
         "external_refs": 1
       },
-      "row_count": 35,
+      "row_count": 36,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5854,6 +6429,9 @@
     {
       "table": "position_lots",
       "shape": "money",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "lot_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -5863,7 +6441,7 @@
       "signals": {
         "create_index": 6,
         "create_table": 3,
-        "delete": 2,
+        "delete": 1,
         "insert": 3,
         "select": 9,
         "update": 1
@@ -5873,10 +6451,10 @@
         "service_readers": 9,
         "client_writers": 0,
         "client_readers": 3,
-        "script_refs": 4,
+        "script_refs": 3,
         "external_refs": 4
       },
-      "row_count": 43,
+      "row_count": 44,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5889,8 +6467,8 @@
       "service_writers": [
         "trading-service/app/db/migrations.py:653:delete",
         "trading-service/app/services/bot_manager.py:551:insert",
-        "trading-service/app/trading/paper_trader.py:747:insert",
-        "trading-service/app/trading/paper_trader.py:976:update"
+        "trading-service/app/trading/paper_trader.py:1002:update",
+        "trading-service/app/trading/paper_trader.py:747:insert"
       ],
       "service_readers": [
         "trading-service/app/db/migrations.py:2058:create_table",
@@ -5898,7 +6476,7 @@
         "trading-service/app/db/schema_pg.sql:513:create_index",
         "trading-service/app/db/schema_pg.sql:514:create_index",
         "trading-service/app/db/schema_pg.sql:515:create_index",
-        "trading-service/app/trading/paper_trader.py:900:select",
+        "trading-service/app/trading/paper_trader.py:926:select",
         "trading-service/app/trading/portfolio.py:382:select",
         "trading-service/app/trading/portfolio.py:391:select",
         "trading-service/app/trading/portfolio.py:483:select"
@@ -5912,8 +6490,7 @@
       "script_refs": [
         "trading-client/scripts/backfill_lots.py:49:select",
         "trading-client/scripts/backfill_lots.py:89:insert",
-        "trading-client/scripts/debug_positions.py:138:select",
-        "trading-client/scripts/reset_for_test.py:45:delete"
+        "trading-client/scripts/debug_positions.py:138:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:409:create_table",
@@ -5925,6 +6502,9 @@
     {
       "table": "positions",
       "shape": "money",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -5937,7 +6517,7 @@
         "alter_table": 1,
         "create_index": 3,
         "create_table": 3,
-        "delete": 4,
+        "delete": 3,
         "insert": 2,
         "select": 30,
         "update": 4
@@ -5947,10 +6527,10 @@
         "service_readers": 22,
         "client_writers": 0,
         "client_readers": 1,
-        "script_refs": 13,
+        "script_refs": 12,
         "external_refs": 2
       },
-      "row_count": 15,
+      "row_count": 16,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -5965,11 +6545,11 @@
         "trading-service/app/db/migrations.py:645:delete",
         "trading-service/app/services/bot_manager.py:506:update",
         "trading-service/app/services/bot_manager.py:513:insert",
-        "trading-service/app/trading/paper_trader.py:1008:update",
-        "trading-service/app/trading/paper_trader.py:1328:update",
+        "trading-service/app/trading/paper_trader.py:1025:delete",
+        "trading-service/app/trading/paper_trader.py:1034:update",
+        "trading-service/app/trading/paper_trader.py:1375:update",
         "trading-service/app/trading/paper_trader.py:681:update",
-        "trading-service/app/trading/paper_trader.py:690:insert",
-        "trading-service/app/trading/paper_trader.py:999:delete"
+        "trading-service/app/trading/paper_trader.py:690:insert"
       ],
       "service_readers": [
         "trading-service/app/data/sp500_price_collector.py:47:select",
@@ -5986,9 +6566,9 @@
         "trading-service/app/services/flash_briefing.py:28:select",
         "trading-service/app/services/watch_desk.py:72:select",
         "trading-service/app/tools/portfolio_tools.py:55:select",
-        "trading-service/app/trading/paper_trader.py:1131:select",
-        "trading-service/app/trading/paper_trader.py:1227:select",
-        "trading-service/app/trading/paper_trader.py:1306:select",
+        "trading-service/app/trading/paper_trader.py:1178:select",
+        "trading-service/app/trading/paper_trader.py:1274:select",
+        "trading-service/app/trading/paper_trader.py:1353:select",
         "trading-service/app/trading/paper_trader.py:387:select",
         "trading-service/app/trading/paper_trader.py:563:select",
         "trading-service/app/trading/paper_trader.py:658:select"
@@ -6007,9 +6587,8 @@
         "trading-client/scripts/debug_positions.py:201:select",
         "trading-client/scripts/debug_positions.py:64:select",
         "trading-client/scripts/debug_positions.py:81:select",
-        "trading-client/scripts/reset_everything.py:61:select",
-        "trading-client/scripts/reset_for_test.py:124:select",
-        "trading-client/scripts/reset_for_test.py:31:delete",
+        "trading-client/scripts/reset_everything.py:82:select",
+        "trading-client/scripts/reset_for_test.py:141:select",
         "trading-client/scripts/verify_fixes.py:46:select"
       ],
       "external_refs": [
@@ -6020,6 +6599,9 @@
     {
       "table": "price_backfill_progress",
       "shape": "timeseries",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -6067,6 +6649,9 @@
     {
       "table": "price_history",
       "shape": "timeseries",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, date, source",
       "natural_key": null,
       "unique_constraints": [],
@@ -6089,7 +6674,7 @@
         "script_refs": 28,
         "external_refs": 2
       },
-      "row_count": 15754427,
+      "row_count": 15755628,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -6156,9 +6741,9 @@
         "trading-client/scripts/check_ticker_data.py:9:select",
         "trading-client/scripts/debug_positions.py:166:select",
         "trading-client/scripts/diag_sp500.py:47:select",
-        "trading-client/scripts/purge_penny_stocks.py:32:select",
-        "trading-client/scripts/purge_penny_stocks.py:46:select",
-        "trading-client/scripts/reset_for_test.py:131:select",
+        "trading-client/scripts/purge_penny_stocks.py:57:select",
+        "trading-client/scripts/purge_penny_stocks.py:73:select",
+        "trading-client/scripts/reset_for_test.py:148:select",
         "trading-service/scripts/audit_ticker_blocklist.py:109:select",
         "trading-service/scripts/audit_ticker_blocklist.py:112:select",
         "trading-service/scripts/confidence_audit.py:101:select",
@@ -6180,6 +6765,9 @@
     {
       "table": "price_triggers",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6200,7 +6788,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 1560,
+      "row_count": 1582,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -6240,6 +6828,9 @@
     {
       "table": "procedural_memory",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6261,7 +6852,7 @@
         "script_refs": 0,
         "external_refs": 2
       },
-      "row_count": 103,
+      "row_count": 107,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -6295,6 +6886,9 @@
     {
       "table": "prompt_templates",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6334,6 +6928,9 @@
     {
       "table": "prospective_memory",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6388,6 +6985,9 @@
     {
       "table": "put_call_ratio",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "symbol, date",
       "natural_key": null,
       "unique_constraints": [],
@@ -6407,7 +7007,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 25,
+      "row_count": 26,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -6433,6 +7033,9 @@
     {
       "table": "quant_equation_library",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": "name",
       "unique_constraints": [
@@ -6489,6 +7092,9 @@
     {
       "table": "rag_ab_results",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6543,6 +7149,9 @@
     {
       "table": "reddit_posts",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6555,17 +7164,17 @@
         "create_table": 3,
         "delete": 1,
         "insert_ignore": 2,
-        "select": 19
+        "select": 17
       },
       "ref_counts": {
         "service_writers": 1,
         "service_readers": 14,
         "client_writers": 2,
         "client_readers": 14,
-        "script_refs": 5,
+        "script_refs": 3,
         "external_refs": 2
       },
-      "row_count": 333,
+      "row_count": 339,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -6576,7 +7185,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/collectors/reddit_collector.py:375:insert_ignore"
+        "trading-service/app/collectors/reddit_collector.py:400:insert_ignore"
       ],
       "service_readers": [
         "trading-service/app/cognition/evidence/packet_builder.py:242:select",
@@ -6584,7 +7193,7 @@
         "trading-service/app/db/schema_pg.sql:1036:create_index",
         "trading-service/app/db/schema_pg.sql:255:create_table",
         "trading-service/app/services/discovery_mode.py:109:select",
-        "trading-service/app/services/pipeline_service.py:1025:select",
+        "trading-service/app/services/pipeline_service.py:1113:select",
         "trading-service/app/utils/db_migrations.py:51:alter_table",
         "trading-service/app/utils/db_migrations.py:52:alter_table",
         "trading-service/app/utils/db_migrations.py:53:alter_table",
@@ -6617,9 +7226,7 @@
       "script_refs": [
         "trading-client/scripts/audit_data.py:16:select",
         "trading-client/scripts/audit_data.py:51:select",
-        "trading-client/scripts/check_sources.py:43:select",
-        "trading-service/scripts/debug/query_discards.py:10:select",
-        "trading-service/scripts/debug/query_fast.py:11:select"
+        "trading-client/scripts/check_sources.py:43:select"
       ],
       "external_refs": [
         "postgres-service/scripts/schema_pg.sql:203:create_table",
@@ -6629,6 +7236,9 @@
     {
       "table": "regime_hmm_posteriors",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, as_of",
       "natural_key": null,
       "unique_constraints": [],
@@ -6676,6 +7286,9 @@
     {
       "table": "rejected_skill_edits",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6694,7 +7307,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 73,
+      "row_count": 75,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -6719,6 +7332,9 @@
     {
       "table": "rejected_symbols",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6745,7 +7361,7 @@
       "archived_at": null,
       "dropped_at": null,
       "archive_file": null,
-      "disposition": "migrate",
+      "disposition": "absent",
       "service_writers": [],
       "service_readers": [],
       "client_writers": [],
@@ -6760,6 +7376,9 @@
     {
       "table": "research_trials",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "family, label",
       "natural_key": null,
       "unique_constraints": [],
@@ -6807,6 +7426,9 @@
     {
       "table": "rss_feeds",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": "url",
       "unique_constraints": [
@@ -6860,6 +7482,9 @@
     {
       "table": "runtime_parameters",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6910,6 +7535,9 @@
     {
       "table": "scheduler_history",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -6958,6 +7586,9 @@
     {
       "table": "scraper_queue",
       "shape": "queue",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -7026,6 +7657,9 @@
     {
       "table": "scraper_scripts",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "domain",
       "natural_key": null,
       "unique_constraints": [],
@@ -7071,6 +7705,9 @@
     {
       "table": "sec_13f_filers",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "cik",
       "natural_key": null,
       "unique_constraints": [],
@@ -7155,6 +7792,9 @@
     {
       "table": "sec_13f_holdings",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "cik, ticker, filing_quarter",
       "natural_key": null,
       "unique_constraints": [],
@@ -7246,6 +7886,9 @@
     {
       "table": "sec_13f_performance",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "cik",
       "natural_key": null,
       "unique_constraints": [],
@@ -7286,6 +7929,9 @@
     {
       "table": "sector_breadth",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "sector, date",
       "natural_key": null,
       "unique_constraints": [],
@@ -7305,7 +7951,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 516,
+      "row_count": 527,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -7337,6 +7983,9 @@
     {
       "table": "sector_correlations",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "sector_a, sector_b, period",
       "natural_key": null,
       "unique_constraints": [],
@@ -7394,6 +8043,9 @@
     {
       "table": "sector_performance",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "sector, date",
       "natural_key": null,
       "unique_constraints": [],
@@ -7415,7 +8067,7 @@
         "script_refs": 5,
         "external_refs": 2
       },
-      "row_count": 2787,
+      "row_count": 2798,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -7468,6 +8120,9 @@
     {
       "table": "sector_rotation_signals",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -7519,6 +8174,9 @@
     {
       "table": "semantic_memory",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -7573,6 +8231,9 @@
     {
       "table": "shared_desk",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "desk_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -7596,7 +8257,7 @@
         "script_refs": 35,
         "external_refs": 0
       },
-      "row_count": 1726,
+      "row_count": 1741,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -7613,7 +8274,7 @@
       "service_readers": [
         "trading-service/app/autoresearch/core.py:84:select",
         "trading-service/app/autoresearch/outcome_tracker.py:270:select",
-        "trading-service/app/routers/cycle_replay_router.py:637:select",
+        "trading-service/app/routers/cycle_replay_router.py:701:select",
         "trading-service/app/routers/eval_trust_router.py:412:select",
         "trading-service/app/v3/desk_persistence.py:124:select",
         "trading-service/app/v3/desk_persistence.py:154:select",
@@ -7622,8 +8283,8 @@
         "trading-service/app/v3/desk_persistence.py:45:create_index",
         "trading-service/app/v3/desk_persistence.py:50:create_index",
         "trading-service/app/v3/invariants.py:134:select",
-        "trading-service/app/v3/invariants.py:485:select",
-        "trading-service/app/v3/invariants.py:600:select",
+        "trading-service/app/v3/invariants.py:511:select",
+        "trading-service/app/v3/invariants.py:626:select",
         "trading-service/app/v3/reconciliation.py:81:select",
         "trading-service/app/v3/substitute_demand.py:59:select",
         "trading-service/app/v3/wake_pool.py:102:select"
@@ -7659,6 +8320,9 @@
     {
       "table": "shkreli_opinions",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -7708,6 +8372,9 @@
     {
       "table": "simulation_transcripts",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -7747,6 +8414,9 @@
     {
       "table": "smart_money_performance",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "actor_type, actor_id, horizon",
       "natural_key": null,
       "unique_constraints": [],
@@ -7808,6 +8478,9 @@
     {
       "table": "smart_money_trade_scores",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "trade_key",
       "natural_key": null,
       "unique_constraints": [],
@@ -7861,6 +8534,9 @@
     {
       "table": "social_posts",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -7884,7 +8560,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 6100,
+      "row_count": 6247,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -7923,6 +8599,9 @@
     {
       "table": "source_quality_scores",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "publisher",
       "natural_key": null,
       "unique_constraints": [],
@@ -7963,6 +8642,9 @@
     {
       "table": "source_trust",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "source_type, source_name",
       "natural_key": null,
       "unique_constraints": [],
@@ -8001,8 +8683,8 @@
         "trading-service/app/services/logging/pending_review.py:96:update"
       ],
       "service_readers": [
-        "trading-service/app/collectors/news_collector.py:820:select",
-        "trading-service/app/collectors/news_collector.py:990:select",
+        "trading-service/app/collectors/news_collector.py:1011:select",
+        "trading-service/app/collectors/news_collector.py:841:select",
         "trading-service/app/db/migrations.py:2372:create_table",
         "trading-service/app/db/schema_pg.sql:888:create_table",
         "trading-service/app/services/data_flag_service.py:225:select",
@@ -8032,6 +8714,9 @@
     {
       "table": "stable_harnesses",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "target_type, target_name",
       "natural_key": null,
       "unique_constraints": [],
@@ -8074,6 +8759,9 @@
     {
       "table": "stock_commodity_correlations",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, commodity, period",
       "natural_key": null,
       "unique_constraints": [],
@@ -8129,6 +8817,9 @@
     {
       "table": "strategy_candidates",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -8181,6 +8872,9 @@
     {
       "table": "strategy_evaluations",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -8200,7 +8894,7 @@
         "script_refs": 0,
         "external_refs": 1
       },
-      "row_count": 266,
+      "row_count": 274,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -8230,6 +8924,9 @@
     {
       "table": "strategy_performance",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -8252,7 +8949,7 @@
         "script_refs": 0,
         "external_refs": 4
       },
-      "row_count": 2025,
+      "row_count": 2026,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -8292,6 +8989,9 @@
     {
       "table": "sub_task_queue",
       "shape": "queue",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -8331,6 +9031,9 @@
     {
       "table": "subsystem_benchmarks",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -8384,6 +9087,9 @@
     {
       "table": "swarm_scorecards",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -8433,6 +9139,9 @@
     {
       "table": "system_commands",
       "shape": "queue",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -8442,7 +9151,7 @@
       "signals": {
         "create_table": 1,
         "insert": 20,
-        "select": 13,
+        "select": 11,
         "skip_locked": 1,
         "update": 11
       },
@@ -8451,10 +9160,10 @@
         "service_readers": 3,
         "client_writers": 17,
         "client_readers": 5,
-        "script_refs": 9,
+        "script_refs": 7,
         "external_refs": 0
       },
-      "row_count": 1179,
+      "row_count": 1187,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -8474,7 +9183,7 @@
         "trading-service/app/autoresearch/eval_worker.py:73:update",
         "trading-service/app/autoresearch/eval_worker.py:88:update",
         "trading-service/app/services/boot_service.py:253:update",
-        "trading-service/app/services/pipeline_service.py:2256:insert",
+        "trading-service/app/services/pipeline_service.py:2360:insert",
         "trading-service/app/services/research_governor.py:359:insert",
         "trading-service/app/services/research_governor.py:470:insert"
       ],
@@ -8514,8 +9223,6 @@
         "trading-service/scripts/check_db.py:11:select",
         "trading-service/scripts/check_system_cmds.py:7:select",
         "trading-service/scripts/clear_db.py:8:update",
-        "trading-service/scripts/debug/check_cmds.py:7:select",
-        "trading-service/scripts/debug/query_commands.py:4:select",
         "trading-service/scripts/fix_db.py:4:update",
         "trading-service/scripts/query_cmds.py:10:select",
         "trading-service/scripts/test_canary_cmd.py:7:select"
@@ -8525,6 +9232,9 @@
     {
       "table": "taskboard_findings",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -8566,6 +9276,9 @@
     {
       "table": "taskboard_investigations",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -8607,6 +9320,9 @@
     {
       "table": "technicals",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, date",
       "natural_key": null,
       "unique_constraints": [],
@@ -8626,7 +9342,7 @@
         "script_refs": 1,
         "external_refs": 1
       },
-      "row_count": 1368532,
+      "row_count": 1369231,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -8687,6 +9403,9 @@
     {
       "table": "ticker_attention",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -8731,6 +9450,9 @@
     {
       "table": "ticker_bans",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -8789,6 +9511,9 @@
     {
       "table": "ticker_collection_watermarks",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker, source",
       "natural_key": null,
       "unique_constraints": [],
@@ -8828,6 +9553,9 @@
     {
       "table": "ticker_consensus",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -8874,6 +9602,9 @@
     {
       "table": "ticker_correlations",
       "shape": "reference",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker_a, ticker_b, period",
       "natural_key": null,
       "unique_constraints": [],
@@ -8923,6 +9654,9 @@
     {
       "table": "ticker_dossiers",
       "shape": "upsert",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -8942,7 +9676,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 89,
+      "row_count": 93,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -8967,6 +9701,9 @@
     {
       "table": "ticker_health",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -9009,6 +9746,9 @@
     {
       "table": "ticker_metadata",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -9119,6 +9859,9 @@
     {
       "table": "ticker_quarantine",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -9165,6 +9908,9 @@
     {
       "table": "ticker_reports",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [
@@ -9187,7 +9933,7 @@
         "script_refs": 2,
         "external_refs": 0
       },
-      "row_count": 2866,
+      "row_count": 2874,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -9212,13 +9958,16 @@
       ],
       "script_refs": [
         "trading-service/scripts/db_audit.py:24:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:137:select"
+        "trading-service/scripts/pg_to_mongo_backfill.py:134:select"
       ],
       "external_refs": []
     },
     {
       "table": "ticker_user_notes",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -9279,6 +10028,9 @@
     {
       "table": "ticker_watches",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9300,7 +10052,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 731,
+      "row_count": 746,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -9335,6 +10087,9 @@
     {
       "table": "tool_playbook",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9357,7 +10112,7 @@
         "script_refs": 0,
         "external_refs": 2
       },
-      "row_count": 97,
+      "row_count": 99,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -9391,6 +10146,9 @@
     {
       "table": "tool_usage_stats",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9422,8 +10180,8 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/services/logging/tool_logging.py:101:insert",
-        "trading-service/app/tools/registry.py:122:insert"
+        "trading-service/app/services/logging/tool_logging.py:102:insert",
+        "trading-service/app/tools/registry.py:123:insert"
       ],
       "service_readers": [
         "trading-service/app/db/migrations.py:3150:create_table",
@@ -9431,9 +10189,9 @@
         "trading-service/app/db/schema_pg.sql:2262:create_index",
         "trading-service/app/db/schema_pg.sql:2263:create_index",
         "trading-service/app/services/logging/tool_logging.py:83:select",
-        "trading-service/app/services/tool_optimizer.py:447:select",
-        "trading-service/app/services/tool_optimizer.py:67:select",
-        "trading-service/app/v3/invariants.py:356:select"
+        "trading-service/app/services/tool_optimizer.py:117:select",
+        "trading-service/app/services/tool_optimizer.py:547:select",
+        "trading-service/app/v3/invariants.py:382:select"
       ],
       "client_writers": [],
       "client_readers": [
@@ -9460,6 +10218,9 @@
     {
       "table": "trade_fills",
       "shape": "money",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "fill_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9482,7 +10243,7 @@
         "script_refs": 5,
         "external_refs": 4
       },
-      "row_count": 54,
+      "row_count": 55,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -9495,7 +10256,7 @@
       "service_writers": [
         "trading-service/app/db/migrations.py:661:delete",
         "trading-service/app/services/bot_manager.py:539:insert",
-        "trading-service/app/trading/paper_trader.py:1041:insert",
+        "trading-service/app/trading/paper_trader.py:1067:insert",
         "trading-service/app/trading/paper_trader.py:723:insert"
       ],
       "service_readers": [
@@ -9506,7 +10267,7 @@
         "trading-service/app/db/schema_pg.sql:511:create_index",
         "trading-service/app/db/schema_pg.sql:512:create_index",
         "trading-service/app/trading/paper_trader.py:468:select",
-        "trading-service/app/trading/paper_trader.py:818:select",
+        "trading-service/app/trading/paper_trader.py:844:select",
         "trading-service/app/trading/portfolio.py:457:select"
       ],
       "client_writers": [],
@@ -9530,6 +10291,9 @@
     {
       "table": "trade_results",
       "shape": "money",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9543,7 +10307,7 @@
         "delete": 1,
         "insert": 1,
         "join": 3,
-        "select": 18,
+        "select": 17,
         "update": 1
       },
       "ref_counts": {
@@ -9551,10 +10315,10 @@
         "service_readers": 17,
         "client_writers": 0,
         "client_readers": 0,
-        "script_refs": 11,
+        "script_refs": 10,
         "external_refs": 0
       },
-      "row_count": 1051,
+      "row_count": 1065,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -9582,10 +10346,10 @@
         "trading-service/app/routers/cycle_replay_router.py:143:select",
         "trading-service/app/routers/cycle_replay_router.py:178:select",
         "trading-service/app/services/cycle_scheduler.py:1648:select",
-        "trading-service/app/services/pipeline_service.py:1426:select",
+        "trading-service/app/services/pipeline_service.py:1515:select",
         "trading-service/app/v3/invariants.py:138:select",
-        "trading-service/app/v3/invariants.py:389:select",
-        "trading-service/app/v3/invariants.py:597:select",
+        "trading-service/app/v3/invariants.py:415:select",
+        "trading-service/app/v3/invariants.py:623:select",
         "trading-service/app/v3/reconciliation.py:87:select"
       ],
       "client_writers": [],
@@ -9598,7 +10362,6 @@
         "trading-service/scripts/cycle_audit.py:236:select",
         "trading-service/scripts/gate_ablation.py:185:join",
         "trading-service/scripts/hold_wall_report.py:226:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:132:select",
         "trading-service/scripts/simplification_baseline.py:69:select",
         "trading-service/scripts/simplification_baseline.py:74:select",
         "trading-service/scripts/simplification_baseline.py:79:select"
@@ -9608,6 +10371,9 @@
     {
       "table": "trading_constitution",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9617,14 +10383,14 @@
       "signals": {
         "create_table": 1,
         "insert_ignore": 1,
-        "select": 3
+        "select": 2
       },
       "ref_counts": {
         "service_writers": 1,
         "service_readers": 3,
         "client_writers": 0,
         "client_readers": 0,
-        "script_refs": 1,
+        "script_refs": 0,
         "external_refs": 0
       },
       "row_count": 7,
@@ -9647,14 +10413,15 @@
       ],
       "client_writers": [],
       "client_readers": [],
-      "script_refs": [
-        "trading-service/scripts/_archive/scratch_query.py:7:select"
-      ],
+      "script_refs": [],
       "external_refs": []
     },
     {
       "table": "user_constraints",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9697,6 +10464,9 @@
     {
       "table": "user_data",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9742,6 +10512,9 @@
     {
       "table": "user_feedback",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9807,6 +10580,9 @@
     {
       "table": "user_intents",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9825,7 +10601,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 131,
+      "row_count": 139,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -9849,6 +10625,9 @@
     {
       "table": "user_notes",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9891,6 +10670,9 @@
     {
       "table": "v3_agent_telemetry",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9902,17 +10684,17 @@
         "create_index": 3,
         "create_table": 1,
         "insert": 1,
-        "select": 15
+        "select": 13
       },
       "ref_counts": {
         "service_writers": 1,
-        "service_readers": 22,
+        "service_readers": 21,
         "client_writers": 0,
         "client_readers": 1,
-        "script_refs": 6,
+        "script_refs": 5,
         "external_refs": 0
       },
-      "row_count": 7243,
+      "row_count": 7413,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -9926,14 +10708,13 @@
         "trading-service/app/v3/telemetry.py:231:insert"
       ],
       "service_readers": [
-        "trading-service/app/autoresearch/outcome_tracker.py:361:select",
-        "trading-service/app/quant/strategy_health.py:57:select",
-        "trading-service/app/routers/cycle_replay_router.py:301:select",
-        "trading-service/app/routers/cycle_replay_router.py:313:select",
-        "trading-service/app/routers/cycle_replay_router.py:418:select",
-        "trading-service/app/routers/cycle_replay_router.py:503:select",
-        "trading-service/app/routers/cycle_replay_router.py:667:select",
-        "trading-service/app/v3/invariants.py:425:select",
+        "trading-service/app/autoresearch/outcome_tracker.py:376:select",
+        "trading-service/app/quant/strategy_health.py:72:select",
+        "trading-service/app/routers/cycle_replay_router.py:195:select",
+        "trading-service/app/routers/cycle_replay_router.py:223:select",
+        "trading-service/app/routers/cycle_replay_router.py:232:select",
+        "trading-service/app/routers/cycle_replay_router.py:260:select",
+        "trading-service/app/v3/invariants.py:451:select",
         "trading-service/app/v3/telemetry.py:102:create_index",
         "trading-service/app/v3/telemetry.py:106:create_index",
         "trading-service/app/v3/telemetry.py:110:create_index",
@@ -9945,7 +10726,8 @@
         "trading-service/app/v3/telemetry.py:66:alter_table",
         "trading-service/app/v3/telemetry.py:75:alter_table",
         "trading-service/app/v3/telemetry.py:76:alter_table",
-        "trading-service/app/v3/telemetry.py:95:alter_table"
+        "trading-service/app/v3/telemetry.py:95:alter_table",
+        "trading-service/app/v3/telemetry.py:96:alter_table"
       ],
       "client_writers": [],
       "client_readers": [
@@ -9955,7 +10737,6 @@
         "trading-service/scripts/cycle_audit.py:212:select",
         "trading-service/scripts/inflight_peak.py:94:select",
         "trading-service/scripts/jetson_benchmark.py:168:select",
-        "trading-service/scripts/pg_to_mongo_backfill.py:120:select",
         "trading-service/scripts/simplification_baseline.py:132:select",
         "trading-service/scripts/tool_audit.py:120:select"
       ],
@@ -9964,6 +10745,9 @@
     {
       "table": "v3_guardrail_firings",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -9985,7 +10769,7 @@
         "script_refs": 3,
         "external_refs": 0
       },
-      "row_count": 417,
+      "row_count": 446,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -10018,6 +10802,9 @@
     {
       "table": "v3_invariant_violations",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10064,6 +10851,9 @@
     {
       "table": "v3_research_queues",
       "shape": "queue",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10085,7 +10875,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 82,
+      "row_count": 87,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -10119,6 +10909,9 @@
     {
       "table": "v3_system_commands",
       "shape": "queue",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10128,8 +10921,8 @@
       "signals": {
         "create_index": 1,
         "create_table": 2,
-        "insert": 20,
-        "select": 18,
+        "insert": 18,
+        "select": 16,
         "skip_locked": 2,
         "update": 11
       },
@@ -10138,10 +10931,10 @@
         "service_readers": 11,
         "client_writers": 12,
         "client_readers": 3,
-        "script_refs": 18,
+        "script_refs": 14,
         "external_refs": 0
       },
-      "row_count": 822,
+      "row_count": 829,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -10157,11 +10950,11 @@
         "trading-service/app/services/cycle_scheduler.py:235:insert",
         "trading-service/app/services/research_governor.py:176:insert",
         "trading-service/app/services/watch_desk.py:747:insert",
-        "trading-service/cycle_main.py:104:update",
-        "trading-service/cycle_main.py:141:update",
-        "trading-service/cycle_main.py:209:update",
-        "trading-service/cycle_main.py:219:update",
-        "trading-service/cycle_main.py:226:update"
+        "trading-service/cycle_main.py:127:update",
+        "trading-service/cycle_main.py:183:update",
+        "trading-service/cycle_main.py:264:update",
+        "trading-service/cycle_main.py:279:update",
+        "trading-service/cycle_main.py:291:update"
       ],
       "service_readers": [
         "trading-service/app/db/migrations.py:1170:create_table",
@@ -10171,10 +10964,10 @@
         "trading-service/app/services/research_governor.py:149:select",
         "trading-service/app/services/research_governor.py:389:select",
         "trading-service/app/services/watch_desk.py:565:select",
-        "trading-service/cycle_main.py:100:skip_locked",
-        "trading-service/cycle_main.py:132:select",
-        "trading-service/cycle_main.py:135:skip_locked",
-        "trading-service/cycle_main.py:98:select"
+        "trading-service/cycle_main.py:121:select",
+        "trading-service/cycle_main.py:123:skip_locked",
+        "trading-service/cycle_main.py:174:select",
+        "trading-service/cycle_main.py:177:skip_locked"
       ],
       "client_writers": [
         "trading-client/app/routers/dashboard.py:383:insert",
@@ -10196,10 +10989,6 @@
         "trading-client/app/routers/pipeline.py:455:select"
       ],
       "script_refs": [
-        "trading-service/scripts/_archive/scratch_trigger_and_poll.py:30:insert",
-        "trading-service/scripts/_archive/scratch_trigger_and_poll.py:40:select",
-        "trading-service/scripts/_archive/scratch_trigger_command.py:22:insert",
-        "trading-service/scripts/_archive/scratch_trigger_command.py:30:select",
         "trading-service/scripts/canary_loop.py:34:insert",
         "trading-service/scripts/canary_loop.py:44:select",
         "trading-service/scripts/clear_db.py:9:update",
@@ -10220,6 +11009,9 @@
     {
       "table": "variance_runs",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10264,6 +11056,9 @@
     {
       "table": "watch_events",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10286,7 +11081,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 187,
+      "row_count": 193,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -10317,6 +11112,9 @@
     {
       "table": "watchlist",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "ticker",
       "natural_key": null,
       "unique_constraints": [],
@@ -10328,15 +11126,14 @@
         "create_table": 3,
         "insert": 5,
         "select": 37,
-        "update": 17,
-        "upsert": 1
+        "update": 16
       },
       "ref_counts": {
         "service_writers": 9,
         "service_readers": 23,
         "client_writers": 9,
         "client_readers": 12,
-        "script_refs": 14,
+        "script_refs": 12,
         "external_refs": 4
       },
       "row_count": 212,
@@ -10411,14 +11208,12 @@
         "trading-client/scripts/audit_data.py:70:select",
         "trading-client/scripts/check_portfolio.py:13:select",
         "trading-client/scripts/evolve.py:106:select",
-        "trading-client/scripts/reset_everything.py:64:select",
-        "trading-client/scripts/reset_for_test.py:114:select",
-        "trading-client/scripts/reset_for_test.py:69:update",
-        "trading-client/scripts/reset_for_test.py:75:select",
+        "trading-client/scripts/reset_everything.py:85:select",
+        "trading-client/scripts/reset_for_test.py:131:select",
         "trading-client/scripts/reset_for_test.py:78:update",
-        "trading-client/scripts/reset_for_test.py:81:insert",
-        "trading-service/scripts/_archive/fix_state.py:5:update",
-        "trading-service/scripts/_archive/fix_state.py:6:upsert",
+        "trading-client/scripts/reset_for_test.py:84:select",
+        "trading-client/scripts/reset_for_test.py:87:update",
+        "trading-client/scripts/reset_for_test.py:90:insert",
         "trading-service/scripts/simulate_freshness_thresholds.py:38:select",
         "trading-service/scripts/simulate_freshness_thresholds.py:39:select",
         "trading-service/scripts/trigger_cycle.py:44:select"
@@ -10433,6 +11228,9 @@
     {
       "table": "watchlist_curation_log",
       "shape": "unreferenced",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10472,6 +11270,9 @@
     {
       "table": "whiteboard_annotations",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10508,7 +11309,7 @@
         "trading-service/app/agents/whiteboard.py:225:select",
         "trading-service/app/agents/whiteboard.py:326:select",
         "trading-service/app/db/init_db.py:173:create_table",
-        "trading-service/app/routers/cycle_replay_router.py:812:select"
+        "trading-service/app/routers/cycle_replay_router.py:857:select"
       ],
       "client_writers": [],
       "client_readers": [],
@@ -10518,6 +11319,9 @@
     {
       "table": "whiteboard_entries",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10540,7 +11344,7 @@
         "script_refs": 0,
         "external_refs": 0
       },
-      "row_count": 3215,
+      "row_count": 3158,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -10564,7 +11368,7 @@
         "trading-service/app/agents/whiteboard.py:297:select",
         "trading-service/app/agents/whiteboard.py:327:join",
         "trading-service/app/db/init_db.py:153:create_table",
-        "trading-service/app/routers/cycle_replay_router.py:791:select",
+        "trading-service/app/routers/cycle_replay_router.py:836:select",
         "trading-service/app/v3/battle_royale.py:124:select"
       ],
       "client_writers": [],
@@ -10575,6 +11379,9 @@
     {
       "table": "worklist_shadow_runs",
       "shape": "append",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10594,7 +11401,7 @@
         "script_refs": 2,
         "external_refs": 0
       },
-      "row_count": 84,
+      "row_count": 92,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -10621,6 +11428,9 @@
     {
       "table": "youtube_channels",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "channel_handle",
       "natural_key": null,
       "unique_constraints": [],
@@ -10657,7 +11467,7 @@
       ],
       "service_readers": [
         "trading-service/app/collectors/youtube_collector.py:218:select",
-        "trading-service/app/collectors/youtube_collector.py:475:select",
+        "trading-service/app/collectors/youtube_collector.py:495:select",
         "trading-service/app/collectors/youtube_collector.py:58:select",
         "trading-service/app/db/migrations.py:2486:create_table",
         "trading-service/app/db/schema_pg.sql:1040:create_table"
@@ -10679,6 +11489,9 @@
     {
       "table": "youtube_transcripts",
       "shape": "mutable",
+      "scope_basis": "manifest",
+      "scope_evidence": null,
+      "owner": null,
       "key_field": "video_id",
       "natural_key": null,
       "unique_constraints": [],
@@ -10701,7 +11514,7 @@
         "script_refs": 3,
         "external_refs": 1
       },
-      "row_count": 10382,
+      "row_count": 10473,
       "backfilled_at": null,
       "field_verified_at": null,
       "promoted_dual": null,
@@ -10712,7 +11525,7 @@
       "archive_file": null,
       "disposition": "migrate",
       "service_writers": [
-        "trading-service/app/collectors/youtube_collector.py:319:insert_ignore"
+        "trading-service/app/collectors/youtube_collector.py:339:insert_ignore"
       ],
       "service_readers": [
         "trading-service/app/cognition/evidence/packet_builder.py:265:select",
@@ -10720,7 +11533,7 @@
         "trading-service/app/db/migrations.py:1881:create_table",
         "trading-service/app/db/schema_pg.sql:277:create_table",
         "trading-service/app/services/cycle_scheduler.py:1537:join",
-        "trading-service/app/services/pipeline_service.py:1030:select",
+        "trading-service/app/services/pipeline_service.py:1119:select",
         "trading-service/app/services/web_search.py:239:select",
         "trading-service/app/services/web_search.py:250:select",
         "trading-service/app/utils/db_migrations.py:44:alter_table",
@@ -10764,75 +11577,6 @@
     }
   ],
   "foreign_tables": [
-    {
-      "table": "agent_registry",
-      "owner": "UNCLASSIFIED",
-      "owner_basis": "matches neither the manifest nor any positive owner list",
-      "inferred_owner": "trading-client",
-      "evidence": [
-        "trading-client/app/client_agents/agent_pool.py:109:select",
-        "trading-client/app/client_agents/agent_pool.py:218:select",
-        "trading-client/app/client_agents/agent_pool.py:222:update",
-        "trading-client/app/client_agents/base_agent.py:102:update",
-        "trading-client/app/client_agents/base_agent.py:49:select",
-        "trading-client/app/client_agents/base_agent.py:75:upsert",
-        "trading-client/app/routers/cognition.py:213:select",
-        "trading-client/app/routers/cognition.py:99:select",
-        "trading-client/app/routers/pipeline.py:211:select"
-      ],
-      "evidence_count": 9,
-      "row_count": 1,
-      "disposition": "hold"
-    },
-    {
-      "table": "agent_tasks",
-      "owner": "UNCLASSIFIED",
-      "owner_basis": "matches neither the manifest nor any positive owner list",
-      "inferred_owner": "trading-client",
-      "evidence": [
-        "trading-client/app/client_agents/base_agent.py:138:insert",
-        "trading-client/app/client_agents/base_agent.py:162:update",
-        "trading-client/app/client_agents/base_agent.py:175:update",
-        "trading-client/app/routers/cognition.py:243:select",
-        "trading-client/app/routers/pipeline.py:229:select"
-      ],
-      "evidence_count": 5,
-      "row_count": 0,
-      "disposition": "hold"
-    },
-    {
-      "table": "autofix_runs",
-      "owner": "UNCLASSIFIED",
-      "owner_basis": "matches neither the manifest nor any positive owner list",
-      "inferred_owner": [
-        "trading-client",
-        "trading-service"
-      ],
-      "evidence": [
-        "trading-client/app/routers/autoresearch.py:325:select",
-        "trading-service/scripts/autofix/run_autofix.py:272:insert",
-        "trading-service/scripts/autofix/run_autofix.py:292:select",
-        "trading-service/scripts/autofix/worth_report.py:122:select",
-        "trading-service/scripts/autofix/worth_report.py:146:select",
-        "trading-service/scripts/autofix/worth_report.py:171:select"
-      ],
-      "evidence_count": 6,
-      "row_count": 0,
-      "disposition": "hold"
-    },
-    {
-      "table": "box_benchmark_runs",
-      "owner": "UNCLASSIFIED",
-      "owner_basis": "matches neither the manifest nor any positive owner list",
-      "inferred_owner": "trading-service",
-      "evidence": [
-        "trading-service/scripts/jetson_benchmark.py:471:create_table",
-        "trading-service/scripts/jetson_benchmark.py:486:insert"
-      ],
-      "evidence_count": 2,
-      "row_count": 90,
-      "disposition": "hold"
-    },
     {
       "table": "breeders",
       "owner": "treesearch-service",
@@ -10937,16 +11681,6 @@
       "disposition": "hold"
     },
     {
-      "table": "context_telemetry",
-      "owner": "UNCLASSIFIED",
-      "owner_basis": "matches neither the manifest nor any positive owner list",
-      "inferred_owner": null,
-      "evidence": [],
-      "evidence_count": 0,
-      "row_count": 789,
-      "disposition": "hold"
-    },
-    {
       "table": "decision_outcomes_backup_20260727",
       "owner": "snapshot",
       "owner_basis": "name matches *_backup_2026* (a pg_dump-era snapshot table)",
@@ -10964,16 +11698,6 @@
       "evidence": [],
       "evidence_count": 0,
       "row_count": 2246,
-      "disposition": "hold"
-    },
-    {
-      "table": "fallback_data",
-      "owner": "UNCLASSIFIED",
-      "owner_basis": "matches neither the manifest nor any positive owner list",
-      "inferred_owner": null,
-      "evidence": [],
-      "evidence_count": 0,
-      "row_count": 0,
       "disposition": "hold"
     },
     {
@@ -11075,16 +11799,6 @@
       "evidence_count": 0,
       "row_count": 2,
       "disposition": "migrate"
-    },
-    {
-      "table": "llm_traces",
-      "owner": "UNCLASSIFIED",
-      "owner_basis": "matches neither the manifest nor any positive owner list",
-      "inferred_owner": null,
-      "evidence": [],
-      "evidence_count": 0,
-      "row_count": 21454,
-      "disposition": "hold"
     },
     {
       "table": "observation_images",

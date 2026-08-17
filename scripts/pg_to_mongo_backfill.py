@@ -29,6 +29,7 @@ import pymongo
 from app.db import connection
 from app.db import mongo_store
 from app.db import table_spec
+from app.db.collections import collection_for
 from app.db.table_spec import quote_ident
 
 
@@ -195,7 +196,7 @@ def _bulk_upsert(collection: str, docs: list[dict], keys: list[str]) -> int:
         return mongo_store.bulk_upsert(collection, docs, key_field=keys[0])
     mongo_store.ensure_indexes()
     ops = [pymongo.UpdateOne(_key_filter(keys, d), {"$set": d}, upsert=True) for d in docs]
-    mongo_store.get_doc_db()[collection].bulk_write(ops, ordered=False)
+    mongo_store.get_doc_db()[collection_for(collection)].bulk_write(ops, ordered=False)
     return len(docs)
 
 
@@ -343,7 +344,11 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
     except (KeyError, ValueError) as exc:
         print(f"cannot build a spec for {table!r}: {exc}", file=sys.stderr)
         return 2
-    coll = mongo_store.get_doc_db()[table]
+    # Resolve, never index by the raw table name: once apply_renames flips, an
+    # unresolved name addresses a collection nothing writes -- and this verifier
+    # would read it empty and report every row missing, which reads exactly like
+    # a catastrophic mirror failure.
+    coll = mongo_store.get_doc_db()[collection_for(table)]
 
     mismatches: Counter = Counter()
     samples: dict[str, list] = {}

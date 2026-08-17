@@ -18,6 +18,26 @@ from app.db import connection, table_spec  # noqa: E402
 from scripts.pg_to_mongo_backfill import TABLES  # noqa: E402
 
 
+def _key_columns(key) -> list[str]:
+    """Both spec flavours as a column list.
+
+    Hand-written specs name a single key column as a string; the generator
+    names all of them as a list, because 26 tables are composite. Interpolating
+    the list straight into SQL produced `ORDER BY ['id']`, which is a syntax
+    error -- so this script aborted on its first table and checked nothing.
+    """
+    return list(key) if isinstance(key, (list, tuple)) else [key]
+
+
+def _order_by(columns: list[str]) -> str:
+    return ", ".join(f'"{c}" DESC' for c in columns)
+
+
+def _doc_key(doc: dict, columns: list[str]):
+    """Composite keys need a tuple; a single column keeps its bare value."""
+    return doc[columns[0]] if len(columns) == 1 else tuple(doc[c] for c in columns)
+
+
 def compare(table: str, rows: int) -> tuple[str, list[str]]:
     """Return (verdict, differences) for one table."""
     hand_sql, hand_key, hand_map = TABLES[table]
@@ -27,24 +47,29 @@ def compare(table: str, rows: int) -> tuple[str, list[str]]:
     except (KeyError, ValueError) as exc:
         return "NEEDS-OVERRIDE", [str(exc)]
 
+    hand_keys = _key_columns(hand_key)
+    gen_keys = _key_columns(gen_key)
+
     diffs: list[str] = []
-    if gen_key != hand_key:
-        diffs.append(f"key: hand={hand_key!r} generated={gen_key!r}")
+    if gen_keys != hand_keys:
+        diffs.append(f"key: hand={hand_keys!r} generated={gen_keys!r}")
 
     with connection.get_db() as db:
-        cur = db.execute(f"{hand_sql} ORDER BY {hand_key} DESC LIMIT %s", [rows])
+        cur = db.execute(f"{hand_sql} ORDER BY {_order_by(hand_keys)} LIMIT %s", [rows])
         hand_rows = cur.fetchall()
         hand_cols = [c[0] for c in cur.description]
     if not hand_rows:
         return "NO-ROWS", ["table is empty — comparison proves nothing"]
 
     with connection.get_db() as db:
-        cur = db.execute(f"{gen_sql} ORDER BY {gen_key} DESC LIMIT %s", [rows])
+        cur = db.execute(f"{gen_sql} ORDER BY {_order_by(gen_keys)} LIMIT %s", [rows])
         gen_rows = cur.fetchall()
         gen_cols = [c[0] for c in cur.description]
 
-    hand_docs = {d[hand_key]: d for d in (hand_map(r, hand_cols) for r in hand_rows)}
-    gen_docs = {d[gen_key]: d for d in (gen_map(r, gen_cols) for r in gen_rows)}
+    hand_docs = {_doc_key(d, hand_keys): d
+                 for d in (hand_map(r, hand_cols) for r in hand_rows)}
+    gen_docs = {_doc_key(d, gen_keys): d
+                for d in (gen_map(r, gen_cols) for r in gen_rows)}
 
     for key, hand_doc in hand_docs.items():
         gen_doc = gen_docs.get(key)

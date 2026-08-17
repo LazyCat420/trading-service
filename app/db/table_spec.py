@@ -15,7 +15,8 @@ timestamp or JSON:
 
 against 106 json/jsonb columns and ~2,000 plain scalars. So the mapping is
 derivable from `information_schema` plus the key and numeric policy the ledger
-(`app/db/migration_ledger.json`) already records for all 183 manifest tables.
+(`app/db/migration_ledger.json`) already records for every table in scope —
+the 183 the manifest declares, plus the live tables it never saw.
 
 What this module deliberately does NOT do: guess renames or defaults. The
 hand-written `pipeline_events` mapper renames `data_json` -> `data` and floors
@@ -125,12 +126,17 @@ def key_field_for(table: str) -> str:
     a spec that quietly dropped the rest would mirror rows on top of each other
     and report the collapse as parity.
 
-    **26 of the 158 tables are composite** — including the three biggest
+    **26 of the 161 migrate tables are composite** — including the three biggest
     (`price_history` on `ticker, date, source`, `technicals` on `ticker, date`,
-    `sec_13f_holdings` on `cik, ticker, filing_quarter`). So this generator
-    serves 132 tables today, and composite-key support is a prerequisite for
-    waves W6/W7, not an afterthought. Until then those tables raise here, which
-    is the point: loudly unsupported beats quietly wrong.
+    `sec_13f_holdings` on `cik, ticker, filing_quarter`), so this one serves the
+    other 135.
+
+    Composite keys ARE supported now — by `key_fields_for()` above, and by the
+    backfill's keyset pagination (`_paginate_clause`). This function is the
+    single-column accessor for callers that genuinely take one column; it raises
+    on a composite rather than keying on part of it, which is still the point:
+    loudly unsupported beats quietly wrong. Prefer `key_fields_for()` in new
+    code.
     """
     row = _ledger().get(table)
     if row is None:

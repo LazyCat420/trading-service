@@ -67,16 +67,48 @@ def manifest() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_the_ledger_covers_the_manifest_exactly(ledger, manifest):
-    """Set equality, not counts. A count matching is not the same as covering."""
+def test_the_ledger_covers_the_manifest_and_says_why_it_exceeds_it(ledger, manifest):
+    """Set equality, not counts. A count matching is not the same as covering.
+
+    The ledger is a superset of the manifest: schema.sql declares 183 tables,
+    but four live tables are created at runtime by scripts and were therefore
+    invisible to the manifest -- and to the migration -- until adopted. Every
+    table beyond the manifest has to name its basis, so the excess can never be
+    an accident.
+    """
     ledger_tables = {rec["table"] for rec in ledger["tables"]}
     manifest_tables = set(manifest["tables"])
 
     missing = sorted(manifest_tables - ledger_tables)
-    extra = sorted(ledger_tables - manifest_tables)
     assert not missing, f"manifest tables absent from the ledger: {missing}"
-    assert not extra, f"ledger tables absent from the manifest: {extra}"
-    assert ledger_tables == manifest_tables
+
+    for table in sorted(ledger_tables - manifest_tables):
+        rec = next(r for r in ledger["tables"] if r["table"] == table)
+        assert rec["scope_basis"] in {"adopted", "retired"}, (
+            f"{table} is in the ledger but not the manifest, and claims "
+            f"scope_basis={rec['scope_basis']!r}"
+        )
+        assert rec["scope_evidence"], f"{table} was adopted with no evidence"
+        assert rec["owner"], f"{table} was adopted with no owner"
+
+
+def test_manifest_tables_absent_from_the_database_are_not_migrate(ledger):
+    """A table declared in schema.sql but missing from the database cannot be
+    migrated, and counting it as scope overstates the work left.
+
+    `rejected_symbols` was the case that made this a rule: it carried a
+    migrate disposition and a collection-map entry while having no live table
+    at all, so it was the one migrate row with a null row count and the one
+    table whose spec could not be generated.
+    """
+    for rec in ledger["tables"]:
+        if rec["disposition"] == "absent":
+            assert rec["row_count"] is None, (
+                f"{rec['table']} is marked absent but reported rows"
+            )
+    absent = {r["table"] for r in ledger["tables"] if r["disposition"] == "absent"}
+    migrate = {r["table"] for r in ledger["tables"] if r["disposition"] == "migrate"}
+    assert not (absent & migrate)
 
 
 def test_the_ledger_has_no_duplicate_rows(ledger):
@@ -84,8 +116,30 @@ def test_the_ledger_has_no_duplicate_rows(ledger):
     assert len(tables) == len(set(tables)), "a table appears twice in the ledger"
 
 
-def test_the_recorded_table_count_matches_the_rows(ledger, manifest):
-    assert ledger["manifest_table_count"] == manifest["table_count"] == len(ledger["tables"])
+def test_the_recorded_table_counts_match_the_rows(ledger, manifest):
+    """Two counts now, because they answer two questions: how big the manifest
+    is, and how big the migration's scope is."""
+    assert ledger["manifest_table_count"] == manifest["table_count"]
+    assert ledger["scope_table_count"] == len(ledger["tables"])
+    assert sum(ledger["scope_basis_counts"].values()) == len(ledger["tables"])
+    assert ledger["scope_basis_counts"]["manifest"] == ledger["manifest_table_count"]
+
+
+def test_the_ledger_is_built_from_committed_code(ledger):
+    """Shape drives disposition and collection prefix, so a classifier that
+    reads working trees makes the ledger a function of whoever is mid-edit.
+
+    Regenerating with a dirty trading-client used to flip `llm_audit_logs`
+    between mutable and append on nothing but another session's uncommitted
+    work. The scan reads HEAD; repos that were dirty are named rather than
+    silently folded in.
+    """
+    assert ledger["scanned_at"] == "HEAD"
+    assert isinstance(ledger["dirty_repos_ignored"], list)
+    assert ledger["working_tree_fallback_repos"] == [], (
+        "a repo could not be exported at HEAD and was read from its working "
+        f"tree instead: {ledger['working_tree_fallback_repos']}"
+    )
 
 
 def test_the_shape_counts_sum_to_the_table_count(ledger):
@@ -125,10 +179,60 @@ def test_the_known_queues_are_shaped_queue(ledger):
 
 
 def test_dead_tables_are_archive_only_and_live_ones_migrate(ledger):
-    """The user decision: an unreferenced table gets a dump and a drop, no Mongo copy."""
+    """The user decision: an unreferenced table gets a dump and a drop, no Mongo copy.
+
+    Two dispositions override the shape rule, and both are decisions rather
+    than classifications: a `retired` table keeps rows nobody writes any more,
+    and an `absent` table is declared in schema.sql but not in the database.
+    """
     for rec in ledger["tables"]:
+        if rec["scope_basis"] == "retired":
+            assert rec["disposition"] == "archive-only", rec["table"]
+            continue
+        if rec["disposition"] == "absent":
+            continue
         expected = "archive-only" if rec["shape"] == "unreferenced" else "migrate"
         assert rec["disposition"] == expected, rec["table"]
+
+
+def test_adopted_tables_declare_the_key_the_database_actually_has(ledger):
+    """Adopted tables have no manifest constraint block, so their key is
+    declared by hand -- and a hand-declared key is exactly the kind of thing
+    that drifts. Checked against the live primary key when the database is
+    reachable; skipped, never faked, when it is not.
+    """
+    import os
+
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        pytest.skip("DATABASE_URL not set")
+    try:
+        import psycopg
+        conn = psycopg.connect(dsn, connect_timeout=8)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"database unreachable: {type(exc).__name__}: {exc}")
+
+    adopted = [r for r in ledger["tables"] if r["scope_basis"] == "adopted"]
+    assert adopted, "no adopted tables in the ledger"
+    with conn, conn.cursor() as cur:
+        for rec in adopted:
+            cur.execute(
+                """select kcu.column_name
+                     from information_schema.table_constraints tc
+                     join information_schema.key_column_usage kcu
+                       on tc.constraint_name = kcu.constraint_name
+                      and tc.table_schema = kcu.table_schema
+                    where tc.table_schema = 'public'
+                      and tc.table_name = %s
+                      and tc.constraint_type = 'PRIMARY KEY'
+                    order by kcu.ordinal_position""",
+                (rec["table"],),
+            )
+            live_pk = [r[0] for r in cur.fetchall()]
+            assert live_pk == [rec["key_field"]], (
+                f"{rec['table']}: ledger declares key_field={rec['key_field']!r} "
+                f"but the database's primary key is {live_pk}"
+            )
 
 
 def test_lifecycle_stamps_start_null(ledger):
@@ -543,3 +647,71 @@ def test_deploy_sh_is_no_longer_a_source_of_backend_flags():
     """
     text = (_ROOT / "deploy.sh").read_text(encoding="utf-8")
     assert "MONGO_STORE_DEFAULT=" not in text
+
+
+def test_a_dirty_working_tree_cannot_reach_the_ledger(tmp_path):
+    """The scanner must read committed content, not whatever is on disk.
+
+    This is the whole defence: the ledger scans every repo in sun, so before
+    this, one parallel session's half-finished edit could re-file a trading
+    table -- shape drives disposition and collection prefix alike. Proven on a
+    throwaway repo rather than by inspection, because "it reads HEAD" is
+    exactly the kind of claim that stays true only until someone adds a
+    convenience fallback.
+    """
+    import subprocess
+
+    repo = tmp_path / "throwaway"
+    (repo / "app").mkdir(parents=True)
+    target = repo / "app" / "queries.py"
+    target.write_text('SQL = "SELECT * FROM committed_table"\n', encoding="utf-8")
+
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a],  # noqa: E731
+                                    capture_output=True, check=True)
+    run("init", "-q")
+    run("config", "user.email", "t@t")
+    run("config", "user.name", "t")
+    run("add", "-A")
+    run("commit", "-qm", "committed")
+
+    # The uncommitted edit that must NOT be seen.
+    target.write_text('SQL = "SELECT * FROM uncommitted_table"\n', encoding="utf-8")
+
+    bml.DIRTY_REPOS.clear()
+    bml._SNAPSHOTS.pop(repo, None)
+    snapshot = bml.snapshot_head(repo)
+
+    assert snapshot != repo, "snapshot_head handed back the working tree"
+    seen = (snapshot / "app" / "queries.py").read_text(encoding="utf-8")
+    assert "committed_table" in seen
+    assert "uncommitted_table" not in seen, (
+        "the scanner read an uncommitted edit -- the contamination this fixes"
+    )
+    assert "throwaway" in bml.DIRTY_REPOS, (
+        "a dirty repo must be NAMED as ignored, not silently skipped"
+    )
+
+
+def test_the_backfill_addresses_collections_through_the_resolver():
+    """The backfill must not index Mongo by the raw table name.
+
+    `mongo_store._coll()` resolves through `collection_for()`, so the day
+    `apply_renames` flips, the application moves to the prefixed collection.
+    Two sites in the backfill indexed `get_doc_db()[table]` directly and would
+    have stayed on the old name: the writer would fill a collection nothing
+    reads, and `--verify-all` would read the new one empty and report every
+    single row missing -- indistinguishable from total mirror failure, on a
+    tool whose whole job is to be believed about parity.
+
+    Inert today (the map is the identity function while renames are off),
+    which is exactly why it needed a test rather than a fix and a hope.
+    """
+    src = (_ROOT / "scripts" / "pg_to_mongo_backfill.py").read_text(encoding="utf-8")
+    offenders = [
+        line.strip()
+        for line in src.splitlines()
+        if "get_doc_db()[" in line and "collection_for(" not in line
+    ]
+    assert not offenders, (
+        "these address Mongo by an unresolved name:\n  " + "\n  ".join(offenders)
+    )

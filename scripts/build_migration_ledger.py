@@ -60,7 +60,11 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict
+import io
+import subprocess
+import tarfile
+import tempfile
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,7 +86,67 @@ SERVICE_REPO = SUN_ROOT / "trading-service"
 CLIENT_REPO = SUN_ROOT / "trading-client"
 TREESEARCH_ORM = SUN_ROOT / "treesearch-service" / "src" / "models" / "orm.py"
 
-LEDGER_FORMAT_VERSION = "1.0"
+LEDGER_FORMAT_VERSION = "1.1"
+
+# ---------------------------------------------------------------------------
+# Tables the manifest never saw
+# ---------------------------------------------------------------------------
+#
+# schema.sql declares 183 tables; the database holds 214. Most of that gap is
+# other products sharing the instance, but a handful of tables are trading's
+# own: created at runtime by a script instead of being declared, so the
+# manifest never saw them and the ledger left them out of scope entirely.
+# A table a live writer still fills has to be IN scope -- otherwise removing
+# Postgres removes the store that writer depends on, and nothing in the
+# migration ever notices.
+#
+# Adoption follows the same rule as ownership below: POSITIVE lists only. Each
+# entry names the write site that proves the claim, and declares its key, since
+# there is no manifest constraint block to read one from.
+ADOPTED: dict[str, dict] = {
+    "agent_registry": {
+        "owner": "trading-client",
+        "proof": "trading-client/app/client_agents/base_agent.py:75:upsert",
+        "key_field": "agent_id",
+    },
+    "agent_tasks": {
+        "owner": "trading-client",
+        "proof": "trading-client/app/client_agents/base_agent.py:138:insert",
+        "key_field": "task_id",
+    },
+    "autofix_runs": {
+        "owner": "trading-service",
+        "proof": "trading-service/scripts/autofix/run_autofix.py:272:insert",
+        "key_field": "id",
+    },
+    "box_benchmark_runs": {
+        "owner": "trading-service",
+        "proof": "trading-service/scripts/jetson_benchmark.py:486:insert",
+        "key_field": "id",
+    },
+}
+
+# Live tables with a trading past and no writer today. They keep their rows for
+# history and take `archive-only`, which is a disposition the migration already
+# understands -- but they are recorded here rather than left UNCLASSIFIED, so a
+# future DROP consults a decision instead of a silence.
+RETIRED: dict[str, dict] = {
+    "llm_traces": {
+        "owner": "trading-service",
+        "basis": "last write 2026-06-25, zero code references (replay-only archive)",
+        "key_field": "id",
+    },
+    "context_telemetry": {
+        "owner": "trading-service",
+        "basis": "last write 2026-06-25, zero code references",
+        "key_field": "id",
+    },
+    "fallback_data": {
+        "owner": "trading-service",
+        "basis": "0 rows, zero code references",
+        "key_field": "id",
+    },
+}
 
 DSN = os.environ.get(
     "DATABASE_URL", "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
@@ -305,24 +369,97 @@ def _walk(root: Path):
         yield path
 
 
+_SNAPSHOT_TMP: tempfile.TemporaryDirectory | None = None
+_SNAPSHOTS: dict[Path, Path] = {}
+DIRTY_REPOS: list[str] = []
+UNSNAPSHOTTABLE: list[str] = []
+
+
+def repo_is_dirty(repo: Path) -> bool:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        capture_output=True, text=True, check=False,
+    )
+    return proc.returncode == 0 and bool(proc.stdout.strip())
+
+
+def snapshot_head(repo: Path) -> Path:
+    """Export `repo`'s committed HEAD to a temp dir, once per run.
+
+    The ledger describes what SHIPS, and what ships is committed. This scanner
+    reads every repo in sun, so before this, one unrelated session's
+    uncommitted edit changed a trading table's classification: regenerating
+    with a dirty trading-client flipped `llm_audit_logs` from mutable to
+    append, and shape drives both disposition and collection prefix. Reading
+    HEAD makes the ledger a function of committed state -- reproducible, and
+    identical no matter who is mid-edit.
+
+    Falls back to the working tree for anything that is not a git repo, and
+    records that it did so rather than passing it off as HEAD.
+    """
+    global _SNAPSHOT_TMP
+    if repo in _SNAPSHOTS:
+        return _SNAPSHOTS[repo]
+
+    if _SNAPSHOT_TMP is None:
+        _SNAPSHOT_TMP = tempfile.TemporaryDirectory(prefix="ledger-head-")
+
+    dest = Path(_SNAPSHOT_TMP.name) / repo.name
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "archive", "--format=tar", "HEAD"],
+        capture_output=True, check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        UNSNAPSHOTTABLE.append(repo.name)
+        _SNAPSHOTS[repo] = repo
+        return repo
+
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tf:
+        # Only the files this scanner would read anyway -- keeps the export
+        # small enough to hold in memory for every repo in sun.
+        members = [
+            m for m in tf.getmembers()
+            if m.isfile()
+            and Path(m.name).suffix in SCAN_SUFFIXES
+            and not (SKIP_DIR_PARTS & set(Path(m.name).parts))
+        ]
+        tf.extractall(dest, members=members, filter="data")
+
+    if repo_is_dirty(repo):
+        DIRTY_REPOS.append(repo.name)
+    _SNAPSHOTS[repo] = dest
+    return dest
+
+
 def scan_roots(known: set[str]) -> tuple[dict[str, list], dict[str, dict[str, int]]]:
     """Scan every configured root; return refs bucketed by role, plus signal counts.
 
     Buckets follow the migration's actual question -- who writes, who reads,
     and from which side of the service/client split -- because that is what
     decides who has to be cut over together.
+
+    Every root is read at committed HEAD, never from the working tree -- see
+    snapshot_head().
     """
-    # (bucket-role, label, path). `role` picks the destination list; SQL op
-    # then splits writers from readers.
-    roots: list[tuple[str, Path]] = []
+    # (bucket-role, scan path, label prefix). `role` picks the destination
+    # list; SQL op then splits writers from readers. The scan path points into
+    # a HEAD export; the label keeps evidence readable as `<repo>/<path>`.
+    roots: list[tuple[str, Path, str]] = []
+
+    def add(role: str, repo: Path, rel: str = "") -> None:
+        base = snapshot_head(repo)
+        roots.append((role, base / rel if rel else base,
+                      f"{repo.name}/{rel}" if rel else repo.name))
+
     for rel in ("app", "cycle_main.py", ".claude/hooks"):
-        roots.append(("service", SERVICE_REPO / rel))
+        add("service", SERVICE_REPO, rel)
     for rel in ("scripts", "tools"):
-        roots.append(("script", SERVICE_REPO / rel))
+        add("script", SERVICE_REPO, rel)
     for rel in ("app", "frontend/src"):
-        roots.append(("client", CLIENT_REPO / rel))
+        add("client", CLIENT_REPO, rel)
     for rel in ("scripts", "tools"):
-        roots.append(("script", CLIENT_REPO / rel))
+        add("script", CLIENT_REPO, rel)
 
     # Every other sun repo: a foreign reader of a trading table is exactly the
     # kind of coupling a migration breaks silently.
@@ -331,12 +468,12 @@ def scan_roots(known: set[str]) -> tuple[dict[str, list], dict[str, dict[str, in
             continue
         if child.name.startswith(".") or child.name == "node_modules":
             continue
-        roots.append(("external", child))
+        add("external", child)
 
     by_table: dict[str, list[tuple[str, str, str]]] = defaultdict(list)  # table -> (role, ref, op)
     signals: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-    for role, root in roots:
+    for role, root, label in roots:
         for path in _walk(root):
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
@@ -345,10 +482,9 @@ def scan_roots(known: set[str]) -> tuple[dict[str, list], dict[str, dict[str, in
             if not text:
                 continue
             for table, op, line in scan_text(text, known):
-                try:
-                    rel = path.relative_to(SUN_ROOT).as_posix()
-                except ValueError:
-                    rel = path.as_posix()
+                # Label against the logical repo path, not the temp export, so
+                # evidence stays clickable.
+                rel = label if path == root else f"{label}/{path.relative_to(root).as_posix()}"
                 by_table[table].append((role, f"{rel}:{line}:{op}", op))
                 signals[table][op] += 1
 
@@ -581,17 +717,48 @@ def build(use_db: bool = True, ref_cap: int = 20) -> dict:
     refs_by_table, signals_by_table = scan_roots(known)
     modes = parse_mongo_modes(REPO_ROOT / "app" / "db" / "mongo_backends.env")
 
+    # Scope is the manifest plus the tables it never saw (ADOPTED/RETIRED), but
+    # only those actually present in the database. With --no-db there is no
+    # liveness evidence, so nothing is judged absent on a guess.
+    db_ok = db_error is None
+    live_set = set(live_tables)
+    adopted_scope = [t for t in (ADOPTED | RETIRED) if not db_ok or t in live_set]
+
     records = []
-    for table in sorted(manifest_tables):
+    for table in sorted(set(manifest_tables) | set(adopted_scope)):
+        adopted = ADOPTED.get(table)
+        retired = RETIRED.get(table)
         signals = signals_by_table.get(table, {})
         shape = classify(table, signals)
         buckets = bucket_refs(refs_by_table.get(table, []))
-        pk, single_unique, uniques = key_fields(
-            constraints.get(table, []), manifest.get("indexes", {}).get(table, [])
-        )
+        if adopted or retired:
+            # No manifest constraint block exists for these; the key is declared
+            # in the adoption entry and checked against the live PK by
+            # tests/unit/test_adopted_tables.py.
+            pk, single_unique, uniques = (adopted or retired)["key_field"], None, []
+        else:
+            pk, single_unique, uniques = key_fields(
+                constraints.get(table, []), manifest.get("indexes", {}).get(table, [])
+            )
+
+        if retired:
+            # Rows worth keeping, no writer left. A decision, not a silence.
+            disposition = "archive-only"
+        elif db_ok and table not in live_set:
+            # Declared in schema.sql, absent from the database. Migrating it is
+            # impossible and counting it as scope overstates the work left.
+            disposition = "absent"
+        elif shape == "unreferenced":
+            disposition = "archive-only"
+        else:
+            disposition = "migrate"
+
         record = {
             "table": table,
             "shape": shape,
+            "scope_basis": "adopted" if adopted else "retired" if retired else "manifest",
+            "scope_evidence": (adopted or {}).get("proof") or (retired or {}).get("basis"),
+            "owner": (adopted or retired or {}).get("owner"),
             "key_field": pk,
             "natural_key": single_unique,
             "unique_constraints": uniques,
@@ -609,14 +776,20 @@ def build(use_db: bool = True, ref_cap: int = 20) -> dict:
             "archived_at": None,
             "dropped_at": None,
             "archive_file": None,
-            "disposition": "archive-only" if shape == "unreferenced" else "migrate",
+            "disposition": disposition,
         }
         for key, values in buckets.items():
             record[key] = cap(values, ref_cap)
         records.append(record)
 
+    # Anything now carried in `tables` is no longer foreign to this migration.
     foreign = build_foreign(
-        live_tables, set(manifest_tables), ts_tables, refs_by_table, row_counts, ref_cap
+        live_tables,
+        set(manifest_tables) | set(ADOPTED) | set(RETIRED),
+        ts_tables,
+        refs_by_table,
+        row_counts,
+        ref_cap,
     )
 
     shape_counts: dict[str, int] = {s: 0 for s in SHAPES}
@@ -632,6 +805,11 @@ def build(use_db: bool = True, ref_cap: int = 20) -> dict:
         "ledger_format_version": LEDGER_FORMAT_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "manifest_table_count": len(manifest_tables),
+        # `tables` is no longer the manifest: it is the manifest plus the live
+        # trading tables schema.sql never declared, minus anything the manifest
+        # declares that the database does not actually have.
+        "scope_table_count": len(records),
+        "scope_basis_counts": dict(sorted(Counter(r["scope_basis"] for r in records).items())),
         "manifest_format_version": manifest.get("manifest_format_version"),
         "external_refs_caveat": (
             "external_refs match on table NAME across sun repos, not on database. "
@@ -639,6 +817,13 @@ def build(use_db: bool = True, ref_cap: int = 20) -> dict:
             "own store, so hits there are name collisions. Refs in "
             "postgres-service/scripts/schema_pg.sql are the ones that share this instance."
         ),
+        # Provenance: code refs come from committed HEAD, so a parallel
+        # session's work-in-progress cannot move a table's shape. Repos that
+        # were dirty at scan time are named -- their uncommitted work is NOT
+        # represented here, which is the point.
+        "scanned_at": "HEAD",
+        "dirty_repos_ignored": sorted(set(DIRTY_REPOS)),
+        "working_tree_fallback_repos": sorted(set(UNSNAPSHOTTABLE)),
         "database_reachable": db_error is None,
         "database_note": db_error,
         "live_table_count": len(live_tables) or None,

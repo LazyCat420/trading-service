@@ -32,6 +32,16 @@
    "numeric_policy": "float",
    "mode_at_authoring": "pg"
   },
+  "agent_registry": {
+   "collection": "state_agent_registry",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "agent_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "adopted_note": "created at runtime by a script; never declared in schema.sql"
+  },
   "agent_skills": {
    "collection": "state_agent_skills",
    "shape_at_authoring": "mutable",
@@ -40,6 +50,16 @@
    ],
    "numeric_policy": "float",
    "mode_at_authoring": "pg"
+  },
+  "agent_tasks": {
+   "collection": "state_agent_tasks",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "task_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "adopted_note": "created at runtime by a script; never declared in schema.sql"
   },
   "agent_tool_optimization": {
    "collection": "state_agent_tool_optimization",
@@ -86,6 +106,16 @@
    "numeric_policy": "float",
    "mode_at_authoring": "pg"
   },
+  "autofix_runs": {
+   "collection": "log_autofix_runs",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "adopted_note": "created at runtime by a script; never declared in schema.sql"
+  },
   "autoresearch_cycle_summaries": {
    "collection": "ts_autoresearch_cycle_summaries",
    "shape_at_authoring": "upsert",
@@ -131,6 +161,16 @@
    "numeric_policy": "dec128",
    "mode_at_authoring": "pg",
    "rename_reason": "holds cash_balance/total_pnl -- money, whatever the classifier says"
+  },
+  "box_benchmark_runs": {
+   "collection": "log_box_benchmark_runs",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "adopted_note": "created at runtime by a script; never declared in schema.sql"
   },
   "canonical_memories": {
    "collection": "state_canonical_memories",
@@ -911,15 +951,6 @@
    "numeric_policy": "float",
    "mode_at_authoring": "pg"
   },
-  "rejected_symbols": {
-   "collection": "ref_rejected_symbols",
-   "shape_at_authoring": "reference",
-   "id_fields": [
-    "id"
-   ],
-   "numeric_policy": "float",
-   "mode_at_authoring": "pg"
-  },
   "research_trials": {
    "collection": "ts_research_trials",
    "shape_at_authoring": "upsert",
@@ -1457,13 +1488,16 @@
   "agent_loop_stats",
   "best_per_ticker",
   "company_narratives",
+  "context_telemetry",
   "critic_feedback",
   "debate_tool_cache",
   "evolution_attempts",
+  "fallback_data",
   "hallucination_audit",
   "hallucination_log",
   "lens_scorecard",
   "llm_attention_weights",
+  "llm_traces",
   "memory_usage_logs",
   "prompt_templates",
   "sec_13f_performance",
@@ -1480,10 +1514,6 @@
   "watchlist_curation_log"
  ],
  "foreign": [
-  "agent_registry",
-  "agent_tasks",
-  "autofix_runs",
-  "box_benchmark_runs",
   "breeders",
   "canonical_strains",
   "chemical_profiles",
@@ -1493,10 +1523,8 @@
   "cognition_reflections",
   "cognition_reflective_memories",
   "cognition_semantic_memories",
-  "context_telemetry",
   "decision_outcomes_backup_20260727",
   "decision_outcomes_backup_20260728",
-  "fallback_data",
   "fundamentals_backup_20260727",
   "genetic_relationships",
   "genomic_samples",
@@ -1505,7 +1533,6 @@
   "glass_favorites",
   "glass_ratings",
   "glass_submissions",
-  "llm_traces",
   "observation_images",
   "observations",
   "sec_13f_holdings_backup_20260804",
