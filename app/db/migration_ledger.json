@@ -2594,10 +2594,10 @@
       "scope_basis": "manifest",
       "scope_evidence": null,
       "owner": null,
-      "key_field": "id",
-      "natural_key": "cycle_id",
+      "key_field": "ticker, cycle_id",
+      "natural_key": "ticker, cycle_id",
       "unique_constraints": [
-        "UNIQUE (cycle_id)"
+        "PRIMARY KEY (ticker, cycle_id)"
       ],
       "numeric_policy": "float",
       "mode_now": "pg",

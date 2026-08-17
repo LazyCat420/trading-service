@@ -2627,12 +2627,6 @@
       },
       {
         "default": null,
-        "name": "id",
-        "nullable": false,
-        "type": "text"
-      },
-      {
-        "default": null,
         "name": "lesson_summary",
         "nullable": true,
         "type": "text"
@@ -12741,12 +12735,7 @@
     ],
     "cycle_summaries": [
       {
-        "definition": "UNIQUE (cycle_id)",
-        "name": "cycle_summaries_cycle_id_key",
-        "type": "u"
-      },
-      {
-        "definition": "PRIMARY KEY (id)",
+        "definition": "PRIMARY KEY (ticker, cycle_id)",
         "name": "cycle_summaries_pkey",
         "type": "p"
       }
@@ -13989,8 +13978,7 @@
     ],
     "cycle_summaries": [
       "CREATE INDEX idx_cycle_summaries_cycle ON public.cycle_summaries USING btree (cycle_id)",
-      "CREATE UNIQUE INDEX cycle_summaries_cycle_id_key ON public.cycle_summaries USING btree (cycle_id)",
-      "CREATE UNIQUE INDEX cycle_summaries_pkey ON public.cycle_summaries USING btree (id)"
+      "CREATE UNIQUE INDEX cycle_summaries_pkey ON public.cycle_summaries USING btree (ticker, cycle_id)"
     ],
     "cycle_ticker_benchmarks": [
       "CREATE UNIQUE INDEX cycle_ticker_benchmarks_pkey ON public.cycle_ticker_benchmarks USING btree (cycle_id, ticker)"
