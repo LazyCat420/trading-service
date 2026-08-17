@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Callable
 
@@ -74,6 +75,26 @@ def _ledger() -> dict[str, dict]:
             data = json.load(fh)
         _ledger_cache = {row["table"]: row for row in data.get("tables", [])}
     return _ledger_cache
+
+
+def key_fields_for(table: str) -> list[str]:
+    """The column(s) identifying a row, as a list — 1 for most tables, 2-3 for 26.
+
+    Composite keys are the rule for the biggest tables, not an exception:
+    `price_history` is (ticker, date, source), `technicals` is (ticker, date),
+    `sec_13f_holdings` is (cik, ticker, filing_quarter). Keying on any single
+    column of those collapses every row that shares it.
+    """
+    row = _ledger().get(table)
+    if row is None:
+        raise KeyError(f"{table!r} is not in migration_ledger.json — regenerate it "
+                       "(scripts/build_migration_ledger.py) before migrating this table")
+    if table in _KEY_OVERRIDES:
+        return [_KEY_OVERRIDES[table]]
+    raw = (row.get("natural_key") or row.get("key_field") or "").strip()
+    if not raw:
+        raise ValueError(f"{table!r} has no natural_key or key_field in the ledger")
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 def key_field_for(table: str) -> str:
@@ -140,6 +161,16 @@ def columns_for(table: str, db) -> list[tuple[str, str, str]]:
 def _coerce(value, data_type: str, udt_name: str, money: bool):
     if value is None:
         return None
+    # BSON has no `date` type: pymongo raises InvalidDocument on a bare
+    # datetime.date, which is what psycopg returns for a `date` column. There
+    # are 26 such columns, and several composite keys are built on them
+    # (price_history ticker,date,source · technicals ticker,date ·
+    # put_call_ratio symbol,date), so this is not a corner. Store midnight UTC,
+    # which sorts and range-queries the same way the date did.
+    # NOTE the isinstance order: datetime SUBCLASSES date, so a plain
+    # `isinstance(value, date)` would rewrite every timestamp in the database.
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return datetime(value.year, value.month, value.day)
     if data_type in _JSON_TYPES:
         # psycopg returns jsonb as a dict already; json/text columns holding
         # JSON arrive as str. A string that does not parse is kept verbatim
@@ -160,18 +191,23 @@ def _coerce(value, data_type: str, udt_name: str, money: bool):
     return value
 
 
-def spec_for(table: str, db) -> tuple[str, str, Callable]:
-    """(select_sql, key_field, mapper) for `table`, derived from the schema.
+def spec_for(table: str, db) -> tuple[str, list[str], Callable]:
+    """(select_sql, key_fields, mapper) for `table`, derived from the schema.
 
-    The SELECT names its columns explicitly rather than using `*` so the
-    document shape is pinned to what this spec was built from: a column added
-    later changes the mirror only when the spec is regenerated deliberately.
+    `key_fields` is always a LIST, single-column or not, so every caller handles
+    one shape. The SELECT names its columns explicitly rather than using `*` so
+    the document shape is pinned to what this spec was built from: a column
+    added later changes the mirror only when the spec is regenerated
+    deliberately.
     """
-    key = key_field_for(table)
+    keys = key_fields_for(table)
     cols = columns_for(table, db)
     names = [c[0] for c in cols]
-    if key not in names:
-        raise ValueError(f"key {key!r} is not a column of {table!r} (has: {', '.join(names)})")
+    missing = [k for k in keys if k not in names]
+    if missing:
+        raise ValueError(
+            f"key column(s) {missing} are not columns of {table!r} (has: {', '.join(names)})"
+        )
 
     money = uses_decimal128(table)
     types = {name: (dt, udt) for name, dt, udt in cols}
@@ -184,4 +220,4 @@ def spec_for(table: str, db) -> tuple[str, str, Callable]:
             for name in row_cols
         }
 
-    return select_sql, key, _mapper
+    return select_sql, keys, _mapper

@@ -24,6 +24,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import pymongo
+
 from app.db import connection
 from app.db import mongo_store
 from app.db import table_spec
@@ -160,11 +162,58 @@ def _spec_for(table: str):
     had those fields at all), and `trade_results` omitted 4 that the LIVE writer
     does mirror, so re-running its backfill was a strip rather than a repair.
     A generated spec cannot drift from the table, because it IS the table.
+
+    The key is normalised to a LIST here, single-column or not, so that every
+    caller below handles exactly one shape. 26 of the 158 tables are composite
+    — including the three biggest — so a single-string key is not the rule.
     """
     if table in TABLES:
-        return TABLES[table]
+        select_sql, key, mapper = TABLES[table]
+        return select_sql, ([key] if isinstance(key, str) else list(key)), mapper
     with connection.get_db() as db:
-        return table_spec.spec_for(table, db)
+        select_sql, keys, mapper = table_spec.spec_for(table, db)
+        return select_sql, ([keys] if isinstance(keys, str) else list(keys)), mapper
+
+
+def _key_filter(keys: list[str], doc: dict) -> dict:
+    """The Mongo filter identifying one document by its (possibly composite) key."""
+    return {k: doc[k] for k in keys}
+
+
+def _bulk_upsert(collection: str, docs: list[dict], keys: list[str]) -> int:
+    """Composite-key-aware bulk upsert.
+
+    `mongo_store.bulk_upsert` takes a single `key_field`, which cannot express
+    (ticker, date, source). Rather than widen that shared helper — it is held by
+    another session's in-flight work — the composite case is built here from the
+    same pymongo primitive it uses.
+    """
+    if not docs:
+        return 0
+    if len(keys) == 1:
+        return mongo_store.bulk_upsert(collection, docs, key_field=keys[0])
+    mongo_store.ensure_indexes()
+    ops = [pymongo.UpdateOne(_key_filter(keys, d), {"$set": d}, upsert=True) for d in docs]
+    mongo_store.get_doc_db()[collection].bulk_write(ops, ordered=False)
+    return len(docs)
+
+
+def _paginate_clause(keys: list[str], first_page: bool) -> tuple[str, str]:
+    """(where, order_by) for keyset pagination over one or more key columns.
+
+    Composite pagination uses a ROW CONSTRUCTOR — `(a,b,c) > (%s,%s,%s)` — which
+    Postgres compares lexicographically, exactly matching `ORDER BY a,b,c`.
+    Comparing the columns separately (`a > %s AND b > %s`) would silently skip
+    rows whose first column matches but whose second is smaller.
+    """
+    cols = ", ".join(keys)
+    order = f"ORDER BY {cols} ASC"
+    if first_page:
+        return "", order
+    placeholders = ", ".join(["%s"] * len(keys))
+    lhs = cols if len(keys) == 1 else f"({cols})"
+    rhs = placeholders if len(keys) == 1 else f"({placeholders})"
+    return f"WHERE {lhs} > {rhs}", order
 
 
 def known_tables() -> list[str]:
@@ -211,7 +260,7 @@ def verify_fields(table: str, sample: int) -> int:
     Note: ORDER BY random() is a full scan — fine for the sub-million-row
     tables migrated so far; switch to TABLESAMPLE for the time-series tier."""
     try:
-        select_sql, key_field, mapper = _spec_for(table)
+        select_sql, key_fields, mapper = _spec_for(table)
     except (KeyError, ValueError) as exc:
         print(f"cannot build a spec for {table!r}: {exc}", file=sys.stderr)
         return 2
@@ -223,7 +272,7 @@ def verify_fields(table: str, sample: int) -> int:
     missing = 0
     for r in rows:
         expected = mapper(r, cols)
-        docs = mongo_store.find_docs(table, {key_field: expected[key_field]}, limit=1)
+        docs = mongo_store.find_docs(table, _key_filter(key_fields, expected), limit=1)
         if not docs:
             missing += 1
             continue
@@ -259,7 +308,7 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
     collation-independent.
     """
     try:
-        select_sql, key_field, mapper = _spec_for(table)
+        select_sql, key_fields, mapper = _spec_for(table)
     except (KeyError, ValueError) as exc:
         print(f"cannot build a spec for {table!r}: {exc}", file=sys.stderr)
         return 2
@@ -274,14 +323,10 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
     # no WHERE clause, so an int id is never compared against a sentinel string.
     last_key = None
     while True:
+        where, order = _paginate_clause(key_fields, last_key is None)
+        params = ([] if last_key is None else list(last_key)) + [batch]
         with connection.get_db() as db:
-            if last_key is None:
-                cur = db.execute(f"{select_sql} ORDER BY {key_field} ASC LIMIT %s", [batch])
-            else:
-                cur = db.execute(
-                    f"{select_sql} WHERE {key_field} > %s ORDER BY {key_field} ASC LIMIT %s",
-                    [last_key, batch],
-                )
+            cur = db.execute(f"{select_sql} {where} {order} LIMIT %s", params)
             rows = cur.fetchall()
             cols = [c[0] for c in cur.description]
         if not rows:
@@ -290,12 +335,19 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
         for r in rows:
             pg_total += 1
             doc = mapper(r, cols)
-            expected_by_key[doc[key_field]] = doc
-        last_key = rows[-1][cols.index(key_field)]
+            expected_by_key[tuple(doc[k] for k in key_fields)] = doc
+        last_key = tuple(rows[-1][cols.index(k)] for k in key_fields)
 
+        # A composite key cannot use $in; an $or of exact-match filters is the
+        # index-friendly equivalent and keeps one round-trip per batch.
+        if len(key_fields) == 1:
+            k0 = key_fields[0]
+            query = {k0: {"$in": [kv[0] for kv in expected_by_key]}}
+        else:
+            query = {"$or": [_key_filter(key_fields, d) for d in expected_by_key.values()]}
         found = {
-            d.get(key_field): d
-            for d in coll.find({key_field: {"$in": list(expected_by_key)}})
+            tuple(d.get(k) for k in key_fields): d
+            for d in coll.find(query)
         }
         for key, expected in expected_by_key.items():
             doc = found.get(key)
@@ -322,7 +374,8 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
     for field, n in mismatches.most_common():
         print(f"[{table}]   field {field!r}: {n:,} mismatch(es)")
         for key, pg_v, mg_v in samples.get(field, []):
-            print(f"[{table}]      {key_field}={key!r}  pg={pg_v!r}  mongo={mg_v!r}")
+            key_desc = ", ".join(f"{k}={v!r}" for k, v in zip(key_fields, key))
+            print(f"[{table}]      {key_desc}  pg={pg_v!r}  mongo={mg_v!r}")
     if missing_keys:
         print(f"[{table}]   missing keys (first {len(missing_keys)}): "
               + ", ".join(repr(k) for k in missing_keys))
@@ -335,7 +388,7 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
 def backfill(table: str, batch: int = 2000, verify_only: bool = False,
              rate_limit: float = 0.0) -> int:
     try:
-        select_sql, key_field, mapper = _spec_for(table)
+        select_sql, key_fields, mapper = _spec_for(table)
     except (KeyError, ValueError) as exc:
         print(f"cannot build a spec for {table!r}: {exc}", file=sys.stderr)
         return 2
@@ -352,14 +405,10 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
         # pages use the actual last-row key value, which carries its own type.
         last_key = None
         while True:
+            where, order = _paginate_clause(key_fields, last_key is None)
+            params = ([] if last_key is None else list(last_key)) + [batch]
             with connection.get_db() as db:
-                if last_key is None:
-                    cur = db.execute(f"{select_sql} ORDER BY {key_field} ASC LIMIT %s", [batch])
-                else:
-                    cur = db.execute(
-                        f"{select_sql} WHERE {key_field} > %s ORDER BY {key_field} ASC LIMIT %s",
-                        [last_key, batch],
-                    )
+                cur = db.execute(f"{select_sql} {where} {order} LIMIT %s", params)
                 rows = cur.fetchall()
                 cols = [c[0] for c in cur.description]
             if not rows:
@@ -367,9 +416,9 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
             batch_started = time.monotonic()
             docs = [mapper(r, cols) for r in rows]
             # One bulk round-trip per batch (not one upsert per doc).
-            mongo_store.bulk_upsert(table, docs, key_field=key_field)
+            _bulk_upsert(table, docs, key_fields)
             moved += len(docs)
-            last_key = dict(zip(cols, rows[-1]))[key_field]
+            last_key = tuple(rows[-1][cols.index(k)] for k in key_fields)
             print(f"[{table}] upserted {moved}/{pg_count}", end="\r", flush=True)
             if rate_limit > 0:
                 # Hold sustained throughput at --rate-limit rows/sec so a big
