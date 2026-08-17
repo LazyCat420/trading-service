@@ -130,6 +130,6 @@ def log_tool_call(
                         "called_at": now_utc,
                     }])
             except Exception as mongo_err:
-                logger.debug("[ToolLogger] Mongo mirror failed (non-fatal): %s", mongo_err)
+                logger.warning("[ToolLogger] Mongo mirror failed (non-fatal): %s", mongo_err)
     except Exception as e:
         logger.debug("[ToolLogger] Failed to log tool execution for '%s': %s", canonical_name, e)

@@ -151,7 +151,7 @@ def _db_telemetry_callback(
                     "called_at": now_utc,
                 }])
         except Exception as mongo_err:
-            logger.debug("[ToolRegistry] Mongo mirror failed (non-fatal): %s", mongo_err)
+            logger.warning("[ToolRegistry] Mongo mirror failed (non-fatal): %s", mongo_err)
     except Exception as e:
         logger.debug(f"[ToolRegistry] Usage log failed (non-fatal): {e}")
 

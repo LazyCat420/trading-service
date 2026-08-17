@@ -785,7 +785,7 @@ async def buy(
                     if mongo_store.writes_mongo("position_lots"):
                         mongo_store.upsert_doc("position_lots", {"lot_id": lot_id}, {"lot_id": lot_id, "bot_id": bot_id, "ticker": ticker, "fill_id": fill_id, "opened_at": now, "original_qty": qty, "remaining_qty": qty, "entry_price": current_price, "status": "open", "cycle_id": cycle_id})
                 except Exception as m_buy_err:
-                    logger.debug("[paper] Mongo buy mirror write failed (non-fatal): %s", m_buy_err)
+                    logger.error("[paper] Mongo mirror failed on BUY ledger write: %s", m_buy_err)
                 logger.info(
                     "[TRACE][BUY] COMMITTED OK — order_id=%s fill_id=%s lot_id=%s",
                     order_id,
@@ -1103,7 +1103,7 @@ async def sell(
                     if mongo_store.writes_mongo("trade_fills"):
                         mongo_store.upsert_doc("trade_fills", {"fill_id": sell_fill_id}, {"fill_id": sell_fill_id, "order_id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "SELL", "fill_qty": qty_to_sell, "fill_price": current_price, "fill_value": proceeds, "fees": round(proceeds * sell_cost["total_bps"] / 10_000.0, 6), "decision_price": reference_price, "filled_at": now, "cycle_id": cycle_id})
                 except Exception as m_sell_err:
-                    logger.debug("[paper] Mongo sell mirror write failed (non-fatal): %s", m_sell_err)
+                    logger.error("[paper] Mongo mirror failed on SELL ledger write: %s", m_sell_err)
 
                 # Update bot win_rate dynamically
                 db.execute(

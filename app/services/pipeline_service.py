@@ -803,7 +803,7 @@ class PipelineService:
                                     }
                                 )
                     except Exception as b_mongo_err:
-                        logger.debug("[PipelineService] Mongo cycle_benchmarks write failed (non-fatal): %s", b_mongo_err)
+                        logger.warning("[PipelineService] Mongo mirror failed (non-fatal), cycle_benchmarks: %s", b_mongo_err)
 
                     if mongo_store.writes_pg("cycle_benchmarks"):
                         db.execute(

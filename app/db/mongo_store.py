@@ -235,20 +235,31 @@ def ensure_indexes() -> None:
 
 # ── Generic document ops (used by callers behind the backend flags) ────────
 def insert_docs(collection: str, docs: list[dict[str, Any]]) -> int:
-    """Append documents (idempotent on the natural `id` via ordered=False upsert-on-dup).
-    Returns the number the caller handed us (Mongo is best-effort in dual mode)."""
+    """Append documents (idempotent on the natural `id`, ordered=False).
+
+    Returns the number ACTUALLY inserted, which is not always the number handed
+    in. This used to `return len(docs)` unconditionally, so a duplicate-key
+    rejection -- swallowed just below as a legitimate re-run -- was reported to
+    the caller as a successful write of every document. A mirror that
+    under-writes while reporting success is indistinguishable from one that
+    works, and the only way to notice was a row-count comparison against
+    Postgres days later.
+    """
     if not docs:
         return 0
     ensure_indexes()
     db = get_doc_db()
     try:
-        db[collection].insert_many(docs, ordered=False)
+        res = db[collection].insert_many(docs, ordered=False)
+        return len(res.inserted_ids)
     except pymongo.errors.BulkWriteError as bwe:
         # Duplicate-key (re-run of the same cycle) is not an error for append-logs.
-        non_dupe = [e for e in bwe.details.get("writeErrors", []) if e.get("code") != 11000]
+        write_errors = bwe.details.get("writeErrors", [])
+        non_dupe = [e for e in write_errors if e.get("code") != 11000]
         if non_dupe:
             raise
-    return len(docs)
+        # nInserted is what the server actually committed; the rest were dups.
+        return int(bwe.details.get("nInserted", 0))
 
 
 def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],

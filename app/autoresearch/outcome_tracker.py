@@ -493,7 +493,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                             },
                         )
                 except Exception as me:
-                    logger.debug("[OUTCOME] Mongo mirror write failed (non-fatal): %s", me)
+                    logger.warning("[OUTCOME] Mongo mirror failed (non-fatal): %s", me)
                 recorded += 1
 
         if recorded > 0 or skipped_degraded:
