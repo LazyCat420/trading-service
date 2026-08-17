@@ -28,6 +28,15 @@ if ! python3 "${SCRIPT_DIR}/check_backend_map.py"; then
     exit 1
 fi
 
+# The collection map is hand-authored, so a machine has to keep it honest:
+# coverage, injectivity (two tables sharing a collection SILENTLY merges two
+# entities in Mongo), naming grammar, and money discipline.
+echo "🧭 Checking the Mongo collection map..."
+if ! python3 "${SCRIPT_DIR}/check_collection_map.py"; then
+    echo "❌ [Pre-Deploy Check] Collection map is invalid. Deployment aborted." >&2
+    exit 1
+fi
+
 # Run fast unit tests and mocked quality gate tests.
 # The migration suites are listed explicitly rather than globbed: this gate is
 # meant to stay fast, and a glob would silently pull in every future test file.
@@ -35,6 +44,10 @@ echo "🧪 Running unit & mocked regression tests..."
 if pytest \
     "${ROOT_DIR}/tests/unit/test_agent_regression.py" \
     "${ROOT_DIR}/tests/unit/test_backend_map_check.py" \
+    "${ROOT_DIR}/tests/unit/test_collection_map.py" \
+    "${ROOT_DIR}/tests/unit/test_identifier_quoting.py" \
+    "${ROOT_DIR}/tests/unit/test_pipeline_state_mongo_read.py" \
+    "${ROOT_DIR}/tests/unit/test_mirror_failures_are_visible.py" \
     "${ROOT_DIR}/tests/unit/test_migration_ledger.py" \
     "${ROOT_DIR}/tests/unit/test_mongo_store.py" \
     "${ROOT_DIR}/tests/unit/test_pg_write_guard.py" \

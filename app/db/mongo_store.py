@@ -125,6 +125,24 @@ def get_doc_db() -> "pymongo.database.Database":
     return get_mongo_client()[TRADING_MONGO_DB]
 
 
+def _coll(table: str):
+    """The pymongo Collection for a POSTGRES TABLE NAME.
+
+    Every helper below takes a table name and resolves it here, exactly once.
+    That is what lets the physical collections be renamed without touching the
+    ~245 call sites that name a table, and what keeps the flags, the write
+    guard, the ledger and the specs -- all of which key on the table name -- in
+    agreement with the store.
+
+    Never take a collection name from a caller. Mongo creates a collection on
+    first write, so a name that bypasses this function does not error; it
+    silently starts a second, invisible collection.
+    """
+    from app.db.collections import collection_for
+
+    return get_doc_db()[collection_for(table)]
+
+
 _indexes_ready = False
 
 
@@ -178,7 +196,7 @@ def ensure_indexes() -> None:
 
     def _try(coll: str, *args, **kwargs) -> None:
         try:
-            db[coll].create_index(*args, **kwargs)
+            _coll(coll).create_index(*args, **kwargs)
         except Exception as e:
             logger.warning("[mongo_store] index on %s failed (non-fatal): %s", coll, e)
 
@@ -187,9 +205,9 @@ def ensure_indexes() -> None:
         # it (create_index on the same key with different options errors, it
         # does not modify).
         try:
-            for info in db[coll].list_indexes():
+            for info in _coll(coll).list_indexes():
                 if "expireAfterSeconds" in info and list(info["key"]) == [field]:
-                    db[coll].drop_index(info["name"])
+                    _coll(coll).drop_index(info["name"])
                     logger.info("[mongo_store] dropped TTL index %s on %s", info["name"], coll)
         except Exception as e:
             logger.warning("[mongo_store] TTL drop on %s failed (non-fatal): %s", coll, e)
@@ -250,7 +268,7 @@ def insert_docs(collection: str, docs: list[dict[str, Any]]) -> int:
     ensure_indexes()
     db = get_doc_db()
     try:
-        res = db[collection].insert_many(docs, ordered=False)
+        res = _coll(collection).insert_many(docs, ordered=False)
         return len(res.inserted_ids)
     except pymongo.errors.BulkWriteError as bwe:
         # Duplicate-key (re-run of the same cycle) is not an error for append-logs.
@@ -269,7 +287,7 @@ def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],
     left untouched (use for immutable, content-addressed rows)."""
     ensure_indexes()
     update = {"$setOnInsert": doc} if insert_only else {"$set": doc}
-    get_doc_db()[collection].update_one(key, update, upsert=True)
+    _coll(collection).update_one(key, update, upsert=True)
 
 
 def bulk_upsert(collection: str, docs: list[dict[str, Any]], key_field: str = "id") -> int:
@@ -280,13 +298,13 @@ def bulk_upsert(collection: str, docs: list[dict[str, Any]], key_field: str = "i
         return 0
     ensure_indexes()
     ops = [pymongo.UpdateOne({key_field: d[key_field]}, {"$set": d}, upsert=True) for d in docs]
-    get_doc_db()[collection].bulk_write(ops, ordered=False)
+    _coll(collection).bulk_write(ops, ordered=False)
     return len(docs)
 
 
 def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = None,
               projection: Optional[dict] = None, limit: int = 0) -> list[dict[str, Any]]:
-    cur = get_doc_db()[collection].find(query, projection)
+    cur = _coll(collection).find(query, projection)
     if sort:
         cur = cur.sort(sort)
     if limit:
@@ -297,15 +315,15 @@ def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = Non
 def aggregate(collection: str, pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Run an aggregation pipeline (the Mongo replacement for SQL GROUP BY /
     DISTINCT ON readers)."""
-    return list(get_doc_db()[collection].aggregate(pipeline, allowDiskUse=True))
+    return list(_coll(collection).aggregate(pipeline, allowDiskUse=True))
 
 
 def count_docs(collection: str, query: Optional[dict] = None) -> int:
-    return get_doc_db()[collection].count_documents(query or {})
+    return _coll(collection).count_documents(query or {})
 
 
 def distinct_values(collection: str, field: str, query: Optional[dict] = None) -> list:
-    return get_doc_db()[collection].distinct(field, query or {})
+    return _coll(collection).distinct(field, query or {})
 
 
 def delete_docs(collection: str, query: dict[str, Any],
@@ -316,7 +334,7 @@ def delete_docs(collection: str, query: dict[str, Any],
     if not query:
         raise ValueError("delete_docs with an empty query would empty the collection; "
                          "pass an explicit filter (or use {'_id': {'$exists': True}} deliberately)")
-    res = get_doc_db()[collection].delete_many(query, session=session)
+    res = _coll(collection).delete_many(query, session=session)
     return res.deleted_count
 
 
@@ -327,7 +345,7 @@ def update_docs(collection: str, query: dict[str, Any], update: dict[str, Any],
     operators ($set/$inc/...)."""
     if not any(k.startswith("$") for k in update):
         update = {"$set": update}
-    res = get_doc_db()[collection].update_many(query, update, upsert=upsert, session=session)
+    res = _coll(collection).update_many(query, update, upsert=upsert, session=session)
     return res.modified_count
 
 
@@ -342,7 +360,7 @@ def find_one_and_update(collection: str, query: dict[str, Any], update: dict[str
     default) or None when nothing matched."""
     if not any(k.startswith("$") for k in update):
         update = {"$set": update}
-    return get_doc_db()[collection].find_one_and_update(
+    return _coll(collection).find_one_and_update(
         query, update, sort=sort, upsert=upsert,
         return_document=pymongo.ReturnDocument.AFTER if return_after else pymongo.ReturnDocument.BEFORE,
         session=session,

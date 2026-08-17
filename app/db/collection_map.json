@@ -1,0 +1,1516 @@
+{
+ "map_format_version": "1",
+ "authored_at": "2026-08-17",
+ "database": "trading_bot",
+ "apply_renames": false,
+ "apply_renames_note": "INERT. While false, collection_for() is the identity function and the physical collections keep their table names. Flipping this is a coordinated operation -- ship the resolver to BOTH repos, stop both containers, renameCollection the 13 that hold data, then flip and deploy both together. Flipping it in a plain deploy points live code at collections that do not exist, and Mongo creates them empty on first write rather than erroring.",
+ "prefixes": {
+  "log_": "append-only; never updated; read by time range",
+  "state_": "mutable current state; one document per entity",
+  "ts_": "time series keyed (entity, date)",
+  "ref_": "reference/config; small; read by key",
+  "q_": "work queue; claimed via find_one_and_update",
+  "ledger_": "money; Decimal128; transactional"
+ },
+ "note": "Hand-authored and machine-validated -- unlike migration_ledger.json, which is generated and therefore cannot be hand-corrected. Flags, the write guard, the ledger and the specs all keep keying on the POSTGRES TABLE NAME; only the physical collection is renamed, so call sites keep passing table names and change zero lines.",
+ "collections": {
+  "agent_audit_log": {
+   "collection": "log_agent_audit",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "dual"
+  },
+  "agent_directives": {
+   "collection": "state_agent_directives",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "agent_skills": {
+   "collection": "state_agent_skills",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "agent_tool_optimization": {
+   "collection": "state_agent_tool_optimization",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "agent_name, tool_name"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "agent_tool_telemetry": {
+   "collection": "log_agent_tool_telemetry",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "dual"
+  },
+  "agent_traces": {
+   "collection": "log_agent_traces",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "dual"
+  },
+  "analysis_results": {
+   "collection": "state_analysis_results",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "mongo_read"
+  },
+  "asset_prices": {
+   "collection": "ts_asset_prices",
+   "shape_at_authoring": "timeseries",
+   "id_fields": [
+    "symbol, asset_class, date"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "autoresearch_cycle_summaries": {
+   "collection": "ts_autoresearch_cycle_summaries",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "cycle_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "autoresearch_reports": {
+   "collection": "state_autoresearch_reports",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "balance_sheet": {
+   "collection": "ts_balance_sheet",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "ticker, period_end"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ban_patterns": {
+   "collection": "ref_ban_patterns",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "bots": {
+   "collection": "ledger_bots",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "bot_id"
+   ],
+   "numeric_policy": "dec128",
+   "mode_at_authoring": "pg",
+   "rename_reason": "holds cash_balance/total_pnl -- money, whatever the classifier says"
+  },
+  "canonical_memories": {
+   "collection": "state_canonical_memories",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "challenger_decisions": {
+   "collection": "state_challenger_decisions",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "chat_history": {
+   "collection": "state_chat_history",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "chat_sessions": {
+   "collection": "state_chat_sessions",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "company_registry": {
+   "collection": "state_company_registry",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "symbol"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "component_health_reports": {
+   "collection": "log_component_health_reports",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "congress_members": {
+   "collection": "ts_congress_members",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "bioguide_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "congress_trades": {
+   "collection": "state_congress_trades",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "consolidation_reports": {
+   "collection": "log_consolidation_reports",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "context_blobs": {
+   "collection": "log_context_blobs",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "context_hash"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "dual"
+  },
+  "cross_asset_correlations": {
+   "collection": "ref_cross_asset_correlations",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "asset_a, asset_b, period"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_audit_log": {
+   "collection": "log_cycle_audit",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "dual"
+  },
+  "cycle_benchmarks": {
+   "collection": "state_cycle_benchmarks",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "cycle_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_checkpoints": {
+   "collection": "state_cycle_checkpoints",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_context": {
+   "collection": "state_cycle_context",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_directives": {
+   "collection": "state_cycle_directives",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_resume_state": {
+   "collection": "ref_cycle_resume_state",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "cycle_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_run_summaries": {
+   "collection": "ts_cycle_run_summaries",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "cycle_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_schedules": {
+   "collection": "state_cycle_schedules",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_summaries": {
+   "collection": "state_cycle_summaries",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "cycle_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "cycle_ticker_benchmarks": {
+   "collection": "ts_cycle_ticker_benchmarks",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "cycle_id, ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "data_archive": {
+   "collection": "state_data_archive",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "data_flags": {
+   "collection": "state_data_flags",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "data_source_status": {
+   "collection": "ts_data_source_status",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "source, ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "debate_history": {
+   "collection": "state_debate_history",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "decision_evaluations": {
+   "collection": "state_decision_evaluations",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "decision_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "decision_outcomes": {
+   "collection": "state_decision_outcomes",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "decision_scores": {
+   "collection": "state_decision_scores",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "deleted_data": {
+   "collection": "log_deleted_data",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "source, item_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "discovered_channels": {
+   "collection": "state_discovered_channels",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "channel_handle"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "discovered_tickers": {
+   "collection": "state_discovered_tickers",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker, source"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "dossier_question_log": {
+   "collection": "state_dossier_question_log",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "economic_calendar": {
+   "collection": "ts_economic_calendar",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "embeddings": {
+   "collection": "state_embeddings",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "mongo"
+  },
+  "episodic_memory": {
+   "collection": "state_episodic_memory",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "episodic_observations": {
+   "collection": "state_episodic_observations",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "etf_metadata": {
+   "collection": "ts_etf_metadata",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "eval_scores": {
+   "collection": "log_eval_scores",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "evolution_dead_ends": {
+   "collection": "ref_evolution_dead_ends",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "evolution_lessons": {
+   "collection": "state_evolution_lessons",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "evolution_lessons_archive": {
+   "collection": "log_evolution_lessons_archive",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "evolution_nodes": {
+   "collection": "log_evolution_nodes",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "evolution_repair_queue": {
+   "collection": "q_evolution_repair",
+   "shape_at_authoring": "queue",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "execution_errors": {
+   "collection": "log_execution_errors",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "dual"
+  },
+  "failure_buckets": {
+   "collection": "log_failure_buckets",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "financial_history": {
+   "collection": "ts_financial_history",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "ticker, period_type, period_end"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "flash_briefings": {
+   "collection": "log_flash_briefings",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "freshness_gate_config": {
+   "collection": "ref_freshness_thresholds",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "threshold_name"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "`_config` abbreviates; the rows are thresholds"
+  },
+  "fund_alerts": {
+   "collection": "log_fund_alerts",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "fundamentals": {
+   "collection": "state_fundamentals",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker, snapshot_date"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "generated_agent_prompts": {
+   "collection": "state_generated_agent_prompts",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "graph_node_events": {
+   "collection": "state_graph_node_events",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "insider_trades": {
+   "collection": "log_insider_trades",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "janitor_run_log": {
+   "collection": "ref_janitor_run_log",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "layout_presets": {
+   "collection": "state_layout_presets",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "name"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "llm_audit_logs": {
+   "collection": "log_llm_calls",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "mongo_read",
+   "rename_reason": "append-only call log; the ledger shape is unstable here"
+  },
+  "lot_closures": {
+   "collection": "ledger_lot_closures",
+   "shape_at_authoring": "money",
+   "id_fields": [
+    "closure_id"
+   ],
+   "numeric_policy": "dec128",
+   "mode_at_authoring": "pg"
+  },
+  "macro_indicators": {
+   "collection": "ts_macro_indicators",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "indicator, date, country"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "market_regime": {
+   "collection": "ts_market_regime",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "date"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "market_snapshots": {
+   "collection": "log_market_snapshots",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "ticker, fetched_at"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "model_shadow_runs": {
+   "collection": "state_model_shadow_runs",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "monitored_subreddits": {
+   "collection": "state_monitored_subreddits",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "subreddit"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "morning_briefings": {
+   "collection": "ref_morning_briefings",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "news_articles": {
+   "collection": "state_news_articles",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ontology_edges": {
+   "collection": "state_ontology_edges",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ontology_nodes": {
+   "collection": "state_ontology_nodes",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "orders": {
+   "collection": "ledger_orders",
+   "shape_at_authoring": "money",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "dec128",
+   "mode_at_authoring": "pg"
+  },
+  "pending_approvals": {
+   "collection": "state_pending_approvals",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "pending_evolution_fixes": {
+   "collection": "state_evolution_fix_proposals",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "`pending_` is a status, not a name"
+  },
+  "pipeline_events": {
+   "collection": "log_pipeline_events",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "mongo_read"
+  },
+  "pipeline_profiler": {
+   "collection": "log_pipeline_profiler",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "pipeline_state": {
+   "collection": "state_pipeline",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "singleton_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "state_pipeline_state is redundant"
+  },
+  "portfolio_snapshots": {
+   "collection": "ledger_portfolio_snapshots",
+   "shape_at_authoring": "money",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "dec128",
+   "mode_at_authoring": "pg"
+  },
+  "position_lots": {
+   "collection": "ledger_position_lots",
+   "shape_at_authoring": "money",
+   "id_fields": [
+    "lot_id"
+   ],
+   "numeric_policy": "dec128",
+   "mode_at_authoring": "pg"
+  },
+  "positions": {
+   "collection": "ledger_positions",
+   "shape_at_authoring": "money",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "dec128",
+   "mode_at_authoring": "pg"
+  },
+  "price_backfill_progress": {
+   "collection": "ts_price_backfill_progress",
+   "shape_at_authoring": "timeseries",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "price_history": {
+   "collection": "ts_price_history",
+   "shape_at_authoring": "timeseries",
+   "id_fields": [
+    "ticker, date, source"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "price_triggers": {
+   "collection": "state_price_triggers",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "procedural_memory": {
+   "collection": "state_procedural_memory",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "prospective_memory": {
+   "collection": "state_prospective_memory",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "put_call_ratio": {
+   "collection": "ts_put_call_ratio",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "symbol, date"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "quant_equation_library": {
+   "collection": "state_quant_equations",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "name"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "`_library` names the container, not the document"
+  },
+  "rag_ab_results": {
+   "collection": "log_rag_ab_results",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "reddit_posts": {
+   "collection": "state_reddit_posts",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "regime_hmm_posteriors": {
+   "collection": "ts_regime_hmm_posteriors",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "ticker, as_of"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "rejected_skill_edits": {
+   "collection": "log_rejected_skill_edits",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "rejected_symbols": {
+   "collection": "ref_rejected_symbols",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "research_trials": {
+   "collection": "ts_research_trials",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "family, label"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "rss_feeds": {
+   "collection": "state_rss_feeds",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "url"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "runtime_parameters": {
+   "collection": "log_runtime_parameters",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "scheduler_history": {
+   "collection": "log_scheduler_events",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "scraper_queue": {
+   "collection": "q_scraper",
+   "shape_at_authoring": "queue",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "scraper_scripts": {
+   "collection": "state_scraper_scripts",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "domain"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "sec_13f_filers": {
+   "collection": "state_sec_13f_filers",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "cik"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "sec_13f_holdings": {
+   "collection": "state_sec_13f_holdings",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "cik, ticker, filing_quarter"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "sector_breadth": {
+   "collection": "ts_sector_breadth",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "sector, date"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "sector_correlations": {
+   "collection": "ts_sector_correlations",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "sector_a, sector_b, period"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "sector_performance": {
+   "collection": "ts_sector_performance",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "sector, date"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "sector_rotation_signals": {
+   "collection": "log_sector_rotation_signals",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "semantic_memory": {
+   "collection": "state_semantic_memory",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "shared_desk": {
+   "collection": "state_shared_desk",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "desk_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "shkreli_opinions": {
+   "collection": "state_analyst_opinions",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "a person's name is not a schema"
+  },
+  "smart_money_performance": {
+   "collection": "ts_smart_money_performance",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "actor_type, actor_id, horizon"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "smart_money_trade_scores": {
+   "collection": "ts_smart_money_trade_scores",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "trade_key"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "social_posts": {
+   "collection": "log_social_posts",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "source_trust": {
+   "collection": "state_source_trust",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "source_type, source_name"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "stable_harnesses": {
+   "collection": "ref_stable_harnesses",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "target_type, target_name"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "stock_commodity_correlations": {
+   "collection": "ts_stock_commodity_correlations",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "ticker, commodity, period"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "strategy_candidates": {
+   "collection": "ref_strategy_candidates",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "strategy_evaluations": {
+   "collection": "log_strategy_evaluations",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "strategy_performance": {
+   "collection": "state_strategy_performance",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "sub_task_queue": {
+   "collection": "q_sub_task",
+   "shape_at_authoring": "queue",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "subsystem_benchmarks": {
+   "collection": "log_subsystem_benchmarks",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "system_commands": {
+   "collection": "q_autoresearch_commands",
+   "shape_at_authoring": "queue",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "the LEGACY autoresearch queue; must not collide with q_commands"
+  },
+  "technicals": {
+   "collection": "ts_technicals",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "ticker, date"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_attention": {
+   "collection": "state_ticker_attention",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_bans": {
+   "collection": "state_ticker_bans",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_consensus": {
+   "collection": "ref_ticker_consensus",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_correlations": {
+   "collection": "ref_ticker_correlations",
+   "shape_at_authoring": "reference",
+   "id_fields": [
+    "ticker_a, ticker_b, period"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_dossiers": {
+   "collection": "ts_ticker_dossiers",
+   "shape_at_authoring": "upsert",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_metadata": {
+   "collection": "state_ticker_metadata",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_quarantine": {
+   "collection": "state_ticker_quarantine",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_reports": {
+   "collection": "state_ticker_reports",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "mongo_read"
+  },
+  "ticker_user_notes": {
+   "collection": "state_ticker_user_notes",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "ticker_watches": {
+   "collection": "state_ticker_watches",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "tool_playbook": {
+   "collection": "state_tool_playbook",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "tool_usage_stats": {
+   "collection": "log_tool_usage_stats",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "trade_fills": {
+   "collection": "ledger_trade_fills",
+   "shape_at_authoring": "money",
+   "id_fields": [
+    "fill_id"
+   ],
+   "numeric_policy": "dec128",
+   "mode_at_authoring": "pg"
+  },
+  "trade_results": {
+   "collection": "log_trade_decisions",
+   "shape_at_authoring": "money",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "mongo_read",
+   "rename_reason": "holds decision parameters, not settled money (ch.64)",
+   "numeric_policy_reason": "ledger shape says money, but ch.64 established these are decision parameters (action/confidence/stop_loss), not settled amounts. This is the same fact table_spec._NUMERIC_OVERRIDES encodes; recording it here lets that override be deleted."
+  },
+  "trading_constitution": {
+   "collection": "log_trading_constitution",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "user_feedback": {
+   "collection": "state_user_feedback",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "user_intents": {
+   "collection": "log_user_intents",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "v3_agent_telemetry": {
+   "collection": "log_agent_llm_calls",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "dual",
+   "rename_reason": "`v3_` is a version, not a domain; there is no v1/v2"
+  },
+  "v3_guardrail_firings": {
+   "collection": "log_agent_guardrail_firings",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "`v3_` is a version, not a domain"
+  },
+  "v3_invariant_violations": {
+   "collection": "log_agent_invariant_violations",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "`v3_` is a version, not a domain"
+  },
+  "v3_research_queues": {
+   "collection": "q_research",
+   "shape_at_authoring": "queue",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "`v3_` is a version; a queue is named for its items"
+  },
+  "v3_system_commands": {
+   "collection": "q_commands",
+   "shape_at_authoring": "queue",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg",
+   "rename_reason": "the CURRENT command queue"
+  },
+  "variance_runs": {
+   "collection": "log_variance_runs",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "watch_events": {
+   "collection": "state_watch_events",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "watchlist": {
+   "collection": "state_watchlist",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "ticker"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "whiteboard_annotations": {
+   "collection": "log_whiteboard_annotations",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "whiteboard_entries": {
+   "collection": "state_whiteboard_entries",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "worklist_shadow_runs": {
+   "collection": "log_worklist_shadow_runs",
+   "shape_at_authoring": "append",
+   "id_fields": [
+    "id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "youtube_channels": {
+   "collection": "state_youtube_channels",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "channel_handle"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  },
+  "youtube_transcripts": {
+   "collection": "state_youtube_transcripts",
+   "shape_at_authoring": "mutable",
+   "id_fields": [
+    "video_id"
+   ],
+   "numeric_policy": "float",
+   "mode_at_authoring": "pg"
+  }
+ },
+ "archive_only": [
+  "agent_experiences",
+  "agent_loop_stats",
+  "best_per_ticker",
+  "company_narratives",
+  "critic_feedback",
+  "debate_tool_cache",
+  "evolution_attempts",
+  "hallucination_audit",
+  "hallucination_log",
+  "lens_scorecard",
+  "llm_attention_weights",
+  "memory_usage_logs",
+  "prompt_templates",
+  "sec_13f_performance",
+  "simulation_transcripts",
+  "source_quality_scores",
+  "swarm_scorecards",
+  "taskboard_findings",
+  "taskboard_investigations",
+  "ticker_collection_watermarks",
+  "ticker_health",
+  "user_constraints",
+  "user_data",
+  "user_notes",
+  "watchlist_curation_log"
+ ],
+ "foreign": [
+  "agent_registry",
+  "agent_tasks",
+  "autofix_runs",
+  "box_benchmark_runs",
+  "breeders",
+  "canonical_strains",
+  "chemical_profiles",
+  "cognition_episodic_memories",
+  "cognition_memory_envelopes",
+  "cognition_procedural_memories",
+  "cognition_reflections",
+  "cognition_reflective_memories",
+  "cognition_semantic_memories",
+  "context_telemetry",
+  "decision_outcomes_backup_20260727",
+  "decision_outcomes_backup_20260728",
+  "fallback_data",
+  "fundamentals_backup_20260727",
+  "genetic_relationships",
+  "genomic_samples",
+  "glass_artists",
+  "glass_collaborations",
+  "glass_favorites",
+  "glass_ratings",
+  "glass_submissions",
+  "llm_traces",
+  "observation_images",
+  "observations",
+  "sec_13f_holdings_backup_20260804",
+  "source_genomics_records",
+  "source_strain_records",
+  "strain_aliases"
+ ]
+}
