@@ -36,6 +36,7 @@ import psycopg.rows
 from psycopg_pool import ConnectionPool
 
 from app.config import settings
+from app.db.pg_write_guard import check_pg_write
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,9 @@ class PooledCursor:
     def execute(self, sql: str, params=None) -> "PooledCursor":
         """Execute SQL with automatic placeholder translation."""
 
+        # Fail closed on writes to tables that have cut over to Mongo.
+        check_pg_write(sql)
+
         # Convert list params to tuple (psycopg requires tuples)
         if isinstance(params, list):
             params = tuple(params)
@@ -154,6 +158,8 @@ class PooledCursor:
 
     def executemany(self, sql: str, params_seq) -> "PooledCursor":
         """Execute SQL for a sequence of parameters."""
+
+        check_pg_write(sql)
 
         # Ensure parameters are sequences (tuples)
         cleaned_seq = [tuple(p) if isinstance(p, list) else p for p in params_seq]
