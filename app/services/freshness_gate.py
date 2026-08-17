@@ -248,8 +248,8 @@ def run_freshness_gate(
                                 [ticker, since],
                             ).fetchone()[0]
                     news_counts[ticker] = c_val
-                    else:
-                        news_counts[ticker] = 0
+                else:
+                    news_counts[ticker] = 0
         except Exception as e:
             logger.warning("[FreshnessGate] Could not fetch news counts: %s", e)
 

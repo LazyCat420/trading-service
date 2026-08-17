@@ -172,13 +172,28 @@ class PipelineStateDB:
             from app.db import mongo_store
             d = None
             if mongo_store.reads_mongo("pipeline_state"):
-                doc = mongo_store.find_doc("pipeline_state", {"singleton_id": cls.SINGLETON_ID})
-                if doc:
-                    d = dict(doc)
-                    d.pop("_id", None)
-                    d.pop("singleton_id", None)
+                try:
+                    docs = mongo_store.find_docs(
+                        "pipeline_state", {"singleton_id": cls.SINGLETON_ID}, limit=1
+                    )
+                    if docs:
+                        d = dict(docs[0])
+                        d.pop("_id", None)
+                        d.pop("singleton_id", None)
+                except Exception as me:
+                    handle_mongo_read_failure(
+                        "pipeline_state", "[PipelineStateDB] mongo state read", me
+                    )
 
-            if d is None and not mongo_store.reads_mongo("pipeline_state"):
+            # Fall back to Postgres whenever it is still being written, which
+            # covers both a Mongo read error and a Mongo copy that has no
+            # document yet. Guarding this on `not reads_mongo(...)` instead
+            # would mean a stale or missing Mongo singleton silently reports
+            # the pipeline as idle -- and an idle reading is what the deploy
+            # interlock treats as "safe to restart the container".
+            # At mode `mongo` writes_pg() is False, so a missing document
+            # surfaces as an empty state rather than a stale one.
+            if d is None and mongo_store.writes_pg("pipeline_state"):
                 with connection.get_db() as db:
                     row = db.execute("SELECT * FROM pipeline_state WHERE singleton_id = %s", [cls.SINGLETON_ID]).fetchone()
                     if row:
@@ -205,11 +220,16 @@ class PipelineStateDB:
                                 d["events"] = []
                         else:
                             try:
-                                ev_rows = db.execute(
-                                    "SELECT timestamp, phase, step, detail, status, data_json, elapsed_ms "
-                                    "FROM pipeline_events WHERE cycle_id = %s ORDER BY timestamp ASC",
-                                    [cycle_id],
-                                ).fetchall()
+                                # A fresh connection: the `db` from the state
+                                # read above is out of scope here whenever the
+                                # state came from Mongo, and closed even when
+                                # it did not.
+                                with connection.get_db() as ev_db:
+                                    ev_rows = ev_db.execute(
+                                        "SELECT timestamp, phase, step, detail, status, data_json, elapsed_ms "
+                                        "FROM pipeline_events WHERE cycle_id = %s ORDER BY timestamp ASC",
+                                        [cycle_id],
+                                    ).fetchall()
                                 events = []
                                 for erow in ev_rows:
                                     ts_val = erow[0]
@@ -248,10 +268,11 @@ class PipelineStateDB:
                                 except Exception as me:
                                     handle_mongo_read_failure("analysis_results", "[PipelineStateDB] mongo results read", me)
                             if ar_rows is None:
-                                ar_rows = db.execute(
-                                    "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
-                                    [cycle_id],
-                                ).fetchall()
+                                with connection.get_db() as ar_db:
+                                    ar_rows = ar_db.execute(
+                                        "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
+                                        [cycle_id],
+                                    ).fetchall()
                             results = []
                             for ar in ar_rows:
                                 try:
