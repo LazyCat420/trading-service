@@ -214,6 +214,96 @@ def verify_fields(table: str, sample: int) -> int:
     return 0 if ok else 1
 
 
+def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
+    """EXHAUSTIVE field-level parity: every row, not a sample.
+
+    `verify_fields` draws N random rows, so its verdict depends on the draw —
+    it scored `context_blobs` OK three runs out of four while a full sweep of
+    the same unchanged data found 117 drifted `created_at` values and 2
+    permanently missing documents. A sampled check cannot certify a table for
+    promotion to `mongo`, because that is exactly the moment a missing row
+    becomes unreadable and a drifted value becomes the only value there is.
+
+    Implementation note: this walks PG in key batches and fetches the matching
+    Mongo docs with `$in`, rather than sorting both sides and merge-joining.
+    PG's default collation and Mongo's binary sort do not agree on string keys,
+    so a merge-join would report spurious gaps on any text key (every hash- and
+    ticker-keyed table here). Batched lookups are index-driven and
+    collation-independent.
+    """
+    if table not in TABLES:
+        print(f"unknown table {table!r}; known: {', '.join(TABLES)}", file=sys.stderr)
+        return 2
+    select_sql, key_field, mapper = TABLES[table]
+    coll = mongo_store.get_doc_db()[table]
+
+    mismatches: Counter = Counter()
+    samples: dict[str, list] = {}
+    missing_keys: list = []
+    pg_total = 0
+
+    # Same type-agnostic keyset pagination the backfill uses: the first page has
+    # no WHERE clause, so an int id is never compared against a sentinel string.
+    last_key = None
+    while True:
+        with connection.get_db() as db:
+            if last_key is None:
+                cur = db.execute(f"{select_sql} ORDER BY {key_field} ASC LIMIT %s", [batch])
+            else:
+                cur = db.execute(
+                    f"{select_sql} WHERE {key_field} > %s ORDER BY {key_field} ASC LIMIT %s",
+                    [last_key, batch],
+                )
+            rows = cur.fetchall()
+            cols = [c[0] for c in cur.description]
+        if not rows:
+            break
+        expected_by_key = {}
+        for r in rows:
+            pg_total += 1
+            doc = mapper(r, cols)
+            expected_by_key[doc[key_field]] = doc
+        last_key = rows[-1][cols.index(key_field)]
+
+        found = {
+            d.get(key_field): d
+            for d in coll.find({key_field: {"$in": list(expected_by_key)}})
+        }
+        for key, expected in expected_by_key.items():
+            doc = found.get(key)
+            if doc is None:
+                if len(missing_keys) < examples:
+                    missing_keys.append(key)
+                mismatches["__missing__"] += 1
+                continue
+            for k, v in expected.items():
+                if not _values_equal(v, doc.get(k)):
+                    mismatches[k] += 1
+                    if len(samples.setdefault(k, [])) < examples:
+                        samples[k].append((key, v, doc.get(k)))
+
+    mongo_total = coll.count_documents({})
+    missing = mismatches.pop("__missing__", 0)
+    drifted = sum(mismatches.values())
+
+    print(f"[{table}] VERIFY-ALL: pg_rows={pg_total:,} mongo_docs={mongo_total:,} "
+          f"missing-in-mongo={missing:,} drifted-fields={drifted:,}")
+    if mongo_total > pg_total:
+        print(f"[{table}]   NOTE: Mongo holds {mongo_total - pg_total:,} document(s) "
+              f"with no PG row — orphans, or rows deleted from PG only")
+    for field, n in mismatches.most_common():
+        print(f"[{table}]   field {field!r}: {n:,} mismatch(es)")
+        for key, pg_v, mg_v in samples.get(field, []):
+            print(f"[{table}]      {key_field}={key!r}  pg={pg_v!r}  mongo={mg_v!r}")
+    if missing_keys:
+        print(f"[{table}]   missing keys (first {len(missing_keys)}): "
+              + ", ".join(repr(k) for k in missing_keys))
+
+    ok = missing == 0 and drifted == 0 and mongo_total == pg_total
+    print(f"[{table}] VERIFY-ALL: {'OK' if ok else 'MISMATCH'}")
+    return 0 if ok else 1
+
+
 def backfill(table: str, batch: int = 2000, verify_only: bool = False,
              rate_limit: float = 0.0) -> int:
     if table not in TABLES:
@@ -277,11 +367,22 @@ def main():
     ap.add_argument("--batch", type=int, default=2000, help="rows per bulk round-trip")
     ap.add_argument("--rate-limit", type=float, default=0.0, metavar="ROWS_PER_SEC",
                     help="cap sustained backfill throughput (0 = unlimited)")
+    ap.add_argument("--verify-all", action="store_true",
+                    help="EXHAUSTIVE field parity over every row, no writes — "
+                         "required before promoting a table to `mongo`")
+    ap.add_argument("--examples", type=int, default=5, metavar="N",
+                    help="offending rows to print per defect class (--verify-all)")
     ap.add_argument("--list", action="store_true", help="list supported tables")
     args = ap.parse_args()
     if args.list or not args.table:
         print("supported tables:", ", ".join(TABLES))
         return 0
+    if args.verify_all:
+        tables = list(TABLES) if args.table == "all" else [args.table]
+        worst = 0
+        for t in tables:
+            worst = max(worst, verify_all(t, batch=args.batch, examples=args.examples))
+        return worst
     if args.verify_fields:
         tables = list(TABLES) if args.table == "all" else [args.table]
         worst = 0

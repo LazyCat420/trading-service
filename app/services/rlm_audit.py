@@ -39,6 +39,18 @@ def log_rlm_audit_trail(
 
             # Insert blobs only if they don't already exist (dedup)
             _blob_recs = []
+            # ONE timestamp, written to both stores. This used to let PG take
+            # the column default (CURRENT_TIMESTAMP) while Mongo took a Python
+            # datetime.now() computed moments earlier — two clocks for one fact.
+            # They agreed only when both landed in the same millisecond, so it
+            # read as parity: an exhaustive sweep found 117 of 56,452 rows
+            # drifted, Mongo always the EARLIER of the two, by 1.0-6.3 ms. (The
+            # spread is the tell: millisecond rounding cannot exceed 1 ms, and
+            # CURRENT_TIMESTAMP is transaction-start time, not statement time.)
+            # Naive UTC because the column is `timestamp without time zone` and
+            # pymongo stores naive datetimes as UTC — so both sides hold the
+            # identical value by construction rather than by luck.
+            _blob_ts = datetime.now(timezone.utc).replace(tzinfo=None)
             for blob_hash, blob_content in [
                 (ctx_hash, context),
                 (prompt_hash, trading_system_prompt),
@@ -46,17 +58,15 @@ def log_rlm_audit_trail(
                 _blob_recs.append({
                     "context_hash": blob_hash, "content": blob_content,
                     "byte_size": len(blob_content.encode("utf-8")),
-                    # PG gets created_at from the column default; the Mongo
-                    # mirror must set it explicitly or the doc has none.
-                    "created_at": datetime.now(timezone.utc),
+                    "created_at": _blob_ts,
                 })
                 db.execute(
                     """
-                    INSERT INTO context_blobs (context_hash, content, byte_size)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO context_blobs (context_hash, content, byte_size, created_at)
+                    VALUES (%s, %s, %s, %s)
                     ON CONFLICT (context_hash) DO NOTHING
                 """,
-                    [blob_hash, blob_content, len(blob_content.encode("utf-8"))],
+                    [blob_hash, blob_content, len(blob_content.encode("utf-8")), _blob_ts],
                 )
             # Best-effort Mongo mirror — upsert by content_hash (dedup, like the
             # ON CONFLICT DO NOTHING above).
