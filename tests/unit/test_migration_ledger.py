@@ -179,14 +179,64 @@ def test_mode_now_is_a_backend_this_migration_knows(ledger):
         assert rec["mode_now"] in {"pg", "dual", "mongo_read", "mongo"}, rec["table"]
 
 
+_BACKENDS_ENV = _ROOT / "app" / "db" / "mongo_backends.env"
+
+
 def test_the_live_backend_flags_reach_the_ledger(ledger):
-    """`mode_now` must come from deploy.sh, not default to pg for everything."""
-    modes = bml.parse_mongo_modes(_ROOT / "deploy.sh")
-    assert modes, "MONGO_STORE_DEFAULT was not found in deploy.sh"
+    """`mode_now` comes from the committed map, not a default of pg for everything."""
+    modes = bml.parse_mongo_modes(_BACKENDS_ENV)
+    assert modes, "MONGO_STORE_BACKEND was not found in app/db/mongo_backends.env"
     by_table = {r["table"]: r for r in ledger["tables"]}
     for table, mode in modes.items():
         if table in by_table:
             assert by_table[table]["mode_now"] == mode, table
+
+
+def test_every_non_pg_table_in_the_ledger_is_in_the_backend_map(ledger):
+    """The reverse direction: the ledger cannot claim a promotion the map does not.
+
+    Without this, a hand-edited ledger row could report a table as `mongo` while
+    the deployed containers still run it at `pg` -- which reads as "migrated".
+    """
+    modes = bml.parse_mongo_modes(_BACKENDS_ENV)
+    for rec in ledger["tables"]:
+        if rec["mode_now"] != "pg":
+            assert rec["table"] in modes, (
+                f"{rec['table']} is {rec['mode_now']} in the ledger but absent "
+                "from app/db/mongo_backends.env"
+            )
+            assert modes[rec["table"]] == rec["mode_now"], rec["table"]
+
+
+def test_a_missing_backend_map_aborts_instead_of_reporting_everything_pg(tmp_path):
+    """The regression guard for the defect this replaced.
+
+    parse_mongo_modes used to return {} when its source did not match, and the
+    builder wrote `mode_now: pg` for all 183 rows -- erasing the record of every
+    promoted table. A missing or empty map must abort the build instead.
+    """
+    with pytest.raises(SystemExit):
+        bml.parse_mongo_modes(tmp_path / "nope.env")
+
+    empty = tmp_path / "empty.env"
+    empty.write_text("# no assignment here\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        bml.parse_mongo_modes(empty)
+
+    bad = tmp_path / "bad.env"
+    bad.write_text("MONGO_STORE_BACKEND=pipeline_events:sideways\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        bml.parse_mongo_modes(bad)
+
+    good = tmp_path / "good.env"
+    good.write_text(
+        "MONGO_STORE_BACKEND=pipeline_events:mongo_read,embeddings:mongo\n",
+        encoding="utf-8",
+    )
+    assert bml.parse_mongo_modes(good) == {
+        "pipeline_events": "mongo_read",
+        "embeddings": "mongo",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +528,18 @@ def test_the_ledger_reports_the_external_ref_caveat(ledger):
     assert "name collisions" in ledger["external_refs_caveat"]
 
 
-def test_deploy_sh_supplies_the_current_backends():
-    modes = bml.parse_mongo_modes(_ROOT / "deploy.sh")
+def test_the_committed_map_supplies_the_current_backends():
+    modes = bml.parse_mongo_modes(_BACKENDS_ENV)
     assert modes.get("embeddings") == "mongo"
     assert set(modes.values()) <= {"pg", "dual", "mongo_read", "mongo"}
+
+
+def test_deploy_sh_is_no_longer_a_source_of_backend_flags():
+    """deploy.sh reads the committed map; it must not carry a map of its own.
+
+    If MONGO_STORE_DEFAULT ever reappears there, two sources disagree and the
+    one that wins depends on shell evaluation order -- the exact ambiguity
+    phase 0.1 removed.
+    """
+    text = (_ROOT / "deploy.sh").read_text(encoding="utf-8")
+    assert "MONGO_STORE_DEFAULT=" not in text

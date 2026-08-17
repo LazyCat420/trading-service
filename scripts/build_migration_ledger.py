@@ -469,22 +469,52 @@ def key_fields(
     return pk, (single_cols[0] if single_cols else None), uniques
 
 
-def parse_mongo_modes(deploy_sh: Path) -> dict[str, str]:
-    """Read MONGO_STORE_DEFAULT out of deploy.sh -- the live per-table backend."""
-    if not deploy_sh.exists():
-        return {}
-    modes: dict[str, str] = {}
-    for line in deploy_sh.read_text(encoding="utf-8", errors="ignore").splitlines():
+VALID_MODES = frozenset({"pg", "dual", "mongo_read", "mongo"})
+
+
+def parse_mongo_modes(backends_env: Path) -> dict[str, str]:
+    """Read MONGO_STORE_BACKEND out of app/db/mongo_backends.env.
+
+    This used to read MONGO_STORE_DEFAULT out of deploy.sh. Phase 0.1 (99da42f)
+    moved the canonical map into a committed app/db/mongo_backends.env and
+    deleted that variable, so the grep matched nothing and this returned {} --
+    which is indistinguishable from "every table is pg". `mode_now` is the
+    ledger's only record of which tables have been promoted, so a regeneration
+    silently erased all 13 flagged tables. It is the state machine; losing it
+    loses the migration's progress.
+
+    So this now fails CLOSED. A ledger with no mode data is worse than no
+    ledger, because it reads as an authoritative "nothing has been migrated".
+    """
+    if not backends_env.exists():
+        raise SystemExit(
+            f"{backends_env} is missing -- it is the canonical per-table backend "
+            "map. Refusing to build a ledger that would record every table as "
+            "`pg` and erase the record of which tables are already promoted."
+        )
+    for line in backends_env.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        if not stripped.startswith("MONGO_STORE_DEFAULT="):
+        if not stripped.startswith("MONGO_STORE_BACKEND="):
             continue
         value = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+        modes: dict[str, str] = {}
         for pair in value.split(","):
-            if ":" in pair:
-                table, mode = pair.split(":", 1)
-                modes[table.strip()] = mode.strip()
-        break
-    return modes
+            if ":" not in pair:
+                continue
+            table, mode = pair.split(":", 1)
+            table, mode = table.strip(), mode.strip()
+            if mode not in VALID_MODES:
+                raise SystemExit(
+                    f"{backends_env}: table {table!r} has unknown mode {mode!r} "
+                    f"(expected one of {sorted(VALID_MODES)})"
+                )
+            modes[table] = mode
+        if not modes:
+            raise SystemExit(
+                f"{backends_env}: MONGO_STORE_BACKEND= parsed to zero tables."
+            )
+        return modes
+    raise SystemExit(f"{backends_env} has no MONGO_STORE_BACKEND= line.")
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +579,7 @@ def build(use_db: bool = True, ref_cap: int = 20) -> dict:
     known = set(manifest_tables) | set(live_tables) | set(ts_tables)
 
     refs_by_table, signals_by_table = scan_roots(known)
-    modes = parse_mongo_modes(REPO_ROOT / "deploy.sh")
+    modes = parse_mongo_modes(REPO_ROOT / "app" / "db" / "mongo_backends.env")
 
     records = []
     for table in sorted(manifest_tables):
