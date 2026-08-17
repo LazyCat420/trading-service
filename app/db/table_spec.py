@@ -41,6 +41,28 @@ _JSON_TYPES = {"json", "jsonb"}
 # Types that need a value transform on the way into BSON.
 _VECTOR_UDT = "vector"
 
+# The ledger is GENERATED (scripts/build_migration_ledger.py), so it cannot be
+# hand-corrected — a regeneration would silently undo the edit. These are the
+# facts the classifier gets wrong, recorded here with why, until the classifier
+# itself is fixed.
+_KEY_OVERRIDES = {
+    # The classifier reads the `id` column and stops. The mirror is really keyed
+    # on request_id: the ch.62 heal re-keyed it that way after 31,637 id-less
+    # documents turned up, and the unique index follows request_id. Keying a
+    # backfill on `id` here would mirror rows alongside the existing documents
+    # instead of onto them, doubling the collection.
+    "agent_audit_log": "request_id",
+}
+_NUMERIC_OVERRIDES = {
+    # ch.64 established that this table holds DECISION PARAMETERS (action,
+    # confidence, reasoning, price levels) and not settled amounts — no cash, no
+    # quantities, no realized P&L — and recommended reclassifying it out of
+    # `money`. Its 1,051 live documents already store these as IEEE floats, so
+    # honouring the ledger's `dec128` would make every existing document
+    # disagree with every newly written one.
+    "trade_results": "float",
+}
+
 _ledger_cache: dict[str, dict] | None = None
 
 
@@ -58,29 +80,43 @@ def key_field_for(table: str) -> str:
     """The single column that identifies a row in both stores.
 
     Prefers the ledger's `natural_key`, falling back to `key_field`. Raises on a
-    composite key rather than silently keying on half of it: the backfill's
-    keyset pagination and the verifier's `$in` lookups both need one column, and
-    a spec that quietly dropped the second column would mirror rows on top of
-    each other. Only 2 of 158 tables are composite; they take an override.
+    composite key rather than silently keying on part of it: the backfill's
+    keyset pagination and the verifier's `$in` lookups both take one column, and
+    a spec that quietly dropped the rest would mirror rows on top of each other
+    and report the collapse as parity.
+
+    **26 of the 158 tables are composite** — including the three biggest
+    (`price_history` on `ticker, date, source`, `technicals` on `ticker, date`,
+    `sec_13f_holdings` on `cik, ticker, filing_quarter`). So this generator
+    serves 132 tables today, and composite-key support is a prerequisite for
+    waves W6/W7, not an afterthought. Until then those tables raise here, which
+    is the point: loudly unsupported beats quietly wrong.
     """
     row = _ledger().get(table)
     if row is None:
         raise KeyError(f"{table!r} is not in migration_ledger.json — regenerate it "
                        "(scripts/build_migration_ledger.py) before migrating this table")
+    if table in _KEY_OVERRIDES:
+        return _KEY_OVERRIDES[table]
     key = (row.get("natural_key") or row.get("key_field") or "").strip()
     if not key:
         raise ValueError(f"{table!r} has no natural_key or key_field in the ledger")
     if "," in key:
         raise ValueError(
-            f"{table!r} has a COMPOSITE key ({key!r}). Add an explicit entry to "
-            "TABLES in scripts/pg_to_mongo_backfill.py — a generated spec would "
-            "key on one column and collapse rows that differ only in the other."
+            f"{table!r} has a COMPOSITE key ({key!r}), which this generator does "
+            "not serve yet (26 of 158 tables, including price_history, technicals "
+            "and sec_13f_holdings). Keying on one of its columns would collapse "
+            "rows that differ only in the others and report it as parity. Add an "
+            "explicit entry to TABLES, or add composite-key support to the "
+            "backfill's pagination and the verifier's lookups."
         )
     return key
 
 
 def uses_decimal128(table: str) -> bool:
-    """True when the ledger classifies this table's numbers as money."""
+    """True when this table's numbers are money and must be Decimal128."""
+    if table in _NUMERIC_OVERRIDES:
+        return _NUMERIC_OVERRIDES[table] == "dec128"
     row = _ledger().get(table)
     return bool(row and row.get("numeric_policy") == "dec128")
 

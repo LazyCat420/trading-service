@@ -26,6 +26,7 @@ from decimal import Decimal
 
 from app.db import connection
 from app.db import mongo_store
+from app.db import table_spec
 
 
 def _pipeline_events_doc(row, cols):
@@ -115,22 +116,15 @@ TABLES = {
         "service_source FROM agent_traces",
         "id", _passthrough_doc,
     ),
-    "v3_agent_telemetry": (
-        "SELECT id, cycle_id, ticker, agent_name, phase, outcome, elapsed_ms, loops_used, token_usage, "
-        "artifact_size_bytes, quality_score, created_at FROM v3_agent_telemetry",
-        "id", _passthrough_doc,
-    ),
+    # v3_agent_telemetry and trade_results deliberately have NO entry here: they
+    # are served by app/db/table_spec.py. Their hand-written column lists were
+    # strict subsets of the table, which is not a style problem but a data one —
+    # see the note above `_spec_for`.
     "llm_audit_logs": (
         "SELECT id, cycle_id, bot_id, ticker, agent_step, model, system_prompt_hash, context_hash, "
         "raw_response, tokens_used, execution_ms, created_at, endpoint_name, prompt_tokens, "
         "completion_tokens, queue_wait_ms, tokens_per_second, agent_task_id FROM llm_audit_logs",
         "id", _passthrough_doc,
-    ),
-    "trade_results": (
-        "SELECT id, ticker, cycle_id, action, confidence, reasoning, signal_weights, signal_assessments, "
-        "risk_flags, stop_loss, take_profit, position_size_pct, persona_used, regime, created_at "
-        "FROM trade_results",
-        "id", _json_doc("signal_weights", "signal_assessments", "risk_flags"),
     ),
     "ticker_reports": (
         "SELECT id, cycle_id, ticker, action, confidence, report_markdown, result_summary, is_summary, "
@@ -149,6 +143,38 @@ TABLES = {
         "context_hash", _passthrough_doc,
     ),
 }
+
+
+def _spec_for(table: str):
+    """(select_sql, key_field, mapper) — hand-written if one exists, else derived.
+
+    A hand-written entry is now the exception, kept only where the schema cannot
+    express the mapping: `pipeline_events` renames `data_json` -> `data`, which
+    nothing in `information_schema` implies.
+
+    Everything else is generated, because a hand-written column list is not a
+    style choice — it is a place for the mirror to silently disagree with the
+    table. Both hand-written specs removed here were strict SUBSETS of their
+    tables: `v3_agent_telemetry` omitted 9 columns (7,279 PG rows carry
+    `prompt_tokens`/`cached_tokens`/`sys_prompt_chars` while 36 Mongo documents
+    had those fields at all), and `trade_results` omitted 4 that the LIVE writer
+    does mirror, so re-running its backfill was a strip rather than a repair.
+    A generated spec cannot drift from the table, because it IS the table.
+    """
+    if table in TABLES:
+        return TABLES[table]
+    with connection.get_db() as db:
+        return table_spec.spec_for(table, db)
+
+
+def known_tables() -> list[str]:
+    """Every table this script can move: hand-written plus ledger `migrate`."""
+    from app.db.table_spec import _ledger  # local: keeps import cost off --help
+    ledger_tables = [
+        row["table"] for row in _ledger().values()
+        if row.get("disposition") == "migrate"
+    ]
+    return sorted(set(TABLES) | set(ledger_tables))
 
 
 def _normalize(v):
@@ -184,10 +210,11 @@ def verify_fields(table: str, sample: int) -> int:
 
     Note: ORDER BY random() is a full scan — fine for the sub-million-row
     tables migrated so far; switch to TABLESAMPLE for the time-series tier."""
-    if table not in TABLES:
-        print(f"unknown table {table!r}; known: {', '.join(TABLES)}", file=sys.stderr)
+    try:
+        select_sql, key_field, mapper = _spec_for(table)
+    except (KeyError, ValueError) as exc:
+        print(f"cannot build a spec for {table!r}: {exc}", file=sys.stderr)
         return 2
-    select_sql, key_field, mapper = TABLES[table]
     with connection.get_db() as db:
         cur = db.execute(f"{select_sql} ORDER BY random() LIMIT %s", [sample])
         rows = cur.fetchall()
@@ -231,10 +258,11 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
     ticker-keyed table here). Batched lookups are index-driven and
     collation-independent.
     """
-    if table not in TABLES:
-        print(f"unknown table {table!r}; known: {', '.join(TABLES)}", file=sys.stderr)
+    try:
+        select_sql, key_field, mapper = _spec_for(table)
+    except (KeyError, ValueError) as exc:
+        print(f"cannot build a spec for {table!r}: {exc}", file=sys.stderr)
         return 2
-    select_sql, key_field, mapper = TABLES[table]
     coll = mongo_store.get_doc_db()[table]
 
     mismatches: Counter = Counter()
@@ -306,10 +334,11 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
 
 def backfill(table: str, batch: int = 2000, verify_only: bool = False,
              rate_limit: float = 0.0) -> int:
-    if table not in TABLES:
-        print(f"unknown table {table!r}; known: {', '.join(TABLES)}", file=sys.stderr)
+    try:
+        select_sql, key_field, mapper = _spec_for(table)
+    except (KeyError, ValueError) as exc:
+        print(f"cannot build a spec for {table!r}: {exc}", file=sys.stderr)
         return 2
-    select_sql, key_field, mapper = TABLES[table]
 
     with connection.get_db() as db:
         pg_count = db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
@@ -375,16 +404,16 @@ def main():
     ap.add_argument("--list", action="store_true", help="list supported tables")
     args = ap.parse_args()
     if args.list or not args.table:
-        print("supported tables:", ", ".join(TABLES))
+        print("supported tables:", ", ".join(known_tables()))
         return 0
     if args.verify_all:
-        tables = list(TABLES) if args.table == "all" else [args.table]
+        tables = known_tables() if args.table == "all" else [args.table]
         worst = 0
         for t in tables:
             worst = max(worst, verify_all(t, batch=args.batch, examples=args.examples))
         return worst
     if args.verify_fields:
-        tables = list(TABLES) if args.table == "all" else [args.table]
+        tables = known_tables() if args.table == "all" else [args.table]
         worst = 0
         for t in tables:
             worst = max(worst, verify_fields(t, args.verify_fields))
