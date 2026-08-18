@@ -252,23 +252,18 @@ def ensure_indexes() -> None:
 
 
 # ── Generic document ops (used by callers behind the backend flags) ────────
-def insert_docs(collection: str, docs: list[dict[str, Any]]) -> int:
+def insert_docs(collection: str, docs: list[dict[str, Any]],
+                session: Optional[Any] = None) -> int:
     """Append documents (idempotent on the natural `id`, ordered=False).
 
     Returns the number ACTUALLY inserted, which is not always the number handed
-    in. This used to `return len(docs)` unconditionally, so a duplicate-key
-    rejection -- swallowed just below as a legitimate re-run -- was reported to
-    the caller as a successful write of every document. A mirror that
-    under-writes while reporting success is indistinguishable from one that
-    works, and the only way to notice was a row-count comparison against
-    Postgres days later.
+    in.
     """
     if not docs:
         return 0
     ensure_indexes()
-    db = get_doc_db()
     try:
-        res = _coll(collection).insert_many(docs, ordered=False)
+        res = _coll(collection).insert_many(docs, ordered=False, session=session)
         return len(res.inserted_ids)
     except pymongo.errors.BulkWriteError as bwe:
         # Duplicate-key (re-run of the same cycle) is not an error for append-logs.
@@ -281,13 +276,13 @@ def insert_docs(collection: str, docs: list[dict[str, Any]]) -> int:
 
 
 def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],
-               insert_only: bool = False) -> None:
+               insert_only: bool = False, session: Optional[Any] = None) -> None:
     """Upsert `doc` by the `key` filter (the natural key). $set semantics.
     insert_only=True mirrors PG's ON CONFLICT DO NOTHING: existing docs are
     left untouched (use for immutable, content-addressed rows)."""
     ensure_indexes()
     update = {"$setOnInsert": doc} if insert_only else {"$set": doc}
-    _coll(collection).update_one(key, update, upsert=True)
+    _coll(collection).update_one(key, update, upsert=True, session=session)
 
 
 def bulk_upsert(collection: str, docs: list[dict[str, Any]], key_field: str = "id") -> int:
@@ -303,8 +298,9 @@ def bulk_upsert(collection: str, docs: list[dict[str, Any]], key_field: str = "i
 
 
 def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = None,
-              projection: Optional[dict] = None, limit: int = 0) -> list[dict[str, Any]]:
-    cur = _coll(collection).find(query, projection)
+              projection: Optional[dict] = None, limit: int = 0,
+              session: Optional[Any] = None) -> list[dict[str, Any]]:
+    cur = _coll(collection).find(query, projection, session=session)
     if sort:
         cur = cur.sort(sort)
     if limit:
@@ -312,10 +308,11 @@ def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = Non
     return list(cur)
 
 
-def aggregate(collection: str, pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def aggregate(collection: str, pipeline: list[dict[str, Any]],
+              session: Optional[Any] = None) -> list[dict[str, Any]]:
     """Run an aggregation pipeline (the Mongo replacement for SQL GROUP BY /
     DISTINCT ON readers)."""
-    return list(_coll(collection).aggregate(pipeline, allowDiskUse=True))
+    return list(_coll(collection).aggregate(pipeline, allowDiskUse=True, session=session))
 
 
 def count_docs(collection: str, query: Optional[dict] = None) -> int:

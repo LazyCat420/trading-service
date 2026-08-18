@@ -111,7 +111,7 @@ def test_check_stop_losses_skips_reanalyze_positions(monkeypatch):
         ("id2", "SOFT", 10.0, 100.0, 0.08, "reanalyze_on_breach"),
     ]
     monkeypatch.setattr(pt, "_ensure_bot", lambda b: None)
-    monkeypatch.setattr(pt, "get_db", _fake_get_db(rows))
+    monkeypatch.setattr(pt.mongo_query, "find_rows", lambda coll, q, cols, **kw: rows)
     monkeypatch.setattr(pt, "_get_current_price", lambda t: (80.0, 1.0))  # deep breach
     monkeypatch.setattr(pt, "sell", _fake_sell)
     monkeypatch.setattr(pt, "record_fund_alert", lambda **kw: None)
@@ -138,7 +138,7 @@ def test_check_take_profits_uses_agent_target_and_skips_reanalyze(monkeypatch):
         ("id3", "SOFT", 10.0, 100.0, 0.08, 0.05, "reanalyze_on_breach"),
     ]
     monkeypatch.setattr(pt, "_ensure_bot", lambda b: None)
-    monkeypatch.setattr(pt, "get_db", _fake_get_db(rows))
+    monkeypatch.setattr(pt.mongo_query, "find_rows", lambda coll, q, cols, **kw: rows)
     monkeypatch.setattr(pt, "_get_current_price", lambda t: (106.0, 1.0))
     monkeypatch.setattr(pt, "sell", _fake_sell)
 

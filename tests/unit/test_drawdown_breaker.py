@@ -32,23 +32,11 @@ from app.trading import paper_trader
 
 
 def _patch_peak(peak_value):
-    """Patch paper_trader.get_db so the breaker reads `peak_value` as the peak.
-
-    Returns a context manager patching the module-level get_db (imported with
-    `from app.db.connection import get_db`, so it must be patched on
-    paper_trader itself, not on app.db.connection).
-    """
-    cursor = MagicMock()
-    cursor.execute.return_value = cursor
-    cursor.fetchone.return_value = (peak_value,) if peak_value is not None else None
-    cursor.__enter__ = MagicMock(return_value=cursor)
-    cursor.__exit__ = MagicMock(return_value=False)
-
-    @contextmanager
-    def _get_db():
-        yield cursor
-
-    return patch("app.trading.paper_trader.get_db", _get_db)
+    """Patch paper_trader.mongo_query.agg_row so the breaker reads `peak_value` as the peak."""
+    return patch(
+        "app.trading.paper_trader.mongo_query.agg_row",
+        return_value=(peak_value,) if peak_value is not None else None,
+    )
 
 
 class TestDrawdownBreaker:
@@ -111,10 +99,10 @@ class TestDrawdownBreaker:
     def test_fails_open_on_db_error(self):
         # Any DB error must fail open — the breaker is a safety net, not a
         # trade dependency, so it must never block on infrastructure failure.
-        def _boom():
+        def _boom(*a, **kw):
             raise RuntimeError("db down")
 
-        with patch("app.trading.paper_trader.get_db", _boom), \
+        with patch("app.trading.paper_trader.mongo_query.agg_row", side_effect=_boom), \
              patch("app.trading.paper_trader.get_param", lambda k: 0.20):
             result = paper_trader._check_drawdown_breaker("bot-1", 10_000.0)
 

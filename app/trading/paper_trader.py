@@ -16,7 +16,7 @@ Features:
 import datetime
 import uuid
 import logging
-from app.db.connection import get_db
+from typing import Any
 from app.config import settings
 from app.config.config_tickers import classify_asset as _classify_asset
 from app.services.alert_service import record_fund_alert
@@ -55,8 +55,7 @@ def _compute_stop_loss_pct(ticker: str, entry_price: float) -> float:
     min_stop, max_stop, default_stop = _STOP_BOUNDS[asset_class]
 
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('technicals', {'ticker': ticker, 'atr_14': {'$ne': None}}, ['atr_14'], sort=[('date', -1)])
+        row = mongo_query.find_row('technicals', {'ticker': ticker, 'atr_14': {'$ne': None}}, ['atr_14'], sort=[('date', -1)])
 
         if row and row[0] and entry_price > 0:
             atr = row[0]
@@ -174,8 +173,7 @@ def _check_drawdown_breaker(bot_id: str, portfolio_value: float) -> dict | None:
         return None
 
     try:
-        with get_db() as db:
-            peak_row = mongo_query.agg_row('portfolio_snapshots', {'bot_id': bot_id}, [('max', 'total_value')])
+        peak_row = mongo_query.agg_row('portfolio_snapshots', {'bot_id': bot_id}, [('max', 'total_value')])
         peak_value = float(peak_row[0]) if peak_row and peak_row[0] else 0.0
         if peak_value <= 0:
             return None
@@ -218,15 +216,24 @@ def _record_portfolio_snapshot(bot_id: str) -> None:
 
 def _ensure_bot(bot_id: str):
     """Create bot row if it doesn't exist."""
-    with get_db() as db:
-        existing = mongo_query.find_row('bots', {'bot_id': bot_id}, ['bot_id'])
-        if not existing:
-            mongo_store.insert_docs('bots', [{'bot_id': bot_id, 'display_name': bot_id, 'cash_balance': settings.STARTING_CASH, 'total_pnl': 0.0, 'created_at': datetime.datetime.now(datetime.UTC)}])
-            logger.info(
-                "[paper] Created bot '%s' with $%s",
-                bot_id,
-                f"{settings.STARTING_CASH:,.0f}",
-            )
+    existing = mongo_query.find_row('bots', {'bot_id': bot_id}, ['bot_id'])
+    if not existing:
+        mongo_store.insert_docs('bots', [{
+            'bot_id': bot_id,
+            'display_name': bot_id,
+            'cash_balance': mongo_store.dec128(settings.STARTING_CASH),
+            'starting_cash': mongo_store.dec128(settings.STARTING_CASH),
+            'total_pnl': mongo_store.dec128(0.0),
+            'win_rate': 0.0,
+            'total_trades': 0,
+            'is_active': True,
+            'created_at': datetime.datetime.now(datetime.UTC),
+        }])
+        logger.info(
+            "[paper] Created bot '%s' with $%s",
+            bot_id,
+            f"{settings.STARTING_CASH:,.0f}",
+        )
 
 
 def _ticker_liquidity(ticker: str) -> tuple[float | None, float | None]:
@@ -237,25 +244,19 @@ def _ticker_liquidity(ticker: str) -> tuple[float | None, float | None]:
     conservative default", never as "free".
     """
     try:
-        with get_db() as db:
-            row = db.execute(
-                """
-                SELECT avg(close * volume) AS adv,
-                       stddev(close / NULLIF(prev_close, 0) - 1) AS vol
-                FROM (
-                    SELECT close, volume,
-                           lag(close) OVER (ORDER BY date) AS prev_close
-                    FROM price_history
-                    WHERE ticker = %s AND date > current_date - 90
-                      AND close > 0 AND volume > 0
-                ) x
-                """,
-                [ticker],
-            ).fetchone()
-        if not row:
+        ninety_days_ago = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=90)
+        bars = mongo_query.find_rows(
+            'price_history',
+            {'ticker': ticker, 'date': {'$gt': ninety_days_ago}, 'close': {'$gt': 0}, 'volume': {'$gt': 0}},
+            ['close', 'volume'],
+            sort=[('date', 1)],
+        )
+        if not bars or len(bars) < 2:
             return None, None
-        adv = float(row[0]) if row[0] else None
-        vol = float(row[1]) if row[1] else None
+        adv = sum(float(c) * float(v) for c, v in bars) / len(bars)
+        returns = [float(bars[i][0]) / float(bars[i - 1][0]) - 1.0 for i in range(1, len(bars)) if float(bars[i - 1][0]) > 0]
+        import statistics
+        vol = statistics.stdev(returns) if len(returns) >= 2 else None
         return adv, vol
     except Exception as e:  # noqa: BLE001 — costs must never block a trade
         logger.warning("[paper] %s: liquidity lookup failed: %s", ticker, e)
@@ -304,13 +305,12 @@ def _get_current_price(ticker: str) -> tuple[float | None, float | None]:
     Returns (price, age_hours) or (None, None) if no price data.
     Checks price_history first, then asset_prices (crypto/commodity).
     """
-    with get_db() as db:
-        # Try price_history first (stocks)
-        price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close', 'date'], sort=[('date', -1)])
+    # Try price_history first (stocks)
+    price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close', 'date'], sort=[('date', -1)])
 
-        # Fallback: asset_prices (crypto/commodity)
-        if not price_row:
-            price_row = mongo_query.find_row('asset_prices', {'symbol': ticker}, ['close', 'date'], sort=[('date', -1)])
+    # Fallback: asset_prices (crypto/commodity)
+    if not price_row:
+        price_row = mongo_query.find_row('asset_prices', {'symbol': ticker}, ['close', 'date'], sort=[('date', -1)])
 
     if not price_row:
         return None, None
@@ -349,10 +349,8 @@ def get_portfolio(bot_id: str) -> dict:
     """Get current portfolio state: cash + positions."""
     _ensure_bot(bot_id)
 
-    with get_db() as db:
-        bot = mongo_query.find_row('bots', {'bot_id': bot_id}, ['cash_balance', 'total_pnl'])
-
-        positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'opened_at'])
+    bot = mongo_query.find_row('bots', {'bot_id': bot_id}, ['cash_balance', 'total_pnl'])
+    positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'opened_at'])
 
     pos_list = []
     for p in positions:
@@ -427,14 +425,13 @@ async def buy(
     _ensure_bot(bot_id)
 
     if cycle_id:
-        with get_db() as db:
-            existing = mongo_query.find_row('trade_fills', {'cycle_id': cycle_id, 'ticker': ticker, 'side': 'BUY'}, ['fill_id'])
-            if existing:
-                logger.warning("[TRACE][BUY] ABORT — Duplicate BUY order in same cycle for %s", ticker)
-                return {"error": f"Duplicate BUY order in cycle {cycle_id} for {ticker}"}
+        existing = mongo_query.find_row('trade_fills', {'cycle_id': cycle_id, 'ticker': ticker, 'side': 'BUY'}, ['fill_id'])
+        if existing:
+            logger.warning("[TRACE][BUY] ABORT — Duplicate BUY order in same cycle for %s", ticker)
+            return {"error": f"Duplicate BUY order in cycle {cycle_id} for {ticker}"}
 
-    with get_db() as db:
-        cash = mongo_query.find_row('bots', {'bot_id': bot_id}, ['cash_balance'])[0]
+    bot_row = mongo_query.find_row('bots', {'bot_id': bot_id}, ['cash_balance'])
+    cash = float(bot_row[0]) if bot_row and bot_row[0] is not None else float(settings.STARTING_CASH)
     logger.info("[TRACE][BUY] cash=%.2f for bot_id=%s", cash, bot_id)
 
     # Fix #3: Get price with staleness check
@@ -491,10 +488,9 @@ async def buy(
 
     # General sanity: compare to recent historical price if available
     try:
-        with get_db() as _sanity_db:
-            hist_row = mongo_query.agg_row('price_history', {'ticker': ticker, 'date': {'$gt': (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30))}}, [('avg', 'close')])
+        hist_row = mongo_query.agg_row('price_history', {'ticker': ticker, 'date': {'$gt': (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30))}}, [('avg', 'close')])
         if hist_row and hist_row[0] and hist_row[0] > 0:
-            avg_30d = hist_row[0]
+            avg_30d = float(hist_row[0])
             ratio = current_price / avg_30d
             # Reject if price is <5% or >500% of 30-day average (likely bad data)
             if ratio < 0.05 or ratio > 5.0:
@@ -513,8 +509,7 @@ async def buy(
         logger.warning("[paper] Historical price sanity check skipped for %s: %s", ticker, e)
 
     # Calculate portfolio total value to enforce concentration cap
-    with get_db() as db:
-        positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['ticker', 'qty'])
+    positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['ticker', 'qty'])
     portfolio_value = cash
     existing_ticker_value = 0.0
 
@@ -601,92 +596,141 @@ async def buy(
     pos_id = str(uuid.uuid4())
     order_id = str(uuid.uuid4())
 
-    # Fix #5: Wrap in transaction
-    with get_db() as db:
-        try:
-            with db.transaction():
-                # Check for existing position
-                existing = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty', 'avg_entry_price'])
+    # Wrap in Mongo replica transaction (Tier F)
+    try:
+        with mongo_store.with_txn() as session:
+            # Check for existing position
+            existing = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty', 'avg_entry_price'], session=session)
 
-                # Resolve exits: agent-decided stop/target when supplied,
-                # ATR fallback otherwise (agent-owned exits).
-                style = normalize_exit_style(exit_style)
-                stop_pct, stop_source, tp_pct = _resolve_entry_exits(
-                    ticker, current_price, stop_loss_price, take_profit_price
-                )
-
-                if existing:
-                    old_id, old_qty, old_price = existing
-                    new_qty = old_qty + qty
-                    new_avg = ((old_qty * old_price) + (qty * current_price)) / new_qty
-                    # Re-resolve exits against the new average entry price
-                    stop_pct, stop_source, tp_pct = _resolve_entry_exits(
-                        ticker, new_avg, stop_loss_price, take_profit_price
-                    )
-                    mongo_store.update_docs('positions', {'id': old_id}, {'$set': {'qty': new_qty, 'avg_entry_price': new_avg, 'stop_loss_pct': stop_pct, 'take_profit_pct': tp_pct, 'stop_source': stop_source, 'exit_style': style}})
-                else:
-                    mongo_store.insert_docs('positions', [{'id': pos_id, 'bot_id': bot_id, 'ticker': ticker, 'qty': qty, 'avg_entry_price': current_price, 'stop_loss_pct': stop_pct, 'take_profit_pct': tp_pct, 'stop_source': stop_source, 'exit_style': style, 'opened_at': now}])
-                logger.info(
-                    "[TRACE][BUY] %s exits: stop=%.2f%% (%s), tp=%s, style=%s",
-                    ticker, stop_pct * 100, stop_source,
-                    f"{tp_pct * 100:.2f}%%" if tp_pct is not None else "R:R fallback",
-                    style,
-                )
-
-                # Deduct cash and log trade count
-                db.execute(
-                    "UPDATE bots SET cash_balance = cash_balance - %s, total_trades = total_trades + 1 WHERE bot_id = %s",
-                    [amount, bot_id],
-                )
-
-                # Log order
-                mongo_store.insert_docs('orders', [{'id': order_id, 'bot_id': bot_id, 'ticker': ticker, 'side': 'BUY', 'qty': qty, 'price': current_price, 'signal': 'pipeline', 'created_at': now, 'filled_at': now}])
-
-                # ── BROKER LEDGER: create fill + lot ──
-                fill_id = str(uuid.uuid4())
-                lot_id = str(uuid.uuid4())
-                mongo_store.insert_docs('trade_fills', [{'fill_id': fill_id, 'order_id': order_id, 'bot_id': bot_id, 'ticker': ticker, 'side': 'BUY', 'fill_qty': qty, 'fill_price': current_price, 'fill_value': amount, 'fees': round(amount * cost["total_bps"] / 10_000.0, 6), 'decision_price': reference_price, 'filled_at': now, 'cycle_id': cycle_id}])
-                mongo_store.insert_docs('position_lots', [{'lot_id': lot_id, 'bot_id': bot_id, 'ticker': ticker, 'fill_id': fill_id, 'opened_at': now, 'original_qty': qty, 'remaining_qty': qty, 'entry_price': current_price, 'status': 'open', 'cycle_id': cycle_id}])
-                try:
-                    from app.db import mongo_store
-                    if mongo_store.writes_mongo("positions"):
-                        if existing:
-                            mongo_store.upsert_doc(
-                                "positions",
-                                {"bot_id": bot_id, "ticker": ticker},
-                                {"id": old_id, "bot_id": bot_id, "ticker": ticker, "qty": new_qty, "avg_entry_price": new_avg, "stop_loss_pct": stop_pct, "take_profit_pct": tp_pct, "stop_source": stop_source, "exit_style": style, "updated_at": now}
-                            )
-                        else:
-                            mongo_store.upsert_doc(
-                                "positions",
-                                {"bot_id": bot_id, "ticker": ticker},
-                                {"id": pos_id, "bot_id": bot_id, "ticker": ticker, "qty": qty, "avg_entry_price": current_price, "stop_loss_pct": stop_pct, "take_profit_pct": tp_pct, "stop_source": stop_source, "exit_style": style, "opened_at": now}
-                            )
-                    if mongo_store.writes_mongo("bots"):
-                        db_doc = mongo_store.get_doc_db()
-                        db_doc["bots"].update_one({"bot_id": bot_id}, {"$inc": {"cash_balance": -amount, "total_trades": 1}})
-                    if mongo_store.writes_mongo("orders"):
-                        mongo_store.upsert_doc("orders", {"id": order_id}, {"id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "BUY", "qty": qty, "price": current_price, "signal": "pipeline", "created_at": now, "filled_at": now})
-                    if mongo_store.writes_mongo("trade_fills"):
-                        mongo_store.upsert_doc("trade_fills", {"fill_id": fill_id}, {"fill_id": fill_id, "order_id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "BUY", "fill_qty": qty, "fill_price": current_price, "fill_value": amount, "fees": round(amount * cost["total_bps"] / 10_000.0, 6), "decision_price": reference_price, "filled_at": now, "cycle_id": cycle_id})
-                    if mongo_store.writes_mongo("position_lots"):
-                        mongo_store.upsert_doc("position_lots", {"lot_id": lot_id}, {"lot_id": lot_id, "bot_id": bot_id, "ticker": ticker, "fill_id": fill_id, "opened_at": now, "original_qty": qty, "remaining_qty": qty, "entry_price": current_price, "status": "open", "cycle_id": cycle_id})
-                except Exception as m_buy_err:
-                    logger.error("[paper] Mongo mirror failed on BUY ledger write: %s", m_buy_err)
-                logger.info(
-                    "[TRACE][BUY] COMMITTED OK — order_id=%s fill_id=%s lot_id=%s",
-                    order_id,
-                    fill_id,
-                    lot_id,
-                )
-        except Exception as e:
-            logger.error(
-                "[TRACE][BUY] ROLLBACK triggered for %s: %s",
-                ticker,
-                repr(e),
-                exc_info=True,
+            # Resolve exits: agent-decided stop/target when supplied,
+            # ATR fallback otherwise (agent-owned exits).
+            style = normalize_exit_style(exit_style)
+            stop_pct, stop_source, tp_pct = _resolve_entry_exits(
+                ticker, current_price, stop_loss_price, take_profit_price
             )
-            return {"error": f"Transaction failed: {e}"}
+
+            if existing:
+                old_id, old_qty, old_price = existing
+                new_qty = float(old_qty) + qty
+                new_avg = ((float(old_qty) * float(old_price)) + (qty * current_price)) / new_qty
+                # Re-resolve exits against the new average entry price
+                stop_pct, stop_source, tp_pct = _resolve_entry_exits(
+                    ticker, new_avg, stop_loss_price, take_profit_price
+                )
+                mongo_store.update_docs(
+                    'positions',
+                    {'id': old_id},
+                    {'$set': {
+                        'qty': new_qty,
+                        'avg_entry_price': mongo_store.dec128(new_avg),
+                        'stop_loss_pct': stop_pct,
+                        'take_profit_pct': tp_pct,
+                        'stop_source': stop_source,
+                        'exit_style': style,
+                        'updated_at': now,
+                    }},
+                    session=session,
+                )
+            else:
+                mongo_store.insert_docs(
+                    'positions',
+                    [{
+                        'id': pos_id,
+                        'bot_id': bot_id,
+                        'ticker': ticker,
+                        'qty': qty,
+                        'avg_entry_price': mongo_store.dec128(current_price),
+                        'stop_loss_pct': stop_pct,
+                        'take_profit_pct': tp_pct,
+                        'stop_source': stop_source,
+                        'exit_style': style,
+                        'opened_at': now,
+                    }],
+                    session=session,
+                )
+            logger.info(
+                "[TRACE][BUY] %s exits: stop=%.2f%% (%s), tp=%s, style=%s",
+                ticker, stop_pct * 100, stop_source,
+                f"{tp_pct * 100:.2f}%%" if tp_pct is not None else "R:R fallback",
+                style,
+            )
+
+            # Deduct cash and increment trade count
+            mongo_store.update_docs(
+                'bots',
+                {'bot_id': bot_id},
+                {'$inc': {'cash_balance': mongo_store.dec128(-amount), 'total_trades': 1}},
+                session=session,
+            )
+
+            # Log order
+            mongo_store.insert_docs(
+                'orders',
+                [{
+                    'id': order_id,
+                    'bot_id': bot_id,
+                    'ticker': ticker,
+                    'side': 'BUY',
+                    'qty': qty,
+                    'price': mongo_store.dec128(current_price),
+                    'signal': 'pipeline',
+                    'created_at': now,
+                    'filled_at': now,
+                }],
+                session=session,
+            )
+
+            # ── BROKER LEDGER: create fill + lot ──
+            fill_id = str(uuid.uuid4())
+            lot_id = str(uuid.uuid4())
+            mongo_store.insert_docs(
+                'trade_fills',
+                [{
+                    'fill_id': fill_id,
+                    'order_id': order_id,
+                    'bot_id': bot_id,
+                    'ticker': ticker,
+                    'side': 'BUY',
+                    'fill_qty': qty,
+                    'fill_price': mongo_store.dec128(current_price),
+                    'fill_value': mongo_store.dec128(amount),
+                    'fees': mongo_store.dec128(round(amount * cost["total_bps"] / 10_000.0, 6)),
+                    'decision_price': mongo_store.dec128(reference_price),
+                    'filled_at': now,
+                    'cycle_id': cycle_id,
+                }],
+                session=session,
+            )
+            mongo_store.insert_docs(
+                'position_lots',
+                [{
+                    'lot_id': lot_id,
+                    'bot_id': bot_id,
+                    'ticker': ticker,
+                    'fill_id': fill_id,
+                    'opened_at': now,
+                    'original_qty': qty,
+                    'remaining_qty': qty,
+                    'entry_price': mongo_store.dec128(current_price),
+                    'status': 'open',
+                    'cycle_id': cycle_id,
+                }],
+                session=session,
+            )
+            logger.info(
+                "[TRACE][BUY] COMMITTED OK — order_id=%s fill_id=%s lot_id=%s",
+                order_id,
+                fill_id,
+                lot_id,
+            )
+    except Exception as e:
+        logger.error(
+            "[TRACE][BUY] ROLLBACK triggered for %s: %s",
+            ticker,
+            repr(e),
+            exc_info=True,
+        )
+        return {"error": f"Transaction failed: {e}"}
 
     result = {
         "action": "BUY",
@@ -726,14 +770,12 @@ async def sell(
     _ensure_bot(bot_id)
 
     if cycle_id:
-        with get_db() as db:
-            existing = mongo_query.find_row('trade_fills', {'cycle_id': cycle_id, 'ticker': ticker, 'side': 'SELL'}, ['fill_id'])
-            if existing:
-                logger.warning("[TRACE][SELL] ABORT — Duplicate SELL order in same cycle for %s", ticker)
-                return {"error": f"Duplicate SELL order in cycle {cycle_id} for {ticker}"}
+        existing = mongo_query.find_row('trade_fills', {'cycle_id': cycle_id, 'ticker': ticker, 'side': 'SELL'}, ['fill_id'])
+        if existing:
+            logger.warning("[TRACE][SELL] ABORT — Duplicate SELL order in same cycle for %s", ticker)
+            return {"error": f"Duplicate SELL order in cycle {cycle_id} for {ticker}"}
 
-    with get_db() as db:
-        pos = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty', 'avg_entry_price'])
+    pos = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty', 'avg_entry_price'])
 
     if not pos:
         logger.warning(
@@ -793,148 +835,189 @@ async def sell(
     order_id = str(uuid.uuid4())
     sell_fill_id = str(uuid.uuid4())
 
-    # Fix #5: Wrap in transaction
-    with get_db() as db:
-        try:
-            with db.transaction():
-                # 1. FIFO lot matching: consume oldest lots first to calculate true P&L
-                open_lots = mongo_query.find_rows('position_lots', {'bot_id': bot_id, 'ticker': ticker, 'status': {'$in': ['open', 'partial']}}, ['lot_id', 'remaining_qty', 'entry_price', 'opened_at'], sort=[('opened_at', 1)])
+    # Wrap in Mongo replica transaction (Tier F)
+    try:
+        with mongo_store.with_txn() as session:
+            # 1. FIFO lot matching: consume oldest lots first to calculate true P&L
+            open_lots = mongo_query.find_rows('position_lots', {'bot_id': bot_id, 'ticker': ticker, 'status': {'$in': ['open', 'partial']}}, ['lot_id', 'remaining_qty', 'entry_price', 'opened_at'], sort=[('opened_at', 1)], session=session)
 
-                remaining_to_sell = qty_to_sell
-                total_realized_pnl = 0.0
-                remaining_lots_value = 0.0
-                remaining_lots_qty = 0.0
+            remaining_to_sell = qty_to_sell
+            total_realized_pnl = 0.0
+            remaining_lots_value = 0.0
+            remaining_lots_qty = 0.0
 
-                for lot_row in open_lots:
-                    lot_id, lot_remaining, lot_entry, lot_opened = lot_row
+            for lot_row in open_lots:
+                lot_id, lot_remaining, lot_entry, lot_opened = lot_row
+                lot_remaining = float(lot_remaining)
+                lot_entry = float(lot_entry)
 
-                    if remaining_to_sell > 0:
-                        closed_qty = min(remaining_to_sell, lot_remaining)
-                        lot_pnl = (current_price - lot_entry) * closed_qty
-                        total_realized_pnl += lot_pnl
+                if remaining_to_sell > 0:
+                    closed_qty = min(remaining_to_sell, lot_remaining)
+                    lot_pnl = (current_price - lot_entry) * closed_qty
+                    total_realized_pnl += lot_pnl
 
-                        new_remaining = lot_remaining - closed_qty
-                        new_status = "closed" if new_remaining <= 0.0001 else "partial"
+                    new_remaining = lot_remaining - closed_qty
+                    new_status = "closed" if new_remaining <= 0.0001 else "partial"
 
-                        if new_remaining > 0.0001:
-                            remaining_lots_qty += new_remaining
-                            remaining_lots_value += new_remaining * lot_entry
+                    if new_remaining > 0.0001:
+                        remaining_lots_qty += new_remaining
+                        remaining_lots_value += new_remaining * lot_entry
 
-                        # Calculate holding duration
-                        holding_days = None
-                        if lot_opened:
-                            try:
-                                if isinstance(lot_opened, str):
-                                    lot_opened_dt = datetime.datetime.fromisoformat(
-                                        lot_opened.replace("Z", "+00:00")
-                                    )
-                                elif isinstance(lot_opened, datetime.datetime):
-                                    lot_opened_dt = lot_opened
-                                else:
-                                    lot_opened_dt = datetime.datetime.combine(
-                                        lot_opened, datetime.time(), tzinfo=datetime.UTC
-                                    )
-                                if lot_opened_dt.tzinfo is None:
-                                    lot_opened_dt = lot_opened_dt.replace(
-                                        tzinfo=datetime.UTC
-                                    )
-                                holding_days = (now - lot_opened_dt).days
-                            except Exception as parse_err:
-                                logger.warning("[paper] Failed to calculate holding_days for %s: %s", ticker, parse_err)
+                    # Calculate holding duration
+                    holding_days = None
+                    if lot_opened:
+                        try:
+                            if isinstance(lot_opened, str):
+                                lot_opened_dt = datetime.datetime.fromisoformat(
+                                    lot_opened.replace("Z", "+00:00")
+                                )
+                            elif isinstance(lot_opened, datetime.datetime):
+                                lot_opened_dt = lot_opened
+                            else:
+                                lot_opened_dt = datetime.datetime.combine(
+                                    lot_opened, datetime.time(), tzinfo=datetime.UTC
+                                )
+                            if lot_opened_dt.tzinfo is None:
+                                lot_opened_dt = lot_opened_dt.replace(
+                                    tzinfo=datetime.UTC
+                                )
+                            holding_days = (now - lot_opened_dt).days
+                        except Exception as parse_err:
+                            logger.warning("[paper] Failed to calculate holding_days for %s: %s", ticker, parse_err)
 
-                        # Create closure record
-                        closure_id = str(uuid.uuid4())
-                        mongo_store.insert_docs('lot_closures', [{'closure_id': closure_id, 'bot_id': bot_id, 'ticker': ticker, 'sell_fill_id': sell_fill_id, 'lot_id': lot_id, 'closed_qty': closed_qty, 'entry_price': lot_entry, 'exit_price': current_price, 'realized_pnl': lot_pnl, 'closed_at': now, 'holding_days': holding_days}])
-
-                        # Update lot status
-                        mongo_store.update_docs('position_lots', {'lot_id': lot_id}, {'$set': {'remaining_qty': max(new_remaining, 0), 'status': new_status}})
-
-                        remaining_to_sell -= closed_qty
-                    else:
-                        # Lot is not sold, track its value for the new average cost basis
-                        remaining_lots_qty += lot_remaining
-                        remaining_lots_value += lot_remaining * lot_entry
-
-                if remaining_to_sell > 0.0001:
-                    logger.warning(
-                        "[paper] SELL %s: %.4f shares unmatched to lots (legacy position)",
-                        ticker,
-                        remaining_to_sell,
+                    # Create closure record
+                    closure_id = str(uuid.uuid4())
+                    mongo_store.insert_docs(
+                        'lot_closures',
+                        [{
+                            'closure_id': closure_id,
+                            'bot_id': bot_id,
+                            'ticker': ticker,
+                            'sell_fill_id': sell_fill_id,
+                            'lot_id': lot_id,
+                            'closed_qty': closed_qty,
+                            'entry_price': mongo_store.dec128(lot_entry),
+                            'exit_price': mongo_store.dec128(current_price),
+                            'realized_pnl': mongo_store.dec128(lot_pnl),
+                            'closed_at': now,
+                            'holding_days': holding_days,
+                        }],
+                        session=session,
                     )
-                    total_realized_pnl += (
-                        current_price - avg_entry_price
-                    ) * remaining_to_sell
 
-                # 2. Update positions table and recalculate cost basis if partial
-                if qty_to_sell >= total_qty - 0.0001:
-                    mongo_store.delete_docs('positions', {'id': pos_id})
+                    # Update lot status
+                    mongo_store.update_docs(
+                        'position_lots',
+                        {'lot_id': lot_id},
+                        {'$set': {'remaining_qty': max(new_remaining, 0.0), 'status': new_status}},
+                        session=session,
+                    )
+
+                    remaining_to_sell -= closed_qty
                 else:
-                    new_pos_qty = total_qty - qty_to_sell
-                    new_avg_price = (
-                        (remaining_lots_value / remaining_lots_qty)
-                        if remaining_lots_qty > 0.0001
-                        else avg_entry_price
-                    )
-                    mongo_store.update_docs('positions', {'id': pos_id}, {'$set': {'qty': new_pos_qty, 'avg_entry_price': new_avg_price}})
+                    # Lot is not sold, track its value for the new average cost basis
+                    remaining_lots_qty += lot_remaining
+                    remaining_lots_value += lot_remaining * lot_entry
 
-                # 3. Add cash back, update P&L, and log trade count
-                db.execute(
-                    "UPDATE bots SET cash_balance = cash_balance + %s, total_pnl = total_pnl + %s, "
-                    "total_trades = total_trades + 1 WHERE bot_id = %s",
-                    [proceeds, total_realized_pnl, bot_id],
+            if remaining_to_sell > 0.0001:
+                logger.warning(
+                    "[paper] SELL %s: %.4f shares unmatched to lots (legacy position)",
+                    ticker,
+                    remaining_to_sell,
+                )
+                total_realized_pnl += (
+                    current_price - float(avg_entry_price)
+                ) * remaining_to_sell
+
+            # 2. Update positions table and recalculate cost basis if partial
+            if qty_to_sell >= float(total_qty) - 0.0001:
+                mongo_store.delete_docs('positions', {'id': pos_id}, session=session)
+            else:
+                new_pos_qty = float(total_qty) - qty_to_sell
+                new_avg_price = (
+                    (remaining_lots_value / remaining_lots_qty)
+                    if remaining_lots_qty > 0.0001
+                    else float(avg_entry_price)
+                )
+                mongo_store.update_docs(
+                    'positions',
+                    {'id': pos_id},
+                    {'$set': {'qty': new_pos_qty, 'avg_entry_price': mongo_store.dec128(new_avg_price), 'updated_at': now}},
+                    session=session,
                 )
 
-                # 4. Log order
-                mongo_store.insert_docs('orders', [{'id': order_id, 'bot_id': bot_id, 'ticker': ticker, 'side': 'SELL', 'qty': qty_to_sell, 'price': current_price, 'signal': 'pipeline', 'created_at': now, 'filled_at': now, 'realized_pnl': total_realized_pnl}])
-
-                # 5. BROKER LEDGER: create sell fill
-                mongo_store.insert_docs('trade_fills', [{'fill_id': sell_fill_id, 'order_id': order_id, 'bot_id': bot_id, 'ticker': ticker, 'side': 'SELL', 'fill_qty': qty_to_sell, 'fill_price': current_price, 'fill_value': proceeds, 'fees': round(proceeds * sell_cost["total_bps"] / 10_000.0, 6), 'decision_price': reference_price, 'filled_at': now, 'cycle_id': cycle_id}])
-                try:
-                    from app.db import mongo_store
-                    if mongo_store.writes_mongo("positions"):
-                        if qty_to_sell >= total_qty - 0.0001:
-                            db_doc = mongo_store.get_doc_db()
-                            db_doc["positions"].delete_one({"bot_id": bot_id, "ticker": ticker})
-                        else:
-                            mongo_store.upsert_doc(
-                                "positions",
-                                {"bot_id": bot_id, "ticker": ticker},
-                                {"id": pos_id, "bot_id": bot_id, "ticker": ticker, "qty": new_pos_qty, "avg_entry_price": new_avg_price, "updated_at": now}
-                            )
-                    if mongo_store.writes_mongo("bots"):
-                        db_doc = mongo_store.get_doc_db()
-                        db_doc["bots"].update_one({"bot_id": bot_id}, {"$inc": {"cash_balance": proceeds, "total_pnl": total_realized_pnl, "total_trades": 1}})
-                    if mongo_store.writes_mongo("orders"):
-                        mongo_store.upsert_doc("orders", {"id": order_id}, {"id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "SELL", "qty": qty_to_sell, "price": current_price, "signal": "pipeline", "created_at": now, "filled_at": now, "realized_pnl": total_realized_pnl})
-                    if mongo_store.writes_mongo("trade_fills"):
-                        mongo_store.upsert_doc("trade_fills", {"fill_id": sell_fill_id}, {"fill_id": sell_fill_id, "order_id": order_id, "bot_id": bot_id, "ticker": ticker, "side": "SELL", "fill_qty": qty_to_sell, "fill_price": current_price, "fill_value": proceeds, "fees": round(proceeds * sell_cost["total_bps"] / 10_000.0, 6), "decision_price": reference_price, "filled_at": now, "cycle_id": cycle_id})
-                except Exception as m_sell_err:
-                    logger.error("[paper] Mongo mirror failed on SELL ledger write: %s", m_sell_err)
-
-                # Update bot win_rate dynamically
-                db.execute(
-                    """
-                    UPDATE bots SET win_rate = (
-                        SELECT coalesce(CAST(sum(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / NULLIF(count(*), 0) * 100.0, 0.0)
-                        FROM lot_closures WHERE bot_id = %s
-                    ) WHERE bot_id = %s
-                """,
-                    [bot_id, bot_id],
-                )
-
-                logger.info(
-                    "[TRACE][SELL] COMMITTED OK — order_id=%s sell_fill_id=%s",
-                    order_id,
-                    sell_fill_id,
-                )
-        except Exception as e:
-            logger.error(
-                "[TRACE][SELL] ROLLBACK triggered for %s: %s",
-                ticker,
-                repr(e),
-                exc_info=True,
+            # 3. Add cash back, update P&L, and log trade count
+            mongo_store.update_docs(
+                'bots',
+                {'bot_id': bot_id},
+                {'$inc': {
+                    'cash_balance': mongo_store.dec128(proceeds),
+                    'total_pnl': mongo_store.dec128(total_realized_pnl),
+                    'total_trades': 1,
+                }},
+                session=session,
             )
-            return {"error": f"Transaction failed: {e}"}
+
+            # 4. Log order
+            mongo_store.insert_docs(
+                'orders',
+                [{
+                    'id': order_id,
+                    'bot_id': bot_id,
+                    'ticker': ticker,
+                    'side': 'SELL',
+                    'qty': qty_to_sell,
+                    'price': mongo_store.dec128(current_price),
+                    'signal': 'pipeline',
+                    'created_at': now,
+                    'filled_at': now,
+                    'realized_pnl': mongo_store.dec128(total_realized_pnl),
+                }],
+                session=session,
+            )
+
+            # 5. BROKER LEDGER: create sell fill
+            mongo_store.insert_docs(
+                'trade_fills',
+                [{
+                    'fill_id': sell_fill_id,
+                    'order_id': order_id,
+                    'bot_id': bot_id,
+                    'ticker': ticker,
+                    'side': 'SELL',
+                    'fill_qty': qty_to_sell,
+                    'fill_price': mongo_store.dec128(current_price),
+                    'fill_value': mongo_store.dec128(proceeds),
+                    'fees': mongo_store.dec128(round(proceeds * sell_cost["total_bps"] / 10_000.0, 6)),
+                    'decision_price': mongo_store.dec128(reference_price),
+                    'filled_at': now,
+                    'cycle_id': cycle_id,
+                }],
+                session=session,
+            )
+
+            # Update bot win_rate dynamically from lot_closures
+            closures = mongo_store.find_docs('lot_closures', {'bot_id': bot_id}, projection={'realized_pnl': 1}, session=session)
+            if closures:
+                wins = sum(1 for c in closures if float(str(c.get('realized_pnl', 0))) > 0)
+                win_rate = (wins / len(closures)) * 100.0
+            else:
+                win_rate = 0.0
+            mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'win_rate': round(win_rate, 2)}}, session=session)
+
+            logger.info(
+                "[TRACE][SELL] COMMITTED OK — order_id=%s sell_fill_id=%s",
+                order_id,
+                sell_fill_id,
+            )
+    except Exception as e:
+        logger.error(
+            "[TRACE][SELL] ROLLBACK triggered for %s: %s",
+            ticker,
+            repr(e),
+            exc_info=True,
+        )
+        return {"error": f"Transaction failed: {e}"}
 
     cost_basis = avg_entry_price * qty_to_sell
     pnl_pct = (total_realized_pnl / cost_basis) * 100 if cost_basis != 0 else 0.0
@@ -978,8 +1061,7 @@ async def check_stop_losses(
     """
     _ensure_bot(bot_id)
 
-    with get_db() as db:
-        positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['id', 'ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'exit_style'])
+    positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['id', 'ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'exit_style'])
 
     triggered = []
     for pos in positions:
@@ -1067,8 +1149,7 @@ async def check_take_profits(
     if reward_risk_ratio is None:
         reward_risk_ratio = float(get_param("TAKE_PROFIT_RR_RATIO"))
 
-    with get_db() as db:
-        positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['id', 'ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'take_profit_pct', 'exit_style'])
+    positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['id', 'ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'take_profit_pct', 'exit_style'])
 
     triggered = []
     for pos in positions:
@@ -1133,37 +1214,25 @@ def update_position_exits(
     take_profit_price: float | None = None,
     exit_style: str | None = None,
 ) -> dict:
-    """Re-point an ALREADY-HELD position's exits from a fresh agent decision.
-
-    Used when a cycle produces new stop/target levels for a position it did
-    not trade this cycle — previously those levels became parallel
-    price_triggers rows while the position kept its stale entry-time stop
-    (the dual-stop conflict). Now the position's own exits are updated.
-    Returns {updated: bool, ...} — never raises.
-    """
+    """Re-point an ALREADY-HELD position's exits from a fresh agent decision."""
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'avg_entry_price'])
-            if not row:
-                return {"updated": False, "reason": "no_position"}
-            pos_id, entry_price = row
+        row = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'avg_entry_price'])
+        if not row:
+            return {"updated": False, "reason": "no_position"}
+        pos_id, entry_price = row
 
-            stop_pct, stop_source, tp_pct = _resolve_entry_exits(
-                ticker, float(entry_price), stop_loss_price, take_profit_price
-            )
-            style = normalize_exit_style(exit_style)
-            sets = ["exit_style = %s"]
-            vals: list = [style]
-            if stop_source == "agent":
-                # Only an explicit agent stop overwrites; no stop supplied
-                # leaves the position's existing stop (and its provenance) alone.
-                sets.extend(["stop_loss_pct = %s", "stop_source = %s"])
-                vals.extend([stop_pct, stop_source])
-            if tp_pct is not None:
-                sets.append("take_profit_pct = %s")
-                vals.append(tp_pct)
-            vals.append(pos_id)
-            db.execute(f"UPDATE positions SET {', '.join(sets)} WHERE id = %s", vals)
+        stop_pct, stop_source, tp_pct = _resolve_entry_exits(
+            ticker, float(entry_price), stop_loss_price, take_profit_price
+        )
+        style = normalize_exit_style(exit_style)
+        update_dict: dict[str, Any] = {"exit_style": style}
+        if stop_source == "agent":
+            update_dict["stop_loss_pct"] = stop_pct
+            update_dict["stop_source"] = stop_source
+        if tp_pct is not None:
+            update_dict["take_profit_pct"] = tp_pct
+
+        mongo_store.update_docs('positions', {'id': pos_id}, {'$set': update_dict})
         logger.info(
             "[paper] %s: position exits updated (stop %s=%.2f%%, tp=%s, style=%s)",
             ticker, stop_source, stop_pct * 100,

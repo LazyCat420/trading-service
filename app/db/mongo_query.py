@@ -44,39 +44,44 @@ def _to_tuple(doc: dict, columns: Sequence[str]) -> tuple:
 
 
 def find_rows(collection: str, query: dict[str, Any], columns: Sequence[str],
-              sort: Optional[list] = None, limit: int = 0) -> list[tuple]:
+              sort: Optional[list] = None, limit: int = 0,
+              session: Optional[Any] = None) -> list[tuple]:
     """`cursor.execute(SELECT ...).fetchall()` — rows as tuples in `columns` order."""
     docs = mongo_store.find_docs(collection, query, sort=sort,
-                                 projection=_project(columns), limit=limit)
+                                 projection=_project(columns), limit=limit,
+                                 session=session)
     return [_to_tuple(d, columns) for d in docs]
 
 
 def find_row(collection: str, query: dict[str, Any], columns: Sequence[str],
-             sort: Optional[list] = None) -> Optional[tuple]:
+             sort: Optional[list] = None,
+             session: Optional[Any] = None) -> Optional[tuple]:
     """`cursor.execute(SELECT ...).fetchone()` — one row or None."""
     docs = mongo_store.find_docs(collection, query, sort=sort,
-                                 projection=_project(columns), limit=1)
+                                 projection=_project(columns), limit=1,
+                                 session=session)
     return _to_tuple(docs[0], columns) if docs else None
 
 
 def find_dicts(collection: str, query: dict[str, Any],
-               sort: Optional[list] = None, limit: int = 0) -> list[dict]:
-    """`SELECT *` — whole documents. Callers that unpack positionally cannot
-    use this: a document has no column order. Those sites need their columns
-    named explicitly, which is why the codemod refuses to rewrite `SELECT *`
-    into a positional read."""
-    return mongo_store.find_docs(collection, query, sort=sort, limit=limit)
+               sort: Optional[list] = None, limit: int = 0,
+               session: Optional[Any] = None) -> list[dict]:
+    """`SELECT *` — whole documents."""
+    return mongo_store.find_docs(collection, query, sort=sort, limit=limit,
+                                session=session)
 
 
 def scalar(collection: str, query: dict[str, Any], column: str,
-           sort: Optional[list] = None) -> Any:
+           sort: Optional[list] = None,
+           session: Optional[Any] = None) -> Any:
     """One value from one row — `SELECT col FROM ... LIMIT 1` then `row[0]`."""
-    row = find_row(collection, query, [column], sort=sort)
+    row = find_row(collection, query, [column], sort=sort, session=session)
     return row[0] if row else None
 
 
 def agg_row(collection: str, query: dict[str, Any],
-            aggs: Sequence[tuple[str, Any]]) -> tuple:
+            aggs: Sequence[tuple[str, Any]],
+            session: Optional[Any] = None) -> tuple:
     """`SELECT COUNT(*), MIN(x), MAX(x) FROM t WHERE ...` as one tuple.
 
     Each entry in `aggs` is (op, field), matching the SELECT list order:
@@ -115,7 +120,7 @@ def agg_row(collection: str, query: dict[str, Any],
             raise ValueError(f"unsupported aggregate {op!r}")
 
     pipeline = ([{"$match": query}] if query else []) + [{"$group": group}]
-    rows = mongo_store.aggregate(collection, pipeline)
+    rows = mongo_store.aggregate(collection, pipeline, session=session)
     if not rows:
         return tuple(0 if op.startswith("count") else None for op, _ in aggs)
     doc = rows[0]

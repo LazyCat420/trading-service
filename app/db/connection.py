@@ -261,8 +261,9 @@ def _ensure_pool() -> ConnectionPool:
                 f"[DB] Connecting to PostgreSQL: {db_url.split('@')[-1] if '@' in db_url else db_url}"
             )
 
-            # Initialize schema before pool creation so pgvector extension is ready
-            _init_schema(db_url)
+            # Only initialize PG schema if explicitly requested (defuse auto-creation of dropped tables)
+            if os.getenv("INIT_PG_SCHEMA") == "1" or os.getenv("TRADING_BOT_TEST_DB") == "1":
+                _init_schema(db_url)
 
             def _configure_connection(conn):
                 from pgvector.psycopg import register_vector
@@ -471,51 +472,54 @@ def _init_schema(db_url: str):
 
 def _seed_and_migrate():
     """Seed default bot and run migrations after pool is initialized."""
-    # ── Seed default bot if bots table is empty ──
+    # ── Seed default bot in MongoDB ──
     try:
-        with get_db() as db:
-            db.execute("SELECT COUNT(*) FROM bots")
-            row = db.fetchone()
-            if row and row[0] == 0:
-                from app.config import settings as _s
-
-                db.execute(
-                    "INSERT INTO bots (bot_id, display_name, model_name, status, "
-                    "cash_balance, starting_cash, total_pnl, win_rate, total_trades, "
-                    "is_active, created_at) "
-                    "VALUES (%s, 'Lazy Trader V4', %s, 'idle', %s, %s, 0.0, 0.0, 0, "
-                    "TRUE, CURRENT_TIMESTAMP)",
-                    (_s.BOT_ID, _s.ACTIVE_MODEL, _s.STARTING_CASH, _s.STARTING_CASH),
-                )
-                logger.info(f"[DB] Seeded default bot: {_s.BOT_ID}")
+        from app.db import mongo_query, mongo_store
+        from app.config import settings as _s
+        import datetime
+        existing_bot = mongo_query.find_row('bots', {'bot_id': _s.BOT_ID}, ['bot_id'])
+        if not existing_bot:
+            mongo_store.insert_docs('bots', [{
+                'bot_id': _s.BOT_ID,
+                'display_name': 'Lazy Trader V4',
+                'model_name': _s.ACTIVE_MODEL,
+                'status': 'idle',
+                'cash_balance': mongo_store.dec128(_s.STARTING_CASH),
+                'starting_cash': mongo_store.dec128(_s.STARTING_CASH),
+                'total_pnl': mongo_store.dec128(0.0),
+                'win_rate': 0.0,
+                'total_trades': 0,
+                'is_active': True,
+                'created_at': datetime.datetime.now(datetime.UTC),
+            }])
+            logger.info(f"[DB] Seeded default bot in MongoDB: {_s.BOT_ID}")
     except Exception as e:
-        logger.info(f"[DB] Bot seed skipped: {e}")
+        logger.info(f"[DB] Mongo bot seed skipped: {e}")
 
-    # ── Auto-migrations for existing databases ──
-    try:
-        from app.db.migrations import run_migrations
-        # Use a raw connection from the pool for migrations as it might require it
-        conn = _pool.getconn()
+    # ── Auto-migrations for existing PostgreSQL databases (guarded) ──
+    if os.getenv("RUN_PG_MIGRATIONS") == "1":
         try:
-            run_migrations(conn)
-            conn.commit()
-        except Exception as e:
+            from app.db.migrations import run_migrations
+            conn = _pool.getconn()
             try:
-                conn.rollback()
-            except Exception:
-                pass
-            logger.warning(f"[DB] Migration warning: {e}")
-        finally:
-            _pool.putconn(conn)
-    except Exception as e:
-        logger.warning(f"[DB] Migration setup warning: {e}")
+                run_migrations(conn)
+                conn.commit()
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.warning(f"[DB] Migration warning: {e}")
+            finally:
+                _pool.putconn(conn)
+        except Exception as e:
+            logger.warning(f"[DB] Migration setup warning: {e}")
 
-    # ── Run additional auto migrations ──
-    try:
-        from app.db.init_db import run_auto_migrations
-        run_auto_migrations()
-    except Exception as e:
-        logger.warning(f"[DB] Inline auto-migrations warning: {e}")
+        try:
+            from app.db.init_db import run_auto_migrations
+            run_auto_migrations()
+        except Exception as e:
+            logger.warning(f"[DB] Inline auto-migrations warning: {e}")
 
 
 def close_db():
