@@ -1002,8 +1002,8 @@ class PipelineService:
                 # only tickers it is allowed to pick. Bound here, before the
                 # try, because the admission check ~460 lines below reads it
                 # from OUTSIDE this block: the assignment lives inside
-                # `try:` + `with get_db()`, so any failure before it — a
-                # database connect timeout is enough — left the name unbound
+                # the `try:` below, so any failure before it — a database
+                # connect timeout, back when this opened one — left it unbound
                 # and `if selected and all_pool:` raised UnboundLocalError at
                 # the moment the gatekeeper's picks were being admitted. The
                 # enclosing handler catches that as "Portfolio screener
@@ -1016,318 +1016,296 @@ class PipelineService:
                 all_pool: dict[str, dict] = {}
                 # Find trending tickers from the last 24h (News, Reddit, YouTube) that aren't in the static watchlist
                 try:
-                    from app.db.connection import get_db
                     from app.processors.ticker_extractor import FALSE_TICKERS
-                    with get_db() as db:
-                        # 1. Pull Trending from each source independently
-                        from app.db import mongo_store
-                        now_utc = datetime.now(timezone.utc)
-                        since_24h = now_utc - timedelta(hours=24)
+                    from app.db import mongo_store
+                    now_utc = datetime.now(timezone.utc)
+                    since_24h = now_utc - timedelta(hours=24)
 
-                        news_trends, reddit_trends, youtube_trends = None, None, None
-                        if mongo_store.reads_mongo("news_articles"):
-                            try:
-                                news_trends = [
-                                    (d["_id"], d["mentions"])
-                                    for d in mongo_store.aggregate("news_articles", [
-                                        {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
-                                        {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-                                        {"$sort": {"mentions": -1}},
-                                        {"$limit": 40},
-                                    ])
-                                ]
-                            except Exception as me:
-                                mongo_store.handle_mongo_read_failure("news_articles", "discovery news", me)
+                    news_trends, reddit_trends, youtube_trends = [], [], []
+                    try:
+                        news_trends = [
+                            (d["_id"], d["mentions"])
+                            for d in mongo_store.aggregate("news_articles", [
+                                {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
+                                {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+                                {"$sort": {"mentions": -1}},
+                                {"$limit": 40},
+                            ])
+                        ]
+                    except Exception as me:
+                        mongo_store.handle_mongo_read_failure("news_articles", "discovery news", me)
 
-                        if mongo_store.reads_mongo("reddit_posts"):
-                            try:
-                                reddit_trends = [
-                                    (d["_id"], d["mentions"])
-                                    for d in mongo_store.aggregate("reddit_posts", [
-                                        {"$match": {"ticker": {"$ne": None}, "created_utc": {"$gt": since_24h}}},
-                                        {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-                                        {"$sort": {"mentions": -1}},
-                                        {"$limit": 30},
-                                    ])
-                                ]
-                            except Exception as me:
-                                mongo_store.handle_mongo_read_failure("reddit_posts", "discovery reddit", me)
+                    try:
+                        reddit_trends = [
+                            (d["_id"], d["mentions"])
+                            for d in mongo_store.aggregate("reddit_posts", [
+                                {"$match": {"ticker": {"$ne": None}, "created_utc": {"$gt": since_24h}}},
+                                {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+                                {"$sort": {"mentions": -1}},
+                                {"$limit": 30},
+                            ])
+                        ]
+                    except Exception as me:
+                        mongo_store.handle_mongo_read_failure("reddit_posts", "discovery reddit", me)
 
-                        if mongo_store.reads_mongo("youtube_transcripts"):
-                            try:
-                                youtube_trends = [
-                                    (d["_id"], d["mentions"])
-                                    for d in mongo_store.aggregate("youtube_transcripts", [
-                                        {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
-                                        {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-                                        {"$sort": {"mentions": -1}},
-                                        {"$limit": 15},
-                                    ])
-                                ]
-                            except Exception as me:
-                                mongo_store.handle_mongo_read_failure("youtube_transcripts", "discovery youtube", me)
+                    try:
+                        youtube_trends = [
+                            (d["_id"], d["mentions"])
+                            for d in mongo_store.aggregate("youtube_transcripts", [
+                                {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
+                                {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+                                {"$sort": {"mentions": -1}},
+                                {"$limit": 15},
+                            ])
+                        ]
+                    except Exception as me:
+                        mongo_store.handle_mongo_read_failure("youtube_transcripts", "discovery youtube", me)
 
-                        if news_trends is None:
-                            news_trends = db.execute("""
-                                SELECT ticker, COUNT(*) as mentions FROM news_articles
-                                WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                                GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 40
-                            """).fetchall()
-                        if reddit_trends is None:
-                            reddit_trends = db.execute("""
-                                SELECT ticker, COUNT(*) as mentions FROM reddit_posts
-                                WHERE ticker IS NOT NULL AND created_utc > NOW() - INTERVAL '24 hours'
-                                GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 30
-                            """).fetchall()
-                        if youtube_trends is None:
-                            youtube_trends = db.execute("""
-                                SELECT ticker, COUNT(*) as mentions FROM youtube_transcripts
-                                WHERE ticker IS NOT NULL AND published_at > NOW() - INTERVAL '24 hours'
-                                GROUP BY ticker ORDER BY COUNT(*) DESC LIMIT 15
-                            """).fetchall()
                         
-                        # 2. Phase 4A: Cross-reference — track source count per ticker
-                        source_tracker: dict[str, dict] = {}  # ticker -> {"sources": set, "mentions": int}
-                        for rows, source_label in [
-                            (news_trends, "News"),
-                            (reddit_trends, "Reddit"),
-                            (youtube_trends, "YouTube"),
-                        ]:
-                            for row in rows:
-                                tkr = row[0].upper().strip()
-                                if not tkr or tkr in base_tickers:
-                                    continue
-                                # Phase 4A: FALSE_TICKERS pre-filter
-                                if tkr in FALSE_TICKERS:
-                                    logger.debug("[PipelineService] Filtered out FALSE_TICKER: %s from %s", tkr, source_label)
-                                    continue
-                                # Phase 4E: Foreign ticker filter — reject non-US tickers from discovery
-                                if not is_us_tradeable(tkr):
-                                    logger.debug("[PipelineService] Filtered foreign ticker from discovery: %s from %s", tkr, source_label)
-                                    continue
-                                if tkr not in source_tracker:
-                                    source_tracker[tkr] = {"sources": set(), "mentions": 0}
-                                source_tracker[tkr]["sources"].add(source_label)
-                                # Cap one ticker's contribution so a mega-cap
-                                # with 80 mentions can't drown ten mid-caps.
-                                source_tracker[tkr]["mentions"] += min(
-                                    row[1] if len(row) > 1 else 1, 10
-                                )
+                    # 2. Phase 4A: Cross-reference — track source count per ticker
+                    source_tracker: dict[str, dict] = {}  # ticker -> {"sources": set, "mentions": int}
+                    for rows, source_label in [
+                        (news_trends, "News"),
+                        (reddit_trends, "Reddit"),
+                        (youtube_trends, "YouTube"),
+                    ]:
+                        for row in rows:
+                            tkr = row[0].upper().strip()
+                            if not tkr or tkr in base_tickers:
+                                continue
+                            # Phase 4A: FALSE_TICKERS pre-filter
+                            if tkr in FALSE_TICKERS:
+                                logger.debug("[PipelineService] Filtered out FALSE_TICKER: %s from %s", tkr, source_label)
+                                continue
+                            # Phase 4E: Foreign ticker filter — reject non-US tickers from discovery
+                            if not is_us_tradeable(tkr):
+                                logger.debug("[PipelineService] Filtered foreign ticker from discovery: %s from %s", tkr, source_label)
+                                continue
+                            if tkr not in source_tracker:
+                                source_tracker[tkr] = {"sources": set(), "mentions": 0}
+                            source_tracker[tkr]["sources"].add(source_label)
+                            # Cap one ticker's contribution so a mega-cap
+                            # with 80 mentions can't drown ten mid-caps.
+                            source_tracker[tkr]["mentions"] += min(
+                                row[1] if len(row) > 1 else 1, 10
+                            )
                         
-                        # 3. Phase 4A: Build trending_discovered with source counts
-                        trending_discovered = {}
-                        for tkr, info in source_tracker.items():
-                            source_count = len(info["sources"])
-                            source_label = f"Trending {'+'.join(sorted(info['sources']))}"
-                            if source_count >= 2:
-                                source_label += f" ({source_count} sources)"
-                            trending_discovered[tkr] = {
-                                "label": source_label,
-                                "source_count": source_count,
-                                "total_mentions": info["mentions"],
-                            }
+                    # 3. Phase 4A: Build trending_discovered with source counts
+                    trending_discovered = {}
+                    for tkr, info in source_tracker.items():
+                        source_count = len(info["sources"])
+                        source_label = f"Trending {'+'.join(sorted(info['sources']))}"
+                        if source_count >= 2:
+                            source_label += f" ({source_count} sources)"
+                        trending_discovered[tkr] = {
+                            "label": source_label,
+                            "source_count": source_count,
+                            "total_mentions": info["mentions"],
+                        }
                         
-                        # Phase 4C: Institutional Discovery — tickers with hedge fund consensus
-                        try:
-                            from app.collectors.fund_scanner import get_top_conviction_tickers
-                            institutional_leads = get_top_conviction_tickers(min_funds=2, max_results=20)
-                            for lead in institutional_leads:
-                                tkr = lead["ticker"]
-                                if tkr in base_tickers:
-                                    continue  # already in watchlist
-                                if tkr not in source_tracker:
-                                    source_tracker[tkr] = {"sources": set(), "mentions": 0}
-                                source_tracker[tkr]["sources"].add("Institutional")
-                                source_tracker[tkr]["mentions"] += lead["fund_count"]
-                                # Also add to trending_discovered if not already there
-                                if tkr not in trending_discovered:
-                                    sc = len(source_tracker[tkr]["sources"])
-                                    src_label = f"Institutional ({lead['fund_count']} funds)"
-                                    if sc >= 2:
-                                        src_label = f"Trending {'+'.join(sorted(source_tracker[tkr]['sources']))} ({sc} sources)"
-                                    trending_discovered[tkr] = {
-                                        "label": src_label,
-                                        "source_count": sc,
-                                        "total_mentions": source_tracker[tkr]["mentions"],
-                                    }
-                            if institutional_leads:
-                                logger.info(
-                                    "[PipelineService] Institutional Discovery: %d conviction leads (top: %s)",
-                                    len(institutional_leads),
-                                    [l["ticker"] for l in institutional_leads[:5]],
-                                )
-                        except Exception as e:
-                            logger.warning("[PipelineService] Institutional discovery failed (non-fatal): %s", e)
-
-                        # Discovery-table merge (diversity wave 2026-07-23):
-                        # 25 of 46 tickers discovered in the prior week —
-                        # including the top-scored ones — never entered a
-                        # cycle, because the pool only saw raw 24h trending
-                        # mentions, never the discovered_tickers table.
-                        try:
-                            disc_rows = db.execute("""
-                                SELECT ticker, source, MAX(score) AS score
-                                FROM discovered_tickers
-                                WHERE validation_status = 'valid'
-                                  AND discovered_at > NOW() - INTERVAL '7 days'
-                                GROUP BY ticker, source
-                                ORDER BY MAX(score) DESC LIMIT 30
-                            """).fetchall()
-                            added = 0
-                            for tkr, disc_src, disc_score in disc_rows:
-                                tkr = (tkr or "").upper().strip()
-                                if (not tkr or tkr in base_tickers
-                                        or tkr in trending_discovered
-                                        or tkr in FALSE_TICKERS
-                                        or not is_us_tradeable(tkr)):
-                                    continue
-                                # discovered_tickers.score carries two different
-                                # scales: reddit/youtube write a 0.0-1.0
-                                # confidence, institutional writes a raw fund
-                                # count. int() collapsed the whole 0-1 cohort to
-                                # 0 -- silencing every reddit and youtube
-                                # discovery (measured 2026-08-11: reddit
-                                # 0.69-1.0, reddit-purge 0.07-0.17, youtube 0.8,
-                                # all -> 0) while institutional's 19-22
-                                # saturated the cap.
-                                _s = float(disc_score or 0)
-                                if _s <= 1.0:
-                                    mentions = max(1, round(_s * 10))
-                                else:
-                                    mentions = min(int(_s), 10)
+                    # Phase 4C: Institutional Discovery — tickers with hedge fund consensus
+                    try:
+                        from app.collectors.fund_scanner import get_top_conviction_tickers
+                        institutional_leads = get_top_conviction_tickers(min_funds=2, max_results=20)
+                        for lead in institutional_leads:
+                            tkr = lead["ticker"]
+                            if tkr in base_tickers:
+                                continue  # already in watchlist
+                            if tkr not in source_tracker:
+                                source_tracker[tkr] = {"sources": set(), "mentions": 0}
+                            source_tracker[tkr]["sources"].add("Institutional")
+                            source_tracker[tkr]["mentions"] += lead["fund_count"]
+                            # Also add to trending_discovered if not already there
+                            if tkr not in trending_discovered:
+                                sc = len(source_tracker[tkr]["sources"])
+                                src_label = f"Institutional ({lead['fund_count']} funds)"
+                                if sc >= 2:
+                                    src_label = f"Trending {'+'.join(sorted(source_tracker[tkr]['sources']))} ({sc} sources)"
                                 trending_discovered[tkr] = {
-                                    "label": f"Discovery ({disc_src})",
-                                    "source_count": 1,
-                                    "total_mentions": mentions,
+                                    "label": src_label,
+                                    "source_count": sc,
+                                    "total_mentions": source_tracker[tkr]["mentions"],
                                 }
-                                added += 1
-                            if added:
-                                logger.info("[PipelineService] Discovery-table merge: +%d tickers into pool", added)
-                        except Exception as e:
-                            logger.warning("[PipelineService] Discovery-table merge failed (non-fatal): %s", e)
-
-                        all_pool.update({t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers})
-                        all_pool.update(trending_discovered)
-
-                        # THE BEAR'S NAMED ALTERNATIVE, CARRIED FORWARD.
-                        # `substitute.py` has asked every bear "what would you
-                        # rather own?" since 2026-08-08 and got a real ticker 41
-                        # times; until now nothing read the answer back, so the
-                        # one executable expression of a bearish thesis on a
-                        # long-only book — own that one INSTEAD — reached no
-                        # cycle. Merged here, before the last-analysis lookup,
-                        # because this is the last point where a name can still
-                        # enter `all_pool`, and `all_pool` is what
-                        # `admit_gatekeeper_selection` admits from.
-                        # Only NAMED is carried, and NAMED is by construction a
-                        # ticker the bear was SHOWN, hence already screened.
-                        try:
-                            from app.v3.substitute_demand import (
-                                merge_into_pool, recent_substitute_demand,
+                        if institutional_leads:
+                            logger.info(
+                                "[PipelineService] Institutional Discovery: %d conviction leads (top: %s)",
+                                len(institutional_leads),
+                                [l["ticker"] for l in institutional_leads[:5]],
                             )
-                            _demand = recent_substitute_demand()
-                            _carried = merge_into_pool(all_pool, _demand)
-                            substitute_demand = _demand
-                            if _carried:
-                                logger.info(
-                                    "[PipelineService] Bear substitutes carried into pool: "
-                                    "%d new (%s) from %d named",
-                                    len(_carried), ", ".join(_carried[:8]), len(_demand),
-                                )
-                        except Exception as _e:  # noqa: BLE001
-                            logger.warning(
-                                "[PipelineService] substitute carry failed (non-fatal): %s", _e)
-                        
-                        # 4. Fetch Last Analysis Date for all
-                        if all_pool:
-                            last_analysis_rows = None
-                            try:
-                                from app.db import mongo_store
-                                if mongo_store.reads_mongo("analysis_results"):
-                                    last_analysis_rows = [
-                                        (d["_id"], d.get("last_date"))
-                                        for d in mongo_store.aggregate("analysis_results", [
-                                            {"$match": {"ticker": {"$in": list(all_pool.keys())}}},
-                                            {"$group": {"_id": "$ticker",
-                                                        "last_date": {"$max": "$created_at"}}},
-                                        ])
-                                    ]
-                            except Exception as me:
-                                handle_mongo_read_failure("analysis_results", "[PipelineService] mongo last-analysis read", me)
-                                last_analysis_rows = None
-                            if last_analysis_rows is None:
-                                placeholders = ','.join(['%s'] * len(all_pool))
-                                last_analysis_rows = db.execute(f"""
-                                    SELECT ticker, MAX(created_at) as last_date
-                                    FROM analysis_results
-                                    WHERE ticker IN ({placeholders})
-                                    GROUP BY ticker
-                                """, list(all_pool.keys())).fetchall()
+                    except Exception as e:
+                        logger.warning("[PipelineService] Institutional discovery failed (non-fatal): %s", e)
 
-                            last_analysis_map = {r[0]: r[1] for r in last_analysis_rows}
-                        else:
-                            last_analysis_map = {}
-                            
-                        # Hard re-analysis exclusion (diversity wave 2026-07-23):
-                        # penalties alone let the same tickers re-run every few
-                        # hours (66.7% of 14d analyses were <24h re-runs; one
-                        # cycle re-ran 5/6 tickers from 5.5h earlier). Held
-                        # positions are exempt — exits need re-analysis.
-                        try:
-                            # Aliased import: a bare `get_param` here would
-                            # shadow the module-level name for the WHOLE
-                            # function and break the trade-execution path
-                            # (UnboundLocalError on the explicit-tickers route).
-                            from app.services.parameter_store import get_param as _excl_get_param
-                            exclude_hours = float(_excl_get_param("PIPELINE_REANALYSIS_EXCLUDE_HOURS"))
-                        except Exception:
-                            exclude_hours = 12.0
-                        held_tickers: set[str] = set()
-                        try:
-                            from app.trading.paper_trader import get_portfolio
-                            from app.services.bot_manager import get_active_bot_id
-                            held_tickers = {
-                                (p.get("ticker") or "").upper()
-                                for p in (get_portfolio(get_active_bot_id()).get("positions") or [])
-                            }
-                        except Exception as e:
-                            logger.warning("[PipelineService] held-ticker fetch failed (exclusion still on): %s", e)
-
-                        # 5. Construct dictionary structure
-                        excluded_recent: list[str] = []
-                        for tkr, info in all_pool.items():
-                            last_date = ensure_aware(last_analysis_map.get(tkr))
-                            if last_date:
-                                if exclude_hours > 0 and tkr not in held_tickers:
-                                    hours_since = (datetime.now(timezone.utc) - last_date).total_seconds() / 3600
-                                    if hours_since < exclude_hours:
-                                        excluded_recent.append(tkr)
-                                        continue
-                                days_ago = (datetime.now(timezone.utc) - last_date).days
-                                dsa_str = f"{days_ago} days ago" if days_ago > 0 else "Today"
+                    # Discovery-table merge (diversity wave 2026-07-23):
+                    # 25 of 46 tickers discovered in the prior week —
+                    # including the top-scored ones — never entered a
+                    # cycle, because the pool only saw raw 24h trending
+                    # mentions, never the discovered_tickers table.
+                    try:
+                        # GROUP BY (ticker, source) with MAX(score): the
+                        # composite key becomes a compound _id, and the tuple
+                        # shape the loop below unpacks is rebuilt from it.
+                        disc_rows = [
+                            (d["_id"]["ticker"], d["_id"]["source"], d["score"])
+                            for d in mongo_store.aggregate("discovered_tickers", [
+                                {"$match": {
+                                    "validation_status": "valid",
+                                    "discovered_at": {"$gt": now_utc - timedelta(days=7)},
+                                }},
+                                {"$group": {"_id": {"ticker": "$ticker", "source": "$source"},
+                                            "score": {"$max": "$score"}}},
+                                {"$sort": {"score": -1}},
+                                {"$limit": 30},
+                            ])
+                        ]
+                        added = 0
+                        for tkr, disc_src, disc_score in disc_rows:
+                            tkr = (tkr or "").upper().strip()
+                            if (not tkr or tkr in base_tickers
+                                    or tkr in trending_discovered
+                                    or tkr in FALSE_TICKERS
+                                    or not is_us_tradeable(tkr)):
+                                continue
+                            # discovered_tickers.score carries two different
+                            # scales: reddit/youtube write a 0.0-1.0
+                            # confidence, institutional writes a raw fund
+                            # count. int() collapsed the whole 0-1 cohort to
+                            # 0 -- silencing every reddit and youtube
+                            # discovery (measured 2026-08-11: reddit
+                            # 0.69-1.0, reddit-purge 0.07-0.17, youtube 0.8,
+                            # all -> 0) while institutional's 19-22
+                            # saturated the cap.
+                            _s = float(disc_score or 0)
+                            if _s <= 1.0:
+                                mentions = max(1, round(_s * 10))
                             else:
-                                dsa_str = "Never"
+                                mentions = min(int(_s), 10)
+                            trending_discovered[tkr] = {
+                                "label": f"Discovery ({disc_src})",
+                                "source_count": 1,
+                                "total_mentions": mentions,
+                            }
+                            added += 1
+                        if added:
+                            logger.info("[PipelineService] Discovery-table merge: +%d tickers into pool", added)
+                    except Exception as e:
+                        logger.warning("[PipelineService] Discovery-table merge failed (non-fatal): %s", e)
 
+                    all_pool.update({t: {"label": "Watchlist", "source_count": 0, "total_mentions": 0} for t in base_tickers})
+                    all_pool.update(trending_discovered)
 
-                            active_ticker_dicts.append({
-                                "ticker": tkr,
-                                "source": info["label"],
-                                "days_since_analysis": dsa_str,
-                                "source_count": info["source_count"],
-                                "total_mentions": info["total_mentions"],
-                            })
+                    # THE BEAR'S NAMED ALTERNATIVE, CARRIED FORWARD.
+                    # `substitute.py` has asked every bear "what would you
+                    # rather own?" since 2026-08-08 and got a real ticker 41
+                    # times; until now nothing read the answer back, so the
+                    # one executable expression of a bearish thesis on a
+                    # long-only book — own that one INSTEAD — reached no
+                    # cycle. Merged here, before the last-analysis lookup,
+                    # because this is the last point where a name can still
+                    # enter `all_pool`, and `all_pool` is what
+                    # `admit_gatekeeper_selection` admits from.
+                    # Only NAMED is carried, and NAMED is by construction a
+                    # ticker the bear was SHOWN, hence already screened.
+                    try:
+                        from app.v3.substitute_demand import (
+                            merge_into_pool, recent_substitute_demand,
+                        )
+                        _demand = recent_substitute_demand()
+                        _carried = merge_into_pool(all_pool, _demand)
+                        substitute_demand = _demand
+                        if _carried:
+                            logger.info(
+                                "[PipelineService] Bear substitutes carried into pool: "
+                                "%d new (%s) from %d named",
+                                len(_carried), ", ".join(_carried[:8]), len(_demand),
+                            )
+                    except Exception as _e:  # noqa: BLE001
+                        logger.warning(
+                            "[PipelineService] substitute carry failed (non-fatal): %s", _e)
+                        
+                    # 4. Fetch Last Analysis Date for all
+                    if all_pool:
+                        last_analysis_rows = None
+                        try:
+                            from app.db import mongo_store
+                            if mongo_store.reads_mongo("analysis_results"):
+                                last_analysis_rows = [
+                                    (d["_id"], d.get("last_date"))
+                                    for d in mongo_store.aggregate("analysis_results", [
+                                        {"$match": {"ticker": {"$in": list(all_pool.keys())}}},
+                                        {"$group": {"_id": "$ticker",
+                                                    "last_date": {"$max": "$created_at"}}},
+                                    ])
+                                ]
+                        except Exception as me:
+                            handle_mongo_read_failure("analysis_results", "[PipelineService] mongo last-analysis read", me)
+                            last_analysis_rows = None
+                        if last_analysis_rows is None:
+                            last_analysis_rows = []
+
+                        last_analysis_map = {r[0]: r[1] for r in last_analysis_rows}
+                    else:
+                        last_analysis_map = {}
                             
-                        if excluded_recent:
-                            logger.info(
-                                "[PipelineService] Re-analysis exclusion (%.0fh window): dropped %d tickers: %s",
-                                exclude_hours, len(excluded_recent), excluded_recent[:15],
-                            )
-                        if trending_discovered:
-                            multi_source = [t for t, i in trending_discovered.items() if i["source_count"] >= 2]
-                            logger.info(
-                                "[PipelineService] Discovery Engine: %d trending leads (%d multi-source: %s)",
-                                len(trending_discovered), len(multi_source), multi_source[:5],
-                            )
+                    # Hard re-analysis exclusion (diversity wave 2026-07-23):
+                    # penalties alone let the same tickers re-run every few
+                    # hours (66.7% of 14d analyses were <24h re-runs; one
+                    # cycle re-ran 5/6 tickers from 5.5h earlier). Held
+                    # positions are exempt — exits need re-analysis.
+                    try:
+                        # Aliased import: a bare `get_param` here would
+                        # shadow the module-level name for the WHOLE
+                        # function and break the trade-execution path
+                        # (UnboundLocalError on the explicit-tickers route).
+                        from app.services.parameter_store import get_param as _excl_get_param
+                        exclude_hours = float(_excl_get_param("PIPELINE_REANALYSIS_EXCLUDE_HOURS"))
+                    except Exception:
+                        exclude_hours = 12.0
+                    held_tickers: set[str] = set()
+                    try:
+                        from app.trading.paper_trader import get_portfolio
+                        from app.services.bot_manager import get_active_bot_id
+                        held_tickers = {
+                            (p.get("ticker") or "").upper()
+                            for p in (get_portfolio(get_active_bot_id()).get("positions") or [])
+                        }
+                    except Exception as e:
+                        logger.warning("[PipelineService] held-ticker fetch failed (exclusion still on): %s", e)
+
+                    # 5. Construct dictionary structure
+                    excluded_recent: list[str] = []
+                    for tkr, info in all_pool.items():
+                        last_date = ensure_aware(last_analysis_map.get(tkr))
+                        if last_date:
+                            if exclude_hours > 0 and tkr not in held_tickers:
+                                hours_since = (datetime.now(timezone.utc) - last_date).total_seconds() / 3600
+                                if hours_since < exclude_hours:
+                                    excluded_recent.append(tkr)
+                                    continue
+                            days_ago = (datetime.now(timezone.utc) - last_date).days
+                            dsa_str = f"{days_ago} days ago" if days_ago > 0 else "Today"
+                        else:
+                            dsa_str = "Never"
+
+
+                        active_ticker_dicts.append({
+                            "ticker": tkr,
+                            "source": info["label"],
+                            "days_since_analysis": dsa_str,
+                            "source_count": info["source_count"],
+                            "total_mentions": info["total_mentions"],
+                        })
+                            
+                    if excluded_recent:
+                        logger.info(
+                            "[PipelineService] Re-analysis exclusion (%.0fh window): dropped %d tickers: %s",
+                            exclude_hours, len(excluded_recent), excluded_recent[:15],
+                        )
+                    if trending_discovered:
+                        multi_source = [t for t, i in trending_discovered.items() if i["source_count"] >= 2]
+                        logger.info(
+                            "[PipelineService] Discovery Engine: %d trending leads (%d multi-source: %s)",
+                            len(trending_discovered), len(multi_source), multi_source[:5],
+                        )
                 except Exception as e:
                     logger.error(f"[PipelineService] Discovery Engine failed to fetch trends: {e}")
                 # ------------------------
@@ -1454,33 +1432,23 @@ class PipelineService:
                         logger.info(f"[PipelineService] Scoring Engine top picks: {[s['ticker'] for s in top_scorers]}")
                         
                         # Phase 4B: Fetch past verdicts for top 20 (latest per ticker)
-                        past_results_rows = None
+                        past_results_rows = []
                         try:
                             from app.db import mongo_store
-                            if mongo_store.reads_mongo("trade_results"):
-                                past_results_rows = [
-                                    (d["_id"], d.get("action"), d.get("confidence"), d.get("reasoning"))
-                                    for d in mongo_store.aggregate("trade_results", [
-                                        {"$match": {"ticker": {"$in": [s['ticker'] for s in top_scorers]}}},
-                                        {"$sort": {"ticker": 1, "created_at": -1}},
-                                        {"$group": {"_id": "$ticker",
-                                                    "action": {"$first": "$action"},
-                                                    "confidence": {"$first": "$confidence"},
-                                                    "reasoning": {"$first": "$reasoning"}}},
-                                    ])
-                                ]
+                            past_results_rows = [
+                                (d["_id"], d.get("action"), d.get("confidence"), d.get("reasoning"))
+                                for d in mongo_store.aggregate("trade_results", [
+                                    {"$match": {"ticker": {"$in": [s['ticker'] for s in top_scorers]}}},
+                                    {"$sort": {"ticker": 1, "created_at": -1}},
+                                    {"$group": {"_id": "$ticker",
+                                                "action": {"$first": "$action"},
+                                                "confidence": {"$first": "$confidence"},
+                                                "reasoning": {"$first": "$reasoning"}}},
+                                ])
+                            ]
                         except Exception as me:
                             handle_mongo_read_failure("trade_results", "[PipelineService] mongo past-verdicts read", me)
-                            past_results_rows = None
-                        if past_results_rows is None:
-                            placeholders = ','.join(['%s'] * len(top_scorers))
-                            with get_db() as db:
-                                past_results_rows = db.execute(f"""
-                                    SELECT DISTINCT ON (ticker) ticker, action, confidence, reasoning, created_at
-                                    FROM trade_results
-                                    WHERE ticker IN ({placeholders})
-                                    ORDER BY ticker, created_at DESC
-                                """, [s['ticker'] for s in top_scorers]).fetchall()
+                            past_results_rows = []
                         past_results_map = {r[0]: {"action": r[1], "conf": r[2], "reason": r[3]} for r in past_results_rows}
                         
                         # ── FRESHNESS GATE: classify stocks as NEW/CHANGED/STALE ──
@@ -2303,24 +2271,27 @@ class PipelineService:
             try:
                 if cycle_summary:
                     import uuid as _uuid
-                    from app.db.connection import get_db
                     job_id = f"job_{_uuid.uuid4().hex[:8]}"
                     from app.db import mongo_store
                     now_utc = datetime.now(timezone.utc)
-                    if mongo_store.writes_mongo("system_commands"):
-                        mongo_store.upsert_doc(
-                            "system_commands",
-                            {"id": job_id},
-                            {
-                                "id": job_id,
-                                "command_type": "AUTORESEARCH",
-                                "payload": {"cycle_id": cycle_id, "cycle_summary": cycle_summary},
-                                "status": "pending",
-                                "created_at": now_utc,
-                            }
-                        )
-                    if mongo_store.writes_pg("system_commands"):
-                        mongo_store.insert_docs('system_commands', [{'id': job_id, 'command_type': 'AUTORESEARCH', 'payload': json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary}), 'status': 'pending'}])
+                    # One enqueue, one shape. The conversion left two writers
+                    # here: writes_mongo() upserted the job with a dict
+                    # payload, and writes_pg() -- which also lands in Mongo now
+                    # -- inserted the SAME job id again with the payload
+                    # json.dumps()'d to a string. The poller reads
+                    # payload["cycle_id"], which works on the dict and silently
+                    # does not on the string.
+                    mongo_store.upsert_doc(
+                        "system_commands",
+                        {"id": job_id},
+                        {
+                            "id": job_id,
+                            "command_type": "AUTORESEARCH",
+                            "payload": {"cycle_id": cycle_id, "cycle_summary": cycle_summary},
+                            "status": "pending",
+                            "created_at": now_utc,
+                        }
+                    )
                     logger.info(
                         "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
                     )
