@@ -387,13 +387,46 @@ class TestMockTradingCycleMongoE2E:
         assert bot_final[3] == 2
 
         # 9. Telemetry & Pipeline Event Persistence to MongoDB
-        mongo_store.insert_docs("pipeline_events", [{
+        from app.services.pipeline_state import PipelineStateDB
+        from app.services.trade_result_saver import save_trade_result
+
+        # Save pipeline state
+        PipelineStateDB.save_state({
+            "status": "running",
             "cycle_id": cycle_id,
+            "tickers": ["AAPL", "NVDA"],
+            "phase": "execution",
+            "progress": "Executing trade decisions",
+        })
+
+        # Save trade verdict result
+        save_trade_result("AAPL", cycle_id, {
+            "action": "BUY",
+            "confidence": 85,
+            "reasoning": "Strong trend and breakout setup",
+            "decision_provenance": "board_reasoned",
+        })
+
+        # Append pipeline events
+        PipelineStateDB.append_events(cycle_id, [{
             "phase": "complete",
             "step": "cycle_finished",
-            "status": "success",
-            "timestamp": now,
+            "detail": "Cycle completed successfully",
+            "status": "ok",
+            "ts": now,
         }])
+
+        # Read back and verify from pure Mongo
+        p_state = PipelineStateDB.get_state()
+        assert p_state["status"] == "running"
+        assert p_state["cycle_id"] == cycle_id
+        assert p_state["tickers"] == ["AAPL", "NVDA"]
+
+        saved_verdicts = mongo_store.find_docs("trade_results", {"cycle_id": cycle_id, "ticker": "AAPL"})
+        assert len(saved_verdicts) == 1
+        assert saved_verdicts[0]["action"] == "BUY"
+        assert saved_verdicts[0]["confidence"] == 85
+
         events = mongo_store.find_docs("pipeline_events", {"cycle_id": cycle_id})
-        assert len(events) == 1
-        assert events[0]["status"] == "success"
+        assert len(events) >= 1
+        assert events[0]["status"] == "ok"
