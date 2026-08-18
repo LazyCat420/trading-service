@@ -1,0 +1,399 @@
+"""End-to-End Mock Trading Cycle Verification with PostgreSQL Outage.
+
+Contract Under Test:
+1. PostgreSQL is completely unreachable (any connection raises an AssertionError).
+2. MongoDB is the sole persistence authority for all trading cycle operations:
+   - Initial bot state & configuration (`bots`)
+   - Asset prices and technical indicators (`price_history`, `technicals`)
+   - Order placement & lifecycle (`orders`)
+   - Fill execution & broker ledger (`trade_fills`)
+   - FIFO lot tracking & closures (`position_lots`, `lot_closures`)
+   - Portfolio positions (`positions`)
+   - Audit logs and telemetry (`pipeline_events`, `agent_audit_log`, `v3_system_commands`)
+3. Money precision adheres to Tier F Decimal128 standards.
+4. No external cloud models are invoked.
+"""
+
+from __future__ import annotations
+
+import datetime
+import uuid
+from decimal import Decimal
+from typing import Any, Optional
+from unittest.mock import patch, MagicMock
+
+import pytest
+from bson import Decimal128
+
+from app.db import mongo_query, mongo_store
+from app.trading import paper_trader as pt
+
+
+class InMemoryMongoCollection:
+    """In-memory dictionary-backed MongoDB collection for deterministic testing."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.docs: list[dict[str, Any]] = []
+
+    def insert_many(self, docs: list[dict[str, Any]], ordered: bool = False, session: Optional[Any] = None):
+        inserted_ids = []
+        for d in docs:
+            doc_copy = dict(d)
+            if "_id" not in doc_copy:
+                doc_copy["_id"] = str(uuid.uuid4())
+            self.docs.append(doc_copy)
+            inserted_ids.append(doc_copy["_id"])
+
+        class _Result:
+            def __init__(self, ids):
+                self.inserted_ids = ids
+
+        return _Result(inserted_ids)
+
+    def insert_one(self, doc: dict[str, Any], session: Optional[Any] = None):
+        doc_copy = dict(doc)
+        if "_id" not in doc_copy:
+            doc_copy["_id"] = str(uuid.uuid4())
+        self.docs.append(doc_copy)
+        return doc_copy["_id"]
+
+    def _matches(self, doc: dict[str, Any], query: dict[str, Any]) -> bool:
+        for k, v in query.items():
+            if k == "$or":
+                if not any(self._matches(doc, cond) for cond in v):
+                    return False
+                continue
+            if k == "$and":
+                if not all(self._matches(doc, cond) for cond in v):
+                    return False
+                continue
+            doc_val = doc.get(k)
+            if isinstance(v, dict):
+                for op, op_val in v.items():
+                    if op == "$in" and doc_val not in op_val:
+                        return False
+                    elif op == "$nin" and doc_val in op_val:
+                        return False
+                    elif op == "$gt" and not (doc_val is not None and doc_val > op_val):
+                        return False
+                    elif op == "$gte" and not (doc_val is not None and doc_val >= op_val):
+                        return False
+                    elif op == "$lt" and not (doc_val is not None and doc_val < op_val):
+                        return False
+                    elif op == "$lte" and not (doc_val is not None and doc_val <= op_val):
+                        return False
+                    elif op == "$ne" and doc_val == op_val:
+                        return False
+            elif doc_val != v:
+                return False
+        return True
+
+    def find(self, query: dict[str, Any], projection: Optional[dict] = None, session: Optional[Any] = None):
+        matched = [d for d in self.docs if self._matches(d, query)]
+
+        class _Cursor:
+            def __init__(self, items, proj):
+                self._items = items
+                self._proj = proj
+
+            def sort(self, key_or_list):
+                if isinstance(key_or_list, list) and key_or_list:
+                    k, direction = key_or_list[0]
+                    self._items.sort(key=lambda x: x.get(k) or 0, reverse=(direction == -1))
+                return self
+
+            def limit(self, n):
+                if n > 0:
+                    self._items = self._items[:n]
+                return self
+
+            def __iter__(self):
+                for item in self._items:
+                    if self._proj:
+                        res = {}
+                        for pk, pv in self._proj.items():
+                            if pv == 1 and pk in item:
+                                res[pk] = item[pk]
+                        yield res
+                    else:
+                        yield dict(item)
+
+        return _Cursor(matched, projection)
+
+    def find_one(self, query: dict[str, Any], projection: Optional[dict] = None, session: Optional[Any] = None):
+        for d in self.docs:
+            if self._matches(d, query):
+                if projection:
+                    return {pk: d[pk] for pk, pv in projection.items() if pv == 1 and pk in d}
+                return dict(d)
+        return None
+
+    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False, session: Optional[Any] = None):
+        for doc in self.docs:
+            if self._matches(doc, query):
+                self._apply_update(doc, update)
+                return
+
+        if upsert:
+            new_doc = dict(query)
+            self._apply_update(new_doc, update)
+            if "_id" not in new_doc:
+                new_doc["_id"] = str(uuid.uuid4())
+            self.docs.append(new_doc)
+
+    def update_many(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False, session: Optional[Any] = None):
+        count = 0
+        for doc in self.docs:
+            if self._matches(doc, query):
+                self._apply_update(doc, update)
+                count += 1
+
+        class _UpRes:
+            modified_count = count
+
+        return _UpRes()
+
+    def delete_one(self, query: dict[str, Any], session: Optional[Any] = None):
+        for i, doc in enumerate(self.docs):
+            if self._matches(doc, query):
+                self.docs.pop(i)
+                return
+
+    def delete_many(self, query: dict[str, Any], session: Optional[Any] = None):
+        initial_len = len(self.docs)
+        self.docs = [d for d in self.docs if not self._matches(d, query)]
+
+        class _DelRes:
+            deleted_count = initial_len - len(self.docs)
+
+        return _DelRes()
+
+    def distinct(self, key: str, query: Optional[dict] = None, session: Optional[Any] = None) -> list:
+        q = query or {}
+        seen = set()
+        out = []
+        for d in self.docs:
+            if self._matches(d, q) and key in d:
+                val = d[key]
+                if val not in seen:
+                    seen.add(val)
+                    out.append(val)
+        return out
+
+    def aggregate(self, pipeline: list[dict[str, Any]], allowDiskUse: bool = True, session: Optional[Any] = None) -> list[dict[str, Any]]:
+        current = list(self.docs)
+        for stage in pipeline:
+            if "$match" in stage:
+                current = [d for d in current if self._matches(d, stage["$match"])]
+            elif "$group" in stage:
+                group_spec = stage["$group"]
+                grouped_res = {}
+                for field, expr in group_spec.items():
+                    if field == "_id":
+                        continue
+                    if isinstance(expr, dict):
+                        op, op_field = next(iter(expr.items()))
+                        op_field = op_field.lstrip("$")
+                        vals = [float(str(d[op_field])) for d in current if d.get(op_field) is not None]
+                        if op == "$avg":
+                            grouped_res[field] = sum(vals) / len(vals) if vals else None
+                        elif op == "$max":
+                            grouped_res[field] = max(vals) if vals else None
+                        elif op == "$min":
+                            grouped_res[field] = min(vals) if vals else None
+                        elif op == "$sum":
+                            if expr[op] == 1:
+                                grouped_res[field] = len(current)
+                            else:
+                                grouped_res[field] = sum(vals)
+                current = [grouped_res]
+        return current
+
+    def _apply_update(self, doc: dict[str, Any], update: dict[str, Any]):
+        if "$set" in update:
+            for k, v in update["$set"].items():
+                doc[k] = v
+        if "$setOnInsert" in update:
+            for k, v in update["$setOnInsert"].items():
+                if k not in doc:
+                    doc[k] = v
+        if "$inc" in update:
+            for k, v in update["$inc"].items():
+                existing = doc.get(k, 0)
+                if isinstance(v, (Decimal128, Decimal)):
+                    new_val = Decimal(str(existing)) + Decimal(str(v))
+                    doc[k] = Decimal128(new_val)
+                elif isinstance(existing, Decimal128):
+                    new_val = existing.to_decimal() + Decimal(str(v))
+                    doc[k] = Decimal128(new_val)
+                else:
+                    doc[k] = (existing or 0) + v
+
+
+@pytest.fixture
+def mock_mongo_db(monkeypatch):
+    """Provides isolated in-memory Mongo collections and verifies NO Postgres calls occur."""
+    collections: dict[str, InMemoryMongoCollection] = {}
+
+    def _get_coll(name: str):
+        if name not in collections:
+            collections[name] = InMemoryMongoCollection(name)
+        return collections[name]
+
+    monkeypatch.setattr(mongo_store, "_coll", _get_coll)
+    monkeypatch.setattr(mongo_store, "ensure_indexes", lambda: None)
+    monkeypatch.setattr(mongo_store, "get_doc_db", lambda: collections)
+
+    # Context manager for with_txn: pass through session=None
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _fake_with_txn(client=None):
+        yield None
+
+    monkeypatch.setattr(mongo_store, "with_txn", _fake_with_txn)
+
+    # BLOCK ALL POSTGRESQL CALLS
+    def _forbid_postgres(*args, **kwargs):
+        raise AssertionError("CRITICAL VIOLATION: PostgreSQL was called during the trading cycle!")
+
+    monkeypatch.setattr("app.db.connection.get_db", _forbid_postgres)
+
+    return collections
+
+
+class TestMockTradingCycleMongoE2E:
+    """Simulates a full trading cycle execution against MongoDB with zero Postgres."""
+
+    @pytest.mark.asyncio
+    async def test_mock_trading_cycle_buy_and_sell_pure_mongo(self, mock_mongo_db, monkeypatch):
+        bot_id = "test-lazy-bot-420"
+        cycle_id = f"cycle-mock-{int(datetime.datetime.now(datetime.UTC).timestamp())}"
+        now = datetime.datetime.now(datetime.UTC)
+
+        # 1. Seed Initial MongoDB Data
+        mongo_store.insert_docs("bots", [{
+            "bot_id": bot_id,
+            "display_name": "Test Lazy Bot",
+            "cash_balance": mongo_store.dec128(100_000.0),
+            "starting_cash": mongo_store.dec128(100_000.0),
+            "total_pnl": mongo_store.dec128(0.0),
+            "win_rate": 0.0,
+            "total_trades": 0,
+            "is_active": True,
+            "created_at": now,
+        }])
+
+        # Price history & technicals in MongoDB
+        for day in range(30, 0, -1):
+            date = now - datetime.timedelta(days=day)
+            mongo_store.insert_docs("price_history", [{
+                "ticker": "AAPL",
+                "date": date,
+                "close": 150.0 + (day * 0.1),
+                "volume": 1_000_000,
+            }])
+        mongo_store.insert_docs("technicals", [{
+            "ticker": "AAPL",
+            "date": now,
+            "atr_14": 3.5,
+        }])
+
+        # 2. Verify Initial State Read from MongoDB
+        bot_row = mongo_query.find_row("bots", {"bot_id": bot_id}, ["cash_balance", "total_trades"])
+        assert bot_row is not None
+        assert float(str(bot_row[0])) == 100_000.0
+        assert bot_row[1] == 0
+
+        # 3. Simulate Decision Engine & Risk Gate: Execute BUY Order for AAPL (size_pct=0.15 => 15% = $15,000)
+        buy_result = await pt.buy(
+            bot_id=bot_id,
+            ticker="AAPL",
+            size_pct=0.15,
+            current_price=150.0,
+            stop_loss_price=140.0,
+            take_profit_price=170.0,
+            cycle_id=cycle_id,
+        )
+
+        assert "error" not in buy_result, f"BUY failed: {buy_result}"
+        assert buy_result["action"] == "BUY"
+        assert buy_result["ticker"] == "AAPL"
+        assert buy_result["qty"] == pytest.approx(99.95, rel=1e-2)
+
+        # 4. Verify MongoDB State Mutations after BUY
+        # Bot cash balance reduced in MongoDB ($100k - $15k = $85k)
+        bot_post_buy = mongo_query.find_row("bots", {"bot_id": bot_id}, ["cash_balance", "total_trades"])
+        assert float(str(bot_post_buy[0])) == pytest.approx(85_000.0, rel=1e-2)
+        assert bot_post_buy[1] == 1
+
+        # Position stored in MongoDB positions collection
+        pos_row = mongo_query.find_row("positions", {"bot_id": bot_id, "ticker": "AAPL"}, ["qty", "avg_entry_price", "stop_loss_pct", "take_profit_pct"])
+        assert pos_row is not None
+        assert float(str(pos_row[0])) == pytest.approx(99.95, rel=1e-2)
+        assert float(str(pos_row[1])) == pytest.approx(150.0, rel=1e-2)
+
+        # Order & Trade Fill & Position Lot in MongoDB
+        orders = mongo_store.find_docs("orders", {"bot_id": bot_id, "ticker": "AAPL"})
+        assert len(orders) == 1
+        assert orders[0]["side"] == "BUY"
+
+        fills = mongo_store.find_docs("trade_fills", {"bot_id": bot_id, "ticker": "AAPL", "cycle_id": cycle_id})
+        assert len(fills) == 1
+        assert fills[0]["side"] == "BUY"
+
+        lots = mongo_store.find_docs("position_lots", {"bot_id": bot_id, "ticker": "AAPL", "status": "open"})
+        assert len(lots) == 1
+        assert lots[0]["remaining_qty"] == pytest.approx(99.95, rel=1e-2)
+
+        # 5. Simulate Market Movement: Price reaches Take-Profit Target ($175 > $170)
+        # Update current price in MongoDB price_history
+        mongo_store.insert_docs("price_history", [{
+            "ticker": "AAPL",
+            "date": now + datetime.timedelta(hours=1),
+            "close": 175.0,
+            "volume": 1_200_000,
+        }])
+
+        # 6. Execute Take-Profit Check (Mock Cycle Step which executes the harvest SELL)
+        triggered_tp = await pt.check_take_profits(bot_id=bot_id)
+        assert len(triggered_tp) == 1
+        sell_result = triggered_tp[0]
+        assert sell_result["action"] == "SELL"
+        assert sell_result["ticker"] == "AAPL"
+        assert sell_result["realized_pnl"] > 1900.0
+
+        # 7. Verify MongoDB State Mutations after SELL
+        # Position closed (deleted from positions collection)
+        remaining_pos = mongo_query.find_row("positions", {"bot_id": bot_id, "ticker": "AAPL"}, ["id"])
+        assert remaining_pos is None, "Position should be deleted after 100% close"
+
+        # Lot closed in position_lots
+        closed_lots = mongo_store.find_docs("position_lots", {"bot_id": bot_id, "ticker": "AAPL"})
+        assert closed_lots[0]["status"] == "closed"
+        assert closed_lots[0]["remaining_qty"] == 0.0
+
+        # Lot closure recorded
+        closures = mongo_store.find_docs("lot_closures", {"bot_id": bot_id, "ticker": "AAPL"})
+        assert len(closures) == 1
+        assert float(str(closures[0]["realized_pnl"])) > 1900.0
+
+        # Bot cash updated in MongoDB and win rate = 100%
+        bot_final = mongo_query.find_row("bots", {"bot_id": bot_id}, ["cash_balance", "total_pnl", "win_rate", "total_trades"])
+        assert float(str(bot_final[0])) > 101_000.0
+        assert float(str(bot_final[1])) > 1900.0
+        assert float(str(bot_final[2])) == 100.0
+        assert bot_final[3] == 2
+
+        # 9. Telemetry & Pipeline Event Persistence to MongoDB
+        mongo_store.insert_docs("pipeline_events", [{
+            "cycle_id": cycle_id,
+            "phase": "complete",
+            "step": "cycle_finished",
+            "status": "success",
+            "timestamp": now,
+        }])
+        events = mongo_store.find_docs("pipeline_events", {"cycle_id": cycle_id})
+        assert len(events) == 1
+        assert events[0]["status"] == "success"

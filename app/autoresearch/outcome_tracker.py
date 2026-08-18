@@ -24,7 +24,6 @@ import logging
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from app.db.connection import get_db
 from app.db import mongo_query
 from app.db import mongo_store
 
@@ -234,63 +233,25 @@ def _is_unscoreable(confidence, result: dict) -> bool:
     return "PIPELINE FAILURE" in thesis or "Failed to parse thesis" in thesis
 
 
-def resolve_overridden_from(db, cycle_id: str, ticker: str, action: str):
-    """Label a decision that something overruled, or None if nothing did.
-
-    Two mechanisms overrule a decision, and they leave different traces.
-
-    1. The SYNTHESIZER downgrade. Execution reads `trade_decision or
-       final_decision`, so the synthesizer wins — over 7 days it turned 21 of
-       41 Board BUYs into HOLDs. Read from shared_desk rather than
-       analysis_results, which carries only the surviving action.
-
-    2. The POLICY GATE refusal. A blocked BUY leaves shared_desk.final_decision
-       AND analysis_results.action both reading 'BUY', so check 1 is false and
-       the row lands unlabelled. It is then graded WIN or LOSS as though the
-       trade had been taken, and override_scorecard() counts it in `kept_buys`:
-       the desk gets credit for keeping a trade the gate actually refused.
-       Measured 2026-07-31: 17 BUY + 2 SELL blocks, all NULL.
-
-    The row deliberately keeps `action='BUY'`. Its P&L is the counterfactual —
-    what the declined trade would have returned — and that is exactly how the
-    floor gets back-tested. What the label changes is that it is distinguishable.
-
-    The gate is read from TWO tables because `trade_results` is not written for
-    every blocked decision. Measured 2026-08-06 over the 25 blocks on record:
-    8 had no `trade_results` row at all, so `policy_action` came back NULL and
-    the block was recorded as a trade the desk kept — 5 of them already graded
-    (ASML x2, COF, ASIC WIN; CRH LOSS). `v3_guardrail_firings` is written by
-    the guardrail itself on the same path that refuses the trade, and carried
-    a row for all 25. Either source naming a block is a block: a missing row in
-    one table must not read as permission.
-
-    Never raises. An unlabelled row is a gap; a lost row is a lost outcome.
-    """
+def resolve_overridden_from(db_unused, cycle_id: str, ticker: str, action: str):
+    """Label a decision that something overruled, or None if nothing did."""
     try:
-        desk_row = db.execute(
-            "SELECT desk_data->'final_decision'->>'action' "
-            "FROM shared_desk WHERE cycle_id = %s AND ticker = %s LIMIT 1",
-            [cycle_id, ticker],
-        ).fetchone()
-        board_action = desk_row[0] if desk_row else None
-        if board_action and board_action != action:
-            return board_action
+        desk_row = mongo_query.find_row('shared_desk', {'cycle_id': cycle_id, 'ticker': ticker}, ['desk_data'])
+        if desk_row and desk_row[0]:
+            desk_data = desk_row[0] if isinstance(desk_row[0], dict) else {}
+            board_action = desk_data.get('final_decision', {}).get('action')
+            if board_action and board_action != action:
+                return board_action
     except Exception as e:  # noqa: BLE001 — provenance, never blocks
         logger.debug("[OUTCOME] %s: override lookup failed: %s", ticker, e)
 
-    if _was_blocked_by_policy(db, cycle_id, ticker):
-        # Matches the synthesizer path's meaning: the action that did NOT
-        # survive.
+    if _was_blocked_by_policy(db_unused, cycle_id, ticker):
         return action
     return None
 
 
-def _was_blocked_by_policy(db, cycle_id: str, ticker: str) -> bool:
-    """True when either record of the policy gate says it refused this trade.
-
-    Each lookup is independently fault-tolerant: one table being unreadable
-    must not suppress the other's evidence.
-    """
+def _was_blocked_by_policy(db_unused, cycle_id: str, ticker: str) -> bool:
+    """True when either record of the policy gate says it refused this trade."""
     try:
         gate_row = mongo_query.find_row('trade_results', {'cycle_id': cycle_id, 'ticker': ticker}, ['policy_action'])
         policy_action = gate_row[0] if gate_row else None
@@ -300,12 +261,7 @@ def _was_blocked_by_policy(db, cycle_id: str, ticker: str) -> bool:
         logger.debug("[OUTCOME] %s: policy-gate lookup failed: %s", ticker, e)
 
     try:
-        fired = db.execute(
-            "SELECT 1 FROM v3_guardrail_firings "
-            "WHERE cycle_id = %s AND ticker = %s "
-            "AND guardrail LIKE 'HOLD_POLICY_BLOCKED%%' LIMIT 1",
-            [cycle_id, ticker],
-        ).fetchone()
+        fired = mongo_query.find_row('v3_guardrail_firings', {'cycle_id': cycle_id, 'ticker': ticker, 'guardrail': {'$regex': '^HOLD_POLICY_BLOCKED'}}, ['id'])
         if fired:
             return True
     except Exception as e:  # noqa: BLE001 — provenance, never blocks
@@ -342,144 +298,83 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
         logger.debug("[OUTCOME] skill version snapshot failed: %s", e)
 
     try:
-        with get_db() as db:
-            # Which model served each agent on each desk this cycle — the
-            # per-model leaderboard's join key. Same snapshot rationale as
-            # skill_versions, but per TICKER rather than per cycle: routing is
-            # per-agent and a cycle can straddle a gateway-side model swap, so
-            # stamping one cycle-wide model would average over the boundary.
-            # ORDER BY created_at makes the dict's last-write the latest run
-            # (retries overwrite their first attempt).
-            models_by_ticker: dict = {}
-            import json as _mjson
+        models_by_ticker: dict = {}
+        import json as _mjson
+        try:
+            docs = mongo_store.find_docs(
+                "v3_agent_telemetry",
+                {"cycle_id": cycle_id, "model_used": {"$ne": None}},
+                sort=[("created_at", 1)],
+                projection={"ticker": 1, "agent_name": 1, "model_used": 1},
+            )
+            for d in docs:
+                models_by_ticker.setdefault(d.get("ticker"), {})[d.get("agent_name")] = d.get("model_used")
+        except Exception as e:  # noqa: BLE001 — provenance, never blocks
+            logger.debug("[OUTCOME] model snapshot failed: %s", e)
+
+        raw_rows = mongo_query.find_rows(
+            'analysis_results',
+            {'cycle_id': cycle_id, 'confidence': {'$ne': None}},
+            ['ticker', 'confidence', 'result_json'],
+        )
+        from app.quant.returns import latest_close
+
+        rows = [
+            (ticker, confidence, latest_close(ticker), result_json)
+            for ticker, confidence, result_json in raw_rows
+        ]
+
+        for ticker, confidence, entry_price, result_json in rows:
+            # Extract action from result_json
+            import json
             try:
-                from app.db import mongo_store
-                if mongo_store.reads_mongo("v3_agent_telemetry"):
-                    try:
-                        docs = mongo_store.find_docs(
-                            "v3_agent_telemetry",
-                            {"cycle_id": cycle_id, "model_used": {"$ne": None}},
-                            sort=[("created_at", 1)],
-                            projection={"ticker": 1, "agent_name": 1, "model_used": 1},
-                        )
-                        for d in docs:
-                            models_by_ticker.setdefault(d.get("ticker"), {})[d.get("agent_name")] = d.get("model_used")
-                    except Exception as me:
-                        mongo_store.handle_mongo_read_failure("v3_agent_telemetry", "outcome_tracker model snapshot", me)
+                result = json.loads(result_json) if isinstance(result_json, str) else (result_json or {})
+            except (json.JSONDecodeError, TypeError):
+                result = {}
 
-                if not models_by_ticker and not mongo_store.reads_mongo("v3_agent_telemetry"):
-                    m_rows = mongo_query.find_rows('v3_agent_telemetry', {'cycle_id': cycle_id, 'model_used': {'$ne': None}}, ['ticker', 'agent_name', 'model_used'], sort=[('created_at', 1)])
-                    for _t, _agent, _model in m_rows:
-                        models_by_ticker.setdefault(_t, {})[_agent] = _model
-            except Exception as e:  # noqa: BLE001 — provenance, never blocks
-                logger.debug("[OUTCOME] model snapshot failed: %s", e)
+            action = result.get("action", "HOLD")
 
-            # The entry price is read through the same one-vendor path as the
-            # exit price below. Reading them independently is what let a vendor
-            # SPREAD become P&L: price_history carries both a yfinance and a
-            # polygon print for ~19% of scored tickers, the two disagree by a
-            # mean 20.05% (ALLY 1.11%, DRIP 718%), and an unfiltered
-            # `ORDER BY date DESC LIMIT 1` picks between them non-
-            # deterministically. See app/quant/returns.py.
-            rows = db.execute(
-                """
-                SELECT ar.ticker, ar.confidence, NULL::double precision AS entry_price,
-                       ar.result_json
-                FROM analysis_results ar
-                WHERE ar.cycle_id = %s AND ar.confidence IS NOT NULL
-                """,
-                [cycle_id],
-            ).fetchall()
-            from app.quant.returns import latest_close
-
-            rows = [
-                (ticker, confidence, latest_close(ticker), result_json)
-                for ticker, confidence, _entry, result_json in rows
-            ]
-
-            for ticker, confidence, entry_price, result_json in rows:
-                # Extract action from result_json
-                import json
-                try:
-                    result = json.loads(result_json) if isinstance(result_json, str) else (result_json or {})
-                except (json.JSONDecodeError, TypeError):
-                    result = {}
-
-                action = result.get("action", "HOLD")
-
-                # A pipeline failure is not a decision, and must never be
-                # scored as a trade. 2026-07-27: 363 of 2,215 rows here were
-                # confidence=0 artifacts — 145 whose thesis text reads
-                # "PIPELINE FAILURE (EMPTY_SIGNAL): Thesis returned
-                # confidence=0 with 0 claims" and 198 "Failed to parse thesis.
-                # Invalid JSON format" — recorded, resolved against price, and
-                # labelled WIN/LOSS like any real call.
-                #
-                # They are not a random sample: they win 55.1% at -5.61% mean
-                # versus 61.1% / +1.94% for real decisions, and they all land
-                # at confidence 0. So they poison every consumer that reads
-                # this table — SkillOpt's baseline, the scorecard, and the
-                # confidence calibration, where they manufactured a fake
-                # "low confidence loses money" band that was really the crash
-                # rate wearing a calibration costume (see calibration_report's
-                # fetch()).
-                #
-                # Confidence is a clean discriminator here: the distribution
-                # jumps 0 -> 15 with nothing in between, so 0 is a sentinel
-                # rather than a real (if dismal) score.
-                if _is_unscoreable(confidence, result):
-                    logger.info(
-                        "[OUTCOME] Skipping %s — degraded artifact, not a "
-                        "decision (confidence=%s, provenance=%s)",
-                        ticker, confidence, result.get("decision_provenance"),
-                    )
-                    skipped_degraded += 1
-                    continue
-
-                if entry_price is None:
-                    logger.debug("[OUTCOME] Skipping %s — no price_history available", ticker)
-                    continue
-
-                # Check if we already recorded this cycle+ticker combo
-                existing = mongo_query.find_row('decision_outcomes', {'cycle_id': cycle_id, 'ticker': ticker}, ['id'])
-                if existing:
-                    continue
-
-                overridden_from = resolve_overridden_from(
-                    db, cycle_id, ticker, action
+            if _is_unscoreable(confidence, result):
+                logger.info(
+                    "[OUTCOME] Skipping %s — degraded artifact, not a "
+                    "decision (confidence=%s, provenance=%s)",
+                    ticker, confidence, result.get("decision_provenance"),
                 )
+                skipped_degraded += 1
+                continue
 
-                outcome_id = f"do-{uuid.uuid4().hex[:12]}"
-                # Serialized like skill_versions: psycopg adapts dict->hstore,
-                # not JSONB.
-                _models = models_by_ticker.get(ticker)
-                models_used = _mjson.dumps(_models) if _models else None
-                now_utc = datetime.now(timezone.utc)
-                mongo_store.insert_docs('decision_outcomes', [{'id': outcome_id, 'cycle_id': cycle_id, 'ticker': ticker, 'action': action, 'confidence': confidence, 'entry_price': round(entry_price, 4), 'created_at': now_utc, 'skill_versions': skill_versions, 'overridden_from': overridden_from, 'models_used': models_used}])
-                try:
-                    from app.db import mongo_store
-                    if mongo_store.writes_mongo("decision_outcomes"):
-                        mongo_store.upsert_doc(
-                            "decision_outcomes",
-                            {"id": outcome_id},
-                            {
-                                "id": outcome_id, "cycle_id": cycle_id, "ticker": ticker,
-                                "action": action, "confidence": confidence,
-                                "entry_price": round(entry_price, 4), "created_at": now_utc,
-                                "skill_versions": skill_versions, "overridden_from": overridden_from,
-                                "models_used": _models, "exit_price": None, "pnl_pct": None,
-                                "outcome": None, "resolved_at": None,
-                            },
-                        )
-                except Exception as me:
-                    logger.warning("[OUTCOME] Mongo mirror failed (non-fatal): %s", me)
-                recorded += 1
+            if entry_price is None:
+                logger.debug("[OUTCOME] Skipping %s — no price_history available", ticker)
+                continue
+
+            # Check if we already recorded this cycle+ticker combo
+            existing = mongo_query.find_row('decision_outcomes', {'cycle_id': cycle_id, 'ticker': ticker}, ['id'])
+            if existing:
+                continue
+
+            overridden_from = resolve_overridden_from(
+                None, cycle_id, ticker, action
+            )
+
+            outcome_id = f"do-{uuid.uuid4().hex[:12]}"
+            _models = models_by_ticker.get(ticker)
+            models_used = _mjson.dumps(_models) if _models else None
+            now_utc = datetime.now(timezone.utc)
+            mongo_store.insert_docs('decision_outcomes', [{
+                'id': outcome_id,
+                'cycle_id': cycle_id,
+                'ticker': ticker,
+                'action': action,
+                'confidence': confidence,
+                'entry_price': round(entry_price, 4),
+                'created_at': now_utc,
+                'skill_versions': skill_versions,
+                'overridden_from': overridden_from,
+                'models_used': models_used,
+            }])
+            recorded += 1
 
         if recorded > 0 or skipped_degraded:
-            # Report the skip count rather than silently dropping rows: a
-            # cycle where most artifacts were degraded looks identical to a
-            # quiet cycle if only `recorded` is logged, and that is precisely
-            # the failure this filter exists to surface.
             logger.info(
                 "[OUTCOME] Recorded %d decision outcomes for cycle %s%s",
                 recorded, cycle_id[:12],
@@ -508,103 +403,64 @@ def resolve_pending_outcomes() -> dict:
 
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
-        from app.db import mongo_store
-        pending = []
-        if mongo_store.reads_mongo("decision_outcomes"):
+        pending = mongo_query.find_rows(
+            'decision_outcomes',
+            {'resolved_at': None, 'created_at': {'$lt': cutoff}},
+            ['id', 'ticker', 'action', 'entry_price', 'created_at', 'cycle_id', 'confidence'],
+            sort=[('created_at', 1)],
+            limit=50,
+        )
+
+        for (outcome_id, ticker, action, entry_price, created_at,
+             cycle_id, confidence) in pending:
             try:
-                docs = mongo_store.find_docs(
-                    "decision_outcomes",
-                    {"resolved_at": None, "created_at": {"$lt": cutoff}},
-                    sort=[("created_at", 1)],
-                    limit=50,
-                )
-                pending = [
-                    (d["id"], d["ticker"], d["action"], d.get("entry_price"),
-                     d.get("created_at"), d.get("cycle_id"), d.get("confidence"))
-                    for d in docs
-                ]
-            except Exception as me:
-                mongo_store.handle_mongo_read_failure("decision_outcomes", "resolve_pending_outcomes read", me)
+                from app.quant.returns import latest_close
 
-        with get_db() as db:
-            if not pending and not mongo_store.reads_mongo("decision_outcomes"):
-                pending = mongo_query.find_rows('decision_outcomes', {'resolved_at': None, 'created_at': {'$lt': cutoff}}, ['id', 'ticker', 'action', 'entry_price', 'created_at', 'cycle_id', 'confidence'], sort=[('created_at', 1)], limit=50)
+                _px = latest_close(ticker)
+                price_row = (_px,) if _px is not None else None
 
-            for (outcome_id, ticker, action, entry_price, created_at,
-                 cycle_id, confidence) in pending:
-                try:
-                    # Same one-vendor path as the entry price, or the P&L is a
-                    # vendor spread rather than a return (see app/quant/returns.py).
-                    from app.quant.returns import latest_close
+                if not price_row or price_row[0] is None:
+                    logger.debug("[OUTCOME] Cannot resolve %s — no current price for %s", outcome_id, ticker)
+                    continue
 
-                    _px = latest_close(ticker)
-                    price_row = (_px,) if _px is not None else None
+                exit_price = price_row[0]
 
-                    if not price_row or price_row[0] is None:
-                        logger.debug("[OUTCOME] Cannot resolve %s — no current price for %s", outcome_id, ticker)
-                        continue
+                if entry_price is None or entry_price == 0:
+                    logger.debug("[OUTCOME] Cannot resolve %s — invalid entry_price", outcome_id)
+                    continue
 
-                    exit_price = price_row[0]
+                if action == "SELL":
+                    pnl_pct = ((entry_price - exit_price) / entry_price) * 100
+                else:  # BUY and HOLD both measure the long-side move
+                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
 
-                    if entry_price is None or entry_price == 0:
-                        logger.debug("[OUTCOME] Cannot resolve %s — invalid entry_price", outcome_id)
-                        continue
-
-                    # Compute PnL based on action direction. A HOLD claim is
-                    # evaluated on the raw signed move — direction is
-                    # irrelevant to "nothing meaningful happened".
-                    if action == "SELL":
-                        pnl_pct = ((entry_price - exit_price) / entry_price) * 100
-                    else:  # BUY and HOLD both measure the long-side move
-                        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-
-                    outcome = _classify(action, pnl_pct)
-                    # .get, not [outcome]: this lookup sits BEFORE the UPDATE,
-                    # so an unmapped label would raise into the row handler and
-                    # the row would never be written — left unresolved to be
-                    # retried, and re-skipped, on every future batch. A missing
-                    # counter is a reporting gap; a missing UPDATE is a lost
-                    # outcome.
-                    key = {
-                        "WIN": "wins", "LOSS": "losses", "FLAT": "flats",
-                        "HOLD_CORRECT": "holds_correct", "HOLD_MISS": "holds_miss",
-                        "HOLD_AVOIDED_DECLINE": "holds_avoided_decline",
-                    }.get(outcome)
-                    if key:
-                        stats[key] += 1
-                    else:
-                        logger.warning(
-                            "[OUTCOME] %s: unmapped outcome label %r — resolving "
-                            "the row anyway, but it is uncounted", outcome_id, outcome,
-                        )
-
-                    now_res = datetime.now(timezone.utc)
-                    if mongo_store.writes_pg("decision_outcomes"):
-                        mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res}})
-                    if mongo_store.writes_mongo("decision_outcomes"):
-                        mongo_store.upsert_doc(
-                            "decision_outcomes",
-                            {"id": outcome_id},
-                            {
-                                "exit_price": round(exit_price, 4),
-                                "pnl_pct": round(pnl_pct, 2),
-                                "outcome": outcome,
-                                "resolved_at": now_res,
-                            },
-                        )
-                    resolved += 1
-
-                    # AFTER the UPDATE, never before: the memory tiers must
-                    # only learn outcomes the ledger already committed to.
-                    write_outcome_to_memory(
-                        cycle_id=cycle_id, ticker=ticker, action=action,
-                        outcome=outcome, pnl_pct=round(pnl_pct, 2),
-                        confidence=confidence,
+                outcome = _classify(action, pnl_pct)
+                key = {
+                    "WIN": "wins", "LOSS": "losses", "FLAT": "flats",
+                    "HOLD_CORRECT": "holds_correct", "HOLD_MISS": "holds_miss",
+                    "HOLD_AVOIDED_DECLINE": "holds_avoided_decline",
+                }.get(outcome)
+                if key:
+                    stats[key] += 1
+                else:
+                    logger.warning(
+                        "[OUTCOME] %s: unmapped outcome label %r — resolving "
+                        "the row anyway, but it is uncounted", outcome_id, outcome,
                     )
 
-                except Exception as row_err:
-                    errors += 1
-                    logger.warning("[OUTCOME] Failed to resolve %s: %s", outcome_id, row_err)
+                now_res = datetime.now(timezone.utc)
+                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res}})
+                resolved += 1
+
+                write_outcome_to_memory(
+                    cycle_id=cycle_id, ticker=ticker, action=action,
+                    outcome=outcome, pnl_pct=round(pnl_pct, 2),
+                    confidence=confidence,
+                )
+
+            except Exception as row_err:
+                errors += 1
+                logger.warning("[OUTCOME] Failed to resolve %s: %s", outcome_id, row_err)
 
         if resolved > 0:
             logger.info(
@@ -629,28 +485,27 @@ def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float
     """
     resolved = 0
     try:
-        with get_db() as db:
-            pending = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': None}, ['id', 'action', 'entry_price', 'cycle_id', 'confidence'])
-            for outcome_id, action, entry_price, cycle_id, confidence in pending:
-                if not entry_price or not exit_price:
-                    continue
-                if action == "BUY":
-                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-                elif action == "SELL":
-                    pnl_pct = ((entry_price - exit_price) / entry_price) * 100
-                else:
-                    # HOLD claims resolve on their 7-day timer, never on a
-                    # position exit — the claim is about the horizon, and an
-                    # exit at day 2 says nothing about it.
-                    continue
-                outcome = _classify(action, pnl_pct)
-                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': datetime.now(timezone.utc)}})
-                resolved += 1
-                write_outcome_to_memory(
-                    cycle_id=cycle_id, ticker=ticker, action=action,
-                    outcome=outcome, pnl_pct=round(pnl_pct, 2),
-                    confidence=confidence,
-                )
+        pending = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': None}, ['id', 'action', 'entry_price', 'cycle_id', 'confidence'])
+        for outcome_id, action, entry_price, cycle_id, confidence in pending:
+            if not entry_price or not exit_price:
+                continue
+            if action == "BUY":
+                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            elif action == "SELL":
+                pnl_pct = ((entry_price - exit_price) / entry_price) * 100
+            else:
+                # HOLD claims resolve on their 7-day timer, never on a
+                # position exit — the claim is about the horizon, and an
+                # exit at day 2 says nothing about it.
+                continue
+            outcome = _classify(action, pnl_pct)
+            mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': datetime.now(timezone.utc)}})
+            resolved += 1
+            write_outcome_to_memory(
+                cycle_id=cycle_id, ticker=ticker, action=action,
+                outcome=outcome, pnl_pct=round(pnl_pct, 2),
+                confidence=confidence,
+            )
         if resolved:
             logger.info("[OUTCOME] Resolved %d outcome(s) for %s on position exit", resolved, ticker)
     except Exception as e:
@@ -687,42 +542,31 @@ def override_scorecard(days: int = 30) -> dict:
     """
     out: dict = {"days": days, "note": None}
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT
-                    CASE
-                        -- Order matters: a policy-blocked BUY keeps
-                        -- action='BUY' (so its counterfactual stays
-                        -- scoreable) and now carries overridden_from='BUY'.
-                        -- It must be caught BEFORE kept_buys, which it used
-                        -- to fall into while overridden_from was NULL —
-                        -- crediting the desk with keeping a trade the gate
-                        -- refused.
-                        WHEN action = overridden_from
-                            THEN 'blocked_by_gate'
-                        WHEN action = 'BUY' AND overridden_from IS NULL
-                            THEN 'kept_buys'
-                        WHEN action = 'HOLD' AND overridden_from = 'BUY'
-                            THEN 'overridden_buys'
-                        ELSE 'other'
-                    END AS bucket,
-                    count(*),
-                    count(pnl_pct),
-                    avg(pnl_pct)
-                FROM decision_outcomes
-                WHERE created_at > now() - (%s || ' days')::interval
-                GROUP BY 1
-                """,
-                [str(days)],
-            ).fetchall()
-        for bucket, n, scored, mean in rows:
-            if bucket == "other":
-                continue
-            out[bucket] = {
-                "n": n,
-                "scored": scored,
-                "mean_pnl": round(float(mean), 3) if mean is not None else None,
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        docs = mongo_store.find_docs('decision_outcomes', {'created_at': {'$gt': since}})
+        buckets: dict[str, list[float]] = {'blocked_by_gate': [], 'kept_buys': [], 'overridden_buys': []}
+        counts: dict[str, int] = {'blocked_by_gate': 0, 'kept_buys': 0, 'overridden_buys': 0}
+        for d in docs:
+            act = d.get('action')
+            ovr = d.get('overridden_from')
+            pnl = d.get('pnl_pct')
+            b = None
+            if act == ovr and act is not None:
+                b = 'blocked_by_gate'
+            elif act == 'BUY' and ovr is None:
+                b = 'kept_buys'
+            elif act == 'HOLD' and ovr == 'BUY':
+                b = 'overridden_buys'
+            if b:
+                counts[b] += 1
+                if pnl is not None:
+                    buckets[b].append(float(pnl))
+        for b in ['blocked_by_gate', 'kept_buys', 'overridden_buys']:
+            pnls = buckets[b]
+            out[b] = {
+                "n": counts[b],
+                "scored": len(pnls),
+                "mean_pnl": round(sum(pnls) / len(pnls), 3) if pnls else None,
             }
     except Exception as e:
         logger.warning("[OUTCOME] override scorecard failed: %s", e)
@@ -730,10 +574,6 @@ def override_scorecard(days: int = 30) -> dict:
 
     kept = out.get("kept_buys", {})
     over = out.get("overridden_buys", {})
-    # State the verdict only when both sides have enough resolved rows to
-    # support one. A 4-row mean is noise, and printing it next to a 900-row
-    # mean invites reading it as a finding — the failure this whole audit has
-    # been about.
     if (kept.get("scored") or 0) >= 20 and (over.get("scored") or 0) >= 20:
         delta = (over["mean_pnl"] or 0) - (kept["mean_pnl"] or 0)
         out["veto_edge_pct"] = round(delta, 3)

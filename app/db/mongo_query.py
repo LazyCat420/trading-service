@@ -36,11 +36,19 @@ def _project(columns: Sequence[str]) -> dict:
     return proj
 
 
+def _clean_val(v: Any) -> Any:
+    if v is None:
+        return None
+    if hasattr(v, "to_decimal"):
+        return float(str(v))
+    return v
+
+
 def _to_tuple(doc: dict, columns: Sequence[str]) -> tuple:
     # `doc.get(c)` and not `doc[c]`: a document written before a column was
     # added simply lacks the field, and Postgres would have returned NULL for
     # it. Raising here would fail a read that the SQL answered fine.
-    return tuple(doc.get(c) for c in columns)
+    return tuple(_clean_val(doc.get(c)) for c in columns)
 
 
 def find_rows(collection: str, query: dict[str, Any], columns: Sequence[str],
