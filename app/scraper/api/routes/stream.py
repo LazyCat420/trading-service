@@ -157,10 +157,12 @@ async def _extract_stream_url(video_id: str, audio_only: bool = False) -> dict:
             sys.executable, "-m", "yt_dlp",
             url,
             "-f", fmt,
+            "--extractor-args", "youtube:player_client=android",
             "--get-url",
             "--no-download",
             "--no-playlist",
             "--no-warnings",
+            "--no-update",
             "--socket-timeout", "15",
         ]
 
@@ -172,10 +174,12 @@ async def _extract_stream_url(video_id: str, audio_only: bool = False) -> dict:
             sys.executable, "-m", "yt_dlp",
             url,
             "-f", fmt,
+            "--extractor-args", "youtube:player_client=android",
             "--dump-json",
             "--no-download",
             "--no-playlist",
             "--no-warnings",
+            "--no-update",
             "--socket-timeout", "15",
         ]
 
