@@ -1289,6 +1289,15 @@ class TestMockTradingCycleMongoE2E:
         from app.services.news_extraction import _store_facts, ensure_facts
         from app.services.news_backfill import _cycle_is_running, _select_batch, backlog_size
 
+        mongo_store.insert_docs("news_articles", [{
+            "id": "news-001",
+            "ticker": "AAPL",
+            "title": "Apple Q3 Record Earnings",
+            "publisher": "Reuters",
+            "published_at": now,
+            "summary": "Apple delivered record revenue in Q3.",
+        }])
+
         _store_facts(
             article_id="news-001",
             facts=[{
@@ -1388,3 +1397,37 @@ class TestMockTradingCycleMongoE2E:
         sm_board = await get_smart_money_leaderboard("congress", horizon="1y")
         assert "Representative Alpha" in sm_board
         assert "12.8%" in sm_board
+
+        # 46. Finance Tools Market Data & News in MongoDB
+        from app.tools.finance_tools import get_market_data, get_finnhub_news
+
+        mongo_store.insert_docs("financial_history", [
+            {
+                "ticker": "AAPL",
+                "period_type": "quarterly",
+                "period_end": "2026-06-30",
+                "revenue": 85000000000.0,
+                "gross_profit": 38000000000.0,
+                "operating_income": 25000000000.0,
+                "net_income": 21000000000.0,
+                "eps": 1.40,
+                "free_cash_flow": 19000000000.0,
+            },
+            {
+                "ticker": "AAPL",
+                "period_type": "annual",
+                "period_end": "2025-09-30",
+                "revenue": 383000000000.0,
+                "gross_profit": 170000000000.0,
+                "operating_income": 114000000000.0,
+                "net_income": 97000000000.0,
+                "eps": 6.13,
+                "free_cash_flow": 100000000000.0,
+            },
+        ])
+
+        mkt_data = await get_market_data("AAPL")
+        assert "Quarterly Financials" in mkt_data or "Fundamentals" in mkt_data
+
+        news_out = await get_finnhub_news("AAPL")
+        assert "Apple" in news_out or "AAPL" in news_out

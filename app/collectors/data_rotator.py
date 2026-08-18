@@ -42,12 +42,10 @@ def _is_missing_recent_session(ticker: str) -> bool:
     """
     try:
         from datetime import date
-
-        from app.db.connection import get_db
         from app.quant.technical_baseline import _trading_day_age
+        from app.db import mongo_query
 
-        with get_db() as db:
-            row = mongo_query.agg_row('price_history', {'ticker': ticker}, [('max', 'date')])
+        row = mongo_query.agg_row('price_history', {'ticker': ticker}, [('max', 'date')])
         latest = row[0] if row else None
         if latest is None:
             return False  # no rows at all — nothing to compare, let step 1 decide

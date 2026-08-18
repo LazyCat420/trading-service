@@ -2,7 +2,6 @@ import logging
 
 from pydantic import BaseModel, Field
 from app.tools.registry import registry
-from app.db.connection import get_db
 from app.utils.text_utils import format_db_section, fmt_usd
 from app.db import mongo_query
 from datetime import datetime, timezone
@@ -47,79 +46,67 @@ async def get_market_data(ticker: str) -> str:
         await fetch_financials(ticker)
         await fetch_balance_sheet(ticker)
 
-    with get_db() as db:
-        sections = []
+    sections = []
 
-        # Fundamentals
-        rows = mongo_query.find_rows('fundamentals', {'ticker': ticker}, ['snapshot_date', 'market_cap', 'pe_ratio', 'forward_pe', 'peg_ratio', 'price_to_book', 'profit_margin', 'roe', 'revenue', 'revenue_growth', 'debt_to_equity', 'beta', 'week_52_high', 'week_52_low', 'short_float_pct'], sort=[('snapshot_date', -1)], limit=1)
-        sections.append(
-            format_db_section(
-                "Fundamentals",
-                rows,
-                [
-                    "Date",
-                    "MarketCap",
-                    "PE",
-                    "ForwardPE",
-                    "PEG",
-                    "P/B",
-                    # Named to match the screener's column (net_margin): the old
-                    # "ProfitMargin" label sent agents chasing a nonexistent
-                    # screener field 'profit_margin' (6 failed calls on 08-04).
-                    "NetMargin",
-                    "ROE",
-                    "Revenue",
-                    "RevenueGrowth",
-                    "D/E",
-                    "Beta",
-                    "52wHigh",
-                    "52wLow",
-                    "ShortFloat%",
-                ],
-            )
+    from app.db import mongo_store, mongo_query
+
+    # Fundamentals
+    rows = mongo_query.find_rows('fundamentals', {'ticker': ticker}, ['snapshot_date', 'market_cap', 'pe_ratio', 'forward_pe', 'peg_ratio', 'price_to_book', 'profit_margin', 'roe', 'revenue', 'revenue_growth', 'debt_to_equity', 'beta', 'week_52_high', 'week_52_low', 'short_float_pct'], sort=[('snapshot_date', -1)], limit=1)
+    sections.append(
+        format_db_section(
+            "Fundamentals",
+            rows,
+            [
+                "Date",
+                "MarketCap",
+                "PE",
+                "ForwardPE",
+                "PEG",
+                "P/B",
+                "NetMargin",
+                "ROE",
+                "Revenue",
+                "RevenueGrowth",
+                "D/E",
+                "Beta",
+                "52wHigh",
+                "52wLow",
+                "ShortFloat%",
+            ],
         )
+    )
 
-        # Quarterly Financials
-        q_rows = db.execute(
-            """
-            SELECT period_end, revenue, gross_profit, operating_income, net_income, eps, free_cash_flow
-            FROM financial_history
-            WHERE ticker = %s AND period_type = 'quarterly'
-              AND COALESCE(revenue, gross_profit, operating_income,
-                           net_income, eps, free_cash_flow) IS NOT NULL
-            ORDER BY period_end DESC LIMIT 4
-        """,
-            [ticker],
-        ).fetchall()
-        if q_rows:
-            q_lines = ["\n## Recent Quarterly Financials"]
-            for row in q_rows:
-                rev = fmt_usd(row[1]) if row[1] else "N/A"
-                ni = fmt_usd(row[4]) if row[4] else "N/A"
-                eps = f"EPS=${row[5]:.2f}" if row[5] else ""
-                q_lines.append(f"  {row[0]}: Rev={rev}, Net Income={ni}, {eps}")
-            sections.append("\n".join(q_lines))
+    # Quarterly Financials
+    q_docs = mongo_store.find_docs(
+        "financial_history",
+        {"ticker": ticker, "period_type": "quarterly"},
+        sort=[("period_end", -1)],
+        limit=4,
+    )
+    if q_docs:
+        q_lines = ["\n## Recent Quarterly Financials"]
+        for d in q_docs:
+            rev = fmt_usd(d.get("revenue")) if d.get("revenue") else "N/A"
+            ni = fmt_usd(d.get("net_income")) if d.get("net_income") else "N/A"
+            eps = f"EPS=${float(d.get('eps')):.2f}" if d.get("eps") is not None else ""
+            q_lines.append(f"  {d.get('period_end')}: Rev={rev}, Net Income={ni}, {eps}")
+        sections.append("\n".join(q_lines))
 
-        # Annual Financials
-        a_rows = db.execute(
-            """
-            SELECT period_end, revenue, gross_profit, operating_income, net_income, eps, free_cash_flow
-            FROM financial_history
-            WHERE ticker = %s AND period_type = 'annual'
-              AND COALESCE(revenue, gross_profit, operating_income,
-                           net_income, eps, free_cash_flow) IS NOT NULL
-            ORDER BY period_end DESC LIMIT 4
-        """,
-            [ticker],
-        ).fetchall()
-        if a_rows:
-            a_lines = ["\n## Recent Annual Financials"]
-            for row in a_rows:
-                rev = fmt_usd(row[1]) if row[1] else "N/A"
-                ni = fmt_usd(row[4]) if row[4] else "N/A"
-                eps = f"EPS=${row[5]:.2f}" if row[5] else ""
-                a_lines.append(f"  {row[0]}: Rev={rev}, Net Income={ni}, {eps}")
-            sections.append("\n".join(a_lines))
+    # Annual Financials
+    a_docs = mongo_store.find_docs(
+        "financial_history",
+        {"ticker": ticker, "period_type": "annual"},
+        sort=[("period_end", -1)],
+        limit=4,
+    )
+    if a_docs:
+        a_lines = ["\n## Recent Annual Financials"]
+        for d in a_docs:
+            rev = fmt_usd(d.get("revenue")) if d.get("revenue") else "N/A"
+            ni = fmt_usd(d.get("net_income")) if d.get("net_income") else "N/A"
+            eps = f"EPS=${float(d.get('eps')):.2f}" if d.get("eps") is not None else ""
+            a_lines.append(f"  {d.get('period_end')}: Rev={rev}, Net Income={ni}, {eps}")
+        sections.append("\n".join(a_lines))
 
     return "\n".join(sections)
 
@@ -141,44 +128,36 @@ async def get_market_data(ticker: str) -> str:
 async def get_finnhub_news(ticker: str) -> str:
     from app.collectors.news_collector import collect_finnhub_news
     from app.services.api_rate_limiter import rate_limiter
+    from datetime import datetime, timezone, timedelta
+    from app.db import mongo_store
 
     async with rate_limiter.acquire("finnhub"):
         await collect_finnhub_news(ticker)
 
-    # Recency floor. This query had none, so for a thinly-covered ticker
-    # "ORDER BY published_at DESC LIMIT 15" simply reached further back until
-    # it found 15 rows: in cycle-v3-1785137616 ASC's list ran to 2024-07-24 and
-    # BOOT's to 2025-07-14, both presented to the agents under the heading
-    # "Recent News & Sentiment" with nothing marking their age. Three of seven
-    # tickers debated on news containing no item from the last 24 hours.
-    #
-    # Widen rather than return nothing (a quiet small-cap still deserves
-    # context), but say plainly how old the window had to get.
-    # `summary` only. The retired column lost its writer in 8528bb0
-    # (2026-06-19). The 640 rows that survive it are 51-62 days stale and
-    # 76% are SHORTER than the summary they masked: 56 rows across 36
-    # tickers were being served at 703 chars against 2,783 available, and
-    # 19 of those fell under the grounded extractor's 400-char floor purely
-    # because of the COALESCE. Its job is done by grounded_facts.
-    with get_db() as db:
-        def _fetch(days: int):
-            return db.execute(
-                """
-                SELECT id, title, publisher, published_at,
-                       summary
-                FROM news_articles
-                WHERE ticker = %s
-                  AND published_at > NOW() - make_interval(days => %s)
-                ORDER BY published_at DESC LIMIT 15
-                """,
-                [ticker, days],
-            ).fetchall()
+    def _fetch(days: int):
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        docs = mongo_store.find_docs(
+            "news_articles",
+            {"ticker": ticker, "published_at": {"$gte": since}},
+            sort=[("published_at", -1)],
+            limit=15,
+        )
+        return [
+            (
+                d.get("id"),
+                d.get("title"),
+                d.get("publisher"),
+                d.get("published_at"),
+                d.get("summary"),
+            )
+            for d in docs
+        ]
 
-        window_days = 14
+    window_days = 14
+    rows = _fetch(window_days)
+    if len(rows) < 3:
+        window_days = 90
         rows = _fetch(window_days)
-        if len(rows) < 3:
-            window_days = 90
-            rows = _fetch(window_days)
 
     if not rows:
         return (
