@@ -1052,3 +1052,28 @@ class TestMockTradingCycleMongoE2E:
         read_df = pd.read_parquet(parquet_path)
         assert not read_df.empty
         assert "close" in read_df.columns
+
+        # 33. Candidate Validation & Quarantine in MongoDB
+        from app.validation.persistence import (
+            save_validation_result,
+            get_pending_retries,
+            get_quarantine_summary,
+            release_ticker,
+            increment_rate_limit_and_check,
+        )
+        from app.validation.models import ValidationResult, ValidationStatus, QuarantineReason
+
+        v_res = ValidationResult(
+            ticker="PENNY",
+            status=ValidationStatus.QUARANTINE,
+            reason=QuarantineReason.NO_DATA,
+            details="Volume < 100k shares daily average",
+        )
+        save_validation_result(v_res)
+
+        quarantined = get_quarantine_summary()
+        assert any(q["ticker"] == "PENNY" for q in quarantined)
+
+        release_ticker("PENNY")
+        quarantined_after = get_quarantine_summary()
+        assert not any(q["ticker"] == "PENNY" for q in quarantined_after)
