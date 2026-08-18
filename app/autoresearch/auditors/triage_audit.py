@@ -8,6 +8,7 @@ from pydantic import BaseModel, field_validator
 
 from app.db.connection import get_db
 from app.db import mongo_store
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +41,7 @@ def _audit_triage(cycle_id: str, cycle_summary: dict, tickers: list[str]) -> dic
             tier_rows = None
         if tier_rows is None:
             with get_db() as db:
-                tier_rows = db.execute(
-                    "SELECT triage_tier, COUNT(*) FROM analysis_results "
-                    "WHERE cycle_id = %s GROUP BY triage_tier",
-                    [cycle_id],
-                ).fetchall()
+                tier_rows = mongo_query.group_rows('analysis_results', {'cycle_id': cycle_id}, ['triage_tier'], [('count', None)], [('key', 'triage_tier'), ('agg', 0)])
         for tier, count in tier_rows:
             tier = (tier or "").lower()
             if "glance" in tier:

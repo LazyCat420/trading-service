@@ -139,15 +139,8 @@ async def hold_outcomes():
     """
     try:
         with get_db() as db:
-            resolved = db.execute(
-                "SELECT outcome, COUNT(*) FROM decision_outcomes "
-                "WHERE resolved_at IS NOT NULL AND outcome IS NOT NULL "
-                "GROUP BY outcome"
-            ).fetchall()
-            pending = db.execute(
-                "SELECT action, COUNT(*), MIN(created_at) FROM decision_outcomes "
-                "WHERE resolved_at IS NULL GROUP BY action"
-            ).fetchall()
+            resolved = mongo_query.group_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$ne': None}}, ['outcome'], [('count', None)], [('key', 'outcome'), ('agg', 0)])
+            pending = mongo_query.group_rows('decision_outcomes', {'resolved_at': None}, ['action'], [('count', None), ('min', 'created_at')], [('key', 'action'), ('agg', 0), ('agg', 1)])
             recent = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}}, ['ticker', 'action', 'confidence', 'pnl_pct', 'outcome', 'cycle_id', 'created_at', 'resolved_at'], sort=[('resolved_at', -1)], limit=25)
 
         counts = {row[0]: row[1] for row in resolved}

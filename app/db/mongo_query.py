@@ -130,6 +130,103 @@ def agg_row(collection: str, query: dict[str, Any],
     return tuple(out)
 
 
+def group_rows(collection: str, query: dict[str, Any],
+               keys: Sequence[str], aggs: Sequence[tuple[str, Any]],
+               select: Sequence[tuple[str, Any]],
+               sort: Optional[list] = None, limit: int = 0) -> list[tuple]:
+    """`SELECT k, COUNT(*) FROM t WHERE ... GROUP BY k` as a list of tuples.
+
+    `keys`   the GROUP BY columns.
+    `aggs`   the aggregates, same (op, field) vocabulary as agg_row().
+    `select` the SELECT list in ORDER, as ("key", col) or ("agg", index) —
+             SQL lets you write the aggregate before the key, so the output
+             order cannot be inferred from keys+aggs and is passed explicitly.
+
+    Returns tuples in SELECT order, matching `cursor.fetchall()`, so callers
+    that unpack positionally keep working.
+
+    `sort` is applied INSIDE the pipeline over the output names, because
+    ORDER BY on a grouped query sorts the groups, not the documents — sorting
+    the input and grouping afterwards would silently reorder the result.
+    """
+    group: dict[str, Any] = {"_id": {k: f"${k}" for k in keys} if keys else None}
+    for i, (op, field) in enumerate(aggs):
+        name = f"a{i}"
+        if op == "count" and field is None:
+            group[name] = {"$sum": 1}
+        elif op == "count":
+            group[name] = {"$sum": {"$cond": [{"$eq": [f"${field}", None]}, 0, 1]}}
+        elif op == "count_null":
+            group[name] = {"$sum": {"$cond": [{"$eq": [f"${field}", None]}, 1, 0]}}
+        elif op == "count_distinct":
+            group[name] = {"$addToSet": f"${field}"}
+        elif op in ("min", "max", "avg", "sum"):
+            group[name] = {f"${op}": f"${field}"}
+        else:
+            raise ValueError(f"unsupported aggregate {op!r}")
+
+    pipeline: list[dict] = ([{"$match": query}] if query else []) + [{"$group": group}]
+    if sort:
+        pipeline.append({"$sort": {
+            (f"_id.{c}" if any(c == k for k in keys) else c): d for c, d in sort
+        }})
+    if limit:
+        pipeline.append({"$limit": limit})
+
+    out = []
+    for doc in mongo_store.aggregate(collection, pipeline):
+        row = []
+        for kind, ref in select:
+            if kind == "key":
+                row.append((doc.get("_id") or {}).get(ref))
+            else:
+                v = doc.get(f"a{ref}")
+                if aggs[ref][0] == "count_distinct":
+                    v = len([x for x in (v or []) if x is not None])
+                row.append(v)
+        out.append(tuple(row))
+    return out
+
+
+def join_rows(left: str, left_query: dict[str, Any], left_key: str,
+              right: str, right_key: str, right_query: Optional[dict] = None,
+              left_fields: Sequence[str] = (), right_fields: Sequence[str] = (),
+              select: Sequence[tuple[str, str]] = (),
+              sort: Optional[list] = None, limit: int = 0) -> list[tuple]:
+    """An INNER JOIN on one equality, done as two queries plus a Python stitch.
+
+    Deliberately NOT $lookup. $lookup on an unindexed foreign field does a
+    collection scan per input document, and its left-outer semantics differ
+    from an INNER JOIN — a non-matching row comes back with an empty array
+    rather than being dropped, so a careless port turns a filter into a
+    pass-through.
+
+    Rows are emitted once per matching right document, which is what an INNER
+    JOIN does when the right side is not unique on the key. `select` is
+    ("l"|"r", column) in SELECT order.
+    """
+    r_docs = mongo_store.find_docs(
+        right, right_query or {},
+        projection={f: 1 for f in list(right_fields) + [right_key]} | {"_id": 0})
+    index: dict[Any, list[dict]] = {}
+    for d in r_docs:
+        index.setdefault(d.get(right_key), []).append(d)
+
+    l_docs = mongo_store.find_docs(
+        left, left_query,
+        projection={f: 1 for f in list(left_fields) + [left_key]} | {"_id": 0},
+        sort=sort)
+
+    out = []
+    for l in l_docs:
+        for r in index.get(l.get(left_key), ()):      # inner join: no match, no row
+            out.append(tuple((l if side == "l" else r).get(col)
+                             for side, col in select))
+            if limit and len(out) >= limit:
+                return out
+    return out
+
+
 def exists(collection: str, query: dict[str, Any]) -> bool:
     """`SELECT 1 FROM ... WHERE ... LIMIT 1` used as a boolean."""
     return mongo_store.count_docs(collection, query) > 0

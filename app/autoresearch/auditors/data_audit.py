@@ -223,10 +223,7 @@ def _audit_news(db, ticker: str) -> dict:
 
         source_list = []
         if rows > 0:
-            src = db.execute(
-                "SELECT source, COUNT(*) FROM news_articles WHERE ticker = %s GROUP BY source",
-                [ticker]
-            ).fetchall()
+            src = mongo_query.group_rows('news_articles', {'ticker': ticker}, ['source'], [('count', None)], [('key', 'source'), ('agg', 0)])
             source_list = [{"source": r[0], "count": r[1]} for r in src]
 
         # Score on articles from the last 7 days — the lifetime count let a

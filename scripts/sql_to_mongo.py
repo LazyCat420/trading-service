@@ -319,7 +319,92 @@ def _agg_list(tree) -> list[tuple[str, str | None]] | None:
     return out or None
 
 
+def _translate_group_by(tree, table, ctx: _Ctx) -> Translation:
+    """`SELECT k, COUNT(*) ... GROUP BY k` -> mongo_query.group_rows().
+
+    Refuses HAVING (a post-group filter needs a $match after $group, which is
+    expressible but is a different shape and nothing in this codebase uses it),
+    grouping over an expression, and any SELECT item that is neither a grouped
+    key nor an aggregate — Postgres rejects those too, so seeing one means the
+    statement was not what it looked like.
+    """
+    if tree.args.get("having"):
+        raise Unsupported("GROUP BY ... HAVING")
+    keys = []
+    for g in tree.args["group"].expressions:
+        if not isinstance(g, exp.Column):
+            raise Unsupported("GROUP BY over an expression")
+        keys.append(g.name)
+
+    select: list[tuple[str, object]] = []
+    aggs: list[tuple[str, str | None]] = []
+    alias_of: dict[str, str] = {}     # SELECT alias -> pipeline field name
+    for e in tree.expressions:
+        node = e.this if isinstance(e, exp.Alias) else e
+        alias = e.alias if isinstance(e, exp.Alias) else None
+        if isinstance(node, exp.Column):
+            if node.name not in keys:
+                raise Unsupported(f"{node.name!r} is selected but not grouped")
+            select.append(("key", node.name))
+            continue
+        one = _agg_list(_FakeSelect([node]))
+        if one is None:
+            raise Unsupported(f"SELECT item {type(node).__name__} in a GROUP BY")
+        aggs.extend(one)
+        select.append(("agg", len(aggs) - 1))
+        if alias:
+            alias_of[alias] = f"a{len(aggs) - 1}"
+
+    q = _where(tree.args["where"].this if tree.args.get("where") else None, ctx)
+
+    sort = None
+    if tree.args.get("order"):
+        pairs = []
+        for o in tree.args["order"].expressions:
+            col = o.this
+            if not isinstance(col, exp.Column):
+                raise Unsupported("ORDER BY over an expression in a GROUP BY")
+            name = col.name
+            if name in alias_of:
+                # `ORDER BY n DESC` where n aliases COUNT(*): the pipeline
+                # field is a0, not n. Passing the alias through sorted on a
+                # field that does not exist — a silent no-op that returns the
+                # rows in $group order and looks like it worked.
+                name = alias_of[name]
+            elif name not in keys:
+                raise Unsupported(
+                    f"ORDER BY {name!r} is neither a grouped key nor a "
+                    "SELECT alias")
+            pairs.append(f"({name!r}, {-1 if o.args.get('desc') else 1})")
+        sort = "[" + ", ".join(pairs) + "]"
+
+    args = [f"{table!r}", _render(q),
+            "[" + ", ".join(repr(k) for k in keys) + "]",
+            "[" + ", ".join(f"({op!r}, {f!r})" for op, f in aggs) + "]",
+            "[" + ", ".join(f"({k!r}, {v!r})" for k, v in select) + "]"]
+    if sort:
+        args.append(f"sort={sort}")
+    if tree.args.get("limit"):
+        args.append(f"limit={_value(tree.args['limit'].expression, ctx)}")
+    return Translation("select", table,
+                       f"mongo_query.group_rows({', '.join(args)})",
+                       ctx.count, "rows")
+
+
+class _FakeSelect:
+    """Minimal stand-in so _agg_list can classify a single SELECT item."""
+
+    def __init__(self, expressions):
+        self.expressions = expressions
+        self.args = {}
+
+
 def _translate_select(tree, ctx: _Ctx) -> Translation:
+    # GROUP BY is handled, so it must be checked BEFORE the blanket rejection —
+    # _reject_hard_features lists exp.Group and was vetoing every grouped
+    # statement before the branch that knows how to translate it could run.
+    if tree.args.get("group") and not list(tree.find_all(exp.Join)):
+        return _translate_group_by(tree, _one_table(tree), ctx)
     _reject_hard_features(tree)
     table = _one_table(tree)
 

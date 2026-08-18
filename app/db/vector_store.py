@@ -587,20 +587,9 @@ class VectorStore:
         with get_db() as db:
             total = mongo_query.agg_row('embeddings', {}, [('count', None)])[0]
 
-            by_source = db.execute("""
-                SELECT source_table, COUNT(*) as cnt
-                FROM embeddings
-                GROUP BY source_table
-                ORDER BY cnt DESC
-            """).fetchall()
+            by_source = mongo_query.group_rows('embeddings', {}, ['source_table'], [('count', None)], [('key', 'source_table'), ('agg', 0)], sort=[('a0', -1)])
 
-            by_ticker = db.execute("""
-                SELECT ticker, COUNT(*) as cnt
-                FROM embeddings
-                GROUP BY ticker
-                ORDER BY cnt DESC
-                LIMIT 20
-            """).fetchall()
+            by_ticker = mongo_query.group_rows('embeddings', {}, ['ticker'], [('count', None)], [('key', 'ticker'), ('agg', 0)], sort=[('a0', -1)], limit=20)
 
             return {
                 "total_embeddings": total,

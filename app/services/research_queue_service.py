@@ -282,9 +282,7 @@ class ResearchQueueService:
         make a stalled queue read as a busy one.
         """
         with get_db() as db:
-            rows = db.execute(
-                "SELECT queue_type, COUNT(*) FROM v3_research_queues WHERE status = 'pending' GROUP BY queue_type"
-            ).fetchall()
+            rows = mongo_query.group_rows('v3_research_queues', {'status': 'pending'}, ['queue_type'], [('count', None)], [('key', 'queue_type'), ('agg', 0)])
         summary = {qt.value: 0 for qt in QueueType}
         for q_type, count in rows:
             summary[q_type] = count
@@ -299,10 +297,7 @@ class ResearchQueueService:
         before.
         """
         with get_db() as db:
-            rows = db.execute(
-                "SELECT queue_type, status, COUNT(*) FROM v3_research_queues "
-                "GROUP BY queue_type, status"
-            ).fetchall()
+            rows = mongo_query.group_rows('v3_research_queues', {}, ['queue_type', 'status'], [('count', None)], [('key', 'queue_type'), ('key', 'status'), ('agg', 0)])
         out: Dict[str, Dict[str, int]] = {qt.value: {} for qt in QueueType}
         for q_type, status, count in rows:
             out.setdefault(q_type, {})[status] = count

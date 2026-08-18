@@ -401,10 +401,5 @@ def get_lot_count_by_ticker(bot_id: str = "") -> dict[str, int]:
     """Return {ticker: open_lot_count} for all open positions."""
     bid = bot_id or _get_default_bot_id()
     with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, COUNT(*) FROM position_lots "
-            "WHERE bot_id = %s AND status IN ('open', 'partial') "
-            "GROUP BY ticker",
-            [bid],
-        ).fetchall()
+        rows = mongo_query.group_rows('position_lots', {'bot_id': bid, 'status': {'$in': ['open', 'partial']}}, ['ticker'], [('count', None)], [('key', 'ticker'), ('agg', 0)])
     return {r[0]: r[1] for r in rows}

@@ -102,8 +102,8 @@ def build_call(t, params: list[str], fetch: str) -> str | None:
     elif fetch == "fetchall":
         if call.startswith("mongo_query.agg_row("):
             call = f"[{call}]"               # one aggregate row, as a row list
-        elif call.startswith("mongo_query.find_rows("):
-            pass
+        elif call.startswith(("mongo_query.find_rows(", "mongo_query.group_rows(")):
+            pass                             # already a list of tuples
         else:
             return None                      # SELECT * has no column order
     else:
