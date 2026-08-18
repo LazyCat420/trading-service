@@ -1,13 +1,7 @@
 """
 Verdict + User Notes Router — persistent swarm verdicts and per-ticker notes.
 
-Endpoints:
-  GET  /api/v1/verdicts/latest         — Latest verdict per ticker (persistent)
-  GET  /api/v1/verdicts/history/:ticker — All verdicts for a specific ticker
-  GET  /api/v1/notes                   — List all ticker notes
-  GET  /api/v1/notes/:ticker           — Get note for a ticker
-  PUT  /api/v1/notes/:ticker           — Upsert note for a ticker
-  DELETE /api/v1/notes/:ticker         — Remove note for a ticker
+Pure MongoDB implementation.
 """
 
 import logging
@@ -18,7 +12,6 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 router = APIRouter()
@@ -66,13 +59,12 @@ def verdicts_history(ticker: str, limit: int = Query(default=20, le=100)):
 @router.get("/api/v1/ticker-notes")
 def list_ticker_notes():
     """List all ticker notes."""
-    with get_db() as db:
-        rows = mongo_query.find_rows('ticker_user_notes', {}, ['ticker', 'note', 'updated_at'], sort=[('updated_at', -1)])
+    rows = mongo_query.find_rows('ticker_user_notes', {}, ['ticker', 'note', 'updated_at'], sort=[('updated_at', -1)])
     return [
         {
             "ticker": r[0],
             "note": r[1],
-            "updated_at": r[2].isoformat() if r[2] else None,
+            "updated_at": r[2].isoformat() if hasattr(r[2], "isoformat") else str(r[2]) if r[2] else None,
         }
         for r in rows
     ]
@@ -81,14 +73,13 @@ def list_ticker_notes():
 @router.get("/api/v1/ticker-notes/{ticker}")
 def get_ticker_note(ticker: str):
     """Get user note for a specific ticker."""
-    with get_db() as db:
-        row = mongo_query.find_row('ticker_user_notes', {'ticker': ticker.upper().strip()}, ['ticker', 'note', 'updated_at'])
+    row = mongo_query.find_row('ticker_user_notes', {'ticker': ticker.upper().strip()}, ['ticker', 'note', 'updated_at'])
     if not row:
         return {"ticker": ticker.upper().strip(), "note": None, "updated_at": None}
     return {
         "ticker": row[0],
         "note": row[1],
-        "updated_at": row[2].isoformat() if row[2] else None,
+        "updated_at": row[2].isoformat() if hasattr(row[2], "isoformat") else str(row[2]) if row[2] else None,
     }
 
 
@@ -101,8 +92,12 @@ def upsert_ticker_note(ticker: str, body: TickerNoteUpsert):
     if not body.note or not body.note.strip():
         raise HTTPException(400, "Note cannot be empty")
 
-    with get_db() as db:
-        mongo_store.update_docs('ticker_user_notes', {'ticker': ticker_clean}, {'$set': {'note': body.note.strip(), 'updated_at': now}}, upsert=True)
+    mongo_store.update_docs(
+        'ticker_user_notes',
+        {'ticker': ticker_clean},
+        {'$set': {'note': body.note.strip(), 'updated_at': now}},
+        upsert=True
+    )
     logger.info("ticker note upserted: %s", ticker_clean)
     return {"ticker": ticker_clean, "note": body.note.strip(), "updated_at": now.isoformat(), "saved": True}
 
@@ -111,10 +106,9 @@ def upsert_ticker_note(ticker: str, body: TickerNoteUpsert):
 def delete_ticker_note(ticker: str):
     """Remove a user note for a ticker."""
     ticker_clean = ticker.upper().strip()
-    with get_db() as db:
-        row = mongo_query.find_row('ticker_user_notes', {'ticker': ticker_clean}, ['ticker'])
-        if not row:
-            raise HTTPException(404, f"No note found for {ticker_clean}")
-        mongo_store.delete_docs('ticker_user_notes', {'ticker': ticker_clean})
+    row = mongo_query.find_row('ticker_user_notes', {'ticker': ticker_clean}, ['ticker'])
+    if not row:
+        raise HTTPException(404, f"No note found for {ticker_clean}")
+    mongo_store.delete_docs('ticker_user_notes', {'ticker': ticker_clean})
     logger.info("ticker note deleted: %s", ticker_clean)
     return {"ticker": ticker_clean, "deleted": True}

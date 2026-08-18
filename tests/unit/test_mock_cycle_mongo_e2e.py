@@ -765,3 +765,36 @@ class TestMockTradingCycleMongoE2E:
 
         del_res = delete_bot_profile("alpha-trader")
         assert del_res["deleted"] is True
+
+        # 19. Ticker User Notes & Market Map in MongoDB
+        from app.routers.verdict_router import upsert_ticker_note, get_ticker_note, list_ticker_notes, delete_ticker_note, TickerNoteUpsert
+        from app.routers.market_router import get_market_map
+
+        # Note CRUD
+        saved_note = upsert_ticker_note("AAPL", TickerNoteUpsert(note="Strong buy into earnings cycle"))
+        assert saved_note["saved"] is True
+        assert saved_note["ticker"] == "AAPL"
+
+        note_val = get_ticker_note("AAPL")
+        assert note_val["note"] == "Strong buy into earnings cycle"
+
+        all_notes = list_ticker_notes()
+        note_tickers = [n["ticker"] for n in all_notes]
+        assert "AAPL" in note_tickers
+
+        del_note = delete_ticker_note("AAPL")
+        assert del_note["deleted"] is True
+
+        # Market map router
+        mongo_store.insert_docs("ticker_metadata", [{
+            "ticker": "AAPL",
+            "name": "Apple Inc",
+            "sector": "Technology",
+            "industry": "Consumer Electronics",
+            "market_cap": 3_000_000_000_000,
+            "market_cap_tier": "mega",
+            "sp500": True,
+        }])
+
+        mmap_res = get_market_map(days=7)
+        assert mmap_res.status_code == 200
