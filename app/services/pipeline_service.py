@@ -724,94 +724,90 @@ class PipelineService:
             overlapping phases mean they can sum to more than total_ms.
             """
             try:
-                from app.db.connection import get_db
-
                 ok = summary.get("collector_ok", 0) or 0
                 err = summary.get("collector_error", 0) or 0
                 skipped = summary.get("collector_skipped", 0) or 0
                 steps_total = ok + err + skipped
                 ticker_count = len(summary.get("tickers_final") or [])
                 total_ms = summary.get("elapsed_ms")
-                tokens_row = None
-                try:
-                    from app.db import mongo_store
-                    if mongo_store.reads_mongo("llm_audit_logs"):
-                        _agg = mongo_store.aggregate("llm_audit_logs", [
-                            {"$match": {"cycle_id": cycle_id}},
-                            {"$group": {"_id": None,
-                                        "t": {"$sum": {"$ifNull": ["$tokens_used", 0]}}}},
-                        ])
-                        tokens_row = ((_agg[0].get("t") or 0),) if _agg else (0,)
-                except Exception as me:
-                    handle_mongo_read_failure("llm_audit_logs", "[PipelineService] mongo tokens read", me)
-                    tokens_row = None
-                with get_db() as db:
-                    if tokens_row is None:
-                        tokens_row = db.execute(
-                            "SELECT COALESCE(SUM(tokens_used), 0) FROM llm_audit_logs WHERE cycle_id = %s",
-                            [cycle_id],
-                        ).fetchone()
-                    phase_ms = {"collecting": None, "analyzing": None, "trading": None}
-                    try:
-                        for phase, ms in db.execute(
-                            """SELECT phase,
-                                      EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) * 1000
-                               FROM pipeline_events
-                               WHERE cycle_id = %s AND phase IN ('collecting', 'analyzing', 'trading')
-                               GROUP BY phase""",
-                            [cycle_id],
-                        ).fetchall():
-                            phase_ms[phase] = int(ms) if ms is not None else None
-                    except Exception as ph_err:
-                        logger.warning("[PipelineService] phase-ms derivation failed (non-fatal): %s", ph_err)
-                    try:
-                        from app.db import mongo_store
-                        if mongo_store.writes_mongo("cycle_benchmarks"):
-                            mongo_store.upsert_doc(
-                                "cycle_benchmarks",
-                                {"cycle_id": cycle_id},
-                                {
-                                    "cycle_id": cycle_id,
-                                    "started_at": _started_at_or_fallback(summary),
-                                    "finished_at": summary.get("ended_at"),
-                                    "total_ms": total_ms,
-                                    "ticker_count": ticker_count,
-                                    "avg_ticker_ms": int(total_ms / ticker_count) if total_ms and ticker_count else None,
-                                    "collect_ms": phase_ms["collecting"],
-                                    "analyze_ms": phase_ms["analyzing"],
-                                    "trade_ms": phase_ms["trading"],
-                                    "steps_total": steps_total,
-                                    "steps_skipped": skipped,
-                                    "steps_ok": ok,
-                                    "steps_error": err,
-                                    "total_tokens": int(tokens_row[0]) if tokens_row else 0,
-                                    "cache_hit_pct": round(skipped / steps_total * 100, 1) if steps_total else 0.0,
-                                    "status": summary.get("status"),
-                                }
-                            )
-                        if mongo_store.writes_mongo("cycle_ticker_benchmarks"):
-                            for r in (results or []):
-                                if not isinstance(r, dict) or not r.get("ticker"):
-                                    continue
-                                mongo_store.upsert_doc(
-                                    "cycle_ticker_benchmarks",
-                                    {"cycle_id": cycle_id, "ticker": r["ticker"]},
-                                    {
-                                        "cycle_id": cycle_id,
-                                        "ticker": r["ticker"],
-                                        "action": r.get("action"),
-                                        "confidence": r.get("confidence"),
-                                    }
-                                )
-                    except Exception as b_mongo_err:
-                        logger.warning("[PipelineService] Mongo mirror failed (non-fatal), cycle_benchmarks: %s", b_mongo_err)
 
-                    if mongo_store.writes_pg("cycle_benchmarks"):
-                        mongo_store.update_docs('cycle_benchmarks', {'cycle_id': cycle_id}, {'$set': {'finished_at': summary.get("ended_at"), 'total_ms': total_ms, 'ticker_count': ticker_count, 'avg_ticker_ms': int(total_ms / ticker_count) if total_ms and ticker_count else None, 'collect_ms': phase_ms["collecting"], 'analyze_ms': phase_ms["analyzing"], 'trade_ms': phase_ms["trading"], 'steps_total': steps_total, 'steps_skipped': skipped, 'steps_ok': ok, 'steps_error': err, 'total_tokens': int(tokens_row[0]) if tokens_row else 0, 'cache_hit_pct': round(skipped / steps_total * 100, 1) if steps_total else 0.0, 'status': summary.get("status")}, '$setOnInsert': {'started_at': _started_at_or_fallback(summary)}}, upsert=True)
-                        for r in (results or []):
-                            if not isinstance(r, dict) or not r.get("ticker"):
-                                continue
-                            mongo_store.update_docs('cycle_ticker_benchmarks', {'cycle_id': cycle_id, 'ticker': r["ticker"]}, {'$set': {'action': r.get("action"), 'confidence': r.get("confidence")}}, upsert=True)
+                from app.db import mongo_store
+
+                _agg = mongo_store.aggregate("llm_audit_logs", [
+                    {"$match": {"cycle_id": cycle_id}},
+                    {"$group": {"_id": None,
+                                "t": {"$sum": {"$ifNull": ["$tokens_used", 0]}}}},
+                ])
+                tokens_row = ((_agg[0].get("t") or 0),) if _agg else (0,)
+
+                phase_ms = {"collecting": None, "analyzing": None, "trading": None}
+                try:
+                    # SQL took EXTRACT(EPOCH FROM (MAX - MIN)) * 1000 per phase.
+                    # $group carries the same min/max; the subtraction of two
+                    # BSON dates yields milliseconds directly, so there is no
+                    # epoch conversion to mirror.
+                    for row in mongo_store.aggregate("pipeline_events", [
+                        {"$match": {"cycle_id": cycle_id,
+                                    "phase": {"$in": ["collecting", "analyzing", "trading"]}}},
+                        {"$group": {"_id": "$phase",
+                                    "lo": {"$min": "$timestamp"},
+                                    "hi": {"$max": "$timestamp"}}},
+                    ]):
+                        lo, hi = row.get("lo"), row.get("hi")
+                        if lo is None or hi is None:
+                            continue
+                        try:
+                            phase_ms[row["_id"]] = int((hi - lo).total_seconds() * 1000)
+                        except (AttributeError, TypeError):
+                            # Timestamps written as strings by an older writer
+                            # subtract to nothing useful; leave the phase None
+                            # rather than record a fabricated duration.
+                            continue
+                except Exception as ph_err:
+                    logger.warning("[PipelineService] phase-ms derivation failed (non-fatal): %s", ph_err)
+
+                # One writer, not two. The conversion left this block writing
+                # the same benchmark twice: once under writes_mongo() and again
+                # under writes_pg(), which now also lands in Mongo. The second
+                # pass re-upserted every field it had just written.
+                try:
+                    mongo_store.upsert_doc(
+                        "cycle_benchmarks",
+                        {"cycle_id": cycle_id},
+                        {
+                            "cycle_id": cycle_id,
+                            "started_at": _started_at_or_fallback(summary),
+                            "finished_at": summary.get("ended_at"),
+                            "total_ms": total_ms,
+                            "ticker_count": ticker_count,
+                            "avg_ticker_ms": int(total_ms / ticker_count) if total_ms and ticker_count else None,
+                            "collect_ms": phase_ms["collecting"],
+                            "analyze_ms": phase_ms["analyzing"],
+                            "trade_ms": phase_ms["trading"],
+                            "steps_total": steps_total,
+                            "steps_skipped": skipped,
+                            "steps_ok": ok,
+                            "steps_error": err,
+                            "total_tokens": int(tokens_row[0]) if tokens_row else 0,
+                            "cache_hit_pct": round(skipped / steps_total * 100, 1) if steps_total else 0.0,
+                            "status": summary.get("status"),
+                        }
+                    )
+                    for r in (results or []):
+                        if not isinstance(r, dict) or not r.get("ticker"):
+                            continue
+                        mongo_store.upsert_doc(
+                            "cycle_ticker_benchmarks",
+                            {"cycle_id": cycle_id, "ticker": r["ticker"]},
+                            {
+                                "cycle_id": cycle_id,
+                                "ticker": r["ticker"],
+                                "action": r.get("action"),
+                                "confidence": r.get("confidence"),
+                            }
+                        )
+                except Exception as b_mongo_err:
+                    logger.warning("[PipelineService] cycle_benchmarks write failed (non-fatal): %s", b_mongo_err)
             except Exception as bench_err:
                 logger.warning("[PipelineService] cycle_benchmarks write failed (non-fatal): %s", bench_err)
 
