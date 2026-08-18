@@ -1,4 +1,5 @@
 import json
+import re
 import logging
 import uuid
 import asyncio
@@ -6,7 +7,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -22,26 +22,23 @@ from app.autoresearch.directives import _generate_directives, _expire_old_direct
 from app.autoresearch.outcome_tracker import record_cycle_decisions, resolve_pending_outcomes
 from app.autoresearch.janitor import run_janitor
 from app.db import mongo_query, mongo_store
+# get_db survives for ONE call: evaluate_pending_decisions() takes a live PG
+# cursor as its first argument. That function is in app/cognition/, outside
+# this module's scope — converting it is another agent's change.
+from app.db.connection import get_db
 
 def _update_ar_state(report_id: str, **kwargs):
-    updates = []
-    params = []
+    updates: dict = {}
     for k, v in kwargs.items():
         if k == "running":
-            updates.append("status = %s")
-            params.append("running" if v else "done")
+            updates["status"] = "running" if v else "done"
         else:
-            updates.append(f"{k} = %s")
-            params.append(v)
+            updates[k] = v
     if not updates:
         return
-    params.append(report_id)
     try:
-        with get_db() as db:
-            db.execute(
-                f"UPDATE autoresearch_reports SET {', '.join(updates)} WHERE id = %s",
-                params,
-            )
+        mongo_store.update_docs('autoresearch_reports', {'id': report_id},
+                                {'$set': updates})
     except Exception as e:
         logger.debug("Failed to update ar state: %s", e)
 
@@ -75,15 +72,15 @@ def _collect_learning_signals(cycle_id: str) -> dict:
     """
     signals: dict = {}
     try:
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT ticker, desk_data->'trade_decision'->'learning_signal' "
-                "FROM shared_desk WHERE cycle_id = %s",
-                (cycle_id,),
-            ).fetchall()
-            for ticker, sig in rows:
-                if sig:
-                    signals[ticker] = sig
+        # desk_data->'trade_decision'->'learning_signal' is a JSONB path. Mongo
+        # stores it as a nested field, but find_rows() cannot read one: a
+        # dotted projection comes back NESTED, while _to_tuple() does a flat
+        # doc.get("a.b.c") and would return None for every row. So take the
+        # documents and walk the path here.
+        for d in mongo_query.find_dicts('shared_desk', {'cycle_id': cycle_id}):
+            sig = ((d.get('desk_data') or {}).get('trade_decision') or {}).get('learning_signal')
+            if sig:
+                signals[d.get('ticker')] = sig
     except Exception as e:
         logger.debug("[AUTORESEARCH] learning_signal collection failed: %s", e)
     return signals
@@ -379,15 +376,18 @@ async def _resolve_data_gaps(gaps: list[dict], cycle_id: str) -> dict:
         if not ticker or not missing: continue
 
         try:
-            with get_db() as db:
-                occurrence_row = db.execute(
-                    "SELECT COUNT(*) FROM autoresearch_reports WHERE status = 'done' AND data_gaps LIKE %s",
-                    [f'%"{ticker}"%']
-                ).fetchone()
+            # data_gaps is stored as a json.dumps() STRING (see the report
+            # update below), so `LIKE '%"TICKER"%'` is a substring match on
+            # that text, not a structured containment test. re.escape keeps a
+            # ticker with a regex metacharacter from matching the wrong rows.
+            occurrences = mongo_query.count(
+                'autoresearch_reports',
+                {'status': 'done',
+                 'data_gaps': {'$regex': f'"{re.escape(ticker)}"'}})
 
-            if occurrence_row and occurrence_row[0] >= 3:
+            if occurrences >= 3:
                 from app.trading.watchlist import ban_ticker
-                ban_ticker(ticker, f"AutoResearch: persistent data gap across {occurrence_row[0]} cycles")
+                ban_ticker(ticker, f"AutoResearch: persistent data gap across {occurrences} cycles")
                 banned += 1
                 continue
         except Exception as ban_err:

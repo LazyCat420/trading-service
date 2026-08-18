@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -83,25 +83,33 @@ def _pava(points: list[tuple[float, float, int]]) -> list[tuple[float, float, in
 
 def calibration_map(min_bucket: int = MIN_BUCKET) -> dict:
     """Stated-vs-realized per bucket, plus the isotonic-corrected mapping."""
-    # _DIRECTIONAL is a module constant of bare identifiers, never user input,
-    # so inlining it is safe. Parameterising a tuple as `IN %s` does not bind
-    # through this db wrapper — it failed to an EMPTY map rather than raising,
-    # which would have read as "no calibration data" forever.
-    directional = ", ".join(f"'{o}'" for o in _DIRECTIONAL)
+    # The bucket is a COMPUTED grouping key — `(confidence / W)::int * W` —
+    # which $group cannot take as a plain field, so a $project computes it
+    # first. `::int` in Postgres truncates toward zero, which is $trunc, NOT
+    # $toInt (that rounds half-away-from-zero and would put a confidence of 55
+    # in the 60 bucket at W=10).
     try:
-        with get_db() as db:
-            rows = db.execute(
-                f"""
-                SELECT (confidence / {BUCKET_WIDTH})::int * {BUCKET_WIDTH} AS bucket,
-                       COUNT(*) n,
-                       AVG(confidence) stated,
-                       AVG(CASE WHEN outcome = 'WIN' THEN 1.0 ELSE 0.0 END) * 100 realized
-                FROM decision_outcomes
-                WHERE outcome IN ({directional})
-                  AND confidence IS NOT NULL AND confidence > 0
-                GROUP BY 1 ORDER BY 1
-                """
-            ).fetchall()
+        rows_docs = mongo_store.aggregate('decision_outcomes', [
+            {"$match": {"outcome": {"$in": list(_DIRECTIONAL)},
+                        "confidence": {"$ne": None, "$exists": True, "$gt": 0}}},
+            {"$project": {
+                "bucket": {"$multiply": [
+                    {"$trunc": {"$divide": ["$confidence", BUCKET_WIDTH]}},
+                    BUCKET_WIDTH]},
+                "confidence": 1,
+                "win": {"$cond": [{"$eq": ["$outcome", "WIN"]}, 1.0, 0.0]},
+            }},
+            {"$group": {"_id": "$bucket",
+                        "n": {"$sum": 1},
+                        "stated": {"$avg": "$confidence"},
+                        "realized": {"$avg": "$win"}}},
+            {"$sort": {"_id": 1}},          # ORDER BY 1 — on the bucket
+        ])
+        # Rebuild the (bucket, n, stated, realized) tuples the callers below
+        # unpack positionally; realized is a 0..1 mean scaled to a percentage,
+        # matching the `* 100` in the SQL.
+        rows = [(d["_id"], d["n"], d["stated"], (d["realized"] or 0.0) * 100)
+                for d in rows_docs]
     except Exception as e:  # noqa: BLE001 — a missing map must not break a cycle
         logger.warning("[CALIB] calibration map unavailable: %s", e)
         return {"buckets": [], "error": str(e)}

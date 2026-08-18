@@ -6,7 +6,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -318,105 +317,119 @@ def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) 
 def process_pending_traces(limit: int = 50) -> int:
     """Find and evaluate pending traces."""
     processed_count = 0
-    with get_db() as db:
-        try:
-            # Join against eval_scores treating eval_scores.run_id as agent_traces.id
-            rows = db.execute(
-                """
-                SELECT t.id, t.run_id, t.agent_name, t.task_type, t.goal, 
-                       t.planned_next_action, t.tool_name, t.tool_args, 
-                       t.tool_result_summary, t.why_tool_was_called, 
-                       t.tokens_before, t.tokens_after, t.latency_ms, 
-                       t.did_tool_change_decision, t.loop_step, t.stop_reason
-                FROM agent_traces t
-                LEFT JOIN eval_scores e ON t.id = e.run_id
-                WHERE e.id IS NULL
-                ORDER BY t.created_at ASC
-                LIMIT %s
-                """,
-                [limit],
-            ).fetchall()
+    try:
+        # LEFT JOIN ... WHERE e.id IS NULL is an ANTI-JOIN: traces with no
+        # eval_scores row. join_rows() only does INNER, so this is the
+        # complement — collect the scored run_ids and exclude them. The
+        # SELECT names t.run_id in the second position but the caller
+        # relabels that slot "cycle_id" (see `columns`), so the projection
+        # keeps the SQL's column, not the label.
+        scored = [rid for rid in mongo_store.distinct_values(
+            'eval_scores', 'run_id') if rid is not None]
+        rows = mongo_query.find_rows(
+            'agent_traces', {'id': {'$nin': scored}},
+            ["id", "run_id", "agent_name", "task_type", "goal",
+             "planned_next_action", "tool_name", "tool_args",
+             "tool_result_summary", "why_tool_was_called",
+             "tokens_before", "tokens_after", "latency_ms",
+             "did_tool_change_decision", "loop_step", "stop_reason"],
+            sort=[('created_at', 1)], limit=limit)
 
-            columns = [
-                "id", "cycle_id", "agent_name", "task_type", "goal", 
-                "planned_next_action", "tool_name", "tool_args", 
-                "tool_result_summary", "why_tool_was_called", 
-                "tokens_before", "tokens_after", "latency_ms", 
-                "did_tool_change_decision", "loop_step", "stop_reason"
-            ]
+        columns = [
+            "id", "cycle_id", "agent_name", "task_type", "goal", 
+            "planned_next_action", "tool_name", "tool_args", 
+            "tool_result_summary", "why_tool_was_called", 
+            "tokens_before", "tokens_after", "latency_ms", 
+            "did_tool_change_decision", "loop_step", "stop_reason"
+        ]
 
-            for row in rows:
-                trace = dict(zip(columns, row))
-                # Map trace 'id' to 'run_id' for EvalEngine backwards compatibility
-                trace["run_id"] = trace["id"]
-                
-                # Fetch decision info to allow hold_bias check to work
-                decision = mongo_query.find_row('decision_outcomes', {'cycle_id': trace.get("cycle_id")}, ['action', 'confidence', 'pnl_pct'])
-                
-                if decision:
-                    trace["decision_action"] = decision[0] or "HOLD"
-                    trace["decision_confidence"] = decision[1] or 0
-                    trace["pnl_pct"] = decision[2] or 0.0
-                
-                try:
-                    record = TraceRecord(**trace)
-                    process_and_store_trace(record)
-                    processed_count += 1
-                except ValueError as ve:
-                    logger.warning("TraceRecord validation failed for run_id %s: %s", trace.get("run_id"), ve)
-                except EvalStoreError as ee:
-                    logger.warning("Failed to store trace %s: %s", trace.get("run_id"), ee)
-
-            if processed_count > 0:
-                logger.info(f"[EvalWorker] Processed {processed_count} pending agent traces.")
-                
-        except Exception as e:
-            logger.error(f"[EvalWorker] Failed to process pending traces: {e}")
+        for row in rows:
+            trace = dict(zip(columns, row))
+            # Map trace 'id' to 'run_id' for EvalEngine backwards compatibility
+            trace["run_id"] = trace["id"]
             
+            # Fetch decision info to allow hold_bias check to work
+            decision = mongo_query.find_row('decision_outcomes', {'cycle_id': trace.get("cycle_id")}, ['action', 'confidence', 'pnl_pct'])
+            
+            if decision:
+                trace["decision_action"] = decision[0] or "HOLD"
+                trace["decision_confidence"] = decision[1] or 0
+                trace["pnl_pct"] = decision[2] or 0.0
+            
+            try:
+                record = TraceRecord(**trace)
+                process_and_store_trace(record)
+                processed_count += 1
+            except ValueError as ve:
+                logger.warning("TraceRecord validation failed for run_id %s: %s", trace.get("run_id"), ve)
+            except EvalStoreError as ee:
+                logger.warning("Failed to store trace %s: %s", trace.get("run_id"), ee)
+
+        if processed_count > 0:
+            logger.info(f"[EvalWorker] Processed {processed_count} pending agent traces.")
+            
+    except Exception as e:
+        logger.error(f"[EvalWorker] Failed to process pending traces: {e}")
+        
     return processed_count
 
 def update_tool_playbook():
     """Aggregate trace eval scores and update the tool_playbook."""
-    with get_db() as db:
-        try:
-            # Identify successful tool sequences for playbook
-            rows = db.execute(
-                """
-                SELECT t.agent_name, t.tool_name, COUNT(*) as uses, AVG(e.final_score) as avg_score
-                FROM agent_traces t
-                JOIN eval_scores e ON t.id = e.run_id
-                WHERE t.tool_name IS NOT NULL
-                GROUP BY t.agent_name, t.tool_name
-                HAVING COUNT(*) >= 5 AND AVG(e.final_score) >= 80.0
-                """
-            ).fetchall()
+    try:
+        # GROUP BY over an INNER JOIN with a HAVING clause. group_rows()
+        # cannot span two collections, so the join is done with join_rows()
+        # (inner, on t.id = e.run_id) and the grouping/HAVING applied to
+        # its output. AVG(e.final_score) skips NULLs the way SQL's AVG
+        # does, so a scored row with no final_score must not drag the mean
+        # toward zero — but it still COUNTS, because COUNT(*) counts rows.
+        joined = mongo_query.join_rows(
+            'agent_traces', {'tool_name': {'$ne': None, '$exists': True}}, 'id',
+            'eval_scores', 'run_id',
+            left_fields=['agent_name', 'tool_name'],
+            right_fields=['final_score'],
+            select=[('l', 'agent_name'), ('l', 'tool_name'),
+                    ('r', 'final_score')])
+        buckets: dict[tuple, list] = {}
+        for agent, tool, final_score in joined:
+            uses, scores = buckets.setdefault((agent, tool), [0, []])
+            buckets[(agent, tool)][0] = uses + 1
+            if final_score is not None:
+                scores.append(float(final_score))
+        rows = []
+        for (agent, tool), (uses, scores) in buckets.items():
+            if uses < 5 or not scores:          # HAVING COUNT(*) >= 5
+                continue
+            avg = sum(scores) / len(scores)
+            if avg < 80.0:                      # HAVING AVG(...) >= 80.0
+                continue
+            rows.append((agent, tool, uses, avg))
 
-            # UPSERT on the natural key, never accumulate.
-            #
-            # The `WHERE tool_name IS NOT NULL` on the conflict target is load
-            # bearing, not decoration: uq_tool_playbook_natural_key is a PARTIAL
-            # unique index, and Postgres refuses to infer a partial index unless
-            # the statement repeats its predicate ("no unique or exclusion
-            # constraint matching the ON CONFLICT specification"). Drop it and
-            # every call raises, which the except below turns into a log line —
-            # the playbook silently stops updating while row counts look correct.
-            #
-            # This used to INSERT a fresh uuid4 PK per row under
-            # `ON CONFLICT DO NOTHING`, which cannot fire against a random key —
-            # so every run appended another copy of every (agent, tool) pair.
-            # By 2026-08-05 that was 4,948 rows growing ~831/day, and since
-            # base_agent injects the matching rows into each agent prompt it
-            # produced 131k-char prompts that prism rejected outright, killing
-            # every discovery cycle at the first agent. tool_name is a real
-            # column because recommended_tool_sequence carries the live stats
-            # and therefore changes on almost every run.
-            for agent_name, tool_name, uses, avg_score in rows:
-                seq = f"Primary tool: {tool_name} (avg score: {avg_score:.1f} over {uses} uses)"
+        # UPSERT on the natural key, never accumulate.
+        #
+        # The `WHERE tool_name IS NOT NULL` on the conflict target is load
+        # bearing, not decoration: uq_tool_playbook_natural_key is a PARTIAL
+        # unique index, and Postgres refuses to infer a partial index unless
+        # the statement repeats its predicate ("no unique or exclusion
+        # constraint matching the ON CONFLICT specification"). Drop it and
+        # every call raises, which the except below turns into a log line —
+        # the playbook silently stops updating while row counts look correct.
+        #
+        # This used to INSERT a fresh uuid4 PK per row under
+        # `ON CONFLICT DO NOTHING`, which cannot fire against a random key —
+        # so every run appended another copy of every (agent, tool) pair.
+        # By 2026-08-05 that was 4,948 rows growing ~831/day, and since
+        # base_agent injects the matching rows into each agent prompt it
+        # produced 131k-char prompts that prism rejected outright, killing
+        # every discovery cycle at the first agent. tool_name is a real
+        # column because recommended_tool_sequence carries the live stats
+        # and therefore changes on almost every run.
+        for agent_name, tool_name, uses, avg_score in rows:
+            seq = f"Primary tool: {tool_name} (avg score: {avg_score:.1f} over {uses} uses)"
 
-                mongo_store.update_docs('tool_playbook', {'agent_role': agent_name, 'task_type': 'general', 'market_context': 'any', 'tool_name': tool_name}, {'$set': {'recommended_tool_sequence': seq, 'score_stats': json.dumps({"uses": int(uses), "avg_score": round(float(avg_score), 2)}), 'last_validated_at': datetime.now(timezone.utc)}, '$setOnInsert': {'id': str(uuid.uuid4()), 'required_preconditions': 'None'}}, upsert=True)
+            mongo_store.update_docs('tool_playbook', {'agent_role': agent_name, 'task_type': 'general', 'market_context': 'any', 'tool_name': tool_name}, {'$set': {'recommended_tool_sequence': seq, 'score_stats': json.dumps({"uses": int(uses), "avg_score": round(float(avg_score), 2)}), 'last_validated_at': datetime.now(timezone.utc)}, '$setOnInsert': {'id': str(uuid.uuid4()), 'required_preconditions': 'None'}}, upsert=True)
 
-            logger.info(
-                "[EvalWorker] Updated tool playbook: %d agent/tool pairs upserted.", len(rows)
-            )
-        except Exception as e:
-            logger.error(f"[EvalWorker] Failed to update tool playbook: {e}")
+        logger.info(
+            "[EvalWorker] Updated tool playbook: %d agent/tool pairs upserted.", len(rows)
+        )
+    except Exception as e:
+        logger.error(f"[EvalWorker] Failed to update tool playbook: {e}")

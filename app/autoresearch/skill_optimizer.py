@@ -34,7 +34,6 @@ import logging
 import re
 import time
 
-from app.db.connection import get_db
 from app.autoresearch.scorecard import (
     VERDICT_CONTAMINATED, VERDICT_HEALTHY, VERDICT_REGRESSED, regression_verdict,
 )
@@ -230,8 +229,7 @@ def _compute_baseline_score() -> float | None:
     decisions (WIN=1, FLAT=0.5, LOSS=0). None when there are too few rows to
     say anything (cold start)."""
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'action': {'$in': ['BUY', 'SELL']}, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT']}}, ['outcome', 'confidence'], sort=[('resolved_at', -1)], limit=BASELINE_WINDOW_ROWS)
+        rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'action': {'$in': ['BUY', 'SELL']}, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT']}}, ['outcome', 'confidence'], sort=[('resolved_at', -1)], limit=BASELINE_WINDOW_ROWS)
     except Exception as e:  # noqa: BLE001
         logger.warning("[SkillOpt] baseline query failed: %s", e)
         return None
@@ -267,17 +265,22 @@ def _decisions_governed(agent_name: str, version: int) -> int | None:
     if not version:
         return None
     try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT count(*) FROM decision_outcomes "
-                "WHERE resolved_at IS NOT NULL "
-                "AND skill_versions IS NOT NULL "
-                "AND (skill_versions ->> %s)::int = %s",
-                [agent_name, int(version)],
-            ).fetchone()
-            governed = int(row[0]) if row else 0
-            if governed:
-                return governed
+        # `(skill_versions ->> %s)::int = %s` — skill_versions is a JSONB
+        # object keyed by agent name, i.e. a nested Mongo field. The `::int`
+        # cast is load bearing: JSONB ->> yields TEXT, so a version stored as
+        # the string "3" compared equal to 3 in SQL but would NOT match an int
+        # in Mongo. Match either representation.
+        governed = mongo_query.count('decision_outcomes', {
+            # $exists is belt-and-braces, not a correction: measured against
+            # the live server, {$ne: None} ALREADY excludes documents missing
+            # the field, so this matches SQL's IS NOT NULL either way. Kept
+            # because it states the intent at the call site.
+            'resolved_at': {'$ne': None, '$exists': True},
+            'skill_versions': {'$ne': None, '$exists': True},
+            f'skill_versions.{agent_name}': {'$in': [int(version), str(int(version))]},
+        })
+        if governed:
+            return governed
 
             # Zero stamped rows is ambiguous, and getting this wrong freezes the
             # whole fleet. It means EITHER "this version is brand new" (hold it,
@@ -285,10 +288,9 @@ def _decisions_governed(agent_name: str, version: int) -> int | None:
             # unknowable, and holding on that basis would block every agent for
             # weeks after deploy — every live version on 2026-07-25 predated the
             # column). Distinguish by asking whether the stamp is flowing AT ALL.
-            stamped = db.execute(
-                "SELECT 1 FROM decision_outcomes "
-                "WHERE skill_versions IS NOT NULL LIMIT 1"
-            ).fetchone()
+        stamped = mongo_query.exists(
+            'decision_outcomes',
+            {'skill_versions': {'$ne': None, '$exists': True}})
         if not stamped:
             return None  # attribution has not started — unknown, not zero
         return 0
@@ -693,8 +695,7 @@ async def _call_optimizer_llm(agent_name: str, prompt: str) -> dict | None:
 def _load_skill(agent_name: str) -> tuple[str, int]:
     """Active skill text + version for an agent; ("", 0) when none exists."""
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'status': 'active'}, ['skill_text', 'version'], sort=[('version', -1)])
+        row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'status': 'active'}, ['skill_text', 'version'], sort=[('version', -1)])
         if row:
             return (row[0] or "", int(row[1] or 0))
     except Exception as e:  # noqa: BLE001
@@ -713,9 +714,8 @@ def _save_skill(
     rationale: str,
     new_version: int,
 ) -> None:
-    with get_db() as db:
-        mongo_store.update_docs('agent_skills', {'agent_name': agent_name, 'status': 'active'}, {'$set': {'status': 'archived'}})
-        mongo_store.insert_docs('agent_skills', [{'agent_name': agent_name, 'version': new_version, 'skill_text': skill_text, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'score': round(float(score), 4), 'action': action, 'rationale': rationale, 'status': 'active'}])
+    mongo_store.update_docs('agent_skills', {'agent_name': agent_name, 'status': 'active'}, {'$set': {'status': 'archived'}})
+    mongo_store.insert_docs('agent_skills', [{'agent_name': agent_name, 'version': new_version, 'skill_text': skill_text, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'score': round(float(score), 4), 'action': action, 'rationale': rationale, 'status': 'active'}])
 
 
 def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
@@ -731,15 +731,14 @@ def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
     The reverted edit is also recorded as a dead end, so the optimizer is not
     handed the same idea again next cycle.
     """
-    with get_db() as db:
-        prev = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(from_version) - 1}, ['skill_text', 'skill_hash'])
-        if not prev or not prev[0]:
-            logger.warning(
-                "[SkillOpt] %s v%d regressed but v%d is unavailable — cannot roll back",
-                agent_name, from_version, from_version - 1,
-            )
-            return False
-        bad = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(from_version)}, ['skill_hash', 'rationale'])
+    prev = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(from_version) - 1}, ['skill_text', 'skill_hash'])
+    if not prev or not prev[0]:
+        logger.warning(
+            "[SkillOpt] %s v%d regressed but v%d is unavailable — cannot roll back",
+            agent_name, from_version, from_version - 1,
+        )
+        return False
+    bad = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(from_version)}, ['skill_hash', 'rationale'])
 
     _save_skill(
         agent_name=agent_name,
@@ -779,7 +778,6 @@ def _log_rejection(
     rationale: str,
 ) -> None:
     try:
-        with get_db() as db:
-            mongo_store.insert_docs('rejected_skill_edits', [{'agent_name': agent_name, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'reason': reason, 'score_delta': round(float(score_delta), 4) if score_delta is not None else None, 'rationale': rationale}])
+        mongo_store.insert_docs('rejected_skill_edits', [{'agent_name': agent_name, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'reason': reason, 'score_delta': round(float(score_delta), 4) if score_delta is not None else None, 'rationale': rationale}])
     except Exception as e:  # noqa: BLE001 — audit log, never fatal
         logger.debug("[SkillOpt] rejection log failed for %s: %s", agent_name, e)

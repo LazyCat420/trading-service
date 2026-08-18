@@ -47,7 +47,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, asdict
 
-from app.db.connection import get_db
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
@@ -172,14 +171,18 @@ def _governed_outcomes(agent_name: str, version: int) -> list[tuple]:
     they were governed by *some* version nobody recorded, and counting them here
     would manufacture a sample that never existed.
     """
-    with get_db() as db:
-        return db.execute(
-            "SELECT outcome, confidence FROM decision_outcomes "
-            "WHERE resolved_at IS NOT NULL "
-            "AND skill_versions IS NOT NULL "
-            "AND (skill_versions ->> %s)::int = %s",
-            [agent_name, int(version)],
-        ).fetchall()
+    # `(skill_versions ->> %s)::int` — a JSONB object keyed by agent name is a
+    # nested Mongo field. The cast matters: JSONB ->> yields TEXT, so SQL
+    # matched a version stored as "3" against 3; match both forms here.
+    # $exists is belt-and-braces, not a correction: measured against the live
+    # server, {$ne: None} ALREADY excludes documents missing the field, so this
+    # matches SQL's IS NOT NULL either way.
+    return mongo_query.find_rows(
+        'decision_outcomes',
+        {'resolved_at': {'$ne': None, '$exists': True},
+         'skill_versions': {'$ne': None, '$exists': True},
+         f'skill_versions.{agent_name}': {'$in': [int(version), str(int(version))]}},
+        ['outcome', 'confidence'])
 
 
 def _version_window(agent_name: str, version: int) -> tuple:
@@ -205,20 +208,26 @@ def _incomplete_rate(agent_name: str, started, ended) -> tuple[float | None, int
     """
     if started is None:
         return None, 0
-    clause = "AND e.created_at < %s" if ended else ""
-    params = [agent_name, started] + ([ended] if ended else [])
-    with get_db() as db:
-        row = db.execute(
-            "SELECT count(*), "
-            "       sum(CASE WHEN e.completion_score = 0 THEN 1 ELSE 0 END) "
-            "FROM eval_scores e JOIN agent_traces t ON t.id = e.run_id "
-            f"WHERE t.agent_name = %s AND e.created_at >= %s {clause}",
-            params,
-        ).fetchone()
-    n = int(row[0] or 0)
+    # INNER JOIN eval_scores e ON t.id = e.run_id, filtered on BOTH sides
+    # (agent_name on the trace, the created_at window on the score). join_rows
+    # takes a query per side, so each predicate stays on its own collection —
+    # and it is a true inner join, so a trace with no score contributes no row,
+    # exactly as the SQL had it. The two aggregates are then counted here.
+    score_window: dict = {'created_at': {'$gte': started}}
+    if ended:
+        score_window['created_at']['$lt'] = ended
+    rows = mongo_query.join_rows(
+        'agent_traces', {'agent_name': agent_name}, 'id',
+        'eval_scores', 'run_id', score_window,
+        left_fields=['id'], right_fields=['completion_score'],
+        select=[('r', 'completion_score')])
+    n = len(rows)
+    # sum(CASE WHEN e.completion_score = 0 ...) — NULL is not 0 in SQL, so a
+    # missing score must not be counted as an incomplete run.
+    incomplete = sum(1 for (cs,) in rows if cs == 0)
     if n < MIN_TRACES_FOR_CONTAMINATION:
         return None, n
-    return float(row[1] or 0) / n, n
+    return float(incomplete) / n, n
 
 
 def blend(directional: float | None, hold: float | None) -> float | None:

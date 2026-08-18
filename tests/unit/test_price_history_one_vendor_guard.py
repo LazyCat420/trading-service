@@ -90,11 +90,14 @@ _PINNED = (
 # The seven modules fixed on 2026-07-30 — returns, factors, regime_hmm,
 # technical_baseline, technical_processor, challenger, quant_edge_verifier —
 # are deliberately absent: they must never regress into this list.
+#
+# returns_engine.py (was 2) and sector_aggregator.py (was 1) left the list on
+# 2026-08-18 with the Mongo port. Their reads are now pinned in pandas via
+# keep_dominant_source() rather than in SQL — the debt was PAID, not moved out
+# of the scanner's sight, which a port off SQL can otherwise do for free.
 KNOWN_UNPINNED: dict[str, int] = {
-    "app/analytics/returns_engine.py": 2,
     "app/autoresearch/auditors/data_audit.py": 1,
     "app/cognition/evaluation/oracle.py": 1,
-    "app/data/sector_aggregator.py": 1,
     "app/processors/data_sanity.py": 2,
     "app/processors/quant_processor.py": 7,
     "app/services/boot_service.py": 2,
@@ -206,7 +209,20 @@ def test_the_scanner_actually_finds_queries():
         for _, text in _sql_literals(f)
         if _reads_price_history(text)
     )
-    assert total >= 25, (
+    # Floor lowered 25 → 18 on 2026-08-18: the Mongo port moved real reads
+    # (returns_engine, sector_aggregator) out of SQL literals and into
+    # mongo_query calls, so the SQL-literal count fell to 19 legitimately. The
+    # negative control above still passes, which is what distinguishes "fewer
+    # SQL reads exist" from "the walk stopped matching".
+    #
+    # NOTE for whoever finishes the migration: this floor measures SQL literals
+    # only, so it decays toward 0 as tables cut over — and at 0 every other test
+    # in this file goes green while checking nothing. The vendor rule is a
+    # property of price_history, not of Postgres; the guard needs a Mongo-side
+    # scan (a find_rows/join_rows on "price_history" that neither filters
+    # `source` nor routes through keep_dominant_source) before the last SQL
+    # reader leaves.
+    assert total >= 18, (
         f"scanner found only {total} price_history reads — it is broken, "
         "not the codebase that is clean"
     )

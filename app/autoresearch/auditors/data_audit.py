@@ -6,13 +6,12 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
 
 from app.autoresearch.utils import _grade, _safe_iso
-from app.db import mongo_query
+from app.db import mongo_query, mongo_store
 
 
 def _age_days(max_date) -> int | None:
@@ -44,32 +43,55 @@ def _freshness_multiplier(age: int | None, fresh_days: int, floor_days: int) -> 
     return 1.0 - 0.7 * (age - fresh_days) / (floor_days - fresh_days)
 
 
-def _audit_price_history(db, ticker: str) -> dict:
+def _audit_price_history(ticker: str) -> dict:
     try:
-        stats = db.execute(
-            """
-            SELECT COUNT(*), MIN(date), MAX(date),
-                   SUM(CASE WHEN close IS NULL THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN volume IS NULL OR volume = 0 THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN open IS NULL OR high IS NULL OR low IS NULL THEN 1 ELSE 0 END)
-            FROM price_history WHERE ticker = %s
-            """,
-            [ticker],
-        ).fetchone()
-
-        rows, min_d, max_d, null_close, zero_vol, null_ohlc = stats
+        # The three SUM(CASE ...) columns are multi-field OR predicates, which
+        # agg_row's (op, field) vocabulary cannot express, so they are counted
+        # with $cond in one $group — still one round trip, and still server-side
+        # (price_history is the 15.7M-row table; pulling it to count in Python
+        # would replace a fast query with a slow one).
+        _null = lambda f: {"$or": [{"$eq": [f"${f}", None]},
+                                   {"$eq": [{"$type": f"${f}"}, "missing"]}]}
+        agg = mongo_store.aggregate('price_history', [
+            {"$match": {"ticker": ticker}},
+            {"$group": {
+                "_id": None,
+                "n": {"$sum": 1},
+                "min_d": {"$min": "$date"},
+                "max_d": {"$max": "$date"},
+                "null_close": {"$sum": {"$cond": [_null("close"), 1, 0]}},
+                "zero_vol": {"$sum": {"$cond": [
+                    {"$or": [_null("volume"), {"$eq": ["$volume", 0]}]}, 1, 0]}},
+                "null_ohlc": {"$sum": {"$cond": [
+                    {"$or": [_null("open"), _null("high"), _null("low")]}, 1, 0]}},
+            }},
+        ])
+        if not agg:
+            return {"rows": 0, "quality": "critical", "quality_score": 0}
+        s = agg[0]
+        rows, min_d, max_d = s["n"], s["min_d"], s["max_d"]
+        null_close, zero_vol, null_ohlc = s["null_close"], s["zero_vol"], s["null_ohlc"]
         if rows == 0:
             return {"rows": 0, "quality": "critical", "quality_score": 0}
 
-        gaps = db.execute(
-            """
-            SELECT COUNT(*) FROM (
-                SELECT date, LEAD(date) OVER (ORDER BY date) as next_date
-                FROM price_history WHERE ticker = %s
-            ) sub WHERE next_date::date - date::date > 4
-            """,
-            [ticker],
-        ).fetchone()[0]
+        # LEAD(date) OVER (ORDER BY date): a window function has no Mongo
+        # equivalent below server 5.0's $setWindowFields, and this only needs
+        # the date column, so the gap scan is done over a projected, sorted
+        # date list — one field, not whole rows.
+        dates = [d[0] for d in mongo_query.find_rows(
+            'price_history', {'ticker': ticker}, ['date'], sort=[('date', 1)])]
+        gaps = 0
+        for prev, nxt in zip(dates, dates[1:]):
+            try:
+                delta = (nxt - prev)
+                # `next_date::date - date::date > 4` is a difference in whole
+                # DAYS. A BSON date subtraction gives a timedelta, whose .days
+                # is that same whole-day count — using .total_seconds() here
+                # would compare seconds against 4 and count every gap.
+                if delta.days > 4:
+                    gaps += 1
+            except TypeError:
+                continue
 
         latest = mongo_query.find_row('price_history', {'ticker': ticker}, ['date', 'open', 'high', 'low', 'close', 'volume'], sort=[('date', -1)])
 
@@ -99,7 +121,7 @@ def _audit_price_history(db, ticker: str) -> dict:
         logger.warning("audit price_history failed for %s: %s", ticker, e)
         return {"rows": 0, "quality": "error", "error": str(e)}
 
-def _audit_technicals(db, ticker: str) -> dict:
+def _audit_technicals(ticker: str) -> dict:
     INDICATORS = [
         "rsi_14", "macd", "macd_signal", "macd_hist", "sma_20", "sma_50", "sma_200",
         "ema_12", "ema_26", "bb_upper", "bb_mid", "bb_lower", "atr_14", "adx_14",
@@ -116,25 +138,32 @@ def _audit_technicals(db, ticker: str) -> dict:
         total_nulls = 0
         indicators_ok = 0
 
+        # One pass per indicator became 40 round trips; the same numbers come
+        # from a single $group over the ticker's rows. COUNT(col) skips NULLs
+        # and the SUM(CASE) counts them, exactly as agg_row's count/count_null.
+        group: dict = {"_id": None}
         for col in INDICATORS:
-            try:
-                ind = db.execute(
-                    f"""
-                    SELECT COUNT({col}), SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END),
-                           MIN({col}), MAX({col}), AVG({col})
-                    FROM technicals WHERE ticker = %s
-                    """,
-                    [ticker],
-                ).fetchone()
+            group[f"{col}__n"] = {"$sum": {"$cond": [{"$eq": [f"${col}", None]}, 0, 1]}}
+            group[f"{col}__nulls"] = {"$sum": {"$cond": [{"$eq": [f"${col}", None]}, 1, 0]}}
+            group[f"{col}__min"] = {"$min": f"${col}"}
+            group[f"{col}__max"] = {"$max": f"${col}"}
+        agg = mongo_store.aggregate(
+            'technicals', [{"$match": {"ticker": ticker}}, {"$group": group}])
+        stats_doc = agg[0] if agg else {}
+        # The latest row, once, for every indicator's "latest" value.
+        latest_doc = mongo_query.find_row(
+            'technicals', {'ticker': ticker}, INDICATORS, sort=[('date', -1)])
 
-                non_null, nulls, min_v, max_v, avg_v = ind
+        for idx, col in enumerate(INDICATORS):
+            try:
+                non_null = stats_doc.get(f"{col}__n") or 0
+                nulls = stats_doc.get(f"{col}__nulls") or 0
+                min_v = stats_doc.get(f"{col}__min")
+                max_v = stats_doc.get(f"{col}__max")
                 null_pct = nulls / rows if rows else 0
                 total_nulls += nulls
 
-                latest_val = db.execute(
-                    f"SELECT {col} FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
+                latest_val = (latest_doc[idx],) if latest_doc else None
 
                 status = "ok" if null_pct < 0.1 else "degraded" if null_pct < 0.5 else "poor"
                 if non_null > 0:
@@ -169,7 +198,7 @@ def _audit_technicals(db, ticker: str) -> dict:
         logger.warning("audit technicals failed for %s: %s", ticker, e)
         return {"rows": 0, "quality": "error", "error": str(e)}
 
-def _audit_fundamentals(db, ticker: str) -> dict:
+def _audit_fundamentals(ticker: str) -> dict:
     try:
         stats = mongo_query.agg_row('fundamentals', {'ticker': ticker}, [('count', None), ('min', 'snapshot_date'), ('max', 'snapshot_date')])
         rows, min_d, max_d = stats
@@ -178,13 +207,13 @@ def _audit_fundamentals(db, ticker: str) -> dict:
             return {"rows": 0, "quality": "critical", "quality_score": 0}
 
         key_fields = ["market_cap", "pe_ratio", "revenue", "profit_margin", "debt_to_equity"]
-        latest = db.execute(
-            "SELECT * FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-            [ticker]
-        ).fetchone()
-        
-        cols = [d[0] for d in db.execute("SELECT * FROM fundamentals LIMIT 0").description]
-        data = dict(zip(cols, latest)) if latest else {}
+        # `SELECT *` + a cursor.description introspection existed only to turn
+        # the positional row into a dict keyed by column name. A Mongo document
+        # already IS that dict, so both queries collapse into one read.
+        latest_docs = mongo_query.find_dicts(
+            'fundamentals', {'ticker': ticker},
+            sort=[('snapshot_date', -1)], limit=1)
+        data = latest_docs[0] if latest_docs else {}
 
         non_null_key = sum(1 for f in key_fields if data.get(f) is not None)
         age = _age_days(max_d)
@@ -209,17 +238,20 @@ def _audit_fundamentals(db, ticker: str) -> dict:
         logger.warning("audit fundamentals failed for %s: %s", ticker, e)
         return {"rows": 0, "quality": "error", "error": str(e)}
 
-def _audit_news(db, ticker: str) -> dict:
+def _audit_news(ticker: str) -> dict:
     try:
-        stats = db.execute(
-            """
-            SELECT COUNT(*), MIN(published_at), MAX(published_at), COUNT(DISTINCT source),
-                   COUNT(*) FILTER (WHERE published_at > CURRENT_TIMESTAMP - INTERVAL '7 days')
-            FROM news_articles WHERE ticker = %s
-            """,
-            [ticker]
-        ).fetchone()
-        rows, min_d, max_d, sources, recent = stats
+        # CURRENT_TIMESTAMP - INTERVAL '7 days' is evaluated in Python: a
+        # relative interval inside the pipeline would be recomputed per shard.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        rows, min_d, max_d, sources = mongo_query.agg_row(
+            'news_articles', {'ticker': ticker},
+            [('count', None), ('min', 'published_at'), ('max', 'published_at'),
+             ('count_distinct', 'source')])
+        # COUNT(*) FILTER (...) is a differently-filtered count, so it is its
+        # own query rather than a column of the aggregate above.
+        recent = mongo_query.count('news_articles',
+                                   {'ticker': ticker,
+                                    'published_at': {'$gt': cutoff}})
 
         source_list = []
         if rows > 0:
@@ -248,56 +280,55 @@ def _audit_data_quality(tickers: list[str]) -> dict:
     from app.trading.watchlist import _snapshot_market_data, ban_ticker
 
     per_ticker, gaps, scores, purged_tickers = {}, [], [], []
-    with get_db() as db:
-        for ticker in tickers:
-            try:
-                cats = [
-                    _audit_price_history(db, ticker),
-                    _audit_technicals(db, ticker),
-                    _audit_fundamentals(db, ticker),
-                    _audit_news(db, ticker),
-                ]
-                # Missing categories count as 0 — the old average silently
-                # dropped them, so a ticker with no fundamentals and no news
-                # could still score ~1.0 off prices+technicals alone.
-                cat_scores = [
-                    c.get("quality_score", 0) if isinstance(c.get("quality_score"), (int, float)) else 0
-                    for c in cats
-                ]
-                avg = sum(cat_scores) / len(cats) if cats else 0
-                scores.append(avg)
-                per_ticker[ticker] = {"score": round(avg, 3)}
-                missing = []
-                for name, cat in zip(["price_history", "technicals", "fundamentals", "news"], cats):
-                    if cat.get("rows", 0) == 0:
-                        missing.append(name)
-                if missing:
-                    market_cap, price, volume = _snapshot_market_data(ticker)
+    for ticker in tickers:
+        try:
+            cats = [
+                _audit_price_history(ticker),
+                _audit_technicals(ticker),
+                _audit_fundamentals(ticker),
+                _audit_news(ticker),
+            ]
+            # Missing categories count as 0 — the old average silently
+            # dropped them, so a ticker with no fundamentals and no news
+            # could still score ~1.0 off prices+technicals alone.
+            cat_scores = [
+                c.get("quality_score", 0) if isinstance(c.get("quality_score"), (int, float)) else 0
+                for c in cats
+            ]
+            avg = sum(cat_scores) / len(cats) if cats else 0
+            scores.append(avg)
+            per_ticker[ticker] = {"score": round(avg, 3)}
+            missing = []
+            for name, cat in zip(["price_history", "technicals", "fundamentals", "news"], cats):
+                if cat.get("rows", 0) == 0:
+                    missing.append(name)
+            if missing:
+                market_cap, price, volume = _snapshot_market_data(ticker)
 
-                    is_junk = False
-                    junk_reason = ""
-                    if price is not None and price < 1.00:
-                        is_junk = True
-                        junk_reason = f"Penny stock (Price: ${price:.4f})"
-                    elif market_cap is not None and market_cap > 0 and market_cap < 50_000_000:
-                        is_junk = True
-                        junk_reason = f"Micro-cap (Cap: ${market_cap:,.0f})"
-                    elif price is not None and volume is not None and volume == 0:
-                        is_junk = True
-                        junk_reason = "Zero volume"
+                is_junk = False
+                junk_reason = ""
+                if price is not None and price < 1.00:
+                    is_junk = True
+                    junk_reason = f"Penny stock (Price: ${price:.4f})"
+                elif market_cap is not None and market_cap > 0 and market_cap < 50_000_000:
+                    is_junk = True
+                    junk_reason = f"Micro-cap (Cap: ${market_cap:,.0f})"
+                elif price is not None and volume is not None and volume == 0:
+                    is_junk = True
+                    junk_reason = "Zero volume"
 
-                    if is_junk:
-                        ban_ticker(ticker, f"AutoResearch Context-Aware Pruning: {junk_reason}")
-                        purged_tickers.append({"ticker": ticker, "reason": junk_reason})
-                    else:
-                        gaps.append({
-                            "ticker": ticker,
-                            "missing_sources": missing,
-                            "recommendation": f"Re-collect {', '.join(missing)} for {ticker}",
-                        })
-            except Exception as e:
-                scores.append(0)
-                per_ticker[ticker] = {"score": 0, "error": str(e)}
+                if is_junk:
+                    ban_ticker(ticker, f"AutoResearch Context-Aware Pruning: {junk_reason}")
+                    purged_tickers.append({"ticker": ticker, "reason": junk_reason})
+                else:
+                    gaps.append({
+                        "ticker": ticker,
+                        "missing_sources": missing,
+                        "recommendation": f"Re-collect {', '.join(missing)} for {ticker}",
+                    })
+        except Exception as e:
+            scores.append(0)
+            per_ticker[ticker] = {"score": 0, "error": str(e)}
 
     return {
         "avg_score": round(sum(scores) / len(scores), 3) if scores else 0,

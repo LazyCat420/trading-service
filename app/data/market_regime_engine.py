@@ -1,140 +1,129 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
+
 import pandas as pd
+import pymongo
 import yfinance as yf
-from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
 
 def get_latest_regime():
-    with get_db() as db:
-        row = db.execute(
-            "SELECT * FROM market_regime ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            return None
-        cols = [desc[0] for desc in db.description]
-    return dict(zip(cols, row))
+    rows = mongo_query.find_dicts(
+        "market_regime", {}, sort=[("date", pymongo.DESCENDING)], limit=1
+    )
+    return rows[0] if rows else None
 
 
 def get_sector_breadth_data():
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT * FROM sector_breadth WHERE date = (SELECT MAX(date) FROM sector_breadth)"
-        ).fetchall()
-        if not rows:
-            return []
-        cols = [desc[0] for desc in db.description]
-    return [dict(zip(cols, r)) for r in rows]
+    # `WHERE date = (SELECT MAX(date) ...)` — the scalar subquery becomes a
+    # separate MAX aggregate, then an equality match on the value it returned.
+    latest = mongo_query.agg_row("sector_breadth", {}, [("max", "date")])[0]
+    if latest is None:
+        return []
+    return mongo_query.find_dicts("sector_breadth", {"date": latest})
 
 
 def get_cross_correlations(period: str):
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT * FROM cross_asset_correlations WHERE period = %s", (period,)
-        ).fetchall()
-        if not rows:
-            return []
-        cols = [desc[0] for desc in db.description]
-    return [dict(zip(cols, r)) for r in rows]
+    return mongo_query.find_dicts("cross_asset_correlations", {"period": period})
 
 
 async def detect_anomalies():
-    with get_db() as db:
-        try:
-            query = "SELECT * FROM global.anomalies ORDER BY detected_at DESC LIMIT 10"
-            rows = db.execute(query).fetchall()
-            if not rows:
-                return []
-            cols = [desc[0] for desc in db.description]
-            return [dict(zip(cols, r)) for r in rows]
-        except Exception:
-            return []
+    try:
+        return mongo_query.find_dicts(
+            "anomalies", {}, sort=[("detected_at", pymongo.DESCENDING)], limit=10
+        )
+    except Exception:
+        return []
 
 
 async def compute_sector_breadth():
     logger.info("Computing sector breadth...")
-    with get_db() as db:
-        query = """
-            SELECT p.ticker, p.date, p.close, t.sector
-            FROM price_history p
-            JOIN ticker_metadata t ON p.ticker = t.ticker
-            WHERE t.sp500 = TRUE AND p.source = 'yfinance'
-            ORDER BY p.date ASC
-        """
-        cursor = db.execute(query)
-        rows = cursor.fetchall()
-        cols = [desc[0] for desc in cursor.description] if cursor.description else []
-        import pandas as pd
+    # price_history JOIN ticker_metadata ON ticker, filtered to S&P 500
+    # yfinance rows, ordered by date. INNER join: a price row whose ticker
+    # has no metadata is dropped, same as the SQL.
+    cols = ["ticker", "date", "close", "sector"]
+    rows = mongo_query.join_rows(
+        "price_history", {"source": "yfinance"}, "ticker",
+        "ticker_metadata", "ticker", {"sp500": True},
+        left_fields=["ticker", "date", "close"], right_fields=["sector"],
+        select=[("l", "ticker"), ("l", "date"), ("l", "close"), ("r", "sector")],
+        sort=[("date", pymongo.ASCENDING)],
+    )
+    import pandas as pd
 
-        df = pd.DataFrame(rows, columns=cols)
-        if df.empty:
-            return
+    df = pd.DataFrame(rows, columns=cols)
+    if df.empty:
+        return
 
-        df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"])
 
-        df["sma50"] = df.groupby("ticker")["close"].transform(
-            lambda x: x.rolling(50).mean()
-        )
-        df["sma200"] = df.groupby("ticker")["close"].transform(
-            lambda x: x.rolling(200).mean()
-        )
-        df["high_252"] = df.groupby("ticker")["close"].transform(
-            lambda x: x.rolling(252).max()
-        )
-        df["low_252"] = df.groupby("ticker")["close"].transform(
-            lambda x: x.rolling(252).min()
-        )
+    df["sma50"] = df.groupby("ticker")["close"].transform(
+        lambda x: x.rolling(50).mean()
+    )
+    df["sma200"] = df.groupby("ticker")["close"].transform(
+        lambda x: x.rolling(200).mean()
+    )
+    df["high_252"] = df.groupby("ticker")["close"].transform(
+        lambda x: x.rolling(252).max()
+    )
+    df["low_252"] = df.groupby("ticker")["close"].transform(
+        lambda x: x.rolling(252).min()
+    )
 
-        df["above_50"] = df["close"] > df["sma50"]
-        df["above_200"] = df["close"] > df["sma200"]
-        df["is_new_high"] = df["close"] >= df["high_252"]
-        df["is_new_low"] = df["close"] <= df["low_252"]
+    df["above_50"] = df["close"] > df["sma50"]
+    df["above_200"] = df["close"] > df["sma200"]
+    df["is_new_high"] = df["close"] >= df["high_252"]
+    df["is_new_low"] = df["close"] <= df["low_252"]
 
-        latest_date = df["date"].max()
-        latest_df = df[df["date"] == latest_date]
+    latest_date = df["date"].max()
+    latest_df = df[df["date"] == latest_date]
 
-        sectors = latest_df["sector"].unique()
-        inserts = []
+    sectors = latest_df["sector"].unique()
+    inserts = []
 
-        for sector in sectors:
-            sdf = latest_df[latest_df["sector"] == sector]
-            if sdf.empty:
-                continue
+    for sector in sectors:
+        sdf = latest_df[latest_df["sector"] == sector]
+        if sdf.empty:
+            continue
 
-            pct_above_50 = sdf["above_50"].mean() * 100
-            pct_above_200 = sdf["above_200"].mean() * 100
-            new_highs = sdf["is_new_high"].sum()
-            new_lows = sdf["is_new_low"].sum()
-            net_highs = new_highs - new_lows
+        pct_above_50 = sdf["above_50"].mean() * 100
+        pct_above_200 = sdf["above_200"].mean() * 100
+        new_highs = sdf["is_new_high"].sum()
+        new_lows = sdf["is_new_low"].sum()
+        net_highs = new_highs - new_lows
 
-            inserts.append(
-                (
-                    sector,
-                    latest_date.strftime("%Y-%m-%d"),
-                    float(pct_above_50) if pd.notna(pct_above_50) else 0.0,
-                    float(pct_above_200) if pd.notna(pct_above_200) else 0.0,
-                    int(new_highs),
-                    int(new_lows),
-                    int(net_highs),
-                )
+        inserts.append(
+            (
+                sector,
+                latest_date.strftime("%Y-%m-%d"),
+                float(pct_above_50) if pd.notna(pct_above_50) else 0.0,
+                float(pct_above_200) if pd.notna(pct_above_200) else 0.0,
+                int(new_highs),
+                int(new_lows),
+                int(net_highs),
             )
+        )
 
-        if inserts:
-            query_ins = """
-                INSERT INTO sector_breadth (sector, date, pct_above_sma50, pct_above_sma200, new_highs, new_lows, net_highs, computed_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (sector, date) DO UPDATE SET
-                    pct_above_sma50 = EXCLUDED.pct_above_sma50,
-                    pct_above_sma200 = EXCLUDED.pct_above_sma200,
-                    new_highs = EXCLUDED.new_highs,
-                    new_lows = EXCLUDED.new_lows,
-                    net_highs = EXCLUDED.net_highs,
-                    computed_at = CURRENT_TIMESTAMP
-            """
-            for item in inserts:
-                db.execute(query_ins, item)
+    for item in inserts:
+        sector, date_s, pct50, pct200, nh, nl, net = item
+        mongo_store.upsert_doc(
+            "sector_breadth",
+            {"sector": sector, "date": date_s},
+            {
+                "sector": sector,
+                "date": date_s,
+                "pct_above_sma50": pct50,
+                "pct_above_sma200": pct200,
+                "new_highs": nh,
+                "new_lows": nl,
+                "net_highs": net,
+                "computed_at": datetime.now(timezone.utc),
+            },
+        )
+
 
 async def compute_market_regime():
     logger.info("Computing market regime...")
@@ -181,42 +170,26 @@ async def compute_market_regime():
         else:
             regime_label = "Neutral"
 
-        inserts = [
-            (
-                pd.Timestamp.now().strftime("%Y-%m-%d"),
-                vix_level,
-                "Elevated" if vix_level > 20 else "Normal",
-                0.0,
-                1.0,
-                "Normal",
-                yield_10y,
-                yield_10y,
-                0.0,
-                "Normal",
-                dollar_index,
-                dollar_change_5d,
-                sp500_level,
-                sp500_change_5d,
-                50.0,
-                regime_label,
-            )
-        ]
-
-        with get_db() as db:
-            query_ins = """
-                INSERT INTO market_regime (date, vix_level, vix_signal, vix_zscore, vix_term_ratio, vix_term_signal, yield_2y, yield_10y, yield_2y10y_spread, yield_signal, dollar_index, dollar_change_5d, sp500_level, sp500_change_5d, breadth_sp500, regime_label, computed_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (date) DO UPDATE SET
-                    vix_level = EXCLUDED.vix_level,
-                    vix_signal = EXCLUDED.vix_signal,
-                    dollar_index = EXCLUDED.dollar_index,
-                    sp500_level = EXCLUDED.sp500_level,
-                    regime_label = EXCLUDED.regime_label,
-                    sp500_change_5d = EXCLUDED.sp500_change_5d,
-                    computed_at = CURRENT_TIMESTAMP
-            """
-            for item in inserts:
-                db.execute(query_ins, item)
+        doc = {
+            "date": pd.Timestamp.now().strftime("%Y-%m-%d"),
+            "vix_level": vix_level,
+            "vix_signal": "Elevated" if vix_level > 20 else "Normal",
+            "vix_zscore": 0.0,
+            "vix_term_ratio": 1.0,
+            "vix_term_signal": "Normal",
+            "yield_2y": yield_10y,
+            "yield_10y": yield_10y,
+            "yield_2y10y_spread": 0.0,
+            "yield_signal": "Normal",
+            "dollar_index": dollar_index,
+            "dollar_change_5d": dollar_change_5d,
+            "sp500_level": sp500_level,
+            "sp500_change_5d": sp500_change_5d,
+            "breadth_sp500": 50.0,
+            "regime_label": regime_label,
+            "computed_at": datetime.now(timezone.utc),
+        }
+        mongo_store.upsert_doc("market_regime", {"date": doc["date"]}, doc)
 
     except Exception as e:
         logger.error(f"Error computing market regime: {e}")

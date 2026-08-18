@@ -35,8 +35,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from app.db.connection import get_db
-from app.db import mongo_query
+from datetime import datetime, timezone
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -96,25 +96,21 @@ def mark_question_answered(
         )
         return False
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                UPDATE dossier_question_log
-                   SET status         = 'answered',
-                       evidence_ref   = %s,
-                       resolved_cycle = %s,
-                       resolved_at    = CURRENT_TIMESTAMP
-                 WHERE ticker = %s
-                   AND question_hash = %s
-                   AND status IN ('open', 'reasked')
-              RETURNING id
-                """,
-                [evidence, cycle_id, ticker, qhash],
-            ).fetchall()
-            # RETURNING, not rowcount: PooledCursor exposes no rowcount, and
-            # reading it raises into the except below — which would report
-            # every successful write as a failure.
-            return bool(rows)
+        # The RETURNING id was only ever read for its truthiness ("did this
+        # update hit anything?"), which update_docs' modified count answers
+        # directly. Note it is MODIFIED, not matched: a row already carrying
+        # these exact values is not counted — but `status` is required to be
+        # 'open'/'reasked' here and is being set to 'answered', so every
+        # matched row genuinely changes.
+        changed = mongo_store.update_docs(
+            'dossier_question_log',
+            {'ticker': ticker, 'question_hash': qhash,
+             'status': {'$in': ['open', 'reasked']}},
+            {'$set': {'status': 'answered',
+                      'evidence_ref': evidence,
+                      'resolved_cycle': cycle_id,
+                      'resolved_at': datetime.now(timezone.utc)}})
+        return bool(changed)
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "[research_loop] mark_question_answered failed for %s: %s", ticker, e
