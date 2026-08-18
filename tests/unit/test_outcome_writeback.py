@@ -15,9 +15,22 @@ the label "outcome".
 The negative controls come first on purpose: a writeback that fires on an
 unresolved or degraded decision would teach the memory system an outcome that
 does not exist yet, which is worse than the gap it replaces.
+
+PORTED off the inert `get_db` mock (2026-08-18). The call-site tests below used
+to drive the two resolvers through a faked `get_db()` cursor whose first
+`execute()` handed back the pending rows. `app/autoresearch/outcome_tracker.py`
+reads through `mongo_query.find_rows` and writes through
+`mongo_store.update_docs` now, so the patched cursor intercepted nothing: the
+resolvers queried the LIVE database for pending decision_outcomes and, having
+found none there matching, "resolved 0" — the tests failed once the Mongo guard
+landed, and before that they were reading and updating production.
+
+The fixture now patches BOTH halves and dispatches `find_rows` on the
+COLLECTION name. `find_rows` returns TUPLES positioned in the column order the
+caller listed, so the pending rows stay tuples — same shape the old cursor
+yielded, which is why the row literals below are unchanged.
 """
 
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -172,23 +185,35 @@ def test_hold_outcomes_are_written_too(sinks):
 # live path.
 
 def _patch_db(pending_rows):
-    """A get_db() whose first execute() returns `pending_rows`."""
-    calls = {"n": 0}
+    """Patch the tracker's Mongo layer so `decision_outcomes` yields the rows.
 
-    @contextmanager
-    def factory():
-        conn = MagicMock()
+    Both halves are patched together: stubbing only `mongo_query` would leave
+    the resolvers' `update_docs` writing resolutions into production.
+    """
+    query = MagicMock()
+    store = MagicMock()
 
-        def execute_side_effect(*args, **kwargs):
-            calls["n"] += 1
-            cursor = MagicMock()
-            cursor.fetchall.return_value = pending_rows if calls["n"] == 1 else []
-            return cursor
+    def _find_rows(collection, *a, **k):
+        return list(pending_rows) if collection == "decision_outcomes" else []
 
-        conn.execute.side_effect = execute_side_effect
-        yield conn
+    query.find_rows.side_effect = _find_rows
+    query.find_row.return_value = None
+    store.find_docs.return_value = []
 
-    return patch("app.autoresearch.outcome_tracker.get_db", factory)
+    class _Both:
+        def __enter__(self):
+            self._q = patch("app.autoresearch.outcome_tracker.mongo_query", query)
+            self._s = patch("app.autoresearch.outcome_tracker.mongo_store", store)
+            self._q.start()
+            self._s.start()
+            return query, store
+
+        def __exit__(self, *exc):
+            self._s.stop()
+            self._q.stop()
+            return False
+
+    return _Both()
 
 
 @pytest.fixture

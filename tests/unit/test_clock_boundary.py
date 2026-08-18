@@ -8,6 +8,19 @@ Tests:
   4. _is_market_hours returns False after 4:00 PM ET
   5. Schedule skips execution when outside market hours + market_hours_only=True
   6. Schedule executes when inside market hours + market_hours_only=True
+
+The schedule-boundary tests used to patch `schedule_validator.get_db` and
+`cycle_scheduler.get_db` and then assert on SQL text ("INSERT INTO
+v3_system_commands" in the executed string). Both modules read and write
+through `mongo_query`/`mongo_store` now — `schedule_validator` does not import
+`get_db` at all — so the patched cursor intercepted nothing and the dispatch
+assertion was scored against a mock that could never see the write, while the
+module itself talked to the live store.
+
+They patch the Mongo helpers now and assert on the STRUCTURE of the dispatch:
+the collection name and the command document, which pins more than the SQL
+substring ever did. `find_row` returns a TUPLE in the column order the caller
+listed, so the schedule fixture stays a positional row.
 """
 import os
 import sys
@@ -111,6 +124,63 @@ class TestIsMarketHours:
 # TEST: Schedule behavior at clock boundaries
 # ============================================================================
 
+def _schedule_row(schedule_id: str, market_hours_only: bool = True):
+    """One cycle_schedules row in the exact column order execute_schedule lists.
+
+    `mongo_query.find_row` returns a positional tuple, and the module zips it
+    against its own `cols` list — a row of the wrong LENGTH would silently
+    shift every field, so the order here is load-bearing.
+    """
+    return (
+        schedule_id, "Test", "interval", None, 2.0, "next_pre_market",
+        True, True, True, "[]", None, None, market_hours_only,
+        True,           # is_active
+        None, None,     # last_run_at, next_run_at
+        0, "ok", None,  # run_count, last_status, last_error
+        "2025-01-01", "2025-01-01",  # created_at, updated_at
+        None, None,     # run_at, expiry_at (no TTL -> never expires)
+    )
+
+
+def _mongo(schedule_row):
+    """Patch the scheduler's + validator's Mongo layer, dispatching on collection."""
+    query = MagicMock()
+    store = MagicMock()
+
+    def _find_row(coll, *a, **k):
+        if coll == "cycle_schedules":
+            return schedule_row
+        if coll == "pipeline_state":
+            return ("idle",)
+        return None
+
+    query.find_row.side_effect = _find_row
+    query.find_rows.return_value = []
+    query.agg_row.return_value = None
+
+    # The validator reads cycle_schedules for its own pre_run_check; it asks
+    # for a DIFFERENT column list, so it gets its own stub.
+    vquery = MagicMock()
+    # (schedule_scope, review_intent, urgency, tickers, last_run_at)
+    vquery.find_row.return_value = ("portfolio", "monitor", "low", "[]", None)
+
+    return (
+        patch("app.services.cycle_scheduler.mongo_query", query),
+        patch("app.services.cycle_scheduler.mongo_store", store),
+        patch("app.validation.schedule_validator.mongo_query", vquery),
+        query,
+        store,
+    )
+
+
+def _dispatch_calls(store):
+    """Every insert_docs call that dispatched a START_CYCLE command."""
+    return [
+        c for c in store.insert_docs.call_args_list
+        if c.args and c.args[0] == "v3_system_commands"
+    ]
+
+
 class TestScheduleClockBoundary:
     """Scheduler should respect market_hours_only flag."""
 
@@ -119,17 +189,13 @@ class TestScheduleClockBoundary:
         """When market_hours_only=True and outside hours, schedule skips."""
         mock_db = MagicMock()
         mock_db.execute.return_value = mock_db
-        mock_db.fetchone.return_value = (
-            "sched-1", "Test", "interval", None, 2.0, "next_pre_market",
-            True, True, True, "[]", None, None, True,  # market_hours_only=True
-            True, None, None, 0, "ok", None,
-            "2025-01-01", "2025-01-01",
-        )
 
         from app.services.cycle_scheduler import SchedulerService
 
+        pq, ps, pv, query, store = _mongo(_schedule_row("sched-1"))
         with patch.object(SchedulerService, "_is_market_hours", return_value=False), \
              patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
+             pq, ps, pv, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
@@ -139,52 +205,39 @@ class TestScheduleClockBoundary:
 
             await SchedulerService.execute_schedule("sched-1")
 
-        # Should NOT have inserted a system_command (skipped)
-        insert_calls = [
-            c for c in mock_db.execute.call_args_list
-            if "INSERT INTO v3_system_commands" in str(c)
-        ]
-        assert len(insert_calls) == 0, "Schedule should have been skipped outside market hours"
+        # Should NOT have dispatched a system_command (skipped)
+        assert _dispatch_calls(store) == [], \
+            "Schedule should have been skipped outside market hours"
 
     @pytest.mark.asyncio
     async def test_schedule_runs_during_market_hours(self):
         """When market_hours_only=True and inside hours, schedule executes."""
         mock_db = MagicMock()
         mock_db.execute.return_value = mock_db
-        # First fetchone = schedule row, second = ScheduleValidator.pre_run_check row, third = pipeline_state (idle)
-        mock_db.fetchone.side_effect = [
-            (
-                "sched-2", "Test", "interval", None, 2.0, "next_pre_market",
-                True, True, True, "[]", None, None, True,  # market_hours_only=True
-                True, None, None, 0, "ok", None,
-                "2025-01-01", "2025-01-01",
-            ),
-            ("portfolio", "monitor", "low", "[]", None),  # validator check
-            ("idle",),  # pipeline_state.status
-        ]
 
         from app.services.cycle_scheduler import SchedulerService
 
+        pq, ps, pv, query, store = _mongo(_schedule_row("sched-2"))
         with patch.object(SchedulerService, "_is_market_hours", return_value=True), \
              patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
-             patch("app.validation.schedule_validator.get_db") as mock_val_get_db, \
+             pq, ps, pv, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
             mock_cc.is_stopped = False
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-            mock_val_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_val_get_db.return_value.__exit__ = MagicMock(return_value=False)
 
             await SchedulerService.execute_schedule("sched-2")
 
-        # Should have inserted a system_command (executed)
-        insert_calls = [
-            c for c in mock_db.execute.call_args_list
-            if "INSERT INTO v3_system_commands" in str(c)
-        ]
-        assert len(insert_calls) >= 1, "Schedule should have executed during market hours"
+        # Should have dispatched a system_command (executed). Asserting on the
+        # command DOCUMENT rather than on SQL text: the collection, the command
+        # type, and the fact that a payload rode along.
+        dispatches = _dispatch_calls(store)
+        assert len(dispatches) >= 1, "Schedule should have executed during market hours"
+        doc = dispatches[0].args[1][0]
+        assert doc["command_type"] == "START_CYCLE"
+        assert doc["payload"]
 
 
 # ============================================================================
@@ -199,20 +252,15 @@ class TestPausedSystemSkipsSchedule:
         """Paused system should skip executing scheduled cycles and not call resume."""
         mock_db = MagicMock()
         mock_db.execute.return_value = mock_db
-        mock_db.fetchone.side_effect = [
-            (
-                "sched-paused", "Test", "interval", None, 2.0, "next_pre_market",
-                True, True, True, "[]", None, None, False,
-                True, None, None, 0, "ok", None,
-                "2025-01-01", "2025-01-01",
-            ),
-            ("idle",),
-        ]
 
         from app.services.cycle_scheduler import SchedulerService
 
+        pq, ps, pv, query, store = _mongo(
+            _schedule_row("sched-paused", market_hours_only=False)
+        )
         with patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
+             pq, ps, pv, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = True
             mock_cc.is_stopped = False
@@ -224,9 +272,6 @@ class TestPausedSystemSkipsSchedule:
             # Check that resume was NOT triggered on cycle_control
             mock_cc.resume.assert_not_called()
 
-        # Should NOT have inserted a system_command (skipped)
-        insert_calls = [
-            c for c in mock_db.execute.call_args_list
-            if "INSERT INTO v3_system_commands" in str(c)
-        ]
-        assert len(insert_calls) == 0, "Schedule should have been skipped when system is paused"
+        # Should NOT have dispatched a system_command (skipped)
+        assert _dispatch_calls(store) == [], \
+            "Schedule should have been skipped when system is paused"

@@ -20,10 +20,35 @@ pins it against the real `get_db` — if the real contract ever changes, the fak
 is caught as stale instead of quietly diverging again.
 
 These tests fail on the pre-fix tree. That was verified, not assumed.
+
+## Ported off the inert get_db mock (2026-08-18)
+
+`app/services/dossier_service.py` and `app/services/research_queue_service.py`
+were converted to `mongo_query` / `mongo_store` and no longer import `get_db`
+at all. Patching `<module>.get_db` therefore intercepted NOTHING: the services
+read and wrote the LIVE Mongo database while `FakeCursor` recorded an empty
+statement list, so every "assert this SQL was emitted" check was scanning
+nothing and every "assert this SQL was NOT emitted" check passed vacuously.
+
+The queue tests below now patch both Mongo halves — reads AND writes; stubbing
+only the read leaves `update_docs` claiming real queue rows — and the SQL-text
+assertions became STRUCTURAL assertions on the Mongo calls: the collection
+name, the filter document, and the update document. That is strictly stronger
+than the old substring checks, because a Mongo filter is machine-comparable
+where `"status = 'pending'" in sql` was not: the old dedupe test needed a
+sabotage run to convince itself the predicate was even being looked at, and
+the equivalent assertion here compares the whole `$in` list.
+
+`mongo_query.find_row`/`find_rows` return TUPLES positioned in the column order
+the caller listed; `group_rows` returns tuples in its own group/agg order. The
+fixtures below honour that.
+
+`question_ledger` still uses `get_db`, so its tests keep the `FakeCursor` path
+unchanged.
 """
 
 from contextlib import contextmanager
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -85,6 +110,86 @@ def fake_get_db(cursor):
     return _factory
 
 
+# ───────────────────────── contract-faithful Mongo fake ─────────────────────
+
+
+class FakeMongo:
+    """Records every read filter and every write, for the queue service.
+
+    `find_rows` is dispatched on the read FILTER, not on call order: the
+    reclaim's two passes differ only by their `attempts` predicate, and keying
+    on order would let the two swap places without the test noticing — which is
+    precisely the ordering invariant one of the tests below pins.
+    """
+
+    def __init__(self, find_row=None, find_rows=None, group_rows=None):
+        self._find_row = find_row
+        self._find_rows = find_rows or (lambda coll, flt, cols, **k: [])
+        self._group_rows = group_rows or (lambda *a, **k: [])
+        self.reads: list[tuple] = []      # (collection, filter)
+        self.updates: list[tuple] = []    # (collection, filter, update)
+        self.inserts: list[tuple] = []    # (collection, docs)
+
+    # ── mongo_query surface ──
+    def find_row(self, collection, filt, cols, **kw):
+        self.reads.append((collection, filt))
+        if callable(self._find_row):
+            return self._find_row(collection, filt, cols, **kw)
+        return self._find_row
+
+    def find_rows(self, collection, filt, cols, **kw):
+        self.reads.append((collection, filt))
+        if callable(self._find_rows):
+            return self._find_rows(collection, filt, cols, **kw)
+        return list(self._find_rows)
+
+    def group_rows(self, collection, filt, keys, aggs, order, **kw):
+        self.reads.append((collection, filt))
+        if callable(self._group_rows):
+            return self._group_rows(collection, filt, keys, aggs, order, **kw)
+        return list(self._group_rows)
+
+    # ── mongo_store surface ──
+    def update_docs(self, collection, filt, update, **kw):
+        self.updates.append((collection, filt, update))
+        return 1
+
+    def insert_docs(self, collection, docs, **kw):
+        self.inserts.append((collection, docs))
+        return len(docs)
+
+    # ── assertion helpers ──
+    def set_values(self):
+        """Every `$set` document written, in order."""
+        return [u[2].get("$set", {}) for u in self.updates]
+
+    def statuses_written(self):
+        """The `status` value of every write that set one, in order."""
+        return [s["status"] for s in self.set_values() if "status" in s]
+
+
+def patch_queue_mongo(fake):
+    """Patch BOTH halves of the queue service's Mongo layer.
+
+    Patching only the read would leave `update_docs` claiming and failing rows
+    in the production queue — which is what the get_db patch was doing.
+    """
+    class _Both:
+        def __enter__(self):
+            self._q = patch("app.services.research_queue_service.mongo_query", fake)
+            self._s = patch("app.services.research_queue_service.mongo_store", fake)
+            self._q.start()
+            self._s.start()
+            return fake
+
+        def __exit__(self, *exc):
+            self._s.stop()
+            self._q.stop()
+            return False
+
+    return _Both()
+
+
 # ─────────────────────────────── the contract ───────────────────────────────
 
 
@@ -140,10 +245,11 @@ def test_watchlist_hold_spec():
 
 
 def test_dossier_service_record_decision_against_real_contract():
-    """Fails on the pre-fix tree with AttributeError, which is the point."""
-    cursor = FakeCursor(results=[None])  # fresh ticker: SELECT returns nothing
+    """The write must actually happen, not just the happy return object."""
+    store = MagicMock()
+    store.find_docs.return_value = []  # fresh ticker: nothing on file
 
-    with patch("app.services.dossier_service.get_db", fake_get_db(cursor)):
+    with patch("app.services.dossier_service.mongo_store", store):
         dossier = DossierService.record_decision(
             ticker="MSFT",
             cycle_id="cycle-123",
@@ -159,13 +265,21 @@ def test_dossier_service_record_decision_against_real_contract():
     assert len(dossier.decision_history) == 1
     assert dossier.decision_history[0].action == "HOLD"
     # It must actually have written, not just returned a happy object.
-    assert "INSERT" in cursor.sql_verbs()
+    # (Was `"INSERT" in cursor.sql_verbs()`; the write is an upsert now, and
+    # asserting the key + the persisted history says more than the verb did.)
+    store.upsert_doc.assert_called_once()
+    collection, key, doc = store.upsert_doc.call_args[0][:3]
+    assert collection == "ticker_dossiers"
+    assert key == {"ticker": "MSFT"}
+    assert doc["lifecycle_state"] == LifecycleState.WATCHLIST_HOLD.value
+    assert len(doc["decision_history"]) == 1
+    assert doc["decision_history"][0]["action"] == "HOLD"
 
 
 def test_research_queue_enqueue_against_real_contract():
-    cursor = FakeCursor(results=[None])  # dedupe SELECT finds nothing
+    fake = FakeMongo(find_row=None)  # dedupe read finds nothing
 
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    with patch_queue_mongo(fake):
         item_id = ResearchQueueService.enqueue_item(
             ticker="NVDA",
             queue_type=QueueType.LEAD_QUEUE,
@@ -175,7 +289,14 @@ def test_research_queue_enqueue_against_real_contract():
         )
 
     assert item_id.startswith("qitem-")
-    assert "INSERT" in cursor.sql_verbs()
+    assert len(fake.inserts) == 1
+    collection, docs = fake.inserts[0]
+    assert collection == "v3_research_queues"
+    assert docs[0]["id"] == item_id
+    assert docs[0]["ticker"] == "NVDA"
+    assert docs[0]["queue_type"] == QueueType.LEAD_QUEUE.value
+    assert docs[0]["status"] == "pending"
+    assert docs[0]["attempts"] == 0
 
 
 def test_pop_worklist_claims_and_peek_does_not():
@@ -185,30 +306,28 @@ def test_pop_worklist_claims_and_peek_does_not():
     shadow called it, the shadow would drain the queue it is measuring while
     no worker is serving it.
     """
-    selection = [
-        [],  # exit_review
-        [],  # monitor
-        [],  # deep_dive
-        [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")],
-    ]
     # `pop_worklist` reclaims stale claims before selecting (open item 14), and
-    # that is two RETURNING statements ahead of the four queue SELECTs. `peek`
-    # must still take neither — it is read-only by contract.
-    reclaim = [[], []]
+    # that is two reads ahead of the four queue reads. `peek` must still take
+    # neither — it is read-only by contract.
+    def _selection(coll, flt, cols, **kw):
+        if flt.get("queue_type") == QueueType.LEAD_QUEUE.value:
+            return [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")]
+        return []  # exit_review, monitor, deep_dive, and the reclaim passes
 
-    pop_cursor = FakeCursor(results=reclaim + list(selection))
-    with patch("app.services.research_queue_service.get_db", fake_get_db(pop_cursor)):
+    pop_fake = FakeMongo(find_rows=_selection)
+    with patch_queue_mongo(pop_fake):
         popped = ResearchQueueService.pop_worklist(budget=4)
 
-    peek_cursor = FakeCursor(results=list(selection))
-    with patch("app.services.research_queue_service.get_db", fake_get_db(peek_cursor)):
+    peek_fake = FakeMongo(find_rows=_selection)
+    with patch_queue_mongo(peek_fake):
         peeked = ResearchQueueService.peek_worklist(budget=4)
 
     # Same selection...
     assert [i["ticker"] for i in popped] == [i["ticker"] for i in peeked] == ["NVDA"]
     # ...different side effects.
-    assert "UPDATE" in pop_cursor.sql_verbs(), "pop must claim what it returns"
-    assert "UPDATE" not in peek_cursor.sql_verbs(), "peek must not mutate the queue"
+    assert pop_fake.updates, "pop must claim what it returns"
+    assert peek_fake.updates == [], "peek must not mutate the queue"
+    assert peek_fake.inserts == [], "peek must not write at all"
 
 
 # ───────────────────────────── the orphan path ──────────────────────────────
@@ -223,23 +342,46 @@ def test_pop_worklist_claims_and_peek_does_not():
 # weeks (open item 7).
 
 
-def _reclaim_statements(cursor):
-    return [sql for sql, _ in cursor.statements if sql.upper().startswith("UPDATE")]
+def _reclaim_reads(fake):
+    """The two staleness reads reclaim_stale issues, in order."""
+    return [flt for coll, flt in fake.reads if coll == "v3_research_queues"
+            and flt.get("status") == "processing" and "attempts" in flt]
+
+
+def _reclaim_rows(failed_ids=(), requeued_ids=()):
+    """Dispatch the two reclaim passes on their `attempts` predicate.
+
+    Keyed on the FILTER rather than on call order: the two passes differ only
+    by `$gte` vs `$lt` on `attempts`, and a fixture that answered them by
+    position would keep working if they swapped — which is the very ordering
+    one of the tests below pins.
+    """
+    def _rows(coll, flt, cols, **kw):
+        att = flt.get("attempts") or {}
+        if "$gte" in att:
+            return [(i,) for i in failed_ids]
+        if "$lt" in att:
+            return [(i,) for i in requeued_ids]
+        return []
+    return _rows
 
 
 def test_a_dead_worker_gets_its_claim_back():
     """The item this whole path exists for: claimed, abandoned, returned."""
-    cursor = FakeCursor(results=[
-        [],                 # nothing past MAX_ATTEMPTS
-        [("qitem-dead",)],  # one stale claim requeued
-    ])
+    fake = FakeMongo(find_rows=_reclaim_rows(requeued_ids=["qitem-dead"]))
 
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    with patch_queue_mongo(fake):
         out = ResearchQueueService.reclaim_stale()
 
     assert out["requeued"] == ["qitem-dead"]
     assert out["failed"] == []
-    assert any("status = 'pending'" in s for s in _reclaim_statements(cursor)), \
+    # Was `"status = 'pending'" in sql`. The equivalent structural claim: the
+    # write that touched qitem-dead set it back to pending, not to some other
+    # status.
+    writes = [u for u in fake.updates if u[1] == {"id": "qitem-dead"}]
+    assert len(writes) == 1
+    assert writes[0][0] == "v3_research_queues"
+    assert writes[0][2]["$set"]["status"] == "pending", \
         "a reclaimed item must go back to pending, not to some other status"
 
 
@@ -251,15 +393,16 @@ def test_reclaim_judges_the_heartbeat_and_never_the_start_time():
     item purely for having been enqueued a while ago, however recently it was
     claimed.
     """
-    cursor = FakeCursor(results=[[], []])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    fake = FakeMongo(find_rows=_reclaim_rows())
+    with patch_queue_mongo(fake):
         ResearchQueueService.reclaim_stale()
 
-    stmts = _reclaim_statements(cursor)
-    assert stmts, "reclaim must issue statements"
-    for s in stmts:
-        assert "updated_at <" in s, f"staleness must be judged on updated_at: {s}"
-        assert "created_at" not in s, f"reclaim must not judge created_at: {s}"
+    filters = _reclaim_reads(fake)
+    assert filters, "reclaim must issue its staleness reads"
+    for f in filters:
+        assert "$lt" in (f.get("updated_at") or {}), \
+            f"staleness must be judged on updated_at: {f}"
+        assert "created_at" not in f, f"reclaim must not judge created_at: {f}"
 
 
 def test_an_item_that_keeps_dying_is_failed_rather_than_requeued_forever():
@@ -267,77 +410,93 @@ def test_an_item_that_keeps_dying_is_failed_rather_than_requeued_forever():
     time, with nothing visible in the queue depth."""
     from app.services.research_queue_service import MAX_ATTEMPTS
 
-    cursor = FakeCursor(results=[
-        [("qitem-poison",)],  # past MAX_ATTEMPTS
-        [],
-    ])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    fake = FakeMongo(find_rows=_reclaim_rows(failed_ids=["qitem-poison"]))
+    with patch_queue_mongo(fake):
         out = ResearchQueueService.reclaim_stale()
 
     assert out["failed"] == ["qitem-poison"]
     assert out["requeued"] == []
 
-    fail_stmt = _reclaim_statements(cursor)[0]
-    assert "status = 'failed'" in fail_stmt
-    assert "attempts >=" in fail_stmt
+    writes = [u for u in fake.updates if u[1] == {"id": "qitem-poison"}]
+    assert len(writes) == 1
+    assert writes[0][2]["$set"]["status"] == "failed"
+
     # The fail pass must run BEFORE the requeue pass, or an item at the limit is
-    # requeued by this call and only failed by the next one.
-    assert cursor.statements[0][1][-1] == MAX_ATTEMPTS
-    assert "attempts <" in _reclaim_statements(cursor)[1]
+    # requeued by this call and only failed by the next one. The two reads are
+    # distinguished by their `attempts` predicate, and the FIRST one must be
+    # the >= MAX_ATTEMPTS pass.
+    filters = _reclaim_reads(fake)
+    assert len(filters) == 2
+    assert filters[0]["attempts"] == {"$gte": MAX_ATTEMPTS}
+    assert filters[1]["attempts"] == {"$lt": MAX_ATTEMPTS}
 
 
-def test_reclaim_counts_with_returning_because_the_cursor_has_no_rowcount():
-    """`PooledCursor` carries no `rowcount`; reading it reports zero silently
-    (`5cec538`). `FakeCursor` exposes none either, so a regression here raises
-    rather than passing quietly."""
-    cursor = FakeCursor(results=[[], []])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
-        ResearchQueueService.reclaim_stale()
+def test_reclaim_counts_what_it_actually_touched_not_a_driver_rowcount():
+    """`PooledCursor` carried no `rowcount`; reading it reported zero silently
+    (`5cec538`). The Mongo port must not reintroduce that shape: the counts it
+    returns have to come from the ids it read and wrote, so a reclaim that
+    touched nothing reports nothing and a reclaim that touched two reports two.
+    """
+    empty = FakeMongo(find_rows=_reclaim_rows())
+    with patch_queue_mongo(empty):
+        out = ResearchQueueService.reclaim_stale()
+    assert out == {"requeued": [], "failed": []}
+    assert empty.updates == [], "nothing stale means nothing written"
 
-    for s in _reclaim_statements(cursor):
-        assert "RETURNING" in s.upper(), f"count with RETURNING, not rowcount: {s}"
+    busy = FakeMongo(find_rows=_reclaim_rows(
+        failed_ids=["qitem-a"], requeued_ids=["qitem-b", "qitem-c"]
+    ))
+    with patch_queue_mongo(busy):
+        out = ResearchQueueService.reclaim_stale()
+    # The returned ids ARE the count — there is no separate tally to drift.
+    assert out["failed"] == ["qitem-a"]
+    assert out["requeued"] == ["qitem-b", "qitem-c"]
+    assert len(busy.updates) == 3, "one write per id, no more and no fewer"
 
 
 def test_pop_arms_the_orphan_path_and_counts_the_attempt():
     """The guard is armed by pop, so a queue nothing pops neither strands nor
     reclaims — which is exactly today's state."""
-    cursor = FakeCursor(results=[
-        [], [],                                   # the reclaim
-        [], [], [],                               # three empty queues
-        [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")],
-    ])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    def _rows(coll, flt, cols, **kw):
+        if flt.get("status") == "processing":       # the reclaim's two passes
+            return []
+        if flt.get("queue_type") == QueueType.LEAD_QUEUE.value:
+            return [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")]
+        return []
+
+    fake = FakeMongo(find_rows=_rows)
+    with patch_queue_mongo(fake):
         ResearchQueueService.pop_worklist(budget=4)
 
-    stmts = [sql for sql, _ in cursor.statements]
-    assert "status = 'pending'" in stmts[1], \
+    # pop must reclaim stale claims BEFORE it selects, not after: the two
+    # reclaim reads have to precede the first queue read.
+    reads = [flt for coll, flt in fake.reads]
+    first_select = next(i for i, f in enumerate(reads) if "queue_type" in f)
+    assert first_select == 2, \
         "pop must reclaim stale claims before it selects, not after"
-    # `SET status`, not just `status` — the reclaim's WHERE clause also names
-    # `processing`, and matching it here would test the wrong statement.
-    claim = [s for s in stmts if "SET status = 'processing'" in s]
-    assert claim, "pop must claim what it returns"
-    assert "attempts = attempts + 1" in claim[0], \
+
+    # The claim itself. `$set.status`, not merely a filter naming `processing`
+    # — the reclaim's own FILTER also names `processing`, and matching that
+    # would be testing the wrong call.
+    claims = [u for u in fake.updates if u[2].get("$set", {}).get("status") == "processing"]
+    assert claims, "pop must claim what it returns"
+    assert claims[0][1] == {"id": "qitem-1"}
+    assert claims[0][2].get("$inc", {}).get("attempts") == 1, \
         "an unincremented attempt makes MAX_ATTEMPTS unreachable"
 
 
 def test_a_failing_reclaim_does_not_take_the_worklist_with_it():
     """Worst case without the reclaim is the stall it replaces; worst case with
     a reclaim that propagates is no worklist at all."""
-    selection = [
-        [], [], [],
-        [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")],
-    ]
-    cursor = FakeCursor(results=list(selection))
-    calls = {"n": 0}
-
-    @contextmanager
-    def flaky():
-        calls["n"] += 1
-        if calls["n"] == 1:          # the reclaim's connection
+    def _rows(coll, flt, cols, **kw):
+        if flt.get("status") == "processing":       # the reclaim's reads
             raise RuntimeError("pool exhausted")
-        yield cursor
+        if flt.get("queue_type") == QueueType.LEAD_QUEUE.value:
+            return [("qitem-1", "NVDA", "lead_queue", 10, "Breakout", "ScoutAgent", "{}")]
+        return []
 
-    with patch("app.services.research_queue_service.get_db", flaky):
+    fake = FakeMongo(find_rows=_rows)
+    with patch_queue_mongo(fake):
         popped = ResearchQueueService.pop_worklist(budget=4)
 
     assert [i["ticker"] for i in popped] == ["NVDA"]
@@ -346,9 +505,9 @@ def test_a_failing_reclaim_does_not_take_the_worklist_with_it():
 def test_enqueue_dedupes_against_a_claim_not_only_against_pending():
     """The bug's actual symptom. A stranded `processing` row did not block a new
     enqueue, so the queue grew duplicates instead of showing a stall."""
-    cursor = FakeCursor(results=[("qitem-held", "processing")])
+    fake = FakeMongo(find_row=("qitem-held", "processing"))
 
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    with patch_queue_mongo(fake):
         item_id = ResearchQueueService.enqueue_item(
             ticker="NVDA",
             queue_type=QueueType.LEAD_QUEUE,
@@ -357,54 +516,68 @@ def test_enqueue_dedupes_against_a_claim_not_only_against_pending():
         )
 
     assert item_id == "qitem-held"
-    assert "INSERT" not in cursor.sql_verbs(), \
+    assert fake.inserts == [], \
         "an item a worker is holding is still queued; enqueuing a second is the duplicate"
 
-    # The two assertions above pass on the BROKEN code too: `FakeCursor` returns
-    # its programmed row whatever the WHERE clause says, so they cannot see the
-    # predicate. Verified by sabotage — reverting the dedupe to `pending`-only
-    # left them green. The check has to be on the SQL the service emitted.
-    sql = cursor.statements[0][0]
-    assert "'processing'" in sql, \
-        f"the dedupe must consider claimed rows, not only pending ones: {sql}"
+    # The two assertions above pass on the BROKEN code too: the fake returns its
+    # programmed row whatever the filter says, so they cannot see the predicate.
+    # (Under the SQL version this needed a sabotage run to establish; a Mongo
+    # filter is a comparable object, so the whole predicate is pinned here.)
+    coll, flt = fake.reads[0]
+    assert coll == "v3_research_queues"
+    assert flt["ticker"] == "NVDA"
+    assert flt["queue_type"] == QueueType.LEAD_QUEUE.value
+    assert set(flt["status"]["$in"]) == {"pending", "processing"}, \
+        f"the dedupe must consider claimed rows, not only pending ones: {flt}"
 
 
 def test_heartbeat_tells_a_worker_its_claim_was_taken_away():
     """A worker that ignores this keeps working on an item somebody else now
     owns — the duplicate the orphan path exists to prevent."""
-    live = FakeCursor(results=[("qitem-1",)])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(live)):
+    live = FakeMongo(find_row=("qitem-1",))
+    with patch_queue_mongo(live):
         assert ResearchQueueService.heartbeat("qitem-1") is True
 
-    lost = FakeCursor(results=[None])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(lost)):
+    lost = FakeMongo(find_row=None)
+    with patch_queue_mongo(lost):
         assert ResearchQueueService.heartbeat("qitem-1") is False
+
+    # The confirming read must require the claim to still be the worker's, or
+    # a row reassigned to somebody else would read back as live.
+    assert lost.reads[-1][1] == {"id": "qitem-1", "status": "processing"}
 
 
 def test_reset_only_takes_back_an_item_that_is_actually_claimed():
     """A reset that also fired on `completed` would resurrect finished work."""
-    cursor = FakeCursor(results=[None])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    fake = FakeMongo()
+    with patch_queue_mongo(fake):
         ResearchQueueService.reset_item("qitem-1", reason="agent raised")
 
-    sql = cursor.statements[0][0]
-    assert "status = 'pending'" in sql
-    assert "AND status = 'processing'" in sql
+    assert len(fake.updates) == 1
+    coll, flt, update = fake.updates[0]
+    assert coll == "v3_research_queues"
+    assert update["$set"]["status"] == "pending"
+    # The `AND status = 'processing'` half: the filter must exclude anything
+    # that is not currently claimed.
+    assert flt == {"id": "qitem-1", "status": "processing"}
 
 
 def test_status_counts_can_see_a_stall_that_queue_depth_cannot():
     """`get_queue_summary` is pending-only by contract — `worklist_shadow`
     stores it as `queue_depth`. A growing `processing` count against a flat
     `completed` count IS the stall, and nothing could see it before."""
-    cursor = FakeCursor(results=[[
+    fake = FakeMongo(group_rows=[
         ("deep_dive_queue", "processing", 7),
         ("deep_dive_queue", "completed", 0),
-    ]])
-    with patch("app.services.research_queue_service.get_db", fake_get_db(cursor)):
+    ])
+    with patch_queue_mongo(fake):
         counts = ResearchQueueService.get_status_counts()
 
     assert counts["deep_dive_queue"]["processing"] == 7
-    assert "WHERE" not in cursor.statements[0][0].upper(), \
+    # Was `"WHERE" not in sql`. The equivalent: the aggregation must run over
+    # an UNFILTERED collection — any filter at all would hide a status, and a
+    # status summary that filters by status cannot report the stall.
+    assert fake.reads[0][1] == {}, \
         "a status summary that filters by status cannot report the stall"
 
 

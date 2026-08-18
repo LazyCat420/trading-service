@@ -1,3 +1,17 @@
+"""Twitter collector tests, ported off the inert `get_db` mock.
+
+The old fixture patched `get_db` on both `twitter_collector` and
+`processors.dedup_engine`. After the Postgres->Mongo migration the collector
+writes posts through `mongo_store.upsert_doc('social_posts', ...)` and
+`DedupEngine` reads through `mongo_store` — `dedup_engine.get_db` is gone
+entirely — so the mock intercepted nothing and both the duplicate checks and
+the post writes went to the LIVE Mongo database. The fixture patches
+`twitter_collector.mongo_store` and `dedup_engine.mongo_store` here (patching
+only the read would leave the WRITES aimed at production), keeps a `get_db`
+mock for the one thing still on Postgres — the watchlist read in
+`collect_all` — and the old `"INSERT INTO social_posts" in sql` assertion
+became a structural assertion on the collection name and document fields.
+"""
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from app.collectors.twitter_collector import (
@@ -9,10 +23,17 @@ from app.collectors.twitter_collector import (
 @pytest.fixture
 def mock_db():
     db = MagicMock()
-    with patch("app.collectors.twitter_collector.get_db") as mock_get_db_1, \
-         patch("app.processors.dedup_engine.get_db") as mock_get_db_2:
-        mock_get_db_1.return_value.__enter__.return_value = db
-        mock_get_db_2.return_value.__enter__.return_value = db
+    db.fetchone.return_value = None
+    db.fetchall.return_value = []
+    with patch("app.collectors.twitter_collector.get_db") as mock_get_db, \
+         patch("app.collectors.twitter_collector.mongo_store") as store, \
+         patch("app.processors.dedup_engine.mongo_store") as dedup_store:
+        mock_get_db.return_value.__enter__.return_value = db
+        # Nothing on record => nothing is a duplicate.
+        dedup_store.count_docs.return_value = 0
+        dedup_store.find_docs.return_value = []
+        # Exposed on the fixture so tests can assert on the Mongo writes.
+        db.mongo_store = store
         yield db
 
 @pytest.fixture
@@ -39,10 +60,10 @@ def sweep_enabled():
 def test_is_quality_tweet():
     # Retweet should be filtered out
     assert _is_quality_tweet({"is_retweet": True, "like_count": 100}) is False
-    
+
     # Low likes should be filtered out
     assert _is_quality_tweet({"is_retweet": False, "like_count": 2}) is False
-    
+
     # Valid tweet
     assert _is_quality_tweet({"is_retweet": False, "like_count": 5}) is True
     assert _is_quality_tweet({"is_retweet": False, "like_count": 10, "view_count": 100}) is True
@@ -68,29 +89,32 @@ async def test_collect_for_ticker_success(mock_get_tickers, mock_scraper_client,
             "hashtags": []
         }
     ]
-    
-    # Configure mock DB calls for DedupEngine
-    mock_db.fetchone.return_value = None
-    mock_db.fetchall.return_value = []
 
     mock_get_tickers.return_value = ["AAPL"]
-    
+
     # Run collection
     count = await collect_for_ticker("AAPL")
-    
+
     # Assertions
     assert count == 1
     mock_scraper_client.collect.assert_called_once_with(
         source="twitter",
         req_data={"cashtags": ["AAPL"], "limit": 50}
     )
-    
-    # Verify DB insert was called
-    insert_calls = [c for c in mock_db.execute.call_args_list if "INSERT INTO social_posts" in c[0][0]]
+
+    # Verify the post was written to social_posts.
+    insert_calls = [
+        c for c in mock_db.mongo_store.upsert_doc.call_args_list
+        if c[0][0] == "social_posts"
+    ]
     assert len(insert_calls) == 1
-    # 'twitter' is hardcoded in the query, not in parameters
-    assert "123456" in insert_calls[0][0][1]
-    assert "AAPL" in insert_calls[0][0][1]
+    doc = insert_calls[0][0][2]
+    # 'twitter' is set by the collector, not carried in the scraper payload.
+    assert doc["platform"] == "twitter"
+    assert doc["platform_post_id"] == "123456"
+    assert doc["ticker"] == "AAPL"
+    assert doc["author_username"] == "trader1"
+    assert doc["like_count"] == 10
 
 @pytest.mark.asyncio
 @patch("app.collectors.twitter_collector.get_ticker_symbols", new_callable=AsyncMock)
@@ -113,16 +137,12 @@ async def test_collect_fintwit_sweep_success(mock_get_tickers, mock_scraper_clie
             "hashtags": []
         }
     ]
-    
-    # Configure mock DB calls for DedupEngine
-    mock_db.fetchone.return_value = None
-    mock_db.fetchall.return_value = []
 
     mock_get_tickers.return_value = []
-    
+
     # Run fintwit sweep
     count = await collect_fintwit_sweep(limit=5)
-    
+
     # Since FINTWIT_ACCOUNTS + CRYPTO_ACCOUNTS is 16 accounts, in batches of 3,
     # it makes 6 collect calls. Let's assert we got posts stored
     assert count >= 0
