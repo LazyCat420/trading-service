@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict
 
 from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response
-from app.db.connection import get_db
 from .judge_agent import evaluate_decision
 from app.trading.portfolio_drawdown import compute_portfolio_drawdown
 from app.db import mongo_query, mongo_store
@@ -26,43 +25,37 @@ def _write_audit_log(audit_id: str, data: dict):
         f.write(json.dumps(data, default=str) + "\n")
 
 
-def get_latest_benchmark_cycle_id(db) -> str | None:
+def get_latest_benchmark_cycle_id(db=None) -> str | None:
     """Return the most recent benchmarked cycle id if one exists."""
     row = mongo_query.find_row('cycle_benchmarks', {}, ['cycle_id'], sort=[('started_at', -1)])
     return row[0] if row and row[0] else None
 
 
-def compute_agent_metrics(db, cycle_id: str | None = None) -> Dict[str, Any]:
+def compute_agent_metrics(db=None, cycle_id: str | None = None) -> Dict[str, Any]:
     """Aggregate grounding metrics grouped by model and agent_step."""
     scope = "cycle" if cycle_id else "global"
-    query = """
-        SELECT l.model, l.agent_step, e.red_cards, e.evidence_gathering 
-        FROM decision_evaluations e
-        JOIN llm_audit_logs l ON e.decision_id = l.id
-    """
-    params = []
-    if cycle_id:
-        # %s, not '?' — this is psycopg/Postgres. The old SQLite-style
-        # placeholder made every cycle-scoped call raise ("0 placeholders,
-        # 1 parameters"); it was never caught because this function had no
-        # callers until the strategy_eval phase was reconnected.
-        query += " WHERE e.cycle_id = %s"
-        params.append(cycle_id)
-
-    evals = db.execute(query, params).fetchall()
-
-    if not evals and cycle_id:
+    eval_filter = {"cycle_id": cycle_id} if cycle_id else {}
+    eval_docs = mongo_store.find_docs("decision_evaluations", eval_filter)
+    if not eval_docs and cycle_id:
         logger.debug(
             "0 evaluated decisions for cycle %s — falling back to global scope",
             cycle_id,
         )
-        query = """
-            SELECT l.model, l.agent_step, e.red_cards, e.evidence_gathering 
-            FROM decision_evaluations e
-            JOIN llm_audit_logs l ON e.decision_id = l.id
-        """
-        evals = db.execute(query).fetchall()
+        eval_docs = mongo_store.find_docs("decision_evaluations", {})
         scope = "global"
+
+    dec_ids = [d.get("decision_id") for d in eval_docs if d.get("decision_id")]
+    log_map = {}
+    if dec_ids:
+        log_docs = mongo_store.find_docs("llm_audit_logs", {"id": {"$in": dec_ids}})
+        for l in log_docs:
+            log_map[l.get("id")] = (l.get("model"), l.get("agent_step"))
+
+    evals = []
+    for d in eval_docs:
+        did = d.get("decision_id")
+        model, agent_step = log_map.get(did, ("Unknown", "unknown"))
+        evals.append((model, agent_step, d.get("red_cards"), d.get("evidence_gathering")))
 
     global_metrics = {
         "total_deepeval_red_cards": 0,
@@ -203,38 +196,37 @@ def compute_agent_metrics(db, cycle_id: str | None = None) -> Dict[str, Any]:
 
 
 async def evaluate_pending_decisions(
-    db,
+    db=None,
     cycle_id: str | None = None,
     limit: int = 100,
     timeout_sec: float = 0,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> int:
-    """Backfill missing decision evaluations before strategy scoring.
+    """Backfill missing decision evaluations before strategy scoring in pure MongoDB."""
+    eval_docs = mongo_store.find_docs("decision_evaluations", {}, projection={"decision_id": 1})
+    evaluated_ids = set(d.get("decision_id") for d in eval_docs if d.get("decision_id"))
 
-    If *cycle_id* is provided the query is scoped to that cycle first.
-    When the scoped query returns 0 pending rows (common when cycle_id
-    doesn't match any llm_audit_logs), the function falls back to a
-    **global** query across all cycles so that decisions are never
-    silently skipped.
+    def _fetch_pending(cid):
+        log_filter = {"cycle_id": cid} if cid else {}
+        candidate_logs = mongo_store.find_docs(
+            "llm_audit_logs",
+            log_filter,
+            sort=[("created_at", -1)],
+            limit=limit * 2,
+        )
+        res = []
+        for l in candidate_logs:
+            lid = l.get("id")
+            raw = l.get("raw_response") or ""
+            if lid and lid not in evaluated_ids and any(k in raw for k in ("BUY", "SELL", "HOLD")):
+                res.append((lid,))
+                if len(res) >= limit:
+                    break
+        return res
 
-    *timeout_sec* caps total wall-clock time.  0 = no limit (background).
-    *on_progress(current, total, decision_id)* is called after each decision.
-    """
     pending = []
     if cycle_id:
-        pending = db.execute(
-            """
-            SELECT l.id
-            FROM llm_audit_logs l
-            LEFT JOIN decision_evaluations e ON l.id = e.decision_id
-            WHERE l.cycle_id = %s
-              AND e.decision_id IS NULL
-              AND (l.raw_response LIKE '%%BUY%%' OR l.raw_response LIKE '%%SELL%%' OR l.raw_response LIKE '%%HOLD%%')
-            ORDER BY l.created_at DESC NULLS LAST
-            LIMIT %s
-            """,
-            [cycle_id, limit],
-        ).fetchall()
+        pending = _fetch_pending(cycle_id)
 
     # Global fallback: no pending found for this cycle (or no cycle given)
     if not pending:
@@ -243,18 +235,7 @@ async def evaluate_pending_decisions(
                 "No pending decisions for cycle %s — falling back to global scope",
                 cycle_id,
             )
-        pending = db.execute(
-            """
-            SELECT l.id
-            FROM llm_audit_logs l
-            LEFT JOIN decision_evaluations e ON l.id = e.decision_id
-            WHERE e.decision_id IS NULL
-              AND (l.raw_response LIKE '%%BUY%%' OR l.raw_response LIKE '%%SELL%%' OR l.raw_response LIKE '%%HOLD%%')
-            ORDER BY l.created_at DESC NULLS LAST
-            LIMIT %s
-            """,
-            [limit],
-        ).fetchall()
+        pending = _fetch_pending(None)
 
     success_count = 0
     t0 = time.monotonic()
@@ -369,203 +350,199 @@ async def evaluate_strategy(
     refresh_pending: bool = False,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> Dict[str, Any]:
-    """Run the comprehensive Bot-Level strategy evaluation."""
-    with get_db() as db:
+    """Run the comprehensive Bot-Level strategy evaluation in pure MongoDB."""
+    try:
+        # Aggregating real stats from the database.
+        bot = mongo_query.agg_row('bots', {}, [('sum', 'total_pnl'), ('avg', 'win_rate'), ('sum', 'total_trades'), ('sum', 'cash_balance')])
+
+        total_pnl = bot[0] if bot[0] is not None else 0.0
+        win_rate = bot[1] if bot[1] is not None else 0.0
+        total_trades = bot[2] if bot[2] is not None else 0
+        cash_balance = bot[3] if bot[3] is not None else 100000.0
+
+        # Compute real max drawdown from trade history
         try:
-            # Aggregating real stats from the database.
-            # we will approximate some fields like MDD as we don't have equity curve simulation yet.
-            bot = mongo_query.agg_row('bots', {}, [('sum', 'total_pnl'), ('avg', 'win_rate'), ('sum', 'total_trades'), ('sum', 'cash_balance')])
-
-            total_pnl = bot[0] if bot[0] is not None else 0.0
-            win_rate = bot[1] if bot[1] is not None else 0.0
-            total_trades = bot[2] if bot[2] is not None else 0
-            cash_balance = bot[3] if bot[3] is not None else 100000.0
-
-            # Compute real max drawdown from trade history
-            try:
-                mdd_value = compute_portfolio_drawdown(db)
-                mdd = (
-                    f"{mdd_value * 100:.1f}%"
-                    if mdd_value is not None
-                    else "Unknown (no trade history)"
-                )
-            except Exception as e:
-                logger.warning("Failed to compute portfolio drawdown: %s", e)
-                mdd = "Unknown (computation error)"
-
-            latest_cycle_id = cycle_id
-            if latest_cycle_id is None and refresh_pending:
-                latest_cycle_id = get_latest_benchmark_cycle_id(db)
-
-            warnings: list[str] = []
-            if refresh_pending:
-                backfilled = await evaluate_pending_decisions(
-                    db,
-                    latest_cycle_id,
-                    on_progress=on_progress,
-                )
-                if backfilled:
-                    logger.info(
-                        "Backfilled %d decision evaluations before strategy audit",
-                        backfilled,
-                    )
-                else:
-                    warnings.append(
-                        f"No pending decisions found to backfill (cycle_id={latest_cycle_id})"
-                    )
-
-            agent_metrics = compute_agent_metrics(db, latest_cycle_id)
-            if agent_metrics["total_decisions_evaluated"] == 0:
-                warnings.append(
-                    "0 decisions evaluated — run the pipeline first to generate trade decisions, "
-                    "then click 'Run Strategy Audit' again."
-                )
-
-            logger.info(
-                "Strategy audit metrics: decisions=%d, red_cards=%d, grounding=%.3f, rouge=%.3f, citation=%.3f, scope=%s",
-                agent_metrics["total_decisions_evaluated"],
-                agent_metrics["total_deepeval_red_cards"],
-                agent_metrics["avg_grounding_score"],
-                agent_metrics["avg_raw_rougeL"],
-                agent_metrics["avg_citation_overlap"],
-                agent_metrics.get("scope", "unknown"),
+            mdd_value = compute_portfolio_drawdown(None)
+            mdd = (
+                f"{mdd_value * 100:.1f}%"
+                if mdd_value is not None
+                else "Unknown (no trade history)"
             )
-
-            user_prompt = USER_TEMPLATE.format(
-                total_pnl=total_pnl,
-                win_rate=win_rate,
-                total_trades=total_trades,
-                cash_balance=cash_balance,
-                mdd=mdd,
-                total_decisions_evaluated=agent_metrics["total_decisions_evaluated"],
-                total_deepeval_red_cards=agent_metrics["total_deepeval_red_cards"],
-                faithfulness_red_cards=agent_metrics.get("faithfulness_red_cards", 0),
-                relevancy_red_cards=agent_metrics.get("relevancy_red_cards", 0),
-                error_red_cards=agent_metrics.get("error_red_cards", 0),
-                avg_grounding_score=agent_metrics["avg_grounding_score"],
-                avg_raw_rougeL=agent_metrics["avg_raw_rougeL"],
-                avg_citation_overlap=agent_metrics["avg_citation_overlap"],
-            )
-
-            try:
-                if on_progress:
-                    on_progress(0, -1, "scoring")
-                t_llm = time.monotonic()
-                eval_response, tokens, ms = await llm.chat(
-                    system=SYSTEM_PROMPT,
-                    user=user_prompt,
-                    temperature=0.1,
-                    max_tokens=512,
-                    priority=Priority.HIGH,
-                    agent_name="strategy_evaluator",
-                )
-                logger.info(
-                    "LLM scoring call completed in %.1fs (%d tokens)",
-                    time.monotonic() - t_llm,
-                    tokens or 0,
-                )
-            except Exception as api_err:
-                logger.error(
-                    f"llm.chat failed for strategy evaluation: {api_err}", exc_info=True
-                )
-                raise api_err
-
-            payload = parse_json_response(eval_response)
-            payload["agent_metrics_scope_cycle_id"] = latest_cycle_id
-            payload["agent_metrics_total_decisions"] = agent_metrics[
-                "total_decisions_evaluated"
-            ]
-
-            risk_score = float(payload.get("risk_score", 1.0))
-            perf_score = float(payload.get("performance_score", 1.0))
-            rob_score = float(payload.get("robustness_score", 1.0))
-            log_score = float(payload.get("logic_score", 1.0))
-            op_score = float(payload.get("operational_score", 1.0))
-
-            # Calculate Total Score out of 100
-            # 1-5 scale. So 5 is max points.
-            # Risk: max 30. perf 25. rob 25. log 10. op 10.
-            score_out_of_100 = (
-                (risk_score / 5.0) * 30
-                + (perf_score / 5.0) * 25
-                + (rob_score / 5.0) * 25
-                + (log_score / 5.0) * 10
-                + (op_score / 5.0) * 10
-            )
-
-            total_score = round(score_out_of_100, 2)
-            eval_id = str(uuid.uuid4())
-
-            # Save to database
-            mongo_store.insert_docs('strategy_evaluations', [{'id': eval_id, 'cycle_id': latest_cycle_id, 'total_score': total_score, 'risk_score': risk_score, 'performance_score': perf_score, 'robustness_score': rob_score, 'logic_score': log_score, 'operational_score': op_score, 'full_analysis': json.dumps(payload)}])
-
-            logger.info(f"Strategy Evaluated! Total Score: {total_score}")
-
-            # ── Write structured audit log ──
-            _write_audit_log(
-                eval_id,
-                {
-                    "step": "metrics",
-                    "timestamp": datetime.datetime.now(
-                        datetime.timezone.utc
-                    ).isoformat(),
-                    "cycle_id": latest_cycle_id,
-                    "bot_stats": {
-                        "total_pnl": total_pnl,
-                        "win_rate": win_rate,
-                        "total_trades": total_trades,
-                        "cash_balance": cash_balance,
-                    },
-                    "agent_metrics": agent_metrics,
-                    "warnings": warnings,
-                },
-            )
-            _write_audit_log(
-                eval_id,
-                {
-                    "step": "llm_scores",
-                    "timestamp": datetime.datetime.now(
-                        datetime.timezone.utc
-                    ).isoformat(),
-                    "total_score": total_score,
-                    "risk_score": risk_score,
-                    "performance_score": perf_score,
-                    "robustness_score": rob_score,
-                    "logic_score": log_score,
-                    "operational_score": op_score,
-                    "risk_reasoning": payload.get("risk_reasoning"),
-                    "performance_reasoning": payload.get("performance_reasoning"),
-                    "robustness_reasoning": payload.get("robustness_reasoning"),
-                    "logic_reasoning": payload.get("logic_reasoning"),
-                    "operational_reasoning": payload.get("operational_reasoning"),
-                },
-            )
-            # Log each individual decision evaluation for debugging
-            evals_for_log = mongo_query.find_rows('decision_evaluations', {}, ['decision_id', 'ticker', 'judge_a_score', 'final_quality_score', 'red_cards', 'evidence_gathering'], sort=[('timestamp', -1)], limit=100)
-            for ev in evals_for_log:
-                _write_audit_log(
-                    eval_id,
-                    {
-                        "step": "decision_detail",
-                        "decision_id": ev[0],
-                        "ticker": ev[1],
-                        "judge_a_score": ev[2],
-                        "final_quality_score": ev[3],
-                        "red_cards": json.loads(ev[4]) if ev[4] else [],
-                        "evidence": json.loads(ev[5]) if ev[5] else {},
-                    },
-                )
-
-            result: Dict[str, Any] = {
-                "id": eval_id,
-                "total_score": total_score,
-                "components": payload,
-                "agent_metrics": agent_metrics,
-            }
-            if warnings:
-                result["warnings"] = warnings
-            return result
-
         except Exception as e:
-            logger.error(f"Failed Strategy Evaluation: {e}", exc_info=True)
-            return {"error": str(e)}
+            logger.warning("Failed to compute portfolio drawdown: %s", e)
+            mdd = "Unknown (computation error)"
+
+        latest_cycle_id = cycle_id
+        if latest_cycle_id is None and refresh_pending:
+            latest_cycle_id = get_latest_benchmark_cycle_id(None)
+
+        warnings: list[str] = []
+        if refresh_pending:
+            backfilled = await evaluate_pending_decisions(
+                None,
+                latest_cycle_id,
+                on_progress=on_progress,
+            )
+            if backfilled:
+                logger.info(
+                    "Backfilled %d decision evaluations before strategy audit",
+                    backfilled,
+                )
+            else:
+                warnings.append(
+                    f"No pending decisions found to backfill (cycle_id={latest_cycle_id})"
+                )
+
+        agent_metrics = compute_agent_metrics(None, latest_cycle_id)
+        if agent_metrics["total_decisions_evaluated"] == 0:
+            warnings.append(
+                "0 decisions evaluated — run the pipeline first to generate trade decisions, "
+                "then click 'Run Strategy Audit' again."
+            )
+
+        logger.info(
+            "Strategy audit metrics: decisions=%d, red_cards=%d, grounding=%.3f, rouge=%.3f, citation=%.3f, scope=%s",
+            agent_metrics["total_decisions_evaluated"],
+            agent_metrics["total_deepeval_red_cards"],
+            agent_metrics["avg_grounding_score"],
+            agent_metrics["avg_raw_rougeL"],
+            agent_metrics["avg_citation_overlap"],
+            agent_metrics.get("scope", "unknown"),
+        )
+
+        user_prompt = USER_TEMPLATE.format(
+            total_pnl=total_pnl,
+            win_rate=win_rate,
+            total_trades=total_trades,
+            cash_balance=cash_balance,
+            mdd=mdd,
+            total_decisions_evaluated=agent_metrics["total_decisions_evaluated"],
+            total_deepeval_red_cards=agent_metrics["total_deepeval_red_cards"],
+            faithfulness_red_cards=agent_metrics.get("faithfulness_red_cards", 0),
+            relevancy_red_cards=agent_metrics.get("relevancy_red_cards", 0),
+            error_red_cards=agent_metrics.get("error_red_cards", 0),
+            avg_grounding_score=agent_metrics["avg_grounding_score"],
+            avg_raw_rougeL=agent_metrics["avg_raw_rougeL"],
+            avg_citation_overlap=agent_metrics["avg_citation_overlap"],
+        )
+
+        try:
+            if on_progress:
+                on_progress(0, -1, "scoring")
+            t_llm = time.monotonic()
+            eval_response, tokens, ms = await llm.chat(
+                system=SYSTEM_PROMPT,
+                user=user_prompt,
+                temperature=0.1,
+                max_tokens=512,
+                priority=Priority.HIGH,
+                agent_name="strategy_evaluator",
+            )
+            logger.info(
+                "LLM scoring call completed in %.1fs (%d tokens)",
+                time.monotonic() - t_llm,
+                tokens or 0,
+            )
+        except Exception as api_err:
+            logger.error(
+                f"llm.chat failed for strategy evaluation: {api_err}", exc_info=True
+            )
+            raise api_err
+
+        payload = parse_json_response(eval_response)
+        payload["agent_metrics_scope_cycle_id"] = latest_cycle_id
+        payload["agent_metrics_total_decisions"] = agent_metrics[
+            "total_decisions_evaluated"
+        ]
+
+        risk_score = float(payload.get("risk_score", 1.0))
+        perf_score = float(payload.get("performance_score", 1.0))
+        rob_score = float(payload.get("robustness_score", 1.0))
+        log_score = float(payload.get("logic_score", 1.0))
+        op_score = float(payload.get("operational_score", 1.0))
+
+        # Calculate Total Score out of 100
+        score_out_of_100 = (
+            (risk_score / 5.0) * 30
+            + (perf_score / 5.0) * 25
+            + (rob_score / 5.0) * 25
+            + (log_score / 5.0) * 10
+            + (op_score / 5.0) * 10
+        )
+
+        total_score = round(score_out_of_100, 2)
+        eval_id = str(uuid.uuid4())
+
+        # Save to database
+        mongo_store.insert_docs('strategy_evaluations', [{'id': eval_id, 'cycle_id': latest_cycle_id, 'total_score': total_score, 'risk_score': risk_score, 'performance_score': perf_score, 'robustness_score': rob_score, 'logic_score': log_score, 'operational_score': op_score, 'full_analysis': json.dumps(payload)}])
+
+        logger.info(f"Strategy Evaluated! Total Score: {total_score}")
+
+        # ── Write structured audit log ──
+        _write_audit_log(
+            eval_id,
+            {
+                "step": "metrics",
+                "timestamp": datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat(),
+                "cycle_id": latest_cycle_id,
+                "bot_stats": {
+                    "total_pnl": total_pnl,
+                    "win_rate": win_rate,
+                    "total_trades": total_trades,
+                    "cash_balance": cash_balance,
+                },
+                "agent_metrics": agent_metrics,
+                "warnings": warnings,
+            },
+        )
+        _write_audit_log(
+            eval_id,
+            {
+                "step": "llm_scores",
+                "timestamp": datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat(),
+                "total_score": total_score,
+                "risk_score": risk_score,
+                "performance_score": perf_score,
+                "robustness_score": rob_score,
+                "logic_score": log_score,
+                "operational_score": op_score,
+                "risk_reasoning": payload.get("risk_reasoning"),
+                "performance_reasoning": payload.get("performance_reasoning"),
+                "robustness_reasoning": payload.get("robustness_reasoning"),
+                "logic_reasoning": payload.get("logic_reasoning"),
+                "operational_reasoning": payload.get("operational_reasoning"),
+            },
+        )
+        # Log each individual decision evaluation for debugging
+        evals_for_log = mongo_query.find_rows('decision_evaluations', {}, ['decision_id', 'ticker', 'judge_a_score', 'final_quality_score', 'red_cards', 'evidence_gathering'], sort=[('timestamp', -1)], limit=100)
+        for ev in evals_for_log:
+            _write_audit_log(
+                eval_id,
+                {
+                    "step": "decision_detail",
+                    "decision_id": ev[0],
+                    "ticker": ev[1],
+                    "judge_a_score": ev[2],
+                    "final_quality_score": ev[3],
+                    "red_cards": json.loads(ev[4]) if ev[4] else [],
+                    "evidence": json.loads(ev[5]) if ev[5] else {},
+                },
+            )
+
+        result: Dict[str, Any] = {
+            "id": eval_id,
+            "total_score": total_score,
+            "components": payload,
+            "agent_metrics": agent_metrics,
+        }
+        if warnings:
+            result["warnings"] = warnings
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed Strategy Evaluation: {e}", exc_info=True)
+        return {"error": str(e)}

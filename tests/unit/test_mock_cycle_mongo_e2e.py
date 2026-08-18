@@ -1465,3 +1465,10 @@ class TestMockTradingCycleMongoE2E:
         assert "checklist" in oracle_res
         assert "completeness_score" in oracle_res
         assert oracle_res["completeness_score"] >= 2.0
+
+        # 50. Judge & Strategy Auditor in MongoDB
+        from app.cognition.evaluation.strategy_auditor import compute_agent_metrics
+
+        metrics = compute_agent_metrics(None, cycle_id)
+        assert "total_decisions_evaluated" in metrics
+        assert "model_benchmarks" in metrics
