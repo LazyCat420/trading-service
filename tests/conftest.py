@@ -195,6 +195,107 @@ def mock_db():
     return cursor
 
 
+class _ProductionMongoReached(RuntimeError):
+    """Raised when a test touches the real MongoDB client."""
+
+
+@pytest.fixture(autouse=True)
+def block_production_mongo(request):
+    """Fail any test that reaches the real MongoDB client.
+
+    THE HOLE THIS CLOSES
+    --------------------
+    `patch_get_db` protects Postgres. Nothing protected Mongo, and every module
+    converted off `get_db` silently left the protected set: the autouse mock
+    still intercepted a `get_db` the module no longer calls, so the test read
+    as isolated while `mongo_store` opened a real connection to the NAS.
+
+    Measured on 2026-08-18, from a plain unit test with no fixtures requested:
+
+        get_doc_db() -> pymongo.database.Database  name=trading_bot
+        collections visible: 141
+
+    That is production. Reads there are silent, and writes are not reversible.
+    The conversion multiplies the exposure with every file it converts, so the
+    guard has to land before the conversion continues, not after.
+
+    WHY IT RAISES INSTEAD OF FAKING
+    -------------------------------
+    A fake client would have to imitate pymongo well enough that code passing
+    against it also passes against the server — cursors, bulk_write results,
+    Decimal128 round-trips, `$inc` semantics. A fake that drifts hands back a
+    green suite for code the server would reject, which is the failure this
+    migration keeps hitting. So the default is fail-closed: unpatched Mongo
+    access raises and names the fixture to use. A test that wants a store must
+    say so, either by patching `mongo_store`/`mongo_query` itself (the
+    `test_watchlist.py` pattern — patch BOTH, since stubbing only the read
+    leaves writes pointed at the real store) or by requesting `real_mongo`.
+
+    Opt out for a whole module with `pytestmark = pytest.mark.real_mongo`, or
+    per test with `@pytest.mark.real_mongo`.
+    """
+    if request.node.get_closest_marker("real_mongo"):
+        yield
+        return
+
+    def _blocked(*_args, **_kwargs):
+        raise _ProductionMongoReached(
+            "This test reached the real MongoDB client.\n"
+            "        Patch app.db.mongo_store (and app.db.mongo_query if the code reads),\n"
+            "        or request the `real_mongo` fixture / mark the test\n"
+            "        @pytest.mark.real_mongo to use an isolated test database."
+        )
+
+    # Patch BOTH the definition and the name `mongo_store` bound at import
+    # time. `from app.db.mongo import get_mongo_client` copies the reference,
+    # so patching only the source module leaves mongo_store calling the real
+    # client — the first version of this guard did exactly that and its probe
+    # test reported DID NOT RAISE while the connection went through.
+    with patch("app.db.mongo.get_mongo_client", _blocked), \
+         patch("app.db.mongo_store.get_mongo_client", _blocked):
+        yield
+
+
+@pytest.fixture
+def real_mongo():
+    """A real Mongo database for tests that need one — never the production DB.
+
+    Pinned to a dedicated database name and ASSERTED, not left to convention:
+    the production database is `trading_bot`, one typo away from a test suite
+    that truncates the live store. Skips unless explicitly enabled, because a
+    fixture that silently degrades to a no-op is the `live_db` bug above.
+    """
+    if not os.environ.get("TRADING_BOT_MONGO_TEST"):
+        pytest.skip("real Mongo test — set TRADING_BOT_MONGO_TEST=1")
+
+    import pymongo
+
+    from app.config import settings
+
+    db_name = os.environ.get("TRADING_MONGO_TEST_DB", "trading_bot_pytest")
+    if db_name in ("trading_bot", "prism"):
+        pytest.fail(
+            f"refusing to run tests against {db_name!r}: that is a production database"
+        )
+
+    try:
+        client = pymongo.MongoClient(
+            settings.PRISM_MONGO_URI, serverSelectionTimeoutMS=5000
+        )
+        client.admin.command("ping")
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"MongoDB unreachable: {e}")
+
+    db = client[db_name]
+    with patch("app.db.mongo.get_mongo_client", lambda: client), \
+         patch("app.db.mongo_store.get_mongo_client", lambda: client), \
+         patch("app.db.mongo_store.TRADING_MONGO_DB", db_name):
+        yield db
+
+    client.drop_database(db_name)
+    client.close()
+
+
 @pytest.fixture(autouse=True)
 def patch_get_db(mock_db):
     """Patch get_db() globally so no real DB connections are created.
