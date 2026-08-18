@@ -20,7 +20,7 @@ import datetime
 import uuid
 from decimal import Decimal
 from typing import Any, Optional
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 from bson import Decimal128
@@ -700,9 +700,21 @@ class TestMockTradingCycleMongoE2E:
         assert fund_tool_res["ticker"] == "MSFT"
         assert fund_tool_res["pe_ratio"] == 35.5
 
-        # Query congress trades tool
-        cong_tool_res = json.loads(await get_congress_trades_tool("MSFT"))
+        # Query congress trades tool.
+        #
+        # The tool does a best-effort refresh via `collect_trades_for_ticker`
+        # before it reads. Left unmocked that is a LIVE network scrape of
+        # congressional disclosures which inserts whatever it finds into the
+        # in-memory store, so the count below is whatever the internet returned
+        # today (it read 4). Pin the refresh to zero: the contract under test
+        # here is that the tool serves the row MongoDB already holds.
+        with patch(
+            "app.collectors.congress_collector.collect_trades_for_ticker",
+            new=AsyncMock(return_value=0),
+        ):
+            cong_tool_res = json.loads(await get_congress_trades_tool("MSFT"))
         assert cong_tool_res["status"] == "success"
+        assert cong_tool_res["trades_collected"] == 0
         assert cong_tool_res["trade_count"] == 1
         assert cong_tool_res["trades"][0]["politician"] == "Pelosi"
 

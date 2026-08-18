@@ -29,6 +29,7 @@ divergence is a listed fact rather than a surprise at backfill time.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import os
 from datetime import date, datetime
 from decimal import Decimal
@@ -159,10 +160,37 @@ def key_field_for(table: str) -> str:
     return key
 
 
+def _map_numeric_policy(table: str) -> str | None:
+    """`numeric_policy` from collection_map.json, if it records one.
+
+    The map outranks the ledger because the ledger is GENERATED and the map is
+    hand-corrected. `bots` is the case that proves it: the classifier called it
+    `numeric_policy: "float", shape: "mutable"`, and a human overrode that in
+    the map with the note "holds cash_balance/total_pnl -- money, whatever the
+    classifier says". Reading only the ledger meant this function answered
+    False for the account balance while paper_trader was already writing that
+    balance through dec128 — the two halves of the money contract disagreeing
+    about the one row that holds the cash.
+    """
+    try:
+        import json
+
+        path = Path(__file__).with_name("collection_map.json")
+        entry = json.loads(path.read_text(encoding="utf-8"))["collections"].get(table)
+        if isinstance(entry, dict):
+            return entry.get("numeric_policy")
+    except Exception:  # noqa: BLE001 - a missing map must not break callers
+        pass
+    return None
+
+
 def uses_decimal128(table: str) -> bool:
     """True when this table's numbers are money and must be Decimal128."""
     if table in _NUMERIC_OVERRIDES:
         return _NUMERIC_OVERRIDES[table] == "dec128"
+    mapped = _map_numeric_policy(table)
+    if mapped is not None:
+        return mapped == "dec128"
     row = _ledger().get(table)
     return bool(row and row.get("numeric_policy") == "dec128")
 

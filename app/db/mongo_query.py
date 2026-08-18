@@ -36,19 +36,74 @@ def _project(columns: Sequence[str]) -> dict:
     return proj
 
 
-def _clean_val(v: Any) -> Any:
+def _clean_val(v: Any, *, as_decimal: bool = False) -> Any:
+    """Unwrap a Decimal128 on the way out of Mongo.
+
+    WHY THIS HAS TWO ANSWERS
+    ------------------------
+    Postgres stored every money column as DOUBLE PRECISION — 328 of them, and
+    not one NUMERIC in the whole schema — so psycopg handed back floats and
+    every caller was written against floats. Decimal128 is therefore an
+    UPGRADE the migration is making deliberately ("switch to Decimal128 during
+    migration, don't preserve", 2026-07-21), not a shape to preserve.
+
+    An upgrade that stops at the storage layer is not an upgrade: writing
+    Decimal128 and reading float back means every P&L sum, every cash
+    adjustment and every average entry price is still float arithmetic, and
+    the ledger merely *looks* exact at rest. So money collections now read as
+    `decimal.Decimal`.
+
+    Everything else keeps reading as float, because those callers pass values
+    into numpy, json and pandas, where a Decimal is a TypeError rather than a
+    precision improvement.
+
+    NOT YET, AND HERE IS THE MEASUREMENT
+    ------------------------------------
+    Flipping money reads to Decimal was tried on 2026-08-18 and reverted the
+    same hour. It works — `find_row("bots", ...)` returns exact Decimals and
+    100000.07 + 0.03 gives 100000.10 rather than 100000.09999999999 — but the
+    money path mixes money with things that are NOT money: ratios
+    (`take_profit_pct`), vendor quotes (`price_history.close`, still float),
+    and share counts. `entry_price * (1 + effective_tp)` raises TypeError the
+    moment entry_price is a Decimal, and that is one of 39 such sites across
+    8 modules (paper_trader 13, bot_manager 11, portfolio 10).
+
+    Doing it properly means deciding, per boundary, whether the float side is
+    promoted or the Decimal side demoted — and proving the result with the
+    cent-exact reconciliation artifact Tier F requires, not with a green
+    suite. That is phase S3, and it is a change to the money path that
+    deserves its own pass rather than a tail-end edit.
+
+    The `as_decimal` parameter and `_money()` below are the plumbing, already
+    wired and tested; only the flip is deferred.
+    """
     if v is None:
         return None
     if hasattr(v, "to_decimal"):
+        # STILL FLOAT, deliberately — see the NOT-YET note below.
         return float(str(v))
     return v
 
 
-def _to_tuple(doc: dict, columns: Sequence[str]) -> tuple:
+def _to_tuple(doc: dict, columns: Sequence[str], *, as_decimal: bool = False) -> tuple:
     # `doc.get(c)` and not `doc[c]`: a document written before a column was
     # added simply lacks the field, and Postgres would have returned NULL for
     # it. Raising here would fail a read that the SQL answered fine.
-    return tuple(_clean_val(doc.get(c)) for c in columns)
+    return tuple(_clean_val(doc.get(c), as_decimal=as_decimal) for c in columns)
+
+
+def _money(collection: str) -> bool:
+    """Does this collection carry the dec128 numeric policy?
+
+    Read from the same table_spec helper the WRITE path uses, so the two sides
+    cannot disagree about which collections are money.
+    """
+    try:
+        from app.db.table_spec import uses_decimal128
+
+        return uses_decimal128(collection)
+    except Exception:  # noqa: BLE001 - a missing ledger must not break reads
+        return False
 
 
 def find_rows(collection: str, query: dict[str, Any], columns: Sequence[str],
@@ -58,7 +113,8 @@ def find_rows(collection: str, query: dict[str, Any], columns: Sequence[str],
     docs = mongo_store.find_docs(collection, query, sort=sort,
                                  projection=_project(columns), limit=limit,
                                  session=session)
-    return [_to_tuple(d, columns) for d in docs]
+    as_dec = _money(collection)
+    return [_to_tuple(d, columns, as_decimal=as_dec) for d in docs]
 
 
 def find_row(collection: str, query: dict[str, Any], columns: Sequence[str],
@@ -68,7 +124,7 @@ def find_row(collection: str, query: dict[str, Any], columns: Sequence[str],
     docs = mongo_store.find_docs(collection, query, sort=sort,
                                  projection=_project(columns), limit=1,
                                  session=session)
-    return _to_tuple(docs[0], columns) if docs else None
+    return _to_tuple(docs[0], columns, as_decimal=_money(collection)) if docs else None
 
 
 def find_dicts(collection: str, query: dict[str, Any],
