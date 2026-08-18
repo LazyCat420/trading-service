@@ -27,7 +27,12 @@ including `price_history`, `technicals` and `sec_13f_holdings`.
       excluded from every purge, gate and migration step by an explicit
       allowlist in `scripts/quality_gates.py`, re-checked immediately before
       every statement, and their row counts are asserted unchanged after any
-      destructive run.
+      destructive run. **Re-verified 2026-08-17 after the purge: all present,
+      1,659 `observations` / 471 `canonical_strains` / 648 `genomic_samples`
+      and the `glass_*` family intact.** Note the allowlist declares **14**
+      names but only **13** exist — `glass_votes` has no table, so the
+      allowlist protects a phantom (harmless, but it is why the handoff says
+      13 and the code says 14; do not "reconcile" them by adding a table).
 - [x] **Runtime-created positive list preserved** — the 4 tables above keep
       their ledger rows even where the empty PG shell was dropped.
 - [x] **`rejected_symbols` stays `absent`** and out of the tooling.
@@ -65,6 +70,26 @@ Executed before any further conversion so that only good data is ever migrated.
 - [x] **214 → 157 tables**; **244,650 bad rows** deleted; DB **4.79 → 4.44 GB**.
 - [x] All 57 dropped tables archived individually first, each with row count,
       sha256 and a restore command → `docs/PURGED_TABLES_MANIFEST_2026-08-17.json`.
+- [ ] ⚠ **THE TABLE DROP DID NOT HOLD — re-measured 2026-08-17 20:0x: 197 live
+      public tables, not 157.** **40 of the 57 dropped tables are back**, every
+      one of them with **0 rows**. Nothing re-inserted data; the DDL simply
+      recreated the shells. `run_migrations()` is called at boot
+      (`app/db/connection.py:496-500`) and `schema_pg.sql` is applied statement
+      by statement (`:400`, `:426`), and both still declare these tables with
+      `CREATE TABLE IF NOT EXISTS` (e.g. `migrations.py:973` for
+      `agent_experiences`). The 17 that stayed dropped are the ones no DDL
+      declares. So:
+      - a `DROP TABLE` is a **data** operation here, not a retirement — it
+        survives exactly until the next service boot;
+      - the count in the line above is a measurement of one moment, and any
+        later claim of "157 tables" is stale;
+      - scope regrows silently: 40 empty tables are in the live schema again,
+        so anything deriving migrate scope from the live DB will re-adopt them,
+        which is the same manifest→ledger→spec chain that hid the four
+        runtime-created tables (ch.72).
+      **Retiring a table means deleting its DDL in the same change as the
+      drop.** Until that lands, do not treat the purge as having reduced the
+      migration's denominator.
 - [x] treesearch-service row counts asserted **unchanged**.
 - [x] Good scraped data asserted intact: `price_history` 15,755,628 (0 bad
       closes, 0 duplicates on its true key), `technicals` 1,369,231,
