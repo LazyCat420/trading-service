@@ -41,6 +41,10 @@ SCAN_ROOTS = ("app", "scripts")
 # Reads that genuinely do not need a vendor pin. Every entry needs a reason;
 # "it was already like that" is not one. Keyed by path suffix.
 VENDOR_AGNOSTIC: dict[str, str] = {
+    # Measures the vendor split ITSELF: it counts (ticker,date) days carried by
+    # more than one source, so pinning a single vendor would make the number it
+    # reports always zero. Reads nothing into a trading decision.
+    "scripts/quality_census.py": "audit — counts multi-vendor coverage by design",
     # Writers: these POPULATE price_history, so `source` is a column they set,
     # not a filter they apply.
     "scripts/backfill_price_history.py": "writer — inserts rows, sets source",
@@ -88,23 +92,17 @@ _PINNED = (
 # are deliberately absent: they must never regress into this list.
 KNOWN_UNPINNED: dict[str, int] = {
     "app/analytics/returns_engine.py": 2,
-    "app/autoresearch/auditors/data_audit.py": 2,
+    "app/autoresearch/auditors/data_audit.py": 1,
     "app/cognition/evaluation/oracle.py": 1,
-    "app/cognition/evidence/packet_builder.py": 1,
     "app/data/sector_aggregator.py": 1,
     "app/processors/data_sanity.py": 2,
-    "app/processors/market_regime.py": 3,
-    "app/processors/quant_processor.py": 8,
+    "app/processors/quant_processor.py": 7,
     "app/services/boot_service.py": 2,
     "app/services/cycle_scheduler.py": 1,
     "app/tools/market_tools.py": 1,
     "app/trading/backtest_data.py": 2,
-    "app/trading/paper_trader.py": 3,
-    "app/trading/portfolio.py": 1,
-    "app/trading/scoring_engine.py": 2,
-    "app/trading/watchlist.py": 1,
+    "app/trading/paper_trader.py": 2,
     "app/v3/invariants.py": 1,
-    "app/v3/orchestrator.py": 1,
     "scripts/confidence_audit.py": 1,
     "scripts/cycle_healthcheck.py": 1,
     "scripts/factor_backtest.py": 1,
