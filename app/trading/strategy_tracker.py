@@ -1,27 +1,8 @@
 """
 Strategy Tracker — P&L tracking per system prompt.
 
-Links strategy candidates to trade outcomes to compute
-win rates per analytical lens/prompt. Benches underperformers,
-gives confidence bonuses to proven winners.
-
-Extends the existing outcome_tracker.py with prompt-level tracking.
-
-Usage:
-    from app.trading.strategy_tracker import (
-        record_strategy, evaluate_pnl, compute_rankings,
-        get_confidence_bonus, bench_underperformers,
-    )
-
-    # After a BUY/SELL decision using a specific prompt:
-    record_strategy(candidate_id, outcome_id, prompt_hash, ticker, "BUY", 150.0)
-
-    # When a trade closes:
-    evaluate_pnl(ticker, exit_price=165.0)
-
-    # Periodic ranking update:
-    rankings = compute_rankings()
-    bench_underperformers()
+Pure MongoDB implementation for strategy_performance, strategy_candidates,
+and generated_agent_prompts collections.
 """
 
 import logging
@@ -29,7 +10,6 @@ import uuid
 from datetime import datetime, timezone
 
 from app.config import settings
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -43,352 +23,301 @@ def record_strategy(
     signal: str,
     entry_price: float | None = None,
 ) -> str | None:
-    """Record a strategy performance entry for P&L tracking.
-
-    Called after a trading decision is made, linking the specific
-    prompt (via hash) to the decision outcome.
-
-    Args:
-        strategy_candidate_id: FK to strategy_candidates table
-        decision_outcome_id: FK to decision_outcomes table
-        agent_prompt_hash: SHA256 hash of the system prompt used
-        ticker: Stock ticker
-        signal: BUY | SELL | HOLD
-        entry_price: Entry price at time of decision
-
-    Returns:
-        Strategy performance ID if recorded, None if skipped (HOLD)
-    """
+    """Record a strategy performance entry for P&L tracking."""
     if signal not in ("BUY", "SELL"):
-        return None  # Only track actionable signals
+        return None
 
-    with get_db() as db:
-        perf_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+    perf_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
 
-        try:
-            mongo_store.insert_docs('strategy_performance', [{'id': perf_id, 'strategy_candidate_id': strategy_candidate_id, 'decision_outcome_id': decision_outcome_id, 'agent_prompt_hash': agent_prompt_hash, 'ticker': ticker, 'signal': signal, 'entry_price': entry_price, 'created_at': now}])
+    try:
+        mongo_store.insert_docs('strategy_performance', [{
+            'id': perf_id,
+            'strategy_candidate_id': strategy_candidate_id,
+            'decision_outcome_id': decision_outcome_id,
+            'agent_prompt_hash': agent_prompt_hash,
+            'ticker': ticker,
+            'signal': signal,
+            'entry_price': entry_price,
+            'active': True,
+            'created_at': now,
+        }])
 
-            logger.info(
-                "[STRATEGY] Recorded %s %s @ $%.2f (prompt=%s, id=%s)",
-                signal,
-                ticker,
-                entry_price or 0,
-                agent_prompt_hash[:8],
-                perf_id[:8],
-            )
-            return perf_id
+        logger.info(
+            "[STRATEGY] Recorded %s %s @ $%.2f (prompt=%s, id=%s)",
+            signal,
+            ticker,
+            entry_price or 0,
+            agent_prompt_hash[:8] if agent_prompt_hash else "",
+            perf_id[:8],
+        )
+        return perf_id
 
-        except Exception as e:
-            logger.warning("[STRATEGY] Failed to record %s %s: %s", signal, ticker, e)
-            return None
+    except Exception as e:
+        logger.warning("[STRATEGY] Failed to record %s %s: %s", signal, ticker, e)
+        return None
 
 
 def evaluate_pnl(ticker: str, exit_price: float) -> list[dict]:
-    """Resolve open strategy performance entries for a closed trade.
-
-    Finds all unresolved BUY entries for this ticker, calculates
-    return_pct, and marks as WIN/LOSS.
-
-    Args:
-        ticker: Stock ticker
-        exit_price: Price at which the position was closed
-
-    Returns:
-        List of resolved strategy performance records
-    """
-    with get_db() as db:
-        resolved = []
-
-        try:
-            rows = mongo_query.find_rows('strategy_performance', {'ticker': ticker, 'signal': 'BUY', 'resolved_at': None, 'active': True}, ['id', 'entry_price', 'signal', 'agent_prompt_hash'])
-
-            if not rows:
-                return []
-
-            now = datetime.now(timezone.utc)
-
-            for row in rows:
-                perf_id = row[0]
-                entry_price = row[1]
-                prompt_hash = row[3]
-
-                if entry_price and entry_price > 0:
-                    return_pct = ((exit_price - entry_price) / entry_price) * 100
-                    win = return_pct > 0.5  # >0.5% return = win
-                else:
-                    return_pct = 0.0
-                    win = False
-
-                # Calculate hold days
-                created_row = mongo_query.find_row('strategy_performance', {'id': perf_id}, ['created_at'])
-                hold_days = 0
-                if created_row and created_row[0]:
-                    try:
-                        created_at = created_row[0]
-                        if isinstance(created_at, str):
-                            created_at = datetime.fromisoformat(created_at)
-                        if created_at.tzinfo is None:
-                            created_at = created_at.replace(tzinfo=timezone.utc)
-                        hold_days = (now - created_at).days
-                    except Exception:
-                        pass
-
-                mongo_store.update_docs('strategy_performance', {'id': perf_id}, {'$set': {'exit_price': exit_price, 'return_pct': round(return_pct, 2), 'win': win, 'hold_days': hold_days, 'resolved_at': now}})
-
-                resolved.append(
-                    {
-                        "id": perf_id,
-                        "ticker": ticker,
-                        "prompt_hash": prompt_hash,
-                        "entry_price": entry_price,
-                        "exit_price": exit_price,
-                        "return_pct": round(return_pct, 2),
-                        "win": win,
-                        "hold_days": hold_days,
-                    }
-                )
-
-                logger.info(
-                    "[STRATEGY] Resolved %s: %s (%.1f%%, prompt=%s)",
-                    ticker,
-                    "WIN" if win else "LOSS",
-                    return_pct,
-                    prompt_hash[:8],
-                )
-
-            # Update generated_agent_prompts stats
-            _update_prompt_stats(db)
-
-        except Exception as e:
-            logger.warning("[STRATEGY] Failed to evaluate P&L for %s: %s", ticker, e)
-
-        return resolved
-
-
-def _update_prompt_stats(db=None) -> None:
-    """Recalculate win_rate and total_trades for all generated prompts."""
-    if db is None:
-        with get_db() as new_db:
-            _update_prompt_stats(new_db)
-        return
+    """Resolve open strategy performance entries for a closed trade."""
+    resolved = []
 
     try:
-        db.execute(
-            """
-            UPDATE generated_agent_prompts
-            SET
-                total_trades = COALESCE(sub.total, 0),
-                win_rate = COALESCE(sub.win_rate, 0.0),
-                performance_score = COALESCE(sub.avg_return, 0.0)
-            FROM (
-                SELECT
-                    agent_prompt_hash,
-                    COUNT(*) as total,
-                    AVG(CASE WHEN win THEN 1.0 ELSE 0.0 END) as win_rate,
-                    AVG(return_pct) as avg_return
-                FROM strategy_performance
-                WHERE resolved_at IS NOT NULL
-                GROUP BY agent_prompt_hash
-            ) AS sub
-            WHERE generated_agent_prompts.prompt_hash = sub.agent_prompt_hash
-            """
+        rows = mongo_query.find_rows(
+            'strategy_performance',
+            {'ticker': ticker, 'signal': 'BUY', 'resolved_at': None, 'active': True},
+            ['id', 'entry_price', 'signal', 'agent_prompt_hash']
         )
+
+        if not rows:
+            return []
+
+        now = datetime.now(timezone.utc)
+
+        for row in rows:
+            perf_id = row[0]
+            entry_price = row[1]
+            prompt_hash = row[3]
+
+            if entry_price and entry_price > 0:
+                return_pct = ((exit_price - entry_price) / entry_price) * 100
+                win = return_pct > 0.5
+            else:
+                return_pct = 0.0
+                win = False
+
+            created_row = mongo_query.find_row('strategy_performance', {'id': perf_id}, ['created_at'])
+            hold_days = 0
+            if created_row and created_row[0]:
+                try:
+                    created_at = created_row[0]
+                    if isinstance(created_at, str):
+                        created_at = datetime.fromisoformat(created_at)
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
+                    hold_days = (now - created_at).days
+                except Exception:
+                    pass
+
+            mongo_store.update_docs(
+                'strategy_performance',
+                {'id': perf_id},
+                {'$set': {
+                    'exit_price': exit_price,
+                    'return_pct': round(return_pct, 2),
+                    'win': win,
+                    'hold_days': hold_days,
+                    'resolved_at': now,
+                }}
+            )
+
+            resolved.append({
+                "id": perf_id,
+                "ticker": ticker,
+                "prompt_hash": prompt_hash,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "return_pct": round(return_pct, 2),
+                "win": win,
+                "hold_days": hold_days,
+            })
+
+            logger.info(
+                "[STRATEGY] Resolved %s: %s (%.1f%%, prompt=%s)",
+                ticker,
+                "WIN" if win else "LOSS",
+                return_pct,
+                prompt_hash[:8] if prompt_hash else "",
+            )
+
+        _update_prompt_stats()
+
+    except Exception as e:
+        logger.warning("[STRATEGY] Failed to evaluate P&L for %s: %s", ticker, e)
+
+    return resolved
+
+
+def _update_prompt_stats() -> None:
+    """Recalculate win_rate and total_trades for all generated prompts."""
+    try:
+        perf_docs = mongo_store.find_docs("strategy_performance", {"resolved_at": {"$ne": None}})
+        by_hash: dict[str, list[dict]] = {}
+        for d in perf_docs:
+            ph = d.get("agent_prompt_hash")
+            if ph:
+                by_hash.setdefault(ph, []).append(d)
+
+        for ph, group in by_hash.items():
+            total = len(group)
+            wins = sum(1 for d in group if d.get("win"))
+            win_rate = (wins / total) if total else 0.0
+            returns = [d.get("return_pct", 0.0) for d in group if d.get("return_pct") is not None]
+            avg_return = (sum(returns) / len(returns)) if returns else 0.0
+
+            mongo_store.update_docs(
+                'generated_agent_prompts',
+                {'prompt_hash': ph},
+                {'$set': {
+                    'total_trades': total,
+                    'win_rate': round(win_rate, 3),
+                    'performance_score': round(avg_return, 2),
+                }}
+            )
     except Exception as e:
         logger.debug("[STRATEGY] Stats update failed (non-fatal): %s", e)
 
 
 def compute_rankings(limit: int = 50) -> list[dict]:
-    """Compute strategy performance rankings by prompt hash.
+    """Compute strategy performance rankings by prompt hash."""
+    try:
+        perf_docs = mongo_store.find_docs("strategy_performance", {"resolved_at": {"$ne": None}})
+        by_hash: dict[str, list[dict]] = {}
+        for d in perf_docs:
+            ph = d.get("agent_prompt_hash")
+            if ph:
+                by_hash.setdefault(ph, []).append(d)
 
-    Returns a leaderboard sorted by win rate (min trades required).
-    """
-    with get_db() as db:
-        try:
-            rows = db.execute(
-                """
-                SELECT
-                    agent_prompt_hash,
-                    COUNT(*) as total_trades,
-                    SUM(CASE WHEN win THEN 1 ELSE 0 END) as wins,
-                    AVG(CASE WHEN win THEN 1.0 ELSE 0.0 END) as win_rate,
-                    AVG(return_pct) as avg_return,
-                    AVG(hold_days) as avg_hold_days,
-                    MIN(created_at) as first_trade,
-                    MAX(resolved_at) as last_trade
-                FROM strategy_performance
-                WHERE resolved_at IS NOT NULL
-                GROUP BY agent_prompt_hash
-                HAVING COUNT(*) >= 3
-                ORDER BY win_rate DESC, avg_return DESC
-                LIMIT %s
-                """,
-                [limit],
-            ).fetchall()
+        rankings = []
+        for ph, group in by_hash.items():
+            if len(group) < 3:
+                continue
 
-            rankings = []
-            for row in rows:
-                # Look up the prompt name if it's a generated prompt
-                name_row = mongo_query.find_row('generated_agent_prompts', {'prompt_hash': row[0]}, ['name', 'lens_type'])
+            total = len(group)
+            wins = sum(1 for d in group if d.get("win"))
+            win_rate = (wins / total) if total else 0.0
+            returns = [d.get("return_pct", 0.0) for d in group if d.get("return_pct") is not None]
+            avg_return = (sum(returns) / len(returns)) if returns else 0.0
+            holds = [d.get("hold_days", 0) for d in group if d.get("hold_days") is not None]
+            avg_hold = (sum(holds) / len(holds)) if holds else 0.0
 
-                rankings.append(
-                    {
-                        "prompt_hash": row[0],
-                        "name": name_row[0] if name_row else "static_lens",
-                        "lens_type": name_row[1] if name_row else "unknown",
-                        "total_trades": row[1],
-                        "wins": row[2],
-                        "win_rate": round(row[3], 3),
-                        "avg_return_pct": round(row[4], 2),
-                        "avg_hold_days": round(row[5], 1) if row[5] else 0,
-                        "first_trade": str(row[6]),
-                        "last_trade": str(row[7]),
-                    }
-                )
+            first_created = min((d.get("created_at") for d in group if d.get("created_at")), default=None)
+            last_resolved = max((d.get("resolved_at") for d in group if d.get("resolved_at")), default=None)
 
-            return rankings
+            name_row = mongo_query.find_row('generated_agent_prompts', {'prompt_hash': ph}, ['name', 'lens_type'])
 
-        except Exception as e:
-            logger.warning("[STRATEGY] Rankings computation failed: %s", e)
-            return []
+            rankings.append({
+                "prompt_hash": ph,
+                "name": name_row[0] if name_row else "static_lens",
+                "lens_type": name_row[1] if name_row else "unknown",
+                "total_trades": total,
+                "wins": wins,
+                "win_rate": round(win_rate, 3),
+                "avg_return_pct": round(avg_return, 2),
+                "avg_hold_days": round(avg_hold, 1),
+                "first_trade": str(first_created),
+                "last_trade": str(last_resolved),
+            })
+
+        rankings.sort(key=lambda r: (r["win_rate"], r["avg_return_pct"]), reverse=True)
+        return rankings[:limit]
+
+    except Exception as e:
+        logger.warning("[STRATEGY] Rankings computation failed: %s", e)
+        return []
 
 
 def get_confidence_bonus(prompt_hash: str) -> int:
-    """Get a confidence bonus for historically winning prompts.
+    """Get a confidence bonus for historically winning prompts."""
+    try:
+        perf_docs = mongo_store.find_docs(
+            "strategy_performance",
+            {"agent_prompt_hash": prompt_hash, "resolved_at": {"$ne": None}}
+        )
+        total = len(perf_docs)
+        if total < settings.MIN_TRADES_BEFORE_BENCH:
+            return 0
 
-    Returns:
-        +5 if win_rate > WIN_RATE_BONUS_THRESHOLD and enough trades
-        0 otherwise
-    """
-    with get_db() as db:
-        try:
-            row = db.execute(
-                """
-                SELECT
-                    COUNT(*) as total,
-                    AVG(CASE WHEN win THEN 1.0 ELSE 0.0 END) as win_rate
-                FROM strategy_performance
-                WHERE agent_prompt_hash = %s AND resolved_at IS NOT NULL
-                """,
-                [prompt_hash],
-            ).fetchone()
+        wins = sum(1 for d in perf_docs if d.get("win"))
+        win_rate = (wins / total) if total else 0.0
+        if win_rate >= settings.WIN_RATE_BONUS_THRESHOLD:
+            logger.debug(
+                "[STRATEGY] Confidence bonus for prompt %s (%.0f%% win rate)",
+                prompt_hash[:8],
+                win_rate * 100,
+            )
+            return 5
 
-            if not row or row[0] < settings.MIN_TRADES_BEFORE_BENCH:
-                return 0
+    except Exception as e:
+        logger.warning("[STRATEGY] Failed to compute confidence bonus for prompt %s: %s", prompt_hash[:8], e)
 
-            win_rate = row[1] or 0.0
-            if win_rate >= settings.WIN_RATE_BONUS_THRESHOLD:
-                logger.debug(
-                    "[STRATEGY] Confidence bonus for prompt %s (%.0f%% win rate)",
-                    prompt_hash[:8],
-                    win_rate * 100,
-                )
-                return 5
-
-        except Exception as e:
-            logger.warning("[STRATEGY] Failed to compute confidence bonus for prompt %s: %s", prompt_hash[:8], e)
-
-        return 0
+    return 0
 
 
 def bench_underperformers() -> list[str]:
-    """Deactivate generated prompts with poor win rates.
+    """Deactivate generated prompts with poor win rates."""
+    benched = []
+    try:
+        active_prompts = mongo_store.find_docs("generated_agent_prompts", {"active": True})
+        now = datetime.now(timezone.utc)
 
-    Only benches prompts that have enough trades to be statistically
-    meaningful (MIN_TRADES_BEFORE_BENCH).
+        for p in active_prompts:
+            ph = p.get("prompt_hash")
+            if not ph:
+                continue
 
-    Returns list of benched prompt hashes.
-    """
-    with get_db() as db:
-        benched = []
+            perf_docs = mongo_store.find_docs(
+                "strategy_performance",
+                {"agent_prompt_hash": ph, "resolved_at": {"$ne": None}}
+            )
+            total = len(perf_docs)
+            if total >= settings.MIN_TRADES_BEFORE_BENCH:
+                wins = sum(1 for d in perf_docs if d.get("win"))
+                win_rate = (wins / total) if total else 0.0
 
-        try:
-            rows = db.execute(
-                """
-                SELECT
-                    gp.prompt_hash,
-                    gp.name,
-                    COUNT(sp.id) as total_trades,
-                    AVG(CASE WHEN sp.win THEN 1.0 ELSE 0.0 END) as win_rate
-                FROM generated_agent_prompts gp
-                JOIN strategy_performance sp ON gp.prompt_hash = sp.agent_prompt_hash
-                WHERE gp.active = TRUE AND sp.resolved_at IS NOT NULL
-                GROUP BY gp.prompt_hash, gp.name
-                HAVING COUNT(sp.id) >= %s
-                   AND AVG(CASE WHEN sp.win THEN 1.0 ELSE 0.0 END) < %s
-                """,
-                [settings.MIN_TRADES_BEFORE_BENCH, settings.WIN_RATE_BENCH_THRESHOLD],
-            ).fetchall()
+                if win_rate < settings.WIN_RATE_BENCH_THRESHOLD:
+                    mongo_store.update_docs('generated_agent_prompts', {'prompt_hash': ph}, {'$set': {'active': False, 'benched_at': now}})
+                    benched.append(ph)
 
-            now = datetime.now(timezone.utc)
-            for row in rows:
-                prompt_hash, name, total, win_rate = row[0], row[1], row[2], row[3]
+                    logger.info(
+                        "[STRATEGY] Benched '%s' (hash=%s): %.0f%% win rate over %d trades",
+                        p.get("name"),
+                        ph[:8],
+                        win_rate * 100,
+                        total,
+                    )
 
-                mongo_store.update_docs('generated_agent_prompts', {'prompt_hash': prompt_hash}, {'$set': {'active': False, 'benched_at': now}})
-                benched.append(prompt_hash)
+    except Exception as e:
+        logger.warning("[STRATEGY] Bench check failed: %s", e)
 
-                logger.info(
-                    "[STRATEGY] Benched '%s' (hash=%s): %.0f%% win rate over %d trades",
-                    name,
-                    prompt_hash[:8],
-                    (win_rate or 0) * 100,
-                    total,
-                )
-
-        except Exception as e:
-            logger.warning("[STRATEGY] Bench check failed: %s", e)
-
-        return benched
+    return benched
 
 
 def get_ticker_strategy_timeline(ticker: str, limit: int = 20) -> list[dict]:
-    """Get the full Data → Candidate → Performance timeline for a ticker.
+    """Get the full Data -> Candidate -> Performance timeline for a ticker."""
+    try:
+        sc_docs = mongo_store.find_docs(
+            "strategy_candidates",
+            {"ticker": ticker},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
 
-    Used by the API to show the complete lifecycle of a strategy.
-    """
-    with get_db() as db:
-        try:
-            rows = db.execute(
-                """
-                SELECT
-                    sc.lens_name,
-                    sc.signal as candidate_signal,
-                    sc.confidence_score,
-                    sc.created_at as analyzed_at,
-                    sp.signal as trade_signal,
-                    sp.entry_price,
-                    sp.exit_price,
-                    sp.return_pct,
-                    sp.win,
-                    sp.hold_days,
-                    sp.resolved_at
-                FROM strategy_candidates sc
-                LEFT JOIN strategy_performance sp
-                  ON sc.id = sp.strategy_candidate_id
-                WHERE sc.ticker = %s
-                ORDER BY sc.created_at DESC
-                LIMIT %s
-                """,
-                [ticker, limit],
-            ).fetchall()
+        timeline = []
+        for sc in sc_docs:
+            sc_id = sc.get("id")
+            sp = mongo_query.find_row(
+                'strategy_performance',
+                {'strategy_candidate_id': sc_id},
+                ['signal', 'entry_price', 'exit_price', 'return_pct', 'win', 'hold_days', 'resolved_at']
+            )
 
-            return [
-                {
-                    "lens": row[0],
-                    "candidate_signal": row[1],
-                    "confidence": row[2],
-                    "analyzed_at": str(row[3]),
-                    "trade_signal": row[4],
-                    "entry_price": row[5],
-                    "exit_price": row[6],
-                    "return_pct": row[7],
-                    "win": row[8],
-                    "hold_days": row[9],
-                    "resolved_at": str(row[10]) if row[10] else None,
-                }
-                for row in rows
-            ]
+            timeline.append({
+                "lens": sc.get("lens_name"),
+                "candidate_signal": sc.get("signal"),
+                "confidence": sc.get("confidence_score"),
+                "analyzed_at": str(sc.get("created_at")),
+                "trade_signal": sp[0] if sp else None,
+                "entry_price": sp[1] if sp else None,
+                "exit_price": sp[2] if sp else None,
+                "return_pct": sp[3] if sp else None,
+                "win": sp[4] if sp else None,
+                "hold_days": sp[5] if sp else None,
+                "resolved_at": str(sp[6]) if sp and sp[6] else None,
+            })
 
-        except Exception as e:
-            logger.warning("[STRATEGY] Timeline query failed for %s: %s", ticker, e)
-            return []
+        return timeline
+
+    except Exception as e:
+        logger.warning("[STRATEGY] Timeline query failed for %s: %s", ticker, e)
+        return []

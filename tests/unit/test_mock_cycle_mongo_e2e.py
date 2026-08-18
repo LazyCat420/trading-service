@@ -915,3 +915,33 @@ class TestMockTradingCycleMongoE2E:
 
         cancel_res = await cancel_trigger(dyn_trg["id"])
         assert cancel_res["status"] == "cancelled"
+
+        # 25. Strategy Performance & Prompt-Level Tracking in MongoDB
+        from app.trading.strategy_tracker import (
+            record_strategy,
+            evaluate_pnl,
+            compute_rankings,
+            get_confidence_bonus,
+            bench_underperformers,
+            get_ticker_strategy_timeline,
+        )
+
+        perf_id = record_strategy(
+            strategy_candidate_id="sc-001",
+            decision_outcome_id=None,
+            agent_prompt_hash="hash_alpha123",
+            ticker="AAPL",
+            signal="BUY",
+            entry_price=150.0,
+        )
+        assert perf_id is not None
+
+        resolved_strategies = evaluate_pnl("AAPL", exit_price=165.0)
+        assert len(resolved_strategies) >= 1
+        assert resolved_strategies[0]["win"] is True
+
+        rankings = compute_rankings()
+        assert isinstance(rankings, list)
+
+        timeline = get_ticker_strategy_timeline("AAPL")
+        assert isinstance(timeline, list)
