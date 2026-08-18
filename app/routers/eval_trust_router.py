@@ -1,15 +1,6 @@
 """Eval-Trust Router — read-only observability for the eval-trust machinery.
 
-Serves the dashboard everything it needs to interpret the challenger
-experiment honestly: the active spec (so the UI never hardcodes a label),
-HOLD calibration outcomes (kept out of directional win rates), grounding-judge
-health (the Goodhart tripwire), and decision-variance noise-floor runs.
-
-This router changes NOTHING about decision logic, experiment specs, scoring,
-or promotion — it reads what the pipeline already produces. The one action it
-exposes (POST /variance/run) replays the decision synthesizer on a frozen desk
-COPY, which is observational by construction (see app/autoresearch/variance.py),
-and is single-flight + run-capped so it cannot stampede the LLM backends.
+Pure MongoDB implementation.
 """
 
 from __future__ import annotations
@@ -23,32 +14,24 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.db.connection import get_db
 from app.autoresearch.outcome_tracker import RESOLVE_AFTER_DAYS, WIN_THRESHOLD_PCT
 from app.autoresearch import variance as variance_mod
-from app.db import mongo_query
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/eval-trust", tags=["EvalTrust"])
 
-# Promotion gate — mirrors the pre-registration rules in experiments/README.md
-# and the e-process thresholds in app/autoresearch/sequential.py. Served so
-# the client renders the real gate instead of hardcoding it.
 E_VALUE_PROMOTION_THRESHOLD = 20  # alpha 0.05, anytime-valid
 E_VALUE_STRONG_THRESHOLD = 100    # alpha 0.01
 
-# Goodhart tripwire: faithfulness red cards (hallucinations flagged by the
-# grounding judge) as a fraction of judged decisions in the window.
 GOODHART_WINDOW_DAYS = 7
 GOODHART_TRIGGER_RATE = 0.10   # ≥10% hallucination rate with enough volume
 GOODHART_MIN_EVALS = 10
 
 
 def _read_spec_raw() -> tuple[dict | None, str | None]:
-    """Active spec with env-over-file precedence, WITHOUT dropping disabled
-    specs (get_challenger_spec returns None for those; the UI must be able to
-    distinguish 'disabled' from 'absent')."""
+    """Active spec with env-over-file precedence."""
     from app.v3.challenger import _SPEC_FILE
 
     raw = os.getenv("CHALLENGER_SPEC", "").strip()
@@ -73,7 +56,7 @@ def _read_spec_raw() -> tuple[dict | None, str | None]:
 
 @router.get("/experiment")
 async def active_experiment():
-    """Active experiment metadata + the promotion gate the UI should render."""
+    """Active experiment metadata + promotion gate."""
     try:
         spec, source = _read_spec_raw()
         payload: dict = {
@@ -109,13 +92,10 @@ async def active_experiment():
                 "enabled": spec.get("enabled") is not False,
                 "custom_instructions": spec.get("custom_instructions"),
             }
-            from app.v3.challenger import _ensure_table
-            _ensure_table()
-            with get_db() as db:
-                row = mongo_query.agg_row('challenger_decisions', {'spec_label': spec.get("label")}, [('min', 'created_at'), ('max', 'created_at'), ('count', None)])
+            row = mongo_query.agg_row('challenger_decisions', {'spec_label': spec.get("label")}, [('min', 'created_at'), ('max', 'created_at'), ('count', None)])
             if row:
-                payload["first_pair_at"] = row[0].isoformat() if row[0] else None
-                payload["last_pair_at"] = row[1].isoformat() if row[1] else None
+                payload["first_pair_at"] = row[0].isoformat() if hasattr(row[0], "isoformat") else str(row[0]) if row[0] else None
+                payload["last_pair_at"] = row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]) if row[1] else None
                 payload["pairs_logged"] = row[2] or 0
         payload["generated_at"] = datetime.now(timezone.utc).isoformat()
         return payload
@@ -126,28 +106,16 @@ async def active_experiment():
 
 @router.get("/hold-outcomes")
 async def hold_outcomes():
-    """HOLD calibration cohort + directional splits, kept strictly separate.
-
-    The HOLD labels grade what the hold FORWENT over the horizon — calibration
-    evidence, never directional skill. On this long-only book only an upside
-    move is forgone, so the accuracy numerator is HOLD_CORRECT (stayed inside
-    the ±band) PLUS HOLD_AVOIDED_DECLINE (fell, so there was nothing to buy);
-    only HOLD_MISS (rose past the band) is a miss.
-
-    The directional win rate here excludes HOLDs and FLATs (basis
-    ex_flat_ex_hold), matching decision_audit's score v4.
-    """
+    """HOLD calibration cohort + directional splits."""
     try:
-        with get_db() as db:
-            resolved = mongo_query.group_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$ne': None}}, ['outcome'], [('count', None)], [('key', 'outcome'), ('agg', 0)])
-            pending = mongo_query.group_rows('decision_outcomes', {'resolved_at': None}, ['action'], [('count', None), ('min', 'created_at')], [('key', 'action'), ('agg', 0), ('agg', 1)])
-            recent = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}}, ['ticker', 'action', 'confidence', 'pnl_pct', 'outcome', 'cycle_id', 'created_at', 'resolved_at'], sort=[('resolved_at', -1)], limit=25)
+        resolved = mongo_query.group_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$ne': None}}, ['outcome'], [('count', None)], [('key', 'outcome'), ('agg', 0)])
+        pending = mongo_query.group_rows('decision_outcomes', {'resolved_at': None}, ['action'], [('count', None), ('min', 'created_at')], [('key', 'action'), ('agg', 0), ('agg', 1)])
+        recent = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}}, ['ticker', 'action', 'confidence', 'pnl_pct', 'outcome', 'cycle_id', 'created_at', 'resolved_at'], sort=[('resolved_at', -1)], limit=25)
 
         counts = {row[0]: row[1] for row in resolved}
         wins = counts.get("WIN", 0)
         losses = counts.get("LOSS", 0)
         holds_correct = counts.get("HOLD_CORRECT", 0)
-        # Long-only: a hold through a fall forwent nothing, so it is right.
         holds_avoided = counts.get("HOLD_AVOIDED_DECLINE", 0)
         holds_miss = counts.get("HOLD_MISS", 0)
         holds_right = holds_correct + holds_avoided
@@ -167,9 +135,10 @@ async def hold_outcomes():
         eta = None
         if hold_resolved == 0 and earliest_pending_hold is not None:
             base = earliest_pending_hold
-            if base.tzinfo is None:
+            if hasattr(base, "tzinfo") and base.tzinfo is None:
                 base = base.replace(tzinfo=timezone.utc)
-            eta = (base + timedelta(days=RESOLVE_AFTER_DAYS)).isoformat()
+            if hasattr(base, "isoformat"):
+                eta = (base + timedelta(days=RESOLVE_AFTER_DAYS)).isoformat()
 
         return {
             "resolved_counts": counts,
@@ -197,8 +166,8 @@ async def hold_outcomes():
                 {
                     "ticker": r[0], "action": r[1], "confidence": r[2],
                     "pnl_pct": r[3], "outcome": r[4], "cycle_id": r[5],
-                    "created_at": r[6].isoformat() if r[6] else None,
-                    "resolved_at": r[7].isoformat() if r[7] else None,
+                    "created_at": r[6].isoformat() if hasattr(r[6], "isoformat") else str(r[6]) if r[6] else None,
+                    "resolved_at": r[7].isoformat() if hasattr(r[7], "isoformat") else str(r[7]) if r[7] else None,
                 }
                 for r in recent
             ],
@@ -211,24 +180,7 @@ async def hold_outcomes():
 
 @router.get("/provider-failures")
 async def provider_failures(days: int = 2):
-    """Every failed LLM call for the trading project, by class, agent and day.
-
-    Reads prism's own request ledger (`prism.requests` in Mongo) — the one
-    store that records every call with `agent`, `operation`, `errorMessage`
-    and token counts. Until 2026-08-09 this data existed and nothing surfaced
-    it: 1,520 failures over 14 days (an 80-minute box outage, a permanently
-    rejected embedder class, 300s stalls) were discoverable only by ad-hoc
-    Mongo queries, while `execution_errors` filed the same events under
-    cycle_id='system-log'.
-
-    ⚠ `createdAt` in prism.requests is an ISO STRING, not a date — every
-    filter here compares strings. A date-typed `$gte` matches nothing and
-    returns an empty report that reads as "no failures", which is the exact
-    failure mode this endpoint exists to prevent.
-
-    Class names are the leading error text, truncated — grouping by full
-    message would split one cause across a thousand buckets.
-    """
+    """Every failed LLM call for the trading project."""
     days = max(1, min(int(days), 30))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
         "%Y-%m-%dT%H:%M:%S.000Z"
@@ -262,8 +214,6 @@ async def provider_failures(days: int = 2):
         counts = {str(t["_id"]): t["n"] for t in totals}
         ok = counts.get("True", 0)
         failed = counts.get("False", 0)
-        # status='pending' rows have success=None: started, never finished —
-        # a third state, reported as its own number, never pooled into failed.
         stranded = counts.get("None", 0)
 
         return {
@@ -287,17 +237,10 @@ async def provider_failures(days: int = 2):
 
 @router.get("/goodhart")
 async def goodhart_status():
-    """Grounding-judge health over the recent window — the Goodhart tripwire.
-
-    System-wide (champion pipeline) signal: if decisions start scoring well
-    while hallucinating their evidence, the improvement is the metric being
-    gamed, not skill. Faithfulness red cards are the judge's hallucination
-    flags; the tripwire is rate-based so a busy week is not penalized.
-    """
+    """Grounding-judge health over the recent window."""
     try:
         since = datetime.now(timezone.utc) - timedelta(days=GOODHART_WINDOW_DAYS)
-        with get_db() as db:
-            rows = mongo_query.find_rows('decision_evaluations', {'timestamp': {'$gte': since.replace(tzinfo=None)}}, ['red_cards', 'evidence_gathering'])
+        rows = mongo_query.find_rows('decision_evaluations', {'timestamp': {'$gte': since.replace(tzinfo=None)}}, ['red_cards', 'evidence_gathering'])
 
         evaluated = len(rows)
         faithfulness = relevancy = other = 0
@@ -305,7 +248,7 @@ async def goodhart_status():
         for rc_json, evidence_json in rows:
             if rc_json:
                 try:
-                    rcs = json.loads(rc_json)
+                    rcs = json.loads(rc_json) if isinstance(rc_json, str) else rc_json
                     if isinstance(rcs, list):
                         for rc in rcs:
                             if "Faithfulness Failure" in rc:
@@ -318,7 +261,7 @@ async def goodhart_status():
                     pass
             if evidence_json:
                 try:
-                    ev = json.loads(evidence_json)
+                    ev = json.loads(evidence_json) if isinstance(evidence_json, str) else evidence_json
                     gs = ev.get("grounding_score", ev.get("hf_rougeL"))
                     if isinstance(gs, (int, float)):
                         grounding_scores.append(float(gs))
@@ -363,10 +306,7 @@ async def goodhart_status():
 # Variance harness
 # ---------------------------------------------------------------------------
 
-# Single-flight guard: the harness replays the decision synthesizer (real LLM
-# calls); one run at a time is plenty and caps worst-case load.
 _ACTIVE: dict = {"running": False, "ticker": None, "runs": 0, "started_at": None}
-
 MAX_VARIANCE_RUNS = 8
 
 
@@ -380,13 +320,11 @@ class VarianceRunRequest(BaseModel):
 async def variance_runs():
     """Persisted noise-floor runs + coverage + the documented baseline."""
     try:
-        variance_mod._ensure_table()
-        with get_db() as db:
-            rows = mongo_query.find_rows('variance_runs', {}, ['id', 'cycle_id', 'ticker', 'runs', 'completed', 'actions', 'majority_action', 'action_flip_rate', 'confidence_mean', 'confidence_stdev', 'confidence_range', 'status', 'error', 'created_at', 'finished_at'], sort=[('created_at', -1)], limit=20)
-            desks = db.execute(
-                "SELECT DISTINCT ticker FROM shared_desk "
-                "WHERE updated_at >= NOW() - INTERVAL '14 days' ORDER BY ticker"
-            ).fetchall()
+        rows = mongo_query.find_rows('variance_runs', {}, ['id', 'cycle_id', 'ticker', 'runs', 'completed', 'actions', 'majority_action', 'action_flip_rate', 'confidence_mean', 'confidence_stdev', 'confidence_range', 'status', 'error', 'created_at', 'finished_at'], sort=[('created_at', -1)], limit=20)
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+        desk_docs = mongo_store.find_docs("shared_desk", {"updated_at": {"$gte": cutoff}})
+        desks = sorted(list({d.get("ticker") for d in desk_docs if d.get("ticker")}))
 
         def _j(val):
             try:
@@ -401,15 +339,15 @@ async def variance_runs():
                 "action_flip_rate": r[7], "confidence_mean": r[8],
                 "confidence_stdev": r[9], "confidence_range": _j(r[10]),
                 "status": r[11], "error": r[12],
-                "created_at": r[13].isoformat() if r[13] else None,
-                "finished_at": r[14].isoformat() if r[14] else None,
+                "created_at": r[13].isoformat() if hasattr(r[13], "isoformat") else str(r[13]) if r[13] else None,
+                "finished_at": r[14].isoformat() if hasattr(r[14], "isoformat") else str(r[14]) if r[14] else None,
             }
             for r in rows
         ]
         return {
             "runs": runs,
             "measured_desks": sorted({r["ticker"] for r in runs if r["status"] == "done"}),
-            "available_desks": [d[0] for d in desks],
+            "available_desks": desks,
             "in_progress": dict(_ACTIVE) if _ACTIVE["running"] else None,
             "baseline": variance_mod.DOCUMENTED_BASELINE,
             "confidence_noise_band_pts": variance_mod.NOISE_BAND_CONFIDENCE_PTS,
@@ -422,11 +360,7 @@ async def variance_runs():
 
 @router.post("/variance/run")
 async def start_variance_run(req: VarianceRunRequest):
-    """Kick off a noise-floor measurement on a persisted desk (background).
-
-    Guarded: single-flight, run count capped, desk must already exist —
-    this can never create desks, trades, or analysis rows.
-    """
+    """Kick off a noise-floor measurement on a persisted desk (background)."""
     if _ACTIVE["running"]:
         raise HTTPException(
             status_code=409,

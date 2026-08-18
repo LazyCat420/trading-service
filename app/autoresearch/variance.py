@@ -1,19 +1,6 @@
 """Decision-variance harness core — the noise floor of the decision desk.
 
-Agents run at temperature 0.3, so identical evidence can produce different
-decisions. Any A/B comparison of pipeline changes is meaningless until the
-run-to-run spread on IDENTICAL inputs is known. This module replays the
-decision synthesizer N times against a frozen SharedDesk snapshot (persisted
-per cycle in shared_desk) and reports flip rate and confidence spread — the
-minimum detectable effect for every future experiment.
-
-Read-only with respect to the live system: runs against a COPY of the desk,
-never persists artifacts, never writes analysis_results or triggers. Results
-are persisted to variance_runs so the dashboard can show the measured noise
-floor; that table is telemetry only.
-
-Callers: scripts/decision_variance.py (operator CLI, stdout report) and
-app/routers/eval_trust_router.py (guarded dashboard action).
+Pure MongoDB implementation for variance_runs collection.
 """
 
 from __future__ import annotations
@@ -27,15 +14,10 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 
-from app.db.connection import get_db
 from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
-# The 2026-07-19 pre-registered baseline (NVDA desk, run inside the container
-# before variance_runs persistence existed — raw JSON was reported in the
-# eval-trust handoff, not stored). Served as fallback context until live runs
-# populate the table; the ±3-point rule of thumb derives from its σ≈1.5.
 DOCUMENTED_BASELINE = {
     "ticker": "NVDA",
     "runs": 6,
@@ -48,50 +30,12 @@ DOCUMENTED_BASELINE = {
     "source": "handoff-eval-trust-wave (pre-persistence harness run)",
 }
 
-# Confidence movement inside this band is indistinguishable from sampling
-# noise under the measured baseline (σ≈1.5 → ~2σ).
 NOISE_BAND_CONFIDENCE_PTS = 3
-
-_TABLE_READY = False
-
-
-def _ensure_table() -> None:
-    global _TABLE_READY
-    if _TABLE_READY:
-        return
-    with get_db() as db:
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS variance_runs (
-                id TEXT PRIMARY KEY,
-                cycle_id TEXT,
-                ticker TEXT NOT NULL,
-                runs INTEGER,
-                completed INTEGER,
-                actions TEXT,
-                majority_action TEXT,
-                action_flip_rate DOUBLE PRECISION,
-                confidence_mean DOUBLE PRECISION,
-                confidence_stdev DOUBLE PRECISION,
-                confidence_range TEXT,
-                raw TEXT,
-                status TEXT DEFAULT 'done',
-                error TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                finished_at TIMESTAMPTZ
-            )
-            """
-        )
-    _TABLE_READY = True
 
 
 async def run_variance(cycle_id: str | None, ticker: str, runs: int,
                        progress=None) -> dict:
-    """Replay the decision synthesizer `runs` times on a frozen desk copy.
-
-    Raises LookupError when no persisted desk exists for the ticker/cycle.
-    `progress(i, total, action, confidence)` is called after each run.
-    """
+    """Replay the decision synthesizer `runs` times on a frozen desk copy."""
     from app.v3.desk_persistence import load_desk, load_latest_desk_for_ticker
     from app.v3.shared_desk import SharedDesk
     from app.v3.agent_runner import run_v3_agent
@@ -111,11 +55,8 @@ async def run_variance(cycle_id: str | None, ticker: str, runs: int,
     base = desk.to_dict()
     results = []
     for i in range(runs):
-        # Fresh copy per run — the runner appends the decision to the desk
-        # itself (run_v3_agent returns only a PhaseOutcome enum), and a shared
-        # desk would let run N see run N-1's decision.
         run_base = copy.deepcopy(base)
-        run_base["trade_decision"] = None  # the field the synthesizer writes
+        run_base["trade_decision"] = None
         replica = SharedDesk.from_dict(run_base)
         await run_v3_agent(
             replica,
@@ -143,8 +84,6 @@ async def run_variance(cycle_id: str | None, ticker: str, runs: int,
         "completed": len(results),
         "actions": dict(counts),
         "majority_action": majority_action,
-        # Fraction of runs that disagreed with the majority — the headline
-        # noise-floor number. 0.0 = deterministic at this temperature.
         "action_flip_rate": round(flip_rate, 3) if flip_rate is not None else None,
         "confidence_mean": round(statistics.mean(confs), 1) if confs else None,
         "confidence_stdev": round(statistics.stdev(confs), 2) if len(confs) > 1 else 0.0,
@@ -156,10 +95,25 @@ async def run_variance(cycle_id: str | None, ticker: str, runs: int,
 def persist_variance_run(report: dict, status: str = "done",
                          error: str | None = None) -> str:
     """Store a harness report in variance_runs; returns the row id."""
-    _ensure_table()
     run_id = f"vr-{uuid.uuid4().hex[:12]}"
-    with get_db() as db:
-        mongo_store.insert_docs('variance_runs', [{'id': run_id, 'cycle_id': report.get("cycle_id"), 'ticker': report.get("ticker"), 'runs': report.get("runs"), 'completed': report.get("completed"), 'actions': json.dumps(report.get("actions") or {}), 'majority_action': report.get("majority_action"), 'action_flip_rate': report.get("action_flip_rate"), 'confidence_mean': report.get("confidence_mean"), 'confidence_stdev': report.get("confidence_stdev"), 'confidence_range': json.dumps(report.get("confidence_range")), 'raw': json.dumps(report.get("raw") or []), 'status': status, 'error': error, 'finished_at': datetime.now(timezone.utc)}])
+    mongo_store.insert_docs('variance_runs', [{
+        'id': run_id,
+        'cycle_id': report.get("cycle_id"),
+        'ticker': report.get("ticker"),
+        'runs': report.get("runs"),
+        'completed': report.get("completed"),
+        'actions': json.dumps(report.get("actions") or {}),
+        'majority_action': report.get("majority_action"),
+        'action_flip_rate': report.get("action_flip_rate"),
+        'confidence_mean': report.get("confidence_mean"),
+        'confidence_stdev': report.get("confidence_stdev"),
+        'confidence_range': json.dumps(report.get("confidence_range")),
+        'raw': json.dumps(report.get("raw") or []),
+        'status': status,
+        'error': error,
+        'created_at': datetime.now(timezone.utc),
+        'finished_at': datetime.now(timezone.utc),
+    }])
     return run_id
 
 

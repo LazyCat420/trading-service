@@ -825,3 +825,20 @@ class TestMockTradingCycleMongoE2E:
         assert len(stats_res["experiments"]) == 1
         assert stats_res["experiments"][0]["spec_label"] == "exp-test-v3"
         assert stats_res["experiments"][0]["disagreements"] == 1
+
+        # 21. Eval-Trust Router in MongoDB
+        from app.routers.eval_trust_router import active_experiment, hold_outcomes, goodhart_status, variance_runs
+
+        exp_res = await active_experiment()
+        assert "promotion_gate" in exp_res
+
+        holds_res = await hold_outcomes()
+        assert "directional" in holds_res
+        assert "hold" in holds_res
+
+        goodhart_res = await goodhart_status()
+        assert "status" in goodhart_res
+
+        variance_res = await variance_runs()
+        assert "runs" in variance_res
+        assert "baseline" in variance_res
