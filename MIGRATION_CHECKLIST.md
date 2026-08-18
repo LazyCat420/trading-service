@@ -115,8 +115,40 @@ Executed before any further conversion so that only good data is ever migrated.
 - [x] **Differential verification** (`scripts/verify_translations.py`). Runs
       each translation against BOTH stores and compares rows. Caught three real
       bugs, incl. `IS NOT NULL` inverted (sqlglot's `Is(negate=True)`) and
-      `LIMIT 0` returning the whole collection. **94.2% of comparable
-      statements match** after fixes.
+      `LIMIT 0` returning the whole collection. ~~**94.2% of comparable
+      statements match** after fixes.~~
+- [x] ⚠ **THE CHECKER ITSELF WAS BROKEN, and the 94.2% above is stale**
+      (found and fixed 2026-08-17, `a3d8263`). Two faults, the second hidden
+      behind the first:
+      1. `mongo_query` was missing from the eval namespace, so **every**
+         translated SELECT raised `NameError` and scored ERROR. It was
+         comparing nothing while still printing a percentage.
+      2. With that fixed, the real one surfaced: `compare()` only understood
+         **dicts**, but `find_rows`/`find_row`/`agg_row`/`group_rows`/
+         `join_rows` return **tuples** in the SQL's column order — the shape
+         compatibility three lines above, and the reason the codemod could
+         rewrite 578 positional sites. `if c not in d` therefore tested a
+         tuple's VALUES for a column NAME, and reported **38 of 43** comparable
+         statements as "mongo doc missing field '&lt;first column&gt;'". Single-row
+         helpers were compared unwrapped, measuring the COLUMN count against
+         the Postgres ROW count.
+      **Re-measured with the oracle working: 166 MATCH / 21 DIFFER / 24
+      UNTESTED / 51 NOT_SEEDED / 6 ERROR — 88.8% of comparable.** Do not quote
+      94.2% again; this code could not have produced it.
+      The lesson is the checker's own: a tool whose whole job is to be believed
+      about parity has to be tested itself. `tests/unit/test_sql_to_mongo_joins.py`
+      now pins `compare()` in both directions.
+- [ ] **Triage the 21 DIFFER and 6 ERROR in a quiet window.** Not yet
+      attributed, and deliberately not called translation bugs: a seed sweep
+      was running during the measurement, and several DIFFERs are plain
+      row-count drift (`pg=0/mongo=1`, `pg=197/mongo=230`, `pg=13/mongo=23`) of
+      the same kind as the `news_articles` orphan gap (mongo 89,916 vs pg
+      89,896 — `migrate_all`'s per-table VERIFY prints OK when Mongo has
+      MORE rows). **5 of the 6 ERRORs are the harness, not the translator**:
+      `placeholder_columns()` truncates a column name (`reso`←`resolution`,
+      `tick`←`ticker`, `usag`←`usage_*`, `attempt_n`←`attempt_*`,
+      `promoted_to_mem`←`promoted_to_memory`), so the sample query hits a
+      column that does not exist.
 - [x] **Codemod applied** (`scripts/codemod_pg_to_mongo.py`): 459 sites across
       122 files, −3,711 lines of SQL. All compile. Smoke-tested 9/9 against
       live Mongo including a real converted call site.
@@ -125,6 +157,26 @@ Executed before any further conversion so that only good data is ever migrated.
       natural key first: ~65 tables in 45 seconds.
 - [ ] **~370 refused statements** — 39 GROUP BY, 34 JOIN, 25 aggregates, 19
       RETURNING, 14 DISTINCT, 11 LIKE. Python-side rewrites, one at a time.
+- [x] **JOIN: two-table INNER on one equality now translates** to
+      `mongo_query.join_rows()` (`a3d8263`). **The addressable set is 10, not
+      37** — the rest carry a CTE, a subquery, grouping or a third table, and
+      of the 10 several are LEFT joins. `LEFT`/`RIGHT`/`FULL` are refused by
+      name: an inner stitch DROPS the rows they keep, and
+      `LEFT JOIN … WHERE right.col IS NULL` is an **ANTI-join** whose inner
+      translation returns the exact COMPLEMENT of the intended rows — the same
+      shape as the `IS NOT NULL` inversion. Also refused: `ORDER BY` on the
+      joined table (join_rows sorts the LEFT collection, so the sort would be
+      silently dropped), unqualified columns, `SELECT *`, and a WHERE spanning
+      both tables. Parameter numbering is the subtle part — placeholders are
+      assigned when `next_param()` is CALLED, so the WHERE leaves are walked in
+      SQL order and bucketed by side afterwards; building one side then the
+      other re-binds every parameter that crosses the split, and that failure
+      parses perfectly. Note the dispatch had to precede
+      `_reject_hard_features`, exactly as the GROUP BY branch did.
+- [ ] **LEFT-join and ANTI-join support** would unlock most of the remaining
+      join sites (`pending_review`, `smart_money_tools`, both
+      `strategy_auditor` anti-joins). It needs a left-outer helper alongside
+      `join_rows`, not a flag on it — the two have different row counts.
 - [ ] **94 dynamic/unparsed sites** need a human read before classification.
 - [ ] **Vestigial `with get_db() as db:` blocks.** The codemod replaced the
       statements inside them but left the block, so a Postgres connection is
