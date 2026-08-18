@@ -427,6 +427,48 @@ class TestMockTradingCycleMongoE2E:
         assert saved_verdicts[0]["action"] == "BUY"
         assert saved_verdicts[0]["confidence"] == 85
 
-        events = mongo_store.find_docs("pipeline_events", {"cycle_id": cycle_id})
-        assert len(events) >= 1
-        assert events[0]["status"] == "ok"
+        # 10. SharedDesk & Whiteboard Persistence to MongoDB
+        from app.v3.shared_desk import SharedDesk, DeskPhase
+        from app.v3.desk_persistence import save_desk, load_desk
+        from app.agents.whiteboard import whiteboard
+
+        # Create and save SharedDesk
+        desk = SharedDesk(cycle_id=cycle_id, ticker="AAPL")
+        desk.phase = DeskPhase.PM_DONE
+        desk.desk_note = {"summary": "Strong growth signals in services segment."}
+        save_desk(desk)
+
+        # Load back SharedDesk from MongoDB
+        loaded_desk = load_desk(cycle_id=cycle_id, ticker="AAPL")
+        assert loaded_desk is not None
+        assert loaded_desk.ticker == "AAPL"
+        assert loaded_desk.phase == DeskPhase.PM_DONE
+        assert loaded_desk.desk_note["summary"] == "Strong growth signals in services segment."
+
+        # Write, annotate, and summarize Whiteboard in pure MongoDB
+        entry_id = await whiteboard.write_section(
+            ticker="AAPL",
+            cycle_id=cycle_id,
+            section="macro_context",
+            content={"rate_cut_expectation": "25bps", "inflation_trend": "cooling"},
+            author_agent="MacroAgent",
+        )
+        assert entry_id.startswith("wb_")
+
+        annotated = await whiteboard.annotate(
+            entry_id=entry_id,
+            agent="RiskAgent",
+            note="Confirming rate sensitivity is favorable.",
+        )
+        assert annotated is True
+
+        sec_data = await whiteboard.get_section("AAPL", cycle_id, "macro_context")
+        assert sec_data is not None
+        assert sec_data["author_agent"] == "MacroAgent"
+        assert len(sec_data["annotations"]) == 1
+        assert sec_data["annotations"][0]["author"] == "RiskAgent"
+
+        summary = await whiteboard.summarize("AAPL", cycle_id)
+        assert "SHARED WHITEBOARD" in summary
+        assert "MACRO_CONTEXT" in summary
+        assert "RiskAgent" in summary

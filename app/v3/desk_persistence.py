@@ -1,9 +1,7 @@
 """
-Desk Persistence — Postgres persistence for SharedDesk.
+Desk Persistence — Pure MongoDB persistence for SharedDesk.
 
-Uses the existing get_db() connection pool. Creates the shared_desk
-table on first use (idempotent). Stores desk state as JSONB for
-flexibility — the schema evolves with the artifacts.
+Stores desk state in the shared_desk collection.
 """
 
 from __future__ import annotations
@@ -11,86 +9,39 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from datetime import datetime, timezone
 
 from app.v3.shared_desk import SharedDesk
 from app.db import mongo_query, mongo_store
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-_TABLE_ENSURED = False
-
-
-def _ensure_table() -> None:
-    """Create the shared_desk table if it doesn't exist (idempotent)."""
-    global _TABLE_ENSURED
-    if _TABLE_ENSURED:
-        return
-
-    from app.db.connection import get_db
-
-    try:
-        with get_db() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS shared_desk (
-                    desk_id TEXT PRIMARY KEY,
-                    cycle_id TEXT NOT NULL,
-                    ticker TEXT NOT NULL,
-                    phase TEXT NOT NULL DEFAULT 'INIT',
-                    desk_data JSONB NOT NULL DEFAULT '{}',
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            """)
-            # Index for fast lookups by cycle_id + ticker
-            db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_shared_desk_cycle_ticker
-                ON shared_desk (cycle_id, ticker)
-            """)
-            # Index for listing all desks in a cycle
-            db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_shared_desk_cycle
-                ON shared_desk (cycle_id)
-            """)
-        _TABLE_ENSURED = True
-        logger.debug("[DeskPersistence] Table shared_desk ensured")
-    except Exception as e:
-        logger.warning("[DeskPersistence] Failed to ensure table: %s", e)
-
 
 def save_desk(desk: SharedDesk) -> None:
-    """Upsert a SharedDesk to Postgres.
-
-    Uses INSERT ... ON CONFLICT to handle both create and update.
-    The entire desk state is serialized as JSONB in desk_data.
-    """
-    _ensure_table()
-    from app.db.connection import get_db
-
-    # Flush this desk's agent COST rows before serializing (2026-07-30).
-    #
-    # `persist_telemetry` used to run once, at the very end of the pipeline, so
-    # every agent's spend sat in memory until then and a ticker that died first
-    # lost its whole cost record. Since 2026-07-12, ABORTED and DEBATE_DONE desks
-    # have 0% coverage against 99.5% for PM_DONE — up to ~14.5% of real token
-    # spend invisible. Flushing wherever the desk is saved keeps the desk row and
-    # its cost record in step.
-    #
-    # MUST happen BEFORE `to_dict()`: the flush stamps each written entry, and
-    # that stamp has to be inside `desk_data`, or a desk reloaded from Postgres
-    # would look unwritten and bill itself twice.
+    """Upsert a SharedDesk to MongoDB."""
     try:
         from app.v3.telemetry import flush_agent_telemetry
-
         flush_agent_telemetry(desk)
     except Exception as e:  # noqa: BLE001 — never let cost accounting lose a desk
         logger.debug("[DeskPersistence] telemetry flush skipped (non-fatal): %s", e)
 
     desk_data = json.dumps(desk.to_dict(), default=str)
+    now_utc = datetime.now(timezone.utc)
 
     try:
-        with get_db() as db:
-            mongo_store.update_docs('shared_desk', {'desk_id': desk.desk_id}, {'$set': {'phase': desk.phase.value, 'desk_data': desk_data, 'updated_at': datetime.now(timezone.utc)}, '$setOnInsert': {'cycle_id': desk.cycle_id, 'ticker': desk.ticker}}, upsert=True)
+        mongo_store.upsert_doc(
+            'shared_desk',
+            {'cycle_id': desk.cycle_id, 'ticker': desk.ticker.upper()},
+            {
+                'desk_id': desk.desk_id,
+                'cycle_id': desk.cycle_id,
+                'ticker': desk.ticker.upper(),
+                'phase': desk.phase.value,
+                'desk_data': desk_data,
+                'updated_at': now_utc,
+                'created_at': now_utc,
+            },
+        )
         logger.debug(
             "[DeskPersistence] Saved desk %s/%s (phase=%s)",
             desk.cycle_id[:12] if desk.cycle_id else "?",
@@ -103,26 +54,18 @@ def save_desk(desk: SharedDesk) -> None:
 
 
 def load_desk(cycle_id: str, ticker: str) -> SharedDesk | None:
-    """Load a SharedDesk from Postgres by cycle_id + ticker.
-
-    Returns None if no desk exists for this combination.
-    """
-    _ensure_table()
-    from app.db.connection import get_db
-
+    """Load a SharedDesk from MongoDB by cycle_id + ticker."""
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('shared_desk', {'cycle_id': cycle_id, 'ticker': ticker.upper()}, ['desk_data'])
-
-        if not row:
+        row = mongo_query.find_row(
+            'shared_desk',
+            {'cycle_id': cycle_id, 'ticker': ticker.upper()},
+            ['desk_data'],
+        )
+        if not row or not row[0]:
             return None
 
         raw = row[0]
-        if isinstance(raw, str):
-            data = json.loads(raw)
-        else:
-            data = raw  # Already parsed by psycopg2/JSONB
-
+        data = json.loads(raw) if isinstance(raw, str) else raw
         return SharedDesk.from_dict(data)
     except Exception as e:
         logger.error(
@@ -134,19 +77,18 @@ def load_desk(cycle_id: str, ticker: str) -> SharedDesk | None:
 
 def list_desks(cycle_id: str) -> list[SharedDesk]:
     """List all SharedDesks for a given cycle."""
-    _ensure_table()
-    from app.db.connection import get_db
-
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('shared_desk', {'cycle_id': cycle_id}, ['desk_data'], sort=[('created_at', 1)])
-
+        rows = mongo_query.find_rows(
+            'shared_desk',
+            {'cycle_id': cycle_id},
+            ['desk_data'],
+            sort=[('created_at', 1)],
+        )
         desks = []
         for (raw,) in rows:
-            if isinstance(raw, str):
-                data = json.loads(raw)
-            else:
-                data = raw
+            if not raw:
+                continue
+            data = json.loads(raw) if isinstance(raw, str) else raw
             desks.append(SharedDesk.from_dict(data))
         return desks
     except Exception as e:
@@ -159,17 +101,9 @@ def list_desks(cycle_id: str) -> list[SharedDesk]:
 
 def delete_desk(desk_id: str) -> bool:
     """Delete a SharedDesk by desk_id. Returns True if deleted."""
-    _ensure_table()
-    from app.db.connection import get_db
-
     try:
-        with get_db() as db:
-            result = db.execute(
-                "DELETE FROM shared_desk WHERE desk_id = %s",
-                [desk_id],
-            )
-            deleted = result.rowcount > 0 if hasattr(result, "rowcount") else True
-        return deleted
+        deleted_count = mongo_store.delete_docs('shared_desk', {'desk_id': desk_id})
+        return bool(deleted_count)
     except Exception as e:
         logger.error("[DeskPersistence] Failed to delete desk %s: %s", desk_id, e)
         return False
@@ -177,22 +111,18 @@ def delete_desk(desk_id: str) -> bool:
 
 def load_latest_desk_for_ticker(ticker: str) -> SharedDesk | None:
     """Load the most recent SharedDesk for a given ticker, regardless of cycle_id."""
-    _ensure_table()
-    from app.db.connection import get_db
-
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('shared_desk', {'ticker': ticker.upper()}, ['desk_data'], sort=[('created_at', -1)])
-
-        if not row:
+        row = mongo_query.find_row(
+            'shared_desk',
+            {'ticker': ticker.upper()},
+            ['desk_data'],
+            sort=[('created_at', -1)],
+        )
+        if not row or not row[0]:
             return None
 
         raw = row[0]
-        if isinstance(raw, str):
-            data = json.loads(raw)
-        else:
-            data = raw
-
+        data = json.loads(raw) if isinstance(raw, str) else raw
         return SharedDesk.from_dict(data)
     except Exception as e:
         logger.error(
