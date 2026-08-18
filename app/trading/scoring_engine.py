@@ -12,7 +12,6 @@ import logging
 import operator
 import pandas as pd
 from typing import Dict, List, Any
-from app.db.connection import get_db
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
@@ -83,68 +82,67 @@ def compute_normalized_features(ticker: str) -> Dict[str, float]:
     }
     
     try:
-        with get_db() as db:
-            # 1. Fundamentals (Expected Value, Kelly)
-            fund_row = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['revenue_growth', 'profit_margin', 'market_cap'], sort=[('snapshot_date', -1)])
+        # 1. Fundamentals (Expected Value, Kelly)
+        fund_row = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['revenue_growth', 'profit_margin', 'market_cap'], sort=[('snapshot_date', -1)])
+        
+        # Simple EV calculation mock/formula based on growth and margins
+        if fund_row:
+            rev_growth = fund_row[0] or 0.0
+            margin = fund_row[1] or 0.0
+            raw_ev = rev_growth * 0.7 + margin * 0.3
+            features["raw_ev"] = raw_ev
+            features["ev_norm"] = 1.0 / (1.0 + math.exp(-raw_ev * 5.0)) # sigmoid
             
-            # Simple EV calculation mock/formula based on growth and margins
-            if fund_row:
-                rev_growth = fund_row[0] or 0.0
-                margin = fund_row[1] or 0.0
-                raw_ev = rev_growth * 0.7 + margin * 0.3
-                features["raw_ev"] = raw_ev
-                features["ev_norm"] = 1.0 / (1.0 + math.exp(-raw_ev * 5.0)) # sigmoid
-                
-                # Simple Kelly estimate
-                raw_kelly = max(0.0, min(0.25, rev_growth * 0.2))
-                features["raw_kelly"] = raw_kelly
-                features["kelly_norm"] = raw_kelly / 0.25
+            # Simple Kelly estimate
+            raw_kelly = max(0.0, min(0.25, rev_growth * 0.2))
+            features["raw_kelly"] = raw_kelly
+            features["kelly_norm"] = raw_kelly / 0.25
 
-            # 2. Technicals (R/R, Z-Score, Vol, Drawdown, RSI)
-            tech_row = mongo_query.find_row('technicals', {'ticker': ticker}, ['rsi_14', 'atr_14', 'support', 'resistance'], sort=[('date', -1)])
+        # 2. Technicals (R/R, Z-Score, Vol, Drawdown, RSI)
+        tech_row = mongo_query.find_row('technicals', {'ticker': ticker}, ['rsi_14', 'atr_14', 'support', 'resistance'], sort=[('date', -1)])
+        
+        price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
+        
+        if tech_row and price_row:
+            rsi, atr, support, resistance = tech_row
+            close = price_row[0]
             
-            price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
+            features["raw_rsi"] = rsi or 50.0
+            features["rsi_norm"] = (rsi or 50.0) / 100.0
             
-            if tech_row and price_row:
-                rsi, atr, support, resistance = tech_row
-                close = price_row[0]
-                
-                features["raw_rsi"] = rsi or 50.0
-                features["rsi_norm"] = (rsi or 50.0) / 100.0
-                
-                # R/R
-                sup_price = support or (close * 0.95)
-                res_price = resistance or (close * 1.05)
-                risk = close - sup_price
-                reward = res_price - close
-                raw_rr = reward / risk if risk > 0 else 1.0
-                features["raw_rr"] = raw_rr
-                features["rr_norm"] = min(1.0, max(0.0, raw_rr / 5.0))
-                
-                # Volatility (ATR normalized by price)
-                raw_vol = (atr / close) if atr and close else 0.02
-                features["raw_vol"] = raw_vol
-                features["vol_norm"] = min(1.0, max(0.0, (raw_vol - 0.01) / 0.10))
+            # R/R
+            sup_price = support or (close * 0.95)
+            res_price = resistance or (close * 1.05)
+            risk = close - sup_price
+            reward = res_price - close
+            raw_rr = reward / risk if risk > 0 else 1.0
+            features["raw_rr"] = raw_rr
+            features["rr_norm"] = min(1.0, max(0.0, raw_rr / 5.0))
+            
+            # Volatility (ATR normalized by price)
+            raw_vol = (atr / close) if atr and close else 0.02
+            features["raw_vol"] = raw_vol
+            features["vol_norm"] = min(1.0, max(0.0, (raw_vol - 0.01) / 0.10))
 
-            # 3. Z-Score (rolling)
-            price_rows = mongo_query.find_rows('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)], limit=60)
-            if len(price_rows) >= 20:
-                closes = [r[0] for r in price_rows]
-                mean_price = sum(closes) / len(closes)
-                std_price = math.sqrt(sum((c - mean_price)**2 for c in closes) / len(closes))
-                if std_price > 0:
-                    raw_z = (closes[0] - mean_price) / std_price
-                    features["raw_z_score"] = raw_z
-                    features["z_score_norm"] = min(1.0, max(0.0, (raw_z + 3.0) / 6.0))
-                    
-            # 4. Drawdown
-            if len(price_rows) >= 5:
-                closes = [r[0] for r in reversed(price_rows)]
-                peak = max(closes)
-                raw_dd = abs(closes[-1] - peak) / peak if peak > 0 else 0.0
-                features["raw_dd"] = raw_dd
-                features["dd_norm"] = min(1.0, max(0.0, raw_dd / 0.50))
+        # 3. Z-Score (rolling)
+        price_rows = mongo_query.find_rows('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)], limit=60)
+        if len(price_rows) >= 20:
+            closes = [r[0] for r in price_rows]
+            mean_price = sum(closes) / len(closes)
+            std_price = math.sqrt(sum((c - mean_price)**2 for c in closes) / len(closes))
+            if std_price > 0:
+                raw_z = (closes[0] - mean_price) / std_price
+                features["raw_z_score"] = raw_z
+                features["z_score_norm"] = min(1.0, max(0.0, (raw_z + 3.0) / 6.0))
                 
+        # 4. Drawdown
+        if len(price_rows) >= 5:
+            closes = [r[0] for r in reversed(price_rows)]
+            peak = max(closes)
+            raw_dd = abs(closes[-1] - peak) / peak if peak > 0 else 0.0
+            features["raw_dd"] = raw_dd
+            features["dd_norm"] = min(1.0, max(0.0, raw_dd / 0.50))
+            
     except Exception as e:
         logger.warning(f"[SCORING] Failed to compute normalized features for {ticker}: {e}")
         

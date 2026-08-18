@@ -220,14 +220,23 @@ class InMemoryMongoCollection:
                             grouped_res[field] = current[0].get(op_field) if current else None
                         elif op == "$sum" and expr[op] == 1:
                             grouped_res[field] = len(current)
+                        elif op in ("$min", "$max"):
+                            vals = [d[op_field] for d in current if d.get(op_field) is not None]
+                            if vals:
+                                grouped_res[field] = max(vals) if op == "$max" else min(vals)
+                            else:
+                                grouped_res[field] = None
+                        elif op == "$addToSet":
+                            vals = []
+                            for d in current:
+                                v = d.get(op_field)
+                                if v is not None and v not in vals:
+                                    vals.append(v)
+                            grouped_res[field] = vals
                         else:
                             vals = [float(str(d[op_field])) for d in current if d.get(op_field) is not None]
                             if op == "$avg":
                                 grouped_res[field] = sum(vals) / len(vals) if vals else None
-                            elif op == "$max":
-                                grouped_res[field] = max(vals) if vals else None
-                            elif op == "$min":
-                                grouped_res[field] = min(vals) if vals else None
                             elif op == "$sum":
                                 grouped_res[field] = sum(vals)
                 current = [grouped_res]
@@ -320,6 +329,7 @@ class TestMockTradingCycleMongoE2E:
         mongo_store.insert_docs("technicals", [{
             "ticker": "AAPL",
             "date": now,
+            "rsi_14": 45.0,
             "atr_14": 3.5,
         }])
 
@@ -861,3 +871,11 @@ class TestMockTradingCycleMongoE2E:
         detail_res = get_ticker_detail(cycle_id=cycle_id, ticker="AAPL")
         assert detail_res["ticker"] == "AAPL"
         assert "trade_result" in detail_res
+
+        # 23. Scoring Engine in MongoDB
+        from app.trading.scoring_engine import compute_normalized_features
+
+        features = compute_normalized_features("AAPL")
+        assert "raw_rsi" in features
+        assert "ev_norm" in features
+        assert features["raw_rsi"] == 45.0
