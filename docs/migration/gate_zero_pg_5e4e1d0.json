@@ -1,0 +1,3336 @@
+{
+ "root": "/home/lazycat/github/projects/sun/.worktrees/ts-quality-purge",
+ "total": 538,
+ "counts": {
+  "driver_import": 4,
+  "connection_import": 109,
+  "get_db_call": 240,
+  "execute_call": 185
+ },
+ "files": [
+  "app/analytics/returns_engine.py",
+  "app/autoresearch/auditors/data_audit.py",
+  "app/autoresearch/auditors/decision_audit.py",
+  "app/autoresearch/auditors/llm_audit.py",
+  "app/autoresearch/auditors/performance_audit.py",
+  "app/autoresearch/auditors/schedule_audit.py",
+  "app/autoresearch/auditors/triage_audit.py",
+  "app/autoresearch/component_health.py",
+  "app/autoresearch/confidence_calibration.py",
+  "app/autoresearch/core.py",
+  "app/autoresearch/directives.py",
+  "app/autoresearch/eval_engine.py",
+  "app/autoresearch/eval_worker.py",
+  "app/autoresearch/janitor.py",
+  "app/autoresearch/reflection.py",
+  "app/autoresearch/research_loop.py",
+  "app/autoresearch/scorecard.py",
+  "app/autoresearch/skill_loader.py",
+  "app/autoresearch/skill_optimizer.py",
+  "app/autoresearch/trace_writer.py",
+  "app/autoresearch/utils.py",
+  "app/cognition/debate/equation_lab.py",
+  "app/cognition/debate/equation_library.py",
+  "app/cognition/debate/tournament.py",
+  "app/cognition/evolution/coral/attempts.py",
+  "app/cognition/evolution/evaluator.py",
+  "app/cognition/ontology/graph_sync.py",
+  "app/cognition/ontology/ontology_builder.py",
+  "app/collectors/congress_collector.py",
+  "app/collectors/etf_collector.py",
+  "app/collectors/finnhub_collector.py",
+  "app/collectors/fmp_collector.py",
+  "app/collectors/fred_collector.py",
+  "app/collectors/market_regime_collector.py",
+  "app/collectors/news_api_rotator.py",
+  "app/collectors/news_collector.py",
+  "app/collectors/openinsider_collector.py",
+  "app/collectors/pcr_collector.py",
+  "app/collectors/polygon_collector.py",
+  "app/collectors/sec_collector.py",
+  "app/collectors/stocktwits_collector.py",
+  "app/collectors/tradingeconomics_collector.py",
+  "app/collectors/twitter_collector.py",
+  "app/data/market_data_store.py",
+  "app/data/market_regime_engine.py",
+  "app/data/sector_aggregator.py",
+  "app/data/sector_correlation_engine.py",
+  "app/data/sp500_price_collector.py",
+  "app/data/sp500_universe.py",
+  "app/db/connection.py",
+  "app/db/table_spec.py",
+  "app/db/vector_store.py",
+  "app/monitoring/audit_middleware.py",
+  "app/monitoring/audit_worker.py",
+  "app/monitoring/box_scorecard.py",
+  "app/monitoring/dashboard.py",
+  "app/monitoring/pipeline_profiler.py",
+  "app/services/alert_service.py",
+  "app/services/boot_service.py",
+  "app/services/cycle_scheduler.py",
+  "app/services/debate_service.py",
+  "app/services/flash_briefing.py",
+  "app/services/logging/pending_review.py",
+  "app/services/logging/service_health_probe.py",
+  "app/services/logging/tool_logging.py",
+  "app/services/logging/unified_logger.py",
+  "app/services/memory/episodic_memory.py",
+  "app/services/memory/procedural_memory.py",
+  "app/services/memory/prospective_memory.py",
+  "app/services/memory/repository.py",
+  "app/services/memory/semantic_memory.py",
+  "app/services/memory/store.py",
+  "app/services/news_backfill.py",
+  "app/services/news_extraction.py",
+  "app/services/pipeline_service.py",
+  "app/services/question_ledger.py",
+  "app/services/research_governor.py",
+  "app/services/retrieval_context.py",
+  "app/services/startup_tasks.py",
+  "app/services/watch_desk.py",
+  "app/services/web_search.py",
+  "cycle_main.py"
+ ],
+ "file_count": 82,
+ "sqlite_excluded": [
+  "app/scraper/core/failure_cache.py",
+  "app/trading/sandbox_executor.py"
+ ],
+ "schema_files_present": [
+  "app/db/init_db.py",
+  "app/db/migrations.py",
+  "app/db/schema_pg.sql",
+  "app/utils/db_migrations.py"
+ ],
+ "errors": [],
+ "findings": [
+  {
+   "kind": "connection_import",
+   "file": "app/analytics/returns_engine.py",
+   "line": 33,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 51,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 52,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 73,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 94,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 97,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 100,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 297,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 298,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 322,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 324,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/analytics/returns_engine.py",
+   "line": 379,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 49,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 64,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 121,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 134,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 181,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 186,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 214,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/data_audit.py",
+   "line": 251,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 123,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 150,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 162,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 167,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 398,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 417,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/decision_audit.py",
+   "line": 456,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/auditors/llm_audit.py",
+   "line": 3,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/llm_audit.py",
+   "line": 36,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/llm_audit.py",
+   "line": 44,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/llm_audit.py",
+   "line": 70,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/auditors/performance_audit.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/performance_audit.py",
+   "line": 53,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/auditors/schedule_audit.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/schedule_audit.py",
+   "line": 21,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/auditors/triage_audit.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/triage_audit.py",
+   "line": 43,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/auditors/triage_audit.py",
+   "line": 73,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/auditors/triage_audit.py",
+   "line": 74,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/component_health.py",
+   "line": 111,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/component_health.py",
+   "line": 113,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/component_health.py",
+   "line": 114,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/component_health.py",
+   "line": 306,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/component_health.py",
+   "line": 309,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/component_health.py",
+   "line": 383,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/component_health.py",
+   "line": 386,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/component_health.py",
+   "line": 407,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/component_health.py",
+   "line": 410,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/confidence_calibration.py",
+   "line": 42,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/confidence_calibration.py",
+   "line": 92,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/confidence_calibration.py",
+   "line": 93,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/core.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 40,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/core.py",
+   "line": 41,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 50,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 79,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/core.py",
+   "line": 80,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 107,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 143,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 270,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 353,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 360,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/core.py",
+   "line": 387,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/core.py",
+   "line": 388,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/directives.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 23,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 24,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 54,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 65,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 78,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 88,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 98,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 107,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/directives.py",
+   "line": 108,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/eval_engine.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_engine.py",
+   "line": 254,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_engine.py",
+   "line": 265,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_engine.py",
+   "line": 323,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/eval_engine.py",
+   "line": 326,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_engine.py",
+   "line": 382,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/eval_engine.py",
+   "line": 385,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 4,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 40,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 57,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 67,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 77,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 87,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 101,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/eval_worker.py",
+   "line": 112,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/janitor.py",
+   "line": 14,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/janitor.py",
+   "line": 53,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/janitor.py",
+   "line": 55,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/janitor.py",
+   "line": 81,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/janitor.py",
+   "line": 82,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/janitor.py",
+   "line": 99,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/janitor.py",
+   "line": 100,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/janitor.py",
+   "line": 135,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/reflection.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/research_loop.py",
+   "line": 38,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/research_loop.py",
+   "line": 54,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/research_loop.py",
+   "line": 100,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/research_loop.py",
+   "line": 101,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/scorecard.py",
+   "line": 50,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/scorecard.py",
+   "line": 175,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/scorecard.py",
+   "line": 176,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/scorecard.py",
+   "line": 191,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/scorecard.py",
+   "line": 211,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/scorecard.py",
+   "line": 212,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/skill_loader.py",
+   "line": 64,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/skill_loader.py",
+   "line": 66,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 37,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 232,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 233,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 275,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 276,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 293,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 701,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 702,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 726,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 727,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 732,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 754,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 755,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 766,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 810,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/autoresearch/skill_optimizer.py",
+   "line": 811,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/trace_writer.py",
+   "line": 41,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/autoresearch/trace_writer.py",
+   "line": 93,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/autoresearch/utils.py",
+   "line": 8,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/cognition/debate/equation_lab.py",
+   "line": 33,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/debate/equation_lab.py",
+   "line": 78,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/debate/equation_lab.py",
+   "line": 79,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 22,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 165,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 185,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 187,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 234,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 250,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 251,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/debate/equation_library.py",
+   "line": 269,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/cognition/debate/tournament.py",
+   "line": 1179,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/debate/tournament.py",
+   "line": 1195,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/cognition/evolution/coral/attempts.py",
+   "line": 25,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/evolution/coral/attempts.py",
+   "line": 49,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/evolution/coral/attempts.py",
+   "line": 50,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/evolution/coral/attempts.py",
+   "line": 77,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/evolution/coral/attempts.py",
+   "line": 83,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/cognition/evolution/evaluator.py",
+   "line": 8,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/evolution/evaluator.py",
+   "line": 87,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/evolution/evaluator.py",
+   "line": 89,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/evolution/evaluator.py",
+   "line": 159,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/cognition/ontology/graph_sync.py",
+   "line": 17,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/graph_sync.py",
+   "line": 104,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/graph_sync.py",
+   "line": 136,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 31,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 118,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 152,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 154,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 157,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 223,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 325,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 335,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 340,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 432,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 480,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 483,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 503,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/cognition/ontology/ontology_builder.py",
+   "line": 521,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/congress_collector.py",
+   "line": 33,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/congress_collector.py",
+   "line": 112,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/etf_collector.py",
+   "line": 18,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/etf_collector.py",
+   "line": 36,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/etf_collector.py",
+   "line": 52,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/etf_collector.py",
+   "line": 55,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/etf_collector.py",
+   "line": 66,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/etf_collector.py",
+   "line": 107,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/finnhub_collector.py",
+   "line": 19,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/finnhub_collector.py",
+   "line": 58,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/finnhub_collector.py",
+   "line": 59,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/fmp_collector.py",
+   "line": 18,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fmp_collector.py",
+   "line": 39,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fmp_collector.py",
+   "line": 164,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fmp_collector.py",
+   "line": 214,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fmp_collector.py",
+   "line": 287,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fmp_collector.py",
+   "line": 331,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/fred_collector.py",
+   "line": 22,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fred_collector.py",
+   "line": 88,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/fred_collector.py",
+   "line": 89,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fred_collector.py",
+   "line": 174,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/fred_collector.py",
+   "line": 175,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/fred_collector.py",
+   "line": 196,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/market_regime_collector.py",
+   "line": 11,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/market_regime_collector.py",
+   "line": 115,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/market_regime_collector.py",
+   "line": 204,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/market_regime_collector.py",
+   "line": 223,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/market_regime_collector.py",
+   "line": 263,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/news_api_rotator.py",
+   "line": 35,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/news_api_rotator.py",
+   "line": 190,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/news_api_rotator.py",
+   "line": 261,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/news_api_rotator.py",
+   "line": 292,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/news_collector.py",
+   "line": 16,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/news_collector.py",
+   "line": 531,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/news_collector.py",
+   "line": 820,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/news_collector.py",
+   "line": 934,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/news_collector.py",
+   "line": 970,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/news_collector.py",
+   "line": 1073,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/openinsider_collector.py",
+   "line": 13,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/openinsider_collector.py",
+   "line": 142,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/openinsider_collector.py",
+   "line": 143,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/pcr_collector.py",
+   "line": 6,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/pcr_collector.py",
+   "line": 52,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/polygon_collector.py",
+   "line": 12,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/polygon_collector.py",
+   "line": 71,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/sec_collector.py",
+   "line": 23,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/sec_collector.py",
+   "line": 283,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/sec_collector.py",
+   "line": 288,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/sec_collector.py",
+   "line": 370,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/sec_collector.py",
+   "line": 386,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/stocktwits_collector.py",
+   "line": 10,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/stocktwits_collector.py",
+   "line": 63,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/stocktwits_collector.py",
+   "line": 64,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/tradingeconomics_collector.py",
+   "line": 14,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/tradingeconomics_collector.py",
+   "line": 86,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/tradingeconomics_collector.py",
+   "line": 87,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/tradingeconomics_collector.py",
+   "line": 184,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/tradingeconomics_collector.py",
+   "line": 185,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/collectors/twitter_collector.py",
+   "line": 12,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/twitter_collector.py",
+   "line": 95,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/collectors/twitter_collector.py",
+   "line": 186,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/collectors/twitter_collector.py",
+   "line": 187,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/data/market_data_store.py",
+   "line": 4,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_data_store.py",
+   "line": 13,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_data_store.py",
+   "line": 30,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_data_store.py",
+   "line": 31,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/data/market_regime_engine.py",
+   "line": 5,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 11,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 12,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 22,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 23,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 33,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 34,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 44,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 47,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 58,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 66,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 137,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 205,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/market_regime_engine.py",
+   "line": 219,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/data/sector_aggregator.py",
+   "line": 2,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 9,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 15,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 27,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 52,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 61,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 70,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 189,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 202,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 218,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 257,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_aggregator.py",
+   "line": 258,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 3,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 9,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 10,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 20,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 22,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 30,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 32,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 43,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 50,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 111,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 120,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 130,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sector_correlation_engine.py",
+   "line": 205,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/data/sp500_price_collector.py",
+   "line": 5,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sp500_price_collector.py",
+   "line": 25,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sp500_price_collector.py",
+   "line": 41,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sp500_price_collector.py",
+   "line": 185,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/data/sp500_universe.py",
+   "line": 10,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/data/sp500_universe.py",
+   "line": 36,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/data/sp500_universe.py",
+   "line": 92,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 34,
+   "detail": "import psycopg"
+  },
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 35,
+   "detail": "import psycopg.rows"
+  },
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 36,
+   "detail": "from psycopg_pool import ConnectionPool"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/connection.py",
+   "line": 140,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/connection.py",
+   "line": 168,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 269,
+   "detail": "from pgvector.psycopg import register_vector"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/table_spec.py",
+   "line": 172,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/db/vector_store.py",
+   "line": 27,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 151,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/vector_store.py",
+   "line": 156,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 213,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/vector_store.py",
+   "line": 215,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 277,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/vector_store.py",
+   "line": 278,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 300,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/vector_store.py",
+   "line": 301,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 336,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/vector_store.py",
+   "line": 367,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 474,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/vector_store.py",
+   "line": 500,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 583,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/db/vector_store.py",
+   "line": 601,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/vector_store.py",
+   "line": 602,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/monitoring/audit_middleware.py",
+   "line": 179,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/monitoring/audit_middleware.py",
+   "line": 180,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/audit_middleware.py",
+   "line": 184,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/monitoring/audit_worker.py",
+   "line": 257,
+   "detail": "from app.db.connection import _pool"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/monitoring/box_scorecard.py",
+   "line": 13,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/monitoring/box_scorecard.py",
+   "line": 27,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/box_scorecard.py",
+   "line": 29,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/box_scorecard.py",
+   "line": 76,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/box_scorecard.py",
+   "line": 100,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/monitoring/dashboard.py",
+   "line": 16,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/monitoring/dashboard.py",
+   "line": 101,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/dashboard.py",
+   "line": 104,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/dashboard.py",
+   "line": 126,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/monitoring/dashboard.py",
+   "line": 290,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/dashboard.py",
+   "line": 291,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/monitoring/pipeline_profiler.py",
+   "line": 360,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/monitoring/pipeline_profiler.py",
+   "line": 363,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/monitoring/pipeline_profiler.py",
+   "line": 365,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/monitoring/pipeline_profiler.py",
+   "line": 387,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/monitoring/pipeline_profiler.py",
+   "line": 390,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/alert_service.py",
+   "line": 3,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/alert_service.py",
+   "line": 32,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/boot_service.py",
+   "line": 104,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/boot_service.py",
+   "line": 109,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/boot_service.py",
+   "line": 178,
+   "detail": "from app.db.connection import close_db"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/boot_service.py",
+   "line": 228,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/boot_service.py",
+   "line": 231,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/boot_service.py",
+   "line": 241,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/boot_service.py",
+   "line": 243,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/boot_service.py",
+   "line": 413,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/boot_service.py",
+   "line": 415,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/boot_service.py",
+   "line": 446,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/boot_service.py",
+   "line": 448,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/boot_service.py",
+   "line": 539,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/boot_service.py",
+   "line": 545,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/boot_service.py",
+   "line": 553,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/boot_service.py",
+   "line": 554,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 19,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 67,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 112,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 258,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 304,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 493,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1127,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1128,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1322,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1324,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1325,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1366,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1368,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1369,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1422,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1424,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1425,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1479,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1481,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1482,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1572,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1591,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1592,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1660,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1664,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/cycle_scheduler.py",
+   "line": 1726,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/debate_service.py",
+   "line": 9,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/debate_service.py",
+   "line": 15,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/debate_service.py",
+   "line": 16,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/flash_briefing.py",
+   "line": 10,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/flash_briefing.py",
+   "line": 26,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/flash_briefing.py",
+   "line": 92,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/flash_briefing.py",
+   "line": 93,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/flash_briefing.py",
+   "line": 164,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/flash_briefing.py",
+   "line": 165,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/flash_briefing.py",
+   "line": 233,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/flash_briefing.py",
+   "line": 246,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/logging/pending_review.py",
+   "line": 37,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 47,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 48,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 75,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 80,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 91,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 96,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 108,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 122,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/pending_review.py",
+   "line": 155,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/logging/service_health_probe.py",
+   "line": 89,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/service_health_probe.py",
+   "line": 90,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/logging/service_health_probe.py",
+   "line": 91,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/logging/tool_logging.py",
+   "line": 14,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/tool_logging.py",
+   "line": 77,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/logging/tool_logging.py",
+   "line": 82,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/logging/unified_logger.py",
+   "line": 111,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/logging/unified_logger.py",
+   "line": 133,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/logging/unified_logger.py",
+   "line": 137,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/episodic_memory.py",
+   "line": 26,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/episodic_memory.py",
+   "line": 28,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/episodic_memory.py",
+   "line": 57,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/episodic_memory.py",
+   "line": 59,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/episodic_memory.py",
+   "line": 60,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/episodic_memory.py",
+   "line": 78,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/episodic_memory.py",
+   "line": 80,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 22,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 24,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 44,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 46,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 55,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 57,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 59,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 64,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 70,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 81,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 83,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/procedural_memory.py",
+   "line": 85,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/prospective_memory.py",
+   "line": 24,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/prospective_memory.py",
+   "line": 26,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/prospective_memory.py",
+   "line": 73,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/prospective_memory.py",
+   "line": 75,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/prospective_memory.py",
+   "line": 77,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/prospective_memory.py",
+   "line": 111,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/prospective_memory.py",
+   "line": 113,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/repository.py",
+   "line": 3,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/repository.py",
+   "line": 29,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/repository.py",
+   "line": 41,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/repository.py",
+   "line": 59,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/repository.py",
+   "line": 69,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 25,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 27,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 40,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 42,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 53,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 78,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 80,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/semantic_memory.py",
+   "line": 81,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/memory/store.py",
+   "line": 14,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 44,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 54,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 62,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 70,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 77,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/memory/store.py",
+   "line": 78,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 103,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 142,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/memory/store.py",
+   "line": 150,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/news_backfill.py",
+   "line": 41,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/news_extraction.py",
+   "line": 37,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/pipeline_service.py",
+   "line": 727,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 748,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 750,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 756,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/pipeline_service.py",
+   "line": 1023,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1025,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1075,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1081,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1087,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1172,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1264,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1481,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 1482,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/pipeline_service.py",
+   "line": 2310,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/pipeline_service.py",
+   "line": 2327,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/question_ledger.py",
+   "line": 44,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/question_ledger.py",
+   "line": 115,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/question_ledger.py",
+   "line": 118,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/question_ledger.py",
+   "line": 163,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/question_ledger.py",
+   "line": 173,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/question_ledger.py",
+   "line": 195,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/question_ledger.py",
+   "line": 196,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/question_ledger.py",
+   "line": 228,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/question_ledger.py",
+   "line": 229,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/research_governor.py",
+   "line": 24,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 80,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 91,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 102,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/research_governor.py",
+   "line": 149,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 150,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/research_governor.py",
+   "line": 283,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 292,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 307,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 318,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/research_governor.py",
+   "line": 360,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 361,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 368,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/research_governor.py",
+   "line": 393,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/research_governor.py",
+   "line": 439,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/retrieval_context.py",
+   "line": 98,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/retrieval_context.py",
+   "line": 100,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/retrieval_context.py",
+   "line": 101,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/retrieval_context.py",
+   "line": 132,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/retrieval_context.py",
+   "line": 134,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/retrieval_context.py",
+   "line": 135,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/retrieval_context.py",
+   "line": 143,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/startup_tasks.py",
+   "line": 6,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/startup_tasks.py",
+   "line": 103,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/startup_tasks.py",
+   "line": 104,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/startup_tasks.py",
+   "line": 148,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/startup_tasks.py",
+   "line": 204,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/watch_desk.py",
+   "line": 35,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 71,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 189,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/watch_desk.py",
+   "line": 194,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 234,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 255,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/watch_desk.py",
+   "line": 257,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/watch_desk.py",
+   "line": 263,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 458,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/watch_desk.py",
+   "line": 459,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 545,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/watch_desk.py",
+   "line": 546,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 566,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 622,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 701,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 729,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/watch_desk.py",
+   "line": 730,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 742,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/watch_desk.py",
+   "line": 778,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/watch_desk.py",
+   "line": 779,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "app/services/web_search.py",
+   "line": 230,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "app/services/web_search.py",
+   "line": 232,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/web_search.py",
+   "line": 235,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/services/web_search.py",
+   "line": 246,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "cycle_main.py",
+   "line": 94,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "cycle_main.py",
+   "line": 118,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "cycle_main.py",
+   "line": 120,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "cycle_main.py",
+   "line": 126,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "connection_import",
+   "file": "cycle_main.py",
+   "line": 146,
+   "detail": "from app.db.connection import get_db"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "cycle_main.py",
+   "line": 171,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "cycle_main.py",
+   "line": 173,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "cycle_main.py",
+   "line": 182,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "cycle_main.py",
+   "line": 262,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "cycle_main.py",
+   "line": 263,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "cycle_main.py",
+   "line": 277,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "cycle_main.py",
+   "line": 278,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "get_db_call",
+   "file": "cycle_main.py",
+   "line": 289,
+   "detail": "get_db(...)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "cycle_main.py",
+   "line": 290,
+   "detail": ".execute(<sql>)"
+  }
+ ]
+}

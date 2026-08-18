@@ -110,40 +110,40 @@ def get_correlations(tickers: list[str], days: int = 60) -> dict:
     returns = prices.pct_change().dropna()
     corr_matrix = returns.corr()
 
-        # Find highly correlated pairs
-        high_corr = []
-        checked = set()
-        for t1 in corr_matrix.columns:
-            for t2 in corr_matrix.columns:
-                if t1 != t2 and (t2, t1) not in checked:
-                    corr = corr_matrix.loc[t1, t2]
-                    if abs(corr) > 0.7:
-                        high_corr.append(
-                            {
-                                "pair": f"{t1}/{t2}",
-                                "correlation": round(corr, 3),
-                                "warning": "HIGH" if abs(corr) > 0.85 else "MODERATE",
-                            }
-                        )
-                    checked.add((t1, t2))
+    # Find highly correlated pairs
+    high_corr = []
+    checked = set()
+    for t1 in corr_matrix.columns:
+        for t2 in corr_matrix.columns:
+            if t1 != t2 and (t2, t1) not in checked:
+                corr = corr_matrix.loc[t1, t2]
+                if abs(corr) > 0.7:
+                    high_corr.append(
+                        {
+                            "pair": f"{t1}/{t2}",
+                            "correlation": round(corr, 3),
+                            "warning": "HIGH" if abs(corr) > 0.85 else "MODERATE",
+                        }
+                    )
+                checked.add((t1, t2))
 
-        # Convert matrix to dict for JSON serialization
-        matrix = {}
-        for t1 in corr_matrix.columns:
-            matrix[t1] = {
-                t2: round(corr_matrix.loc[t1, t2], 3) for t2 in corr_matrix.columns
-            }
-
-        return {
-            "tickers": list(corr_matrix.columns),
-            "matrix": matrix,
-            "high_correlations": high_corr,
-            "diversification_score": round(
-                1 - corr_matrix.values[np.triu_indices(len(corr_matrix), k=1)].mean(), 3
-            )
-            if len(corr_matrix) > 1
-            else 1.0,
+    # Convert matrix to dict for JSON serialization
+    matrix = {}
+    for t1 in corr_matrix.columns:
+        matrix[t1] = {
+            t2: round(corr_matrix.loc[t1, t2], 3) for t2 in corr_matrix.columns
         }
+
+    return {
+        "tickers": list(corr_matrix.columns),
+        "matrix": matrix,
+        "high_correlations": high_corr,
+        "diversification_score": round(
+            1 - corr_matrix.values[np.triu_indices(len(corr_matrix), k=1)].mean(), 3
+        )
+        if len(corr_matrix) > 1
+        else 1.0,
+    }
 
 
 def get_sharpe(ticker: str, days: int = 252, risk_free_rate: float = 0.05) -> dict:
