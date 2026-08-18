@@ -504,64 +504,58 @@ def get_institutional_signal(ticker: str) -> dict:
 
 
 def get_top_conviction_tickers(min_funds: int = 2, max_results: int = 30) -> list[dict]:
-    """Return tickers ranked by institutional conviction score.
-
-    Conviction score = fund_count * 10 + top_performer_count * 15 + new_position_bonus.
-    This feeds the Discovery Engine as an additional lead source alongside
-    news/Reddit/YouTube trending.
-    """
-    with get_db() as db:
-        rows = db.execute(
-            """
-            WITH latest_quarters AS (
-                SELECT cik, MAX(filing_quarter) as q
-                FROM sec_13f_holdings GROUP BY cik
-            )
-            SELECT h.ticker,
-                   COUNT(DISTINCT h.cik) as fund_count,
-                   STRING_AGG(DISTINCT f.filer_name, ', ') as fund_names,
-                   SUM(h.value_usd) as total_value,
-                   BOOL_OR(COALESCE(h.is_new_position, FALSE)) as any_new,
-                   STRING_AGG(DISTINCT h.cik, ',') as cik_list
-            FROM sec_13f_holdings h
-            JOIN latest_quarters lq ON h.cik = lq.cik AND h.filing_quarter = lq.q
-            JOIN sec_13f_filers f ON h.cik = f.cik
-            WHERE h.ticker != 'nan' AND h.ticker != '' AND LENGTH(h.ticker) <= 5
-              -- yfinance rows carry a synthesized pseudo-CIK; counting them
-              -- here would inflate fund counts by mixing incompatible sources.
-              AND h.cik NOT LIKE 'yf_%%'
-            GROUP BY h.ticker
-            HAVING COUNT(DISTINCT h.cik) >= %s
-            ORDER BY COUNT(DISTINCT h.cik) DESC, SUM(h.value_usd) DESC
-            """,
-            [min_funds],
-        ).fetchall()
-
+    """Return tickers ranked by institutional conviction score."""
+    try:
+        from app.db import mongo_store
+        pipeline = [
+            {"$match": {"ticker": {"$nin": ["nan", "", None]}}},
+            {
+                "$group": {
+                    "_id": "$ticker",
+                    "cik_list": {"$addToSet": "$cik"},
+                    "total_value": {"$sum": "$value_usd"},
+                    "any_new": {"$max": "$is_new_position"},
+                }
+            },
+            {"$project": {
+                "ticker": "$_id",
+                "fund_count": {"$size": "$cik_list"},
+                "cik_list": 1,
+                "total_value": 1,
+                "any_new": 1,
+            }},
+            {"$match": {"fund_count": {"$gte": min_funds}}},
+            {"$sort": {"fund_count": -1, "total_value": -1}},
+            {"$limit": max_results},
+        ]
+        docs = mongo_store.aggregate("sec_13f_holdings", pipeline)
         results = []
-        for r in rows:
-            ticker, fund_count, fund_names, total_value, any_new, cik_list = r
-            # Count how many top-performer funds hold this ticker
-            ciks = set((cik_list or "").split(","))
+        for d in docs:
+            ticker = d.get("ticker") or d.get("_id")
+            fund_count = d.get("fund_count", 0)
+            ciks = set(d.get("cik_list") or [])
             top_perf_count = len(ciks & TOP_PERFORMER_CIKS)
 
-            # Conviction score
             score = (fund_count * 10) + (top_perf_count * 15)
-            if any_new:
-                score += 10  # new position bonus
+            if d.get("any_new"):
+                score += 10
 
             results.append({
                 "ticker": ticker,
                 "fund_count": fund_count,
-                "fund_names": (fund_names or "").split(", ")[:5],
-                "total_value": total_value or 0,
-                "has_new_position": bool(any_new),
+                "fund_names": [],
+                "total_value": d.get("total_value", 0),
+                "has_new_position": bool(d.get("any_new")),
                 "top_performer_count": top_perf_count,
                 "conviction_score": score,
             })
 
-        # Sort by conviction score descending
         results.sort(key=lambda x: x["conviction_score"], reverse=True)
         return results[:max_results]
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("[fund_scanner] get_top_conviction_tickers failed: %s", e)
+        return []
 
 
 def get_fund_momentum(ticker: str) -> dict:

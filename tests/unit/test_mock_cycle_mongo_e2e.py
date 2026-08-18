@@ -735,3 +735,33 @@ class TestMockTradingCycleMongoE2E:
         discovered = await run_discovery(existing_tickers=["AAPL", "MSFT"])
         discovered_tickers = [d["ticker"] for d in discovered]
         assert "AMD" in discovered_tickers
+
+        # 18. Bot Profile Manager in MongoDB
+        from app.services.bot_manager import (
+            create_bot_profile,
+            list_bot_profiles,
+            get_bot_starting_cash,
+            reset_bot_profile,
+            delete_bot_profile,
+        )
+
+        new_bot = create_bot_profile("Alpha Trader", starting_cash=250_000.0, description="Momentum breakout bot")
+        assert new_bot["bot_id"] == "alpha-trader"
+        assert new_bot["starting_cash"] == 250_000.0
+
+        starting_cash = get_bot_starting_cash("alpha-trader")
+        assert starting_cash == 250_000.0
+
+        profiles = list_bot_profiles()
+        profile_ids = [p["bot_id"] for p in profiles]
+        assert "alpha-trader" in profile_ids
+
+        # Reset pipeline state to idle to allow profile modifications
+        PipelineStateDB.save_state({"status": "idle", "phase": "complete", "progress_pct": 100})
+
+        reset_res = reset_bot_profile("alpha-trader")
+        assert reset_res["reset"] is True
+        assert reset_res["starting_cash"] == 250_000.0
+
+        del_res = delete_bot_profile("alpha-trader")
+        assert del_res["deleted"] is True
