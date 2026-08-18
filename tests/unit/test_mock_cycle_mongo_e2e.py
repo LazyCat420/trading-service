@@ -1431,3 +1431,22 @@ class TestMockTradingCycleMongoE2E:
 
         news_out = await get_finnhub_news("AAPL")
         assert "Apple" in news_out or "AAPL" in news_out
+
+        # 47. Evolution Lesson Store in MongoDB
+        from app.cognition.lesson_store import add_lesson, retrieve_lessons
+
+        lesson_id = add_lesson(
+            text="Mean reversion strategy on AAPL works best with 14-day RSI < 30.",
+            metadata={
+                "session_id": "session-gamma",
+                "round": 2,
+                "score": 2.15,
+                "status": "KEEP",
+                "timestamp": now.isoformat(),
+            },
+        )
+        assert lesson_id.startswith("evo_")
+
+        lessons = retrieve_lessons("RSI mean reversion", k=3)
+        assert len(lessons) >= 1
+        assert "session-gamma" in [l.get("session_id") for l in lessons if isinstance(l, dict)]

@@ -281,7 +281,6 @@ async def get_congress_trades_tool(ticker: str) -> str:
     Congress bought got a count and no data, which is unusable as research.
     """
     from app.collectors.congress_collector import collect_trades_for_ticker
-    from app.db.connection import get_db
 
     ticker = (ticker or "").upper().strip()
     if not ticker:

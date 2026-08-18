@@ -1,8 +1,7 @@
 """
 Evolution Lesson Store — stores and retrieves evolution lessons.
 
-Uses the PostgreSQL embeddings table + pgvector for RAG retrieval.
-Optionally offloads embedding to the remote PC server via RemoteEmbedder.
+Pure MongoDB vector store & evolution_lessons collection implementation.
 """
 
 import logging
@@ -14,14 +13,10 @@ logger = logging.getLogger(__name__)
 
 
 def _get_embedder():
-    """Return the appropriate embedder based on config.
-
-    Tries remote first (if configured), falls back to local.
-    """
+    """Return the appropriate embedder based on config."""
     try:
         from app.cognition.remote_embedder import RemoteEmbedder
 
-        # Import constants - may not have EMBED_SERVER_URL yet
         try:
             from app.constants import EMBED_SERVER_URL
         except (ImportError, AttributeError):
@@ -32,126 +27,119 @@ def _get_embedder():
     except Exception:
         pass
 
-    # Fallback to local embedder
     from app.services.embedding_service import embedder
-
     return "local", embedder
 
 
 def add_lesson(text: str, metadata: dict) -> str:
-    """Store an evolution lesson with its embedding in the vector store.
+    """Store an evolution lesson with its embedding in the vector store in MongoDB."""
+    lesson_id = f"evo_{uuid.uuid4().hex[:12]}"
 
-    Args:
-        text: The lesson/analysis text from the analyzer.
-        metadata: Dict with session_id, round, score, status, timestamp.
+    # Generate embedding
+    mode, emb = _get_embedder()
+    try:
+        if mode == "remote":
+            vecs = emb.embed_sync([text])
+            vec = vecs[0]
+        else:
+            vec = emb.embed_text(text)
+    except Exception as e:
+        logger.warning("Remote embedder failed, falling back to local: %s", e)
+        from app.services.embedding_service import embedder
+        vec = embedder.embed_text(text)
 
-    Returns:
-        The ID of the stored embedding row.
-    """
-    from app.db.connection import get_db
+    # Build content preview for search display
+    session_id = metadata.get("session_id", "")
+    rnd = metadata.get("round", 0)
+    score = metadata.get("score")
+    status = metadata.get("status", "")
+    preview = f"[Evolve {session_id} R{rnd} {status} S:{score}] {text[:200]}"
 
-    with get_db() as db:
-        lesson_id = f"evo_{uuid.uuid4().hex[:12]}"
+    # Store the vector via vector_store on MongoDB
+    from app.db.vector_store import vector_store
 
-        # Generate embedding
-        mode, emb = _get_embedder()
-        try:
-            if mode == "remote":
-                vecs = emb.embed_sync([text])
-                vec = vecs[0]
-            else:
-                vec = emb.embed_text(text)
-        except Exception as e:
-            logger.warning("Remote embedder failed, falling back to local: %s", e)
-            from app.services.embedding_service import embedder
+    vector_store.store_embedding(
+        source_table="evolution_lessons",
+        source_id=lesson_id,
+        ticker=f"evo_{session_id}",
+        content_preview=preview,
+        embedding=list(vec),
+        embedding_id=lesson_id,
+    )
 
-            vec = embedder.embed_text(text)
+    # Store the full lesson in evolution_lessons
+    mongo_store.insert_docs('evolution_lessons', [{
+        'id': lesson_id,
+        'session_id': session_id,
+        'round': rnd,
+        'score': score,
+        'status': status,
+        'lesson_text': text,
+        'timestamp': metadata.get("timestamp", datetime.now(timezone.utc).isoformat()),
+    }])
 
-        # Build content preview for search display
-        session_id = metadata.get("session_id", "")
-        rnd = metadata.get("round", 0)
-        score = metadata.get("score")
-        status = metadata.get("status", "")
-        preview = f"[Evolve {session_id} R{rnd} {status} S:{score}] {text[:200]}"
-
-        # Store the vector via the backend-agnostic vector store (pg/dual/mongo)
-        from app.db.vector_store import vector_store
-
-        vector_store.store_embedding(
-            source_table="evolution_lessons",
-            source_id=lesson_id,
-            ticker=f"evo_{session_id}",
-            content_preview=preview,
-            embedding=list(vec),
-            embedding_id=lesson_id,
-        )
-
-        # Store the full lesson in the dedicated table (created at schema init)
-        mongo_store.insert_docs('evolution_lessons', [{'id': lesson_id, 'session_id': session_id, 'round': rnd, 'score': score, 'status': status, 'lesson_text': text, 'timestamp': metadata.get("timestamp", datetime.now(timezone.utc).isoformat())}])
-
-        logger.info(
-            "[cognition] Stored evolution lesson %s (session=%s round=%d)",
-            lesson_id,
-            session_id,
-            rnd,
-        )
-        return lesson_id
+    logger.info(
+        "[cognition] Stored evolution lesson %s (session=%s round=%d)",
+        lesson_id,
+        session_id,
+        rnd,
+    )
+    return lesson_id
 
 
 def retrieve_lessons(query: str, k: int = 5) -> list[dict]:
-    """Retrieve the k most relevant evolution lessons via vector similarity.
+    """Retrieve the k most relevant evolution lessons via vector similarity in MongoDB."""
+    # Generate query embedding
+    mode, emb = _get_embedder()
+    try:
+        if mode == "remote":
+            vecs = emb.embed_sync([query])
+            q_vec = vecs[0]
+        else:
+            q_vec = emb.embed_text(query)
+    except Exception:
+        from app.services.embedding_service import embedder
+        q_vec = embedder.embed_text(query)
 
-    Returns a list of dicts with: id, lesson_text, score, session_id, round, status.
-    """
-    from app.db.connection import get_db
+    # Search via vector_store
+    try:
+        from app.db.vector_store import vector_store
 
-    with get_db() as db:
-        # Generate query embedding
-        mode, emb = _get_embedder()
+        hits = vector_store.search_cosine(
+            list(q_vec), top_k=k, source_filter="evolution_lessons"
+        )
+        rows = [(h["source_id"], h["content_preview"], h["score"]) for h in hits]
+    except Exception:
+        return []
+
+    if not rows:
+        return []
+
+    # Enrich with full lesson data
+    results = []
+    for source_id, preview, sim in rows:
         try:
-            if mode == "remote":
-                vecs = emb.embed_sync([query])
-                q_vec = vecs[0]
-            else:
-                q_vec = emb.embed_text(query)
-        except Exception:
-            from app.services.embedding_service import embedder
-
-            q_vec = embedder.embed_text(query)
-
-        # Search via the backend-agnostic vector store (pg/dual/mongo)
-        try:
-            from app.db.vector_store import vector_store
-
-            hits = vector_store.search_cosine(
-                list(q_vec), top_k=k, source_filter="evolution_lessons"
+            lesson_row = mongo_query.find_row(
+                'evolution_lessons',
+                {'id': source_id},
+                ['id', 'session_id', 'round', 'score', 'status', 'lesson_text', 'timestamp']
             )
-            rows = [(h["source_id"], h["content_preview"], h["score"]) for h in hits]
-        except Exception:
-            return []
-
-        if not rows:
-            return []
-
-        # Enrich with full lesson data
-        results = []
-        for source_id, preview, sim in rows:
-            try:
-                lesson_row = mongo_query.find_row('evolution_lessons', {'id': source_id}, ['id', 'session_id', 'round', 'score', 'status', 'lesson_text', 'timestamp'])
-                if lesson_row:
-                    results.append(
-                        {
-                            "id": lesson_row[0],
-                            "session_id": lesson_row[1],
-                            "round": lesson_row[2],
-                            "score": lesson_row[3],
-                            "status": lesson_row[4],
-                            "lesson_text": lesson_row[5],
-                            "timestamp": lesson_row[6],
-                            "similarity": sim,
-                        }
-                    )
-            except Exception:
+            if lesson_row:
+                results.append(
+                    {
+                        "id": lesson_row[0],
+                        "session_id": lesson_row[1],
+                        "round": lesson_row[2],
+                        "score": lesson_row[3],
+                        "status": lesson_row[4],
+                        "lesson_text": lesson_row[5],
+                        "timestamp": lesson_row[6],
+                        "similarity": sim,
+                    }
+                )
+            else:
                 results.append({"id": source_id, "preview": preview, "similarity": sim})
+        except Exception:
+            results.append({"id": source_id, "preview": preview, "similarity": sim})
 
-        return results
+    return results

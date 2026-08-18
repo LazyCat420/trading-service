@@ -389,18 +389,21 @@ class VectorStore:
         import pymongo
 
         try:
+            from app.db import mongo_store
+
             q: dict = {}
             if ticker:
                 q["$or"] = [{"ticker": ticker}, {"ticker": None}]
             if source_filter:
                 q["source_table"] = source_filter
 
-            docs = list(
-                self._mongo_coll()
-                .find(q, {"_id": 0, "id": 1, "source_table": 1, "source_id": 1,
-                          "ticker": 1, "content_preview": 1, "embedding": 1})
-                .sort("created_at", pymongo.DESCENDING)
-                .limit(_MAX_CANDIDATES)
+            docs = mongo_store.find_docs(
+                "embeddings",
+                q,
+                projection={"_id": 0, "id": 1, "source_table": 1, "source_id": 1,
+                            "ticker": 1, "content_preview": 1, "embedding": 1},
+                sort=[("created_at", -1)],
+                limit=_MAX_CANDIDATES,
             )
             matrix, kept = _unpack_matrix(docs)
             if matrix is None:
