@@ -21,8 +21,6 @@ class ProspectiveMemoryStore:
         context: str = "",
     ) -> str:
         """Store a new prospective memory (future trigger/reminder)."""
-        from app.db.connection import get_db
-
         mem_id = str(uuid.uuid4())
 
         mongo_store.insert_docs('prospective_memory', [{'id': mem_id, 'ticker': ticker, 'intention': intention, 'trigger_condition': trigger_condition, 'priority': priority, 'status': 'pending', 'trigger_at': trigger_at, 'context': context}])
@@ -69,46 +67,36 @@ class ProspectiveMemoryStore:
 
     def retrieve_pending(self, ticker: str) -> list[dict]:
         """Query pending items for a ticker that should be evaluated."""
-        from app.db.connection import get_db
+        # SQL ordered by a CASE over `priority`; Mongo has no such collation,
+        # so the rank is materialised as a computed field and sorted on.
+        rank = {'critical': 1, 'high': 2, 'medium': 3, 'low': 4}
+        docs = mongo_store.aggregate('prospective_memory', [
+            {'$match': {'$or': [{'ticker': ticker}, {'ticker': 'global'}],
+                        'status': 'pending'}},
+            {'$addFields': {'_prio': {'$switch': {
+                'branches': [{'case': {'$eq': ['$priority', p]}, 'then': n}
+                             for p, n in rank.items()],
+                'default': 5}}}},
+            {'$sort': {'_prio': 1}},
+            {'$limit': 3},
+        ])
 
-        with get_db() as db:
-            # We also might want to pull 'global' triggers
-            rows = db.execute(
-                """
-                SELECT id, ticker, intention, trigger_condition, priority, context
-                FROM prospective_memory
-                WHERE (ticker = %s OR ticker = 'global') AND status = 'pending'
-                ORDER BY 
-                    CASE priority
-                        WHEN 'critical' THEN 1
-                        WHEN 'high' THEN 2
-                        WHEN 'medium' THEN 3
-                        WHEN 'low' THEN 4
-                        ELSE 5
-                    END
-                LIMIT 3
-            """,
-                [ticker],
-            ).fetchall()
-
-            results = []
-            for r in rows:
-                results.append(
-                    {
-                        "id": r[0],
-                        "ticker": r[1],
-                        "intention": r[2],
-                        "trigger_condition": r[3],
-                        "priority": r[4],
-                        "context": r[5],
-                    }
-                )
-            return results
+        results = []
+        for d in docs:
+            results.append(
+                {
+                    "id": d.get("id"),
+                    "ticker": d.get("ticker"),
+                    "intention": d.get("intention"),
+                    "trigger_condition": d.get("trigger_condition"),
+                    "priority": d.get("priority"),
+                    "context": d.get("context"),
+                }
+            )
+        return results
 
     def mark_triggered(self, mem_id: str):
         """Mark an item as triggered so it's no longer pending."""
-        from app.db.connection import get_db
-
         mongo_store.update_docs('prospective_memory', {'id': mem_id}, {'$set': {'status': 'triggered'}})
 
 

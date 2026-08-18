@@ -36,20 +36,29 @@ class _FakeCursor:
 
 
 class _FakeDb:
-    """Records every statement so a test can prove no UPDATE was issued."""
+    """Serves the fixture rows to `mongo_query` and records every write.
+
+    `pending_review` is off Postgres: the read is
+    `mongo_query.find_rows('pending_evolution_fixes', ...)` and there is no
+    `get_db` left to patch. `statements` still exists so the mutator tests can
+    prove nothing was written — it now records the Mongo write calls, and the
+    "no UPDATE was issued" assertion holds on an empty list either way.
+    """
 
     def __init__(self, rows):
         self._rows = rows
         self.statements: list[str] = []
 
-    def execute(self, sql, params=None):
-        self.statements.append(sql)
-        return _FakeCursor(self._rows)
+    def find_rows(self, collection, query=None, columns=None, **kwargs):
+        return self._rows
 
+    def update_docs(self, collection, query, update, **kwargs):
+        self.statements.append(f"UPDATE {collection}")
+        return 0
 
-@contextlib.contextmanager
-def _fake_get_db(db):
-    yield db
+    def insert_docs(self, collection, docs, **kwargs):
+        self.statements.append(f"INSERT {collection}")
+        return len(docs)
 
 
 # A row shaped like the 3 survivors: stored status is still literally "pending",
@@ -62,7 +71,8 @@ _STUCK_PENDING_ROW = (
 
 def _fixes_from(rows):
     db = _FakeDb(rows)
-    with patch.object(pending_review, "get_db", lambda: _fake_get_db(db)):
+    with patch.object(pending_review, "mongo_query", db), \
+         patch.object(pending_review, "mongo_store", db):
         return pending_review.get_pending_fixes(), db
 
 
@@ -135,7 +145,8 @@ def test_approve_is_a_no_op_and_issues_no_update():
     # An approved row would sit forever: the deploy path that consumed
     # 'approved' has not run since 2026-06-01.
     db = _FakeDb([])
-    with patch.object(pending_review, "get_db", lambda: _fake_get_db(db)):
+    with patch.object(pending_review, "mongo_query", db), \
+         patch.object(pending_review, "mongo_store", db):
         result = pending_review.approve_fix("fix-may-2026")
 
     assert result["archived"] is True
@@ -145,7 +156,8 @@ def test_approve_is_a_no_op_and_issues_no_update():
 
 def test_reject_is_a_no_op_and_issues_no_update():
     db = _FakeDb([])
-    with patch.object(pending_review, "get_db", lambda: _fake_get_db(db)):
+    with patch.object(pending_review, "mongo_query", db), \
+         patch.object(pending_review, "mongo_store", db):
         result = pending_review.reject_fix("fix-may-2026")
 
     assert result["archived"] is True

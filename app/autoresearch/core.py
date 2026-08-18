@@ -111,7 +111,9 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception as cleanup_err:
             logger.debug("[AUTORESEARCH] Stale cleanup skipped: %s", cleanup_err)
 
-        mongo_store.insert_docs('autoresearch_reports', [{'id': report_id, 'cycle_id': cycle_id, 'status': 'running', 'phase': 'starting'}])
+        # created_at was a Postgres column DEFAULT. Mongo has none, and readers
+        # filter on it, so an omitted field means the report is invisible.
+        mongo_store.insert_docs('autoresearch_reports', [{'id': report_id, 'cycle_id': cycle_id, 'status': 'running', 'phase': 'starting', 'created_at': datetime.now(timezone.utc)}])
 
         # Resolve pending decision outcomes before scoring
         _update_ar_state(report_id, phase="outcome_resolution")

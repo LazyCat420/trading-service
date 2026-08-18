@@ -78,3 +78,37 @@ def test_a_missing_field_sorts_with_null_not_last(coll):
     got = [d["k"] for d in coll.find({}).sort("f", -1)]
     assert got[0] == "has_value"
     assert set(got[1:]) == {"explicit_null", "field_missing"}
+
+
+def test_ne_against_a_value_and_ne_against_null_differ(coll):
+    """The asymmetry that makes this whole area a trap, measured both ways.
+
+    `{'f': {'$ne': None}}`  EXCLUDES a document missing the field.
+    `{'f': {'$ne': "x"}}`   INCLUDES one.
+
+    They read alike. During the 2026-08-18 conversion the difference was
+    asserted wrongly in BOTH directions on the same day — a comment claiming
+    $ne:None needs $exists to mean IS NOT NULL (it does not), and this test's
+    own first draft predicting that $ne:"system" drops missing rows (it does
+    not). Only the server settles it, so both halves are pinned here.
+
+    The practical consequence: `COALESCE(job_type,'user') <> 'system'` ports
+    to a bare `{'$ne': 'system'}` and is correct, while
+    `resolved_at IS NOT NULL` ports to a bare `{'$ne': None}` and is also
+    correct — but swapping the reasoning between them produces a filter that
+    silently drops or admits a whole population.
+    """
+    coll.delete_many({})
+    coll.insert_many([
+        {"k": "user_row", "job_type": "user"},
+        {"k": "system_row", "job_type": "system"},
+        {"k": "null_row", "job_type": None},
+        {"k": "missing_row"},
+    ])
+
+    # $ne against a VALUE: null and missing both come back.
+    assert _keys(coll.find({"job_type": {"$ne": "system"}})) == [
+        "missing_row", "null_row", "user_row"
+    ]
+    # $ne against NULL: only the rows that actually hold a value.
+    assert _keys(coll.find({"job_type": {"$ne": None}})) == ["system_row", "user_row"]

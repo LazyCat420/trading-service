@@ -101,7 +101,6 @@ class BootService:
     def _restore_stable_fixes(cls):
         """Load and restore all evolved stable fixes from stable_harnesses to disk."""
         try:
-            from app.db.connection import get_db
             from app.cognition.evolution.target_map import resolve_target
             from pathlib import Path
 
@@ -172,11 +171,14 @@ class BootService:
         except Exception as e:
             logger.warning("[Boot] Audit worker shutdown: %s", e)
 
-        # Close PostgreSQL connection pool
+        # PostgreSQL pool shutdown. boot_service itself issues no SQL any more,
+        # but other modules are still on PG and this is the process's only
+        # close_db() caller — dropping it would leak the pool at shutdown.
+        # Delete this block with app/db/connection.py at teardown, not before.
         try:
-            from app.db.connection import close_db
+            import importlib
 
-            close_db()
+            importlib.import_module("app.db.connection").close_db()
             logger.info("[Boot] PostgreSQL connection pool closed.")
         except Exception as e:
             logger.warning("[Boot] PostgreSQL close: %s", e)
@@ -224,10 +226,8 @@ class BootService:
 
     @classmethod
     def _init_database(cls):
-        from app.db.connection import get_db
         from app.db.mongo import init_mongo_schema
 
-        get_db()
         init_mongo_schema()
 
     @classmethod
@@ -237,7 +237,6 @@ class BootService:
 
     @classmethod
     def _reset_app_state(cls):
-        from app.db.connection import get_db
         try:
             mongo_store.update_docs('pipeline_state', {'singleton_id': 'current', 'status': {'$in': ['running', 'blocked', 'starting']}}, {'$set': {'status': 'error', 'error': 'Container restarted unexpectedly'}})
             mongo_store.update_docs('v3_system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
@@ -408,8 +407,6 @@ class BootService:
     @classmethod
     async def _startup_market_collect(cls):
         """Background: collect market regime data (indexes, VIX, yields, ETFs)."""
-        from app.db.connection import get_db
-
         recent = mongo_query.agg_row('asset_prices', {'date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=1))}}, [('count', None)])[0]
         if recent > 50:
             logger.info(
@@ -439,8 +436,6 @@ class BootService:
     @classmethod
     async def _startup_sp500_seed(cls):
         """Background: seed SP500 universe + prices if DB is empty."""
-        from app.db.connection import get_db
-
         sp500_count = mongo_query.agg_row('ticker_metadata', {'sp500': True}, [('count', None)])[0]
         if sp500_count > 400:
             logger.info(
@@ -531,7 +526,6 @@ class BootService:
         of 199 watchlist tickers are not in the S&P 500. Keeping only the index
         fresh meant the bot reasoned about a different set than it maintained.
         """
-        from app.db.connection import get_db
         from app.services.market_calendar import MarketCalendar
 
         await asyncio.sleep(10)  # let boot settle first
@@ -544,16 +538,19 @@ class BootService:
             # covering only the index would clear a fixed 400 and look healthy.
             # 75% catches a materially incomplete day without firing on the
             # handful of tickers yfinance always misses.
-            with get_db() as db:
-                expected = db.execute(
-                    """
-                    SELECT COUNT(*) FROM (
-                        SELECT ticker FROM ticker_metadata WHERE sp500 = TRUE
-                        UNION SELECT ticker FROM watchlist
-                        UNION SELECT ticker FROM positions
-                    ) u
-                    """
-                ).fetchone()[0]
+            # SQL's UNION (not UNION ALL) de-duplicates across all three
+            # branches, so this is one set, not three counts summed. Nulls
+            # cannot appear in a ticker column here, but drop them anyway so a
+            # missing field cannot inflate the expected count by one.
+            universe = set()
+            for coll, q in (("ticker_metadata", {"sp500": True}),
+                            ("watchlist", {}),
+                            ("positions", {})):
+                universe.update(
+                    t for t in mongo_store.distinct_values(coll, "ticker", q)
+                    if t is not None
+                )
+            expected = len(universe)
             threshold = int((expected or 500) * 0.75)
             if today_count < threshold:
                 logger.info(

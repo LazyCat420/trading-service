@@ -34,7 +34,6 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -44,16 +43,22 @@ logger = logging.getLogger(__name__)
 
 def get_pending_outliers() -> list[dict]:
     """Fetch all news articles flagged as outliers pending human review."""
-    with get_db() as db:
-        rows = db.execute("""
-            SELECT n.id, n.ticker, n.title, n.summary, n.publisher, n.quality_reason, c.consensus, n.published_at, n.url
-            FROM news_articles n
-            LEFT JOIN ticker_consensus c ON n.ticker = c.ticker
-            WHERE n.quality_status = 'pending_review'
-            ORDER BY n.published_at DESC
-            LIMIT 50
-        """).fetchall()
-        
+    # LEFT JOIN news_articles -> ticker_consensus on ticker. join_rows() is an
+    # INNER join, which would DROP the articles whose ticker has no consensus
+    # row — exactly the rows the `or "No consensus generated yet."` fallback
+    # exists for. So the right side is fetched as a lookup map instead.
+    rows = mongo_query.find_rows(
+        'news_articles', {'quality_status': 'pending_review'},
+        ['id', 'ticker', 'title', 'summary', 'publisher', 'quality_reason',
+         'published_at', 'url'],
+        sort=[('published_at', -1)], limit=50)
+
+    consensus_by_ticker = {
+        d.get('ticker'): d.get('consensus')
+        for d in mongo_query.find_dicts(
+            'ticker_consensus', {'ticker': {'$in': [r[1] for r in rows]}})
+    }
+
     return [
         {
             "id": r[0],
@@ -62,69 +67,84 @@ def get_pending_outliers() -> list[dict]:
             "summary": r[3],
             "publisher": r[4],
             "reason": r[5],
-            "consensus": r[6] or "No consensus generated yet.",
-            "published_at": r[7].isoformat() if r[7] else None,
-            "url": r[8]
+            "consensus": consensus_by_ticker.get(r[1]) or "No consensus generated yet.",
+            "published_at": r[6].isoformat() if hasattr(r[6], "isoformat") else r[6],
+            "url": r[7],
         }
         for r in rows
     ]
 
 
+def _bump_source_trust_wins(publisher: str, delta: int) -> None:
+    """`UPDATE source_trust SET quality_wins = quality_wins + delta`."""
+    mongo_store.update_docs(
+        'source_trust',
+        {'source_type': 'publisher', 'source_name': publisher},
+        {'$inc': {'quality_wins': delta}})
+
+
+def _penalise_source_trust(publisher: str, delta: int = 5) -> None:
+    """`UPDATE source_trust SET total_items = total_items + 5,
+        win_rate = quality_wins::FLOAT / NULLIF(total_items + 5, 0)`.
+
+    Mongo cannot divide by a field it is simultaneously incrementing in a
+    plain $inc, so the row is read, the new values computed in Python, and
+    written back. NULLIF(...,0) makes win_rate NULL when the denominator is
+    zero — reproduced as None, not 0.0.
+    """
+    row = mongo_query.find_row(
+        'source_trust',
+        {'source_type': 'publisher', 'source_name': publisher},
+        ['quality_wins', 'total_items'])
+    if not row:
+        return
+    wins = row[0] or 0
+    new_total = (row[1] or 0) + delta
+    mongo_store.update_docs(
+        'source_trust',
+        {'source_type': 'publisher', 'source_name': publisher},
+        {'$set': {'total_items': new_total,
+                  'win_rate': (float(wins) / new_total) if new_total else None}})
+
+
 def approve_outlier(article_id: str) -> dict:
     """Approve an outlier as valid breaking news."""
-    with get_db() as db:
-        mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'ok'}})
-        
-        row = mongo_query.find_row('news_articles', {'id': article_id}, ['publisher'])
-        if row and row[0]:
-            db.execute("""
-                UPDATE source_trust 
-                SET quality_wins = quality_wins + 2
-                WHERE source_type = 'publisher' AND source_name = %s
-            """, [row[0]])
-            
+    mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'ok'}})
+
+    row = mongo_query.find_row('news_articles', {'id': article_id}, ['publisher'])
+    if row and row[0]:
+        _bump_source_trust_wins(row[0], 2)
+
     return {"status": "approved", "article_id": article_id}
 
 
 def reject_outlier(article_id: str) -> dict:
     """Reject an outlier as fake news or spam."""
-    with get_db() as db:
-        row = mongo_query.find_row('news_articles', {'id': article_id}, ['publisher'])
-        mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'rejected'}})
-        
-        if row and row[0]:
-            db.execute("""
-                UPDATE source_trust 
-                SET total_items = total_items + 5,
-                    win_rate = quality_wins::FLOAT / NULLIF((total_items + 5), 0)
-                WHERE source_type = 'publisher' AND source_name = %s
-            """, [row[0]])
-            
+    row = mongo_query.find_row('news_articles', {'id': article_id}, ['publisher'])
+    mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'rejected'}})
+
+    if row and row[0]:
+        _penalise_source_trust(row[0])
+
     return {"status": "rejected", "article_id": article_id}
 
 
 def add_outlier_rule(article_id: str, rule_content: str) -> dict:
     """Add a permanent rule based on this outlier, then reject it."""
-    with get_db() as db:
-        row = mongo_query.find_row('news_articles', {'id': article_id}, ['ticker', 'publisher'])
-        if not row:
-            raise HTTPException(404, "Article not found")
-            
-        ticker, publisher = row
-        fb_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-        
-        mongo_store.insert_docs('user_feedback', [{'id': fb_id, 'ticker': ticker, 'feedback_type': 'constraint', 'content': rule_content, 'created_at': now, 'is_active': True}])
-        
-        mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'rejected'}})
-        
-        if publisher:
-            db.execute("""
-                UPDATE source_trust 
-                SET total_items = total_items + 5,
-                    win_rate = quality_wins::FLOAT / NULLIF((total_items + 5), 0)
-                WHERE source_type = 'publisher' AND source_name = %s
-            """, [publisher])
+    row = mongo_query.find_row('news_articles', {'id': article_id}, ['ticker', 'publisher'])
+    if not row:
+        raise HTTPException(404, "Article not found")
+
+    ticker, publisher = row
+    fb_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+
+    mongo_store.insert_docs('user_feedback', [{'id': fb_id, 'ticker': ticker, 'feedback_type': 'constraint', 'content': rule_content, 'created_at': now, 'is_active': True}])
+
+    mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'rejected'}})
+
+    if publisher:
+        _penalise_source_trust(publisher)
 
     return {"status": "rule_added", "article_id": article_id, "rule_id": fb_id}
 

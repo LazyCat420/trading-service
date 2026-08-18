@@ -32,7 +32,6 @@ from typing import Any
 
 
 from app.config import settings
-from app.db.connection import get_db
 from app.services.request_utils import SmartClient
 from app.utils.text_utils import is_truncated_content
 from app.db import mongo_store
@@ -185,95 +184,94 @@ async def _persist_articles(
     )
 
     # Fetch the bodies BEFORE opening the transaction. This used to happen one
-    # article at a time inside the `with get_db()` block below, which pinned a
+    # article at a time inside a `with get_db()` block, which pinned a
     # database connection for the length of up to ~100 sequential HTTP fetches.
     bodies = await _upgrade_bodies(articles)
 
-    with get_db() as db:
-        count = 0
+    count = 0
 
-        for article in articles:
-            if not article.title:
+    for article in articles:
+        if not article.title:
+            continue
+
+        api_summary = article.summary or ""
+        summary = bodies.get(article.url or "", "")
+
+        # No body, or one too short to be an article: keep the provider's
+        # blurb, exactly as before. An upgrade that fails must never leave
+        # the article worse off than not attempting one.
+        if (not summary or len(summary) < 150) and len(api_summary) >= 150:
+            summary = api_summary
+
+        if is_truncated_content(summary):
+            logger.warning(
+                "[rotator][DROP] dropped '%s' from %s — truncated/paywalled (len=%d)",
+                article.title[:60], article.source, len(summary),
+            )
+            continue
+
+        # Use tickers from API if provided, otherwise detect from full text.
+        # These are two DIFFERENT provenances and must not share one label:
+        # 'provider' is the vendor's own entity tagging, which we have not
+        # verified against the body, while 'detected' means our own
+        # `_detect_tickers_in_text` found the symbol in the text. Collapsing
+        # them would put an unverified vendor claim behind the same mark the
+        # watch desk trusts to arm a trade-enabled wake.
+        if article.tickers:
+            detected = rank_tickers_for_fanout(
+                article.tickers, requested_tickers, article.title
+            )
+            attribution = "provider"
+        else:
+            full_text = f"{article.title} {summary}"
+            detected = rank_tickers_for_fanout(
+                await _detect_tickers_in_text(full_text),
+                requested_tickers,
+                article.title,
+            )
+            attribution = "detected"
+
+        base_id = hashlib.md5(
+            f"{article.title}{article.published_at.isoformat()}".encode()
+        ).hexdigest()
+
+        # Shared-content dedup: the rotator wrote rows with an EMPTY
+        # content_hash, so the DedupEngine used by the finnhub/yfinance/RSS
+        # collectors could never see rotator articles — the same story
+        # arriving from two providers was double-stored (44 dup groups in
+        # one week, all hashless). Compute the same hash and check first.
+        # Best-effort: a dedup-engine failure must never block persistence.
+        content_hash = ""
+        try:
+            from app.processors.dedup_engine import DedupEngine
+            dedup = DedupEngine(table="news_articles")
+            if dedup.is_duplicate(article.title, summary):
                 continue
+            content_hash = dedup.compute_hash(article.title, summary)
+        except Exception as dedup_err:
+            logger.debug("[rotator] dedup check failed (storing anyway): %s", dedup_err)
 
-            api_summary = article.summary or ""
-            summary = bodies.get(article.url or "", "")
-
-            # No body, or one too short to be an article: keep the provider's
-            # blurb, exactly as before. An upgrade that fails must never leave
-            # the article worse off than not attempting one.
-            if (not summary or len(summary) < 150) and len(api_summary) >= 150:
-                summary = api_summary
-
-            if is_truncated_content(summary):
-                logger.warning(
-                    "[rotator][DROP] dropped '%s' from %s — truncated/paywalled (len=%d)",
-                    article.title[:60], article.source, len(summary),
-                )
-                continue
-
-            # Use tickers from API if provided, otherwise detect from full text.
-            # These are two DIFFERENT provenances and must not share one label:
-            # 'provider' is the vendor's own entity tagging, which we have not
-            # verified against the body, while 'detected' means our own
-            # `_detect_tickers_in_text` found the symbol in the text. Collapsing
-            # them would put an unverified vendor claim behind the same mark the
-            # watch desk trusts to arm a trade-enabled wake.
-            if article.tickers:
-                detected = rank_tickers_for_fanout(
-                    article.tickers, requested_tickers, article.title
-                )
-                attribution = "provider"
-            else:
-                full_text = f"{article.title} {summary}"
-                detected = rank_tickers_for_fanout(
-                    await _detect_tickers_in_text(full_text),
-                    requested_tickers,
-                    article.title,
-                )
-                attribution = "detected"
-
-            base_id = hashlib.md5(
-                f"{article.title}{article.published_at.isoformat()}".encode()
-            ).hexdigest()
-
-            # Shared-content dedup: the rotator wrote rows with an EMPTY
-            # content_hash, so the DedupEngine used by the finnhub/yfinance/RSS
-            # collectors could never see rotator articles — the same story
-            # arriving from two providers was double-stored (44 dup groups in
-            # one week, all hashless). Compute the same hash and check first.
-            # Best-effort: a dedup-engine failure must never block persistence.
-            content_hash = ""
-            try:
-                from app.processors.dedup_engine import DedupEngine
-                dedup = DedupEngine(table="news_articles")
-                if dedup.is_duplicate(article.title, summary):
-                    continue
-                content_hash = dedup.compute_hash(article.title, summary)
-            except Exception as dedup_err:
-                logger.debug("[rotator] dedup check failed (storing anyway): %s", dedup_err)
-
-            from app.collectors.news_collector import quality_at_write, url_fanout_exceeded
-            _qs, _qr = quality_at_write(article.title, summary)
-            if detected:
-                for ticker in detected:
-                    if url_fanout_exceeded(db, article.url):
-                        break
-                    ticker_id = _get_article_id(article.title, ticker)
-                    # ticker_attribution is 'provider' or 'detected' per the
-                    # branch above. Either way it is never an inherited query
-                    # ticker: `rank_tickers_for_fanout` only reorders its input
-                    # and drops nothing, so `requested_tickers` cannot add a
-                    # symbol that was not already there.
-                    mongo_store.upsert_doc('news_articles', {'id': ticker_id}, {'id': ticker_id, 'ticker': ticker, 'title': article.title[:500], 'publisher': article.source, 'url': article.url, 'published_at': article.published_at, 'summary': summary[:15000], 'source': article.source, 'collected_at': datetime.now(timezone.utc), 'content_hash': content_hash, 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': attribution}, insert_only=True)
-                    count += 1
-            else:
-                # General market news — no specific ticker
-                article_id = _get_article_id(article.title, None)
-                mongo_store.upsert_doc('news_articles', {'id': base_id}, {'id': base_id, 'ticker': None, 'title': article.title[:500], 'publisher': article.source, 'url': article.url, 'published_at': article.published_at, 'summary': summary[:15000], 'source': article.source, 'collected_at': datetime.now(timezone.utc), 'content_hash': content_hash, 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': "general"}, insert_only=True)
+        from app.collectors.news_collector import quality_at_write, url_fanout_exceeded
+        _qs, _qr = quality_at_write(article.title, summary)
+        if detected:
+            for ticker in detected:
+                if url_fanout_exceeded(None, article.url):
+                    break
+                ticker_id = _get_article_id(article.title, ticker)
+                # ticker_attribution is 'provider' or 'detected' per the
+                # branch above. Either way it is never an inherited query
+                # ticker: `rank_tickers_for_fanout` only reorders its input
+                # and drops nothing, so `requested_tickers` cannot add a
+                # symbol that was not already there.
+                mongo_store.upsert_doc('news_articles', {'id': ticker_id}, {'id': ticker_id, 'ticker': ticker, 'title': article.title[:500], 'publisher': article.source, 'url': article.url, 'published_at': article.published_at, 'summary': summary[:15000], 'source': article.source, 'collected_at': datetime.now(timezone.utc), 'content_hash': content_hash, 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': attribution}, insert_only=True)
                 count += 1
+        else:
+            # General market news — no specific ticker
+            article_id = _get_article_id(article.title, None)
+            mongo_store.upsert_doc('news_articles', {'id': base_id}, {'id': base_id, 'ticker': None, 'title': article.title[:500], 'publisher': article.source, 'url': article.url, 'published_at': article.published_at, 'summary': summary[:15000], 'source': article.source, 'collected_at': datetime.now(timezone.utc), 'content_hash': content_hash, 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': "general"}, insert_only=True)
+            count += 1
 
-        return count
+    return count
 
 
 # ---------------------------------------------------------------------------

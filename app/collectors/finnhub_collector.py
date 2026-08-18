@@ -16,7 +16,7 @@ import hashlib
 import datetime
 import finnhub
 from app.config import settings
-from app.db.connection import get_db
+from app.db import mongo_store
 
 
 def _get_client() -> finnhub.Client:
@@ -50,20 +50,15 @@ def _merge_into_fundamentals(ticker: str, fields: dict) -> None:
     the gaps — these collectors supply fields (targets, recs, earnings
     dates) the primary yfinance/finviz writers may have missed.
     """
-    cols = list(fields.keys())
-    updates = ", ".join(
-        f"{c} = COALESCE(EXCLUDED.{c}, fundamentals.{c})" for c in cols
-    )
     today = datetime.date.today()
-    with get_db() as db:
-        db.execute(
-            f"""
-            INSERT INTO fundamentals (ticker, snapshot_date, source, {', '.join(cols)})
-            VALUES (%s, %s, 'finnhub', {', '.join(['%s'] * len(cols))})
-            ON CONFLICT (ticker, snapshot_date) DO UPDATE SET {updates}
-            """,
-            [ticker.upper(), today] + [fields[c] for c in cols],
-        )
+    key = {'ticker': ticker.upper(), 'snapshot_date': today}
+    # `ON CONFLICT (ticker, snapshot_date) DO UPDATE SET c = COALESCE(EXCLUDED.c,
+    # fundamentals.c)` — a non-NULL incoming value wins, a NULL leaves the
+    # stored value alone. Omitting the None-valued fields from the $set is that
+    # semantic; on an insert they are simply absent (NULL).
+    doc = {'ticker': ticker.upper(), 'snapshot_date': today, 'source': 'finnhub'}
+    doc.update({c: v for c, v in fields.items() if v is not None})
+    mongo_store.upsert_doc('fundamentals', key, doc)
 
 
 async def collect_analyst_targets(ticker: str) -> bool:

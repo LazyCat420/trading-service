@@ -21,9 +21,6 @@ class SemanticMemoryStore:
         source_agent: str = "manual",
     ) -> str:
         """Store a new piece of semantic memory."""
-        # Late import to prevent circular dependencies
-        from app.db.connection import get_db
-
         mem_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
@@ -36,49 +33,35 @@ class SemanticMemoryStore:
 
     def retrieve(self, ticker: str, limit: int = 6) -> list[dict]:
         """Query by ticker, ranked by confidence and last accessed."""
-        from app.db.connection import get_db
+        now = datetime.now(timezone.utc).isoformat()
 
-        with get_db() as db:
-            now = datetime.now(timezone.utc).isoformat()
+        # Pull ticker-specific AND global rules
+        rows = mongo_query.find_rows('semantic_memory', {'$or': [{'ticker': ticker}, {'ticker': 'global'}]}, ['id', 'ticker', 'type', 'content', 'confidence'], sort=[('confidence', -1), ('last_accessed_at', -1)], limit=limit)
 
-            # Pull ticker-specific AND global rules
-            rows = mongo_query.find_rows('semantic_memory', {'$or': [{'ticker': ticker}, {'ticker': 'global'}]}, ['id', 'ticker', 'type', 'content', 'confidence'], sort=[('confidence', -1), ('last_accessed_at', -1)], limit=limit)
+        results = []
+        if rows:
+            # Update access tracking to show frequency/recency of use
+            ids = [r[0] for r in rows]
+            mongo_store.update_docs(
+                'semantic_memory', {'id': {'$in': ids}},
+                {'$inc': {'access_count': 1}, '$set': {'last_accessed_at': now}})
 
-            results = []
-            if rows:
-                # Update access tracking to show frequency/recency of use
-                ids = [r[0] for r in rows]
-                id_list = ",".join(f"'{i}'" for i in ids)
-                db.execute(
-                    f"""
-                    UPDATE semantic_memory
-                    SET access_count = access_count + 1,
-                        last_accessed_at = %s
-                    WHERE id IN ({id_list})
-                """,
-                    [now],
+            for r in rows:
+                results.append(
+                    {
+                        "id": r[0],
+                        "ticker": r[1],
+                        "type": r[2],
+                        "content": r[3],
+                        "confidence": r[4],
+                    }
                 )
 
-                for r in rows:
-                    results.append(
-                        {
-                            "id": r[0],
-                            "ticker": r[1],
-                            "type": r[2],
-                            "content": r[3],
-                            "confidence": r[4],
-                        }
-                    )
-
-            return results
+        return results
 
     def remove(self, mem_id: str) -> bool:
         """Delete an outdated semantic memory."""
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            res = db.execute("DELETE FROM semantic_memory WHERE id = %s", [mem_id])
-            return res.rowcount > 0
+        return mongo_store.delete_docs('semantic_memory', {'id': mem_id}) > 0
 
 
 # Singleton instance

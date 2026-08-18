@@ -20,8 +20,7 @@ import datetime
 import math
 import pandas as pd
 from edgar import Company, set_identity
-from app.db.connection import get_db
-from app.db import mongo_store
+from app.db import mongo_query, mongo_store
 
 # SEC EDGAR requires a User-Agent header identifying you
 set_identity("TradingBot analysis@example.com")
@@ -259,6 +258,26 @@ def _fetch_holdings_sync(
     return results
 
 
+
+def _upsert_13f_filer(cik: str, filer_name: str, filing_quarter: str) -> None:
+    """`INSERT INTO sec_13f_filers ... ON CONFLICT (cik) DO UPDATE SET
+    filer_name = EXCLUDED.filer_name,
+    latest_quarter = GREATEST(sec_13f_filers.latest_quarter, EXCLUDED.latest_quarter)`
+
+    GREATEST keeps the LATER quarter — a backfill of an older filing must not
+    roll `latest_quarter` backwards. Mongo cannot express a two-sided max in a
+    plain update, so the stored value is read and the max taken in Python.
+    Quarter labels are "YYYYQn", which orders correctly as a string.
+    """
+    row = mongo_query.find_row('sec_13f_filers', {'cik': cik}, ['latest_quarter'])
+    latest = filing_quarter
+    if row and row[0] and str(row[0]) > str(filing_quarter):
+        latest = row[0]
+    mongo_store.upsert_doc('sec_13f_filers', {'cik': cik},
+                           {'cik': cik, 'filer_name': filer_name,
+                            'latest_quarter': latest})
+
+
 async def collect_fund_holdings(
     filer_name: str,
     cik: str,
@@ -280,37 +299,26 @@ async def collect_fund_holdings(
 
         total = 0
         quarters = []
-        with get_db() as db:
-            for holdings, filing_quarter in filings:
-                if not holdings:
-                    continue
-                # Upsert filer to ensure it exists
-                db.execute(
-                    """
-                    INSERT INTO sec_13f_filers (cik, filer_name, latest_quarter)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (cik) DO UPDATE SET
-                        filer_name = EXCLUDED.filer_name,
-                        latest_quarter = GREATEST(sec_13f_filers.latest_quarter, EXCLUDED.latest_quarter)
-                    """,
-                    [cik, filer_name, filing_quarter],
-                )
+        for holdings, filing_quarter in filings:
+            if not holdings:
+                continue
+            # Upsert filer to ensure it exists
+            _upsert_13f_filer(cik, filer_name, filing_quarter)
+            for h in holdings:
+                mongo_store.update_docs('sec_13f_holdings', {'cik': h["cik"], 'ticker': h["ticker"], 'filing_quarter': h["filing_quarter"]}, {'$set': {'name_of_issuer': h["name_of_issuer"], 'cusip': h["cusip"], 'filing_date': h["filing_date"], 'shares': h["shares"], 'share_type': h["share_type"], 'value_usd': h["value"], 'source': "edgar", 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, '$setOnInsert': {'pct_change': None, 'is_new_position': False, 'is_exit': False}}, upsert=True)
+            total += len(holdings)
+            quarters.append(filing_quarter)
 
-                for h in holdings:
-                    mongo_store.update_docs('sec_13f_holdings', {'cik': h["cik"], 'ticker': h["ticker"], 'filing_quarter': h["filing_quarter"]}, {'$set': {'name_of_issuer': h["name_of_issuer"], 'cusip': h["cusip"], 'filing_date': h["filing_date"], 'shares': h["shares"], 'share_type': h["share_type"], 'value_usd': h["value"], 'source': "edgar", 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, '$setOnInsert': {'pct_change': None, 'is_new_position': False, 'is_exit': False}}, upsert=True)
-                total += len(holdings)
-                quarters.append(filing_quarter)
-
-            from app.telemetry import send_system_log
-            send_system_log(
-                subsystem="DB",
-                message=f"[SEC] {filer_name}: Upserted {total} holdings rows to sec_13f_holdings"
-            )
-            logger.info(
-                f"[sec] {filer_name}: {total} holdings written across "
-                f"{len(quarters)} quarters ({', '.join(quarters)})"
-            )
-            return total
+        from app.telemetry import send_system_log
+        send_system_log(
+            subsystem="DB",
+            message=f"[SEC] {filer_name}: Upserted {total} holdings rows to sec_13f_holdings"
+        )
+        logger.info(
+            f"[sec] {filer_name}: {total} holdings written across "
+            f"{len(quarters)} quarters ({', '.join(quarters)})"
+        )
+        return total
 
     except asyncio.TimeoutError:
         logger.info(f"[sec] {filer_name}: TIMEOUT after {EDGAR_TIMEOUT}s (CIK: {cik})")
@@ -367,47 +375,38 @@ async def collect_ticker_institutional(ticker: str) -> int:
             logger.info(f"[sec] {ticker}: no yfinance institutional data")
             return 0
 
-        with get_db() as db:
-            now = datetime.datetime.now()
-            quarter = f"{now.year}Q{(now.month - 1) // 3 + 1}"
-            count = 0
+        now = datetime.datetime.now()
+        quarter = f"{now.year}Q{(now.month - 1) // 3 + 1}"
+        count = 0
 
-            for _, row in ih.iterrows():
-                holder = _clean(row.get("Holder")) or "Unknown"
-                shares = int(_num(row.get("Shares")))
-                value = _num(row.get("Value"))
+        for _, row in ih.iterrows():
+            holder = _clean(row.get("Holder")) or "Unknown"
+            shares = int(_num(row.get("Shares")))
+            value = _num(row.get("Value"))
 
-                import hashlib
+            import hashlib
 
-                holder_hash = hashlib.md5(holder.encode()).hexdigest()[:10]
-                pseudo_cik = f"yf_{holder_hash}"
+            holder_hash = hashlib.md5(holder.encode()).hexdigest()[:10]
+            pseudo_cik = f"yf_{holder_hash}"
 
-                # Upsert filer
-                db.execute(
-                    """
-                    INSERT INTO sec_13f_filers (cik, filer_name, latest_quarter)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (cik) DO UPDATE SET 
-                        filer_name = EXCLUDED.filer_name,
-                        latest_quarter = GREATEST(sec_13f_filers.latest_quarter, EXCLUDED.latest_quarter)
-                    """,
-                    [pseudo_cik, holder, quarter],
-                )
+            # Upsert filer
+            _upsert_13f_filer(pseudo_cik, holder, quarter)
 
-                # Insert holdings.
-                # source='yfinance' — these rows use a SYNTHESIZED pseudo-CIK and
-                # are NOT real EDGAR 13F filings. Any query counting "funds
-                # holding X" must filter source='edgar' or it double-counts.
-                mongo_store.update_docs('sec_13f_holdings', {'cik': pseudo_cik, 'ticker': ticker, 'filing_quarter': quarter}, {'$set': {'name_of_issuer': holder, 'shares': shares, 'value_usd': value, 'source': "yfinance", 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, '$setOnInsert': {'pct_change': None, 'is_new_position': False, 'is_exit': False}}, upsert=True)
-                count += 1
 
-            from app.telemetry import send_system_log
-            send_system_log(
-                subsystem="DB",
-                message=f"[yfinance] {ticker}: Upserted {count} institutional holder rows to sec_13f_holdings"
-            )
-            logger.info(f"[sec] {ticker}: {count} institutional holders via yfinance")
-            return count
+            # Insert holdings.
+            # source='yfinance' — these rows use a SYNTHESIZED pseudo-CIK and
+            # are NOT real EDGAR 13F filings. Any query counting "funds
+            # holding X" must filter source='edgar' or it double-counts.
+            mongo_store.update_docs('sec_13f_holdings', {'cik': pseudo_cik, 'ticker': ticker, 'filing_quarter': quarter}, {'$set': {'name_of_issuer': holder, 'shares': shares, 'value_usd': value, 'source': "yfinance", 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, '$setOnInsert': {'pct_change': None, 'is_new_position': False, 'is_exit': False}}, upsert=True)
+            count += 1
+
+        from app.telemetry import send_system_log
+        send_system_log(
+            subsystem="DB",
+            message=f"[yfinance] {ticker}: Upserted {count} institutional holder rows to sec_13f_holdings"
+        )
+        logger.info(f"[sec] {ticker}: {count} institutional holders via yfinance")
+        return count
 
     except ImportError:
         logger.info("[sec] yfinance not installed")

@@ -49,13 +49,19 @@ def _restore_trace_id():
 
 
 def _captured_cycle_ids(handler_calls) -> list[str]:
-    """Pull the cycle_id argument out of each INSERT the handler issued."""
+    """Pull the cycle_id out of each execution_errors document the handler wrote.
+
+    The handler is off Postgres: it writes through
+    `mongo_store.insert_docs('execution_errors', [doc])`, so the id is read
+    from the document field rather than a positional SQL parameter.
+    """
     out = []
     for call in handler_calls:
-        sql = call.args[0]
-        params = call.args[1]
-        if "INSERT INTO execution_errors" in sql:
-            out.append(params[1])  # (id, cycle_id, phase, ...)
+        collection = call.args[0]
+        docs = call.args[1]
+        if collection == "execution_errors":
+            for doc in docs:
+                out.append(doc["cycle_id"])
     return out
 
 
@@ -70,8 +76,9 @@ class TestHandlerFallbackOrder:
         )
         for k, v in (extra or {}).items():
             setattr(record, k, v)
-        handler.emit(record)
-        return _captured_cycle_ids(mock_db.execute.call_args_list)
+        with patch("app.services.logging.unified_logger.mongo_store") as store:
+            handler.emit(record)
+            return _captured_cycle_ids(store.insert_docs.call_args_list)
 
     def test_record_attribute_wins(self, mock_db):
         set_trace_id("trace-should-lose")

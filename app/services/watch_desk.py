@@ -32,7 +32,6 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from app.db.connection import get_db
 from app.utils.tz import ensure_aware
 from app.db import mongo_query, mongo_store
 
@@ -185,21 +184,30 @@ def create_watch(
     now = datetime.now(timezone.utc)
     expiry = now + timedelta(days=max(1, int(expiry_days)))
     try:
-        with get_db() as db:
-            # Supersede ANY existing active watch for this ticker (one active watch
-            # per ticker — regardless of bot_id — so an auto-baseline and a user
-            # watch_ticker can't both be live and double-wake). RETURNING so the
-            # new watch can inherit the old one's news-dedup anchor.
-            old_rows = db.execute(
-                "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE ticker = %s AND is_active = TRUE RETURNING last_fired_at",
-                [now, ticker],
-            ).fetchall()
-            inherited = [r[0] for r in (old_rows or []) if r and r[0] is not None]
-            anchors = [ensure_aware(a) for a in inherited + [news_seen_until] if a is not None]
-            anchors = [a for a in anchors if a is not None]
-            last_fired_seed = max(anchors) if anchors else None
-            mongo_store.insert_docs('ticker_watches', [{'id': watch_id, 'ticker': ticker, 'bot_id': bot_id, 'triggers': json.dumps(clean), 'reason': (reason or "")[:500], 'thesis_summary': (thesis_summary or "")[:2000], 'is_active': True, 'cooldown_minutes': int(cooldown_minutes), 'source_cycle_id': source_cycle_id, 'expiry_at': expiry, 'last_fired_at': last_fired_seed, 'created_at': now, 'updated_at': now}])
+        # Supersede ANY existing active watch for this ticker (one active watch
+        # per ticker — regardless of bot_id — so an auto-baseline and a user
+        # watch_ticker can't both be live and double-wake). The SQL used
+        # RETURNING so the new watch could inherit the old one's news-dedup
+        # anchor; Mongo has no multi-document RETURNING, so claim them one at a
+        # time with find_one_and_update. That keeps the deactivation atomic per
+        # document — a read-then-update would let a concurrent create_watch see
+        # the same row as active and both inherit/deactivate it.
+        inherited = []
+        while True:
+            old = mongo_store.find_one_and_update(
+                "ticker_watches",
+                {"ticker": ticker, "is_active": True},
+                {"$set": {"is_active": False, "updated_at": now}},
+                return_after=False,   # RETURNING on an UPDATE gives the PRE-image field
+            )
+            if old is None:
+                break
+            if old.get("last_fired_at") is not None:
+                inherited.append(old["last_fired_at"])
+        anchors = [ensure_aware(a) for a in inherited + [news_seen_until] if a is not None]
+        anchors = [a for a in anchors if a is not None]
+        last_fired_seed = max(anchors) if anchors else None
+        mongo_store.insert_docs('ticker_watches', [{'id': watch_id, 'ticker': ticker, 'bot_id': bot_id, 'triggers': json.dumps(clean), 'reason': (reason or "")[:500], 'thesis_summary': (thesis_summary or "")[:2000], 'is_active': True, 'cooldown_minutes': int(cooldown_minutes), 'source_cycle_id': source_cycle_id, 'expiry_at': expiry, 'last_fired_at': last_fired_seed, 'created_at': now, 'updated_at': now}])
     except Exception as e:
         logger.error("[WatchDesk] create_watch failed for %s: %s", ticker, e)
         return {"status": "error", "message": str(e)}
@@ -217,30 +225,27 @@ def create_watch(
 
 def list_watches(ticker: str | None = None, active_only: bool = True) -> list[dict]:
     ticker = (ticker or "").upper().strip() or None
-    q = (
-        "SELECT id, ticker, triggers, reason, is_active, cooldown_minutes, "
-        "fire_count, last_fired_at, last_evaluated_at, expiry_at, created_at "
-        "FROM ticker_watches WHERE 1=1"
-    )
-    params: list = []
+    query: dict = {}
     if active_only:
-        q += " AND is_active = TRUE"
+        query["is_active"] = True
     if ticker:
-        q += " AND ticker = %s"
-        params.append(ticker)
-    q += " ORDER BY created_at DESC"
+        query["ticker"] = ticker
     out = []
-    with get_db() as db:
-        for r in db.execute(q, params).fetchall():
-            out.append({
-                "watch_id": r[0], "ticker": r[1],
-                "triggers": json.loads(r[2] or "[]"), "reason": r[3],
-                "is_active": r[4], "cooldown_minutes": r[5], "fire_count": r[6],
-                "last_fired_at": str(r[7]) if r[7] else None,
-                "last_evaluated_at": str(r[8]) if r[8] else None,
-                "expires_at": str(r[9]) if r[9] else None,
-                "created_at": str(r[10]) if r[10] else None,
-            })
+    for r in mongo_query.find_rows(
+        "ticker_watches", query,
+        ["id", "ticker", "triggers", "reason", "is_active", "cooldown_minutes",
+         "fire_count", "last_fired_at", "last_evaluated_at", "expiry_at", "created_at"],
+        sort=[("created_at", -1)],
+    ):
+        out.append({
+            "watch_id": r[0], "ticker": r[1],
+            "triggers": json.loads(r[2] or "[]"), "reason": r[3],
+            "is_active": r[4], "cooldown_minutes": r[5], "fire_count": r[6],
+            "last_fired_at": str(r[7]) if r[7] else None,
+            "last_evaluated_at": str(r[8]) if r[8] else None,
+            "expires_at": str(r[9]) if r[9] else None,
+            "created_at": str(r[10]) if r[10] else None,
+        })
     return out
 
 
@@ -249,22 +254,17 @@ def clear_watch(ticker: str | None = None, watch_id: str | None = None) -> dict:
     if not ticker and not watch_id:
         return {"status": "rejected", "reason": "provide watch_id or ticker."}
     now = datetime.now(timezone.utc)
-    # RETURNING + fetchall so the count is accurate — the pooled cursor exposes
-    # no .rowcount.
-    with get_db() as db:
-        if watch_id:
-            rows = db.execute(
-                "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE id = %s AND is_active = TRUE RETURNING id",
-                [now, watch_id],
-            ).fetchall()
-        else:
-            rows = db.execute(
-                "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-                "WHERE ticker = %s AND is_active = TRUE RETURNING id",
-                [now, (ticker or "").upper().strip()],
-            ).fetchall()
-    return {"status": "cleared", "deactivated": len(rows or [])}
+    # The SQL used RETURNING id purely to count the affected rows (the pooled
+    # cursor exposes no .rowcount); update_docs returns modified_count, which is
+    # the same number — every matched doc has is_active TRUE, so each match is
+    # a real modification.
+    key = ({"id": watch_id} if watch_id
+           else {"ticker": (ticker or "").upper().strip()})
+    n = mongo_store.update_docs(
+        "ticker_watches", key | {"is_active": True},
+        {"$set": {"is_active": False, "updated_at": now}},
+    )
+    return {"status": "cleared", "deactivated": n}
 
 
 def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycle_id: str) -> None:
@@ -454,17 +454,20 @@ def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
     excluding it blind could blind the desk far more than it protects it.
     """
     try:
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT title, collected_at FROM news_articles "
-                "WHERE ticker = %s "
-                f"AND collected_at >= NOW() - INTERVAL '{int(hours)} hours' "
-                "AND (ticker_attribution IS NULL OR ticker_attribution != 'query_fallback') "
-                "AND (quality_status IS NULL OR quality_status != 'discarded') "
-                "ORDER BY collected_at DESC LIMIT 40",
-                [ticker],
-            ).fetchall()
-            return [(r[0], r[1]) for r in rows if r[0]]
+        # `(col IS NULL OR col != 'x')` is exactly Mongo's `{"col": {"$ne": "x"}}`:
+        # $ne matches documents where the field is missing or null too.
+        rows = mongo_query.find_rows(
+            "news_articles",
+            {
+                "ticker": ticker,
+                "collected_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=int(hours))},
+                "ticker_attribution": {"$ne": "query_fallback"},
+                "quality_status": {"$ne": "discarded"},
+            },
+            ["title", "collected_at"],
+            sort=[("collected_at", -1)], limit=40,
+        )
+        return [(r[0], r[1]) for r in rows if r[0]]
     except Exception:
         return []
 
@@ -541,15 +544,32 @@ def _wakes_today() -> int:
     watch_events.cycle_id holds the wd-* COMMAND id; a command that lost the
     dispatch race ends 'skipped' in v3_system_commands and is refunded here so
     a burned enqueue can't eat the day's budget."""
-    with get_db() as db:
-        row = db.execute(
-            "SELECT COUNT(*) FROM watch_events we WHERE we.cycle_id IS NOT NULL "
-            "AND (we.fired_at AT TIME ZONE 'America/New_York') "
-            ">= date_trunc('day', NOW() AT TIME ZONE 'America/New_York') "
-            "AND NOT EXISTS (SELECT 1 FROM v3_system_commands c "
-            "                WHERE c.id = we.cycle_id AND c.status = 'skipped')"
-        ).fetchone()
-        return row[0] if row else 0
+    from app.services.market_calendar import MarketCalendar
+
+    # date_trunc('day', NOW() AT TIME ZONE 'America/New_York') — the ET midnight
+    # that started the current trading day, expressed back in UTC for the query.
+    now_et = MarketCalendar._to_et()
+    day_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_utc = day_start.astimezone(timezone.utc)
+
+    # The NOT EXISTS anti-join is done in two reads rather than approximated:
+    # first the day's wake rows, then the skipped commands among exactly those
+    # ids. Both sets are bounded by one trading day's wakes (single digits).
+    rows = mongo_query.find_rows(
+        "watch_events",
+        {"cycle_id": {"$ne": None}, "fired_at": {"$gte": day_start_utc}},
+        ["cycle_id"],
+    )
+    cycle_ids = [r[0] for r in rows if r[0] is not None]
+    if not cycle_ids:
+        return 0
+    skipped = set(mongo_store.distinct_values(
+        "v3_system_commands", "id",
+        {"id": {"$in": cycle_ids}, "status": "skipped"},
+    ))
+    # COUNT(*) over the surviving ROWS, not distinct ids — two events sharing a
+    # cycle_id counted twice in SQL and must count twice here.
+    return sum(1 for cid in cycle_ids if cid not in skipped)
 
 
 async def evaluate_watches() -> dict:
@@ -711,7 +731,7 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
             "research_reason": detail,
         }
         cmd_id = f"wd-{uuid.uuid4().hex[:8]}"
-        mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
+        mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
         logger.info("[WatchDesk] WAKE %s for %s — %s", cmd_id, ticker, detail)
         return cmd_id
     except Exception as e:
@@ -722,12 +742,13 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
 def _mark_fired(watch: dict, trig: dict, detail: str, value, cycle_id: str) -> None:
     now = datetime.now(timezone.utc)
     try:
-        with get_db() as db:
-            db.execute(
-                "UPDATE ticker_watches SET last_fired_at = %s, fire_count = fire_count + 1, updated_at = %s "
-                "WHERE id = %s",
-                [now, now, watch["id"]],
-            )
+        # fire_count = fire_count + 1 → $inc, so two concurrent fires cannot
+        # both read the same old count and write the same new one.
+        mongo_store.update_docs(
+            "ticker_watches", {"id": watch["id"]},
+            {"$set": {"last_fired_at": now, "updated_at": now},
+             "$inc": {"fire_count": 1}},
+        )
     except Exception as e:
         logger.warning("[WatchDesk] mark_fired failed: %s", e)
     _log_event(watch, trig, detail, value, cycle_id)
@@ -735,7 +756,15 @@ def _mark_fired(watch: dict, trig: dict, detail: str, value, cycle_id: str) -> N
 
 def _log_event(watch: dict, trig: dict, detail: str, value, cycle_id: str | None) -> None:
     try:
-        mongo_store.insert_docs('watch_events', [{'id': f"wev-{uuid.uuid4().hex[:10]}", 'watch_id': watch["id"], 'ticker': watch["ticker"], 'trigger_type': trig["type"], 'detail': detail[:500], 'trigger_json': json.dumps(trig), 'value': value, 'cycle_id': cycle_id}])
+        mongo_store.insert_docs('watch_events', [{'id': f"wev-{uuid.uuid4().hex[:10]}", 'watch_id': watch["id"], 'ticker': watch["ticker"], 'trigger_type': trig["type"], 'detail': detail[:500], 'trigger_json': json.dumps(trig), 'value': value, 'cycle_id': cycle_id,
+             # watch_events.fired_at was `DEFAULT CURRENT_TIMESTAMP` in PG and
+             # nothing set it explicitly. Mongo has no column defaults, so
+             # without this every event doc lacks fired_at — _wakes_today() and
+             # consume_wake_context() both filter on it and would silently see
+             # ZERO rows, i.e. an unlimited daily wake budget and a permanently
+             # empty "why you woke up".
+             'fired_at': datetime.now(timezone.utc),
+             'consumed_at': None}])
     except Exception as e:
         logger.warning("[WatchDesk] log_event failed: %s", e)
 
@@ -770,17 +799,20 @@ def consume_wake_context(ticker: str, within_minutes: int = 180) -> str | None:
     consumed so it's injected once. Returns a human 'why you woke up' line or None."""
     ticker = (ticker or "").upper().strip()
     try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT id, detail FROM watch_events "
-                "WHERE ticker = %s AND consumed_at IS NULL AND cycle_id IS NOT NULL "
-                f"AND fired_at >= NOW() - INTERVAL '{int(within_minutes)} minutes' "
-                "ORDER BY fired_at DESC LIMIT 1",
-                [ticker],
-            ).fetchone()
-            if not row:
-                return None
-            mongo_store.update_docs('watch_events', {'id': row[0]}, {'$set': {'consumed_at': datetime.now(timezone.utc)}})
-            return row[1]
+        # SELECT-then-mark-consumed is a CLAIM: two data_reports for the same
+        # ticker must not both inject the same trip. find_one_and_update picks
+        # and marks the newest unconsumed row in one atomic step.
+        doc = mongo_store.find_one_and_update(
+            "watch_events",
+            {
+                "ticker": ticker,
+                "consumed_at": None,
+                "cycle_id": {"$ne": None},
+                "fired_at": {"$gte": datetime.now(timezone.utc) - timedelta(minutes=int(within_minutes))},
+            },
+            {"$set": {"consumed_at": datetime.now(timezone.utc)}},
+            sort=[("fired_at", -1)],
+        )
+        return doc.get("detail") if doc else None
     except Exception:
         return None

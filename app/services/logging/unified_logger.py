@@ -108,8 +108,6 @@ class DbLoggingHandler(logging.Handler):
 
     def _write_to_db(self, cycle_id: str, phase: str, ticker: str, error_type: str, error_message: str, stack_trace: str, levelname: str):
         try:
-            from app.db.connection import get_db
-            
             error_id = f"err_{uuid.uuid4().hex[:12]}"
             now = datetime.now(timezone.utc)
             audit_id = f"aud_{uuid.uuid4().hex[:12]}"
@@ -130,30 +128,10 @@ class DbLoggingHandler(logging.Handler):
                 "phase": phase, "ticker": ticker, "severity": severity,
                 "message": f"[{levelname}] {error_message[:500]}", "data": audit_data,
             }
-            with get_db() as db:
-                # 1. Insert into execution_errors
-                mongo_store.insert_docs('execution_errors', [{'id': err_rec["id"], 'cycle_id': err_rec["cycle_id"], 'phase': err_rec["phase"], 'ticker': err_rec["ticker"], 'error_type': err_rec["error_type"], 'error_message': err_rec["error_message"], 'stack_trace': err_rec["stack_trace"], 'created_at': err_rec["created_at"]}])
-                # 2. Duplicate to cycle_audit_log
-                db.execute(
-                    """
-                    INSERT INTO cycle_audit_log (id, cycle_id, timestamp, audit_type, event_type, phase, ticker, severity, message, data)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                    """,
-                    (audit_rec["id"], audit_rec["cycle_id"], audit_rec["timestamp"], audit_rec["audit_type"],
-                     audit_rec["event_type"], audit_rec["phase"], audit_rec["ticker"], audit_rec["severity"],
-                     audit_rec["message"], json.dumps(audit_rec["data"]))
-                )
-            # Best-effort Mongo dual-write (per-table flag; never breaks PG above).
-            try:
-                from app.db import mongo_store
-                if mongo_store.writes_mongo("execution_errors"):
-                    mongo_store.insert_docs("execution_errors", [err_rec])
-                if mongo_store.writes_mongo("cycle_audit_log"):
-                    mongo_store.insert_docs("cycle_audit_log", [audit_rec])
-            except Exception as me:
-                logging.getLogger(__name__).warning(
-                    "[UnifiedLogger] Mongo mirror failed (non-fatal): %s", me
-                )
+            # 1. Insert into execution_errors
+            mongo_store.insert_docs('execution_errors', [err_rec])
+            # 2. Duplicate to cycle_audit_log
+            mongo_store.insert_docs('cycle_audit_log', [audit_rec])
         except Exception as e:
             self._note_drop(e)
 

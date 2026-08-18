@@ -82,16 +82,15 @@ async def _probe_http(
         }
 
 
-async def _probe_postgres() -> dict:
-    """Probe PostgreSQL connectivity."""
+async def _probe_mongo() -> dict:
+    """Probe MongoDB connectivity."""
     start = time.monotonic()
     try:
-        from app.db.connection import get_db
-        with get_db() as db:
-            db.execute("SELECT 1").fetchone()
+        from app.db.mongo_store import get_doc_db
+        get_doc_db().command("ping")
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return {
-            "service": "postgres",
+            "service": "mongodb",
             "url": "internal",
             "status": "healthy",
             "status_code": None,
@@ -102,7 +101,7 @@ async def _probe_postgres() -> dict:
     except Exception as e:
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return {
-            "service": "postgres",
+            "service": "mongodb",
             "url": "internal",
             "status": "down",
             "status_code": None,
@@ -161,7 +160,7 @@ async def run_all_probes() -> list[dict]:
 
 
     # 5. PostgreSQL
-    probes.append(_probe_postgres())
+    probes.append(_probe_mongo())
 
     # Run all probes concurrently
     results = await asyncio.gather(*probes, return_exceptions=True)

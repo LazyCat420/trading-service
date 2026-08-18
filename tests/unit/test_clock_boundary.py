@@ -187,22 +187,15 @@ class TestScheduleClockBoundary:
     @pytest.mark.asyncio
     async def test_schedule_skips_outside_market_hours(self):
         """When market_hours_only=True and outside hours, schedule skips."""
-        mock_db = MagicMock()
-        mock_db.execute.return_value = mock_db
-
         from app.services.cycle_scheduler import SchedulerService
 
         pq, ps, pv, query, store = _mongo(_schedule_row("sched-1"))
         with patch.object(SchedulerService, "_is_market_hours", return_value=False), \
-             patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
              pq, ps, pv, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
             mock_cc.is_stopped = False
-            mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-
             await SchedulerService.execute_schedule("sched-1")
 
         # Should NOT have dispatched a system_command (skipped)
@@ -212,22 +205,15 @@ class TestScheduleClockBoundary:
     @pytest.mark.asyncio
     async def test_schedule_runs_during_market_hours(self):
         """When market_hours_only=True and inside hours, schedule executes."""
-        mock_db = MagicMock()
-        mock_db.execute.return_value = mock_db
-
         from app.services.cycle_scheduler import SchedulerService
 
         pq, ps, pv, query, store = _mongo(_schedule_row("sched-2"))
         with patch.object(SchedulerService, "_is_market_hours", return_value=True), \
-             patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
              pq, ps, pv, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
             mock_cc.is_stopped = False
-            mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-
             await SchedulerService.execute_schedule("sched-2")
 
         # Should have dispatched a system_command (executed). Asserting on the
@@ -250,23 +236,16 @@ class TestPausedSystemSkipsSchedule:
     @pytest.mark.asyncio
     async def test_paused_system_skips_schedule(self):
         """Paused system should skip executing scheduled cycles and not call resume."""
-        mock_db = MagicMock()
-        mock_db.execute.return_value = mock_db
-
         from app.services.cycle_scheduler import SchedulerService
 
         pq, ps, pv, query, store = _mongo(
             _schedule_row("sched-paused", market_hours_only=False)
         )
         with patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
-             patch("app.services.cycle_scheduler.get_db") as mock_get_db, \
              pq, ps, pv, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = True
             mock_cc.is_stopped = False
-            mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-
             await SchedulerService.execute_schedule("sched-paused")
 
             # Check that resume was NOT triggered on cycle_control

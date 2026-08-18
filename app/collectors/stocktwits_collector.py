@@ -7,7 +7,7 @@ import datetime
 import hashlib
 from app.services.scraper_client import scraper_client
 from app.processors.dedup_engine import DedupEngine
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +60,15 @@ async def collect_for_ticker(ticker: str, limit: int = 30) -> int:
         ))
 
     if rows:
-        with get_db() as db:
-            db.executemany("""
-                INSERT INTO social_posts
-                (id, platform, platform_post_id, ticker, author_username, author_display_name,
-                 author_followers, content, like_count, repost_count, reply_count, view_count,
-                 cashtags, hashtags, sentiment_score, quality_score, quality_status, is_repost,
-                 posted_at, collected_at, content_hash)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO NOTHING
-            """, rows)
+        # `executemany(INSERT ... ON CONFLICT (id) DO NOTHING)` — insert_docs is
+        # ordered=False and swallows duplicate-key errors, which is DO NOTHING.
+        cols = ("id", "platform", "platform_post_id", "ticker", "author_username",
+                "author_display_name", "author_followers", "content", "like_count",
+                "repost_count", "reply_count", "view_count", "cashtags", "hashtags",
+                "sentiment_score", "quality_score", "quality_status", "is_repost",
+                "posted_at", "collected_at", "content_hash")
+        mongo_store.insert_docs('social_posts',
+                                [dict(zip(cols, r)) for r in rows])
         logger.info(f"[stocktwits] Wrote {len(rows)} posts for ${ticker}")
         return len(rows)
     return 0

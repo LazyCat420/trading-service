@@ -13,7 +13,6 @@ import hashlib
 import re
 import datetime
 import asyncio
-from app.db.connection import get_db
 from app.processors.ticker_extractor import get_ticker_symbols
 from app.utils.text_utils import is_truncated_content, is_scrape_artifact
 from app.db import mongo_query
@@ -481,7 +480,7 @@ def rank_tickers_for_fanout(
     return sorted({t.upper() for t in detected if t}, key=rank)
 
 
-def url_fanout_exceeded(db, url: str | None, cap: int | None = None) -> bool:
+def url_fanout_exceeded(db=None, url: str | None = None, cap: int | None = None) -> bool:
     """True when `url` already has >= cap news_articles rows.
 
     Per-ticker fan-out of one article is deliberate (all retrieval is
@@ -528,161 +527,160 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
 
     count = 0
     try:
-        with get_db() as db:
-            items = await scraper_client.collect(
-                source="news",
-                req_data={
-                    "feed_url": feed_url,
-                    "query": feed_name,
+        items = await scraper_client.collect(
+            source="news",
+            req_data={
+                "feed_url": feed_url,
+                "query": feed_name,
+            }
+        )
+
+        async def process_rss_article(article):
+            title = article.get("title", "").strip()
+            if not title:
+                return []
+
+            url = article.get("url", "")
+            summary = article.get("summary", "").strip()
+            publisher = article.get("publisher", feed_name)
+
+            # Translate if foreign
+            if is_foreign:
+                title = await _translate_foreign_text(title, publisher)
+                if summary:
+                    summary = await _translate_foreign_text(summary, publisher)
+
+            pub_val = article.get("published_at")
+            if isinstance(pub_val, str):
+                published_at = datetime.datetime.fromisoformat(pub_val)
+                if published_at.tzinfo is None:
+                    published_at = published_at.replace(tzinfo=datetime.UTC)
+            else:
+                published_at = datetime.datetime.now(datetime.UTC)
+
+            # STRICT QUALITY GATE & BODY SCRAPING
+            api_summary = summary
+            summary = ""
+            if url and (len(api_summary) < 150 or "..." in api_summary):
+                body = await _scrape_article_body_via_service(url)
+                if body and len(body) >= 150:
+                    summary = body
+
+            if not summary:
+                summary = api_summary
+
+            if is_truncated_content(summary):
+                _note_drop("collect_feed", title, feed_name, len(summary))
+                return []
+
+            from app.processors.dedup_engine import DedupEngine
+            dedup = DedupEngine(table="news_articles")
+            if dedup.is_duplicate(title, summary):
+                return []
+            content_hash = dedup.compute_hash(title, summary)
+
+            # Detect tickers in title + summary
+            full_text = f"{title} {summary}"
+            detected_tickers = await _detect_tickers_in_text(full_text)
+
+            # Relevance gate: for short/ambiguous tickers, verify the article
+            # actually discusses the stock (not just uses the letters as English).
+            if detected_tickers:
+                relevant_tickers = {
+                    t for t in detected_tickers
+                    if _is_article_relevant_to_ticker(t, full_text)
                 }
-            )
+                detected_tickers = relevant_tickers
 
-            async def process_rss_article(article):
-                title = article.get("title", "").strip()
-                if not title:
-                    return []
-
-                url = article.get("url", "")
-                summary = article.get("summary", "").strip()
-                publisher = article.get("publisher", feed_name)
-
-                # Translate if foreign
-                if is_foreign:
-                    title = await _translate_foreign_text(title, publisher)
-                    if summary:
-                        summary = await _translate_foreign_text(summary, publisher)
-
-                pub_val = article.get("published_at")
-                if isinstance(pub_val, str):
-                    published_at = datetime.datetime.fromisoformat(pub_val)
-                    if published_at.tzinfo is None:
-                        published_at = published_at.replace(tzinfo=datetime.UTC)
-                else:
-                    published_at = datetime.datetime.now(datetime.UTC)
-
-                # STRICT QUALITY GATE & BODY SCRAPING
-                api_summary = summary
-                summary = ""
-                if url and (len(api_summary) < 150 or "..." in api_summary):
-                    body = await _scrape_article_body_via_service(url)
-                    if body and len(body) >= 150:
-                        summary = body
-
-                if not summary:
-                    summary = api_summary
-
-                if is_truncated_content(summary):
-                    _note_drop("collect_feed", title, feed_name, len(summary))
-                    return []
-
-                from app.processors.dedup_engine import DedupEngine
-                dedup = DedupEngine(table="news_articles")
-                if dedup.is_duplicate(title, summary):
-                    return []
-                content_hash = dedup.compute_hash(title, summary)
-
-                # Detect tickers in title + summary
-                full_text = f"{title} {summary}"
-                detected_tickers = await _detect_tickers_in_text(full_text)
-
-                # Relevance gate: for short/ambiguous tickers, verify the article
-                # actually discusses the stock (not just uses the letters as English).
-                if detected_tickers:
-                    relevant_tickers = {
-                        t for t in detected_tickers
-                        if _is_article_relevant_to_ticker(t, full_text)
-                    }
-                    detected_tickers = relevant_tickers
-
-                res_items = []
-                if detected_tickers:
-                    for ticker in detected_tickers:
-                        ticker_article_id = _get_article_id(title, ticker)
-                        res_items.append({
-                            "id": ticker_article_id,
-                            "ticker": ticker,
-                            "title": title,
-                            "publisher": publisher,
-                            "url": url,
-                            "published_at": published_at,
-                            "summary": summary,
-                            "content_hash": content_hash,
-                            "is_general": False,
-                            "tickers_list": list(detected_tickers),
-                        })
-                else:
-                    article_id = _get_article_id(title, None)
+            res_items = []
+            if detected_tickers:
+                for ticker in detected_tickers:
+                    ticker_article_id = _get_article_id(title, ticker)
                     res_items.append({
-                        "id": article_id,
-                        "ticker": None,
+                        "id": ticker_article_id,
+                        "ticker": ticker,
                         "title": title,
                         "publisher": publisher,
                         "url": url,
                         "published_at": published_at,
                         "summary": summary,
                         "content_hash": content_hash,
-                        "is_general": True,
-                        "tickers_list": [],
+                        "is_general": False,
+                        "tickers_list": list(detected_tickers),
                     })
-                return res_items
+            else:
+                article_id = _get_article_id(title, None)
+                res_items.append({
+                    "id": article_id,
+                    "ticker": None,
+                    "title": title,
+                    "publisher": publisher,
+                    "url": url,
+                    "published_at": published_at,
+                    "summary": summary,
+                    "content_hash": content_hash,
+                    "is_general": True,
+                    "tickers_list": [],
+                })
+            return res_items
 
-            # Process up to 15 items in parallel to speed up RSS sweeps
-            tasks = [process_rss_article(art) for art in items[:15]]
-            results_lists = await asyncio.gather(*tasks)
+        # Process up to 15 items in parallel to speed up RSS sweeps
+        tasks = [process_rss_article(art) for art in items[:15]]
+        results_lists = await asyncio.gather(*tasks)
 
-            for item_list in results_lists:
-                if not item_list:
+        for item_list in results_lists:
+            if not item_list:
+                continue
+            for item in item_list:
+                if url_fanout_exceeded(None, item.get("url")):
                     continue
-                for item in item_list:
-                    if url_fanout_exceeded(db, item.get("url")):
-                        continue
-                    _qs, _qr = quality_at_write(item["title"], item["summary"])
-                    from app.db import mongo_store
-                    now_dt = datetime.datetime.now(datetime.UTC)
-                    attr_val = "general" if item.get("is_general") else "detected"
-                    # One upsert. The conversion left a second, near-identical
-                    # one behind a writes_pg() gate that also lands in Mongo,
-                    # so in dual/mongo_read mode every article was written
-                    # twice — idempotent on the id key, but a wasted round trip
-                    # per article, and a writes_pg flag controlling nothing.
-                    mongo_store.upsert_doc(
-                        "news_articles",
-                        {"id": item["id"]},
-                        {
-                            "id": item["id"],
-                            "ticker": item["ticker"],
-                            "title": item["title"][:500],
-                            "publisher": item["publisher"],
-                            "url": item["url"],
-                            "published_at": item["published_at"],
-                            "summary": item["summary"],
-                            "source": "rss",
-                            "content_hash": item["content_hash"],
-                            "collected_at": now_dt,
-                            "quality_status": _qs,
-                            "quality_reason": _qr,
-                            "ticker_attribution": attr_val,
-                        },
-                        insert_only=True,
-                    )
-                    count += 1
+                _qs, _qr = quality_at_write(item["title"], item["summary"])
+                from app.db import mongo_store
+                now_dt = datetime.datetime.now(datetime.UTC)
+                attr_val = "general" if item.get("is_general") else "detected"
+                # One upsert. The conversion left a second, near-identical
+                # one behind a writes_pg() gate that also lands in Mongo,
+                # so in dual/mongo_read mode every article was written
+                # twice — idempotent on the id key, but a wasted round trip
+                # per article, and a writes_pg flag controlling nothing.
+                mongo_store.upsert_doc(
+                    "news_articles",
+                    {"id": item["id"]},
+                    {
+                        "id": item["id"],
+                        "ticker": item["ticker"],
+                        "title": item["title"][:500],
+                        "publisher": item["publisher"],
+                        "url": item["url"],
+                        "published_at": item["published_at"],
+                        "summary": item["summary"],
+                        "source": "rss",
+                        "content_hash": item["content_hash"],
+                        "collected_at": now_dt,
+                        "quality_status": _qs,
+                        "quality_reason": _qr,
+                        "ticker_attribution": attr_val,
+                    },
+                    insert_only=True,
+                )
+                count += 1
 
-                # Emit news scraped log for this unique item list
-                first_item = item_list[0]
-                if not first_item.get("is_general"):
-                    safe_emit(
-                        emit_cb,
-                        "news_scraped",
-                        f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: {first_item['tickers_list']}",
-                        status="ok"
-                    )
-                else:
-                    safe_emit(
-                        emit_cb,
-                        "news_scraped",
-                        f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: General",
-                        status="ok"
-                    )
+            # Emit news scraped log for this unique item list
+            first_item = item_list[0]
+            if not first_item.get("is_general"):
+                safe_emit(
+                    emit_cb,
+                    "news_scraped",
+                    f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: {first_item['tickers_list']}",
+                    status="ok"
+                )
+            else:
+                safe_emit(
+                    emit_cb,
+                    "news_scraped",
+                    f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: General",
+                    status="ok"
+                )
     except Exception as e:
         logger.error(f"[news] {feed_name} FAILED: {type(e).__name__}: {e}", exc_info=True)
 
@@ -932,15 +930,14 @@ async def collect_finnhub_news(
         tasks = [process_article(art) for art in unique_articles]
         results_lists = await asyncio.gather(*tasks)
 
-        with get_db() as db:
-            count = 0
-            for item_list in results_lists:
-                for item in item_list:
-                    if url_fanout_exceeded(db, item.get("url")):
-                        continue
-                    _qs, _qr = quality_at_write(item["title"], item["summary"])
-                    mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'finnhub', 'content_hash': item.get("content_hash"), 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': item.get("ticker_attribution", "detected")}, insert_only=True)
-                    count += 1
+        count = 0
+        for item_list in results_lists:
+            for item in item_list:
+                if url_fanout_exceeded(None, item.get("url")):
+                    continue
+                _qs, _qr = quality_at_write(item["title"], item["summary"])
+                mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'finnhub', 'content_hash': item.get("content_hash"), 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': item.get("ticker_attribution", "detected")}, insert_only=True)
+                count += 1
 
         logger.info(
             f"[news] Finnhub {ticker}: {count} unique articles (skipped {skipped} duplicates)"
@@ -1070,18 +1067,17 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
         tasks = [process_yf_article(art) for art in news]
         results_lists = await asyncio.gather(*tasks)
 
-        with get_db() as db:
-            count = 0
-            for item_list in results_lists:
-                for item in item_list:
-                    if url_fanout_exceeded(db, item.get("url")):
-                        continue
-                    _qs, _qr = quality_at_write(item["title"], item["summary"])
-                    mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'yfinance', 'content_hash': item.get("content_hash"), 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': item.get("ticker_attribution", "detected")}, insert_only=True)
-                    count += 1
+        count = 0
+        for item_list in results_lists:
+            for item in item_list:
+                if url_fanout_exceeded(None, item.get("url")):
+                    continue
+                _qs, _qr = quality_at_write(item["title"], item["summary"])
+                mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'yfinance', 'content_hash': item.get("content_hash"), 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': item.get("ticker_attribution", "detected")}, insert_only=True)
+                count += 1
 
-            logger.info(f"[news] yfinance {ticker}: {count} articles")
-            return count
+        logger.info(f"[news] yfinance {ticker}: {count} articles")
+        return count
 
     except Exception as e:
         logger.info(f"[news] yfinance {ticker} error: {e}")

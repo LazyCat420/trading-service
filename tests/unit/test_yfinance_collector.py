@@ -8,7 +8,8 @@ no longer import `get_db` at all — they write through
 patch intercepted nothing and every price bar, fundamentals row and duplicate
 check went to the LIVE Mongo database. This file patches `mongo_store` on
 `yfinance_collector` and `dedup_engine`, plus `mongo_query`/`mongo_store` on
-`news_collector` (which `collect_news` proxies to), and keeps a `get_db` mock
+`news_collector` (which `collect_news` proxies to); `news_collector` no longer
+imports `get_db` at all, so that mock is gone
 only for the one Postgres read `news_collector` still performs. The
 `executemany`-based assertions became per-document `upsert_doc` assertions on
 the `price_history` collection — the written dates and bar counts are checked
@@ -62,9 +63,7 @@ def mongo():
     with patch("app.collectors.yfinance_collector.mongo_store") as yf_store, \
          patch("app.collectors.news_collector.mongo_store") as news_store, \
          patch("app.collectors.news_collector.mongo_query") as news_query, \
-         patch("app.collectors.news_collector.get_db") as mock_get_db, \
          patch("app.processors.dedup_engine.mongo_store") as dedup_store:
-        mock_get_db.return_value.__enter__.return_value = db
 
         # Nothing on record => nothing is a duplicate, no publisher is banned.
         dedup_store.count_docs.return_value = 0

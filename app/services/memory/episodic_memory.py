@@ -23,8 +23,6 @@ class EpisodicMemoryStore:
         agents_involved: str = "[]",
     ) -> str:
         """Store a new episode summarize a completed cycle."""
-        from app.db.connection import get_db
-
         mem_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
@@ -53,29 +51,15 @@ class EpisodicMemoryStore:
 
         Returns rows updated.
         """
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            result = db.execute(
-                """
-                UPDATE episodic_memory
-                SET outcome = %s, outcome_score = %s
-                WHERE cycle_id = %s AND ticker = %s
-                  AND (outcome IS NULL OR outcome IN ('pending', 'neutral'))
-                """,
-                [outcome, outcome_score, cycle_id, ticker],
-            )
-            # PooledCursor doesn't proxy rowcount — read the real cursor's
-            # (same accessor as the retention delete in memory/store.py).
-            rc = getattr(result, "rowcount", None)
-            if rc is None:
-                rc = getattr(getattr(result, "_cursor", None), "rowcount", 0)
-            return rc if rc and rc > 0 else 0
+        return mongo_store.update_docs(
+            'episodic_memory',
+            {'cycle_id': cycle_id, 'ticker': ticker,
+             'outcome': {'$in': [None, 'pending', 'neutral']}},
+            {'$set': {'outcome': outcome, 'outcome_score': outcome_score}},
+        )
 
     def retrieve(self, ticker: str, limit: int = 4) -> list[dict]:
         """Query past episodes by ticker, ranked by most successful outcomes."""
-        from app.db.connection import get_db
-
         rows = mongo_query.find_rows('episodic_memory', {'ticker': ticker}, ['id', 'cycle_id', 'timestamp', 'summary', 'outcome_score', 'key_decisions', 'outcome'], sort=[('timestamp', -1)], limit=limit)
 
         results = []

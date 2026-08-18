@@ -11,7 +11,6 @@ import json
 import uuid
 import logging
 from datetime import datetime, timezone
-from app.db.connection import get_db
 from app.services.memory.repository import MemoryRepository
 from app.db import mongo_query, mongo_store
 
@@ -57,11 +56,11 @@ class MemoryStore:
         """
         Retrieves recent candidate observations that haven't yet been promoted to canonical memory.
         """
-        with get_db() as cursor:
-            rows = mongo_query.find_rows('episodic_observations', {'promoted_to_memory': False}, ['id', 'created_at', 'cycle_id', 'ticker', 'sector', 'source_type', 'observation_text', 'rationale_excerpt', 'confidence_at_creation', 'outcome_label', 'outcome_score', 'promoted_to_memory'], sort=[('created_at', 1)], limit=limit)
-
-            cols = [d[0] for d in cursor.description]
-            return [dict(zip(cols, row)) for row in rows]
+        cols = ['id', 'created_at', 'cycle_id', 'ticker', 'sector', 'source_type',
+                'observation_text', 'rationale_excerpt', 'confidence_at_creation',
+                'outcome_label', 'outcome_score', 'promoted_to_memory']
+        rows = mongo_query.find_rows('episodic_observations', {'promoted_to_memory': False}, cols, sort=[('created_at', 1)], limit=limit)
+        return [dict(zip(cols, row)) for row in rows]
 
     def mark_observation_promoted(self, obs_id: str):
         """Marks observation as having triggered or supplemented a canonical memory."""
@@ -71,18 +70,14 @@ class MemoryStore:
         """Retention: drop observations already distilled into canonical
         memories. Unpromoted rows are the consolidator's pending inbox and
         are never deleted here. Returns rows deleted."""
-        with get_db() as cursor:
-            result = cursor.execute(
-                "DELETE FROM episodic_observations "
-                "WHERE promoted_to_memory = TRUE "
-                "AND created_at < NOW() - (%s || ' days')::interval",
-                [str(int(days))],
-            )
-            # PooledCursor doesn't proxy rowcount — read the real cursor's.
-            rc = getattr(result, "rowcount", None)
-            if rc is None:
-                rc = getattr(getattr(result, "_cursor", None), "rowcount", 0)
-            return rc if rc and rc > 0 else 0
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+        # created_at is stored as an ISO-8601 string by add_episodic_observation,
+        # and ISO-8601 UTC strings compare lexicographically in timestamp order.
+        return mongo_store.delete_docs(
+            'episodic_observations',
+            {'promoted_to_memory': True, 'created_at': {'$lt': cutoff.isoformat()}},
+        )
 
     def add_canonical_memory(self, memory: dict) -> str:
         """

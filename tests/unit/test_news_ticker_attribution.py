@@ -42,15 +42,15 @@ class _RecorderDb:
 
 @pytest.fixture
 def finnhub_env(monkeypatch):
-    """Fake finnhub client + DB + seams so collect_finnhub_news runs hermetically."""
+    """Fake finnhub client + seams so collect_finnhub_news runs hermetically.
+
+    `news_collector` is off Postgres entirely, so there is no `get_db` left to
+    patch; `_RecorderDb` survives only as the recorder the Mongo write seam
+    below appends its documents to.
+    """
     db = _RecorderDb()
 
-    @contextmanager
-    def fake_get_db():
-        yield db
-
     monkeypatch.setenv("FINNHUB_API_KEY", "test-key")
-    monkeypatch.setattr(news_collector, "get_db", fake_get_db)
     monkeypatch.setattr(news_collector, "url_fanout_exceeded", lambda db_, url, cap=None: False)
 
     # The finnhub writer upserts into Mongo now. Record the documents so the
@@ -152,17 +152,12 @@ def test_detected_article_is_stamped_detected(finnhub_env, monkeypatch):
 def _rotator_env(monkeypatch, db):
     """Fake store + seams so `_persist_articles` runs hermetically.
 
-    The rotator writes through `mongo_store.upsert_doc` now. `db` is still
-    passed so `_rotator_writes` can read what was recorded, but the recorder
-    captures Mongo documents rather than SQL and params.
+    The rotator writes through `mongo_store.upsert_doc` now and no longer
+    imports `get_db` at all. `db` is still passed so `_rotator_writes` can read
+    what was recorded, but the recorder captures Mongo documents rather than
+    SQL and params.
     """
     from app.collectors import news_api_rotator
-
-    @contextmanager
-    def fake_get_db():
-        yield db
-
-    monkeypatch.setattr(news_api_rotator, "get_db", fake_get_db)
 
     store = MagicMock()
     store.upsert_doc.side_effect = lambda coll, key, doc, **kw: db.mongo_writes.append((coll, key, doc))
@@ -335,19 +330,48 @@ def test_every_news_write_stamps_ticker_attribution():
 
 
 def test_watch_desk_news_read_refuses_fallback_rows(monkeypatch):
-    """The wake trigger's SQL must exclude query_fallback and discarded rows
-    while keeping legacy NULLs eligible."""
+    """The wake trigger must exclude query_fallback and discarded rows while
+    keeping legacy NULLs eligible.
+
+    Asserted against the FILTER's behaviour, not its text: the Mongo query is
+    applied to representative documents, so a filter that stopped excluding
+    (or started over-excluding NULLs) fails here regardless of how it is
+    spelled.
+    """
     from app.services import watch_desk
 
-    db = _RecorderDb()
+    captured = {}
 
-    @contextmanager
-    def fake_get_db():
-        yield db
+    def fake_find_rows(collection, query, columns, sort=None, limit=0):
+        captured["collection"] = collection
+        captured["query"] = query
+        return []
 
-    monkeypatch.setattr(watch_desk, "get_db", fake_get_db)
+    fake_q = types.SimpleNamespace(find_rows=fake_find_rows)
+    monkeypatch.setattr(watch_desk, "mongo_query", fake_q)
     watch_desk._recent_news("LLY")
 
-    sql = db.executed[0][0]
-    assert "ticker_attribution IS NULL OR ticker_attribution != 'query_fallback'" in sql
-    assert "quality_status IS NULL OR quality_status != 'discarded'" in sql
+    assert captured["collection"] == "news_articles"
+    q = captured["query"]
+
+    def matches(doc):
+        """Does this document satisfy the filter's attribution/quality parts?"""
+        for field in ("ticker_attribution", "quality_status"):
+            cond = q[field]
+            assert set(cond) == {"$ne"}, f"unexpected operator on {field}: {cond}"
+            # Mongo's $ne matches a MISSING or null field too — which is what
+            # makes it the exact translation of `(col IS NULL OR col != x)`.
+            if doc.get(field) is not None and doc.get(field) == cond["$ne"]:
+                return False
+        return True
+
+    # Refused.
+    assert not matches({"ticker_attribution": "query_fallback"})
+    assert not matches({"quality_status": "discarded"})
+    # Legacy NULLs and absent fields stay eligible — tightening these to
+    # fail-closed would blind every watch on pre-2026-08-07 rows.
+    assert matches({})
+    assert matches({"ticker_attribution": None, "quality_status": None})
+    # A vendor-tagged, detected, or thin-quality row still trips a wake.
+    assert matches({"ticker_attribution": "detected", "quality_status": "thin"})
+    assert matches({"ticker_attribution": "provider"})

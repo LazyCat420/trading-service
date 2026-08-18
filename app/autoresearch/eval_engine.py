@@ -250,10 +250,10 @@ def process_and_store_trace(trace: TraceRecord):
     bucket = classify_failure(trace, score)
     
     try:
-        mongo_store.insert_docs('eval_scores', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'completion_score': score["completion_score"], 'tool_correctness_score': score["tool_correctness_score"], 'efficiency_score': score["efficiency_score"], 'error_recovery_score': score["error_recovery_score"], 'stop_quality_score': score["stop_quality_score"], 'final_score': score["final_score"]}])
+        mongo_store.insert_docs('eval_scores', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'completion_score': score["completion_score"], 'tool_correctness_score': score["tool_correctness_score"], 'efficiency_score': score["efficiency_score"], 'error_recovery_score': score["error_recovery_score"], 'stop_quality_score': score["stop_quality_score"], 'final_score': score["final_score"], 'created_at': datetime.now(timezone.utc)}])
             
         if bucket:
-            mongo_store.insert_docs('failure_buckets', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'bucket_type': bucket, 'description': f"Auto-classified based on score {score['final_score']}", 'error_class': classify_error_class(bucket)}])
+            mongo_store.insert_docs('failure_buckets', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'bucket_type': bucket, 'description': f"Auto-classified based on score {score['final_score']}", 'error_class': classify_error_class(bucket), 'created_at': datetime.now(timezone.utc)}])
     except Exception as e:
         logger.error("Failed to store eval results: %s", e)
         raise EvalStoreError(f"Failed to store eval results: {e}") from e

@@ -101,7 +101,11 @@ KNOWN_UNPINNED: dict[str, int] = {
     "app/processors/data_sanity.py": 2,
     "app/processors/quant_processor.py": 7,
     "app/services/boot_service.py": 2,
-    "app/services/cycle_scheduler.py": 1,
+    # 0 as of the Mongo conversion: the one unpinned read was the finviz
+    # supplement's EXISTS price-freshness subquery, which now spells the
+    # source filter out explicitly. Ratchet lowered, per this test's own
+    # instruction — do not raise it again.
+    "app/services/cycle_scheduler.py": 0,
     "app/tools/market_tools.py": 1,
     "app/trading/backtest_data.py": 2,
     "app/trading/paper_trader.py": 2,

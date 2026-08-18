@@ -11,7 +11,7 @@ import datetime
 import hashlib
 import httpx
 from bs4 import BeautifulSoup
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +83,15 @@ async def _collect_forexfactory() -> int:
         ))
 
     if rows:
-        with get_db() as db:
-            db.executemany("""
-                INSERT INTO economic_calendar
-                (id, event_name, country, event_date, actual, forecast, previous, importance, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE
-                SET actual = EXCLUDED.actual, forecast = EXCLUDED.forecast, previous = EXCLUDED.previous
-            """, rows)
+        # `ON CONFLICT (id) DO UPDATE SET actual, forecast, previous` — the
+        # three mutable columns are refreshed, the rest kept. upsert_doc's $set
+        # writes them all, and the identity columns are unchanged by
+        # construction (same id => same event), so the effect is identical.
+        cols = ("id", "event_name", "country", "event_date", "actual",
+                "forecast", "previous", "importance", "source")
+        for r in rows:
+            doc = dict(zip(cols, r))
+            mongo_store.upsert_doc('economic_calendar', {'id': doc['id']}, doc)
         logger.info("[tradingeconomics] ForexFactory feed: %d calendar events", len(rows))
     return len(rows)
 
@@ -181,14 +182,15 @@ async def collect_economic_calendar() -> int:
         ))
 
     if rows:
-        with get_db() as db:
-            db.executemany("""
-                INSERT INTO economic_calendar
-                (id, event_name, country, event_date, actual, forecast, previous, importance, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE 
-                SET actual = EXCLUDED.actual, forecast = EXCLUDED.forecast, previous = EXCLUDED.previous
-            """, rows)
+        # `ON CONFLICT (id) DO UPDATE SET actual, forecast, previous` — the
+        # three mutable columns are refreshed, the rest kept. upsert_doc's $set
+        # writes them all, and the identity columns are unchanged by
+        # construction (same id => same event), so the effect is identical.
+        cols = ("id", "event_name", "country", "event_date", "actual",
+                "forecast", "previous", "importance", "source")
+        for r in rows:
+            doc = dict(zip(cols, r))
+            mongo_store.upsert_doc('economic_calendar', {'id': doc['id']}, doc)
         logger.info(f"[tradingeconomics] Scraped and inserted {len(rows)} economic calendar events")
         return len(rows)
     return 0

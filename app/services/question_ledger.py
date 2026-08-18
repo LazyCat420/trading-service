@@ -41,7 +41,9 @@ import logging
 import re
 from typing import Any, Iterable
 
-from app.db.connection import get_db
+from datetime import datetime, timedelta, timezone
+
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -112,33 +114,41 @@ def record_asked(
 
     recorded: list[dict[str, Any]] = []
     try:
-        with get_db() as db:
-            for text in cleaned:
-                qhash = question_hash(text)
-                row = db.execute(
-                    """
-                    INSERT INTO dossier_question_log (
-                        ticker, question_hash, question, source_agent,
-                        first_cycle_id, last_cycle_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, question_hash) DO UPDATE SET
-                        ask_count      = dossier_question_log.ask_count + 1,
-                        last_cycle_id  = EXCLUDED.last_cycle_id,
-                        last_asked_at  = CURRENT_TIMESTAMP,
-                        -- An answered question that comes back was not answered.
-                        status         = 'reasked'
-                    RETURNING ask_count, question_hash
-                    """,
-                    [ticker, qhash, text, source_agent, cycle_id, cycle_id],
-                ).fetchone()
-                ask_count = row[0] if row else 1
-                recorded.append({
-                    "ticker": ticker,
-                    "question": text,
-                    "question_hash": qhash,
-                    "ask_count": ask_count,
-                    "is_new": ask_count == 1,
-                })
+        for text in cleaned:
+            qhash = question_hash(text)
+            now = datetime.now(timezone.utc)
+            key = {'ticker': ticker, 'question_hash': qhash}
+            # ON CONFLICT (ticker, question_hash) DO UPDATE ... RETURNING
+            # ask_count. Done as an atomic $inc-on-existing first: if a doc
+            # was there, this is the DO UPDATE branch (bump, restamp,
+            # status='reasked'). None back means no row existed, so this is
+            # the INSERT branch with the DDL defaults (ask_count 1,
+            # status 'open', both _at stamps).
+            doc = mongo_store.find_one_and_update(
+                'dossier_question_log', key,
+                {'$inc': {'ask_count': 1},
+                 '$set': {'last_cycle_id': cycle_id, 'last_asked_at': now,
+                          'status': 'reasked'}},
+                return_after=True,
+            )
+            if doc is None:
+                mongo_store.upsert_doc('dossier_question_log', key, {
+                    'ticker': ticker, 'question_hash': qhash,
+                    'question': text, 'source_agent': source_agent,
+                    'first_cycle_id': cycle_id, 'first_asked_at': now,
+                    'last_cycle_id': cycle_id, 'last_asked_at': now,
+                    'ask_count': 1, 'status': 'open',
+                }, insert_only=True)
+                ask_count = 1
+            else:
+                ask_count = doc.get('ask_count', 1)
+            recorded.append({
+                "ticker": ticker,
+                "question": text,
+                "question_hash": qhash,
+                "ask_count": ask_count,
+                "is_new": ask_count == 1,
+            })
     except Exception as e:
         logger.warning("[questions] record_asked(%s) failed: %s", ticker, e)
         return []
@@ -160,30 +170,18 @@ def mark_not_reasked(ticker: str, cycle_id: str, asked_hashes: Iterable[str]) ->
         return 0
     keep = [h for h in (asked_hashes or []) if h]
     try:
-        with get_db() as db:
-            # RETURNING, not rowcount: PooledCursor exposes neither `rowcount`
-            # nor a __getattr__ passthrough to the psycopg cursor, so reading
-            # it raises AttributeError — which this function's own except would
-            # have turned into a permanent 0. A metric that is always zero is
-            # worse than no metric.
-            #
-            # `%s::text[]` is required: an empty Python list gives Postgres no
-            # element type to infer, and `x = ANY('{}')` is false so the NOT
-            # correctly drops everything still open when a desk asked nothing.
-            rows = db.execute(
-                """
-                UPDATE dossier_question_log
-                   SET status = 'dropped',
-                       resolved_cycle = %s,
-                       resolved_at = CURRENT_TIMESTAMP
-                 WHERE ticker = %s
-                   AND status IN ('open', 'reasked')
-                   AND NOT (question_hash = ANY(%s::text[]))
-              RETURNING id
-                """,
-                [cycle_id, ticker, keep],
-            ).fetchall()
-            return len(rows or [])
+        # `NOT (question_hash = ANY(%s::text[]))` with an empty array is TRUE
+        # for every row, so an empty `keep` correctly drops everything still
+        # open. $nin with an empty list has the same semantics.
+        return mongo_store.update_docs(
+            'dossier_question_log',
+            {'ticker': ticker,
+             'status': {'$in': ['open', 'reasked']},
+             'question_hash': {'$nin': keep}},
+            {'$set': {'status': 'dropped',
+                      'resolved_cycle': cycle_id,
+                      'resolved_at': datetime.now(timezone.utc)}},
+        )
     except Exception as e:
         logger.warning("[questions] mark_not_reasked(%s) failed: %s", ticker, e)
         return 0
@@ -192,19 +190,14 @@ def mark_not_reasked(ticker: str, cycle_id: str, asked_hashes: Iterable[str]) ->
 def age_out(days: int = AGE_OUT_DAYS) -> int:
     """Close questions nothing has touched in `days`. Returns rows closed."""
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                UPDATE dossier_question_log
-                   SET status = 'aged_out',
-                       resolved_at = CURRENT_TIMESTAMP
-                 WHERE status IN ('open', 'reasked')
-                   AND last_asked_at < CURRENT_TIMESTAMP - (%s || ' days')::interval
-              RETURNING id
-                """,
-                [int(days)],
-            ).fetchall()
-            return len(rows or [])
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+        return mongo_store.update_docs(
+            'dossier_question_log',
+            {'status': {'$in': ['open', 'reasked']},
+             'last_asked_at': {'$lt': cutoff}},
+            {'$set': {'status': 'aged_out',
+                      'resolved_at': datetime.now(timezone.utc)}},
+        )
     except Exception as e:
         logger.warning("[questions] age_out failed: %s", e)
         return 0
@@ -225,16 +218,14 @@ def stats(days: int = 14) -> dict[str, Any]:
         "max_ask_count": 0,
     }
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT status, COUNT(*), COALESCE(MAX(ask_count), 0)
-                  FROM dossier_question_log
-                 WHERE first_asked_at >= CURRENT_TIMESTAMP - (%s || ' days')::interval
-                 GROUP BY status
-                """,
-                [int(days)],
-            ).fetchall()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+        rows = mongo_query.group_rows(
+            'dossier_question_log',
+            {'first_asked_at': {'$gte': cutoff}},
+            keys=['status'],
+            aggs=[('count', None), ('max', 'ask_count')],
+            select=[('key', 'status'), ('agg', 0), ('agg', 1)],
+        )
         for status, count, max_asks in rows or []:
             out["by_status"][status] = int(count)
             out["total"] += int(count)

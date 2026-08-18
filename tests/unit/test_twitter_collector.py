@@ -7,10 +7,11 @@ writes posts through `mongo_store.upsert_doc('social_posts', ...)` and
 entirely — so the mock intercepted nothing and both the duplicate checks and
 the post writes went to the LIVE Mongo database. The fixture patches
 `twitter_collector.mongo_store` and `dedup_engine.mongo_store` here (patching
-only the read would leave the WRITES aimed at production), keeps a `get_db`
-mock for the one thing still on Postgres — the watchlist read in
-`collect_all` — and the old `"INSERT INTO social_posts" in sql` assertion
-became a structural assertion on the collection name and document fields.
+only the read would leave the WRITES aimed at production), patches
+`twitter_collector.mongo_query` for the last Postgres holdout — the watchlist
+read in `collect_all`, now `find_rows('watchlist', ...)` — and the old
+`"INSERT INTO social_posts" in sql` assertion became a structural assertion on
+the collection name and document fields.
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -25,10 +26,10 @@ def mock_db():
     db = MagicMock()
     db.fetchone.return_value = None
     db.fetchall.return_value = []
-    with patch("app.collectors.twitter_collector.get_db") as mock_get_db, \
+    with patch("app.collectors.twitter_collector.mongo_query") as query, \
          patch("app.collectors.twitter_collector.mongo_store") as store, \
          patch("app.processors.dedup_engine.mongo_store") as dedup_store:
-        mock_get_db.return_value.__enter__.return_value = db
+        query.find_rows.return_value = []
         # Nothing on record => nothing is a duplicate.
         dedup_store.count_docs.return_value = 0
         dedup_store.find_docs.return_value = []

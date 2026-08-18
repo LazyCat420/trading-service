@@ -9,11 +9,10 @@ import hashlib
 import json
 import asyncio
 from datetime import datetime, timezone, timedelta
-from app.db.connection import get_db
 from app.processors.dedup_engine import DedupEngine
 from app.processors.ticker_extractor import get_ticker_symbols
 from app.services.scraper_client import scraper_client
-from app.db import mongo_store
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +181,8 @@ async def collect_all() -> int:
     # Fetch watchlist tickers from DB
     tickers = []
     try:
-        with get_db() as db:
-            db.execute("SELECT ticker FROM watchlist WHERE status = 'active'")
-            tickers = [r[0] for r in db.fetchall()]
+        tickers = [r[0] for r in mongo_query.find_rows(
+            'watchlist', {'status': 'active'}, ['ticker'])]
     except Exception as e:
         logger.error(f"Failed to fetch watchlist tickers: {e}")
         

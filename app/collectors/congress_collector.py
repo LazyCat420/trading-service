@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 import hashlib
 import datetime
 import re
-from app.db.connection import get_db
 import cloudscraper
 import asyncio
 from app.db import mongo_store
@@ -109,77 +108,76 @@ async def collect_trades(
     Scrape trade data from CapitolTrades.com and upsert into congress_trades.
     Returns number of rows inserted.
     """
-    with get_db() as db:
-        total_count = 0
-        scraper = cloudscraper.create_scraper()
+    total_count = 0
+    scraper = cloudscraper.create_scraper()
 
-        for page in range(1, pages + 1):
-            params = {
-                "page": page,
-                "txType": ["buy", "sell"],
-                "assetType": "stock",
-            }
-            
-            try:
-                r = await asyncio.to_thread(scraper.get, BASE_URL, params=params, timeout=20)
-            except Exception as e:
-                logger.error(f"[congress] Page {page}: Request error: {e}")
-                break
+    for page in range(1, pages + 1):
+        params = {
+            "page": page,
+            "txType": ["buy", "sell"],
+            "assetType": "stock",
+        }
+        
+        try:
+            r = await asyncio.to_thread(scraper.get, BASE_URL, params=params, timeout=20)
+        except Exception as e:
+            logger.error(f"[congress] Page {page}: Request error: {e}")
+            break
 
-            if r.status_code != 200:
-                logger.info(f"[congress] Page {page}: HTTP {r.status_code}")
-                break
+        if r.status_code != 200:
+            logger.info(f"[congress] Page {page}: HTTP {r.status_code}")
+            break
 
-            try:
-                from bs4 import BeautifulSoup
+        try:
+            from bs4 import BeautifulSoup
 
-                soup = BeautifulSoup(r.text, "lxml")
-            except ImportError:
-                from bs4 import BeautifulSoup
+            soup = BeautifulSoup(r.text, "lxml")
+        except ImportError:
+            from bs4 import BeautifulSoup
 
-                soup = BeautifulSoup(r.text, "html.parser")
+            soup = BeautifulSoup(r.text, "html.parser")
 
-            rows = soup.select("table tbody tr")
+        rows = soup.select("table tbody tr")
 
-            if not rows:
-                logger.info(f"[congress] Page {page}: no rows found")
-                break
+        if not rows:
+            logger.info(f"[congress] Page {page}: no rows found")
+            break
 
-            page_count = 0
-            for row in rows:
-                trade = _parse_row(row)
-                if not trade or not trade.get("ticker"):
-                    continue
+        page_count = 0
+        for row in rows:
+            trade = _parse_row(row)
+            if not trade or not trade.get("ticker"):
+                continue
 
-                # Filter by ticker if requested
-                if ticker_filter and trade["ticker"] != ticker_filter.upper():
-                    continue
+            # Filter by ticker if requested
+            if ticker_filter and trade["ticker"] != ticker_filter.upper():
+                continue
 
-                # Build unique ID
-                trade_id = hashlib.md5(
-                    f"{trade['politician']}{trade['ticker']}"
-                    f"{trade['trade_date']}{trade['transaction_type']}".encode()
-                ).hexdigest()
+            # Build unique ID
+            trade_id = hashlib.md5(
+                f"{trade['politician']}{trade['ticker']}"
+                f"{trade['trade_date']}{trade['transaction_type']}".encode()
+            ).hexdigest()
 
-                # Resolve bioguide ID
-                from app.utils.politician_matcher import resolve_bioguide_id
-                bio_id = resolve_bioguide_id(db, trade["politician"])
+            # Resolve bioguide ID
+            from app.utils.politician_matcher import resolve_bioguide_id
+            bio_id = resolve_bioguide_id(None, trade["politician"])
 
-                mongo_store.upsert_doc('congress_trades', {'id': trade_id}, {'id': trade_id, 'politician': trade["politician"], 'party': trade["party"], 'chamber': trade["chamber"], 'state': trade["state"], 'ticker': trade["ticker"], 'transaction_type': trade["transaction_type"], 'amount_range': trade["amount_range"], 'trade_date': trade["trade_date"], 'disclosure_date': trade["disclosure_date"], 'days_to_disclose': trade["days_to_disclose"], 'bioguide_id': bio_id}, insert_only=True)
-                total_count += 1
-                page_count += 1
-
-            logger.info(
-                f"[congress] Page {page}: {len(rows)} rows, {page_count} valid trades"
-            )
-            import random
-            await asyncio.sleep(random.uniform(2.0, 4.0))
+            mongo_store.upsert_doc('congress_trades', {'id': trade_id}, {'id': trade_id, 'politician': trade["politician"], 'party': trade["party"], 'chamber': trade["chamber"], 'state': trade["state"], 'ticker': trade["ticker"], 'transaction_type': trade["transaction_type"], 'amount_range': trade["amount_range"], 'trade_date': trade["trade_date"], 'disclosure_date': trade["disclosure_date"], 'days_to_disclose': trade["days_to_disclose"], 'bioguide_id': bio_id}, insert_only=True)
+            total_count += 1
+            page_count += 1
 
         logger.info(
-            f"[congress] {total_count} trades written"
-            f"{f' (filtered: {ticker_filter})' if ticker_filter else ''}"
+            f"[congress] Page {page}: {len(rows)} rows, {page_count} valid trades"
         )
-        return total_count
+        import random
+        await asyncio.sleep(random.uniform(2.0, 4.0))
+
+    logger.info(
+        f"[congress] {total_count} trades written"
+        f"{f' (filtered: {ticker_filter})' if ticker_filter else ''}"
+    )
+    return total_count
 
 
 async def collect_trades_for_ticker(ticker: str) -> int:

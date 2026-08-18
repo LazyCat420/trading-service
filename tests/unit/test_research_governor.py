@@ -73,57 +73,61 @@ def test_clean_tickers():
     assert out == ["AAPL", "MSFT"]
 
 
-def _mock_db(active_count=0, daily_count=0, queued_rows=None, recent_rows=None):
-    """MagicMock get_db context yielding scripted query results."""
-    db = MagicMock()
+def _mock_mongo(active_count=0, daily_count=0, queued_rows=None, recent_rows=None):
+    """Patch mongo_query AND mongo_store on the module, dispatching on COLLECTION.
 
-    def execute(sql, params=None):
-        m = MagicMock()
-        s = " ".join(sql.split())
-        if "COUNT(*) FROM cycle_schedules WHERE id LIKE" in s and "is_active" in s:
-            m.fetchone.return_value = [active_count]
-        elif "COUNT(*) FROM cycle_schedules WHERE is_active = TRUE" in s:
-            m.fetchone.return_value = [active_count]
-        elif "COUNT(*) FROM cycle_schedules" in s and "24 hours" in s:
-            m.fetchone.return_value = [daily_count]
-        elif "COUNT(*) FROM v3_system_commands" in s:
-            m.fetchone.return_value = [0]
-        elif "SELECT tickers FROM cycle_schedules" in s:
-            m.fetchall.return_value = queued_rows or []
-        elif "SELECT payload FROM v3_system_commands" in s:
-            m.fetchall.return_value = []
-        elif "FROM analysis_results" in s:
-            m.fetchall.return_value = recent_rows or []
-        else:
-            m.fetchall.return_value = []
-            m.fetchone.return_value = [0]
-        return m
+    Both are patched: patching only the reads would leave the governor's
+    insert_docs() calls pointed at the real store.
+    """
+    q = MagicMock()
+    store = MagicMock()
 
-    db.execute.side_effect = execute
-    ctx = MagicMock()
-    ctx.__enter__.return_value = db
-    ctx.__exit__.return_value = False
-    return ctx, db
+    def count(collection, query=None):
+        query = query or {}
+        if collection == "v3_system_commands":
+            return 0
+        if collection == "cycle_schedules":
+            if "created_at" in query:
+                return daily_count
+            return active_count
+        return 0
+
+    def find_rows(collection, query, columns, sort=None, limit=0):
+        if collection == "cycle_schedules":
+            return queued_rows or []
+        return []
+
+    def group_rows(collection, query, keys, aggs, select, sort=None, limit=0):
+        return []
+
+    q.count.side_effect = count
+    q.find_rows.side_effect = find_rows
+    q.group_rows.side_effect = group_rows
+    store.distinct_values.side_effect = lambda coll, field, query=None: [
+        r[0] for r in (recent_rows or [])
+    ]
+    store.insert_docs.return_value = 1
+    return q, store
 
 
 def test_earnings_autoresolve_creates_once():
     # `when` omitted → governor resolves the ticker's earnings into a precise `once`.
     run_at = datetime.now(timezone.utc) + timedelta(days=6)
-    ctx, db = _mock_db()
-    with patch.object(gov, "get_db", return_value=ctx), \
+    q, store = _mock_mongo()
+    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store), \
          patch.object(gov, "_resolve_earnings_run_at", new=AsyncMock(return_value=run_at)):
         res = _run(gov.schedule_research(["NVDA"], when="", reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "scheduled"
     assert res["type"] == "once"
-    sqls = [" ".join(c.args[0].split()) for c in db.execute.call_args_list]
-    assert any("INSERT INTO cycle_schedules" in s for s in sqls)
-    assert any("'once'" in s for s in sqls)
-    assert any("INSERT INTO system_commands" in s for s in sqls)
+    written = {c.args[0]: c.args[1][0] for c in store.insert_docs.call_args_list}
+    assert "cycle_schedules" in written
+    assert written["cycle_schedules"]["schedule_type"] == "once"
+    assert "system_commands" in written
 
 
 def test_no_earnings_found_rejected():
-    ctx, _ = _mock_db()
-    with patch.object(gov, "get_db", return_value=ctx), \
+    q, store = _mock_mongo()
+    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store), \
          patch.object(gov, "_resolve_earnings_run_at", new=AsyncMock(return_value=None)):
         res = _run(gov.schedule_research(["NVDA"], when="", reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "rejected"
@@ -135,32 +139,32 @@ def _future_iso(days=5):
 
 
 def test_active_cap_rejects():
-    ctx, _ = _mock_db(active_count=gov.MAX_ACTIVE_BOT_SCHEDULES)
-    with patch.object(gov, "get_db", return_value=ctx):
+    q, store = _mock_mongo(active_count=gov.MAX_ACTIVE_BOT_SCHEDULES)
+    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store):
         res = _run(gov.schedule_research(["NVDA"], when=_future_iso(), reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "rejected"
     assert "already active" in res["reason"]
 
 
 def test_dedupe_rejects_queued_ticker():
-    ctx, _ = _mock_db(queued_rows=[(json.dumps(["NVDA"]),)])
-    with patch.object(gov, "get_db", return_value=ctx):
+    q, store = _mock_mongo(queued_rows=[(json.dumps(["NVDA"]),)])
+    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store):
         res = _run(gov.schedule_research(["NVDA"], when=_future_iso(), reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "rejected"
     assert "already queued" in res["reason"]
 
 
 def test_cooldown_rejects_recent_ticker():
-    ctx, _ = _mock_db(recent_rows=[("NVDA",)])
-    with patch.object(gov, "get_db", return_value=ctx):
+    q, store = _mock_mongo(recent_rows=[("NVDA",)])
+    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store):
         res = _run(gov.schedule_research(["NVDA"], when=_future_iso(), reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "rejected"
     assert "Cooldown" in res["reason"]
 
 
 def test_critical_bypasses_cooldown():
-    ctx, _ = _mock_db(recent_rows=[("NVDA",)])
-    with patch.object(gov, "get_db", return_value=ctx):
+    q, store = _mock_mongo(recent_rows=[("NVDA",)])
+    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store):
         res = _run(gov.schedule_research(
             ["NVDA"], when=_future_iso(),
             reason="CEO resignation just hit the wire — reassess immediately", urgency="critical"))

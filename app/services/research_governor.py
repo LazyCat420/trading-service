@@ -21,8 +21,6 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from app.db.connection import get_db
-from app.db.mongo_store import handle_mongo_read_failure
 from app.services.parameter_store import get_param
 from app.validation.schedule_validator import ScheduleValidator
 from app.db import mongo_query
@@ -50,6 +48,19 @@ RETIRED_WINDOWS = (
 ONCE_MAX_DAYS = 45
 
 
+# Mongo equivalents of the SQL predicates this module used.
+# `id LIKE 'sch-bot-%'` is a PREFIX match, so anchor the regex — an unanchored
+# one would also match a human schedule that merely contains the string.
+_BOT_SCHEDULE = {"id": {"$regex": "^sch-bot-"}}
+# `payload::text LIKE '%research_request%'` is an unanchored substring match on
+# the serialised payload; payloads are stored as JSON strings.
+_PENDING_RESEARCH = {
+    "status": "pending",
+    "command_type": "START_CYCLE",
+    "payload": {"$regex": "research_request"},
+}
+
+
 def _clean_tickers(tickers: list) -> list[str]:
     seen = []
     for t in tickers or []:
@@ -61,50 +72,36 @@ def _clean_tickers(tickers: list) -> list[str]:
     return seen
 
 
-def _recently_researched(db, tickers: list[str]) -> list[str]:
+def _recently_researched(tickers: list[str]) -> list[str]:
     """Tickers with an analysis_results row inside the cooldown window."""
     if not tickers:
         return []
     cooldown_hours = int(get_param("TICKER_COOLDOWN_HOURS"))
-    try:
-        from app.db import mongo_store
-        if mongo_store.reads_mongo("analysis_results"):
-            from datetime import datetime, timedelta
-            cutoff = datetime.utcnow() - timedelta(hours=cooldown_hours)
-            return [t for t in mongo_store.distinct_values(
-                "analysis_results", "ticker",
-                {"ticker": {"$in": tickers}, "created_at": {"$gte": cutoff}},
-            ) if t]
-    except Exception as me:
-        handle_mongo_read_failure("analysis_results", "[governor] mongo cooldown read", me)
-    rows = db.execute(
-        "SELECT DISTINCT ticker FROM analysis_results "
-        "WHERE ticker = ANY(%s) AND created_at >= NOW() - make_interval(hours => %s)",
-        [tickers, cooldown_hours],
-    ).fetchall()
-    return [r[0] for r in rows]
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)
+    # SELECT DISTINCT ticker → distinct_values; the SQL could not return NULL
+    # tickers as a match either, so drop falsy values.
+    return [t for t in mongo_store.distinct_values(
+        "analysis_results", "ticker",
+        {"ticker": {"$in": tickers}, "created_at": {"$gte": cutoff}},
+    ) if t]
 
 
-def _tickers_already_queued(db, tickers: list[str]) -> list[str]:
+def _tickers_already_queued(tickers: list[str]) -> list[str]:
     """Tickers already covered by an active bot schedule or pending research command."""
     covered = set()
-    rows = db.execute(
-        "SELECT tickers FROM cycle_schedules "
-        "WHERE id LIKE %s AND is_active = TRUE",
-        ["sch-bot-%"],
-    ).fetchall()
+    rows = mongo_query.find_rows(
+        "cycle_schedules", _BOT_SCHEDULE | {"is_active": True}, ["tickers"])
     for (tickers_json,) in rows:
         try:
-            for t in json.loads(tickers_json or "[]"):
+            # Written as a JSON string; tolerate a native list if a doc ever
+            # carries one, rather than silently covering nothing.
+            vals = (json.loads(tickers_json or "[]")
+                    if isinstance(tickers_json, str) else (tickers_json or []))
+            for t in vals:
                 covered.add(str(t).upper())
         except Exception:
             continue
-    rows = db.execute(
-        "SELECT payload FROM v3_system_commands "
-        "WHERE status = 'pending' AND command_type = 'START_CYCLE' "
-        "AND payload::text LIKE %s",
-        ["%research_request%"],
-    ).fetchall()
+    rows = mongo_query.find_rows("v3_system_commands", dict(_PENDING_RESEARCH), ["payload"])
     for (payload,) in rows:
         try:
             p = json.loads(payload) if isinstance(payload, str) else (payload or {})
@@ -115,7 +112,7 @@ def _tickers_already_queued(db, tickers: list[str]) -> list[str]:
     return [t for t in tickers if t in covered]
 
 
-def _guard_common(db, tickers: list[str], urgency: str) -> str | None:
+def _guard_common(tickers: list[str], urgency: str) -> str | None:
     """Shared pickiness gates. Returns a rejection reason or None."""
     if not tickers:
         return "No valid tickers given — research requests must name specific tickers."
@@ -125,7 +122,7 @@ def _guard_common(db, tickers: list[str], urgency: str) -> str | None:
             "Be picky: pick only the highest-conviction candidates."
         )
 
-    dup = _tickers_already_queued(db, tickers)
+    dup = _tickers_already_queued(tickers)
     if dup:
         return (
             f"Research already queued for: {', '.join(dup)}. "
@@ -133,7 +130,7 @@ def _guard_common(db, tickers: list[str], urgency: str) -> str | None:
         )
 
     if urgency != "critical":
-        recent = _recently_researched(db, tickers)
+        recent = _recently_researched(tickers)
         if recent:
             return (
                 f"Cooldown: {', '.join(recent)} researched within the last "
@@ -146,35 +143,29 @@ def _guard_common(db, tickers: list[str], urgency: str) -> str | None:
 def request_research_now(tickers: list, reason: str, urgency: str = "medium") -> dict:
     """Queue an immediate research-only cycle (collect+analyze, trade=False)."""
     tickers = _clean_tickers(tickers)
-    with get_db() as db:
-        pending = db.execute(
-            "SELECT COUNT(*) FROM v3_system_commands "
-            "WHERE status = 'pending' AND command_type = 'START_CYCLE' "
-            "AND payload::text LIKE %s",
-            ["%research_request%"],
-        ).fetchone()[0]
-        if pending >= MAX_PENDING_RESEARCH_NOW:
-            return {
-                "status": "rejected",
-                "reason": f"{pending} research cycles already queued (max {MAX_PENDING_RESEARCH_NOW}). "
-                          "Wait for them to finish.",
-            }
-
-        rej = _guard_common(db, tickers, urgency)
-        if rej:
-            return {"status": "rejected", "reason": rej}
-
-        cmd_id = f"sch-rsrch-{uuid.uuid4().hex[:8]}"
-        payload = {
-            "tickers": tickers,
-            "collect": True,
-            "analyze": True,
-            "trade": False,
-            "dynamic_selection_mode": False,
-            "research_request": True,
-            "research_reason": (reason or "").strip()[:500],
+    pending = mongo_query.count("v3_system_commands", dict(_PENDING_RESEARCH))
+    if pending >= MAX_PENDING_RESEARCH_NOW:
+        return {
+            "status": "rejected",
+            "reason": f"{pending} research cycles already queued (max {MAX_PENDING_RESEARCH_NOW}). "
+                      "Wait for them to finish.",
         }
-        mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
+
+    rej = _guard_common(tickers, urgency)
+    if rej:
+        return {"status": "rejected", "reason": rej}
+
+    cmd_id = f"sch-rsrch-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "tickers": tickers,
+        "collect": True,
+        "analyze": True,
+        "trade": False,
+        "dynamic_selection_mode": False,
+        "research_request": True,
+        "research_reason": (reason or "").strip()[:500],
+    }
+    mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
     logger.info("[GOVERNOR] Immediate research queued %s tickers=%s reason=%s", cmd_id, tickers, reason)
     return {
         "status": "queued",
@@ -280,65 +271,62 @@ async def schedule_research(
                       "so a condition (or the earnings date closer in) wakes it instead.",
         }
 
-    with get_db() as db:
-        # Counts SCHEDULE rows only. If anything ever starts mirroring the
-        # ~26 APScheduler system jobs (market_open_cycle, stop-loss monitor,
-        # collectors, ...) into this table, an unfiltered count would sail past
-        # ScheduleValidator.MAX_SYSTEM_SCHEDULES (10) permanently and reject
-        # every non-critical agent schedule with "System has reached max active
-        # schedules" — a silent throttle of the whole research budget with no
-        # visible cause. The exclusion is cheap insurance; system jobs are
-        # surfaced read-only via /api/diagnostics/system-jobs instead.
-        system_active = db.execute(
-            "SELECT COUNT(*) FROM cycle_schedules "
-            "WHERE is_active = TRUE AND COALESCE(job_type, 'user') <> 'system'"
-        ).fetchone()[0]
+    # Counts SCHEDULE rows only. If anything ever starts mirroring the
+    # ~26 APScheduler system jobs (market_open_cycle, stop-loss monitor,
+    # collectors, ...) into this table, an unfiltered count would sail past
+    # ScheduleValidator.MAX_SYSTEM_SCHEDULES (10) permanently and reject
+    # every non-critical agent schedule with "System has reached max active
+    # schedules" — a silent throttle of the whole research budget with no
+    # visible cause. The exclusion is cheap insurance; system jobs are
+    # surfaced read-only via /api/diagnostics/system-jobs instead.
+    # COALESCE(job_type,'user') <> 'system'. Measured against the server:
+    # {$ne: "system"} DOES match documents where job_type is null or missing —
+    # $ne against a VALUE includes absent fields, which is what makes it the
+    # COALESCE. (Note the asymmetry with {$ne: None}, which does NOT match a
+    # missing field. The two read alike and behave differently; that is why
+    # tests/unit/test_sql_null_semantics_in_mongo.py pins both.)
+    system_active = mongo_query.count(
+        "cycle_schedules", {"is_active": True, "job_type": {"$ne": "system"}})
 
-        ok, why = ScheduleValidator.validate_proposal({
-            "schedule_scope": "single_ticker" if len(tickers) == 1 else "watchlist_subset",
-            "review_intent": review_intent,
-            "urgency": urgency,
-            "earliest_window": "exact_time",
-            "reason_codes": reason_codes or [],
-        }, active_count=system_active)
-        if not ok:
-            return {"status": "rejected", "reason": why}
+    ok, why = ScheduleValidator.validate_proposal({
+        "schedule_scope": "single_ticker" if len(tickers) == 1 else "watchlist_subset",
+        "review_intent": review_intent,
+        "urgency": urgency,
+        "earliest_window": "exact_time",
+        "reason_codes": reason_codes or [],
+    }, active_count=system_active)
+    if not ok:
+        return {"status": "rejected", "reason": why}
 
-        active = db.execute(
-            "SELECT COUNT(*) FROM cycle_schedules WHERE id LIKE %s AND is_active = TRUE",
-            ["sch-bot-%"],
-        ).fetchone()[0]
-        max_active = int(get_param("MAX_ACTIVE_BOT_SCHEDULES"))
-        if active >= max_active:
-            return {
-                "status": "rejected",
-                "reason": f"{active} bot research schedules already active (max {max_active}). "
-                          "Cancel one first or let them run — be picky.",
-            }
-        daily = db.execute(
-            "SELECT COUNT(*) FROM cycle_schedules "
-            "WHERE id LIKE %s AND created_at >= NOW() - INTERVAL '24 hours'",
-            ["sch-bot-%"],
-        ).fetchone()[0]
-        max_daily = int(get_param("MAX_DAILY_BOT_CREATIONS"))
-        if daily >= max_daily:
-            return {
-                "status": "rejected",
-                "reason": f"Daily budget spent ({daily}/{max_daily} schedules in 24h). "
-                          "Only the best research ideas get scheduled — try again tomorrow.",
-            }
+    active = mongo_query.count("cycle_schedules", _BOT_SCHEDULE | {"is_active": True})
+    max_active = int(get_param("MAX_ACTIVE_BOT_SCHEDULES"))
+    if active >= max_active:
+        return {
+            "status": "rejected",
+            "reason": f"{active} bot research schedules already active (max {max_active}). "
+                      "Cancel one first or let them run — be picky.",
+        }
+    daily = mongo_query.count("cycle_schedules", _BOT_SCHEDULE | {
+        "created_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=24)}})
+    max_daily = int(get_param("MAX_DAILY_BOT_CREATIONS"))
+    if daily >= max_daily:
+        return {
+            "status": "rejected",
+            "reason": f"Daily budget spent ({daily}/{max_daily} schedules in 24h). "
+                      "Only the best research ideas get scheduled — try again tomorrow.",
+        }
 
-        rej = _guard_common(db, tickers, urgency)
-        if rej:
-            return {"status": "rejected", "reason": rej}
+    rej = _guard_common(tickers, urgency)
+    if rej:
+        return {"status": "rejected", "reason": rej}
 
-        schedule_id = f"sch-bot-{uuid.uuid4().hex[:8]}"
-        # Expiry must sit AFTER run_at so the TTL guard doesn't kill the schedule
-        # before it fires (earnings can be weeks out).
-        expiry = (run_at + timedelta(days=2)).replace(tzinfo=None)
-        name = f"Research: {', '.join(tickers)} ({reason[:60]})"
-        mongo_store.insert_docs('cycle_schedules', [{'id': schedule_id, 'name': name, 'schedule_type': 'once', 'earliest_window': None, 'run_at': run_at.isoformat(), 'expiry_at': expiry.isoformat(), 'schedule_scope': "single_ticker" if len(tickers) == 1 else "watchlist_subset", 'review_intent': review_intent, 'urgency': urgency, 'reason_codes': json.dumps(reason_codes or [reason[:120]]), 'collect': True, 'analyze': True, 'trade': False, 'tickers': json.dumps(tickers), 'market_hours_only': False, 'is_active': True}])
-        mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id})}])
+    schedule_id = f"sch-bot-{uuid.uuid4().hex[:8]}"
+    # Expiry must sit AFTER run_at so the TTL guard doesn't kill the schedule
+    # before it fires (earnings can be weeks out).
+    expiry = (run_at + timedelta(days=2)).replace(tzinfo=None)
+    name = f"Research: {', '.join(tickers)} ({reason[:60]})"
+    mongo_store.insert_docs('cycle_schedules', [{'id': schedule_id, 'name': name, 'schedule_type': 'once', 'earliest_window': None, 'run_at': run_at.isoformat(), 'expiry_at': expiry.isoformat(), 'schedule_scope': "single_ticker" if len(tickers) == 1 else "watchlist_subset", 'review_intent': review_intent, 'urgency': urgency, 'reason_codes': json.dumps(reason_codes or [reason[:120]]), 'collect': True, 'analyze': True, 'trade': False, 'tickers': json.dumps(tickers), 'market_hours_only': False, 'is_active': True, 'job_type': 'user', 'run_count': 0, 'discovered_tickers': 0, 'created_at': datetime.now(timezone.utc), 'updated_at': datetime.now(timezone.utc)}])
+    mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id}), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
 
     logger.info(
         "[GOVERNOR] Research scheduled %s type=once run_at=%s tickers=%s",
@@ -357,44 +345,24 @@ async def schedule_research(
 
 def list_scheduled_research() -> dict:
     """Active bot schedules + queued research commands + recent research history."""
-    with get_db() as db:
-        sched_rows = db.execute(
-            "SELECT id, name, schedule_type, earliest_window, run_at, tickers, urgency, "
-            "next_run_at, run_count, last_status, expiry_at "
-            "FROM cycle_schedules WHERE id LIKE %s AND is_active = TRUE "
-            "ORDER BY created_at DESC",
-            ["sch-bot-%"],
-        ).fetchall()
-        pending_rows = db.execute(
-            "SELECT id, payload, created_at FROM v3_system_commands "
-            "WHERE status = 'pending' AND command_type = 'START_CYCLE' "
-            "AND payload::text LIKE %s ORDER BY created_at",
-            ["%research_request%"],
-        ).fetchall()
-        recent_rows = None
-        try:
-            from app.db import mongo_store
-            if mongo_store.reads_mongo("analysis_results"):
-                from datetime import datetime, timedelta
-                cutoff = datetime.utcnow() - timedelta(hours=48)
-                recent_rows = [
-                    (d["_id"], d.get("last_date"))
-                    for d in mongo_store.aggregate("analysis_results", [
-                        {"$match": {"created_at": {"$gte": cutoff}}},
-                        {"$group": {"_id": "$ticker", "last_date": {"$max": "$created_at"}}},
-                        {"$sort": {"last_date": -1}},
-                        {"$limit": 25},
-                    ])
-                ]
-        except Exception as me:
-            handle_mongo_read_failure("analysis_results", "[governor] mongo recent read", me)
-            recent_rows = None
-        if recent_rows is None:
-            recent_rows = db.execute(
-                "SELECT ticker, MAX(created_at) FROM analysis_results "
-                "WHERE created_at >= NOW() - INTERVAL '48 hours' GROUP BY ticker "
-                "ORDER BY MAX(created_at) DESC LIMIT 25"
-            ).fetchall()
+    sched_rows = mongo_query.find_rows(
+        "cycle_schedules", _BOT_SCHEDULE | {"is_active": True},
+        ["id", "name", "schedule_type", "earliest_window", "run_at", "tickers",
+         "urgency", "next_run_at", "run_count", "last_status", "expiry_at"],
+        sort=[("created_at", -1)],
+    )
+    pending_rows = mongo_query.find_rows(
+        "v3_system_commands", dict(_PENDING_RESEARCH),
+        ["id", "payload", "created_at"], sort=[("created_at", 1)],
+    )
+    # SELECT ticker, MAX(created_at) ... GROUP BY ticker ORDER BY MAX DESC LIMIT 25
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    recent_rows = mongo_query.group_rows(
+        "analysis_results", {"created_at": {"$gte": cutoff}},
+        keys=["ticker"], aggs=[("max", "created_at")],
+        select=[("key", "ticker"), ("agg", 0)],
+        sort=[("a0", -1)], limit=25,
+    )
 
     schedules = []
     for r in sched_rows:
@@ -440,6 +408,6 @@ def cancel_scheduled_research(schedule_id: str, reason: str = "") -> dict:
     if not row:
         return {"status": "rejected", "reason": f"Schedule {schedule_id} not found."}
     mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': f"cancelled: {reason[:120]}" if reason else "cancelled", 'updated_at': datetime.now(timezone.utc)}})
-    mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id})}])
+    mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id}), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
     logger.info("[GOVERNOR] Schedule %s cancelled (%s)", schedule_id, reason)
     return {"status": "cancelled", "schedule_id": schedule_id}

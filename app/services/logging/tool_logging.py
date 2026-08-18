@@ -10,13 +10,12 @@ All tool names are normalized before storage:
 """
 
 import logging
-from datetime import datetime, timezone
-from app.db.connection import get_db
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
 from app.services.mcp_prefix import strip_mcp_prefix
-from app.db import mongo_store
+from app.db import mongo_query, mongo_store
 
 #: `service_source` values that are NOT production traffic. Anything logged
 #: under one of these is a synthetic call — an audit probe, a contract test, a
@@ -74,46 +73,24 @@ def log_tool_call(
     canonical_name = _normalize_tool_name(tool_name)
 
     try:
-        with get_db() as db:
-            # Deduplicate: skip if the same tool+agent+cycle was logged within the
-            # last 5 seconds. This prevents double-counting when both
-            # lazy-tool-service and prism_agent_harness log the same call.
-            if cycle_id:
-                dup = db.execute(
-                    """
-                    SELECT 1 FROM tool_usage_stats
-                    WHERE tool_name = %s
-                      AND agent_name = %s
-                      AND cycle_id = %s
-                      AND called_at > NOW() - INTERVAL '5 seconds'
-                    LIMIT 1
-                    """,
-                    (canonical_name, agent_name or "", cycle_id),
-                ).fetchone()
-                if dup:
-                    logger.debug(
-                        "[ToolLogger] Skipping duplicate log for '%s' (agent=%s, cycle=%s)",
-                        canonical_name, agent_name, cycle_id,
-                    )
-                    return
+        # Deduplicate: skip if the same tool+agent+cycle was logged within the
+        # last 5 seconds. This prevents double-counting when both
+        # lazy-tool-service and prism_agent_harness log the same call.
+        if cycle_id:
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+            if mongo_query.exists('tool_usage_stats', {
+                'tool_name': canonical_name,
+                'agent_name': agent_name or "",
+                'cycle_id': cycle_id,
+                'called_at': {'$gt': cutoff},
+            }):
+                logger.debug(
+                    "[ToolLogger] Skipping duplicate log for '%s' (agent=%s, cycle=%s)",
+                    canonical_name, agent_name, cycle_id,
+                )
+                return
 
-            now_utc = datetime.now(timezone.utc)
-            mongo_store.insert_docs('tool_usage_stats', [{'tool_name': canonical_name, 'agent_name': agent_name or "", 'ticker': ticker or "", 'cycle_id': cycle_id or "", 'success': success, 'execution_ms': execution_ms, 'error_message': error_message, 'service_source': service_source, 'called_at': now_utc}])
-            try:
-                from app.db import mongo_store
-                if mongo_store.writes_mongo("tool_usage_stats"):
-                    mongo_store.insert_docs("tool_usage_stats", [{
-                        "tool_name": canonical_name,
-                        "agent_name": agent_name or "",
-                        "ticker": ticker or "",
-                        "cycle_id": cycle_id or "",
-                        "success": bool(success),
-                        "execution_ms": execution_ms,
-                        "error_message": error_message,
-                        "service_source": service_source,
-                        "called_at": now_utc,
-                    }])
-            except Exception as mongo_err:
-                logger.warning("[ToolLogger] Mongo mirror failed (non-fatal): %s", mongo_err)
+        now_utc = datetime.now(timezone.utc)
+        mongo_store.insert_docs('tool_usage_stats', [{'tool_name': canonical_name, 'agent_name': agent_name or "", 'ticker': ticker or "", 'cycle_id': cycle_id or "", 'success': success, 'execution_ms': execution_ms, 'error_message': error_message, 'service_source': service_source, 'called_at': now_utc}])
     except Exception as e:
         logger.debug("[ToolLogger] Failed to log tool execution for '%s': %s", canonical_name, e)

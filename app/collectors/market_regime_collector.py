@@ -8,8 +8,7 @@ All data fetched via yfinance batch download for efficiency.
 import logging
 import yfinance as yf
 import asyncio
-from app.db.connection import get_db
-from app.db import mongo_query
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -112,107 +111,102 @@ async def collect_market_data(period: str = "6mo") -> dict:
         logger.warning("[market_regime] Empty dataframe from yfinance")
         return {"total": 0}
 
-    with get_db() as db:
-        counts: dict[str, int] = {}
-        total = 0
-        all_rows = []
+    counts: dict[str, int] = {}
+    total = 0
+    all_rows = []
 
-        for yf_sym, meta in MARKET_TICKERS.items():
-            asset_class = meta["class"]
-            display_sym = _display_symbol(yf_sym)
+    for yf_sym, meta in MARKET_TICKERS.items():
+        asset_class = meta["class"]
+        display_sym = _display_symbol(yf_sym)
 
-            try:
-                # Multi-ticker download returns MultiIndex columns: (field, ticker)
-                if len(symbols) > 1:
-                    ticker_df = (
-                        df.xs(yf_sym, level=1, axis=1)
-                        if isinstance(df.columns, type(df.columns))
-                        else df
-                    )
-                    # yfinance multi-download: columns are (Close, sym), (Open, sym), etc.
-                    close_series = (
-                        df["Close"][yf_sym] if yf_sym in df["Close"].columns else None
-                    )
-                    open_series = (
-                        df["Open"][yf_sym] if yf_sym in df["Open"].columns else None
-                    )
-                    high_series = (
-                        df["High"][yf_sym] if yf_sym in df["High"].columns else None
-                    )
-                    low_series = (
-                        df["Low"][yf_sym] if yf_sym in df["Low"].columns else None
-                    )
-                    vol_series = (
-                        df["Volume"][yf_sym] if yf_sym in df["Volume"].columns else None
-                    )
-                else:
-                    close_series = df["Close"]
-                    open_series = df["Open"]
-                    high_series = df["High"]
-                    low_series = df["Low"]
-                    vol_series = df["Volume"]
+        try:
+            # Multi-ticker download returns MultiIndex columns: (field, ticker)
+            if len(symbols) > 1:
+                ticker_df = (
+                    df.xs(yf_sym, level=1, axis=1)
+                    if isinstance(df.columns, type(df.columns))
+                    else df
+                )
+                # yfinance multi-download: columns are (Close, sym), (Open, sym), etc.
+                close_series = (
+                    df["Close"][yf_sym] if yf_sym in df["Close"].columns else None
+                )
+                open_series = (
+                    df["Open"][yf_sym] if yf_sym in df["Open"].columns else None
+                )
+                high_series = (
+                    df["High"][yf_sym] if yf_sym in df["High"].columns else None
+                )
+                low_series = (
+                    df["Low"][yf_sym] if yf_sym in df["Low"].columns else None
+                )
+                vol_series = (
+                    df["Volume"][yf_sym] if yf_sym in df["Volume"].columns else None
+                )
+            else:
+                close_series = df["Close"]
+                open_series = df["Open"]
+                high_series = df["High"]
+                low_series = df["Low"]
+                vol_series = df["Volume"]
 
-                if close_series is None or close_series.dropna().empty:
-                    logger.debug(f"[market_regime] No data for {yf_sym}")
-                    continue
-
-                import math
-
-                symbol_rows = 0
-                for date_idx in close_series.dropna().index:
-                    d = date_idx.date() if hasattr(date_idx, "date") else date_idx
-                    c = float(close_series[date_idx])
-                    o = (
-                        float(open_series[date_idx])
-                        if open_series is not None
-                        else None
-                    )
-                    h = (
-                        float(high_series[date_idx])
-                        if high_series is not None
-                        else None
-                    )
-                    l_ = float(low_series[date_idx]) if low_series is not None else None
-                    v = float(vol_series[date_idx]) if vol_series is not None else 0
-
-                    # Handle NaN
-                    if math.isnan(c):
-                        continue
-                    o = None if o is not None and math.isnan(o) else o
-                    h = None if h is not None and math.isnan(h) else h
-                    l_ = None if l_ is not None and math.isnan(l_) else l_
-                    v = 0 if v is not None and math.isnan(v) else v
-
-                    all_rows.append(
-                        (display_sym, asset_class, d, o, h, l_, c, v, "yfinance")
-                    )
-                    symbol_rows += 1
-
-                counts[display_sym] = symbol_rows
-                total += symbol_rows
-                if symbol_rows > 0:
-                    logger.info(
-                        f"[market_regime] {display_sym} ({asset_class}): {symbol_rows} rows"
-                    )
-
-            except Exception as e:
-                logger.warning(f"[market_regime] Failed for {yf_sym}: {e}")
+            if close_series is None or close_series.dropna().empty:
+                logger.debug(f"[market_regime] No data for {yf_sym}")
                 continue
 
-        if all_rows:
-            for row in all_rows:
-                db.execute(
-                    """
-                    INSERT INTO asset_prices
-                    (symbol, asset_class, date, open, high, low, close, volume, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (symbol, asset_class, date) DO NOTHING
-                """,
-                    list(row),
+            import math
+
+            symbol_rows = 0
+            for date_idx in close_series.dropna().index:
+                d = date_idx.date() if hasattr(date_idx, "date") else date_idx
+                c = float(close_series[date_idx])
+                o = (
+                    float(open_series[date_idx])
+                    if open_series is not None
+                    else None
+                )
+                h = (
+                    float(high_series[date_idx])
+                    if high_series is not None
+                    else None
+                )
+                l_ = float(low_series[date_idx]) if low_series is not None else None
+                v = float(vol_series[date_idx]) if vol_series is not None else 0
+
+                # Handle NaN
+                if math.isnan(c):
+                    continue
+                o = None if o is not None and math.isnan(o) else o
+                h = None if h is not None and math.isnan(h) else h
+                l_ = None if l_ is not None and math.isnan(l_) else l_
+                v = 0 if v is not None and math.isnan(v) else v
+
+                all_rows.append(
+                    (display_sym, asset_class, d, o, h, l_, c, v, "yfinance")
+                )
+                symbol_rows += 1
+
+            counts[display_sym] = symbol_rows
+            total += symbol_rows
+            if symbol_rows > 0:
+                logger.info(
+                    f"[market_regime] {display_sym} ({asset_class}): {symbol_rows} rows"
                 )
 
-        logger.info(f"[market_regime] Total: {total} rows across {len(counts)} symbols")
-        return {"total": total, "per_symbol": counts}
+        except Exception as e:
+            logger.warning(f"[market_regime] Failed for {yf_sym}: {e}")
+            continue
+
+    if all_rows:
+        # `ON CONFLICT (symbol, asset_class, date) DO NOTHING` — insert_docs is
+        # ordered=False and swallows duplicate-key errors, which is DO NOTHING.
+        cols = ("symbol", "asset_class", "date", "open", "high", "low",
+                "close", "volume", "source")
+        mongo_store.insert_docs('asset_prices',
+                                [dict(zip(cols, list(row))) for row in all_rows])
+
+    logger.info(f"[market_regime] Total: {total} rows across {len(counts)} symbols")
+    return {"total": total, "per_symbol": counts}
 
 
 def get_latest_market_snapshot() -> dict:

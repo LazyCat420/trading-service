@@ -30,9 +30,42 @@ def _warning_record(msg: str = "boom") -> logging.LogRecord:
 
 @pytest.fixture
 def failing_db(monkeypatch):
-    def explode(*a, **k):
-        raise RuntimeError("db unreachable")
-    monkeypatch.setattr("app.db.connection.get_db", explode)
+    """Make the handler's write fail.
+
+    The fault used to be injected at `app.db.connection.get_db`. The handler
+    writes both rows through `mongo_store.insert_docs` now, so that is the
+    surface that has to explode for the drop counter to see anything.
+
+    `dropped` is a CLASS attribute, and a `DbLoggingHandler` is registered on
+    the root logger for the whole session. Anything logged while this fixture
+    is active — including `emit()`'s own lazy imports — reaches that handler
+    too and charges extra drops to the same counter. So the fixture also
+    detaches every DbLoggingHandler from the root logger for its duration,
+    leaving the handler the test constructs as the only one counting.
+
+    (The old fixture patched `app.db.connection.get_db`, which the handler had
+    already stopped using, so the counter never moved at all and neither the
+    fault nor this interference was visible.)
+    """
+    import app.services.logging.unified_logger as ul
+
+    root = logging.getLogger()
+    detached = [h for h in root.handlers if isinstance(h, DbLoggingHandler)]
+    for h in detached:
+        root.removeHandler(h)
+
+    class _Exploding:
+        def __getattr__(self, name):
+            def explode(*a, **k):
+                raise RuntimeError("db unreachable")
+            return explode
+
+    monkeypatch.setattr(ul, "mongo_store", _Exploding())
+    try:
+        yield
+    finally:
+        for h in detached:
+            root.addHandler(h)
 
 
 def test_a_db_failure_increments_the_counter_and_hits_stderr(failing_db, capsys):

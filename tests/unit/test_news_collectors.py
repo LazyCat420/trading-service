@@ -7,7 +7,7 @@ through `mongo_query.find_rows` and writes articles through
 `mongo_store.upsert_doc` — so the mock intercepted almost nothing and both the
 duplicate checks and the article writes went to the LIVE Mongo database. This
 file patches `news_collector.mongo_query` / `news_collector.mongo_store` and
-`dedup_engine.mongo_store`, and keeps a `get_db` mock only for the single
+`dedup_engine.mongo_store`, and (since news_collector no longer imports `get_db` at all) drops the
 Postgres cursor `collect_finnhub_news` still opens. The
 `"INSERT INTO news_articles" in sql` assertion became a structural assertion
 on the `news_articles` collection and the titles in the written documents.
@@ -44,11 +44,9 @@ def mongo():
     db.execute.return_value.fetchone.return_value = None
     db.execute.return_value.fetchall.return_value = []
 
-    with patch("app.collectors.news_collector.get_db") as mock_get_db, \
-         patch("app.collectors.news_collector.mongo_store") as store, \
+    with patch("app.collectors.news_collector.mongo_store") as store, \
          patch("app.collectors.news_collector.mongo_query") as query, \
          patch("app.processors.dedup_engine.mongo_store") as dedup_store:
-        mock_get_db.return_value.__enter__.return_value = db
 
         # Configure defaults so DedupEngine checks don't see false positive
         # duplicates: nothing is stored yet.

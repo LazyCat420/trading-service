@@ -15,7 +15,6 @@ import logging
 
 import yfinance as yf
 
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -48,51 +47,42 @@ async def collect_etf_metadata(ticker: str) -> bool:
         logger.info(f"[etf] {ticker}: not an ETF (quoteType={info.get('quoteType') if info else None})")
         return False
 
-    with get_db() as db:
-        # Keep the metadata row usable by the screener: AUM stands in for
-        # market cap (drives cap tiers/sorting), name from the fund itself.
-        db.execute(
-            """
-            UPDATE ticker_metadata
-            SET name = COALESCE(name, %s),
-                market_cap = COALESCE(%s, market_cap),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE ticker = %s
-            """,
-            [info.get("shortName") or info.get("longName"),
-             info.get("totalAssets"), ticker],
-        )
-        db.execute(
-            """
-            INSERT INTO etf_metadata (
-                ticker, category, fund_family, total_assets, expense_ratio_pct,
-                dividend_yield, ret_3y, ret_5y, nav_price, beta_3y, collected_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (ticker) DO UPDATE SET
-                category = COALESCE(EXCLUDED.category, etf_metadata.category),
-                fund_family = COALESCE(EXCLUDED.fund_family, etf_metadata.fund_family),
-                total_assets = COALESCE(EXCLUDED.total_assets, etf_metadata.total_assets),
-                expense_ratio_pct = COALESCE(EXCLUDED.expense_ratio_pct, etf_metadata.expense_ratio_pct),
-                dividend_yield = COALESCE(EXCLUDED.dividend_yield, etf_metadata.dividend_yield),
-                ret_3y = COALESCE(EXCLUDED.ret_3y, etf_metadata.ret_3y),
-                ret_5y = COALESCE(EXCLUDED.ret_5y, etf_metadata.ret_5y),
-                nav_price = COALESCE(EXCLUDED.nav_price, etf_metadata.nav_price),
-                beta_3y = COALESCE(EXCLUDED.beta_3y, etf_metadata.beta_3y),
-                collected_at = CURRENT_TIMESTAMP
-            """,
-            [
-                ticker,
-                info.get("category"),
-                info.get("fundFamily"),
-                info.get("totalAssets"),
-                info.get("netExpenseRatio"),
-                info.get("yield"),
-                info.get("threeYearAverageReturn"),
-                info.get("fiveYearAverageReturn"),
-                info.get("navPrice"),
-                info.get("beta3Year"),
-            ],
-        )
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    # Keep the metadata row usable by the screener: AUM stands in for
+    # market cap (drives cap tiers/sorting), name from the fund itself.
+    # SQL: `SET name = COALESCE(name, %s)` — keep the existing value, fill only
+    # when it is NULL. Mongo has no such expression in update_many, so the
+    # existing row is read and the COALESCE resolved in Python.
+    existing = mongo_query.find_row('ticker_metadata', {'ticker': ticker},
+                                    ['name', 'market_cap'])
+    new_name = info.get("shortName") or info.get("longName")
+    total_assets = info.get("totalAssets")
+    meta_set = {'updated_at': now}
+    meta_set['name'] = (existing[0] if existing and existing[0] is not None else new_name)
+    meta_set['market_cap'] = (total_assets if total_assets is not None
+                              else (existing[1] if existing else None))
+    mongo_store.update_docs('ticker_metadata', {'ticker': ticker}, {'$set': meta_set})
+
+    # `INSERT ... ON CONFLICT (ticker) DO UPDATE SET c = COALESCE(EXCLUDED.c, etf_metadata.c)`
+    # — a new non-NULL value wins, a NULL leaves the stored one alone. Fields
+    # whose incoming value is None are simply omitted from the $set, which is
+    # exactly that semantic; on an insert they are absent, i.e. NULL.
+    incoming = {
+        'category': info.get("category"),
+        'fund_family': info.get("fundFamily"),
+        'total_assets': total_assets,
+        'expense_ratio_pct': info.get("netExpenseRatio"),
+        'dividend_yield': info.get("yield"),
+        'ret_3y': info.get("threeYearAverageReturn"),
+        'ret_5y': info.get("fiveYearAverageReturn"),
+        'nav_price': info.get("navPrice"),
+        'beta_3y': info.get("beta3Year"),
+    }
+    doc = {'ticker': ticker, 'collected_at': now}
+    doc.update({k: v for k, v in incoming.items() if v is not None})
+    mongo_store.upsert_doc('etf_metadata', {'ticker': ticker}, doc)
+
     logger.info(f"[etf] {ticker}: metadata written ({info.get('category')})")
     return True
 

@@ -19,7 +19,6 @@ _FRED_DB_SEMAPHORE = asyncio.Semaphore(3)
 import datetime
 from fredapi import Fred
 from app.config import settings
-from app.db.connection import get_db
 from app.db import mongo_store
 
 # Key FRED series IDs
@@ -85,17 +84,14 @@ async def collect_macro_indicator(
         rows.append((indicator_name, date.date(), float(value), "US", "fred"))
 
     def _insert_rows(rows_to_insert):
-        with get_db() as db:
-            db.executemany(
-                """
-                INSERT INTO macro_indicators
-                (indicator, date, value, country, source)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (indicator, date, country)
-                DO UPDATE SET value = EXCLUDED.value
-            """,
-                rows_to_insert,
-            )
+        # `ON CONFLICT (indicator, date, country) DO UPDATE SET value` — FRED
+        # revises series, so an existing point must be overwritten, not skipped.
+        for indicator, dt, value, country, source in rows_to_insert:
+            mongo_store.upsert_doc(
+                'macro_indicators',
+                {'indicator': indicator, 'date': dt, 'country': country},
+                {'indicator': indicator, 'date': dt, 'value': value,
+                 'country': country, 'source': source})
 
     if rows:
         # Gate DB writes behind semaphore to avoid pool starvation
@@ -171,17 +167,14 @@ def sync_collect_fred(is_shutting_down) -> int:
                     continue
                 rows.append((name, date.date(), float(value), "US", "fred"))
             if rows:
-                with get_db() as db:
-                    db.executemany(
-                        # DO UPDATE (not DO NOTHING): FRED routinely revises
-                        # CPI/GDP/claims; DO NOTHING kept stale values forever.
-                        "INSERT INTO macro_indicators "
-                        "(indicator, date, value, country, source) "
-                        "VALUES (%s, %s, %s, %s, %s) "
-                        "ON CONFLICT (indicator, date, country) "
-                        "DO UPDATE SET value = EXCLUDED.value",
-                        rows,
-                    )
+                # DO UPDATE (not DO NOTHING): FRED routinely revises
+                # CPI/GDP/claims; DO NOTHING kept stale values forever.
+                for indicator, dt, value, country, source in rows:
+                    mongo_store.upsert_doc(
+                        'macro_indicators',
+                        {'indicator': indicator, 'date': dt, 'country': country},
+                        {'indicator': indicator, 'date': dt, 'value': value,
+                         'country': country, 'source': source})
                 total += len(rows)
             logger.info("[startup] FRED %s: %d rows", name, len(rows))
         except Exception as e:

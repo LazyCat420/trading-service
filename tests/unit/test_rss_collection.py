@@ -260,8 +260,8 @@ class TestCollectFeed:
             }
         ]
 
-        # news_collector still opens a `get_db()` cursor around the loop, but
-        # the ARTICLE WRITE goes through mongo_store.upsert_doc now, and the
+        # news_collector is fully off Postgres now: the ARTICLE WRITE goes
+        # through mongo_store.upsert_doc, and the
         # DedupEngine reads/counts through mongo_store too. Patching
         # `dedup_engine.get_db` — a symbol that module no longer imports —
         # raised, and before that the dedup engine was reading the live
@@ -277,8 +277,7 @@ class TestCollectFeed:
         query.find_rows.return_value = []
         query.find_row.return_value = None
 
-        with patch("app.collectors.news_collector.get_db", return_value=mock_db_ctx), \
-             patch("app.db.mongo_store.upsert_doc", upsert), \
+        with patch("app.db.mongo_store.upsert_doc", upsert), \
              patch("app.collectors.news_collector.mongo_query", query), \
              patch("app.db.mongo_store.ensure_indexes", MagicMock()), \
              patch("app.db.mongo_store.count_docs", return_value=0), \
@@ -316,25 +315,24 @@ class TestCollectFeed:
 
         mock_collect.side_effect = Exception("Scraper error")
 
-        with patch("app.collectors.news_collector.get_db", return_value=mock_db_ctx):
-            with patch("app.collectors.news_collector.get_db", return_value=mock_db_ctx):
-                count = await collect_feed("Test", "https://example.com/rss")
+        count = await collect_feed("Test", "https://example.com/rss")
 
         assert count == 0
 
     @pytest.mark.asyncio
     async def test_collect_feed_db_exception_returns_zero(self):
-        """DB errors should be caught and return 0, not propagate."""
+        """DB errors should be caught and return 0, not propagate.
+
+        The fault used to be injected by making `get_db()` raise on __enter__.
+        collect_feed no longer opens a Postgres cursor, so the equivalent
+        outage is the scraper fetch itself failing against a real feed URL —
+        raised from the same try/except that used to see the DB error.
+        """
         from app.collectors.news_collector import collect_feed
 
-        mock_db = MagicMock()
-        mock_db.__enter__ = MagicMock(side_effect=ConnectionError("DB down"))
-        mock_db.__exit__ = MagicMock(return_value=False)
-
-        # Patch at BOTH locations since collect_feed re-imports get_db inside the function
-        with patch("app.db.connection.get_db", return_value=mock_db):
-            with patch("app.collectors.news_collector.get_db", return_value=mock_db):
-                count = await collect_feed("Test", "https://feeds.bbci.co.uk/news/business/rss.xml")
+        with patch("app.services.scraper_client.scraper_client.collect",
+                   side_effect=ConnectionError("DB down")):
+            count = await collect_feed("Test", "https://feeds.bbci.co.uk/news/business/rss.xml")
 
         assert count == 0
 
@@ -445,8 +443,8 @@ class TestNewsApiRotator:
         The write moved from `db.execute(INSERT ...)` to
         `mongo_store.upsert_doc('news_articles', {'id': ...}, ..., insert_only=True)`,
         so `mock_db.execute.called` no longer proves anything — the rotator
-        still opens a `get_db()` cursor, but the article never travels through
-        it. This reads the document the rotator actually stored.
+        has no Postgres cursor at all. This reads the document the rotator
+        actually stored.
         """
         import asyncio
         from app.collectors.news_api_rotator import _persist_articles, NewsArticle
@@ -482,8 +480,7 @@ class TestNewsApiRotator:
         nc_query.agg_row.return_value = (0,)
 
         async def run_persist():
-            with patch("app.collectors.news_api_rotator.get_db", return_value=mock_db), \
-                 patch("app.collectors.news_api_rotator.mongo_store", store), \
+            with patch("app.collectors.news_api_rotator.mongo_store", store), \
                  patch("app.collectors.news_collector.mongo_query", nc_query), \
                  patch("app.processors.dedup_engine.DedupEngine", return_value=mock_dedup):
                 return await _persist_articles(articles)

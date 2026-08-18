@@ -1,6 +1,6 @@
 import json
 from typing import Any, Dict, List
-from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 
 class MemoryRepository:
@@ -26,28 +26,20 @@ class MemoryRepository:
         """Fetches memory rules pertinent to a specific ticker."""
         from app.db.memory_repo import _ensure_schema
         _ensure_schema()
-        with get_db() as db:
-            query = """
-                SELECT id, type, ticker, sector, summary, tags, 
-                       confidence_score, evidence_count, status, 
-                       last_used_at, last_validated_at, created_at, updated_at
-                FROM canonical_memories 
-                WHERE ticker = %s
-            """
-            params = [ticker]
-            if active_only:
-                query += " AND status = 'active'"
+        cols = ["id", "type", "ticker", "sector", "summary", "tags",
+                "confidence_score", "evidence_count", "status",
+                "last_used_at", "last_validated_at", "created_at", "updated_at"]
+        query: dict = {"ticker": ticker}
+        if active_only:
+            query["status"] = "active"
 
-            cursor = db.execute(query, params)
-            cols = [desc[0] for desc in cursor.description]
+        memories = []
+        for row in mongo_query.find_rows("canonical_memories", query, cols):
+            record = dict(zip(cols, row))
+            record["tags"] = cls._parse_tags(record.get("tags"))
+            memories.append(record)
 
-            memories = []
-            for row in cursor.fetchall():
-                record = dict(zip(cols, row))
-                record["tags"] = cls._parse_tags(record.get("tags"))
-                memories.append(record)
-
-            return memories
+        return memories
 
     @classmethod
     def fetch_candidate_memories(
@@ -56,23 +48,20 @@ class MemoryRepository:
         """Fetch active canonical memories for a specific ticker OR its sector."""
         from app.db.memory_repo import _ensure_schema
         _ensure_schema()
-        with get_db() as db:
-            query = """
-                SELECT * FROM canonical_memories 
-                WHERE status != 'deprecated'
-                  AND (
-                      ticker = %s 
-                      OR (ticker IS NULL AND sector = %s)
-                      OR (ticker IS NULL AND sector IS NULL)
-                  )
-            """
-            cursor = db.execute(query, [ticker, sector])
-            columns = [desc[0] for desc in cursor.description]
+        # SELECT * — whole documents, so read dicts rather than a fixed column list.
+        query = {
+            "status": {"$ne": "deprecated"},
+            "$or": [
+                {"ticker": ticker},
+                {"ticker": None, "sector": sector},
+                {"ticker": None, "sector": None},
+            ],
+        }
 
-            results = []
-            for row in cursor.fetchall():
-                record = dict(zip(columns, row))
-                record["tags"] = cls._parse_tags(record.get("tags"))
-                results.append(record)
+        results = []
+        for record in mongo_query.find_dicts("canonical_memories", query):
+            record.pop("_id", None)
+            record["tags"] = cls._parse_tags(record.get("tags"))
+            results.append(record)
 
-            return results
+        return results

@@ -16,7 +16,6 @@ from fastapi import HTTPException
 
 from app.services.cycle_control import cycle_control
 from app.services.market_calendar import MarketCalendar
-from app.db.connection import get_db
 from app.services.bot_manager import get_active_bot_id
 from app.trading.paper_trader import check_stop_losses, check_take_profits
 
@@ -31,6 +30,69 @@ logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
 
 local_tz = get_localzone()
+
+
+def _stalest_first(universe: set[str], side_collection: str, side_field: str,
+                   limit: int, side_query: dict | None = None,
+                   max_age_days: int | None = None) -> list[tuple]:
+    """The `LEFT JOIN ... GROUP BY ticker ORDER BY MAX(date) ASC NULLS FIRST`
+    shape that four of the nightly refresh jobs share, done exactly.
+
+    A LEFT JOIN is not a Mongo operation, but this particular one is: the left
+    side is a bounded ticker universe already in memory, and the right side
+    collapses to one MAX per ticker. So: `$group` the side collection down to
+    (ticker → max), then attach it to the universe in Python. Tickers with NO
+    matching side row keep None — the LEFT JOIN's whole point — and NULLS FIRST
+    means they sort ahead of every dated one, which `(0, ...)` vs `(1, date)`
+    reproduces without inventing a sentinel date.
+
+    `max_age_days`, when given, applies the SQL HAVING: keep only tickers whose
+    max is NULL or older than N days.
+
+    Returns [(ticker, max_or_None), ...], the tuple shape the callers unpack.
+    """
+    rows = mongo_query.group_rows(
+        side_collection, side_query or {},
+        keys=["ticker"], aggs=[("max", side_field)],
+        select=[("key", "ticker"), ("agg", 0)],
+    )
+    newest = {t: v for t, v in rows if t is not None}
+
+    out = []
+    for t in universe:
+        v = newest.get(t)
+        if max_age_days is not None:
+            if v is not None:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+                try:
+                    if _as_utc(v) >= cutoff:
+                        continue           # fresh enough — HAVING excludes it
+                except TypeError:
+                    pass                   # date/datetime mismatch: treat as stale
+        out.append((t, v))
+    # NULLS FIRST, then oldest date first. Sorting on the value directly would
+    # raise on the None entries, so key on (has_value, value).
+    out.sort(key=lambda r: (1, _sort_key(r[1])) if r[1] is not None else (0, 0))
+    return out[:limit] if limit else out
+
+
+def _as_utc(v):
+    """A BSON date is a datetime; a `DATE` column may arrive as a date. Compare
+    both against a tz-aware cutoff without a naive/aware TypeError."""
+    import datetime as _dt
+
+    if isinstance(v, _dt.datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    if isinstance(v, _dt.date):
+        return _dt.datetime(v.year, v.month, v.day, tzinfo=timezone.utc)
+    raise TypeError(type(v))
+
+
+def _sort_key(v):
+    try:
+        return _as_utc(v).timestamp()
+    except TypeError:
+        return 0
 
 # Single scheduler instance — misfire_grace_time=3600 means jobs that fire
 # up to 1 hour late still execute (APScheduler default is 1 SECOND which
@@ -108,256 +170,254 @@ class SchedulerService:
         logger.info(
             "[SCHEDULER] ====== TRIGGER FIRED for schedule %s ======", schedule_id
         )
-        with get_db() as db:
-            # Load latest config from DB to ensure it wasn't deleted or paused
-            row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
-            if not row:
-                logger.warning(
-                    "[SCHEDULER] Schedule %s not found in DB, removing from engine.",
-                    schedule_id,
-                )
-                try:
-                    scheduler.remove_job(schedule_id)
-                except Exception:
-                    pass
-                return
-
-            cols = [
-                "id",
-                "name",
-                "schedule_type",
-                "cron_expression",
-                "interval_hours",
-                "earliest_window",
-                "collect",
-                "analyze",
-                "trade",
-                "tickers",
-                "max_tickers",
-                "discovered_tickers",
-                "market_hours_only",
-                "is_active",
-                "last_run_at",
-                "next_run_at",
-                "run_count",
-                "last_status",
-                "last_error",
-                "created_at",
-                "updated_at",
-                "run_at",
-                "expiry_at",
-            ]
-            s = dict(zip(cols, row))
-
-            if not s["is_active"]:
-                logger.info(
-                    "[SCHEDULER] Schedule %s is inactive, skipping.", schedule_id
-                )
-                return
-
-            # TTL guardrail: expired schedules deactivate instead of running —
-            # keeps stale bot-created research from firing forever.
-            if SchedulerService._expire_if_past_ttl(s, db):
-                return
-
-            # Pre-run check from validator
-            try:
-                from app.validation.schedule_validator import ScheduleValidator
-                is_valid, reject_reason = ScheduleValidator.pre_run_check(schedule_id)
-                if not is_valid:
-                    logger.info("[SCHEDULER] Pre-run validation failed for %s: %s", schedule_id, reject_reason)
-                    return
-            except Exception as val_e:
-                logger.warning("[SCHEDULER] Validator error (continuing): %s", val_e)
-
-            if s["market_hours_only"] and not SchedulerService._is_market_hours():
-                logger.info(
-                    "[SCHEDULER] Schedule %s skipped (outside market hours).",
-                    schedule_id,
-                )
-                if s["schedule_type"] in ("once", "policy"):
-                    # DateTrigger is spent after firing — without re-arming, the
-                    # schedule silently dies until the next reboot. Re-aim at
-                    # the next market open.
-                    SchedulerService._rearm_date_schedule(s, minutes_from_now=None)
-                # Still sync next_run_at so the timer keeps counting
-                SchedulerService._sync_next_run_to_db(schedule_id)
-                return
-
-            tickers = []
-            try:
-                if s["tickers"]:
-                    tickers = json.loads(s["tickers"])
-            except Exception:
-                tickers = []
-
-            # Dispatch cycle via system_commands table (picked up by cycle_main poller)
-            payload = {
-                "tickers": tickers,
-                "collect": bool(s["collect"]),
-                "analyze": bool(s["analyze"]),
-                "trade": bool(s["trade"]) if s["trade"] is not None else True,
-                "max_tickers": s.get("max_tickers"),
-                "discovered_tickers": s.get("discovered_tickers"),
-                "dynamic_selection_mode": True,
-            }
-
-            logger.info(
-                "[SCHEDULER] Execute schedule detail: schedule_id=%s, name=%s, tickers=%s, max_tickers=%s, discovered_tickers=%s, payload=%s",
+        # Load latest config from DB to ensure it wasn't deleted or paused
+        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
+        if not row:
+            logger.warning(
+                "[SCHEDULER] Schedule %s not found in DB, removing from engine.",
                 schedule_id,
-                s["name"],
-                s["tickers"],
-                s.get("max_tickers"),
-                s.get("discovered_tickers"),
-                json.dumps(payload),
             )
-
-            run_status = "ok"
-            err_msg = ""
             try:
-                # Check if a cycle is already running before dispatching
-                state_row = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
-                if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
-                    raise HTTPException(409, f"Cycle already running: {state_row[0]}")
+                scheduler.remove_job(schedule_id)
+            except Exception:
+                pass
+            return
 
-                cmd_id = f"sch-cmd-{uuid.uuid4().hex[:8]}"
-                mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
+        cols = [
+            "id",
+            "name",
+            "schedule_type",
+            "cron_expression",
+            "interval_hours",
+            "earliest_window",
+            "collect",
+            "analyze",
+            "trade",
+            "tickers",
+            "max_tickers",
+            "discovered_tickers",
+            "market_hours_only",
+            "is_active",
+            "last_run_at",
+            "next_run_at",
+            "run_count",
+            "last_status",
+            "last_error",
+            "created_at",
+            "updated_at",
+            "run_at",
+            "expiry_at",
+        ]
+        s = dict(zip(cols, row))
+
+        if not s["is_active"]:
+            logger.info(
+                "[SCHEDULER] Schedule %s is inactive, skipping.", schedule_id
+            )
+            return
+
+        # TTL guardrail: expired schedules deactivate instead of running —
+        # keeps stale bot-created research from firing forever.
+        if SchedulerService._expire_if_past_ttl(s):
+            return
+
+        # Pre-run check from validator
+        try:
+            from app.validation.schedule_validator import ScheduleValidator
+            is_valid, reject_reason = ScheduleValidator.pre_run_check(schedule_id)
+            if not is_valid:
+                logger.info("[SCHEDULER] Pre-run validation failed for %s: %s", schedule_id, reject_reason)
+                return
+        except Exception as val_e:
+            logger.warning("[SCHEDULER] Validator error (continuing): %s", val_e)
+
+        if s["market_hours_only"] and not SchedulerService._is_market_hours():
+            logger.info(
+                "[SCHEDULER] Schedule %s skipped (outside market hours).",
+                schedule_id,
+            )
+            if s["schedule_type"] in ("once", "policy"):
+                # DateTrigger is spent after firing — without re-arming, the
+                # schedule silently dies until the next reboot. Re-aim at
+                # the next market open.
+                SchedulerService._rearm_date_schedule(s, minutes_from_now=None)
+            # Still sync next_run_at so the timer keeps counting
+            SchedulerService._sync_next_run_to_db(schedule_id)
+            return
+
+        tickers = []
+        try:
+            if s["tickers"]:
+                tickers = json.loads(s["tickers"])
+        except Exception:
+            tickers = []
+
+        # Dispatch cycle via system_commands table (picked up by cycle_main poller)
+        payload = {
+            "tickers": tickers,
+            "collect": bool(s["collect"]),
+            "analyze": bool(s["analyze"]),
+            "trade": bool(s["trade"]) if s["trade"] is not None else True,
+            "max_tickers": s.get("max_tickers"),
+            "discovered_tickers": s.get("discovered_tickers"),
+            "dynamic_selection_mode": True,
+        }
+
+        logger.info(
+            "[SCHEDULER] Execute schedule detail: schedule_id=%s, name=%s, tickers=%s, max_tickers=%s, discovered_tickers=%s, payload=%s",
+            schedule_id,
+            s["name"],
+            s["tickers"],
+            s.get("max_tickers"),
+            s.get("discovered_tickers"),
+            json.dumps(payload),
+        )
+
+        run_status = "ok"
+        err_msg = ""
+        try:
+            # Check if a cycle is already running before dispatching
+            state_row = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
+            if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
+                raise HTTPException(409, f"Cycle already running: {state_row[0]}")
+
+            cmd_id = f"sch-cmd-{uuid.uuid4().hex[:8]}"
+            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
+            logger.info(
+                "[SCHEDULER] Successfully triggered cycle run for schedule %s.",
+                schedule_id,
+            )
+        except HTTPException as he:
+            if he.status_code == 409:
                 logger.info(
-                    "[SCHEDULER] Successfully triggered cycle run for schedule %s.",
+                    "[SCHEDULER] Schedule %s skipped: cycle already running.",
                     schedule_id,
                 )
-            except HTTPException as he:
-                if he.status_code == 409:
-                    logger.info(
-                        "[SCHEDULER] Schedule %s skipped: cycle already running.",
-                        schedule_id,
-                    )
-                    run_status = "skipped"
-                    err_msg = "cycle already running"
-                else:
-                    logger.error(
-                        "[SCHEDULER] Failed to trigger schedule %s: %s",
-                        schedule_id,
-                        he.detail,
-                    )
-                    run_status = "error"
-                    err_msg = he.detail
-            except Exception as e:
+                run_status = "skipped"
+                err_msg = "cycle already running"
+            else:
                 logger.error(
-                    "[SCHEDULER] Unexpected error triggering schedule %s: %s",
+                    "[SCHEDULER] Failed to trigger schedule %s: %s",
                     schedule_id,
-                    e,
-                    exc_info=True,
+                    he.detail,
                 )
                 run_status = "error"
-                err_msg = str(e)
-
-            # Update run stats in DB
-            now = datetime.now(timezone.utc)
-            db.execute(
-                """
-                UPDATE cycle_schedules
-                SET last_run_at = %s, run_count = run_count + 1, last_status = %s, last_error = %s
-                WHERE id = %s
-            """,
-                [now.isoformat(), run_status, err_msg, schedule_id],
+                err_msg = he.detail
+        except Exception as e:
+            logger.error(
+                "[SCHEDULER] Unexpected error triggering schedule %s: %s",
+                schedule_id,
+                e,
+                exc_info=True,
             )
+            run_status = "error"
+            err_msg = str(e)
 
-            # One-shot semantics for DateTrigger-based schedules ('once' and
-            # 'policy'). Without this they stay is_active=TRUE forever and
-            # re-fire at EVERY reboot when load_all_schedules re-registers
-            # them — a research doom loop. Success → deactivate. Failure or
-            # skip → bounded retry (20 min), give up after 5 attempts total.
-            if s["schedule_type"] in ("once", "policy"):
-                attempts = (s["run_count"] or 0) + 1
-                if run_status == "ok":
-                    mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'updated_at': now.isoformat()}})
-                    logger.info(
-                        "[SCHEDULER] One-shot schedule %s completed — deactivated.",
-                        schedule_id,
-                    )
-                elif attempts >= 5:
-                    mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': 'gave_up', 'updated_at': now.isoformat()}})
-                    logger.warning(
-                        "[SCHEDULER] One-shot schedule %s gave up after %d attempts.",
-                        schedule_id,
-                        attempts,
-                    )
-                else:
-                    SchedulerService._rearm_date_schedule(s, minutes_from_now=20)
+        # Update run stats in DB
+        now = datetime.now(timezone.utc)
+        # run_count = run_count + 1 → $inc, not a read-modify-write.
+        mongo_store.update_docs(
+            "cycle_schedules", {"id": schedule_id},
+            {"$set": {"last_run_at": now.isoformat(),
+                      "last_status": run_status,
+                      "last_error": err_msg},
+             "$inc": {"run_count": 1}},
+        )
 
-            # Sync next_run_at from APScheduler (it auto-advances the trigger)
-            SchedulerService._sync_next_run_to_db(schedule_id)
+        # One-shot semantics for DateTrigger-based schedules ('once' and
+        # 'policy'). Without this they stay is_active=TRUE forever and
+        # re-fire at EVERY reboot when load_all_schedules re-registers
+        # them — a research doom loop. Success → deactivate. Failure or
+        # skip → bounded retry (20 min), give up after 5 attempts total.
+        if s["schedule_type"] in ("once", "policy"):
+            attempts = (s["run_count"] or 0) + 1
+            if run_status == "ok":
+                mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'updated_at': now.isoformat()}})
+                logger.info(
+                    "[SCHEDULER] One-shot schedule %s completed — deactivated.",
+                    schedule_id,
+                )
+            elif attempts >= 5:
+                mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': 'gave_up', 'updated_at': now.isoformat()}})
+                logger.warning(
+                    "[SCHEDULER] One-shot schedule %s gave up after %d attempts.",
+                    schedule_id,
+                    attempts,
+                )
+            else:
+                SchedulerService._rearm_date_schedule(s, minutes_from_now=20)
 
-            # Log to scheduler history
-            try:
-                history_id = f"hist-{uuid.uuid4().hex[:8]}"
-                mongo_store.insert_docs('scheduler_history', [{'id': history_id, 'job_name': s["name"], 'started_at': now.isoformat(), 'finished_at': now.isoformat(), 'status': run_status, 'notes': err_msg}])
-            except Exception as filter_e:
-                logger.warning("[SCHEDULER] Failed to write history log: %s", filter_e)
+        # Sync next_run_at from APScheduler (it auto-advances the trigger)
+        SchedulerService._sync_next_run_to_db(schedule_id)
+
+        # Log to scheduler history
+        try:
+            history_id = f"hist-{uuid.uuid4().hex[:8]}"
+            mongo_store.insert_docs('scheduler_history', [{'id': history_id, 'job_name': s["name"], 'started_at': now.isoformat(), 'finished_at': now.isoformat(), 'status': run_status, 'notes': err_msg}])
+        except Exception as filter_e:
+            logger.warning("[SCHEDULER] Failed to write history log: %s", filter_e)
 
     @staticmethod
     def load_all_schedules():
         """Load all active schedules from DB into APScheduler."""
         logger.info("[SCHEDULER] Loading schedules from DB...")
-        with get_db() as db:
-            rows = mongo_query.find_rows('cycle_schedules', {'is_active': True}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
+        rows = mongo_query.find_rows('cycle_schedules', {'is_active': True}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
 
-            cols = [
-                "id",
-                "name",
-                "schedule_type",
-                "cron_expression",
-                "interval_hours",
-                "earliest_window",
-                "collect",
-                "analyze",
-                "trade",
-                "tickers",
-                "max_tickers",
-                "discovered_tickers",
-                "market_hours_only",
-                "is_active",
-                "last_run_at",
-                "next_run_at",
-                "run_count",
-                "last_status",
-                "last_error",
-                "created_at",
-                "updated_at",
-                "run_at",
-                "expiry_at",
-            ]
+        cols = [
+            "id",
+            "name",
+            "schedule_type",
+            "cron_expression",
+            "interval_hours",
+            "earliest_window",
+            "collect",
+            "analyze",
+            "trade",
+            "tickers",
+            "max_tickers",
+            "discovered_tickers",
+            "market_hours_only",
+            "is_active",
+            "last_run_at",
+            "next_run_at",
+            "run_count",
+            "last_status",
+            "last_error",
+            "created_at",
+            "updated_at",
+            "run_at",
+            "expiry_at",
+        ]
 
-            count = 0
-            for row in rows:
-                s = dict(zip(cols, row))
-                if SchedulerService._expire_if_past_ttl(s, db):
-                    continue
-                # Retired: coarse-window 'policy' schedules are superseded by
-                # the Watch Desk (watch_ticker). Deactivate any lingering rows
-                # instead of arming them.
-                if s["schedule_type"] == "policy":
-                    mongo_store.update_docs('cycle_schedules', {'id': s["id"]}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': 'retired_policy'}})
-                    logger.info("[SCHEDULER] Retired policy schedule %s — deactivated.", s["id"])
-                    continue
-                # A DateTrigger-based schedule that already ran successfully
-                # must not be re-armed at boot (pre-fix rows may still be
-                # active with a spent trigger — see one-shot semantics).
-                if s["schedule_type"] in ("once", "policy") and s["last_status"] == "ok" and s["last_run_at"]:
-                    mongo_store.update_docs('cycle_schedules', {'id': s["id"]}, {'$set': {'is_active': False, 'next_run_at': None}})
-                    logger.info(
-                        "[SCHEDULER] One-shot schedule %s already ran (%s) — deactivating instead of re-arming.",
-                        s["id"], s["last_run_at"],
-                    )
-                    continue
-                SchedulerService._add_job_to_scheduler(s)
-                count += 1
+        count = 0
+        for row in rows:
+            s = dict(zip(cols, row))
+            if SchedulerService._expire_if_past_ttl(s):
+                continue
+            # Retired: coarse-window 'policy' schedules are superseded by
+            # the Watch Desk (watch_ticker). Deactivate any lingering rows
+            # instead of arming them.
+            if s["schedule_type"] == "policy":
+                mongo_store.update_docs('cycle_schedules', {'id': s["id"]}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': 'retired_policy'}})
+                logger.info("[SCHEDULER] Retired policy schedule %s — deactivated.", s["id"])
+                continue
+            # A DateTrigger-based schedule that already ran successfully
+            # must not be re-armed at boot (pre-fix rows may still be
+            # active with a spent trigger — see one-shot semantics).
+            if s["schedule_type"] in ("once", "policy") and s["last_status"] == "ok" and s["last_run_at"]:
+                mongo_store.update_docs('cycle_schedules', {'id': s["id"]}, {'$set': {'is_active': False, 'next_run_at': None}})
+                logger.info(
+                    "[SCHEDULER] One-shot schedule %s already ran (%s) — deactivating instead of re-arming.",
+                    s["id"], s["last_run_at"],
+                )
+                continue
+            SchedulerService._add_job_to_scheduler(s)
+            count += 1
 
-            logger.info("[SCHEDULER] Loaded %d active schedules.", count)
+        logger.info("[SCHEDULER] Loaded %d active schedules.", count)
 
     @staticmethod
-    def _expire_if_past_ttl(s: dict, db) -> bool:
+    def _expire_if_past_ttl(s: dict) -> bool:
         """Deactivate a schedule whose expiry_at has passed. Returns True if expired."""
         expiry = s.get("expiry_at")
         if not expiry:
@@ -1120,11 +1180,8 @@ class SchedulerService:
         all. Risk protection must not depend on which bot the UI has selected.
         """
         try:
-            with get_db() as db:
-                rows = db.execute(
-                    "SELECT DISTINCT bot_id FROM positions WHERE qty > 0"
-                ).fetchall()
-            bot_ids = [r[0] for r in rows if r and r[0]]
+            bot_ids = [b for b in mongo_store.distinct_values(
+                "positions", "bot_id", {"qty": {"$gt": 0}}) if b]
             active = get_active_bot_id()
             if active and active not in bot_ids:
                 bot_ids.append(active)
@@ -1315,28 +1372,20 @@ class SchedulerService:
         """
         try:
             from app.collectors.data_rotator import fetch_fundamentals
-            from app.db.connection import get_db
 
-            with get_db() as db:
-                rows = db.execute(
-                    """
-                    WITH universe AS (
-                        SELECT ticker FROM watchlist WHERE status = 'active'
-                        UNION
-                        SELECT ticker FROM ticker_metadata
-                        WHERE COALESCE(asset_class, 'stock') IN ('stock', 'etf')
-                    )
-                    SELECT u.ticker, MAX(f.snapshot_date) AS last_snap
-                    FROM universe u
-                    LEFT JOIN fundamentals f ON f.ticker = u.ticker
-                    GROUP BY u.ticker
-                    HAVING MAX(f.snapshot_date) IS NULL
-                        OR MAX(f.snapshot_date) < CURRENT_DATE - 2
-                    ORDER BY MAX(f.snapshot_date) ASC NULLS FIRST
-                    LIMIT %s
-                    """,
-                    [batch],
-                ).fetchall()
+            # universe = active watchlist ∪ stock/ETF metadata. COALESCE(
+            # asset_class,'stock') IN ('stock','etf') means a missing/null
+            # asset_class counts as 'stock', so it must be admitted too — a
+            # plain $in would silently drop every un-classified ticker.
+            universe = set(mongo_store.distinct_values(
+                "watchlist", "ticker", {"status": "active"}))
+            universe |= set(mongo_store.distinct_values(
+                "ticker_metadata", "ticker",
+                {"$or": [{"asset_class": {"$in": ["stock", "etf"]}},
+                         {"asset_class": None}]}))
+            universe.discard(None)
+            rows = _stalest_first(universe, "fundamentals", "snapshot_date",
+                                  batch, max_age_days=2)
             done = 0
             for (ticker, _last) in rows:
                 try:
@@ -1359,27 +1408,28 @@ class SchedulerService:
         """
         try:
             from app.collectors.finviz_scraper import collect_fundamentals as collect_finviz
-            from app.db.connection import get_db
 
-            with get_db() as db:
-                rows = db.execute(
-                    """
-                    SELECT m.ticker,
-                           (SELECT MAX(f.snapshot_date) FROM fundamentals f
-                             WHERE f.ticker = m.ticker AND f.roic IS NOT NULL) AS last_fv
-                    FROM ticker_metadata m
-                    WHERE COALESCE(m.asset_class, 'stock') = 'stock'
-                      AND EXISTS (
-                          SELECT 1 FROM price_history p
-                          WHERE p.ticker = m.ticker
-                            AND p.date > CURRENT_DATE - 7
-                            AND p.source != 'world_simulator'
-                      )
-                    ORDER BY last_fv ASC NULLS FIRST
-                    LIMIT %s
-                    """,
-                    [batch],
-                ).fetchall()
+            # COALESCE(asset_class,'stock') = 'stock' — a missing/null
+            # asset_class IS a stock here, so it must be included.
+            stocks = set(mongo_store.distinct_values(
+                "ticker_metadata", "ticker",
+                {"$or": [{"asset_class": "stock"}, {"asset_class": None}]}))
+            stocks.discard(None)
+            # The EXISTS price-freshness subquery: the set of tickers with a
+            # non-simulated bar in the last 7 days. `source != 'world_simulator'`
+            # in SQL DROPS null sources; Mongo's $ne keeps them, so this is
+            # spelled out as an explicit non-null inequality to match the SQL.
+            fresh = set(mongo_store.distinct_values(
+                "price_history", "ticker",
+                {"date": {"$gt": datetime.now(timezone.utc) - timedelta(days=7)},
+                 "source": {"$ne": "world_simulator", "$exists": True, "$type": "string"}},
+            ))
+            universe = stocks & fresh
+            # The correlated subquery only counts fundamentals rows that HAVE a
+            # roic — the whole point of this job is finding tickers finviz has
+            # not filled in yet.
+            rows = _stalest_first(universe, "fundamentals", "snapshot_date", batch,
+                                  side_query={"roic": {"$ne": None}})
             done = 0
             for (ticker, _last) in rows:
                 try:
@@ -1415,28 +1465,16 @@ class SchedulerService:
         """
         try:
             from app.collectors.data_rotator import fetch_price_history
-            from app.db.connection import get_db
 
-            with get_db() as db:
-                rows = db.execute(
-                    """
-                    WITH universe AS (
-                        SELECT ticker FROM watchlist WHERE status IN ('active', 'paused')
-                        UNION
-                        -- ETFs have no other scheduled price writer (not S&P500,
-                        -- rarely watchlisted) — without this the screener's ETF
-                        -- rows go stale and its fresh-prices gate hides them all
-                        SELECT ticker FROM ticker_metadata WHERE asset_class = 'etf'
-                    )
-                    SELECT u.ticker, MAX(p.date) AS last_bar
-                    FROM universe u
-                    LEFT JOIN price_history p ON p.ticker = u.ticker
-                    GROUP BY u.ticker
-                    ORDER BY last_bar ASC NULLS FIRST
-                    LIMIT %s
-                    """,
-                    [batch],
-                ).fetchall()
+            universe = set(mongo_store.distinct_values(
+                "watchlist", "ticker", {"status": {"$in": ["active", "paused"]}}))
+            # ETFs have no other scheduled price writer (not S&P500, rarely
+            # watchlisted) — without this the screener's ETF rows go stale and
+            # its fresh-prices gate hides them all.
+            universe |= set(mongo_store.distinct_values(
+                "ticker_metadata", "ticker", {"asset_class": "etf"}))
+            universe.discard(None)
+            rows = _stalest_first(universe, "price_history", "date", batch)
 
             done = 0
             no_data: list[str] = []
@@ -1472,21 +1510,12 @@ class SchedulerService:
         """
         try:
             from app.collectors.youtube_collector import collect_for_ticker
-            from app.db.connection import get_db
 
-            with get_db() as db:
-                rows = db.execute(
-                    """
-                    SELECT w.ticker, MAX(y.published_at) AS newest
-                    FROM watchlist w
-                    LEFT JOIN youtube_transcripts y ON y.ticker = w.ticker
-                    WHERE w.status = 'active'
-                    GROUP BY w.ticker
-                    ORDER BY newest ASC NULLS FIRST
-                    LIMIT %s
-                    """,
-                    [batch],
-                ).fetchall()
+            universe = set(mongo_store.distinct_values(
+                "watchlist", "ticker", {"status": "active"}))
+            universe.discard(None)
+            rows = _stalest_first(universe, "youtube_transcripts",
+                                  "published_at", batch)
             total = 0
             for i, (ticker, _newest) in enumerate(rows):
                 try:
@@ -1565,7 +1594,6 @@ class SchedulerService:
             logger.error("[SCHEDULER] Twitter sweep failed: %s", e)
         try:
             from app.collectors.stocktwits_collector import collect_for_ticker
-            from app.db.connection import get_db
 
             # Target what the desk actually reasons about, stalest first.
             #
@@ -1584,26 +1612,16 @@ class SchedulerService:
             # Union recently-analysed tickers with the active watchlist and
             # order by the age of what we already hold, so the sweep rotates
             # instead of re-collecting one fixed set.
-            with get_db() as db:
-                rows = db.execute(
-                    """
-                    WITH targets AS (
-                        SELECT DISTINCT ticker FROM watchlist WHERE status = 'active'
-                        UNION
-                        SELECT DISTINCT ticker FROM trade_results
-                        WHERE created_at > NOW() - INTERVAL '14 days'
-                          AND ticker IS NOT NULL
-                    )
-                    SELECT t.ticker
-                    FROM targets t
-                    LEFT JOIN social_posts s ON s.ticker = t.ticker
-                    GROUP BY t.ticker
-                    ORDER BY MAX(s.posted_at) ASC NULLS FIRST
-                    LIMIT 15
-                    """
-                ).fetchall()
+            targets = set(mongo_store.distinct_values(
+                "watchlist", "ticker", {"status": "active"}))
+            targets |= set(mongo_store.distinct_values(
+                "trade_results", "ticker",
+                {"created_at": {"$gt": datetime.now(timezone.utc) - timedelta(days=14)},
+                 "ticker": {"$ne": None}}))
+            targets.discard(None)
+            rows = _stalest_first(targets, "social_posts", "posted_at", 15)
             total = 0
-            for (ticker,) in rows:
+            for (ticker, _last) in rows:
                 total += await collect_for_ticker(ticker, limit=20) or 0
             logger.info(
                 "[SCHEDULER] StockTwits sweep: %s posts over %d tickers", total, len(rows)
@@ -1653,49 +1671,65 @@ class SchedulerService:
         (30k disclosures vs 8k holdings rows). Both cohorts now land here, each
         under its own source label so downstream scoring can weight them apart.
         """
-        from app.db.connection import get_db as _get_db
-
         def _work() -> int:
-            with _get_db() as db:
-                rows = db.execute(
-                    """
-                    SELECT s.ticker,
-                           s.actor_type,
-                           COUNT(DISTINCT s.actor_id) AS buyers,
-                           COUNT(DISTINCT s.actor_id) FILTER (
-                               WHERE p.rankable AND p.avg_alpha > 0
-                           ) AS proven_buyers,
-                           MAX(s.event_date) AS latest
-                    FROM smart_money_trade_scores s
-                    LEFT JOIN smart_money_performance p
-                      ON p.actor_type = s.actor_type
-                     AND p.actor_id   = s.actor_id
-                     AND p.horizon    = '1y'
-                    WHERE s.direction = 'buy'
-                      AND s.event_date >= CURRENT_DATE - MAKE_INTERVAL(days => %s)
-                    GROUP BY s.ticker, s.actor_type
-                    HAVING COUNT(DISTINCT s.actor_id) >= %s
-                    ORDER BY proven_buyers DESC, buyers DESC
-                    LIMIT %s
-                    """,
-                    (days, min_buyers, limit),
-                ).fetchall()
+            # The LEFT JOIN onto smart_money_performance is used ONLY inside the
+            # FILTER predicate, so it is a membership test, not a join: "is this
+            # (actor_type, actor_id) a proven 1y performer?". A non-matching
+            # actor contributes nothing to proven_buyers, which is exactly what
+            # not being in this set does. So load the proven set once (it is one
+            # horizon of a small table) and aggregate the trades on their own.
+            proven_keys = {
+                (d.get("actor_type"), d.get("actor_id"))
+                for d in mongo_store.find_docs(
+                    "smart_money_performance",
+                    {"horizon": "1y", "rankable": True, "avg_alpha": {"$gt": 0}},
+                    projection={"actor_type": 1, "actor_id": 1, "_id": 0},
+                )
+            }
 
-                written = 0
-                for ticker, actor_type, buyers, proven, latest in rows:
-                    source = "congress" if actor_type == "congress" else "institutional"
-                    # Score leans on buyers WITH a proven track record — consensus
-                    # among actors who actually beat SPY is a stronger lead than
-                    # consensus among actors we cannot score at all.
-                    score = float(buyers) + (float(proven or 0) * 2.0)
-                    context = (
-                        f"{buyers} distinct {actor_type} buyers "
-                        f"({proven or 0} with positive proven 1y alpha); "
-                        f"latest disclosure {latest}"
-                    )
-                    mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': source}, {'$set': {'score': score, 'context': context, 'discovered_at': datetime.now(timezone.utc)}}, upsert=True)
-                    written += 1
-                return written
+            # GROUP BY (ticker, actor_type) → a compound _id. COUNT(DISTINCT
+            # actor_id) is $addToSet + len, and the FILTERed count is the same
+            # set intersected with proven_keys — counting DISTINCT actors, so
+            # an actor with two buys of the same name still counts once.
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            grouped = mongo_store.aggregate("smart_money_trade_scores", [
+                {"$match": {"direction": "buy", "event_date": {"$gte": cutoff}}},
+                {"$group": {
+                    "_id": {"ticker": "$ticker", "actor_type": "$actor_type"},
+                    "actors": {"$addToSet": "$actor_id"},
+                    "latest": {"$max": "$event_date"},
+                }},
+            ])
+
+            rows = []
+            for g in grouped:
+                key = g.get("_id") or {}
+                ticker, actor_type = key.get("ticker"), key.get("actor_type")
+                # SQL COUNT(DISTINCT col) does not count NULL.
+                actors = [a for a in (g.get("actors") or []) if a is not None]
+                if len(actors) < min_buyers:           # HAVING
+                    continue
+                proven = sum(1 for a in actors if (actor_type, a) in proven_keys)
+                rows.append((ticker, actor_type, len(actors), proven, g.get("latest")))
+            # ORDER BY proven_buyers DESC, buyers DESC — then LIMIT.
+            rows.sort(key=lambda r: (r[3], r[2]), reverse=True)
+            rows = rows[:limit]
+
+            written = 0
+            for ticker, actor_type, buyers, proven, latest in rows:
+                source = "congress" if actor_type == "congress" else "institutional"
+                # Score leans on buyers WITH a proven track record — consensus
+                # among actors who actually beat SPY is a stronger lead than
+                # consensus among actors we cannot score at all.
+                score = float(buyers) + (float(proven or 0) * 2.0)
+                context = (
+                    f"{buyers} distinct {actor_type} buyers "
+                    f"({proven or 0} with positive proven 1y alpha); "
+                    f"latest disclosure {latest}"
+                )
+                mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': source}, {'$set': {'score': score, 'context': context, 'discovered_at': datetime.now(timezone.utc)}}, upsert=True)
+                written += 1
+            return written
 
         count = await asyncio.to_thread(_work)
         logger.info("[SCHEDULER] Smart-money leads injected: %s tickers", count)
@@ -1735,7 +1769,7 @@ class SchedulerService:
                 "dynamic_selection_mode": True,
             }
             cmd_id = f"sch-open-{uuid.uuid4().hex[:8]}"
-            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
+            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
             logger.info("[SCHEDULER] Market-open trading cycle enqueued (START_CYCLE %s).", cmd_id)
         except Exception as e:
             logger.error("[SCHEDULER] Failed to enqueue market-open cycle: %s", e)

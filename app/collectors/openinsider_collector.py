@@ -10,7 +10,7 @@ import datetime
 import hashlib
 import httpx
 from bs4 import BeautifulSoup
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -139,13 +139,13 @@ async def collect_cluster_buys(days: int = 30) -> int:
         ))
 
     if rows:
-        with get_db() as db:
-            db.executemany("""
-                INSERT INTO insider_trades
-                (id, ticker, insider_name, insider_title, trade_type, price, qty, value, shares_owned, delta_pct, trade_date, filing_date, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO NOTHING
-            """, rows)
+        # `ON CONFLICT (id) DO NOTHING` — insert_docs (ordered=False) swallows
+        # duplicate-key errors, which is that semantic.
+        cols = ("id", "ticker", "insider_name", "insider_title", "trade_type",
+                "price", "qty", "value", "shares_owned", "delta_pct",
+                "trade_date", "filing_date", "source")
+        mongo_store.insert_docs('insider_trades',
+                                [dict(zip(cols, r)) for r in rows])
         logger.info(f"[openinsider] Scraped and inserted {len(rows)} insider trades")
         return len(rows)
     return 0
