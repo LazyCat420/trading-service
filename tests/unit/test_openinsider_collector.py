@@ -11,12 +11,21 @@ from app.collectors.openinsider_collector import (
 
 @pytest.fixture
 def mock_db():
-    with patch("app.collectors.openinsider_collector.get_db") as mock_get_db:
-        db = MagicMock()
-        db.fetchone.return_value = None
-        db.fetchall.return_value = []
-        mock_get_db.return_value.__enter__.return_value = db
-        yield db
+    """Isolate the collector's store.
+
+    Patched `openinsider_collector.get_db` until 2026-08-18 — a symbol the module no longer
+    has, so this fixture raised AttributeError at SETUP and every test using
+    it ERRORED. pytest counts errors separately from failures, so the suite
+    summary read "0 failed" while these never executed.
+
+    The collector writes through mongo_store now; the yielded mock is that
+    module, so assertions read the collection, key and document.
+    """
+    store = MagicMock()
+    store.writes_mongo.return_value = True
+    store.writes_pg.return_value = False
+    with patch("app.collectors.openinsider_collector.mongo_store", store):
+        yield store
 
 def test_clean_helpers():
     assert clean_float("$1,234.56") == 1234.56
@@ -53,4 +62,10 @@ async def test_collect_cluster_buys_success(mock_fetch, mock_db):
 
     count = await collect_cluster_buys(days=30)
     assert count == 1
-    mock_db.executemany.assert_called_once()
+    # Was `executemany` — the SQL batch write. The collector inserts into
+    # `insider_trades` through mongo_store now, so assert on the collection
+    # and the documents rather than on a driver method that no longer runs.
+    mock_db.insert_docs.assert_called_once()
+    collection, docs = mock_db.insert_docs.call_args[0][:2]
+    assert collection == "insider_trades"
+    assert len(docs) == count

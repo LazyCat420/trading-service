@@ -10,12 +10,21 @@ from app.collectors.tradingeconomics_collector import (
 
 @pytest.fixture
 def mock_db():
-    with patch("app.collectors.tradingeconomics_collector.get_db") as mock_get_db:
-        db = MagicMock()
-        db.fetchone.return_value = None
-        db.fetchall.return_value = []
-        mock_get_db.return_value.__enter__.return_value = db
-        yield db
+    """Isolate the collector's store.
+
+    Patched `tradingeconomics_collector.get_db` until 2026-08-18 — a symbol the module no longer
+    has, so this fixture raised AttributeError at SETUP and every test using
+    it ERRORED. pytest counts errors separately from failures, so the suite
+    summary read "0 failed" while these never executed.
+
+    The collector writes through mongo_store now; the yielded mock is that
+    module, so assertions read the collection, key and document.
+    """
+    store = MagicMock()
+    store.writes_mongo.return_value = True
+    store.writes_pg.return_value = False
+    with patch("app.collectors.tradingeconomics_collector.mongo_store", store):
+        yield store
 
 def test_parse_val():
     assert parse_val("1.2B") == 1200000000.0
@@ -50,7 +59,14 @@ async def test_collect_economic_calendar_te_fallback(mock_client_cls, mock_ff, m
 
     count = await collect_economic_calendar()
     assert count == 1
-    mock_db.executemany.assert_called_once()
+    # Was `executemany`. The collector upserts each event into
+    # `economic_calendar` keyed on its id, so assert the collection and that
+    # every write is keyed — an unkeyed upsert would duplicate the calendar
+    # on every re-run.
+    assert mock_db.upsert_doc.call_count == count
+    for call in mock_db.upsert_doc.call_args_list:
+        assert call[0][0] == "economic_calendar"
+        assert "id" in call[0][1]
 
 
 @pytest.mark.asyncio
@@ -70,4 +86,11 @@ async def test_collect_forexfactory_primary(mock_client_cls, mock_db):
 
     count = await _collect_forexfactory()
     assert count == 1
-    mock_db.executemany.assert_called_once()
+    # Was `executemany`. The collector upserts each event into
+    # `economic_calendar` keyed on its id, so assert the collection and that
+    # every write is keyed — an unkeyed upsert would duplicate the calendar
+    # on every re-run.
+    assert mock_db.upsert_doc.call_count == count
+    for call in mock_db.upsert_doc.call_args_list:
+        assert call[0][0] == "economic_calendar"
+        assert "id" in call[0][1]

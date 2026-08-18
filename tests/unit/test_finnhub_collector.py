@@ -13,10 +13,21 @@ from app.collectors.finnhub_collector import (
 
 @pytest.fixture
 def mock_db():
-    with patch("app.collectors.finnhub_collector.get_db") as mock_get_db:
-        db = MagicMock()
-        mock_get_db.return_value.__enter__.return_value = db
-        yield db
+    """Isolate the collector's store.
+
+    Was `patch("app.collectors.finnhub_collector.get_db")`, a symbol the
+    module no longer has, so this raised AttributeError at SETUP and all 11
+    tests in the file ERRORED rather than failed — invisible in a summary line
+    that only counts failures.
+
+    The collector writes through `mongo_store.upsert_doc` now; the returned
+    mock is that module, so assertions read the collection, key and document.
+    """
+    store = MagicMock()
+    store.writes_mongo.return_value = True
+    store.writes_pg.return_value = False
+    with patch("app.collectors.finnhub_collector.mongo_store", store):
+        yield store
 
 
 @pytest.fixture

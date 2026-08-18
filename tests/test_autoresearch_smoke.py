@@ -17,13 +17,22 @@ from app.autoresearch.eval_engine import (
 
 @pytest.fixture
 def mock_db():
-    with patch("app.autoresearch.eval_engine.get_db") as mock_get_db:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.__enter__.return_value = mock_conn
-        mock_conn.execute.return_value = mock_cursor
-        mock_get_db.return_value = mock_conn
-        yield mock_conn
+    """Isolate eval_engine's store.
+
+    Was `patch("app.autoresearch.eval_engine.get_db")`, a symbol the module no
+    longer has — so this fixture raised AttributeError at SETUP and every test
+    using it ERRORED. Errors are not failures, so the suite summary read
+    "0 failed" while 16 tests never ran at all.
+
+    Patches both halves: eval_engine writes through mongo_store
+    (insert_docs / distinct_values) and reads through mongo_query.find_rows.
+    """
+    store, query = MagicMock(), MagicMock()
+    store.distinct_values.return_value = []
+    query.find_rows.return_value = []
+    with patch("app.autoresearch.eval_engine.mongo_store", store), \
+         patch("app.autoresearch.eval_engine.mongo_query", query):
+        yield store
 
 def test_evaluate_trace():
     """Test the trace scoring logic directly."""
@@ -71,21 +80,34 @@ def test_process_and_store_trace(mock_db):
     )
     
     process_and_store_trace(trace)
-    assert mock_db.execute.call_count >= 1
-    # Check that it inserted into eval_scores
-    call_args = mock_db.execute.call_args_list[0][0]
-    assert "INSERT INTO eval_scores" in call_args[0]
+
+    # Was `"INSERT INTO eval_scores" in sql`. The write is a Mongo insert now,
+    # so assert on the collection and the document — which also checks the
+    # score actually reached the row, where the SQL substring only proved a
+    # statement mentioning the table had been issued.
+    assert mock_db.insert_docs.call_count >= 1
+    collections = [c[0][0] for c in mock_db.insert_docs.call_args_list]
+    assert "eval_scores" in collections
+    doc = next(c[0][1][0] for c in mock_db.insert_docs.call_args_list
+               if c[0][0] == "eval_scores")
+    assert doc["run_id"] == trace.run_id
+    assert isinstance(doc["final_score"], (int, float))
 
 def test_evaluate_confidence_calibration(mock_db):
     """Smoke test for confidence calibration logic."""
-    # Setup mock returns: confidence, outcome, pnl_pct
-    mock_db.execute.return_value.fetchall.return_value = [
-        (80.0, "WIN", 5.0),
-        (60.0, "WIN", 2.0),
-        (90.0, "LOSS", -10.0)
-    ]
-    
-    result = evaluate_confidence_calibration(ticker="AAPL", limit=10)
+    # decision_outcomes rows come back from mongo_query.find_rows as TUPLES
+    # in the requested column order — ('confidence', 'outcome', 'pnl_pct').
+    from unittest.mock import patch as _patch
+
+    rows = [(80.0, "WIN", 5.0), (60.0, "WIN", 2.0), (90.0, "LOSS", -10.0)]
+    query = MagicMock()
+    query.find_rows.return_value = rows
+    with _patch("app.autoresearch.eval_engine.mongo_query", query):
+        result = evaluate_confidence_calibration(ticker="AAPL", limit=10)
+
+    # The ticker must reach the filter: a calibration computed over the whole
+    # book would answer the same for every symbol.
+    assert query.find_rows.call_args[0][1]["ticker"] == "AAPL"
     
     assert result["status"] == "ok"
     assert result["sample_count"] == 3
