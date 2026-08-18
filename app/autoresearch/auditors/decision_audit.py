@@ -121,10 +121,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
         # No decisions this cycle, but check if we have historical outcomes to score from
         try:
             with get_db() as db:
-                hist_count = db.execute(
-                    "SELECT COUNT(*) FROM decision_outcomes WHERE resolved_at IS NOT NULL "
-                    "AND outcome NOT IN ('CANCELED', 'DEGRADED_ARTIFACT')"
-                ).fetchone()
+                hist_count = mongo_query.agg_row('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$nin': ['CANCELED', 'DEGRADED_ARTIFACT']}}, [('count', None)])
                 if hist_count and hist_count[0] >= 3:
                     # Fall through to the outcome-based scoring below
                     issues.append({"issue": "No decisions produced this cycle (using historical outcomes)", "severity": "info"})
@@ -399,11 +396,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
     per_cycle_judge = None
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT AVG(final_quality_score), COUNT(*) FROM decision_evaluations "
-                "WHERE cycle_id = %s AND final_quality_score IS NOT NULL",
-                [cycle_id],
-            ).fetchone()
+            row = mongo_query.agg_row('decision_evaluations', {'cycle_id': cycle_id, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
             if row and row[1]:
                 per_cycle_judge = round(float(row[0]) * 20.0, 1)  # 0-5 → 0-100
     except Exception:

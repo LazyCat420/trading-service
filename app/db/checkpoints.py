@@ -259,10 +259,7 @@ class CheckpointManager:
 
             with get_db() as db:
                 # Count first for logging
-                count_row = db.execute(
-                    "SELECT COUNT(*) FROM cycle_checkpoints WHERE cycle_id = %s",
-                    [cycle_id],
-                ).fetchone()
+                count_row = mongo_query.agg_row('cycle_checkpoints', {'cycle_id': cycle_id}, [('count', None)])
                 count = count_row[0] if count_row else 0
 
                 if count > 0:
@@ -286,15 +283,7 @@ class CheckpointManager:
             from app.db.connection import get_db
 
             with get_db() as db:
-                row = db.execute(
-                    """
-                    SELECT
-                        COUNT(*) as total,
-                        COUNT(DISTINCT cycle_id) as cycles,
-                        MAX(completed_at) as last_checkpoint
-                    FROM cycle_checkpoints
-                    """
-                ).fetchone()
+                row = mongo_query.agg_row('cycle_checkpoints', {}, [('count', None), ('count_distinct', 'cycle_id'), ('max', 'completed_at')])
 
                 return {
                     "total_checkpoints": row[0] if row else 0,

@@ -1,12 +1,13 @@
 import logging
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
 
 def get_sector_heatmap():
     with get_db() as db:
-        row = db.execute("SELECT MAX(date) FROM sector_performance").fetchone()
+        row = mongo_query.agg_row('sector_performance', {}, [('max', 'date')])
         if not row or not row[0]:
             return []
 
@@ -200,7 +201,7 @@ async def backfill_sector_performance():
     logger.info("Backfilling sector_performance from historical price_history...")
     with get_db() as db:
         # Check if we already have sufficient history (e.g. more than 1 day)
-        row = db.execute("SELECT COUNT(DISTINCT date) FROM sector_performance").fetchone()
+        row = mongo_query.agg_row('sector_performance', {}, [('count_distinct', 'date')])
         if row and row[0] > 1:
             logger.info("Sector performance already has history. Skipping backfill.")
             return

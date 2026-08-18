@@ -75,6 +75,61 @@ def scalar(collection: str, query: dict[str, Any], column: str,
     return row[0] if row else None
 
 
+def agg_row(collection: str, query: dict[str, Any],
+            aggs: Sequence[tuple[str, Any]]) -> tuple:
+    """`SELECT COUNT(*), MIN(x), MAX(x) FROM t WHERE ...` as one tuple.
+
+    Each entry in `aggs` is (op, field), matching the SELECT list order:
+
+        ("count", None)          COUNT(*)
+        ("count", "col")         COUNT(col)      — skips NULLs, as SQL does
+        ("count_distinct", "c")  COUNT(DISTINCT c)
+        ("min"|"max"|"avg"|"sum", "col")
+        ("count_null", "col")    SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END)
+
+    Done as a `$group` pipeline, NOT by fetching documents and reducing in
+    Python. The tables these run against include price_history at 15.7M rows;
+    pulling those over the wire to count them would replace a fast query with a
+    slow one, and the counting is the only part Python would contribute.
+
+    Returns the same shape `cursor.fetchone()` returned: a tuple, in SELECT
+    order. An empty match yields SQL's answer for an empty group — 0 for the
+    counts, None for min/max/avg/sum — rather than an empty tuple, which would
+    make callers index out of range where the SQL gave them a row.
+    """
+    group: dict[str, Any] = {"_id": None}
+    for i, (op, field) in enumerate(aggs):
+        key = f"a{i}"
+        if op == "count" and field is None:
+            group[key] = {"$sum": 1}
+        elif op == "count":
+            # SQL COUNT(col) does not count NULLs.
+            group[key] = {"$sum": {"$cond": [{"$eq": [f"${field}", None]}, 0, 1]}}
+        elif op == "count_null":
+            group[key] = {"$sum": {"$cond": [{"$eq": [f"${field}", None]}, 1, 0]}}
+        elif op == "count_distinct":
+            group[key] = {"$addToSet": f"${field}"}
+        elif op in ("min", "max", "avg", "sum"):
+            group[key] = {f"${op}": f"${field}"}
+        else:
+            raise ValueError(f"unsupported aggregate {op!r}")
+
+    pipeline = ([{"$match": query}] if query else []) + [{"$group": group}]
+    rows = mongo_store.aggregate(collection, pipeline)
+    if not rows:
+        return tuple(0 if op.startswith("count") else None for op, _ in aggs)
+    doc = rows[0]
+    out = []
+    for i, (op, _) in enumerate(aggs):
+        v = doc.get(f"a{i}")
+        if op == "count_distinct":
+            # $addToSet drops duplicates but keeps NULL; SQL COUNT(DISTINCT c)
+            # does not count it.
+            v = len([x for x in (v or []) if x is not None])
+        out.append(v)
+    return tuple(out)
+
+
 def exists(collection: str, query: dict[str, Any]) -> bool:
     """`SELECT 1 FROM ... WHERE ... LIMIT 1` used as a boolean."""
     return mongo_store.count_docs(collection, query) > 0

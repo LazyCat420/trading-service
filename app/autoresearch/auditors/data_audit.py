@@ -106,10 +106,7 @@ def _audit_technicals(db, ticker: str) -> dict:
         "stoch_k", "stoch_d", "obv", "vwap", "support", "resistance"
     ]
     try:
-        stats = db.execute(
-            "SELECT COUNT(*), MIN(date), MAX(date) FROM technicals WHERE ticker = %s",
-            [ticker]
-        ).fetchone()
+        stats = mongo_query.agg_row('technicals', {'ticker': ticker}, [('count', None), ('min', 'date'), ('max', 'date')])
         rows, min_d, max_d = stats
 
         if rows == 0:
@@ -174,10 +171,7 @@ def _audit_technicals(db, ticker: str) -> dict:
 
 def _audit_fundamentals(db, ticker: str) -> dict:
     try:
-        stats = db.execute(
-            "SELECT COUNT(*), MIN(snapshot_date), MAX(snapshot_date) FROM fundamentals WHERE ticker = %s",
-            [ticker]
-        ).fetchone()
+        stats = mongo_query.agg_row('fundamentals', {'ticker': ticker}, [('count', None), ('min', 'snapshot_date'), ('max', 'snapshot_date')])
         rows, min_d, max_d = stats
 
         if rows == 0:

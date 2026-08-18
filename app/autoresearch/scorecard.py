@@ -193,11 +193,7 @@ def _version_window(agent_name: str, version: int) -> tuple:
         if not row:
             return None, None
         started = row[0]
-        nxt = db.execute(
-            "SELECT min(created_at) FROM agent_skills "
-            "WHERE agent_name = %s AND version > %s",
-            [agent_name, int(version)],
-        ).fetchone()
+        nxt = mongo_query.agg_row('agent_skills', {'agent_name': agent_name, 'version': {'$gt': int(version)}}, [('min', 'created_at')])
     return started, (nxt[0] if nxt else None)
 
 

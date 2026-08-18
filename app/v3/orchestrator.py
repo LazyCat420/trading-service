@@ -29,6 +29,7 @@ from app.v3.agent_runner import run_v3_agent
 from app.v3.desk_persistence import save_desk
 from app.db import mongo_query
 from app.db import mongo_store
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -642,10 +643,7 @@ async def run_v3_pipeline(
         try:
             from app.db.connection import get_db
             with get_db() as db:
-                news_count = db.execute(
-                    "SELECT COUNT(*) FROM news_articles WHERE ticker = %s AND published_at >= NOW() - INTERVAL '24 hours'",
-                    [ticker]
-                ).fetchone()[0]
+                news_count = mongo_query.agg_row('news_articles', {'ticker': ticker, 'published_at': {'$gte': (datetime.now(timezone.utc) - timedelta(hours=24))}}, [('count', None)])[0]
         except Exception as e:
             logger.warning("[V3] %s: Triage news_count query failed (defaulting to 0): %s", ticker, e)
             news_count = 0

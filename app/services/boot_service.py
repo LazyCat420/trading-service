@@ -21,6 +21,7 @@ import asyncio
 import logging
 import time
 from app.db import mongo_query, mongo_store
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -413,9 +414,7 @@ class BootService:
 
         with get_db() as db:
             # Skip if we already have recent data
-            recent = db.execute(
-                "SELECT COUNT(*) FROM asset_prices WHERE date >= CURRENT_DATE - INTERVAL '1 day'"
-            ).fetchone()[0]
+            recent = mongo_query.agg_row('asset_prices', {'date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=1))}}, [('count', None)])[0]
             if recent > 50:
                 logger.info(
                     "[startup] Market data already fresh (%d recent rows), skipping",
@@ -447,17 +446,13 @@ class BootService:
         from app.db.connection import get_db
 
         with get_db() as db:
-            sp500_count = db.execute(
-                "SELECT COUNT(*) FROM ticker_metadata WHERE sp500=TRUE"
-            ).fetchone()[0]
+            sp500_count = mongo_query.agg_row('ticker_metadata', {'sp500': True}, [('count', None)])[0]
             if sp500_count > 400:
                 logger.info(
                     "[startup] SP500 universe already loaded (%d tickers)", sp500_count
                 )
                 # Check if price data exists
-                price_count = db.execute(
-                    "SELECT COUNT(*) FROM price_history"
-                ).fetchone()[0]
+                price_count = mongo_query.agg_row('price_history', {}, [('count', None)])[0]
                 if price_count == 0:
                     logger.info(
                         "[startup] No price data — collecting SP500 prices (background)..."
@@ -473,9 +468,7 @@ class BootService:
                     except Exception as e:
                         logger.warning("[startup] Price collection failed: %s", e)
                 # Compute sector analytics if missing
-                perf_count = db.execute(
-                    "SELECT COUNT(*) FROM sector_performance"
-                ).fetchone()[0]
+                perf_count = mongo_query.agg_row('sector_performance', {}, [('count', None)])[0]
                 if perf_count == 0:
                     logger.info("[startup] Computing sector analytics...")
                     try:
@@ -550,9 +543,7 @@ class BootService:
 
         try:
             with get_db() as db:
-                today_count = db.execute(
-                    "SELECT COUNT(*) FROM price_history WHERE date = CURRENT_DATE"
-                ).fetchone()[0]
+                today_count = mongo_query.agg_row('price_history', {'date': datetime.now(timezone.utc)}, [('count', None)])[0]
             # Threshold is derived from the actual refresh set, not a literal.
             # It was a hardcoded 400 against an sp500-only universe; now that the
             # set is sp500 UNION watchlist UNION positions (~636), a stale run

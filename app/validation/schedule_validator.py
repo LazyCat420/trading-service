@@ -36,7 +36,7 @@ class ScheduleValidator:
         # 1. Max schedules limit
         if active_count is None:
             with get_db() as db:
-                count_row = db.execute("SELECT COUNT(*) FROM cycle_schedules WHERE is_active = TRUE").fetchone()
+                count_row = mongo_query.agg_row('cycle_schedules', {'is_active': True}, [('count', None)])
                 active_count = count_row[0] if count_row else 0
         if active_count >= ScheduleValidator.MAX_SYSTEM_SCHEDULES:
             # Unless it's critical, block it

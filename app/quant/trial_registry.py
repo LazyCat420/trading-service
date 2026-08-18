@@ -39,6 +39,7 @@ import logging
 
 from app.db.connection import get_db
 from app.db import mongo_store
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -146,10 +147,7 @@ def trial_count(family: str = DEFAULT_FAMILY, include: str | None = None) -> int
     try:
         ensure_table()
         with get_db() as db:
-            row = db.execute(
-                "SELECT COUNT(*) FROM research_trials WHERE family = %s",
-                [family],
-            ).fetchone()
+            row = mongo_query.agg_row('research_trials', {'family': family}, [('count', None)])
             n = int(row[0]) if row else 0
             if include:
                 seen = db.execute(

@@ -374,9 +374,7 @@ async def evaluate_strategy(
         try:
             # Aggregating real stats from the database.
             # we will approximate some fields like MDD as we don't have equity curve simulation yet.
-            bot = db.execute(
-                "SELECT sum(total_pnl), avg(win_rate), sum(total_trades), sum(cash_balance) FROM bots"
-            ).fetchone()
+            bot = mongo_query.agg_row('bots', {}, [('sum', 'total_pnl'), ('avg', 'win_rate'), ('sum', 'total_trades'), ('sum', 'cash_balance')])
 
             total_pnl = bot[0] if bot[0] is not None else 0.0
             win_rate = bot[1] if bot[1] is not None else 0.0

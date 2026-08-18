@@ -107,9 +107,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         with get_db() as db:
             try:
                 mongo_store.update_docs('autoresearch_reports', {'status': 'running', 'created_at': {'$lt': (datetime.now(timezone.utc) - timedelta(minutes=30))}}, {'$set': {'status': 'stale'}})
-                cleaned = db.execute(
-                    "SELECT COUNT(*) FROM autoresearch_reports WHERE status = 'stale'"
-                ).fetchone()
+                cleaned = mongo_query.agg_row('autoresearch_reports', {'status': 'stale'}, [('count', None)])
                 if cleaned and cleaned[0] > 0:
                     logger.info(
                         "[AUTORESEARCH] Cleaned up stale 'running' reports (total stale: %d)",

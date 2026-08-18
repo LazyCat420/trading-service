@@ -13,6 +13,7 @@ from app.collectors import finnhub_collector
 from app.collectors import polygon_collector
 from app.collectors import finviz_scraper
 from app.config import settings
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,7 @@ def _is_missing_recent_session(ticker: str) -> bool:
         from app.quant.technical_baseline import _trading_day_age
 
         with get_db() as db:
-            row = db.execute(
-                "SELECT MAX(date) FROM price_history WHERE ticker = %s", [ticker]
-            ).fetchone()
+            row = mongo_query.agg_row('price_history', {'ticker': ticker}, [('max', 'date')])
         latest = row[0] if row else None
         if latest is None:
             return False  # no rows at all — nothing to compare, let step 1 decide

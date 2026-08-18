@@ -28,23 +28,19 @@ def run_sanity_checks() -> list[str]:
         # ── 13F Holdings ──
         try:
             # No single position > $1T
-            row = db.execute("SELECT MAX(value_usd) FROM sec_13f_holdings").fetchone()
+            row = mongo_query.agg_row('sec_13f_holdings', {}, [('max', 'value_usd')])
             if row and row[0] and row[0] > 1e12:
                 failures.append(
                     f"13F: Max position value ${row[0] / 1e9:.1f}B exceeds $1T ceiling"
                 )
 
             # No position with negative value
-            row = db.execute(
-                "SELECT COUNT(*) FROM sec_13f_holdings WHERE value_usd < 0"
-            ).fetchone()
+            row = mongo_query.agg_row('sec_13f_holdings', {'value_usd': {'$lt': 0}}, [('count', None)])
             if row and row[0] > 0:
                 failures.append(f"13F: {row[0]} holdings with negative value_usd")
 
             # No position with 0 shares but positive value
-            row = db.execute(
-                "SELECT COUNT(*) FROM sec_13f_holdings WHERE shares <= 0 AND value_usd > 0"
-            ).fetchone()
+            row = mongo_query.agg_row('sec_13f_holdings', {'shares': {'$lte': 0}, 'value_usd': {'$gt': 0}}, [('count', None)])
             if row and row[0] > 0:
                 failures.append(
                     f"13F: {row[0]} holdings with 0 shares but positive value"
@@ -78,9 +74,7 @@ def run_sanity_checks() -> list[str]:
                 )
 
             # No negative market caps
-            row = db.execute(
-                "SELECT COUNT(*) FROM fundamentals WHERE market_cap < 0"
-            ).fetchone()
+            row = mongo_query.agg_row('fundamentals', {'market_cap': {'$lt': 0}}, [('count', None)])
             if row and row[0] > 0:
                 failures.append(
                     f"Fundamentals: {row[0]} tickers with negative market cap"
@@ -99,9 +93,7 @@ def run_sanity_checks() -> list[str]:
         # ── Price Data ──
         try:
             # No $0 or negative prices
-            row = db.execute(
-                "SELECT COUNT(*) FROM price_history WHERE close <= 0"
-            ).fetchone()
+            row = mongo_query.agg_row('price_history', {'close': {'$lte': 0}}, [('count', None)])
             if row and row[0] > 0:
                 failures.append(f"Prices: {row[0]} rows with close <= $0")
 
@@ -150,10 +142,7 @@ def run_sanity_checks() -> list[str]:
         # ── Technicals ──
         try:
             # RSI should be 0-100
-            row = db.execute("""
-                SELECT COUNT(*) FROM technicals
-                WHERE rsi_14 IS NOT NULL AND (rsi_14 < 0 OR rsi_14 > 100)
-            """).fetchone()
+            row = mongo_query.agg_row('technicals', {'rsi_14': {'$ne': None}, '$or': [{'rsi_14': {'$lt': 0}}, {'rsi_14': {'$gt': 100}}]}, [('count', None)])
             if row and row[0] > 0:
                 failures.append(
                     f"Technicals: {row[0]} rows with RSI outside 0-100 range"

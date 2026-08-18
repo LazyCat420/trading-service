@@ -263,6 +263,62 @@ def _reject_hard_features(tree) -> None:
             raise Unsupported(why)
 
 
+_AGG_NODES = {exp.Count: "count", exp.Min: "min", exp.Max: "max",
+              exp.Avg: "avg", exp.Sum: "sum"}
+
+
+def _agg_list(tree) -> list[tuple[str, str | None]] | None:
+    """[(op, field)] when the SELECT list is ENTIRELY plain aggregates.
+
+    Returns None if any item is not an aggregate — a mixed list like
+    `SELECT ticker, COUNT(*)` is an implicit GROUP BY and is not this shape.
+    Refuses (raises) on an aggregate whose Mongo form would not be exact, so a
+    conditional SUM nobody implemented cannot silently become a plain SUM.
+    """
+    if tree.args.get("group") or tree.args.get("having"):
+        return None
+    out: list[tuple[str, str | None]] = []
+    for e in tree.expressions:
+        node = e.this if isinstance(e, exp.Alias) else e
+        cls = type(node)
+        if cls not in _AGG_NODES:
+            return None
+        op = _AGG_NODES[cls]
+        inner = node.this
+
+        if isinstance(node, exp.Count):
+            if node.args.get("distinct") or isinstance(inner, exp.Distinct):
+                col = inner.expressions[0] if isinstance(inner, exp.Distinct) else inner
+                if not isinstance(col, exp.Column):
+                    raise Unsupported("COUNT(DISTINCT <expression>)")
+                out.append(("count_distinct", col.name))
+                continue
+            if inner is None or isinstance(inner, exp.Star):
+                out.append(("count", None))
+                continue
+            if isinstance(inner, exp.Column):
+                out.append(("count", inner.name))
+                continue
+            raise Unsupported("COUNT over an expression")
+
+        # SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END) — the null-counting idiom.
+        if isinstance(node, exp.Sum) and isinstance(inner, exp.Case):
+            ifs = inner.args.get("ifs") or []
+            if len(ifs) == 1:
+                cond = ifs[0].this
+                if (isinstance(cond, exp.Is) and isinstance(cond.expression, exp.Null)
+                        and not cond.args.get("negate")
+                        and isinstance(cond.this, exp.Column)):
+                    out.append(("count_null", cond.this.name))
+                    continue
+            raise Unsupported("SUM(CASE ...) other than the IS NULL idiom")
+
+        if not isinstance(inner, exp.Column):
+            raise Unsupported(f"{op.upper()} over an expression")
+        out.append((op, inner.name))
+    return out or None
+
+
 def _translate_select(tree, ctx: _Ctx) -> Translation:
     _reject_hard_features(tree)
     table = _one_table(tree)
@@ -270,23 +326,18 @@ def _translate_select(tree, ctx: _Ctx) -> Translation:
     if tree.args.get("distinct"):
         raise Unsupported("SELECT DISTINCT — use distinct_values() by hand")
 
-    # `SELECT count(*) FROM t WHERE ...` is the one aggregate with an exact
-    # Mongo equivalent (count_documents). Every other aggregate is refused and
-    # computed in Python at the call site.
-    if len(tree.expressions) == 1:
-        only = tree.expressions[0]
-        only = only.this if isinstance(only, exp.Alias) else only
-        if isinstance(only, exp.Count) and not only.args.get("distinct"):
-            counted = only.this
-            if counted is None or isinstance(counted, (exp.Star, exp.Column)):
-                q = _where(tree.args["where"].this if tree.args.get("where") else None,
-                           ctx)
-                if isinstance(counted, exp.Column):
-                    # count(col) skips NULLs; count(*) does not.
-                    q = {**q, counted.name: {"$ne": None}}
-                return Translation("select", table,
-                                   f"mongo_query.count({table!r}, {_render(q)})",
-                                   ctx.count, "scalar")
+
+    # Single-table, no-GROUP-BY aggregate list: `SELECT COUNT(*), MIN(d), MAX(d)`.
+    # Exactly expressible as one $group, so it becomes a single agg_row() call
+    # rather than a fetch-and-reduce in Python — several of these run over
+    # price_history, where fetching to count would be far slower than the SQL.
+    aggs = _agg_list(tree)
+    if aggs is not None:
+        q = _where(tree.args["where"].this if tree.args.get("where") else None, ctx)
+        spec = "[" + ", ".join(f"({op!r}, {fld!r})" for op, fld in aggs) + "]"
+        return Translation("select", table,
+                           f"mongo_query.agg_row({table!r}, {_render(q)}, {spec})",
+                           ctx.count, "row")
 
     projection = None
     fields = []

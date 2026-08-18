@@ -175,10 +175,7 @@ def _check_drawdown_breaker(bot_id: str, portfolio_value: float) -> dict | None:
 
     try:
         with get_db() as db:
-            peak_row = db.execute(
-                "SELECT MAX(total_value) FROM portfolio_snapshots WHERE bot_id = %s",
-                [bot_id],
-            ).fetchone()
+            peak_row = mongo_query.agg_row('portfolio_snapshots', {'bot_id': bot_id}, [('max', 'total_value')])
         peak_value = float(peak_row[0]) if peak_row and peak_row[0] else 0.0
         if peak_value <= 0:
             return None
@@ -495,11 +492,7 @@ async def buy(
     # General sanity: compare to recent historical price if available
     try:
         with get_db() as _sanity_db:
-            hist_row = _sanity_db.execute(
-                "SELECT AVG(close) FROM price_history "
-                "WHERE ticker = %s AND date > CURRENT_DATE - INTERVAL '30 days'",
-                [ticker],
-            ).fetchone()
+            hist_row = mongo_query.agg_row('price_history', {'ticker': ticker, 'date': {'$gt': (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30))}}, [('avg', 'close')])
         if hist_row and hist_row[0] and hist_row[0] > 0:
             avg_30d = hist_row[0]
             ratio = current_price / avg_30d

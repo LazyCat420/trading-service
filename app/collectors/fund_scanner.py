@@ -35,24 +35,12 @@ def get_fund_portfolios(top_holdings: int = 20) -> list[dict]:
             holdings = mongo_query.find_rows('sec_13f_holdings', {'cik': cik, 'filing_quarter': quarter}, ['ticker', 'shares', 'value_usd', 'pct_change', 'is_new_position', 'is_exit'], sort=[('value_usd', -1)], limit=top_holdings)
 
             total_value = (
-                db.execute(
-                    """
-                SELECT SUM(value_usd) FROM sec_13f_holdings
-                WHERE cik = %s AND filing_quarter = %s
-            """,
-                    [cik, quarter],
-                ).fetchone()[0]
+                mongo_query.agg_row('sec_13f_holdings', {'cik': cik, 'filing_quarter': quarter}, [('sum', 'value_usd')])[0]
                 or 0
             )
 
             holding_count = (
-                db.execute(
-                    """
-                SELECT COUNT(*) FROM sec_13f_holdings
-                WHERE cik = %s AND filing_quarter = %s
-            """,
-                    [cik, quarter],
-                ).fetchone()[0]
+                mongo_query.agg_row('sec_13f_holdings', {'cik': cik, 'filing_quarter': quarter}, [('count', None)])[0]
                 or 0
             )
 

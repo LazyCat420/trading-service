@@ -112,11 +112,7 @@ async def active_experiment():
             from app.v3.challenger import _ensure_table
             _ensure_table()
             with get_db() as db:
-                row = db.execute(
-                    "SELECT MIN(created_at), MAX(created_at), COUNT(*) "
-                    "FROM challenger_decisions WHERE spec_label = %s",
-                    [spec.get("label")],
-                ).fetchone()
+                row = mongo_query.agg_row('challenger_decisions', {'spec_label': spec.get("label")}, [('min', 'created_at'), ('max', 'created_at'), ('count', None)])
             if row:
                 payload["first_pair_at"] = row[0].isoformat() if row[0] else None
                 payload["last_pair_at"] = row[1].isoformat() if row[1] else None

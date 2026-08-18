@@ -498,9 +498,7 @@ def url_fanout_exceeded(db, url: str | None, cap: int | None = None) -> bool:
     if cap <= 0:
         return False
     try:
-        row = db.execute(
-            "SELECT COUNT(*) FROM news_articles WHERE url = %s", [url]
-        ).fetchone()
+        row = mongo_query.agg_row('news_articles', {'url': url}, [('count', None)])
         return bool(row and row[0] >= cap)
     except Exception:
         return False

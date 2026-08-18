@@ -2,6 +2,7 @@ import logging
 
 from app.db.connection import get_db
 from app.db import mongo_query
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,7 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         deepeval_dead = False
         try:
             with get_db() as db:
-                row = db.execute(
-                    "SELECT AVG(final_quality_score), COUNT(*) FROM decision_evaluations "
-                    "WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days' "
-                    "AND final_quality_score IS NOT NULL"
-                ).fetchone()
+                row = mongo_query.agg_row('decision_evaluations', {'timestamp': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
                 if row and row[1] and row[1] >= 3:
                     judge_avg = max(0.0, min(1.0, float(row[0]) / 5.0))
 
@@ -54,11 +51,7 @@ def _audit_llm_traces(cycle_id: str) -> dict:
                 if de and de[1] and de[1] >= 3 and de[0] > de[1] * 0.5:
                     deepeval_dead = True
 
-                ev = db.execute(
-                    "SELECT AVG(final_score), COUNT(*) FROM eval_scores "
-                    "WHERE created_at > CURRENT_TIMESTAMP - INTERVAL '7 days' "
-                    "AND final_score IS NOT NULL"
-                ).fetchone()
+                ev = mongo_query.agg_row('eval_scores', {'created_at': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_score': {'$ne': None}}, [('avg', 'final_score'), ('count', None)])
                 if ev and ev[1] and ev[1] >= 10:
                     eval_avg = max(0.0, min(1.0, float(ev[0]) / 100.0))
         except Exception as q_err:

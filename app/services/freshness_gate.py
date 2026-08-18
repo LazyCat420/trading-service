@@ -243,10 +243,7 @@ def run_freshness_gate(
                             mongo_store.handle_mongo_read_failure("news_articles", "freshness_gate news count", me)
                     if c_val is None:
                         with get_db() as db:
-                            c_val = db.execute(
-                                "SELECT COUNT(*) FROM news_articles WHERE ticker = %s AND published_at > %s",
-                                [ticker, since],
-                            ).fetchone()[0]
+                            c_val = mongo_query.agg_row('news_articles', {'ticker': ticker, 'published_at': {'$gt': since}}, [('count', None)])[0]
                     news_counts[ticker] = c_val
                 else:
                     news_counts[ticker] = 0

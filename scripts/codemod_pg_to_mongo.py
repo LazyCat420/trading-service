@@ -82,16 +82,29 @@ def find_sites(tree: ast.AST, src: str):
 
 
 def build_call(t, params: list[str], fetch: str) -> str | None:
+    """Match the SHAPE the call site expects, or refuse.
+
+    `agg_row` already returns ONE tuple, exactly what fetchone() gave, so it
+    passes through unchanged there and is wrapped in a list for fetchall().
+    Getting this wrong is not a crash but a type error at the caller —
+    `SELECT count(*)` read positionally as `row[0]` fails on a bare int — so
+    every shape is spelled out rather than defaulted.
+    """
     call = t.call
     if fetch == "fetchone":
-        if not call.startswith("mongo_query.find_rows("):
-            return None                      # only a row read has a `fetchone`
-        call = call.replace("mongo_query.find_rows(", "mongo_query.find_row(", 1)
-        call = re.sub(r",\s*limit=\d+\s*\)$", ")", call)
-    elif fetch == "fetchall":
-        if not call.startswith(("mongo_query.find_rows(", "mongo_query.find_dicts(")):
+        if call.startswith("mongo_query.agg_row("):
+            pass                             # already a single tuple
+        elif call.startswith("mongo_query.find_rows("):
+            call = call.replace("mongo_query.find_rows(", "mongo_query.find_row(", 1)
+            call = re.sub(r",\s*limit=\d+\s*\)$", ")", call)
+        else:
             return None
-        if call.startswith("mongo_query.find_dicts("):
+    elif fetch == "fetchall":
+        if call.startswith("mongo_query.agg_row("):
+            call = f"[{call}]"               # one aggregate row, as a row list
+        elif call.startswith("mongo_query.find_rows("):
+            pass
+        else:
             return None                      # SELECT * has no column order
     else:
         if call.startswith("mongo_query."):

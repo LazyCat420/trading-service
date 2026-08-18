@@ -26,6 +26,7 @@ from datetime import datetime, UTC
 
 from app.db.connection import get_db
 from app.db import mongo_store
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -584,7 +585,7 @@ class VectorStore:
                 return {"total_embeddings": 0, "by_source": {}, "by_ticker": {},
                         "hnsw_available": False, "fts_available": False}
         with get_db() as db:
-            total = db.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+            total = mongo_query.agg_row('embeddings', {}, [('count', None)])[0]
 
             by_source = db.execute("""
                 SELECT source_table, COUNT(*) as cnt

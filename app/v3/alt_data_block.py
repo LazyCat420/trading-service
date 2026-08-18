@@ -296,35 +296,21 @@ def compute_positioning_facts(ticker: str) -> dict:
 
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT COUNT(*) FROM insider_trades WHERE ticker = %s "
-                "AND trade_type = 'P' "
-                "AND trade_date >= CURRENT_DATE - INTERVAL '30 days'",
-                [ticker],
-            ).fetchone()
+            row = mongo_query.agg_row('insider_trades', {'ticker': ticker, 'trade_type': 'P', 'trade_date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=30))}}, [('count', None)])
             facts["insider_buy_filings_30d"] = int(row[0]) if row else 0
     except Exception as e:
         logger.debug("[AltData] %s: insider facts failed: %s", ticker, e)
 
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT COUNT(*) FROM congress_trades WHERE ticker = %s "
-                "AND trade_date >= CURRENT_DATE - INTERVAL '90 days' "
-                "AND trade_date <= CURRENT_DATE",
-                [ticker],
-            ).fetchone()
+            row = mongo_query.agg_row('congress_trades', {'ticker': ticker, 'trade_date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=90)), '$lte': datetime.now(timezone.utc)}}, [('count', None)])
             facts["congress_disclosures_90d"] = int(row[0]) if row else 0
     except Exception as e:
         logger.debug("[AltData] %s: congress facts failed: %s", ticker, e)
 
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT COUNT(*) FROM social_posts WHERE ticker = %s "
-                "AND posted_at >= NOW() - INTERVAL '7 days'",
-                [ticker],
-            ).fetchone()
+            row = mongo_query.agg_row('social_posts', {'ticker': ticker, 'posted_at': {'$gte': (datetime.now(timezone.utc) - timedelta(days=7))}}, [('count', None)])
             facts["social_posts_7d"] = int(row[0]) if row else 0
     except Exception as e:
         logger.debug("[AltData] %s: social facts failed: %s", ticker, e)
