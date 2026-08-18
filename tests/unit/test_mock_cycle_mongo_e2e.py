@@ -842,3 +842,22 @@ class TestMockTradingCycleMongoE2E:
         variance_res = await variance_runs()
         assert "runs" in variance_res
         assert "baseline" in variance_res
+
+        # 22. Cycle Replay Router in MongoDB
+        from app.routers.cycle_replay_router import list_cycles, get_cycle_flow, get_cycle_timeline, get_ticker_detail
+
+        cycles_res = list_cycles(limit=10, offset=0)
+        assert "cycles" in cycles_res
+        assert cycles_res["total"] >= 1
+
+        flow_res = get_cycle_flow(cycle_id=cycle_id, ticker="AAPL")
+        assert "nodes" in flow_res
+        assert "mermaid" in flow_res
+
+        timeline_res = get_cycle_timeline(cycle_id=cycle_id, ticker="AAPL")
+        assert "entries" in timeline_res
+        assert timeline_res["cycle_id"] == cycle_id
+
+        detail_res = get_ticker_detail(cycle_id=cycle_id, ticker="AAPL")
+        assert detail_res["ticker"] == "AAPL"
+        assert "trade_result" in detail_res
