@@ -879,3 +879,39 @@ class TestMockTradingCycleMongoE2E:
         assert "raw_rsi" in features
         assert "ev_norm" in features
         assert features["raw_rsi"] == 45.0
+
+        # 24. Automated Price & Dynamic Order Triggers in MongoDB
+        from app.trading.order_triggers import create_trigger, list_triggers, cancel_trigger, check_triggers, deactivate_sell_side_triggers
+
+        new_trg = await create_trigger(
+            bot_id=bot_id,
+            ticker="AAPL",
+            trigger_type="take_profit",
+            trigger_price=180.0,
+            action="SELL",
+        )
+        assert "id" in new_trg
+        assert new_trg["ticker"] == "AAPL"
+
+        active_trgs = list_triggers(bot_id=bot_id, active_only=True)
+        assert len(active_trgs) >= 1
+        assert active_trgs[0]["ticker"] == "AAPL"
+
+        # Deactivate sell side triggers
+        deactivated_n = deactivate_sell_side_triggers(bot_id=bot_id, ticker="AAPL")
+        assert deactivated_n >= 1
+
+        # Dynamic trigger creation and eval
+        dyn_trg = await create_trigger(
+            bot_id=bot_id,
+            ticker="AAPL",
+            trigger_type="dynamic",
+            trigger_price=150.0,
+            dynamic_trigger_type="rsi_14_oversold",
+            dynamic_trigger_value=30.0,
+            action="BUY",
+        )
+        assert "id" in dyn_trg
+
+        cancel_res = await cancel_trigger(dyn_trg["id"])
+        assert cancel_res["status"] == "cancelled"
