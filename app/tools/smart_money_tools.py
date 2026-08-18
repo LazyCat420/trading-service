@@ -1,27 +1,17 @@
 """
-Smart-money agent tools — congressional disclosures and 13F fund filings as
-research leads.
+Smart-money agent tools — congressional disclosures and 13F fund filings as research leads.
 
-These read the materialized output of app/analytics/returns_engine.py, which is
-the SAME source the dashboard reads. That is deliberate: an agent being told a
-different number than the UI displays is a debugging nightmare and erodes trust
-in both.
-
-Every performance figure is real alpha vs SPY. Where we cannot compute one, the
-tool says so explicitly rather than emitting a placeholder — an agent that reads
-"0.0% return" will treat it as a measurement, not a gap.
+Pure MongoDB implementation for smart_money_trade_scores and smart_money_performance collections.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from lazycat.tool_registry import registry
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
-# Disclosure is inherently stale: congress files up to 45 days after the trade,
-# 13Fs land ~45 days after quarter end. Any lead older than this is history, not
-# a signal, so we tell the agent the age and let it discount accordingly.
 STALE_AFTER_DAYS = 120
 
 
@@ -63,100 +53,126 @@ async def get_smart_money_signal(ticker: str, days: int = 365) -> str:
     if not ticker:
         return "No ticker provided."
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT s.actor_type, s.actor_name, s.direction, s.event_date,
-                   s.size_est_usd, s.size_confidence, s.alpha_1y,
-                   p.avg_alpha, p.win_rate, p.scored_count, p.rankable
-            FROM smart_money_trade_scores s
-            LEFT JOIN smart_money_performance p
-              ON p.actor_type = s.actor_type
-             AND p.actor_id   = s.actor_id
-             AND p.horizon    = '1y'
-            WHERE s.ticker = %s
-              AND s.event_date >= CURRENT_DATE - MAKE_INTERVAL(days => %s)
-            ORDER BY s.event_date DESC
-            LIMIT 40
-            """,
-            (ticker, days),
-        ).fetchall()
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
 
-        summary = db.execute(
-            """
-            SELECT
-                COUNT(DISTINCT actor_id) FILTER (WHERE direction = 'buy'
-                    AND actor_type = 'congress')                       AS congress_buyers,
-                COUNT(DISTINCT actor_id) FILTER (WHERE direction = 'sell'
-                    AND actor_type = 'congress')                       AS congress_sellers,
-                COUNT(DISTINCT actor_id) FILTER (WHERE direction = 'buy'
-                    AND actor_type = 'fund')                           AS fund_buyers,
-                COUNT(DISTINCT actor_id) FILTER (WHERE direction = 'sell'
-                    AND actor_type = 'fund')                           AS fund_sellers,
-                MAX(event_date)                                        AS latest,
-                CURRENT_DATE - MAX(event_date)                         AS days_since
-            FROM smart_money_trade_scores
-            WHERE ticker = %s
-              AND event_date >= CURRENT_DATE - MAKE_INTERVAL(days => %s)
-            """,
-            (ticker, days),
-        ).fetchone()
-
-    if not rows:
-        return (
-            f"No congressional or 13F smart-money activity recorded for {ticker} "
-            f"in the last {days} days. Absence of a signal is not a bearish "
-            f"signal — it may simply mean no tracked actor disclosed a trade."
+    try:
+        scores = mongo_store.find_docs(
+            "smart_money_trade_scores",
+            {
+                "ticker": ticker,
+                "event_date": {"$gte": since},
+            },
+            sort=[("event_date", -1)],
+            limit=40,
         )
 
-    c_buy, c_sell, f_buy, f_sell, latest, days_since = summary
-    days_since = int(days_since) if days_since is not None else None
-
-    lines = [f"## Smart Money: {ticker} (last {days}d)", ""]
-    lines.append(
-        f"**Congress:** {c_buy or 0} distinct buyers, {c_sell or 0} sellers"
-    )
-    lines.append(f"**Hedge funds (13F):** {f_buy or 0} buyers, {f_sell or 0} sellers")
-
-    if days_since is not None:
-        freshness = "FRESH" if days_since <= STALE_AFTER_DAYS else "STALE"
-        lines.append(
-            f"**Most recent disclosure:** {latest} ({days_since}d ago — {freshness})"
+        perf_docs = mongo_store.find_docs(
+            "smart_money_performance",
+            {"horizon": "1y"},
         )
-        if freshness == "STALE":
-            lines.append(
-                "> Treat as historical context, not an actionable signal: "
-                "the position may have changed since it was disclosed."
+        perf_map = {(p.get("actor_type"), p.get("actor_id")): p for p in perf_docs}
+
+        if not scores:
+            return (
+                f"No congressional or 13F smart-money activity recorded for {ticker} "
+                f"in the last {days} days. Absence of a signal is not a bearish "
+                f"signal — it may simply mean no tracked actor disclosed a trade."
             )
 
-    lines.append("")
-    lines.append("### Individual disclosures")
-    lines.append("| Actor | Type | Action | Public on | Size | Their 1y alpha | Sample |")
-    lines.append("|---|---|---|---|---|---|---|")
+        congress_buyers = set()
+        congress_sellers = set()
+        fund_buyers = set()
+        fund_sellers = set()
+        latest_date = None
 
-    for (
-        actor_type, actor_name, direction, event_date, size_est,
-        size_conf, _alpha_1y, actor_alpha, _win, scored, rankable,
-    ) in rows[:20]:
-        # An actor's track record is only worth quoting if it cleared the
-        # minimum sample size; otherwise we show the count and no number.
-        if actor_alpha is not None and rankable:
-            track = _fmt_pct(actor_alpha)
-        else:
-            track = "insufficient history"
+        rows = []
+        for s in scores:
+            a_type = s.get("actor_type")
+            a_id = s.get("actor_id")
+            direction = (s.get("direction") or "").lower()
+            ev_date = str(s.get("event_date") or "")
+            if not latest_date or ev_date > latest_date:
+                latest_date = ev_date
 
-        size = _fmt_usd(size_est)
-        if size_conf == "bound":
-            size += " (min)"
-        elif size_conf == "range":
-            size += " (est)"
+            if a_type == "congress":
+                if direction == "buy":
+                    congress_buyers.add(a_id)
+                elif direction == "sell":
+                    congress_sellers.add(a_id)
+            elif a_type == "fund":
+                if direction == "buy":
+                    fund_buyers.add(a_id)
+                elif direction == "sell":
+                    fund_sellers.add(a_id)
 
-        lines.append(
-            f"| {actor_name} | {actor_type} | {direction.upper()} | {event_date} "
-            f"| {size} | {track} | n={scored or 0} |"
-        )
+            p = perf_map.get((a_type, a_id), {})
+            rows.append((
+                a_type,
+                s.get("actor_name", ""),
+                direction,
+                ev_date,
+                s.get("size_est_usd"),
+                s.get("size_confidence"),
+                s.get("alpha_1y"),
+                p.get("avg_alpha"),
+                p.get("win_rate"),
+                p.get("scored_count", 0),
+                p.get("rankable", False),
+            ))
 
-    return "\n".join(lines)
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+        days_since = None
+        if latest_date:
+            try:
+                d_latest = datetime.fromisoformat(latest_date).date()
+                d_today = datetime.fromisoformat(today_iso).date()
+                days_since = (d_today - d_latest).days
+            except Exception:
+                pass
+
+        lines = [f"## Smart Money: {ticker} (last {days}d)", ""]
+        lines.append(f"**Congress:** {len(congress_buyers)} distinct buyers, {len(congress_sellers)} sellers")
+        lines.append(f"**Hedge funds (13F):** {len(fund_buyers)} buyers, {len(fund_sellers)} sellers")
+
+        if days_since is not None:
+            freshness = "FRESH" if days_since <= STALE_AFTER_DAYS else "STALE"
+            lines.append(f"**Most recent disclosure:** {latest_date} ({days_since}d ago — {freshness})")
+            if freshness == "STALE":
+                lines.append(
+                    "> Treat as historical context, not an actionable signal: "
+                    "the position may have changed since it was disclosed."
+                )
+
+        lines.append("")
+        lines.append("### Individual disclosures")
+        lines.append("| Actor | Type | Action | Public on | Size | Their 1y alpha | Sample |")
+        lines.append("|---|---|---|---|---|---|---|")
+
+        for (
+            actor_type, actor_name, direction, event_date, size_est,
+            size_conf, _alpha_1y, actor_alpha, _win, scored, rankable,
+        ) in rows[:20]:
+            if actor_alpha is not None and rankable:
+                track = _fmt_pct(actor_alpha)
+            else:
+                track = "insufficient history"
+
+            size = _fmt_usd(size_est)
+            if size_conf == "bound":
+                size += " (min)"
+            elif size_conf == "range":
+                size += " (est)"
+
+            lines.append(
+                f"| {actor_name} | {actor_type} | {direction.upper()} | {event_date} "
+                f"| {size} | {track} | n={scored or 0} |"
+            )
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.warning("[smart_money] get_smart_money_signal failed: %s", e)
+        return f"Smart money lookup for {ticker} temporarily unavailable."
 
 
 @registry.register(
@@ -201,75 +217,103 @@ async def get_smart_money_leads(
 ) -> str:
     source = source if source in ("congress", "fund", "both") else "both"
     limit = max(1, min(int(limit or 15), 50))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
 
-    type_clause = "" if source == "both" else "AND s.actor_type = %(actor_type)s"
+    try:
+        query = {"event_date": {"$gte": since}}
+        if source != "both":
+            query["actor_type"] = source
 
-    # Rank by conviction-weighted buying, but weight each actor by whether they
-    # have a real track record — consensus among proven performers is a stronger
-    # lead than consensus among actors we cannot score.
-    sql = f"""
-        SELECT
-            s.ticker,
-            COUNT(DISTINCT s.actor_id) FILTER (WHERE s.direction = 'buy')  AS buyers,
-            COUNT(DISTINCT s.actor_id) FILTER (WHERE s.direction = 'sell') AS sellers,
-            COUNT(DISTINCT s.actor_id) FILTER (
-                WHERE s.direction = 'buy' AND p.rankable AND p.avg_alpha > 0
-            ) AS proven_buyers,
-            SUM(s.size_est_usd) FILTER (WHERE s.direction = 'buy')         AS buy_value,
-            MAX(s.event_date)                                              AS latest,
-            STRING_AGG(DISTINCT s.actor_type, '+')                         AS cohorts
-        FROM smart_money_trade_scores s
-        LEFT JOIN smart_money_performance p
-          ON p.actor_type = s.actor_type
-         AND p.actor_id   = s.actor_id
-         AND p.horizon    = '1y'
-        WHERE s.event_date >= CURRENT_DATE - MAKE_INTERVAL(days => %(days)s)
-          {type_clause}
-        GROUP BY s.ticker
-        HAVING COUNT(DISTINCT s.actor_id) FILTER (WHERE s.direction = 'buy') >= %(min_buyers)s
-        ORDER BY proven_buyers DESC, buyers DESC, buy_value DESC NULLS LAST
-        LIMIT %(limit)s
-    """
+        scores = mongo_store.find_docs("smart_money_trade_scores", query)
+        perf_docs = mongo_store.find_docs("smart_money_performance", {"horizon": "1y"})
+        perf_map = {(p.get("actor_type"), p.get("actor_id")): p for p in perf_docs}
 
-    params = {
-        "days": days,
-        "min_buyers": min_buyers,
-        "limit": limit,
-        "actor_type": source,
-    }
+        by_ticker: dict[str, dict] = {}
+        for s in scores:
+            t = s.get("ticker")
+            if not t:
+                continue
+            if t not in by_ticker:
+                by_ticker[t] = {
+                    "buyers": set(),
+                    "sellers": set(),
+                    "proven_buyers": set(),
+                    "buy_value": 0.0,
+                    "latest": "",
+                    "cohorts": set(),
+                }
+            entry = by_ticker[t]
+            a_id = s.get("actor_id")
+            a_type = s.get("actor_type")
+            dir_str = (s.get("direction") or "").lower()
+            ev_date = str(s.get("event_date") or "")
 
-    with get_db() as db:
-        rows = db.execute(sql, params).fetchall()
+            if ev_date > entry["latest"]:
+                entry["latest"] = ev_date
+            if a_type:
+                entry["cohorts"].add(a_type)
 
-    if not rows:
-        return (
-            f"No tickers met the threshold of {min_buyers}+ distinct buyers in the "
-            f"last {days} days for source '{source}'. Try lowering min_buyers or "
-            f"widening the window."
-        )
+            if dir_str == "buy":
+                entry["buyers"].add(a_id)
+                size = float(s.get("size_est_usd") or 0.0)
+                entry["buy_value"] += size
 
-    lines = [
-        f"## Smart Money Leads — {source}, last {days}d, {min_buyers}+ buyers",
-        "",
-        "Ranked by number of buyers with a POSITIVE proven track record "
-        "(real 1y alpha vs SPY, minimum sample size), then by total buyers.",
-        "",
-        "| Ticker | Buyers | Proven buyers | Sellers | Buy value | Cohorts | Latest |",
-        "|---|---|---|---|---|---|---|",
-    ]
+                p = perf_map.get((a_type, a_id), {})
+                if p.get("rankable") and float(p.get("avg_alpha") or 0.0) > 0:
+                    entry["proven_buyers"].add(a_id)
+            elif dir_str == "sell":
+                entry["sellers"].add(a_id)
 
-    for ticker, buyers, sellers, proven, buy_value, latest, cohorts in rows:
+        leads = []
+        for t, data in by_ticker.items():
+            n_buyers = len(data["buyers"])
+            if n_buyers >= min_buyers:
+                leads.append((
+                    t,
+                    n_buyers,
+                    len(data["sellers"]),
+                    len(data["proven_buyers"]),
+                    data["buy_value"],
+                    data["latest"],
+                    "+".join(sorted(data["cohorts"])),
+                ))
+
+        leads.sort(key=lambda x: (x[3], x[1], x[4]), reverse=True)
+        leads = leads[:limit]
+
+        if not leads:
+            return (
+                f"No tickers met the threshold of {min_buyers}+ distinct buyers in the "
+                f"last {days} days for source '{source}'. Try lowering min_buyers or "
+                f"widening the window."
+            )
+
+        lines = [
+            f"## Smart Money Leads — {source}, last {days}d, {min_buyers}+ buyers",
+            "",
+            "Ranked by number of buyers with a POSITIVE proven track record "
+            "(real 1y alpha vs SPY, minimum sample size), then by total buyers.",
+            "",
+            "| Ticker | Buyers | Proven buyers | Sellers | Buy value | Cohorts | Latest |",
+            "|---|---|---|---|---|---|---|",
+        ]
+
+        for ticker, buyers, sellers, proven, buy_value, latest, cohorts in leads:
+            lines.append(
+                f"| {ticker} | {buyers} | {proven or 0} | {sellers or 0} "
+                f"| {_fmt_usd(buy_value)} | {cohorts} | {latest} |"
+            )
+
+        lines.append("")
         lines.append(
-            f"| {ticker} | {buyers} | {proven or 0} | {sellers or 0} "
-            f"| {_fmt_usd(buy_value)} | {cohorts} | {latest} |"
+            "> These are leads, not recommendations. Disclosure lags the actual trade "
+            "by up to 45 days, and consensus buying reflects past conviction."
         )
+        return "\n".join(lines)
 
-    lines.append("")
-    lines.append(
-        "> These are leads, not recommendations. Disclosure lags the actual trade "
-        "by up to 45 days, and consensus buying reflects past conviction."
-    )
-    return "\n".join(lines)
+    except Exception as e:
+        logger.warning("[smart_money] get_smart_money_leads failed: %s", e)
+        return "Smart money leads temporarily unavailable."
 
 
 @registry.register(
@@ -306,44 +350,54 @@ async def get_smart_money_leaderboard(
     horizon = horizon if horizon in ("1m", "3m", "6m", "1y") else "1y"
     limit = max(1, min(int(limit or 15), 50))
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT actor_name, avg_alpha, avg_return, win_rate,
-                   scored_count, coverage_pct
-            FROM smart_money_performance
-            WHERE actor_type = %s AND horizon = %s
-              AND rankable IS TRUE AND avg_alpha IS NOT NULL
-            ORDER BY avg_alpha DESC
-            LIMIT %s
-            """,
-            (actor_type, horizon, limit),
-        ).fetchall()
-
-    if not rows:
-        return (
-            f"No ranked performance data for {actor_type} at {horizon}. "
-            f"Returns may not have been computed yet."
+    try:
+        docs = mongo_store.find_docs(
+            "smart_money_performance",
+            {
+                "actor_type": actor_type,
+                "horizon": horizon,
+                "rankable": True,
+                "avg_alpha": {"$ne": None},
+            },
+            sort=[("avg_alpha", -1)],
+            limit=limit,
         )
 
-    lines = [
-        f"## Smart Money Leaderboard — {actor_type}, {horizon} alpha vs SPY",
-        "",
-        "| Actor | Alpha | Raw return | Win rate | Scored trades | Coverage |",
-        "|---|---|---|---|---|---|",
-    ]
-    for name, alpha, raw, win, scored, cov in rows:
-        win_s = "n/a" if win is None else f"{win:.0f}%"
-        cov_s = "n/a" if cov is None else f"{cov:.0f}%"
+        if not docs:
+            return (
+                f"No ranked performance data for {actor_type} at {horizon}. "
+                f"Returns may not have been computed yet."
+            )
+
+        lines = [
+            f"## Smart Money Leaderboard — {actor_type}, {horizon} alpha vs SPY",
+            "",
+            "| Actor | Alpha | Raw return | Win rate | Scored trades | Coverage |",
+            "|---|---|---|---|---|---|",
+        ]
+        for d in docs:
+            name = d.get("actor_name", "")
+            alpha = d.get("avg_alpha")
+            raw = d.get("avg_return")
+            win = d.get("win_rate")
+            scored = d.get("scored_count", 0)
+            cov = d.get("coverage_pct")
+
+            win_s = "n/a" if win is None else f"{win:.0f}%"
+            cov_s = "n/a" if cov is None else f"{cov:.0f}%"
+            lines.append(
+                f"| {name} | {_fmt_pct(alpha)} | {_fmt_pct(raw)} | {win_s} "
+                f"| {scored} | {cov_s} |"
+            )
+
+        lines.append("")
         lines.append(
-            f"| {name} | {_fmt_pct(alpha)} | {_fmt_pct(raw)} | {win_s} "
-            f"| {scored} | {cov_s} |"
+            "> Alpha is excess return vs SPY over the same window, measured from the "
+            "date each trade became public. Only actors meeting a minimum sample size "
+            "are ranked."
         )
+        return "\n".join(lines)
 
-    lines.append("")
-    lines.append(
-        "> Alpha is excess return vs SPY over the same window, measured from the "
-        "date each trade became public. Only actors meeting a minimum sample size "
-        "are ranked."
-    )
-    return "\n".join(lines)
+    except Exception as e:
+        logger.warning("[smart_money] get_smart_money_leaderboard failed: %s", e)
+        return f"Leaderboard for {actor_type} temporarily unavailable."

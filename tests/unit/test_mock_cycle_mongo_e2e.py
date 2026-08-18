@@ -1348,3 +1348,43 @@ class TestMockTradingCycleMongoE2E:
 
         blob_docs = mongo_store.find_docs("context_blobs", {})
         assert len(blob_docs) >= 1
+
+        # 45. Smart Money Congressional & 13F Tools in MongoDB
+        from app.tools.smart_money_tools import (
+            get_smart_money_signal,
+            get_smart_money_leads,
+            get_smart_money_leaderboard,
+        )
+
+        mongo_store.insert_docs("smart_money_trade_scores", [{
+            "ticker": "AAPL",
+            "actor_type": "congress",
+            "actor_id": "rep-001",
+            "actor_name": "Representative Alpha",
+            "direction": "buy",
+            "event_date": "2026-08-10",
+            "size_est_usd": 250000.0,
+            "size_confidence": "range",
+            "alpha_1y": 14.5,
+        }])
+
+        mongo_store.insert_docs("smart_money_performance", [{
+            "actor_type": "congress",
+            "actor_id": "rep-001",
+            "actor_name": "Representative Alpha",
+            "horizon": "1y",
+            "avg_alpha": 12.8,
+            "avg_return": 24.5,
+            "win_rate": 75.0,
+            "scored_count": 8,
+            "rankable": True,
+            "coverage_pct": 90.0,
+        }])
+
+        sm_signal = await get_smart_money_signal("AAPL", days=180)
+        assert "Representative Alpha" in sm_signal
+        assert "Congress" in sm_signal
+
+        sm_board = await get_smart_money_leaderboard("congress", horizon="1y")
+        assert "Representative Alpha" in sm_board
+        assert "12.8%" in sm_board
