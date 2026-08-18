@@ -41,6 +41,13 @@ including `price_history`, `technicals` and `sec_13f_holdings`.
 - [ ] `apply_renames` stays disabled until both services use the resolver and
       both containers can be stopped and redeployed together.
 - [ ] Regenerate the ledger only from clean committed trees.
+- [ ] **No partial deploy of `quality-purge`, ever.** Branch writes bypass the
+      flag map by design (`insert_docs` has no `writes_mongo` gate while
+      `mongo_backends.env` still lists 13 tables). The branch is safe only
+      deployed nowhere or merged whole: the flag map / `pg_write_guard` /
+      dual-write are removed in the merge change itself, and the merged result
+      deploys to **both repos as one coordinated event**. (Filed 2026-08-17;
+      trading-client ch.73.)
 
 ## A. Data quality purge — **DONE 2026-08-17**
 
@@ -190,6 +197,15 @@ Convert by data shape and failure semantics, never alphabetically.
 - [ ] **Tier E — queues.** Drain cutover, not dual-write.
 - [ ] **Tier F — money, positions, orders, fills, P&L.** Decimal128, real
       replica-set transactions, reconciliation artifact, human sign-off.
+      ⚠ **The codemod already converted `app/trading/paper_trader.py` below
+      this bar** (verified 2026-08-17): reads via `mongo_query`, writes via
+      ungated `insert_docs` with `cash_balance`/`total_pnl` as **floats**, and
+      **zero `with_txn`** — the buy/sell multi-table transaction is now
+      non-atomic. `dec128()` exists but nothing outside `app/db/` calls it.
+      Before merge: wrap buy/sell in `with_txn` and apply Decimal128 per the
+      collection map's 7 `dec128` entries, or record an explicit signed-off
+      policy downgrade. Do not let a codemod overrule a twice-recorded
+      decision silently.
 - [ ] **Tier G — large time series.** `price_history` (15.75M rows) and
       `technicals` (1.37M) are **kept, not recomputed** (user decision: the data
       is expensive to re-collect). Rate-limit the backfill against the ~2 GB
@@ -226,6 +242,14 @@ Convert by data shape and failure semantics, never alphabetically.
 
 ## Immediate next
 
+- [ ] **trading-client conversion is a pre-cutover phase, not an afterthought**
+      (filed 2026-08-17; trading-client ch.73 Phase 5). The client has no
+      `mongo_query` and ~67 files with SQL against this same database (writes
+      52 tables, 44 joins). "Branch green" covers only the service — the
+      moment the service stops writing Postgres, every client dashboard reads
+      frozen data. Approach: port `mongo_query` + inventory/translator/codemod
+      to the client (it already has the strict `mongo_store` write surface);
+      first task is the per-table client read/write matrix.
 - [ ] Work the collection-defect checklist so the collectors stop producing bad rows.
 - [ ] Fix `trade_results` classification + field divergence.
 - [ ] Fix embeddings parity to use its true natural key.
