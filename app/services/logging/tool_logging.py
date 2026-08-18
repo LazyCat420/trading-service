@@ -11,7 +11,6 @@ All tool names are normalized before storage:
 
 import logging
 from datetime import datetime, timezone
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

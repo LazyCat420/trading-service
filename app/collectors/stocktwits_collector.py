@@ -7,7 +7,6 @@ import datetime
 import hashlib
 from app.services.scraper_client import scraper_client
 from app.processors.dedup_engine import DedupEngine
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

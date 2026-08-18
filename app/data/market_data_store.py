@@ -1,7 +1,6 @@
 import logging
 import datetime
 from typing import Optional
-from app.db.connection import get_db
 from app.data.market_snapshot import MarketSnapshot
 from app.db import mongo_store
 

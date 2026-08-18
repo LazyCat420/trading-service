@@ -30,7 +30,6 @@ from app.cognition.debate.equation_library import (
     save_equation,
 )
 from app.cognition.debate.backtest_runner import run_backtest_for_equation
-from app.db.connection import get_db
 from app.utils.text_utils import extract_json_str
 
 logger = logging.getLogger(__name__)

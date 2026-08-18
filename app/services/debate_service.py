@@ -6,7 +6,6 @@ Provides the Civilization Council Debate reports.
 
 import json
 import logging
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

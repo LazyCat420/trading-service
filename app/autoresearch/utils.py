@@ -5,7 +5,6 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,6 @@ import hashlib
 import json
 import asyncio
 from datetime import datetime, timezone, timedelta
-from app.db.connection import get_db
 from app.processors.dedup_engine import DedupEngine
 from app.processors.ticker_extractor import get_ticker_symbols
 from app.services.scraper_client import scraper_client

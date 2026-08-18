@@ -10,7 +10,6 @@ The scorecard is:
 """
 
 import logging
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

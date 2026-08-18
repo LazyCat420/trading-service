@@ -35,7 +35,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from app.db.connection import get_db
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)

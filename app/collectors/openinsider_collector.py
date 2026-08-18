@@ -10,7 +10,6 @@ import datetime
 import hashlib
 import httpx
 from bs4 import BeautifulSoup
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

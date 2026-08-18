@@ -16,7 +16,6 @@ import hashlib
 import datetime
 import finnhub
 from app.config import settings
-from app.db.connection import get_db
 
 
 def _get_client() -> finnhub.Client:

@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import logging
 
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

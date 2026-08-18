@@ -108,7 +108,6 @@ class DbLoggingHandler(logging.Handler):
 
     def _write_to_db(self, cycle_id: str, phase: str, ticker: str, error_type: str, error_message: str, stack_trace: str, levelname: str):
         try:
-            from app.db.connection import get_db
             
             error_id = f"err_{uuid.uuid4().hex[:12]}"
             now = datetime.now(timezone.utc)

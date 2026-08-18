@@ -38,7 +38,6 @@ import os
 import time
 from typing import Any, Callable
 
-from app.db.connection import get_db
 from app.services.news_extraction import (
     ENABLED as _EXTRACTION_ENABLED,
     _MIN_TEXT_CHARS,

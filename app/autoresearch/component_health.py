@@ -108,7 +108,6 @@ VERDICT_DEFINITIONS = {
 # ── persistence ──────────────────────────────────────────────────────
 
 def ensure_health_table() -> None:
-    from app.db.connection import get_db
 
     with get_db() as db:
         db.execute(
@@ -303,7 +302,6 @@ def _failing_streak(component: str) -> int:
     """Consecutive 'failing' verdicts at the head of the report history,
     BEFORE this evaluation. 0 on any read problem — a broken history read
     must not manufacture a disable."""
-    from app.db.connection import get_db
 
     try:
         rows = mongo_query.find_rows('component_health_reports', {'component': component}, ['verdict'], sort=[('evaluated_at', -1)], limit=CONSECUTIVE_FAILING_TO_DISABLE)
@@ -379,7 +377,6 @@ def run_component_health_evaluation() -> dict:
                     "worth ~22-32s/cycle is an open HUMAN call.")
 
         try:
-            from app.db.connection import get_db
 
             ensure_health_table()
             mongo_store.insert_docs('component_health_reports', [{'component': COMPONENT_HMM, 'window_start': metrics.get("window_start"), 'window_end': metrics.get("window_end"), 'observations': metrics.get("observations"), 'verdict': verdict, 'failure_kinds': json.dumps(failures), 'consecutive_failing': streak, 'metrics': json.dumps(metrics, default=str), 'action': action, 'note': note}])
@@ -402,7 +399,6 @@ def run_component_health_evaluation() -> dict:
 # ── read surfaces for the router ─────────────────────────────────────
 
 def report_history(component: str = COMPONENT_HMM, limit: int = 30) -> list[dict]:
-    from app.db.connection import get_db
 
     ensure_health_table()
     rows = mongo_query.find_rows('component_health_reports', {'component': component}, ['evaluated_at', 'window_start', 'window_end', 'observations', 'verdict', 'failure_kinds', 'consecutive_failing', 'metrics', 'action', 'note'], sort=[('evaluated_at', -1)], limit=max(1, min(int(limit), 200)))

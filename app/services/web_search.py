@@ -227,7 +227,6 @@ class YouTubeRecentSource(BaseNewsSource):
     async def fetch_raw(
         self, query: str, ticker: str | None = None, max_results: int = 5
     ) -> list[dict]:
-        from app.db.connection import get_db
 
         with get_db() as db:
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)

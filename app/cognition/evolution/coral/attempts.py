@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import uuid
 
-from app.db.connection import get_db
 from app.cognition.evolution.coral.types import RepairJob
 from app.db import mongo_query, mongo_store
 from datetime import datetime, timezone

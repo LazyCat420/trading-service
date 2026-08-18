@@ -32,7 +32,6 @@ from typing import Any
 
 
 from app.config import settings
-from app.db.connection import get_db
 from app.services.request_utils import SmartClient
 from app.utils.text_utils import is_truncated_content
 

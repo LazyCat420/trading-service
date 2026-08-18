@@ -1176,7 +1176,6 @@ async def run_tournament_debate(
 
     # ── Log tournament to debate_history so the UI/history shows it ──
     try:
-        from app.db.connection import get_db
         import uuid as _uuid
 
         persona_outcomes = {
