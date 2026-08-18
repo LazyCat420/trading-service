@@ -1253,3 +1253,34 @@ class TestMockTradingCycleMongoE2E:
         await record_tool_optimization_usage("v3_junior_analyst", tools_list, ["get_finviz_fundamentals"])
         reset_count = reset_all_pruned()
         assert reset_count >= 0
+
+        # 41. Data Quality Flags & Source Trust in MongoDB
+        from app.services.data_flag_service import (
+            flag_item,
+            unflag_item,
+            get_flags,
+            get_flagged_source_ids,
+            get_filtered_report,
+            get_source_trust,
+        )
+
+        flag_res = flag_item(
+            source_table="news_articles",
+            source_id="news-001",
+            flag_type="clickbait",
+            reason="Sensationalized headline with no substantiation",
+            ticker="AAPL",
+        )
+        assert "flag_id" in flag_res
+
+        flagged_ids = get_flagged_source_ids("news_articles", ticker="AAPL")
+        assert "news-001" in flagged_ids
+
+        flags_list = get_flags(ticker="AAPL")
+        assert len(flags_list) >= 1
+
+        filt_report = get_filtered_report("AAPL")
+        assert len(filt_report["flagged_items"]) >= 1
+
+        unflag_res = unflag_item(flag_res["flag_id"])
+        assert unflag_res is True

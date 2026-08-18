@@ -1,26 +1,13 @@
 """
 Data quality flag service — flag bad data items and manage source trust.
 
-Tables used:
-  - data_flags    — user flags on individual data items
-  - source_trust  — publisher/subreddit/channel trust scores
-
-When a user flags an item:
-  1. Record the flag in data_flags
-  2. Increment the source's total_flags count
-  3. Recalculate flag_rate
-  4. If flag_rate > 0.5, auto-downgrade trust to 0.3
-
-Flagged items are:
-  - Excluded from context blobs (context_builder checks data_flags)
-  - Shown to user in a "Filtered" panel (transparency)
+Pure MongoDB implementation for data_flags and source_trust collections.
 """
 
 import logging
 import uuid
 from datetime import datetime, timezone
 
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -43,70 +30,62 @@ def flag_item(
     reason: str = "",
     ticker: str = "",
 ) -> dict:
-    """Flag a data item as bad. Updates source trust score.
+    """Flag a data item as bad. Updates source trust score in MongoDB."""
+    flag_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
 
-    Args:
-        source_table: 'news_articles' | 'reddit_posts' | 'youtube_transcripts'
-        source_id: primary key of the flagged row
-        flag_type: 'spam' | 'clickbait' | 'irrelevant' | 'outdated' | 'fake'
-        reason: optional user explanation
-        ticker: optional ticker association
+    valid_tables = {"news_articles", "reddit_posts", "youtube_transcripts"}
+    if source_table not in valid_tables:
+        raise ValueError(f"source_table must be one of {valid_tables}")
 
-    Returns:
-        dict with flag_id and updated trust info
-    """
-    with get_db() as db:
-        flag_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+    existing = mongo_query.find_row('data_flags', {'source_table': source_table, 'source_id': source_id}, ['id'])
+    if existing:
+        return {"flag_id": existing[0], "already_flagged": True}
 
-        # Validate source_table
-        valid_tables = {"news_articles", "reddit_posts", "youtube_transcripts"}
-        if source_table not in valid_tables:
-            raise ValueError(f"source_table must be one of {valid_tables}")
+    mongo_store.insert_docs('data_flags', [{
+        'id': flag_id,
+        'source_table': source_table,
+        'source_id': source_id,
+        'ticker': ticker.upper().strip() if ticker else "",
+        'flag_type': flag_type,
+        'reason': reason,
+        'flagged_by': 'user',
+        'flagged_at': now,
+        'auto_action': 'excluded',
+    }])
 
-        # Check if already flagged
-        existing = mongo_query.find_row('data_flags', {'source_table': source_table, 'source_id': source_id}, ['id'])
-        if existing:
-            return {"flag_id": existing[0], "already_flagged": True}
+    trust_info = _update_source_trust(source_table, source_id)
 
-        # Insert flag
-        mongo_store.insert_docs('data_flags', [{'id': flag_id, 'source_table': source_table, 'source_id': source_id, 'ticker': ticker, 'flag_type': flag_type, 'reason': reason, 'flagged_by': 'user', 'flagged_at': now, 'auto_action': 'excluded'}])
+    logger.info(
+        "data_flag: flagged %s.%s as %s (reason: %s)",
+        source_table,
+        source_id,
+        flag_type,
+        reason[:50],
+    )
 
-        # Update source trust
-        trust_info = _update_source_trust(source_table, source_id)
-
-        logger.info(
-            "data_flag: flagged %s.%s as %s (reason: %s)",
-            source_table,
-            source_id,
-            flag_type,
-            reason[:50],
-        )
-
-        return {
-            "flag_id": flag_id,
-            "source_table": source_table,
-            "source_id": source_id,
-            "flag_type": flag_type,
-            "trust_updated": trust_info,
-        }
+    return {
+        "flag_id": flag_id,
+        "source_table": source_table,
+        "source_id": source_id,
+        "flag_type": flag_type,
+        "trust_updated": trust_info,
+    }
 
 
 def unflag_item(flag_id: str) -> bool:
     """Remove a flag. Returns True if flag existed."""
-    with get_db() as db:
-        row = mongo_query.find_row('data_flags', {'id': flag_id}, ['id', 'source_table', 'source_id'])
-        if not row:
-            return False
+    row = mongo_query.find_row('data_flags', {'id': flag_id}, ['id', 'source_table', 'source_id'])
+    if not row:
+        return False
 
-        source_table, source_id = row[1], row[2]
-        mongo_store.delete_docs('data_flags', {'id': flag_id})
+    source_table, source_id = row[1], row[2]
+    mongo_store.delete_docs('data_flags', {'id': flag_id})
 
-        # Recalculate trust after removing flag
-        _update_source_trust(source_table, source_id)
+    _update_source_trust(source_table, source_id)
 
-        logger.info("data_flag: unflagged %s", flag_id)
-        return True
+    logger.info("data_flag: unflagged %s", flag_id)
+    return True
 
 
 def get_flags(
@@ -114,194 +93,179 @@ def get_flags(
     source_table: str | None = None,
     limit: int = 100,
 ) -> list[dict]:
-    """List flagged items. Optional filters."""
-    with get_db() as db:
-        query = (
-            "SELECT id, source_table, source_id, ticker, flag_type, "
-            "reason, flagged_at, auto_action FROM data_flags"
-        )
-        params: list = []
-        clauses = []
+    """List flagged items from MongoDB."""
+    query = {}
+    if ticker:
+        query["ticker"] = ticker.upper().strip()
+    if source_table:
+        query["source_table"] = source_table
 
-        if ticker:
-            clauses.append("ticker = %s")
-            params.append(ticker.upper().strip())
-        if source_table:
-            clauses.append("source_table = %s")
-            params.append(source_table)
-
-        if clauses:
-            query += " WHERE " + " AND ".join(clauses)
-
-        query += " ORDER BY flagged_at DESC LIMIT %s"
-        params.append(limit)
-
-        rows = db.execute(query, params).fetchall()
-        return [
-            {
-                "id": r[0],
-                "source_table": r[1],
-                "source_id": r[2],
-                "ticker": r[3],
-                "flag_type": r[4],
-                "reason": r[5],
-                "flagged_at": r[6].isoformat() if r[6] else None,
-                "auto_action": r[7],
-            }
-            for r in rows
-        ]
+    docs = mongo_store.find_docs(
+        "data_flags",
+        query,
+        sort=[("flagged_at", -1)],
+        limit=limit,
+    )
+    return [
+        {
+            "id": d.get("id"),
+            "source_table": d.get("source_table"),
+            "source_id": d.get("source_id"),
+            "ticker": d.get("ticker"),
+            "flag_type": d.get("flag_type"),
+            "reason": d.get("reason"),
+            "flagged_at": d.get("flagged_at").isoformat() if hasattr(d.get("flagged_at"), "isoformat") else str(d.get("flagged_at")),
+            "auto_action": d.get("auto_action"),
+        }
+        for d in docs
+    ]
 
 
 def get_flagged_source_ids(source_table: str, ticker: str | None = None) -> set:
-    """Get set of source_ids that are flagged for a given table.
-
-    Used by context_builder to exclude flagged items efficiently.
-    """
-    with get_db() as db:
-        try:
-            if ticker:
-                rows = mongo_query.find_rows('data_flags', {'source_table': source_table, 'ticker': ticker.upper().strip()}, ['source_id'])
-            else:
-                rows = mongo_query.find_rows('data_flags', {'source_table': source_table}, ['source_id'])
-            return {r[0] for r in rows}
-        except Exception:
-            return set()
+    """Get set of source_ids that are flagged for a given table in MongoDB."""
+    try:
+        query = {"source_table": source_table}
+        if ticker:
+            query["ticker"] = ticker.upper().strip()
+        rows = mongo_query.find_rows('data_flags', query, ['source_id'])
+        return {r[0] for r in rows if r and r[0]}
+    except Exception:
+        return set()
 
 
 def get_filtered_report(ticker: str) -> dict:
-    """Get a transparency report of what was filtered for a ticker.
+    """Get a transparency report of what was filtered for a ticker from MongoDB."""
+    t = ticker.upper().strip()
+    report: dict = {"ticker": t, "flagged_items": [], "blocked_sources": []}
 
-    Returns flagged items + blocked sources so user can verify.
-    """
-    with get_db() as db:
-        t = ticker.upper().strip()
-        report: dict = {"ticker": t, "flagged_items": [], "blocked_sources": []}
+    try:
+        rows = mongo_query.find_rows(
+            'data_flags',
+            {'ticker': t},
+            ['source_table', 'source_id', 'flag_type', 'reason', 'flagged_at'],
+            sort=[('flagged_at', -1)]
+        )
+        report["flagged_items"] = [
+            {
+                "source_table": r[0],
+                "source_id": r[1],
+                "flag_type": r[2],
+                "reason": r[3],
+                "flagged_at": r[4].isoformat() if hasattr(r[4], "isoformat") else str(r[4]) if r[4] else None,
+            }
+            for r in rows
+        ]
+    except Exception:
+        pass
 
-        # Flagged items
-        try:
-            rows = mongo_query.find_rows('data_flags', {'ticker': t}, ['source_table', 'source_id', 'flag_type', 'reason', 'flagged_at'], sort=[('flagged_at', -1)])
-            report["flagged_items"] = [
-                {
-                    "source_table": r[0],
-                    "source_id": r[1],
-                    "flag_type": r[2],
-                    "reason": r[3],
-                    "flagged_at": r[4].isoformat() if r[4] else None,
-                }
-                for r in rows
-            ]
-        except Exception:
-            pass
+    try:
+        rows = mongo_query.find_rows(
+            'source_trust',
+            {'trust_score': {'$lt': 0.5}},
+            ['source_type', 'source_name', 'trust_score', 'total_flags', 'total_items', 'flag_rate'],
+            sort=[('trust_score', 1)]
+        )
+        report["blocked_sources"] = [
+            {
+                "source_type": r[0],
+                "source_name": r[1],
+                "trust_score": r[2],
+                "total_flags": r[3],
+                "total_items": r[4],
+                "flag_rate": r[5],
+            }
+            for r in rows
+        ]
+    except Exception:
+        pass
 
-        # Blocked sources (trust_score < 0.5)
-        try:
-            rows = mongo_query.find_rows('source_trust', {'trust_score': {'$lt': 0.5}}, ['source_type', 'source_name', 'trust_score', 'total_flags', 'total_items', 'flag_rate'], sort=[('trust_score', 1)])
-            report["blocked_sources"] = [
-                {
-                    "source_type": r[0],
-                    "source_name": r[1],
-                    "trust_score": r[2],
-                    "total_flags": r[3],
-                    "total_items": r[4],
-                    "flag_rate": r[5],
-                }
-                for r in rows
-            ]
-        except Exception:
-            pass
-
-        return report
+    return report
 
 
 # ── Source Trust ──────────────────────────────────────────────────────
 
 
 def get_source_trust(source_type: str, source_name: str) -> float:
-    """Get trust score for a source. Returns 1.0 (trusted) if unknown."""
-    with get_db() as db:
-        try:
-            row = mongo_query.find_row('source_trust', {'source_type': source_type, 'source_name': source_name}, ['trust_score'])
-            return row[0] if row else 1.0
-        except Exception:
-            return 1.0
+    """Get trust score for a source from MongoDB. Returns 1.0 if unknown."""
+    try:
+        row = mongo_query.find_row('source_trust', {'source_type': source_type, 'source_name': source_name}, ['trust_score'])
+        return float(row[0]) if row and row[0] is not None else 1.0
+    except Exception:
+        return 1.0
 
 
 def get_untrusted_sources(threshold: float = 0.5) -> list[dict]:
-    """Get all sources below trust threshold."""
-    with get_db() as db:
-        try:
-            rows = mongo_query.find_rows('source_trust', {'trust_score': {'$lt': threshold}}, ['source_type', 'source_name', 'trust_score', 'total_flags', 'total_items', 'flag_rate'], sort=[('trust_score', 1)])
-            return [
-                {
-                    "source_type": r[0],
-                    "source_name": r[1],
-                    "trust_score": r[2],
-                    "total_flags": r[3],
-                    "total_items": r[4],
-                    "flag_rate": r[5],
-                }
-                for r in rows
-            ]
-        except Exception:
-            return []
+    """Get all sources below trust threshold from MongoDB."""
+    try:
+        rows = mongo_query.find_rows(
+            'source_trust',
+            {'trust_score': {'$lt': threshold}},
+            ['source_type', 'source_name', 'trust_score', 'total_flags', 'total_items', 'flag_rate'],
+            sort=[('trust_score', 1)]
+        )
+        return [
+            {
+                "source_type": r[0],
+                "source_name": r[1],
+                "trust_score": r[2],
+                "total_flags": r[3],
+                "total_items": r[4],
+                "flag_rate": r[5],
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
 def _update_source_trust(source_table: str, source_id: str) -> dict | None:
-    """Recalculate trust score for the source of a flagged item."""
-    with get_db() as db:
-        mapping = _SOURCE_FIELD_MAP.get(source_table)
-        if not mapping:
+    """Recalculate trust score for the source of a flagged item in MongoDB."""
+    mapping = _SOURCE_FIELD_MAP.get(source_table)
+    if not mapping:
+        return None
+
+    source_type, source_column = mapping
+
+    try:
+        source_doc = mongo_store.find_docs(source_table, {"id": source_id}, limit=1)
+        if not source_doc or not source_doc[0].get(source_column):
             return None
+        source_name = source_doc[0][source_column]
 
-        source_type, source_column = mapping
+        total_items_docs = mongo_store.find_docs(source_table, {source_column: source_name})
+        total_items = len(total_items_docs)
 
-        # Get the source name from the original table
-        try:
-            row = db.execute(
-                f"SELECT {source_column} FROM {source_table} WHERE id = %s",
-                [source_id],
-            ).fetchone()
-            if not row or not row[0]:
-                return None
-            source_name = row[0]
-        except Exception:
-            return None
+        source_ids = {d["id"] for d in total_items_docs if "id" in d}
+        total_flags_docs = mongo_store.find_docs(
+            "data_flags",
+            {"source_table": source_table, "source_id": {"$in": list(source_ids)}}
+        )
+        total_flags = len(total_flags_docs)
 
-        # Count total items from this source
-        try:
-            total_row = db.execute(
-                f"SELECT COUNT(*) FROM {source_table} WHERE {source_column} = %s",
-                [source_name],
-            ).fetchone()
-            total_items = total_row[0] if total_row else 0
-        except Exception:
-            total_items = 0
-
-        # Count flags for this source
-        try:
-            flag_row = db.execute(
-                "SELECT COUNT(*) FROM data_flags df "
-                f"JOIN {source_table} st ON df.source_id = st.id "
-                f"WHERE st.{source_column} = %s AND df.source_table = %s",
-                [source_name, source_table],
-            ).fetchone()
-            total_flags = flag_row[0] if flag_row else 0
-        except Exception:
-            total_flags = 0
-
-        # Calculate trust
         flag_rate = total_flags / max(total_items, 1)
         trust_score = max(0.0, 1.0 - flag_rate)
 
-        # Auto-downgrade if more than half flagged
         if flag_rate > 0.5:
             trust_score = min(trust_score, 0.3)
 
         now = datetime.now(timezone.utc)
-        mongo_store.upsert_doc('source_trust', {'source_type': source_type, 'source_name': source_name}, {'source_type': source_type, 'source_name': source_name, 'trust_score': trust_score, 'total_flags': total_flags, 'total_items': total_items, 'flag_rate': flag_rate, 'last_updated': now}, insert_only=True)
+        mongo_store.update_docs(
+            'source_trust',
+            {'source_type': source_type, 'source_name': source_name},
+            {'$set': {
+                'source_type': source_type,
+                'source_name': source_name,
+                'trust_score': trust_score,
+                'total_flags': total_flags,
+                'total_items': total_items,
+                'flag_rate': flag_rate,
+                'last_updated': now,
+            }},
+            upsert=True
+        )
 
         logger.info(
             "source_trust: %s/%s = %.2f (flags=%d/%d)",
@@ -318,3 +282,6 @@ def _update_source_trust(source_table: str, source_id: str) -> dict | None:
             "trust_score": trust_score,
             "flag_rate": flag_rate,
         }
+    except Exception as e:
+        logger.warning("[data_flag_service] _update_source_trust failed: %s", e)
+        return None
