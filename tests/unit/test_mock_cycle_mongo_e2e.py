@@ -969,3 +969,20 @@ class TestMockTradingCycleMongoE2E:
 
         sys_jobs = list_system_jobs()
         assert "engine_running" in sys_jobs
+
+        # 27. VLLM Router Activity Summary in MongoDB
+        from app.routers.vllm_router import _get_agent_recent_activity_summary
+
+        mongo_store.insert_docs("agent_traces", [{
+            "agent_name": "data_janitor",
+            "run_id": "run-jan-001",
+            "tool_name": "clean_temp_tables",
+            "tool_args": "{}",
+            "tool_result_summary": "cleaned 0 stale rows",
+            "why_tool_was_called": "maintenance",
+            "stop_reason": "success",
+            "created_at": now,
+        }])
+
+        jan_summary = _get_agent_recent_activity_summary("data_janitor")
+        assert "ACTIVITY TRACES" in jan_summary

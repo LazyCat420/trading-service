@@ -575,17 +575,17 @@ def strategies_bench_underperformers():
 
 
 def _get_agent_recent_activity_summary(agent_name: str) -> str:
-    """Query recent activity/traces from the database to present as context to the agent."""
-    from app.db.connection import get_db
+    """Query recent activity/traces from MongoDB to present as context to the agent."""
     import json
+    import re
+    from app.db import mongo_store, mongo_query
 
     summary_lines = []
 
     # If it's the janitor, query janitor_run_log first
     if agent_name in ("data_janitor", "janitor", "CUSTOM_SYSTEM_JANITOR_AGENT"):
         try:
-            with get_db() as db:
-                rows = mongo_query.find_rows('janitor_run_log', {}, ['run_time', 'details'], sort=[('run_time', -1)], limit=3)
+            rows = mongo_query.find_rows('janitor_run_log', {}, ['run_time', 'details'], sort=[('run_time', -1)], limit=3)
             if rows:
                 summary_lines.append("### JANITOR CLEANUP RUN LOGS:")
                 for r in rows:
@@ -612,41 +612,20 @@ def _get_agent_recent_activity_summary(agent_name: str) -> str:
         }
         db_agent_name = aliases.get(agent_name, agent_name)
 
-        rows = []
-        from app.db import mongo_store
-        if mongo_store.reads_mongo("agent_traces"):
-            try:
-                import re as _re
-                patt = _re.compile(f"{db_agent_name}|{agent_name}", _re.IGNORECASE)
-                docs = mongo_store.find_docs(
-                    "agent_traces",
-                    {"agent_name": {"$regex": patt}},
-                    sort=[("created_at", -1)],
-                    limit=5,
-                )
-                rows = [
-                    (d.get("created_at"), d.get("run_id"), d.get("tool_name"),
-                     d.get("tool_args"), d.get("tool_result_summary"),
-                     d.get("why_tool_was_called"), d.get("stop_reason"))
-                    for d in docs
-                ]
-            except Exception as me:
-                mongo_store.handle_mongo_read_failure("agent_traces", "vllm_router recent traces", me)
+        patt = re.compile(f"{db_agent_name}|{agent_name}", re.IGNORECASE)
+        docs = mongo_store.find_docs(
+            "agent_traces",
+            {"agent_name": {"$regex": patt}},
+            sort=[("created_at", -1)],
+            limit=5,
+        )
+        rows = [
+            (d.get("created_at"), d.get("run_id"), d.get("tool_name"),
+             d.get("tool_args"), d.get("tool_result_summary"),
+             d.get("why_tool_was_called"), d.get("stop_reason"))
+            for d in docs
+        ]
 
-        if not rows and not mongo_store.reads_mongo("agent_traces"):
-            with get_db() as db:
-                rows = db.execute(
-                    """
-                    SELECT created_at, run_id, tool_name, tool_args, tool_result_summary, 
-                           why_tool_was_called, stop_reason
-                    FROM agent_traces
-                    WHERE agent_name ILIKE %s OR agent_name ILIKE %s
-                    ORDER BY created_at DESC
-                    LIMIT 5
-                    """,
-                    [f"%{db_agent_name}%", f"%{agent_name}%"]
-                ).fetchall()
-        
         if rows:
             summary_lines.append(f"### RECENT {agent_name.upper()} ACTIVITY TRACES:")
             for r in rows:
