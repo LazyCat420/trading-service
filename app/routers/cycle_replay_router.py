@@ -117,31 +117,11 @@ def _has_done_event(db, cycle_id: str) -> bool:
 
 def _trade_actions(db, cycle_id: str) -> list[tuple]:
     """(ticker, action, confidence) rows for a cycle."""
-    if _mongo_reads("trade_results"):
-        try:
-            from app.db import mongo_store
-            docs = mongo_store.find_docs(
-                "trade_results", {"cycle_id": cycle_id},
-                projection={"_id": 0, "ticker": 1, "action": 1, "confidence": 1},
-            )
-            return [(d.get("ticker"), d.get("action"), d.get("confidence")) for d in docs]
-        except Exception as e:
-            handle_mongo_read_failure("trade_results", "[cycles] mongo actions read", e)
     return mongo_query.find_rows('trade_results', {'cycle_id': cycle_id}, ['ticker', 'action', 'confidence'])
 
 
 def _distinct_trade_tickers(db, cycle_id: str) -> list[tuple]:
-    if _mongo_reads("trade_results"):
-        try:
-            from app.db import mongo_store
-            return [(t,) for t in mongo_store.distinct_values(
-                "trade_results", "ticker", {"cycle_id": cycle_id}) if t]
-        except Exception as e:
-            handle_mongo_read_failure("trade_results", "[cycles] mongo tickers read", e)
-    return db.execute(
-        "SELECT DISTINCT ticker FROM trade_results WHERE cycle_id = %s",
-        [cycle_id],
-    ).fetchall()
+    return [(t,) for t in mongo_store.distinct_values("trade_results", "ticker", {"cycle_id": cycle_id}) if t]
 
 
 def _latest_trade_row(db, cycle_id: str, ticker: str):

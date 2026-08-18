@@ -113,39 +113,15 @@ def test_handle_mongo_read_failure_raises_at_full_mongo(monkeypatch, caplog):
 
 def test_forced_outage_on_mongo_mode_table_raises_through_a_real_reader(monkeypatch):
     """End-to-end through a real converted call site: cycle_replay_router's
-    trade-actions reader with Mongo forced down must raise at `mongo` mode,
-    not slide into its SQL fallback."""
+    trade-actions reader with Mongo forced down must raise immediately."""
     ms = _reload_with_backend(monkeypatch, "trade_results:mongo")
     import app.routers.cycle_replay_router as crr
     crr = importlib.reload(crr)
     boom = RuntimeError("forced outage")
     monkeypatch.setattr(ms, "find_docs", lambda *a, **k: (_ for _ in ()).throw(boom))
 
-    class _ExplodingDB:
-        def execute(self, *a, **k):
-            raise AssertionError("SQL fallback ran against a stale PG table")
-
     with pytest.raises(RuntimeError):
-        crr._trade_actions(_ExplodingDB(), "cycle-x")
-
-
-def test_forced_outage_on_mongo_read_table_still_falls_back(monkeypatch):
-    """Control for the test above: same forced outage at `mongo_read` (PG
-    fresh) must use the SQL path, proving the gate discriminates by mode."""
-    ms = _reload_with_backend(monkeypatch, "trade_results:mongo_read")
-    import app.routers.cycle_replay_router as crr
-    crr = importlib.reload(crr)
-    monkeypatch.setattr(ms, "find_docs",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("outage")))
-
-    class _FallbackDB:
-        def execute(self, *a, **k):
-            return self
-
-        def fetchall(self):
-            return [("AAPL", "BUY", 80)]
-
-    assert crr._trade_actions(_FallbackDB(), "cycle-x") == [("AAPL", "BUY", 80)]
+        crr._trade_actions(None, "cycle-x")
 
 
 # ── Phase 1: new helpers (pure logic, mocked collection) ────────────────────
