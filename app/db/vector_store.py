@@ -72,21 +72,15 @@ class VectorStore:
 
     @staticmethod
     def _writes_mongo() -> bool:
-        from app.db.mongo_store import writes_mongo
-
-        return writes_mongo(_TABLE)
+        return True
 
     @staticmethod
     def _reads_mongo() -> bool:
-        from app.db.mongo_store import reads_mongo
-
-        return reads_mongo(_TABLE)
+        return True
 
     @staticmethod
     def _writes_pg() -> bool:
-        from app.db.mongo_store import writes_pg
-
-        return writes_pg(_TABLE)
+        return False
 
     _mongo_indexes_ready = False
 

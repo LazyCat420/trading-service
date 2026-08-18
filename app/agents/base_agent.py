@@ -190,13 +190,15 @@ def get_ticker_outcome_context(ticker: str) -> str:
     if not ticker or ticker.startswith("_"):
         return ""  # Skip synthetic tickers like _AUDIT_
     try:
-        # Query decision_outcomes directly — the old helper module
-        # (app.pipeline.analysis.outcome_tracker) was deleted in the V3 purge,
-        # which silently disabled outcome context for every agent.
-        from app.db.connection import get_db
+        from app.db import mongo_query
 
-        with get_db() as db:
-            rows = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_AVOIDED_DECLINE', 'HOLD_MISS']}}, ['outcome', 'entry_price', 'exit_price', 'pnl_pct', 'confidence', 'resolved_at'], sort=[('resolved_at', -1)], limit=5)
+        rows = mongo_query.find_rows(
+            'decision_outcomes',
+            {'ticker': ticker, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_AVOIDED_DECLINE', 'HOLD_MISS']}},
+            ['outcome', 'entry_price', 'exit_price', 'pnl_pct', 'confidence', 'resolved_at'],
+            sort=[('resolved_at', -1)],
+            limit=5
+        )
         outcomes = [
             {
                 "outcome": r[0],
@@ -247,35 +249,51 @@ def get_confidence_calibration_context() -> str:
 
     text = ""
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_store
+        import datetime
 
-        with get_db() as db:
-            # confidence < 40 buckets are dominated by legacy rows with
-            # missing/zero confidence — not real stated conviction.
-            rows = db.execute(
-                "SELECT (confidence / 10) * 10 AS bucket, COUNT(*) AS n, "
-                "COUNT(*) FILTER (WHERE outcome = 'WIN') AS wins "
-                "FROM decision_outcomes "
-                "WHERE resolved_at IS NOT NULL AND outcome IN ('WIN', 'LOSS') "
-                "AND confidence >= 40 "
-                "AND resolved_at > CURRENT_TIMESTAMP - INTERVAL '90 days' "
-                "GROUP BY 1 HAVING COUNT(*) >= 10 ORDER BY 1",
-            ).fetchall()
-        if rows:
-            lines = [
-                "## CONFIDENCE CALIBRATION (fleet track record, last 90 days)",
-                "Realized win rate of resolved trades at each stated confidence level:",
-            ]
-            for bucket, n, wins in rows:
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=90)
+        docs = mongo_store.find_docs(
+            'decision_outcomes',
+            {
+                'resolved_at': {'$ne': None, '$gte': cutoff},
+                'outcome': {'$in': ['WIN', 'LOSS']},
+                'confidence': {'$gte': 40},
+            }
+        )
+        if docs:
+            buckets = {}
+            for d in docs:
+                conf = d.get('confidence')
+                if conf is None:
+                    continue
+                try:
+                    conf = float(conf)
+                except Exception:
+                    continue
+                bucket = int(conf // 10) * 10
+                if bucket not in buckets:
+                    buckets[bucket] = {"n": 0, "wins": 0}
+                buckets[bucket]["n"] += 1
+                if d.get("outcome") == "WIN":
+                    buckets[bucket]["wins"] += 1
+
+            valid_buckets = [(b, stats["n"], stats["wins"]) for b, stats in sorted(buckets.items()) if stats["n"] >= 10]
+            if valid_buckets:
+                lines = [
+                    "## CONFIDENCE CALIBRATION (fleet track record, last 90 days)",
+                    "Realized win rate of resolved trades at each stated confidence level:",
+                ]
+                for bucket, n, wins in valid_buckets:
+                    lines.append(
+                        f"- stated {bucket}-{bucket + 9}%: won {wins / n:.0%} of {n} trades"
+                    )
                 lines.append(
-                    f"- stated {bucket}-{bucket + 9}%: won {wins / n:.0%} of {n} trades"
+                    "State the confidence the evidence actually supports. If your number "
+                    "lands in a bucket that wins less than it claims, you are overconfident — "
+                    "mixed or conflicting evidence belongs at 40-60, not 70-85.\n"
                 )
-            lines.append(
-                "State the confidence the evidence actually supports. If your number "
-                "lands in a bucket that wins less than it claims, you are overconfident — "
-                "mixed or conflicting evidence belongs at 40-60, not 70-85.\n"
-            )
-            text = "\n".join(lines)
+                text = "\n".join(lines)
     except Exception:
         text = ""
 

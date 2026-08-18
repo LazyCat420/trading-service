@@ -1201,3 +1201,27 @@ class TestMockTradingCycleMongoE2E:
 
         all_evo_sessions = get_sessions()
         assert len(all_evo_sessions) >= 1
+
+        # 38. BaseAgent Prior Outcomes & Confidence Calibration in MongoDB
+        from app.agents.base_agent import get_ticker_outcome_context, get_confidence_calibration_context
+
+        mongo_store.insert_docs("decision_outcomes", [
+            {
+                "ticker": "AAPL",
+                "outcome": "WIN",
+                "entry_price": 150.0,
+                "exit_price": 165.0,
+                "pnl_pct": 10.0,
+                "confidence": 80.0,
+                "resolved_at": now,
+            }
+            for _ in range(12)
+        ])
+
+        prior_hist = get_ticker_outcome_context("AAPL")
+        assert "PRIOR TRADE HISTORY FOR AAPL" in prior_hist
+        assert "WIN: entry=$150.00" in prior_hist
+
+        calib_ctx = get_confidence_calibration_context()
+        assert "CONFIDENCE CALIBRATION" in calib_ctx
+        assert "stated 80-89%" in calib_ctx
