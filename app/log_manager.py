@@ -114,14 +114,45 @@ class LogManager(SDKLogManager):
         super().log_cycle_summary(cycle_id, summary)
 
         try:
-            from app.db.connection import get_db
-            from psycopg.types.json import Jsonb
-            
-            with get_db() as db:
-                mongo_store.update_docs('cycle_run_summaries', {'cycle_id': cycle_id}, {'$set': {'collector_ok': summary.get("collector_ok", 0), 'collector_skipped': summary.get("collector_skipped", 0), 'collector_error': summary.get("collector_error", 0), 'collector_failures': Jsonb(summary.get("collector_failures") or []), 'status': summary.get("status", "unknown"), 'finished_at': summary.get("ended_at"), 'elapsed_ms': summary.get("elapsed_ms", 0), 'analysis_results_count': summary.get("analysis_results_count", 0), 'buy_count': summary.get("buy_count", 0), 'sell_count': summary.get("sell_count", 0), 'hold_count': summary.get("hold_count", 0), 'trade_attempted': summary.get("trade_attempted", 0), 'trade_executed': summary.get("trade_executed", 0), 'trade_failed': summary.get("trade_failed", 0), 'no_trade_reason': summary.get("no_trade_reason"), 'primary_failure_reason': summary.get("primary_failure_reason"), 'report_generated': summary.get("report_generated", False), 'trade_skip_categories': Jsonb(summary.get("trade_skip_categories") or {}), 'summary_json': Jsonb(summary)}, '$setOnInsert': {'trigger_type': summary.get("trigger_type", "manual"), 'started_at': summary.get("started_at"), 'tickers_requested': Jsonb(summary.get("tickers_requested", [])), 'tickers_final': Jsonb(summary.get("tickers", [])), 'collect_requested': summary.get("collect_flag", False), 'analyze_requested': summary.get("analyze_flag", False), 'trade_requested': summary.get("trade_flag", False)}}, upsert=True)
-                db.commit()
+            mongo_store.update_docs(
+                'cycle_run_summaries',
+                {'cycle_id': cycle_id},
+                {
+                    '$set': {
+                        'collector_ok': summary.get("collector_ok", 0),
+                        'collector_skipped': summary.get("collector_skipped", 0),
+                        'collector_error': summary.get("collector_error", 0),
+                        'collector_failures': summary.get("collector_failures") or [],
+                        'status': summary.get("status", "unknown"),
+                        'finished_at': summary.get("ended_at"),
+                        'elapsed_ms': summary.get("elapsed_ms", 0),
+                        'analysis_results_count': summary.get("analysis_results_count", 0),
+                        'buy_count': summary.get("buy_count", 0),
+                        'sell_count': summary.get("sell_count", 0),
+                        'hold_count': summary.get("hold_count", 0),
+                        'trade_attempted': summary.get("trade_attempted", 0),
+                        'trade_executed': summary.get("trade_executed", 0),
+                        'trade_failed': summary.get("trade_failed", 0),
+                        'no_trade_reason': summary.get("no_trade_reason"),
+                        'primary_failure_reason': summary.get("primary_failure_reason"),
+                        'report_generated': summary.get("report_generated", False),
+                        'trade_skip_categories': summary.get("trade_skip_categories") or {},
+                        'summary_json': summary,
+                    },
+                    '$setOnInsert': {
+                        'trigger_type': summary.get("trigger_type", "manual"),
+                        'started_at': summary.get("started_at"),
+                        'tickers_requested': summary.get("tickers_requested", []),
+                        'tickers_final': summary.get("tickers", []),
+                        'collect_requested': summary.get("collect_flag", False),
+                        'analyze_requested': summary.get("analyze_flag", False),
+                        'trade_requested': summary.get("trade_flag", False),
+                    }
+                },
+                upsert=True
+            )
         except Exception as e:
-            logger.debug("[LogManager] Failed to write cycle summary to postgres: %s", e)
+            logger.debug("[LogManager] Failed to write cycle summary to mongo: %s", e)
 
     # ── Crash Recovery Detection (NEW) ────────────────────────────────────
 

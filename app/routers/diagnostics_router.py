@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from app.log_manager import log_manager
 from typing import Optional
-from app.db.connection import get_db
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 

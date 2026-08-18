@@ -945,3 +945,27 @@ class TestMockTradingCycleMongoE2E:
 
         timeline = get_ticker_strategy_timeline("AAPL")
         assert isinstance(timeline, list)
+
+        # 26. Diagnostics Router and LogManager in MongoDB
+        from app.log_manager import log_manager
+        from app.routers.diagnostics_router import list_cycles, list_system_jobs
+
+        log_manager.log_cycle_summary(cycle_id, {
+            "trigger_type": "manual",
+            "started_at": now.isoformat(),
+            "ended_at": (now + datetime.timedelta(seconds=120)).isoformat(),
+            "status": "success",
+            "elapsed_ms": 120000,
+            "collector_ok": 1,
+            "tickers": ["AAPL"],
+        })
+
+        summary_docs = mongo_store.find_docs("cycle_run_summaries", {"cycle_id": cycle_id})
+        assert len(summary_docs) >= 1
+        assert summary_docs[0]["status"] == "success"
+
+        diag_cycles = list_cycles()
+        assert "cycles" in diag_cycles
+
+        sys_jobs = list_system_jobs()
+        assert "engine_running" in sys_jobs
