@@ -994,3 +994,14 @@ class TestMockTradingCycleMongoE2E:
         assert mmap_tool_res["status"] == "success"
         assert "Technology" in mmap_tool_res["data"]
         assert len(mmap_tool_res["data"]["Technology"]["top_gainers"]) >= 1
+
+        # 29. Quant Edge Verifier in MongoDB
+        from app.trading.quant_edge_verifier import load_historical_data, backtest_zscore_strategy
+
+        df = load_historical_data("AAPL")
+        assert not df.empty
+        assert "close" in df.columns
+        assert "z_score" in df.columns
+
+        bt_res = backtest_zscore_strategy(df)
+        assert "error" not in bt_res or "trades" in bt_res

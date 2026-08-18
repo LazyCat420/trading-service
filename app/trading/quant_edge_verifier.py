@@ -8,66 +8,51 @@ measure if they provide a statistical trading edge on historical data.
 import logging
 import numpy as np
 import pandas as pd
-from app.db.connection import get_db
-from app.quant.returns import dominant_source_sql
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
 def load_historical_data(ticker: str) -> pd.DataFrame:
-    """
-    Fetch price history and technical indicators merged on date.
+    """Fetch price history and technical indicators from MongoDB merged on date."""
+    ticker = ticker.upper().strip()
+    prices = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker},
+        projection={"date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1, "_id": 0},
+        sort=[("date", 1)]
+    )
+    if not prices:
+        return pd.DataFrame()
 
-    One vendor only. `source` is part of the price_history primary key, and
-    this query has no LIMIT, so on the 38 dual-source tickers the unfiltered
-    form returned TWO rows for every shared date. That corrupts the frame
-    twice over: the `technicals` merge below fans each duplicated date out
-    again, and `_add_derived_features` then computes returns across a pair of
-    same-date prints, which injects a near-zero return and dilutes variance
-    (measured: CRH annualized vol reads 25.18% mixed vs 32.44% pinned).
+    # Deduplicate by date
+    seen_dates = set()
+    deduped_prices = []
+    for p in reversed(prices):
+        d = p.get("date")
+        if d not in seen_dates:
+            seen_dates.add(d)
+            deduped_prices.append(p)
+    deduped_prices.reverse()
 
-    This frame is the `df` handed to `run_equation`, so the corruption landed
-    in the one quant surface agents actually choose to use.
-    """
-    with get_db() as db:
-        prices_df = _cursor_to_df(
-            db.execute(
-                f"""
-                SELECT date, open, high, low, close, volume
-                FROM price_history
-                WHERE ticker = %(ticker)s
-                  AND source = ({dominant_source_sql()})
-                ORDER BY date ASC
-                """,
-                {"ticker": ticker}
-            )
-        )
-        if prices_df.empty:
-            return pd.DataFrame()
-            
-        tech_df = _cursor_to_df(
-            db.execute(
-                """
-                SELECT date, rsi_14, macd, macd_signal, macd_hist, atr_14, support, resistance 
-                FROM technicals 
-                WHERE ticker = %s 
-                ORDER BY date ASC
-                """,
-                [ticker]
-            )
-        )
-        
-        if tech_df.empty:
-            # If no technicals table rows, compute derived features only
-            prices_df["date"] = pd.to_datetime(prices_df["date"])
-            return _add_derived_features(prices_df.set_index("date"))
+    prices_df = pd.DataFrame(deduped_prices)
+    prices_df["date"] = pd.to_datetime(prices_df["date"])
 
-        prices_df["date"] = pd.to_datetime(prices_df["date"])
-        tech_df["date"] = pd.to_datetime(tech_df["date"])
+    tech_docs = mongo_store.find_docs(
+        "technicals",
+        {"ticker": ticker},
+        projection={"date": 1, "rsi_14": 1, "macd": 1, "macd_signal": 1, "macd_hist": 1, "atr_14": 1, "support": 1, "resistance": 1, "_id": 0},
+        sort=[("date", 1)]
+    )
 
-        merged = pd.merge(prices_df, tech_df, on="date", how="left")
-        merged = merged.sort_values("date").set_index("date")
+    if not tech_docs:
+        return _add_derived_features(prices_df.set_index("date"))
 
-        return _add_derived_features(merged)
+    tech_df = pd.DataFrame(tech_docs)
+    tech_df["date"] = pd.to_datetime(tech_df["date"])
+
+    merged = pd.merge(prices_df, tech_df, on="date", how="left")
+    merged = merged.sort_values("date").set_index("date")
+    return _add_derived_features(merged)
 
 
 def _add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
