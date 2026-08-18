@@ -287,6 +287,26 @@ Convert by data shape and failure semantics, never alphabetically.
       `technicals` (1.37M) are **kept, not recomputed** (user decision: the data
       is expensive to re-collect). Rate-limit the backfill against the ~2 GB
       oplog and monitor lag.
+- [ ] ⚠ **MEASURE THE SEED RATE BEFORE PROMISING `price_history` IS
+      "unattended".** Sampled 2026-08-17 21:2x on the running sweep:
+      **15 rows/s** on `execution_errors` (160,542 rows, natural-key index
+      already present, so this is not the non-indexed 29 rows/s case). At that
+      rate `price_history` alone would need **~12 days** and `technicals`
+      ~25 hours. That is a measurement of ONE table with large documents —
+      price_history rows are small and numeric and may go far faster — so the
+      number to act on is the one taken **when price_history actually starts**,
+      not this one extrapolated. But "finish the data, unattended" is not a
+      safe assumption until that rate is on the record.
+- [x] **The oplog constraint is weaker than recorded, because there is no
+      secondary.** `replSetGetStatus`: **rs0 has ONE member**, PRIMARY. The
+      oplog is currently **full — 2,050 MB of a 2,048 MB cap — with a
+      1 day 7 h window**, down from the 2.1 days ch.69 recorded, because the
+      sweep is writing hard and nothing is throttled (no `throttled to` line
+      appears in this run's log). With a single-member set **no secondary can
+      fall off it**, so this does not threaten backfill correctness or
+      replication; it bounds point-in-time restore and change streams only, and
+      backups are `mongodump`, not oplog replay. Do not carry "the oplog
+      constrains the backfill" forward without saying which of those it means.
 
 ## E. Evidence required per table
 
