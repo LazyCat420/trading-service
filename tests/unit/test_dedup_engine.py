@@ -3,12 +3,21 @@ from unittest.mock import MagicMock, patch
 from app.processors.dedup_engine import DedupEngine
 
 @pytest.fixture
-def mock_db():
-    cursor = MagicMock()
-    # Mock context manager yielding the cursor
-    db_ctx = MagicMock()
-    db_ctx.__enter__.return_value = cursor
-    return cursor, db_ctx
+def mongo():
+    """Patch dedup_engine's Mongo store.
+
+    The engine used to run two SQL statements -- a content_hash SELECT and a
+    recent-items SELECT -- and the tests dispatched a cursor mock on
+    fetchone/fetchall. It now calls `count_docs` for tier 1 and `find_docs`
+    for tiers 2 and 3, so those are what the tests drive. `find_docs` returns
+    DOCUMENTS, not (title, summary) tuples, and the engine reads them by
+    column name.
+    """
+    store = MagicMock()
+    store.count_docs.return_value = 0
+    store.find_docs.return_value = []
+    with patch("app.processors.dedup_engine.mongo_store", store):
+        yield store
 
 def test_normalize_text():
     engine = DedupEngine(table="news_articles")
@@ -31,36 +40,35 @@ def test_compute_hash():
     assert h1 != h3
     assert len(h1) == 64
 
-def test_is_duplicate_tier1_hash(mock_db, monkeypatch):
-    cursor, db_ctx = mock_db
-    monkeypatch.setattr("app.processors.dedup_engine.get_db", lambda: db_ctx)
-    
-    # Mock finding a hash match in the database
-    cursor.fetchone.return_value = ("some_id",)
-    
-    engine = DedupEngine(table="news_articles", ticker="AAPL")
-    
-    # Check duplicate
-    assert engine.is_duplicate("Apple launches iPhone 16", "September event") is True
-    
-    # Verify execute was called with correct parameters
-    execute_calls = cursor.execute.call_args_list
-    assert len(execute_calls) == 1
-    query, params = execute_calls[0][0]
-    assert "content_hash" in query
-    assert "ticker = %s" in query
-    assert params[1] == "AAPL"
+def test_is_duplicate_tier1_hash(mongo):
+    # A content_hash match exists in the store
+    mongo.count_docs.return_value = 1
 
-def test_is_duplicate_tier3_exact_title(mock_db, monkeypatch):
-    cursor, db_ctx = mock_db
-    monkeypatch.setattr("app.processors.dedup_engine.get_db", lambda: db_ctx)
-    
-    # Mock no hash match (return None)
-    cursor.fetchone.return_value = None
-    
-    # Mock recent items fetched (return list of (title, summary) tuples)
-    cursor.fetchall.return_value = [
-        ("Breaking: Apple releases iOS 18!", "iOS 18 is out now.")
+    engine = DedupEngine(table="news_articles", ticker="AAPL")
+
+    assert engine.is_duplicate("Apple launches iPhone 16", "September event") is True
+
+    # Tier 1 short-circuits: the recent-items scan must not run.
+    mongo.find_docs.assert_not_called()
+    collection, query = mongo.count_docs.call_args[0][:2]
+    assert collection == "news_articles"
+    assert "content_hash" in query
+    # The ticker must be part of the filter, and upper-cased — a hash match on
+    # a DIFFERENT ticker is not a duplicate for this one.
+    assert query["ticker"] == "AAPL"
+
+
+def test_tier1_hash_match_on_another_ticker_is_not_a_duplicate(mongo):
+    """The ticker has to reach the filter, not just the log line."""
+    mongo.count_docs.return_value = 0
+    engine = DedupEngine(table="news_articles", ticker="AAPL")
+    assert engine.is_duplicate("Apple launches iPhone 16", "September event") is False
+
+def test_is_duplicate_tier3_exact_title(mongo):
+    # No hash match, so tiers 2/3 run against the recent documents
+    mongo.count_docs.return_value = 0
+    mongo.find_docs.return_value = [
+        {"title": "Breaking: Apple releases iOS 18!", "summary": "iOS 18 is out now."}
     ]
     
     engine = DedupEngine(table="news_articles", ticker="AAPL")
@@ -68,16 +76,11 @@ def test_is_duplicate_tier3_exact_title(mock_db, monkeypatch):
     # Check duplicate of the exact title (case-insensitive and prefix-stripped)
     assert engine.is_duplicate("Apple releases iOS 18!") is True
 
-def test_is_duplicate_tier2_jaccard(mock_db, monkeypatch):
-    cursor, db_ctx = mock_db
-    monkeypatch.setattr("app.processors.dedup_engine.get_db", lambda: db_ctx)
-    
-    # Mock no hash match
-    cursor.fetchone.return_value = None
-    
-    # Mock recent items in the DB
-    cursor.fetchall.return_value = [
-        ("Apple announces new iPhone 16 Pro Max at event", "The phone has an awesome new design and camera.")
+def test_is_duplicate_tier2_jaccard(mongo):
+    mongo.count_docs.return_value = 0
+    mongo.find_docs.return_value = [
+        {"title": "Apple announces new iPhone 16 Pro Max at event",
+         "summary": "The phone has an awesome new design and camera."}
     ]
     
     engine = DedupEngine(table="news_articles", ticker="AAPL", similarity_threshold=0.6)
