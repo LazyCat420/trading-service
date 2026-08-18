@@ -1,28 +1,22 @@
+"""
+Tool Optimizer — Dynamic tool pruning, reputation tracking, and token reduction.
+
+Pure MongoDB implementation for tool_usage_stats and agent_tool_optimization collections.
+"""
+
 import logging
 from typing import Any, Optional
-from app.db.connection import get_db
+from datetime import datetime, timedelta, timezone
+
+from app.db import mongo_store
+from app.services.mcp_prefix import strip_mcp_prefix
 
 logger = logging.getLogger(__name__)
 
 # Minimum number of tools an agent must always retain after pruning.
-# Prevents zombie state where agents have 0 tools and hang in Prism.
 MIN_TOOLS_FLOOR = 2
 
-# ── MCP prefixes to strip for canonical tool names ──
-# Was a local copy carrying a "Must stay in sync with tool_logging.py" comment.
-# It is now imported from one place, because a comment is not a mechanism: the
-# service was renamed and only some copies would have followed.
-from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
-
-# Reputation drives PRUNING, so it must never see a synthetic call. See
-# PROBE_SERVICE_SOURCES for why an untagged probe run can take a working tool
-# away from a live agent.
-from app.services.logging.tool_logging import PROBE_EXCLUSION_SQL  # noqa: E402
-from datetime import datetime, timedelta, timezone
-from app.db import mongo_store
-
-# ── Reputation thresholds ──
-# Tools below these success rates get warnings injected into agent prompts
+# Reputation thresholds
 REPUTATION_UNRELIABLE_THRESHOLD = 0.6   # success_rate < 60% → warning
 REPUTATION_BROKEN_THRESHOLD = 0.2       # success_rate < 20% → strong warning
 REPUTATION_MIN_CALLS = 3                # Minimum calls before judging
@@ -34,243 +28,133 @@ def get_tool_reputation(
     window_hours: int = REPUTATION_WINDOW_HOURS,
     min_calls: int = REPUTATION_MIN_CALLS,
 ) -> dict[str, dict]:
-    """Query tool reliability stats from recent calls in tool_usage_stats.
-
-    Returns per-tool dict with:
-      - total_calls: int
-      - success_count: int
-      - failure_count: int
-      - success_rate: float (0.0 - 1.0)
-      - avg_latency_ms: float
-      - reliability_tier: "reliable" | "unreliable" | "broken" | "unknown"
-
-    Tiers:
-      - reliable:   success_rate >= 0.6 (or < min_calls total)
-      - unreliable: success_rate 0.2 - 0.6
-      - broken:     success_rate < 0.2
-      - unknown:    fewer than min_calls recorded
-    """
+    """Query tool reliability stats from recent calls in tool_usage_stats."""
     if not tool_names:
         return {}
 
     reputation: dict[str, dict] = {}
 
-    from datetime import datetime, timezone, timedelta
-    from app.db import mongo_store
-
-    if mongo_store.reads_mongo("tool_usage_stats"):
-        try:
-            since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
-            pipeline = [
-                {"$match": {
-                    "tool_name": {"$in": tool_names},
-                    "called_at": {"$gte": since},
-                    "service_source": {"$ne": "probe"},
-                }},
-                {"$group": {
-                    "_id": "$tool_name",
-                    "total_calls": {"$sum": 1},
-                    "success_count": {"$sum": {"$cond": ["$success", 1, 0]}},
-                    "failure_count": {"$sum": {"$cond": ["$success", 0, 1]}},
-                    "avg_latency_ms": {"$avg": "$execution_ms"},
-                }},
-            ]
-            rows = mongo_store.aggregate("tool_usage_stats", pipeline)
-            for r in rows:
-                name = r["_id"]
-                total = int(r.get("total_calls") or 0)
-                successes = int(r.get("success_count") or 0)
-                failures = int(r.get("failure_count") or 0)
-                avg_ms = float(r.get("avg_latency_ms") or 0.0)
-                rate = successes / total if total > 0 else 1.0
-
-                if total < min_calls:
-                    tier = "unknown"
-                elif rate < REPUTATION_BROKEN_THRESHOLD:
-                    tier = "broken"
-                elif rate < REPUTATION_UNRELIABLE_THRESHOLD:
-                    tier = "unreliable"
-                else:
-                    tier = "reliable"
-
-                reputation[name] = {
-                    "total_calls": total,
-                    "success_count": successes,
-                    "failure_count": failures,
-                    "success_rate": round(rate, 3),
-                    "avg_latency_ms": round(avg_ms, 1),
-                    "reliability_tier": tier,
-                }
-        except Exception as e:
-            mongo_store.handle_mongo_read_failure("tool_usage_stats", "get_tool_reputation", e)
-
-    if not reputation and not mongo_store.reads_mongo("tool_usage_stats"):
-        try:
-            with get_db() as db:
-                placeholders = ", ".join(["%s"] * len(tool_names))
-                db.execute(
-                    f"""
-                    SELECT
-                        tool_name,
-                        COUNT(*) AS total_calls,
-                        SUM(CASE WHEN success THEN 1 ELSE 0 END) AS success_count,
-                        SUM(CASE WHEN NOT success THEN 1 ELSE 0 END) AS failure_count,
-                        AVG(execution_ms) AS avg_latency_ms
-                    FROM tool_usage_stats
-                    WHERE tool_name IN ({placeholders})
-                      AND called_at > NOW() - INTERVAL '{int(window_hours)} hours'
-                      AND {PROBE_EXCLUSION_SQL}
-                    GROUP BY tool_name
-                    """,
-                    tool_names,
-                )
-                rows = db.fetchall()
-
-                for row in rows:
-                    name, total, successes, failures, avg_ms = row
-                    total = int(total)
-                    successes = int(successes)
-                    failures = int(failures)
-                    avg_ms = float(avg_ms) if avg_ms else 0.0
-                    rate = successes / total if total > 0 else 1.0
-
-                    if total < min_calls:
-                        tier = "unknown"
-                    elif rate < REPUTATION_BROKEN_THRESHOLD:
-                        tier = "broken"
-                    elif rate < REPUTATION_UNRELIABLE_THRESHOLD:
-                        tier = "unreliable"
-                    else:
-                        tier = "reliable"
-
-                    reputation[name] = {
-                        "total_calls": total,
-                        "success_count": successes,
-                        "failure_count": failures,
-                        "success_rate": round(rate, 3),
-                        "avg_latency_ms": round(avg_ms, 1),
-                        "reliability_tier": tier,
-                    }
-        except Exception as e:
-            logger.warning("[ToolOptimizer] Failed to query tool reputation (non-fatal): %s", e)
-
-    # Fill in tools with no data
-    for name in tool_names:
-        if name not in reputation:
-            reputation[name] = {
-                "total_calls": 0,
-                "success_count": 0,
-                "failure_count": 0,
-                "success_rate": 1.0,
-                "avg_latency_ms": 0.0,
-                "reliability_tier": "unknown",
+    try:
+        since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+        docs = mongo_store.find_docs(
+            "tool_usage_stats",
+            {
+                "tool_name": {"$in": tool_names},
+                "called_at": {"$gte": since},
+                "service_source": {"$ne": "probe"},
             }
+        )
+        stats_by_tool: dict[str, dict] = {}
+        for d in docs:
+            name = d.get("tool_name")
+            if not name:
+                continue
+            if name not in stats_by_tool:
+                stats_by_tool[name] = {"total": 0, "success": 0, "failure": 0, "latencies": []}
+            s = stats_by_tool[name]
+            s["total"] += 1
+            if d.get("success"):
+                s["success"] += 1
+            else:
+                s["failure"] += 1
+            ms = d.get("execution_ms")
+            if ms is not None:
+                s["latencies"].append(float(ms))
+
+        for name, s in stats_by_tool.items():
+            total = s["total"]
+            successes = s["success"]
+            failures = s["failure"]
+            avg_ms = sum(s["latencies"]) / len(s["latencies"]) if s["latencies"] else 0.0
+            rate = successes / total if total > 0 else 1.0
+
+            if total < min_calls:
+                tier = "unknown"
+            elif rate < REPUTATION_BROKEN_THRESHOLD:
+                tier = "broken"
+            elif rate < REPUTATION_UNRELIABLE_THRESHOLD:
+                tier = "unreliable"
+            else:
+                tier = "reliable"
+
+            reputation[name] = {
+                "total_calls": total,
+                "success_count": successes,
+                "failure_count": failures,
+                "success_rate": round(rate, 3),
+                "avg_latency_ms": round(avg_ms, 1),
+                "reliability_tier": tier,
+            }
+    except Exception as e:
+        logger.warning("[ToolOptimizer] Failed to get tool reputation: %s", e)
 
     return reputation
 
 
-def get_tool_success_annotations(
-    tool_names: list[str],
-    window_hours: int = REPUTATION_WINDOW_HOURS,
-    min_calls: int = REPUTATION_MIN_CALLS,
-) -> dict[str, str]:
-    """Return per-tool annotation strings for use in tool selector prompts.
+def format_reputation_prompt_additions(
+    reputation: dict[str, dict],
+    tool_names: Optional[list[str]] = None,
+) -> str:
+    """Format reputation warnings for injection into agent system prompts."""
+    if not reputation:
+        return ""
 
-    Returns a dict mapping tool_name -> annotation string like:
-      "get_market_data" -> "[✅ 95% success, 120ms avg]"
-      "scrape_url"      -> "[⚠️ 45% success, 2300ms avg]"
-      "broken_tool"     -> "[🔴 10% success, 800ms avg]"
+    warnings = []
+    target_tools = tool_names if tool_names is not None else list(reputation.keys())
 
-    Tools with fewer than min_calls get no annotation (empty string).
-    """
-    reputation = get_tool_reputation(tool_names, window_hours, min_calls)
-    annotations: dict[str, str] = {}
-
-    for name, stats in reputation.items():
-        if stats["reliability_tier"] == "unknown":
-            annotations[name] = ""
+    for name in target_tools:
+        rep = reputation.get(name)
+        if not rep:
             continue
+        tier = rep.get("reliability_tier")
+        rate = rep.get("success_rate", 1.0)
+        pct = int(rate * 100)
 
-        pct = int(stats["success_rate"] * 100)
-        avg_ms = int(stats["avg_latency_ms"])
+        if tier == "broken":
+            warnings.append(
+                f"- WARNING: `{name}` is currently unreliable ({pct}% success rate). "
+                f"Prefer alternative tools or cross-verify results."
+            )
+        elif tier == "unreliable":
+            warnings.append(
+                f"- CAUTION: `{name}` has a lower success rate ({pct}%). "
+                f"Be prepared for potential errors."
+            )
 
-        if stats["reliability_tier"] == "broken":
-            annotations[name] = f"[🔴 {pct}% success, {avg_ms}ms avg]"
-        elif stats["reliability_tier"] == "unreliable":
-            annotations[name] = f"[⚠️ {pct}% success, {avg_ms}ms avg]"
-        else:
-            annotations[name] = f"[✅ {pct}% success, {avg_ms}ms avg]"
+    if warnings:
+        return "\n\n## Tool Reliability Notice\n" + "\n".join(warnings)
+    return ""
 
-    return annotations
 
 async def optimize_agent_tools(
     agent_name: str,
-    initial_tools: list[dict],
+    initial_tools: list[Any],
     system_prompt: str,
-) -> tuple[list[dict], str]:
-    """
-    Optimizes the toolset for an agent based on historical tool usage.
-    
-    1. Removes tools that are marked as 'pruned' (unused for 4+ consecutive runs).
-    2. Identifies tools marked as 'highlighted' (unused for 2-3 consecutive runs).
-    3. Injects a guidance message into the system prompt encouraging the agent
-       to consider using the highlighted tools.
-       
-    Returns (optimized_tools, updated_system_prompt).
-    """
+) -> tuple[list[Any], str]:
+    """Prunes unused tools and injects highlight prompts for this agent."""
     if not initial_tools:
         return initial_tools, system_prompt
 
-    # Extract tool names from initial_tools
     tool_map = {}
     for t in initial_tools:
-        name = None
         if isinstance(t, dict):
             name = t.get("name") or t.get("function", {}).get("name")
-        elif isinstance(t, str):
-            name = t
+        else:
+            name = str(t)
         if name:
-            clean_name = name
-            clean_name = strip_mcp_prefix(clean_name)
+            clean_name = strip_mcp_prefix(name)
             tool_map[clean_name] = t
-
-    if not tool_map:
-        return initial_tools, system_prompt
 
     pruned_names = set()
     highlighted_names = []
 
     try:
-        from app.db import mongo_store
-        db_stats = {}
-        if mongo_store.reads_mongo("agent_tool_optimization"):
-            try:
-                docs = mongo_store.find_docs(
-                    "agent_tool_optimization",
-                    {"agent_name": agent_name, "tool_name": {"$in": list(tool_map.keys())}}
-                )
-                db_stats = {d["tool_name"]: (d.get("status", "active"), d.get("unused_count", 0)) for d in docs}
-            except Exception as me:
-                mongo_store.handle_mongo_read_failure("agent_tool_optimization", "optimize_agent_tools read", me)
+        docs = mongo_store.find_docs(
+            "agent_tool_optimization",
+            {"agent_name": agent_name, "tool_name": {"$in": list(tool_map.keys())}}
+        )
+        db_stats = {d["tool_name"]: (d.get("status", "active"), d.get("unused_count", 0)) for d in docs}
 
-        if not db_stats and not mongo_store.reads_mongo("agent_tool_optimization"):
-            with get_db() as db:
-                placeholders = ", ".join(["%s"] * len(tool_map))
-                query = f"""
-                    SELECT tool_name, status, unused_count
-                    FROM agent_tool_optimization
-                    WHERE agent_name = %s AND tool_name IN ({placeholders})
-                """
-                params = [agent_name] + list(tool_map.keys())
-                db.execute(query, params)
-                rows = db.fetchall()
-                db_stats = {row[0]: (row[1], row[2]) for row in rows}
-
-                for tool_name in tool_map.keys():
-                    if tool_name not in db_stats:
-                        mongo_store.upsert_doc('agent_tool_optimization', {'agent_name': agent_name, 'tool_name': tool_name}, {'agent_name': agent_name, 'tool_name': tool_name, 'unused_count': 0, 'status': 'active'}, insert_only=True)
-
-        # Process status for each tool
         for tool_name in tool_map.keys():
             if tool_name in db_stats:
                 status, unused_count = db_stats[tool_name]
@@ -279,17 +163,16 @@ async def optimize_agent_tools(
                         pruned_names.add(tool_name)
                 elif status == "highlighted":
                     highlighted_names.append(tool_name)
-            elif mongo_store.writes_mongo("agent_tool_optimization"):
-                mongo_store.upsert_doc(
+            else:
+                mongo_store.update_docs(
                     "agent_tool_optimization",
                     {"agent_name": agent_name, "tool_name": tool_name},
-                    {"agent_name": agent_name, "tool_name": tool_name, "unused_count": 0, "status": "active"},
-                    insert_only=True,
+                    {"$setOnInsert": {"agent_name": agent_name, "tool_name": tool_name, "unused_count": 0, "status": "active"}},
+                    upsert=True,
                 )
 
     except Exception as e:
-        logger.warning("[ToolOptimizer] Failed to optimize tools via DB (non-fatal): %s", e)
-        # Fall back to returning unmodified tools and prompt
+        logger.warning("[ToolOptimizer] Failed to optimize tools via DB: %s", e)
         return initial_tools, system_prompt
 
     # Filter out pruned tools
@@ -297,101 +180,44 @@ async def optimize_agent_tools(
     for t in initial_tools:
         name = (t.get("name") or t.get("function", {}).get("name")) if isinstance(t, dict) else str(t)
         if name:
-            clean_name = name
-            clean_name = strip_mcp_prefix(clean_name)
-            if clean_name not in pruned_names:
-                optimized_tools.append(t)
-        else:
-            optimized_tools.append(t)
+            clean_name = strip_mcp_prefix(name)
+            if clean_name in pruned_names:
+                continue
+        optimized_tools.append(t)
 
-    # ── SAFETY: Never prune below minimum floor ──
-    # If pruning would remove ALL (or nearly all) tools, keep the least-inactive ones.
+    # Floor guard
     if len(optimized_tools) < MIN_TOOLS_FLOOR and len(initial_tools) >= MIN_TOOLS_FLOOR:
         logger.warning(
-            "[ToolOptimizer] FLOOR ENFORCED: Pruning would reduce %s to %d tools (floor=%d). "
-            "Keeping all %d tools as active.",
-            agent_name, len(optimized_tools), MIN_TOOLS_FLOOR, len(initial_tools),
+            "[ToolOptimizer] Pruning would leave agent %s with %d tools (floor=%d). Restoring all.",
+            agent_name,
+            len(optimized_tools),
+            MIN_TOOLS_FLOOR,
         )
         optimized_tools = list(initial_tools)
-        pruned_names.clear()  # Don't report pruned since we reversed it
+        pruned_names = set()
 
-    # Inject nudge/guidance if there are highlighted tools
-    updated_prompt = system_prompt
+    # Modify system prompt if needed
+    enhanced_prompt = system_prompt
     if highlighted_names:
-        highlighted_str = ", ".join(highlighted_names)
-        nudge_message = (
-            f"\n\n### ACTION BIAS - UNDERUSED TOOLS WARNING:\n"
-            f"The following tools are currently available to you but have NOT been used in your recent runs: [{highlighted_str}].\n"
-            f"Before writing your final answer, you MUST review this list and ask yourself: "
-            f"'Does my current analysis have a gap that one of these tools would fill?' "
-            f"If yes, you should call it now. If no, you must briefly state in your thoughts/reasoning why it's not relevant to this task."
-        )
-        updated_prompt += nudge_message
-        logger.info(
-            "[ToolOptimizer] Highlighted tools %s for agent %s in prompt nudge",
-            highlighted_names,
-            agent_name,
-        )
+        highlight_msg = f"\n\n[RECOMMENDED TOOLS]: Consider utilizing: {', '.join(highlighted_names)}"
+        enhanced_prompt += highlight_msg
 
-    if pruned_names:
-        logger.info(
-            "[ToolOptimizer] Pruned %d tools %s for agent %s due to inactivity",
-            len(pruned_names),
-            list(pruned_names),
-            agent_name,
-        )
-
-    # ── Tool Reputation Warnings ──
-    # Query recent success/failure rates and inject warnings for unreliable tools.
-    # Tools are NEVER removed — agents get warnings and decide based on context.
-    remaining_tool_names = [
-        (t.get("name") or t.get("function", {}).get("name")) if isinstance(t, dict) else str(t)
-        for t in optimized_tools
-    ]
-    remaining_tool_names = [n for n in remaining_tool_names if n]
-
-    if remaining_tool_names:
-        reputation = get_tool_reputation(remaining_tool_names)
-        unreliable_warnings = []
-        broken_warnings = []
-
-        for tool_name, stats in reputation.items():
-            tier = stats["reliability_tier"]
-            if tier == "unreliable":
-                pct = int(stats["success_rate"] * 100)
-                fails = stats["failure_count"]
-                total = stats["total_calls"]
-                unreliable_warnings.append(
-                    f"⚠️ {tool_name}: {pct}% success rate "
-                    f"({fails}/{total} calls failed in last {REPUTATION_WINDOW_HOURS}h). "
-                    f"Consider alternative tools if available."
-                )
-            elif tier == "broken":
-                pct = int(stats["success_rate"] * 100)
-                fails = stats["failure_count"]
-                total = stats["total_calls"]
-                broken_warnings.append(
-                    f"🔴 {tool_name}: {pct}% success rate "
-                    f"({fails}/{total} calls failed in last {REPUTATION_WINDOW_HOURS}h). "
-                    f"This tool is highly unreliable — only use as a last resort."
-                )
-
-        if unreliable_warnings or broken_warnings:
-            reputation_block = "\n\n### TOOL RELIABILITY WARNINGS:\n"
-            reputation_block += "\n".join(broken_warnings + unreliable_warnings)
-            reputation_block += (
-                "\n\nUse this information to prioritize more reliable tools. "
-                "Unreliable tools may still work — use your judgement based on the task."
+    try:
+        active_clean_names = [
+            strip_mcp_prefix(
+                (t.get("name") or t.get("function", {}).get("name"))
+                if isinstance(t, dict) else str(t)
             )
-            updated_prompt += reputation_block
-            logger.info(
-                "[ToolOptimizer] Injected reputation warnings for %s: %d unreliable, %d broken",
-                agent_name,
-                len(unreliable_warnings),
-                len(broken_warnings),
-            )
+            for t in optimized_tools
+        ]
+        reputation = get_tool_reputation(active_clean_names)
+        rep_prompt = format_reputation_prompt_additions(reputation, active_clean_names)
+        if rep_prompt:
+            enhanced_prompt += rep_prompt
+    except Exception as rep_err:
+        logger.debug("[ToolOptimizer] Failed to append reputation: %s", rep_err)
 
-    return optimized_tools, updated_prompt
+    return optimized_tools, enhanced_prompt
 
 
 async def record_tool_optimization_usage(
@@ -399,18 +225,10 @@ async def record_tool_optimization_usage(
     offered_tools: list[Any],
     used_tool_names: list[str],
 ) -> None:
-    """
-    Updates the optimization stats for tools offered to an agent in a run.
-    
-    - If a tool was used, resets its unused_count to 0 and sets status to 'active'.
-    - If a tool was offered but NOT used, increments unused_count.
-      * If unused_count >= 2, status transitions to 'highlighted'.
-      * If unused_count >= 4, status transitions to 'pruned'.
-    """
+    """Updates the unused counters and statuses for an agent's offered tools."""
     if not offered_tools:
         return
 
-    # Normalize offered tool names
     offered_names = []
     for t in offered_tools:
         if isinstance(t, dict):
@@ -418,48 +236,22 @@ async def record_tool_optimization_usage(
         else:
             name = str(t)
         if name:
-            clean_name = name
-            clean_name = strip_mcp_prefix(clean_name)
+            clean_name = strip_mcp_prefix(name)
             offered_names.append(clean_name)
 
     if not offered_names:
         return
 
-    # Clean/normalize used tool names — strip ALL known MCP prefixes
-    # so Prism-routed tool calls match the canonical offered tool names.
-    cleaned_used_names = set()
-    for name in used_tool_names:
-        clean_name = name
-        clean_name = strip_mcp_prefix(clean_name)
-        cleaned_used_names.add(clean_name)
+    cleaned_used_names = {strip_mcp_prefix(u) for u in used_tool_names if u}
 
     try:
-        from app.db import mongo_store
-        db_stats = {}
-        if mongo_store.reads_mongo("agent_tool_optimization"):
-            try:
-                docs = mongo_store.find_docs(
-                    "agent_tool_optimization",
-                    {"agent_name": agent_name, "tool_name": {"$in": offered_names}}
-                )
-                db_stats = {d["tool_name"]: (d.get("unused_count", 0), d.get("status", "active")) for d in docs}
-            except Exception as me:
-                mongo_store.handle_mongo_read_failure("agent_tool_optimization", "record_tool_optimization_usage read", me)
+        docs = mongo_store.find_docs(
+            "agent_tool_optimization",
+            {"agent_name": agent_name, "tool_name": {"$in": offered_names}}
+        )
+        db_stats = {d["tool_name"]: (d.get("unused_count", 0), d.get("status", "active")) for d in docs}
 
-        if not db_stats and not mongo_store.reads_mongo("agent_tool_optimization"):
-            with get_db() as db:
-                placeholders = ", ".join(["%s"] * len(offered_names))
-                query = f"""
-                    SELECT tool_name, unused_count, status
-                    FROM agent_tool_optimization
-                    WHERE agent_name = %s AND tool_name IN ({placeholders})
-                """
-                params = [agent_name] + offered_names
-                db.execute(query, params)
-                rows = db.fetchall()
-                db_stats = {row[0]: (row[1], row[2]) for row in rows}
-
-        from datetime import datetime, timezone
+        now_utc = datetime.now(timezone.utc)
         for tool_name in offered_names:
             if tool_name in cleaned_used_names:
                 new_unused_count = 0
@@ -474,22 +266,18 @@ async def record_tool_optimization_usage(
                 else:
                     new_status = old_status
 
-            if mongo_store.writes_pg("agent_tool_optimization"):
-                with get_db() as db:
-                    mongo_store.update_docs('agent_tool_optimization', {'agent_name': agent_name, 'tool_name': tool_name}, {'$set': {'unused_count': new_unused_count, 'status': new_status, 'updated_at': datetime.now(timezone.utc)}}, upsert=True)
-
-            if mongo_store.writes_mongo("agent_tool_optimization"):
-                mongo_store.upsert_doc(
-                    "agent_tool_optimization",
-                    {"agent_name": agent_name, "tool_name": tool_name},
-                    {
-                        "agent_name": agent_name,
-                        "tool_name": tool_name,
-                        "unused_count": new_unused_count,
-                        "status": new_status,
-                        "updated_at": datetime.now(timezone.utc),
-                    }
-                )
+            mongo_store.update_docs(
+                "agent_tool_optimization",
+                {"agent_name": agent_name, "tool_name": tool_name},
+                {"$set": {
+                    "agent_name": agent_name,
+                    "tool_name": tool_name,
+                    "unused_count": new_unused_count,
+                    "status": new_status,
+                    "updated_at": now_utc,
+                }},
+                upsert=True,
+            )
 
         logger.info(
             "[ToolOptimizer] Updated tool optimization stats for agent %s. Offered: %d, Used: %d",
@@ -499,7 +287,7 @@ async def record_tool_optimization_usage(
         )
 
     except Exception as e:
-        logger.warning("[ToolOptimizer] Failed to update tool optimization stats in DB: %s", e)
+        logger.warning("[ToolOptimizer] Failed to update tool optimization stats: %s", e)
 
 
 async def record_run_usage_from_db(
@@ -507,39 +295,21 @@ async def record_run_usage_from_db(
     cycle_id: str,
     offered_tools: list[Any],
 ) -> None:
-    """
-    Finds all tools executed by an agent in a specific cycle,
-    then updates their optimization counters.
-    """
+    """Finds all tools executed by an agent in a specific cycle, then updates optimization counters."""
     if not cycle_id:
-        # Fallback to local scorecard-based update or do nothing if cycle_id is missing
         return
 
     try:
-        from app.db import mongo_store
-        if mongo_store.reads_mongo("tool_usage_stats"):
-            used_tool_names = mongo_store.distinct_values(
-                "tool_usage_stats", "tool_name", {"agent_name": agent_name, "cycle_id": cycle_id}
-            )
-            await record_tool_optimization_usage(agent_name, offered_tools, used_tool_names)
-            return
-
-        with get_db() as db:
-            db.execute(
-                """
-                SELECT DISTINCT tool_name 
-                FROM tool_usage_stats 
-                WHERE agent_name = %s AND cycle_id = %s
-                """,
-                (agent_name, cycle_id)
-            )
-            rows = db.fetchall()
-            used_tool_names = [row[0] for row in rows]
-            
-            await record_tool_optimization_usage(agent_name, offered_tools, used_tool_names)
+        docs = mongo_store.find_docs(
+            "tool_usage_stats",
+            {"agent_name": agent_name, "cycle_id": cycle_id},
+            projection={"tool_name": 1, "_id": 0}
+        )
+        used_tool_names = list({d.get("tool_name") for d in docs if d.get("tool_name")})
+        await record_tool_optimization_usage(agent_name, offered_tools, used_tool_names)
     except Exception as e:
         logger.warning(
-            "[ToolOptimizer] Failed to query tool execution stats from DB for %s in cycle %s: %s",
+            "[ToolOptimizer] Failed to query tool execution stats for %s in cycle %s: %s",
             agent_name,
             cycle_id,
             e,
@@ -547,37 +317,13 @@ async def record_run_usage_from_db(
 
 
 def reset_all_pruned() -> int:
-    """Reset ALL pruned tools back to 'active' state.
-
-    Call this on boot to clear zombie state where agents
-    had all tools pruned and were sent to Prism with tools=0.
-
-    Returns the number of rows reset.
-    """
+    """Reset ALL pruned tools back to 'active' state in MongoDB."""
     try:
-        from app.db import mongo_store
-        count = 0
-        if mongo_store.reads_mongo("agent_tool_optimization"):
-            try:
-                db_doc = mongo_store.get_doc_db()
-                res = db_doc["agent_tool_optimization"].update_many(
-                    {"status": "pruned"},
-                    {"$set": {"status": "active", "unused_count": 0}}
-                )
-                count = res.modified_count
-            except Exception as me:
-                mongo_store.handle_mongo_read_failure("agent_tool_optimization", "reset_all_pruned", me)
-
-        if mongo_store.writes_pg("agent_tool_optimization"):
-            with get_db() as db:
-                db.execute("SELECT COUNT(*) FROM agent_tool_optimization WHERE status = 'pruned'")
-                row = db.fetchone()
-                pg_count = row[0] if row else 0
-                if pg_count > 0:
-                    mongo_store.update_docs('agent_tool_optimization', {'status': 'pruned'}, {'$set': {'status': 'active', 'unused_count': 0}})
-                if not count:
-                    count = pg_count
-
+        count = mongo_store.update_docs(
+            "agent_tool_optimization",
+            {"status": "pruned"},
+            {"$set": {"status": "active", "unused_count": 0}}
+        )
         logger.info("[ToolOptimizer] Reset %d pruned tools → 'active'", count)
         return count
     except Exception as e:
@@ -589,12 +335,7 @@ async def mark_tools_as_used_by_prism(
     agent_name: str,
     offered_tools: list[Any],
 ) -> None:
-    """Mark all offered tools as 'used' after a successful Prism agent run.
-
-    Prism handles tool execution internally, so we can't know which specific
-    tools were called. To prevent the ToolOptimizer from pruning tools that
-    are actually being used by Prism, we reset all offered tools to active.
-    """
+    """Mark all offered tools as 'used' after a successful Prism agent run."""
     if not offered_tools:
         return
 
@@ -605,37 +346,30 @@ async def mark_tools_as_used_by_prism(
         else:
             name = str(t)
         if name:
-            clean_name = name
-            clean_name = strip_mcp_prefix(clean_name)
+            clean_name = strip_mcp_prefix(name)
             offered_names.append(clean_name)
 
     if not offered_names:
         return
 
     try:
-        from app.db import mongo_store
-        from datetime import datetime, timezone
-        if mongo_store.writes_pg("agent_tool_optimization"):
-            with get_db() as db:
-                for tool_name in offered_names:
-                    mongo_store.update_docs('agent_tool_optimization', {'agent_name': agent_name, 'tool_name': tool_name}, {'$set': {'unused_count': 0, 'status': 'active', 'updated_at': datetime.now(timezone.utc)}}, upsert=True)
-        if mongo_store.writes_mongo("agent_tool_optimization"):
-            for tool_name in offered_names:
-                mongo_store.upsert_doc(
-                    "agent_tool_optimization",
-                    {"agent_name": agent_name, "tool_name": tool_name},
-                    {
-                        "agent_name": agent_name,
-                        "tool_name": tool_name,
-                        "unused_count": 0,
-                        "status": "active",
-                        "updated_at": datetime.now(timezone.utc),
-                    }
-                )
+        now_utc = datetime.now(timezone.utc)
+        for tool_name in offered_names:
+            mongo_store.update_docs(
+                "agent_tool_optimization",
+                {"agent_name": agent_name, "tool_name": tool_name},
+                {"$set": {
+                    "agent_name": agent_name,
+                    "tool_name": tool_name,
+                    "unused_count": 0,
+                    "status": "active",
+                    "updated_at": now_utc,
+                }},
+                upsert=True,
+            )
         logger.info(
             "[ToolOptimizer] Marked %d tools as active for Prism-routed agent %s",
             len(offered_names), agent_name,
         )
     except Exception as e:
-        logger.warning("[ToolOptimizer] Failed to mark Prism tools as active for %s: %s", agent_name, e)
-
+        logger.warning("[ToolOptimizer] Failed to mark Prism tools as active: %s", e)

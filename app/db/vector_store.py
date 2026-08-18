@@ -173,12 +173,11 @@ class VectorStore:
 
     def _mongo_store(self, source_table, source_id, ticker, content_preview,
                      embedding, eid, now) -> None:
-        from bson import Binary
+        from app.db import mongo_store
 
-        coll = self._mongo_coll()
-        # Same one-per-source semantics as the PG path.
-        coll.delete_many({"source_table": source_table, "source_id": source_id})
-        coll.update_one(
+        mongo_store.delete_docs("embeddings", {"source_table": source_table, "source_id": source_id})
+        mongo_store.update_docs(
+            "embeddings",
             {"id": eid},
             {"$set": {
                 "id": eid,
@@ -186,7 +185,7 @@ class VectorStore:
                 "source_id": source_id,
                 "ticker": ticker,
                 "content_preview": content_preview[:500],
-                "embedding": Binary(_pack_vec(embedding)),
+                "embedding": _pack_vec(embedding),
                 "dim": len(embedding),
                 "created_at": now,
             }},

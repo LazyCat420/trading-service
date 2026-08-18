@@ -1233,3 +1233,23 @@ class TestMockTradingCycleMongoE2E:
         meta_res = get_ticker_meta(["AAPL"])
         assert "AAPL" in meta_res
         assert meta_res["AAPL"]["sector"] == "Technology"
+
+        # 40. Tool Optimizer Dynamic Pruning & Reputation in MongoDB
+        from app.services.tool_optimizer import (
+            get_tool_reputation,
+            optimize_agent_tools,
+            record_tool_optimization_usage,
+            reset_all_pruned,
+        )
+
+        rep = get_tool_reputation(["get_finviz_fundamentals"])
+        assert "get_finviz_fundamentals" in rep
+        assert rep["get_finviz_fundamentals"]["total_calls"] >= 1
+
+        tools_list = [{"name": "get_finviz_fundamentals"}, {"name": "get_sec_filings"}, {"name": "fetch_news"}]
+        opt_tools, opt_prompt = await optimize_agent_tools("v3_junior_analyst", tools_list, "You are an analyst.")
+        assert len(opt_tools) >= 2
+
+        await record_tool_optimization_usage("v3_junior_analyst", tools_list, ["get_finviz_fundamentals"])
+        reset_count = reset_all_pruned()
+        assert reset_count >= 0
