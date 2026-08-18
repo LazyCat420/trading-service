@@ -30,7 +30,6 @@ from ..contracts.retrieval import (
 from ..contracts.evidence import EvidencePacket
 
 # Import real queries
-from app.db.connection import get_db
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
@@ -49,226 +48,190 @@ async def build_evidence_packet(
         documents: List[NormalizedDocument] = []
         fund_dict = {}
         tech_dict = {}
-        with get_db() as db:
-            # 1. Fetch & Normalize Data (Mocking RetrievalContext pipeline integration here via Direct DB fallback)
-            # Ideally, RetrievalContext is provided by graph/orchestrator. We backfill if it's empty.
+        from app.db import mongo_store, mongo_query
 
-            # -- 1.1 Structural facts (Prices, fundamentals)
-            try:
-                price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['date', 'close'], sort=[('date', -1)])
-                if price_row:
-                    d = normalize_structured_row(
-                        "price_history",
-                        "price",
-                        f"{ticker}_{price_row[0]}",
-                        price_row[1],
-                        price_row[0]
-                        if isinstance(price_row[0], datetime)
-                        else datetime.fromisoformat(str(price_row[0])),
-                    )
-                    documents.append(d)
-            except Exception as e:
-                logger.warning(f"[PACKET] Failed to fetch prices for {ticker}: {e}")
-
-            try:
-                fund_row = db.execute(
-                    "SELECT * FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
-                if fund_row:
-                    cols = [
-                        d[0]
-                        for d in db.execute(
-                            "SELECT * FROM fundamentals LIMIT 0"
-                        ).description
-                    ]
-                    fund_dict_temp = dict(zip(cols, fund_row))
-                    fund_dict.update(fund_dict_temp)
-                    fund_date = fund_dict_temp.get(
-                        "snapshot_date", datetime.now(timezone.utc)
-                    )
-                    if not isinstance(fund_date, datetime):
-                        fund_date = datetime.fromisoformat(str(fund_date))
-
-                    for key, val in fund_dict_temp.items():
-                        if (
-                            key not in ("ticker", "snapshot_date", "source")
-                            and val is not None
-                        ):
-                            d = normalize_structured_row(
-                                "fundamentals",
-                                key,
-                                f"{ticker}_fund_{key}",
-                                val,
-                                fund_date,
-                            )
-                            documents.append(d)
-            except Exception as e:
-                logger.warning(
-                    f"[PACKET] Failed to fetch fundamentals for {ticker}: {e}"
+        # 1. Fetch & Normalize Data
+        # -- 1.1 Structural facts (Prices, fundamentals)
+        try:
+            price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['date', 'close'], sort=[('date', -1)])
+            if price_row:
+                d = normalize_structured_row(
+                    "price_history",
+                    "price",
+                    f"{ticker}_{price_row[0]}",
+                    price_row[1],
+                    price_row[0]
+                    if isinstance(price_row[0], datetime)
+                    else datetime.fromisoformat(str(price_row[0])),
                 )
+                documents.append(d)
+        except Exception as e:
+            logger.warning(f"[PACKET] Failed to fetch prices for {ticker}: {e}")
 
-            try:
-                tech_row = db.execute(
-                    "SELECT * FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
-                if tech_row:
-                    cols = [
-                        d[0]
-                        for d in db.execute(
-                            "SELECT * FROM technicals LIMIT 0"
-                        ).description
-                    ]
-                    tech_dict_temp = dict(zip(cols, tech_row))
-                    tech_dict.update(tech_dict_temp)
-                    tech_date = tech_dict_temp.get("date", datetime.now(timezone.utc))
-                    if not isinstance(tech_date, datetime):
-                        tech_date = datetime.fromisoformat(str(tech_date))
+        try:
+            fund_docs = mongo_store.find_docs(
+                "fundamentals",
+                {"ticker": ticker},
+                sort=[("snapshot_date", -1)],
+                limit=1,
+            )
+            if fund_docs:
+                fund_dict_temp = fund_docs[0]
+                fund_dict.update(fund_dict_temp)
+                fund_date = fund_dict_temp.get(
+                    "snapshot_date", datetime.now(timezone.utc)
+                )
+                if not isinstance(fund_date, datetime):
+                    fund_date = datetime.fromisoformat(str(fund_date))
 
-                    for key, val in tech_dict_temp.items():
-                        if key not in ("ticker", "date") and val is not None:
-                            d = normalize_structured_row(
-                                "technical_data",
-                                key,
-                                f"{ticker}_tech_{key}",
-                                val,
-                                tech_date,
-                            )
-                            documents.append(d)
-            except Exception as e:
-                logger.warning(f"[PACKET] Failed to fetch technicals for {ticker}: {e}")
-
-            try:
-                # Same placeholder filter as finance_tools.get_market_data: an
-                # all-NULL row (known ingestion defect) must not consume the
-                # 4-row evidence window and render the newest quarter as N/A.
-                fin_rows = db.execute(
-                    "SELECT * FROM financial_history WHERE ticker = %s"
-                    " AND COALESCE(revenue, gross_profit, operating_income,"
-                    "              net_income, eps, free_cash_flow) IS NOT NULL"
-                    " ORDER BY period_end DESC LIMIT 4",
-                    [ticker],
-                ).fetchall()
-                if fin_rows:
-                    cols = [
-                        d[0]
-                        for d in db.execute(
-                            "SELECT * FROM financial_history LIMIT 0"
-                        ).description
-                    ]
-                    for i, row in enumerate(fin_rows):
-                        fin_dict = dict(zip(cols, row))
-                        fin_date = fin_dict.get(
-                            "period_end", datetime.now(timezone.utc)
+                for key, val in fund_dict_temp.items():
+                    if (
+                        key not in ("_id", "ticker", "snapshot_date", "source")
+                        and val is not None
+                    ):
+                        d = normalize_structured_row(
+                            "fundamentals",
+                            key,
+                            f"{ticker}_fund_{key}",
+                            val,
+                            fund_date,
                         )
-                        if not isinstance(fin_date, datetime):
-                            fin_date = datetime.fromisoformat(str(fin_date))
+                        documents.append(d)
+        except Exception as e:
+            logger.warning(
+                f"[PACKET] Failed to fetch fundamentals for {ticker}: {e}"
+            )
 
-                        for key, val in fin_dict.items():
-                            if (
-                                key not in ("ticker", "period_end", "period_type")
-                                and val is not None
-                            ):
-                                d = normalize_structured_row(
-                                    "fundamentals",
-                                    key,
-                                    f"{ticker}_fin_{i}_{key}",
-                                    val,
-                                    fin_date,
-                                )
-                                documents.append(d)
-            except Exception as e:
-                logger.warning(f"[PACKET] Failed to fetch financials for {ticker}: {e}")
+        try:
+            tech_docs = mongo_store.find_docs(
+                "technicals",
+                {"ticker": ticker},
+                sort=[("date", -1)],
+                limit=1,
+            )
+            if tech_docs:
+                tech_dict_temp = tech_docs[0]
+                tech_dict.update(tech_dict_temp)
+                tech_date = tech_dict_temp.get("date", datetime.now(timezone.utc))
+                if not isinstance(tech_date, datetime):
+                    tech_date = datetime.fromisoformat(str(tech_date))
 
-            # -- 1.2 Unstructured facts (News, Reddit, YouTube)
-            try:
-                # `llm_summary` has had no writer since 8528bb0 ("rip out V2
-                # python processors") and is NULL for all 37,808 rows. Its
-                # replacement is `grounded_facts`. Selecting it here was not
-                # merely dead — it was actively wrong:
-                #
-                #   c not in ("llm_summary")
-                #
-                # is a SUBSTRING test, because parentheses without a comma are
-                # not a tuple. "summary" IS a substring of "llm_summary", so
-                # BOTH columns were rewritten to the same expression and the
-                # query asked for `best_summary` twice while never selecting
-                # plain `summary`:
-                #
-                #   SELECT id, title, publisher, url, published_at,
-                #          COALESCE(llm_summary, summary) as best_summary,
-                #          COALESCE(llm_summary, summary) as best_summary
-                #
-                # It survived only because llm_summary is always NULL, which
-                # makes best_summary identical to summary. Populate that column
-                # and the evidence packet's `summary` silently becomes
-                # something else.
-                cols = [
-                    "id",
-                    "title",
-                    "publisher",
-                    "url",
-                    "published_at",
-                    "summary",
-                ]
-                q_cols = ", ".join(cols)
-                news_rows = db.execute(
-                    f"SELECT {q_cols} FROM news_articles WHERE ticker = %s ORDER BY published_at DESC LIMIT 5",
-                    [ticker],
-                ).fetchall()
-                for r in news_rows:
-                    doc = normalize_news(r, cols)
-                    if doc:
-                        documents.append(doc)
-            except Exception as e:
-                logger.warning(f"[PACKET] Failed to fetch news for {ticker}: {e}")
+                for key, val in tech_dict_temp.items():
+                    if key not in ("_id", "ticker", "date") and val is not None:
+                        d = normalize_structured_row(
+                            "technical_data",
+                            key,
+                            f"{ticker}_tech_{key}",
+                            val,
+                            tech_date,
+                        )
+                        documents.append(d)
+        except Exception as e:
+            logger.warning(f"[PACKET] Failed to fetch technicals for {ticker}: {e}")
 
-            try:
-                cols = [
-                    "id",
-                    "ticker",
-                    "subreddit",
-                    "title",
-                    "body",
-                    "score",
-                    "comment_count",
-                    "created_utc",
-                ]
-                q_cols = ",".join(cols)
-                reddit_rows = db.execute(
-                    f"SELECT {q_cols} FROM reddit_posts WHERE ticker = %s ORDER BY created_utc DESC LIMIT 5",
-                    [ticker],
-                ).fetchall()
-                for r in reddit_rows:
-                    doc = normalize_reddit(r, cols)
-                    if doc:
-                        documents.append(doc)
-            except Exception as e:
-                logger.warning(f"[PACKET] Failed to fetch reddit for {ticker}: {e}")
+        try:
+            fin_docs = mongo_store.find_docs(
+                "financial_history",
+                {"ticker": ticker},
+                sort=[("period_end", -1)],
+                limit=4,
+            )
+            for i, fin_dict in enumerate(fin_docs):
+                fin_date = fin_dict.get(
+                    "period_end", datetime.now(timezone.utc)
+                )
+                if not isinstance(fin_date, datetime):
+                    fin_date = datetime.fromisoformat(str(fin_date))
 
-            try:
-                cols = [
-                    "video_id",
-                    "ticker",
-                    "title",
-                    "channel",
-                    "raw_transcript",
-                    "published_at",
-                    "summary",
-                    "tickers_mentioned",
-                ]
-                q_cols = ",".join(cols)
-                yt_rows = db.execute(
-                    f"SELECT {q_cols} FROM youtube_transcripts WHERE ticker = %s ORDER BY published_at DESC LIMIT 5",
-                    [ticker],
-                ).fetchall()
-                for r in yt_rows:
-                    doc = normalize_youtube(r, cols)
-                    if doc:
-                        documents.append(doc)
-            except Exception as e:
-                logger.warning(f"[PACKET] Failed to fetch youtube for {ticker}: {e}")
+                for key, val in fin_dict.items():
+                    if (
+                        key not in ("_id", "ticker", "period_end", "period_type")
+                        and val is not None
+                    ):
+                        d = normalize_structured_row(
+                            "fundamentals",
+                            key,
+                            f"{ticker}_fin_{i}_{key}",
+                            val,
+                            fin_date,
+                        )
+                        documents.append(d)
+        except Exception as e:
+            logger.warning(f"[PACKET] Failed to fetch financials for {ticker}: {e}")
+
+        # -- 1.2 Unstructured facts (News, Reddit, YouTube)
+        try:
+            cols = [
+                "id",
+                "title",
+                "publisher",
+                "url",
+                "published_at",
+                "summary",
+            ]
+            news_docs = mongo_store.find_docs(
+                "news_articles",
+                {"ticker": ticker},
+                sort=[("published_at", -1)],
+                limit=5,
+            )
+            for doc_dict in news_docs:
+                r = [doc_dict.get(c) for c in cols]
+                doc = normalize_news(r, cols)
+                if doc:
+                    documents.append(doc)
+        except Exception as e:
+            logger.warning(f"[PACKET] Failed to fetch news for {ticker}: {e}")
+
+        try:
+            cols = [
+                "id",
+                "ticker",
+                "subreddit",
+                "title",
+                "body",
+                "score",
+                "comment_count",
+                "created_utc",
+            ]
+            reddit_docs = mongo_store.find_docs(
+                "reddit_posts",
+                {"ticker": ticker},
+                sort=[("created_utc", -1)],
+                limit=5,
+            )
+            for doc_dict in reddit_docs:
+                r = [doc_dict.get(c) for c in cols]
+                doc = normalize_reddit(r, cols)
+                if doc:
+                    documents.append(doc)
+        except Exception as e:
+            logger.warning(f"[PACKET] Failed to fetch reddit for {ticker}: {e}")
+
+        try:
+            cols = [
+                "video_id",
+                "ticker",
+                "title",
+                "channel",
+                "raw_transcript",
+                "published_at",
+                "summary",
+                "tickers_mentioned",
+            ]
+            yt_docs = mongo_store.find_docs(
+                "youtube_transcripts",
+                {"ticker": ticker},
+                sort=[("published_at", -1)],
+                limit=5,
+            )
+            for doc_dict in yt_docs:
+                r = [doc_dict.get(c) for c in cols]
+                doc = normalize_youtube(r, cols)
+                if doc:
+                    documents.append(doc)
+        except Exception as e:
+            logger.warning(f"[PACKET] Failed to fetch youtube for {ticker}: {e}")
 
         return documents, fund_dict, tech_dict
 

@@ -1450,3 +1450,10 @@ class TestMockTradingCycleMongoE2E:
         lessons = retrieve_lessons("RSI mean reversion", k=3)
         assert len(lessons) >= 1
         assert "session-gamma" in [l.get("session_id") for l in lessons if isinstance(l, dict)]
+
+        # 48. Evidence Packet Builder in MongoDB
+        from app.cognition.evidence.packet_builder import build_evidence_packet
+
+        packet = await build_evidence_packet("AAPL")
+        assert packet is not None
+        assert packet.entity_id == "AAPL"
