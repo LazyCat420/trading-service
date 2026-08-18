@@ -296,8 +296,7 @@ async def get_congress_trades_tool(ticker: str) -> str:
         logger.info("[congress] refresh failed for %s, serving stored rows: %s", ticker, e)
 
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('congress_trades', {'ticker': ticker}, ['politician', 'party', 'chamber', 'state', 'transaction_type', 'amount_range', 'trade_date', 'disclosure_date', 'days_to_disclose'], sort=[('disclosure_date', -1)], limit=40)
+        rows = mongo_query.find_rows('congress_trades', {'ticker': ticker}, ['politician', 'party', 'chamber', 'state', 'transaction_type', 'amount_range', 'trade_date', 'disclosure_date', 'days_to_disclose'], sort=[('disclosure_date', -1)], limit=40)
 
         return json.dumps(
             {
@@ -362,20 +361,20 @@ async def get_earnings_data_tool(ticker: str) -> str:
 )
 async def get_finviz_fundamentals_tool(ticker: str) -> str:
     from app.collectors.finviz_scraper import collect_fundamentals
-    from app.db.connection import get_db
+    from app.db import mongo_store
     import json
 
     try:
-        success = await collect_fundamentals(ticker)
-        if success:
-            with get_db() as db:
-                row = db.execute(
-                    "SELECT * FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
-                if row and db.description:
-                    cols = [column[0] for column in db.description]
-                    return json.dumps(dict(zip(cols, row)), default=str)
+        try:
+            await collect_fundamentals(ticker)
+        except Exception as ce:
+            logger.info("[TradingTools] Live finviz scrape skipped (%s), reading stored fundamentals from MongoDB", ce)
+
+        docs = mongo_store.find_docs("fundamentals", {"ticker": ticker}, sort=[("snapshot_date", -1)], limit=1)
+        if docs:
+            doc = docs[0]
+            doc.pop("_id", None)
+            return json.dumps(doc, default=str)
         return json.dumps({"error": "Failed to collect fundamentals from finviz"})
     except Exception as e:
         logger.error("[TradingTools] Finviz fundamentals failed for %s: %s", ticker, e)

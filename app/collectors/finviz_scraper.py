@@ -17,7 +17,6 @@ import logging
 import datetime
 import re
 from bs4 import BeautifulSoup
-from app.db.connection import get_db
 from app.services.request_utils import SmartClient
 
 logger = logging.getLogger(__name__)
@@ -201,18 +200,16 @@ async def collect_fundamentals(ticker: str) -> bool:
     }
 
     cols = list(fields.keys())
-    updates = ", ".join(f"{c} = COALESCE(EXCLUDED.{c}, fundamentals.{c})" for c in cols)
     filled = sum(1 for v in fields.values() if v is not None)
 
-    with get_db() as db:
-        db.execute(
-            f"""
-            INSERT INTO fundamentals (ticker, snapshot_date, source, {', '.join(cols)})
-            VALUES (%s, %s, 'finviz', {', '.join(['%s'] * len(cols))})
-            ON CONFLICT (ticker, snapshot_date) DO UPDATE SET {updates}
-            """,
-            [ticker, today] + [fields[c] for c in cols],
-        )
+    from app.db import mongo_store
+    doc = {
+        "ticker": ticker,
+        "snapshot_date": today,
+        "source": "finviz",
+        **{c: fields[c] for c in cols if fields[c] is not None},
+    }
+    mongo_store.upsert_doc("fundamentals", {"ticker": ticker, "snapshot_date": today}, doc)
 
     logger.info(f"[finviz] {ticker}: {filled}/{len(cols)} snapshot fields scraped")
     return True

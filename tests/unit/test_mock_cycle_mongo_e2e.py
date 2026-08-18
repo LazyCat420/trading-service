@@ -100,7 +100,12 @@ class InMemoryMongoCollection:
             def sort(self, key_or_list):
                 if isinstance(key_or_list, list) and key_or_list:
                     k, direction = key_or_list[0]
-                    self._items.sort(key=lambda x: x.get(k) or 0, reverse=(direction == -1))
+                    def _key_fn(x):
+                        v = x.get(k)
+                        if hasattr(v, "isoformat"):
+                            return v.isoformat()
+                        return str(v) if v is not None else ""
+                    self._items.sort(key=_key_fn, reverse=(direction == -1))
                 return self
 
             def limit(self, n):
@@ -649,3 +654,44 @@ class TestMockTradingCycleMongoE2E:
         unbanned = unban_ticker("PUMP")
         assert unbanned is True
         assert is_banned("PUMP") is False
+
+        # 15. Portfolio & Trading Tools in Pure MongoDB
+        import json
+        from app.tools.portfolio_tools import get_position_context, get_portfolio_state_tool
+        from app.tools.trading_tools import get_congress_trades_tool, get_finviz_fundamentals_tool
+
+        # Check position context via tool
+        pos_ctx = get_position_context("MSFT", bot_id=bot_id)
+        assert pos_ctx["held"] is False
+
+        # Seed fundamentals and congress trades in MongoDB
+        mongo_store.insert_docs("fundamentals", [{
+            "ticker": "MSFT",
+            "market_cap": 3_100_000_000_000,
+            "pe_ratio": 35.5,
+            "snapshot_date": now,
+        }])
+
+        mongo_store.insert_docs("congress_trades", [{
+            "ticker": "MSFT",
+            "politician": "Pelosi",
+            "party": "D",
+            "chamber": "House",
+            "state": "CA",
+            "transaction_type": "Purchase",
+            "amount_range": "$1,000,001 - $5,000,000",
+            "trade_date": now.date(),
+            "disclosure_date": now.date(),
+            "days_to_disclose": 15,
+        }])
+
+        # Query fundamentals tool
+        fund_tool_res = json.loads(await get_finviz_fundamentals_tool("MSFT"))
+        assert fund_tool_res["ticker"] == "MSFT"
+        assert fund_tool_res["pe_ratio"] == 35.5
+
+        # Query congress trades tool
+        cong_tool_res = json.loads(await get_congress_trades_tool("MSFT"))
+        assert cong_tool_res["status"] == "success"
+        assert cong_tool_res["trade_count"] == 1
+        assert cong_tool_res["trades"][0]["politician"] == "Pelosi"

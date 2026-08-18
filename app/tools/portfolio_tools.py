@@ -1,7 +1,6 @@
 import json
 import logging
 from datetime import datetime, timezone
-from app.db.connection import get_db
 from app.config import settings
 from app.tools.registry import registry
 from app.trading.paper_trader import _get_current_price
@@ -11,27 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_bot_id(bot_id: str = "") -> str:
-    """THE single way to turn an empty bot_id into a real one.
-
-    2026-07-24 audit. Three sources of truth disagreed, and the wrong one was
-    winning: callers fell back to ``settings.BOT_ID`` (= 'lazy-trader-v4',
-    which holds **zero positions**) while the genuinely active bot was
-    'test_bot' with 9 open positions. The pipeline never passed an explicit
-    bot_id, so in production:
-
-      * every ticker resolved to held=False — including TSM/JPM/ALLY, which
-        the desk really did own,
-      * agents were told "NO OPEN POSITION" about their own book and could not
-        reason about an exit,
-      * the HRP branch of the quant-math block silently never ran, because it
-        needs >=2 tickers in the portfolio and saw an empty one. HRP has
-        therefore NEVER been computed in production.
-
-    ``get_active_bot_id()`` is DB-backed (is_active = TRUE), cached with a TTL,
-    and already falls back to settings.BOT_ID — so it is strictly better as the
-    default than settings.BOT_ID alone. Prefer an explicit bot_id when the
-    caller has one; never reintroduce a bare ``settings.BOT_ID`` fallback.
-    """
+    """THE single way to turn an empty bot_id into a real one."""
     if bot_id:
         return bot_id
     try:
@@ -39,80 +18,74 @@ def resolve_bot_id(bot_id: str = "") -> str:
         resolved = get_active_bot_id()
         if resolved:
             return resolved
-    except Exception as e:  # noqa: BLE001 — must still return something usable
+    except Exception as e:  # noqa: BLE001
         logger.warning("[PortfolioTools] active-bot lookup failed (%s) — using settings.BOT_ID", e)
     return settings.BOT_ID
 
 
 def get_position_context(ticker: str, bot_id: str = "") -> dict:
     bot_id = resolve_bot_id(bot_id)
+    ticker = ticker.upper()
 
-    with get_db() as db:
-        ticker = ticker.upper()
+    try:
+        row = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['qty', 'avg_entry_price', 'stop_loss_pct', 'opened_at'])
+    except Exception as e:
+        logger.debug(
+            "[POSITION_CTX] Failed to query position for %s: %s",
+            ticker,
+            e,
+        )
+        return {"held": False}
 
-        try:
-            row = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['qty', 'avg_entry_price', 'stop_loss_pct', 'opened_at'])
-        except Exception as e:
-            logger.debug(
-                "[POSITION_CTX] Failed to query position for %s: %s",
-                ticker,
-                e,
+    if not row:
+        return {"held": False}
+
+    qty = float(row[0])
+    avg_entry = float(row[1])
+    stop_loss_pct = float(row[2]) if row[2] else 0.0
+    opened_at = row[3]
+
+    current_price, _ = _get_current_price(ticker)
+    unrealized_pnl = 0.0
+    unrealized_pnl_pct = 0.0
+
+    if current_price and current_price > 0:
+        unrealized_pnl = (current_price - avg_entry) * qty
+        unrealized_pnl_pct = ((current_price - avg_entry) / avg_entry) * 100
+
+    stop_price = avg_entry * (1 - (stop_loss_pct / 100.0))
+    holding_days = 0
+    if opened_at:
+        if opened_at.tzinfo is None:
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        holding_days = (datetime.now(timezone.utc) - opened_at).days
+
+    ctx = {
+        "held": True,
+        "qty": qty,
+        "avg_entry": avg_entry,
+        "current_price": current_price,
+        "unrealized_pnl": unrealized_pnl,
+        "unrealized_pnl_pct": unrealized_pnl_pct,
+        "holding_days": holding_days,
+        "stop_loss_pct": stop_loss_pct,
+        "stop_price": stop_price,
+    }
+
+    # Try to pull original thesis
+    try:
+        thesis_row = mongo_query.find_row('trade_history', {'bot_id': bot_id, 'ticker': ticker, 'action': 'BUY'}, ['thesis', 'timestamp', 'confidence_score'], sort=[('timestamp', -1)])
+
+        if thesis_row:
+            ctx["original_thesis"] = thesis_row[0]
+            ctx["original_thesis_date"] = (
+                thesis_row[1].isoformat() if thesis_row[1] else None
             )
-            return {"held": False}
+            ctx["original_thesis_conf"] = thesis_row[2]
+    except Exception:
+        pass
 
-        if not row:
-            return {"held": False}
-
-        qty = float(row[0])
-        avg_entry = float(row[1])
-        stop_loss_pct = float(row[2]) if row[2] else 0.0
-        opened_at = row[3]
-
-        current_price, _ = _get_current_price(ticker)
-        unrealized_pnl = 0.0
-        unrealized_pnl_pct = 0.0
-
-        if current_price and current_price > 0:
-            unrealized_pnl = (current_price - avg_entry) * qty
-            unrealized_pnl_pct = ((current_price - avg_entry) / avg_entry) * 100
-
-        stop_price = avg_entry * (1 - (stop_loss_pct / 100.0))
-        holding_days = 0
-        if opened_at:
-            # opened_at comes back tz-naive from the DB; subtracting it from a
-            # tz-aware now() raised "can't subtract offset-naive and
-            # offset-aware datetimes" — caught upstream, but it silently
-            # dropped portfolio_context from EVERY cycle's agent prompts.
-            if opened_at.tzinfo is None:
-                opened_at = opened_at.replace(tzinfo=timezone.utc)
-            holding_days = (datetime.now(timezone.utc) - opened_at).days
-
-        ctx = {
-            "held": True,
-            "qty": qty,
-            "avg_entry": avg_entry,
-            "current_price": current_price,
-            "unrealized_pnl": unrealized_pnl,
-            "unrealized_pnl_pct": unrealized_pnl_pct,
-            "holding_days": holding_days,
-            "stop_loss_pct": stop_loss_pct,
-            "stop_price": stop_price,
-        }
-
-        # Try to pull original thesis
-        try:
-            thesis_row = mongo_query.find_row('trade_history', {'bot_id': bot_id, 'ticker': ticker, 'action': 'BUY'}, ['thesis', 'timestamp', 'confidence_score'], sort=[('timestamp', -1)])
-
-            if thesis_row:
-                ctx["original_thesis"] = thesis_row[0]
-                ctx["original_thesis_date"] = (
-                    thesis_row[1].isoformat() if thesis_row[1] else None
-                )
-                ctx["original_thesis_conf"] = thesis_row[2]
-        except Exception:
-            pass
-
-        return ctx
+    return ctx
 
 
 # ── Tool Registration ──────────────────────────────────────────────
