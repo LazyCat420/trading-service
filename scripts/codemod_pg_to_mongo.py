@@ -253,14 +253,44 @@ def _add_import(src: str) -> str:
 
 
 def _insert(src: str, stmts: list[str]) -> str:
-    """Place `stmts` after the file's last top-level import."""
+    """Place `stmts` after the file's last top-level import.
+
+    The insertion point comes from the AST, not from scanning for lines that
+    start with `import`/`from`. A parenthesized import spans several lines:
+
+        from app.autoresearch.scorecard import (
+            VERDICT_CONTAMINATED, ...,
+        )
+
+    and only its FIRST line starts with `from`, so the line scan put the new
+    import between that line and the names it opens -- inside the parentheses.
+    The result did not parse. The codemod's own guard caught it and declined to
+    write, but it still counted the sites as rewritten, so the run reported
+    "APPLIED - 9 call sites rewritten" while changing nothing on disk.
+
+    `node.end_lineno` knows where a statement actually ends.
+    """
     if not stmts:
         return src
     lines = src.splitlines(keepends=True)
+
     last = 0
-    for i, ln in enumerate(lines[:80]):
-        if ln.startswith(("import ", "from ")):
-            last = i + 1
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        tree = None
+    if tree is not None:
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                last = max(last, (node.end_lineno or node.lineno))
+            elif last:
+                # first non-import statement after the import block
+                break
+    else:  # pragma: no cover - unparseable input
+        for i, ln in enumerate(lines[:80]):
+            if ln.startswith(("import ", "from ")):
+                last = i + 1
+
     for s in reversed(stmts):
         lines.insert(last, s)
     return "".join(lines)
@@ -279,8 +309,19 @@ def main() -> int:
         if process(p, args.apply, stats, log):
             touched += 1
 
+    # Report what reached disk, not what was attempted. The headline used to
+    # read "APPLIED — 9 call sites rewritten across 0 files": every rewrite had
+    # been discarded by the syntax guard, and the only signal was a skip line
+    # buried in the stats table. A summary that says APPLIED when nothing was
+    # applied is the failure mode this migration keeps repeating.
+    broken = stats["FILE SKIPPED: rewrite broke syntax"]
     print(("APPLIED" if args.apply else "DRY RUN")
           + f" — {stats['rewritten']} call sites rewritten across {touched} files\n")
+    if broken:
+        print(f"  !! {broken} file(s) DISCARDED: the rewrite did not parse, "
+              f"so nothing was written for them.")
+        print("     Their call sites are counted in `rewritten` above but did "
+              "NOT reach disk.\n")
     for k, v in stats.most_common(14):
         print(f"  {v:>5}  {k}")
     by_table = Counter(e.get("table") for e in log if "table" in e)

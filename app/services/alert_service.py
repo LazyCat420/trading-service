@@ -1,6 +1,5 @@
 import uuid
 import logging
-from app.db.connection import get_db
 from app.schemas.alerts import FundAlert
 from app.db import mongo_store
 

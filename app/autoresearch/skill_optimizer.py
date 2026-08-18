@@ -38,6 +38,7 @@ from app.db.connection import get_db
 from app.autoresearch.scorecard import (
     VERDICT_CONTAMINATED, VERDICT_HEALTHY, VERDICT_REGRESSED, regression_verdict,
 )
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -230,13 +231,7 @@ def _compute_baseline_score() -> float | None:
     say anything (cold start)."""
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT outcome, confidence FROM decision_outcomes "
-                "WHERE resolved_at IS NOT NULL AND action IN ('BUY', 'SELL') "
-                "AND outcome IN ('WIN', 'LOSS', 'FLAT') "
-                "ORDER BY resolved_at DESC LIMIT %s",
-                [BASELINE_WINDOW_ROWS],
-            ).fetchall()
+            rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'action': {'$in': ['BUY', 'SELL']}, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT']}}, ['outcome', 'confidence'], sort=[('resolved_at', -1)], limit=BASELINE_WINDOW_ROWS)
     except Exception as e:  # noqa: BLE001
         logger.warning("[SkillOpt] baseline query failed: %s", e)
         return None
@@ -699,12 +694,7 @@ def _load_skill(agent_name: str) -> tuple[str, int]:
     """Active skill text + version for an agent; ("", 0) when none exists."""
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT skill_text, version FROM agent_skills "
-                "WHERE agent_name = %s AND status = 'active' "
-                "ORDER BY version DESC LIMIT 1",
-                [agent_name],
-            ).fetchone()
+            row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'status': 'active'}, ['skill_text', 'version'], sort=[('version', -1)])
         if row:
             return (row[0] or "", int(row[1] or 0))
     except Exception as e:  # noqa: BLE001
@@ -724,18 +714,8 @@ def _save_skill(
     new_version: int,
 ) -> None:
     with get_db() as db:
-        db.execute(
-            "UPDATE agent_skills SET status = 'archived' "
-            "WHERE agent_name = %s AND status = 'active'",
-            [agent_name],
-        )
-        db.execute(
-            "INSERT INTO agent_skills "
-            "(agent_name, version, skill_text, skill_hash, cycle_id, score, action, rationale, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'active')",
-            [agent_name, new_version, skill_text, skill_hash, cycle_id,
-             round(float(score), 4), action, rationale],
-        )
+        mongo_store.update_docs('agent_skills', {'agent_name': agent_name, 'status': 'active'}, {'$set': {'status': 'archived'}})
+        mongo_store.insert_docs('agent_skills', [{'agent_name': agent_name, 'version': new_version, 'skill_text': skill_text, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'score': round(float(score), 4), 'action': action, 'rationale': rationale, 'status': 'active'}])
 
 
 def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
@@ -752,22 +732,14 @@ def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
     handed the same idea again next cycle.
     """
     with get_db() as db:
-        prev = db.execute(
-            "SELECT skill_text, skill_hash FROM agent_skills "
-            "WHERE agent_name = %s AND version = %s",
-            [agent_name, int(from_version) - 1],
-        ).fetchone()
+        prev = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(from_version) - 1}, ['skill_text', 'skill_hash'])
         if not prev or not prev[0]:
             logger.warning(
                 "[SkillOpt] %s v%d regressed but v%d is unavailable — cannot roll back",
                 agent_name, from_version, from_version - 1,
             )
             return False
-        bad = db.execute(
-            "SELECT skill_hash, rationale FROM agent_skills "
-            "WHERE agent_name = %s AND version = %s",
-            [agent_name, int(from_version)],
-        ).fetchone()
+        bad = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(from_version)}, ['skill_hash', 'rationale'])
 
     _save_skill(
         agent_name=agent_name,
@@ -808,13 +780,6 @@ def _log_rejection(
 ) -> None:
     try:
         with get_db() as db:
-            db.execute(
-                "INSERT INTO rejected_skill_edits "
-                "(agent_name, skill_hash, cycle_id, reason, score_delta, rationale) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                [agent_name, skill_hash, cycle_id, reason,
-                 round(float(score_delta), 4) if score_delta is not None else None,
-                 rationale],
-            )
+            mongo_store.insert_docs('rejected_skill_edits', [{'agent_name': agent_name, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'reason': reason, 'score_delta': round(float(score_delta), 4) if score_delta is not None else None, 'rationale': rationale}])
     except Exception as e:  # noqa: BLE001 — audit log, never fatal
         logger.debug("[SkillOpt] rejection log failed for %s: %s", agent_name, e)

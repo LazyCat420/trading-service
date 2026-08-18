@@ -35,6 +35,8 @@ from app.config import settings
 from app.db.connection import get_db
 from app.services.request_utils import SmartClient
 from app.utils.text_utils import is_truncated_content
+from app.db import mongo_store
+from datetime import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -258,62 +260,17 @@ async def _persist_articles(
                     if url_fanout_exceeded(db, article.url):
                         break
                     ticker_id = _get_article_id(article.title, ticker)
-                    db.execute(
-                        """
-                        INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason, ticker_attribution)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
-                        ON CONFLICT (id) DO NOTHING
-                    """,
-                        [
-                            ticker_id,
-                            ticker,
-                            article.title[:500],
-                            article.source,
-                            article.url,
-                            article.published_at,
-                            summary[:15000],
-                            article.source,
-                            content_hash,
-                            _qs,
-                            _qr,
-                            # 'provider' or 'detected' per the branch above.
-                            # Either way it is never an inherited query ticker:
-                            # `rank_tickers_for_fanout` only reorders its input
-                            # and drops nothing, so `requested_tickers` cannot
-                            # add a symbol that was not already there.
-                            attribution,
-                        ],
-                    )
+                    # ticker_attribution is 'provider' or 'detected' per the
+                    # branch above. Either way it is never an inherited query
+                    # ticker: `rank_tickers_for_fanout` only reorders its input
+                    # and drops nothing, so `requested_tickers` cannot add a
+                    # symbol that was not already there.
+                    mongo_store.upsert_doc('news_articles', {'id': ticker_id}, {'id': ticker_id, 'ticker': ticker, 'title': article.title[:500], 'publisher': article.source, 'url': article.url, 'published_at': article.published_at, 'summary': summary[:15000], 'source': article.source, 'collected_at': datetime.now(timezone.utc), 'content_hash': content_hash, 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': attribution}, insert_only=True)
                     count += 1
             else:
                 # General market news — no specific ticker
                 article_id = _get_article_id(article.title, None)
-                db.execute(
-                    """
-                    INSERT INTO news_articles
-                    (id, ticker, title, publisher, url, published_at, summary, source, collected_at, content_hash, quality_status, quality_reason, ticker_attribution)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                """,
-                    [
-                        base_id,
-                        None,
-                        article.title[:500],
-                        article.source,
-                        article.url,
-                        article.published_at,
-                        summary[:15000],
-                        article.source,
-                        content_hash,
-                        _qs,
-                        _qr,
-                        # `ticker` is NULL on this branch, so there is no
-                        # attribution to make. Recorded rather than left NULL so
-                        # that NULL keeps meaning "legacy row" and nothing else.
-                        "general",
-                    ],
-                )
+                mongo_store.upsert_doc('news_articles', {'id': base_id}, {'id': base_id, 'ticker': None, 'title': article.title[:500], 'publisher': article.source, 'url': article.url, 'published_at': article.published_at, 'summary': summary[:15000], 'source': article.source, 'collected_at': datetime.now(timezone.utc), 'content_hash': content_hash, 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': "general"}, insert_only=True)
                 count += 1
 
         return count

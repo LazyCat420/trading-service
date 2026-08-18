@@ -15,7 +15,6 @@ import hashlib
 import datetime
 import httpx
 from app.config import settings
-from app.db.connection import get_db
 from app.db import mongo_store
 
 BASE_URL = "https://financialmodelingprep.com/api/v4"
