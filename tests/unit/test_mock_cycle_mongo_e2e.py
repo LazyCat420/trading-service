@@ -149,6 +149,14 @@ class InMemoryMongoCollection:
                 self._apply_update(doc, update)
                 count += 1
 
+        if count == 0 and upsert:
+            new_doc = dict(query)
+            self._apply_update(new_doc, update)
+            if "_id" not in new_doc:
+                new_doc["_id"] = str(uuid.uuid4())
+            self.docs.append(new_doc)
+            count = 1
+
         class _UpRes:
             modified_count = count
 
@@ -399,13 +407,32 @@ class TestMockTradingCycleMongoE2E:
             "progress": "Executing trade decisions",
         })
 
-        # Save trade verdict result
+        # Save baseline decision score
+        from app.quant.decision_score_store import record_decision_score
+        record_decision_score(cycle_id, "AAPL", {
+            "score": 78.5,
+            "band": "STRONG_BUY",
+            "confidence": 80,
+            "coverage_pct": 95.0,
+            "percentile": 88.0,
+            "fundamental_score": 82.0,
+            "technical_score": 75.0,
+        })
+
+        # Save trade verdict result (which attaches board decision)
         save_trade_result("AAPL", cycle_id, {
             "action": "BUY",
             "confidence": 85,
             "reasoning": "Strong trend and breakout setup",
             "decision_provenance": "board_reasoned",
         })
+
+        # Verify decision_scores in MongoDB
+        d_scores = mongo_store.find_docs("decision_scores", {"cycle_id": cycle_id, "ticker": "AAPL"})
+        assert len(d_scores) == 1
+        assert d_scores[0]["band"] == "STRONG_BUY"
+        assert d_scores[0]["board_action"] == "BUY"
+        assert d_scores[0]["board_confidence"] == 85
 
         # Append pipeline events
         PipelineStateDB.append_events(cycle_id, [{
