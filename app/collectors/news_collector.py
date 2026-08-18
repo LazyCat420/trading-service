@@ -17,6 +17,7 @@ from app.db.connection import get_db
 from app.processors.ticker_extractor import get_ticker_symbols
 from app.utils.text_utils import is_truncated_content, is_scrape_artifact
 from app.db import mongo_query
+from app.db import mongo_store
 
 
 def quality_at_write(title: str, summary: str) -> tuple[str, str]:

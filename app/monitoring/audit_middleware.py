@@ -41,6 +41,7 @@ TRUNCATION_MARKERS = [
 
 # ── In-memory ring buffer for fast dashboard queries ──────────────────
 from collections import deque
+from app.db import mongo_store
 
 _AUDIT_BUFFER: deque[dict] = deque(maxlen=500)
 _AUDIT_WARNINGS: deque[dict] = deque(maxlen=200)

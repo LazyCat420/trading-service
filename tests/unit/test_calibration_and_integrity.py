@@ -132,16 +132,24 @@ def test_unparseable_actions_are_stored_as_hold(bad):
 
     class _DB:
         def execute(self, sql, params=None):
-            if params and "INSERT INTO trade_results" in sql:
-                captured["action"] = params[3]
             return self
         def fetchone(self): return None
         def transaction(self): return self
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
+    # The write is a Mongo insert now, not an INSERT statement, so the action
+    # is a NAMED FIELD rather than params[3]. Reading it by position was always
+    # brittle; the document says which value it is.
+    def _capture_insert(collection, docs):
+        if collection == "trade_results" and docs:
+            captured["action"] = docs[0].get("action")
+        return len(docs)
+
     with patch.object(TRS, "get_db", lambda: _DB(), create=True), \
-         patch("app.db.connection.get_db", lambda: _DB()):
+         patch("app.db.connection.get_db", lambda: _DB()), \
+         patch.object(TRS.mongo_store, "insert_docs", _capture_insert), \
+         patch.object(TRS.mongo_store, "upsert_doc", lambda *a, **k: None):
         TRS.save_trade_result("TEST", "cyc-1", {"action": bad, "confidence": 72})
 
     assert captured, "the INSERT never ran — this test would pass vacuously"

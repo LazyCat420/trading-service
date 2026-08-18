@@ -17,6 +17,7 @@ from app.processors.ticker_extractor import (
     get_ticker_symbols,
     FALSE_TICKERS as SHARED_FALSE_TICKERS,
 )
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

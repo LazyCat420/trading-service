@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
 from app.db import mongo_query
+from app.db import mongo_store
 
 
 # ── PG→Mongo read flips (MONGO_STORE_BACKEND mongo_read/mongo) ─────────────

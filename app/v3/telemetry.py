@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.v3.shared_desk import SharedDesk
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

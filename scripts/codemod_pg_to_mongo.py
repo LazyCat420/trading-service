@@ -188,11 +188,25 @@ def _add_import(src: str) -> str:
     lines = src.splitlines(keepends=True)
     stmts = []
 
-    needed = []
-    if "mongo_query." in src and "import mongo_query" not in src:
-        needed.append("mongo_query")
-    if "mongo_store." in src and "import mongo_store" not in src:
-        needed.append("mongo_store")
+    # Decide with the AST, never a substring. `"import mongo_store" not in src`
+    # was satisfied by a FUNCTION-LOCAL `from app.db import mongo_store`, which
+    # puts the name in scope only inside that function — so 33 files were left
+    # calling mongo_store at module scope with no import. They compiled and
+    # would have raised NameError on the first call.
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return src
+    toplevel = set()
+    for n in tree.body:
+        if isinstance(n, ast.ImportFrom):
+            toplevel.update(a.asname or a.name for a in n.names)
+        elif isinstance(n, ast.Import):
+            toplevel.update((a.asname or a.name).split(".")[0] for a in n.names)
+    used = {n.value.id for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+            and n.value.id in ("mongo_store", "mongo_query")}
+    needed = sorted(used - toplevel)
     if needed:
         stmts.append(f"from app.db import {', '.join(needed)}\n")
 

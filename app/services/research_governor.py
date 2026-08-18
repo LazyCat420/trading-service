@@ -26,6 +26,7 @@ from app.db.mongo_store import handle_mongo_read_failure
 from app.services.parameter_store import get_param
 from app.validation.schedule_validator import ScheduleValidator
 from app.db import mongo_query
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

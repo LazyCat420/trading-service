@@ -5,6 +5,7 @@ import traceback
 import uuid
 from datetime import datetime, timezone
 from app.utils.trace import get_trace_id
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

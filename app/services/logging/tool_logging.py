@@ -16,6 +16,7 @@ from app.db.connection import get_db
 logger = logging.getLogger(__name__)
 
 from app.services.mcp_prefix import strip_mcp_prefix
+from app.db import mongo_store
 
 #: `service_source` values that are NOT production traffic. Anything logged
 #: under one of these is a synthetic call — an audit probe, a contract test, a

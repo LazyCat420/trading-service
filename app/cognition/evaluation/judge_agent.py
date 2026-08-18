@@ -16,6 +16,7 @@ from app.db.mongo_store import handle_mongo_read_failure
 
 from .oracle import DataCompletenessOracle
 from app.db import mongo_query
+from app.db import mongo_store
 
 # Grounding score weights: ROUGE-L precision (textual overlap) vs citation
 # overlap (numeric data point grounding).  Citation is weighted higher because

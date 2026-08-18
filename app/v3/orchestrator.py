@@ -28,6 +28,7 @@ from app.v3.telemetry import persist_telemetry
 from app.v3.agent_runner import run_v3_agent
 from app.v3.desk_persistence import save_desk
 from app.db import mongo_query
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

@@ -23,6 +23,7 @@ import threading
 import time
 
 import numpy as np
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

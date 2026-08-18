@@ -44,6 +44,7 @@ def _hash_args(arguments: dict | None) -> str:
 # lazy-agent-service and prism mints this prefix from ITS registration name, so
 # which one arrives depends on which scope the call came through.
 from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
+from app.db import mongo_store
 
 # Framework-injected; never on an agent whitelist by design.
 #

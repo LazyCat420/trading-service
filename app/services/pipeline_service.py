@@ -18,6 +18,7 @@ from app.utils.us_ticker_resolver import (
     resolve_tickers_batch,
     resolve_tickers_batch_async,
 )
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

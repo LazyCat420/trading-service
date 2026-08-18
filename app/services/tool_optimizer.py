@@ -19,6 +19,7 @@ from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
 # away from a live agent.
 from app.services.logging.tool_logging import PROBE_EXCLUSION_SQL  # noqa: E402
 from datetime import datetime, timedelta, timezone
+from app.db import mongo_store
 
 # ── Reputation thresholds ──
 # Tools below these success rates get warnings injected into agent prompts

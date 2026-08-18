@@ -22,6 +22,7 @@ from app.config.config_tickers import classify_asset as _classify_asset
 from app.services.alert_service import record_fund_alert
 from app.services.parameter_store import get_param
 from app.db import mongo_query
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 

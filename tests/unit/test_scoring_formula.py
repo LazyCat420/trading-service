@@ -16,32 +16,38 @@ from contextlib import contextmanager
 # ── Helper to mock get_db for autoresearch module ──
 
 def _mock_get_db_factory(confidence_rows=None, outcome_rows=None):
-    """Build a mock get_db that returns canned data for the two queries
-    _audit_decisions makes: (1) confidence query, (2) outcomes query.
-    """
-    call_count = 0
+    """Mock the two reads `_audit_decisions` makes.
 
+    They no longer come from the same place. The confidence read was converted
+    to `mongo_query.find_rows`; the outcomes read still uses SQL, because it
+    selects `EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at))` — a computed
+    column the translator refuses rather than approximate. So this module is
+    genuinely half-converted, and a mock that stubs only `get_db` now feeds the
+    outcomes query while the confidence query reads the LIVE database.
+
+    Dispatching on call_count was already fragile; with one of the two calls
+    gone it silently fed outcome_rows to the wrong query. Each read is stubbed
+    at its own boundary instead.
+    """
     @contextmanager
     def fake_get_db():
-        nonlocal call_count
         conn = MagicMock()
-
-        def execute_side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            cursor = MagicMock()
-            if call_count == 1:
-                # First query: confidence from analysis_results
-                cursor.fetchall.return_value = confidence_rows or []
-            else:
-                # Second query: resolved outcomes from decision_outcomes
-                cursor.fetchall.return_value = outcome_rows or []
-            return cursor
-
-        conn.execute.side_effect = execute_side_effect
+        cursor = MagicMock()
+        cursor.fetchall.return_value = outcome_rows or []
+        conn.execute.return_value = cursor
         yield conn
 
     return fake_get_db
+
+
+@contextmanager
+def _mock_reads(confidence_rows=None, outcome_rows=None):
+    """Patch both halves together, so neither read reaches a real store."""
+    with patch("app.autoresearch.auditors.decision_audit.get_db",
+               _mock_get_db_factory(confidence_rows, outcome_rows)), \
+         patch("app.autoresearch.auditors.decision_audit.mongo_query") as mq:
+        mq.find_rows.return_value = confidence_rows or []
+        yield
 
 
 class TestDecisionScoringFormula:
@@ -52,7 +58,7 @@ class TestDecisionScoringFormula:
 
     def test_zero_decisions_returns_zero(self):
         """No decisions at all should score 0 with a critical issue."""
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory()):
+        with _mock_reads():
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(0, 0, 0))
 
@@ -65,7 +71,7 @@ class TestDecisionScoringFormula:
         confs = [(60,), (70,), (45,)]
         outcomes = [("BUY", 70, 2.5, "WIN", 5.0)]  # Only 1 trade — cold start
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(2, 1, 8))
 
@@ -78,7 +84,7 @@ class TestDecisionScoringFormula:
         confs = [(50,), (45,), (55,)]
         outcomes = []  # No resolved trades
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(0, 0, 10))
 
@@ -97,7 +103,7 @@ class TestDecisionScoringFormula:
             ("BUY", 60, -1.5, "LOSS", 3.0),
         ]
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(5, 0, 6))
 
@@ -118,7 +124,7 @@ class TestDecisionScoringFormula:
             ("BUY", 60, -1.5, "LOSS", 3.0),
         ]
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(5, 0, 6))
 
@@ -143,7 +149,7 @@ class TestDecisionScoringFormula:
             ("SELL", 25, 8.9, "WIN", 30.0),  # the n=1 lucky low-conf trade
         ]
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(5, 1, 0))
 
@@ -166,7 +172,7 @@ class TestDecisionScoringFormula:
             [("BUY", 70, 5.0, "WIN", 3.0)] * 7 + [("BUY", 70, -2.0, "LOSS", 3.0)] * 3
         )
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(10, 0, 0))
 
@@ -181,7 +187,7 @@ class TestDecisionScoringFormula:
             [("BUY", 90, 5.0, "WIN", 3.0)] * 4 + [("BUY", 90, -3.0, "LOSS", 3.0)] * 6
         )
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(10, 0, 0))
 
@@ -197,7 +203,7 @@ class TestDecisionScoringFormula:
             [("BUY", 70, 5.0, "WIN", 3.0)] * 6 + [("BUY", 70, -2.5, "LOSS", 3.0)] * 4
         )
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(10, 0, 0))
 
@@ -222,7 +228,7 @@ class TestDecisionScoringFormula:
             ("SELL", 77, 0.0, "FLAT", 6.0),
         ]
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(5, 5, 0))
 
@@ -240,7 +246,7 @@ class TestDecisionScoringFormula:
             ("BUY", 75, -2.0, "LOSS", 30.0),
         ]
 
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory(confs, outcomes)):
+        with _mock_reads(confs, outcomes):
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(3, 0, 0))
 
@@ -250,7 +256,7 @@ class TestDecisionScoringFormula:
 
     def test_outcome_stats_always_present(self):
         """The result dict should always include outcome_stats key."""
-        with patch("app.autoresearch.auditors.decision_audit.get_db", _mock_get_db_factory()):
+        with _mock_reads():
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(1, 0, 5))
 
