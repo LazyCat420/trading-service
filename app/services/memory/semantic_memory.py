@@ -24,16 +24,15 @@ class SemanticMemoryStore:
         # Late import to prevent circular dependencies
         from app.db.connection import get_db
 
-        with get_db() as db:
-            mem_id = str(uuid.uuid4())
-            now = datetime.now(timezone.utc).isoformat()
+        mem_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
 
-            mongo_store.insert_docs('semantic_memory', [{'id': mem_id, 'ticker': ticker, 'type': mem_type, 'content': content, 'confidence': confidence, 'source_agent': source_agent, 'created_at': now, 'last_accessed_at': now, 'access_count': 0}])
+        mongo_store.insert_docs('semantic_memory', [{'id': mem_id, 'ticker': ticker, 'type': mem_type, 'content': content, 'confidence': confidence, 'source_agent': source_agent, 'created_at': now, 'last_accessed_at': now, 'access_count': 0}])
 
-            logger.info(
-                f"[SEMANTIC] Wrote '{mem_type}' for {ticker}: {content[:50]}..."
-            )
-            return mem_id
+        logger.info(
+            f"[SEMANTIC] Wrote '{mem_type}' for {ticker}: {content[:50]}..."
+        )
+        return mem_id
 
     def retrieve(self, ticker: str, limit: int = 6) -> list[dict]:
         """Query by ticker, ranked by confidence and last accessed."""

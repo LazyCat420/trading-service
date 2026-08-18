@@ -64,11 +64,10 @@ class SchedulerService:
             nrt_val = getattr(job, "next_run_time", None) if job else None
             if nrt_val:
                 nrt = nrt_val.astimezone(timezone.utc).isoformat()
-                with get_db() as db:
-                    mongo_store.update_docs('cycle_schedules', {'id': job_id}, {'$set': {'next_run_at': nrt}})
-                    logger.info(
-                        "[SCHEDULER] Job %s next_run_at synced: %s", job_id, nrt
-                    )
+                mongo_store.update_docs('cycle_schedules', {'id': job_id}, {'$set': {'next_run_at': nrt}})
+                logger.info(
+                    "[SCHEDULER] Job %s next_run_at synced: %s", job_id, nrt
+                )
             else:
                 if scheduler.running:
                     # A spent one-shot (DateTrigger) has no next run BY DESIGN
@@ -490,47 +489,44 @@ class SchedulerService:
     @staticmethod
     def refresh_job(schedule_id: str):
         """Refresh a specific job in APScheduler from the DB."""
-        with get_db() as db:
-            # NB: must select earliest_window — _add_job_to_scheduler KeyErrors
-            # on policy-type schedules without it.
-            row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
-            if not row:
-                if scheduler.get_job(schedule_id):
-                    scheduler.remove_job(schedule_id)
-                return
-
-            cols = [
-                "id",
-                "name",
-                "schedule_type",
-                "cron_expression",
-                "interval_hours",
-                "earliest_window",
-                "collect",
-                "analyze",
-                "trade",
-                "tickers",
-                "max_tickers",
-                "discovered_tickers",
-                "market_hours_only",
-                "is_active",
-                "last_run_at",
-                "next_run_at",
-                "run_count",
-                "last_status",
-                "last_error",
-                "created_at",
-                "updated_at",
-                "run_at",
-                "expiry_at",
-            ]
-            s = dict(zip(cols, row))
-
+        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
+        if not row:
             if scheduler.get_job(schedule_id):
                 scheduler.remove_job(schedule_id)
+            return
 
-            if s["is_active"]:
-                SchedulerService._add_job_to_scheduler(s)
+        cols = [
+            "id",
+            "name",
+            "schedule_type",
+            "cron_expression",
+            "interval_hours",
+            "earliest_window",
+            "collect",
+            "analyze",
+            "trade",
+            "tickers",
+            "max_tickers",
+            "discovered_tickers",
+            "market_hours_only",
+            "is_active",
+            "last_run_at",
+            "next_run_at",
+            "run_count",
+            "last_status",
+            "last_error",
+            "created_at",
+            "updated_at",
+            "run_at",
+            "expiry_at",
+        ]
+        s = dict(zip(cols, row))
+
+        if scheduler.get_job(schedule_id):
+            scheduler.remove_job(schedule_id)
+
+        if s["is_active"]:
+            SchedulerService._add_job_to_scheduler(s)
 
     @staticmethod
     def get_next_runs() -> dict:
@@ -1723,24 +1719,23 @@ class SchedulerService:
             return
 
         try:
-            with get_db() as db:
-                state_row = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
-                if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
-                    logger.info(
-                        "[SCHEDULER] Market-open cycle skipped: a cycle is already running (%s).",
-                        state_row[0],
-                    )
-                    return
+            state_row = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
+            if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
+                logger.info(
+                    "[SCHEDULER] Market-open cycle skipped: a cycle is already running (%s).",
+                    state_row[0],
+                )
+                return
 
-                payload = {
-                    "tickers": [],
-                    "collect": True,
-                    "analyze": True,
-                    "trade": True,
-                    "dynamic_selection_mode": True,
-                }
-                cmd_id = f"sch-open-{uuid.uuid4().hex[:8]}"
-                mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
+            payload = {
+                "tickers": [],
+                "collect": True,
+                "analyze": True,
+                "trade": True,
+                "dynamic_selection_mode": True,
+            }
+            cmd_id = f"sch-open-{uuid.uuid4().hex[:8]}"
+            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
             logger.info("[SCHEDULER] Market-open trading cycle enqueued (START_CYCLE %s).", cmd_id)
         except Exception as e:
             logger.error("[SCHEDULER] Failed to enqueue market-open cycle: %s", e)

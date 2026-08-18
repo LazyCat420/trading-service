@@ -63,8 +63,7 @@ def _load(agent_name: str, bust_cache: bool) -> tuple[str, int | None]:
     try:
         from app.db.connection import get_db
 
-        with get_db() as db:
-            row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'status': 'active'}, ['skill_text', 'version'], sort=[('version', -1)])
+        row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'status': 'active'}, ['skill_text', 'version'], sort=[('version', -1)])
         text = (row[0] or "").strip() if row else ""
         if text:
             prefix = f"{_SKILL_HEADER}{text}\n\n"

@@ -74,14 +74,12 @@ def enqueue_job(
 def finish_job(job_id: str, status: str, note: str = "") -> None:
     """Close an entry. Anything outside ('queued','running') drops it out of
     ``open_jobs``; the runner's old vocabulary was done/failed/skipped."""
-    with get_db() as db:
-        mongo_store.update_docs('evolution_repair_queue', {'id': job_id}, {'$set': {'status': status, 'last_error': note[:2000], 'finished_at': datetime.now(timezone.utc)}})
+    mongo_store.update_docs('evolution_repair_queue', {'id': job_id}, {'$set': {'status': status, 'last_error': note[:2000], 'finished_at': datetime.now(timezone.utc)}})
 
 
 def open_jobs() -> list[RepairJob]:
     """Failures logged and not yet closed."""
-    with get_db() as db:
-        rows = mongo_query.find_rows('evolution_repair_queue', {'status': {'$in': ['queued', 'running']}}, ['id', 'cycle_id', 'error_message', 'traceback_text', 'target_path', 'target_symbol', 'status', 'attempts'], sort=[('created_at', 1)])
+    rows = mongo_query.find_rows('evolution_repair_queue', {'status': {'$in': ['queued', 'running']}}, ['id', 'cycle_id', 'error_message', 'traceback_text', 'target_path', 'target_symbol', 'status', 'attempts'], sort=[('created_at', 1)])
     return [
         RepairJob(id=r[0], cycle_id=r[1] or "", error_message=r[2] or "",
                   traceback_text=r[3] or "", target_path=r[4], target_symbol=r[5],

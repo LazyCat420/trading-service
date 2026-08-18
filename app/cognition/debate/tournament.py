@@ -1192,16 +1192,15 @@ async def run_tournament_debate(
             "vetoed": vetoed,
             "tokens": total_tokens,
         }
-        with get_db() as db:
-            mongo_store.update_docs('debate_history', {'ticker': ticker, 'cycle_id': cycle_id or "manual"}, {'$set': {'pro_argument': json.dumps({
-                        "persona": debated_a.get("persona"),
-                        "claim": debated_a.get("claim"),
-                        "attack_points": debated_a.get("attack_points", []),
-                    }), 'con_argument': json.dumps({
-                        "persona": debated_b.get("persona"),
-                        "claim": debated_b.get("claim"),
-                        "attack_points": debated_b.get("attack_points", []),
-                    }), 'winner': winning_side, 'final_action': action, 'final_confidence': confidence, 'persona_name': "tournament", 'persona_outcomes': json.dumps(persona_outcomes)}, '$setOnInsert': {'id': f"dh-{_uuid.uuid4().hex[:12]}"}}, upsert=True)
+        mongo_store.update_docs('debate_history', {'ticker': ticker, 'cycle_id': cycle_id or "manual"}, {'$set': {'pro_argument': json.dumps({
+                    "persona": debated_a.get("persona"),
+                    "claim": debated_a.get("claim"),
+                    "attack_points": debated_a.get("attack_points", []),
+                }), 'con_argument': json.dumps({
+                    "persona": debated_b.get("persona"),
+                    "claim": debated_b.get("claim"),
+                    "attack_points": debated_b.get("attack_points", []),
+                }), 'winner': winning_side, 'final_action': action, 'final_confidence': confidence, 'persona_name': "tournament", 'persona_outcomes': json.dumps(persona_outcomes)}, '$setOnInsert': {'id': f"dh-{_uuid.uuid4().hex[:12]}"}}, upsert=True)
     except Exception as db_err:
         logger.error("[TOURNAMENT] Failed to log debate history: %s", db_err)
 

@@ -106,31 +106,30 @@ class BootService:
             from pathlib import Path
 
             logger.info("[Boot] Restoring evolved stable fixes from stable_harnesses...")
-            with get_db() as db:
-                rows = mongo_query.find_rows('stable_harnesses', {}, ['target_type', 'target_name', 'stable_content'])
+            rows = mongo_query.find_rows('stable_harnesses', {}, ['target_type', 'target_name', 'stable_content'])
 
-                restored_count = 0
-                for r_type, r_name, content in rows:
-                    target_info = resolve_target(r_type, r_name)
-                    file_path = target_info.get("file_path")
-                    if file_path:
-                        path = Path(file_path)
-                        # Read current disk content if exists
-                        current_disk_content = ""
-                        if path.exists():
-                            try:
-                                current_disk_content = path.read_text(encoding="utf-8")
-                            except Exception:
-                                pass
+            restored_count = 0
+            for r_type, r_name, content in rows:
+                target_info = resolve_target(r_type, r_name)
+                file_path = target_info.get("file_path")
+                if file_path:
+                    path = Path(file_path)
+                    # Read current disk content if exists
+                    current_disk_content = ""
+                    if path.exists():
+                        try:
+                            current_disk_content = path.read_text(encoding="utf-8")
+                        except Exception:
+                            pass
 
-                        if current_disk_content != content:
-                            # Ensure parent directories exist
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_text(content, encoding="utf-8")
-                            logger.info("[Boot] Restored stable fix for %s/%s to %s", r_type, r_name, file_path)
-                            restored_count += 1
+                    if current_disk_content != content:
+                        # Ensure parent directories exist
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(content, encoding="utf-8")
+                        logger.info("[Boot] Restored stable fix for %s/%s to %s", r_type, r_name, file_path)
+                        restored_count += 1
                 
-                logger.info("[Boot] Restored %d stable fixes.", restored_count)
+            logger.info("[Boot] Restored %d stable fixes.", restored_count)
         except Exception as e:
             logger.warning("[Boot] Failed to restore stable fixes (non-fatal): %s", e)
 
@@ -240,10 +239,9 @@ class BootService:
     def _reset_app_state(cls):
         from app.db.connection import get_db
         try:
-            with get_db() as db:
-                mongo_store.update_docs('pipeline_state', {'singleton_id': 'current', 'status': {'$in': ['running', 'blocked', 'starting']}}, {'$set': {'status': 'error', 'error': 'Container restarted unexpectedly'}})
-                mongo_store.update_docs('v3_system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
-                mongo_store.update_docs('system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
+            mongo_store.update_docs('pipeline_state', {'singleton_id': 'current', 'status': {'$in': ['running', 'blocked', 'starting']}}, {'$set': {'status': 'error', 'error': 'Container restarted unexpectedly'}})
+            mongo_store.update_docs('v3_system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
+            mongo_store.update_docs('system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
         except Exception as e:
             logger.error("[Boot] Failed to reset stuck pipeline state on boot: %s", e)
 
@@ -412,99 +410,96 @@ class BootService:
         """Background: collect market regime data (indexes, VIX, yields, ETFs)."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            # Skip if we already have recent data
-            recent = mongo_query.agg_row('asset_prices', {'date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=1))}}, [('count', None)])[0]
-            if recent > 50:
-                logger.info(
-                    "[startup] Market data already fresh (%d recent rows), skipping",
-                    recent,
-                )
-                return
-            logger.info("[startup] Collecting market regime data (background)...")
-            try:
-                from app.collectors.market_regime_collector import collect_market_data
+        recent = mongo_query.agg_row('asset_prices', {'date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=1))}}, [('count', None)])[0]
+        if recent > 50:
+            logger.info(
+                "[startup] Market data already fresh (%d recent rows), skipping",
+                recent,
+            )
+            return
+        logger.info("[startup] Collecting market regime data (background)...")
+        try:
+            from app.collectors.market_regime_collector import collect_market_data
 
-                result = await collect_market_data(period="6mo")
-                logger.info(
-                    "[startup] Market data collected: %s", result.get("total", 0)
-                )
-                # Compute regime + breadth
-                from app.data.market_regime_engine import (
-                    compute_market_regime,
-                    compute_sector_breadth,
-                )
+            result = await collect_market_data(period="6mo")
+            logger.info(
+                "[startup] Market data collected: %s", result.get("total", 0)
+            )
+            # Compute regime + breadth
+            from app.data.market_regime_engine import (
+                compute_market_regime,
+                compute_sector_breadth,
+            )
 
-                await compute_market_regime()
-                await compute_sector_breadth()
-            except Exception as e:
-                logger.warning("[startup] Market collect failed (non-fatal): %s", e)
+            await compute_market_regime()
+            await compute_sector_breadth()
+        except Exception as e:
+            logger.warning("[startup] Market collect failed (non-fatal): %s", e)
 
     @classmethod
     async def _startup_sp500_seed(cls):
         """Background: seed SP500 universe + prices if DB is empty."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            sp500_count = mongo_query.agg_row('ticker_metadata', {'sp500': True}, [('count', None)])[0]
-            if sp500_count > 400:
+        sp500_count = mongo_query.agg_row('ticker_metadata', {'sp500': True}, [('count', None)])[0]
+        if sp500_count > 400:
+            logger.info(
+                "[startup] SP500 universe already loaded (%d tickers)", sp500_count
+            )
+            # Check if price data exists
+            price_count = mongo_query.agg_row('price_history', {}, [('count', None)])[0]
+            if price_count == 0:
                 logger.info(
-                    "[startup] SP500 universe already loaded (%d tickers)", sp500_count
+                    "[startup] No price data — collecting SP500 prices (background)..."
                 )
-                # Check if price data exists
-                price_count = mongo_query.agg_row('price_history', {}, [('count', None)])[0]
-                if price_count == 0:
+                try:
+                    from app.data.sp500_price_collector import collect_sp500_prices
+
+                    price_result = await collect_sp500_prices(period="6mo")
                     logger.info(
-                        "[startup] No price data — collecting SP500 prices (background)..."
+                        "[startup] SP500 prices collected: %s",
+                        price_result.get("total", 0),
                     )
-                    try:
-                        from app.data.sp500_price_collector import collect_sp500_prices
+                except Exception as e:
+                    logger.warning("[startup] Price collection failed: %s", e)
+            # Compute sector analytics if missing
+            perf_count = mongo_query.agg_row('sector_performance', {}, [('count', None)])[0]
+            if perf_count == 0:
+                logger.info("[startup] Computing sector analytics...")
+                try:
+                    from app.data.sector_aggregator import (
+                        compute_sector_performance,
+                        backfill_sector_performance,
+                    )
 
-                        price_result = await collect_sp500_prices(period="6mo")
-                        logger.info(
-                            "[startup] SP500 prices collected: %s",
-                            price_result.get("total", 0),
-                        )
-                    except Exception as e:
-                        logger.warning("[startup] Price collection failed: %s", e)
-                # Compute sector analytics if missing
-                perf_count = mongo_query.agg_row('sector_performance', {}, [('count', None)])[0]
-                if perf_count == 0:
-                    logger.info("[startup] Computing sector analytics...")
-                    try:
-                        from app.data.sector_aggregator import (
-                            compute_sector_performance,
-                            backfill_sector_performance,
-                        )
+                    await backfill_sector_performance()
+                    await compute_sector_performance()
+                except Exception as e:
+                    logger.warning("[startup] Sector compute failed: %s", e)
+            return
+        logger.info("[startup] Seeding SP500 universe (background)...")
+        try:
+            from app.data.sp500_universe import load_sp500_universe
 
-                        await backfill_sector_performance()
-                        await compute_sector_performance()
-                    except Exception as e:
-                        logger.warning("[startup] Sector compute failed: %s", e)
-                return
-            logger.info("[startup] Seeding SP500 universe (background)...")
-            try:
-                from app.data.sp500_universe import load_sp500_universe
+            result = await load_sp500_universe(enrich=False)
+            logger.info("[startup] SP500 universe loaded: %s", result)
+            # Collect prices in background
+            from app.data.sp500_price_collector import collect_sp500_prices
 
-                result = await load_sp500_universe(enrich=False)
-                logger.info("[startup] SP500 universe loaded: %s", result)
-                # Collect prices in background
-                from app.data.sp500_price_collector import collect_sp500_prices
+            price_result = await collect_sp500_prices(period="6mo")
+            logger.info(
+                "[startup] SP500 prices collected: %s", price_result.get("total", 0)
+            )
+            # Compute sector analytics
+            from app.data.sector_aggregator import (
+                compute_sector_performance,
+                backfill_sector_performance,
+            )
 
-                price_result = await collect_sp500_prices(period="6mo")
-                logger.info(
-                    "[startup] SP500 prices collected: %s", price_result.get("total", 0)
-                )
-                # Compute sector analytics
-                from app.data.sector_aggregator import (
-                    compute_sector_performance,
-                    backfill_sector_performance,
-                )
-
-                await backfill_sector_performance()
-                await compute_sector_performance()
-            except Exception as e:
-                logger.warning("[startup] SP500 seed failed (non-fatal): %s", e)
+            await backfill_sector_performance()
+            await compute_sector_performance()
+        except Exception as e:
+            logger.warning("[startup] SP500 seed failed (non-fatal): %s", e)
 
     @classmethod
     async def _sp500_full_refresh(cls, period: str):
@@ -542,8 +537,7 @@ class BootService:
         await asyncio.sleep(10)  # let boot settle first
 
         try:
-            with get_db() as db:
-                today_count = mongo_query.agg_row('price_history', {'date': datetime.now(timezone.utc)}, [('count', None)])[0]
+            today_count = mongo_query.agg_row('price_history', {'date': datetime.now(timezone.utc)}, [('count', None)])[0]
             # Threshold is derived from the actual refresh set, not a literal.
             # It was a hardcoded 400 against an sp500-only universe; now that the
             # set is sp500 UNION watchlist UNION positions (~636), a stale run

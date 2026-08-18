@@ -115,16 +115,15 @@ class BrainGraph:
         meta_json = json.dumps(metadata) if metadata else None
 
         try:
-            with get_db() as db:
-                existing = mongo_query.find_row('ontology_nodes', {'id': node_id}, ['id'])
+            existing = mongo_query.find_row('ontology_nodes', {'id': node_id}, ['id'])
 
-                if existing:
-                    if embedding:
-                        mongo_store.update_docs('ontology_nodes', {'id': node_id}, {'$set': {'node_type': node_type, 'label': label, 'embedding': embedding, 'metadata_json': meta_json, 'updated_at': now}})
-                    else:
-                        mongo_store.update_docs('ontology_nodes', {'id': node_id}, {'$set': {'node_type': node_type, 'label': label, 'metadata_json': meta_json, 'updated_at': now}})
+            if existing:
+                if embedding:
+                    mongo_store.update_docs('ontology_nodes', {'id': node_id}, {'$set': {'node_type': node_type, 'label': label, 'embedding': embedding, 'metadata_json': meta_json, 'updated_at': now}})
                 else:
-                    mongo_store.insert_docs('ontology_nodes', [{'id': node_id, 'node_type': node_type, 'label': label, 'activation': 0.0, 'embedding': embedding, 'metadata_json': meta_json, 'created_at': now, 'updated_at': now}])
+                    mongo_store.update_docs('ontology_nodes', {'id': node_id}, {'$set': {'node_type': node_type, 'label': label, 'metadata_json': meta_json, 'updated_at': now}})
+            else:
+                mongo_store.insert_docs('ontology_nodes', [{'id': node_id, 'node_type': node_type, 'label': label, 'activation': 0.0, 'embedding': embedding, 'metadata_json': meta_json, 'created_at': now, 'updated_at': now}])
         except Exception as e:
             logger.error("[BrainGraph] upsert_node error: %s", e)
 
@@ -220,69 +219,67 @@ class BrainGraph:
                 "stats": {total_activated, hops_used, seed_nodes}
             }
         """
-        with get_db() as db:
-            # Build adjacency from PostgreSQL — include evidence_count for weight boost
-            all_edges = mongo_query.find_rows('ontology_edges', {}, ['source_id', 'target_id', 'weight', 'decay', 'relation', 'evidence_count'])
+        all_edges = mongo_query.find_rows('ontology_edges', {}, ['source_id', 'target_id', 'weight', 'decay', 'relation', 'evidence_count'])
 
-            # ── Fast Numpy GNNEngine Integration ──────
-            from app.cognition.ontology.gnn_engine import GNNEngine
-            import math
+        # ── Fast Numpy GNNEngine Integration ──────
+        from app.cognition.ontology.gnn_engine import GNNEngine
+        import math
 
-            nodes = list(
-                set(
-                    [src for src, _, _, _, _, _ in all_edges]
-                    + [tgt for _, tgt, _, _, _, _ in all_edges]
-                    + seed_node_ids
-                )
+        nodes = list(
+            set(
+                [src for src, _, _, _, _, _ in all_edges]
+                + [tgt for _, tgt, _, _, _, _ in all_edges]
+                + seed_node_ids
             )
-            # Boost edge weight by evidence_count: effective_w = w * log(1 + evidence_count)
-            graph_edges = [
-                (src, tgt, min(1.0, w * math.log(1 + (ec or 1))))
-                for src, tgt, w, _, _, ec in all_edges
-            ]
+        )
+        # Boost edge weight by evidence_count: effective_w = w * log(1 + evidence_count)
+        graph_edges = [
+            (src, tgt, min(1.0, w * math.log(1 + (ec or 1))))
+            for src, tgt, w, _, _, ec in all_edges
+        ]
 
-            try:
-                gnn = GNNEngine(nodes, graph_edges)
-                # Run graph convolutions
-                activations = gnn.message_passing(
-                    initial_activations={seed: 1.0 for seed in seed_node_ids},
-                    layers=max_hops,
-                    decay=DEFAULT_DECAY,
+        try:
+            gnn = GNNEngine(nodes, graph_edges)
+            # Run graph convolutions
+            activations = gnn.message_passing(
+                initial_activations={seed: 1.0 for seed in seed_node_ids},
+                layers=max_hops,
+                decay=DEFAULT_DECAY,
+            )
+            hops_used = max_hops
+        except Exception as e:
+            logger.error(f"[BrainGraph] GNNEngine failed, fallback to none: {e}")
+            activations = {seed: 1.0 for seed in seed_node_ids}
+            hops_used = 1
+
+        # Prune below threshold + limit
+        activated = {
+            nid: act for nid, act in activations.items() if act >= threshold
+        }
+        # Sort by activation descending, take top N
+        top_nodes = sorted(activated.items(), key=lambda x: -x[1])[:max_nodes]
+        top_ids = {nid for nid, _ in top_nodes}
+
+        # Fetch node details
+        result_nodes = []
+        for nid, act in top_nodes:
+            row = mongo_query.find_row('ontology_nodes', {'id': nid}, ['node_type', 'label', 'metadata_json', 'validated_count', 'contradicted_count', 'disproven'])
+            if row:
+                meta = json.loads(row[2]) if row[2] else {}
+                # Merge lifecycle columns into metadata for Claim nodes
+                if row[0] == "Claim":
+                    meta["validated_count"] = row[3] or 0
+                    meta["contradicted_count"] = row[4] or 0
+                    meta["disproven"] = bool(row[5])
+                result_nodes.append(
+                    {
+                        "id": nid,
+                        "type": row[0],
+                        "label": row[1],
+                        "activation": round(act, 4),
+                        "metadata": meta or None,
+                    }
                 )
-                hops_used = max_hops
-            except Exception as e:
-                logger.error(f"[BrainGraph] GNNEngine failed, fallback to none: {e}")
-                activations = {seed: 1.0 for seed in seed_node_ids}
-                hops_used = 1
-
-            # Prune below threshold + limit
-            activated = {
-                nid: act for nid, act in activations.items() if act >= threshold
-            }
-            # Sort by activation descending, take top N
-            top_nodes = sorted(activated.items(), key=lambda x: -x[1])[:max_nodes]
-            top_ids = {nid for nid, _ in top_nodes}
-
-            # Fetch node details
-            result_nodes = []
-            for nid, act in top_nodes:
-                row = mongo_query.find_row('ontology_nodes', {'id': nid}, ['node_type', 'label', 'metadata_json', 'validated_count', 'contradicted_count', 'disproven'])
-                if row:
-                    meta = json.loads(row[2]) if row[2] else {}
-                    # Merge lifecycle columns into metadata for Claim nodes
-                    if row[0] == "Claim":
-                        meta["validated_count"] = row[3] or 0
-                        meta["contradicted_count"] = row[4] or 0
-                        meta["disproven"] = bool(row[5])
-                    result_nodes.append(
-                        {
-                            "id": nid,
-                            "type": row[0],
-                            "label": row[1],
-                            "activation": round(act, 4),
-                            "metadata": meta or None,
-                        }
-                    )
 
         # Fetch relevant edges (both endpoints in subgraph)
         result_edges = []
@@ -322,8 +319,7 @@ class BrainGraph:
         if ticker:
             seeds = [ticker]
         else:
-            with get_db() as db:
-                rows = mongo_query.find_rows('ontology_nodes', {'node_type': 'Ticker'}, ['id'])
+            rows = mongo_query.find_rows('ontology_nodes', {'node_type': 'Ticker'}, ['id'])
             seeds = [r[0] for r in rows]
         if not seeds:
             return {"total_activated": 0, "persisted": 0, "seed_nodes": []}
@@ -429,12 +425,10 @@ class BrainGraph:
         """
         count = 0
 
-        with get_db() as db:
-            # ── Core Asset node ───────────────────────────────────────────
-            try:
-                row = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['name', 'sector', 'industry', 'market_cap_tier', 'asset_class'])
-            except Exception:
-                row = None
+        try:
+            row = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['name', 'sector', 'industry', 'market_cap_tier', 'asset_class'])
+        except Exception:
+            row = None
 
         # "Ticker" (not "Asset") — the live graph_sync path types cycle
         # tickers as Ticker; a different type here would flip-flop on upsert.
@@ -500,12 +494,10 @@ class BrainGraph:
             )
             count += 2
 
-        with get_db() as db:
-            # ── Recent news as Source nodes ────────────────────────────────
-            try:
-                news_rows = mongo_query.find_rows('news_articles', {'ticker': ticker, 'quality_status': {'$ne': 'discarded'}}, ['id', 'title', 'publisher', 'url'], sort=[('published_at', -1)], limit=5)
-            except Exception:
-                news_rows = []
+        try:
+            news_rows = mongo_query.find_rows('news_articles', {'ticker': ticker, 'quality_status': {'$ne': 'discarded'}}, ['id', 'title', 'publisher', 'url'], sort=[('published_at', -1)], limit=5)
+        except Exception:
+            news_rows = []
 
         for news_id, title, publisher, url in news_rows:
             node_id = f"news_{news_id[:8]}"
@@ -518,15 +510,13 @@ class BrainGraph:
             BrainGraph.upsert_edge(node_id, ticker, "MENTIONS", weight=0.7)
             count += 2
 
-        with get_db() as db:
-            # ── Sector peers ──────────────────────────────────────────────
-            if row and row[1]:  # sector exists
-                try:
-                    peer_rows = mongo_query.find_rows('ticker_metadata', {'sector': row[1], 'ticker': {'$ne': ticker}}, ['ticker'], limit=5)
-                except Exception:
-                    peer_rows = []
-            else:
+        if row and row[1]:  # sector exists
+            try:
+                peer_rows = mongo_query.find_rows('ticker_metadata', {'sector': row[1], 'ticker': {'$ne': ticker}}, ['ticker'], limit=5)
+            except Exception:
                 peer_rows = []
+        else:
+            peer_rows = []
 
         for (peer,) in peer_rows:
             BrainGraph.upsert_node(peer, "Asset", label=peer)

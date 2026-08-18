@@ -162,8 +162,7 @@ def save_equation(
     now = datetime.now(timezone.utc)
 
     try:
-        with get_db() as db:
-            mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'code': code, 'description': description, 'parameters': json.dumps(parameters or {}), 'backtest_results': json.dumps(backtest_results or {}), 'updated_at': now}, '$setOnInsert': {'id': eq_id, 'author_agent': author_agent, 'ticker_origin': ticker_origin, 'created_at': now}}, upsert=True)
+        mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'code': code, 'description': description, 'parameters': json.dumps(parameters or {}), 'backtest_results': json.dumps(backtest_results or {}), 'updated_at': now}, '$setOnInsert': {'id': eq_id, 'author_agent': author_agent, 'ticker_origin': ticker_origin, 'created_at': now}}, upsert=True)
         logger.info("[EQ_LIBRARY] Saved equation '%s' by %s", name, author_agent)
         return {
             "status": "saved",
@@ -231,14 +230,13 @@ def search_equations(query: str = "", top_k: int = 10) -> list[dict]:
 def get_equation_by_name(name: str) -> dict | None:
     """Fetch a single equation by exact name."""
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('quant_equation_library', {'name': name}, ['id', 'name', 'description', 'code', 'parameters'])
-            if not row:
-                return None
-            return {
-                "id": row[0], "name": row[1], "description": row[2],
-                "code": row[3], "parameters": row[4],
-            }
+        row = mongo_query.find_row('quant_equation_library', {'name': name}, ['id', 'name', 'description', 'code', 'parameters'])
+        if not row:
+            return None
+        return {
+            "id": row[0], "name": row[1], "description": row[2],
+            "code": row[3], "parameters": row[4],
+        }
     except Exception as e:
         logger.error("[EQ_LIBRARY] get_equation_by_name failed: %s", e)
         return None
@@ -266,8 +264,7 @@ def update_backtest_stats(
 ) -> None:
     """Update performance stats for an equation after a backtest run."""
     try:
-        with get_db() as db:
-            mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'avg_pnl_pct': pnl_pct, 'win_rate_pct': win_rate, 'sharpe_ratio': sharpe, 'backtest_results': json.dumps(backtest_results), 'updated_at': datetime.now(timezone.utc)}})
+        mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'avg_pnl_pct': pnl_pct, 'win_rate_pct': win_rate, 'sharpe_ratio': sharpe, 'backtest_results': json.dumps(backtest_results), 'updated_at': datetime.now(timezone.utc)}})
     except Exception as e:
         logger.error("[EQ_LIBRARY] update_backtest_stats failed: %s", e)
 

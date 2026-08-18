@@ -580,20 +580,19 @@ class VectorStore:
                 logger.warning("[vector_store] mongo stats failed: %s", e)
                 return {"total_embeddings": 0, "by_source": {}, "by_ticker": {},
                         "hnsw_available": False, "fts_available": False}
-        with get_db() as db:
-            total = mongo_query.agg_row('embeddings', {}, [('count', None)])[0]
+        total = mongo_query.agg_row('embeddings', {}, [('count', None)])[0]
 
-            by_source = mongo_query.group_rows('embeddings', {}, ['source_table'], [('count', None)], [('key', 'source_table'), ('agg', 0)], sort=[('a0', -1)])
+        by_source = mongo_query.group_rows('embeddings', {}, ['source_table'], [('count', None)], [('key', 'source_table'), ('agg', 0)], sort=[('a0', -1)])
 
-            by_ticker = mongo_query.group_rows('embeddings', {}, ['ticker'], [('count', None)], [('key', 'ticker'), ('agg', 0)], sort=[('a0', -1)], limit=20)
+        by_ticker = mongo_query.group_rows('embeddings', {}, ['ticker'], [('count', None)], [('key', 'ticker'), ('agg', 0)], sort=[('a0', -1)], limit=20)
 
-            return {
-                "total_embeddings": total,
-                "by_source": {r[0]: r[1] for r in by_source},
-                "by_ticker": {r[0]: r[1] for r in by_ticker},
-                "hnsw_available": True,  # Always available with pgvector
-                "fts_available": True,  # Always available with PostgreSQL
-            }
+        return {
+            "total_embeddings": total,
+            "by_source": {r[0]: r[1] for r in by_source},
+            "by_ticker": {r[0]: r[1] for r in by_ticker},
+            "hnsw_available": True,  # Always available with pgvector
+            "fts_available": True,  # Always available with PostgreSQL
+        }
 
     def clear(self):
         """Delete all embeddings. Use for testing."""

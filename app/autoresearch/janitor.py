@@ -132,22 +132,21 @@ def _detect_degenerate_scores() -> int:
     """
     flagged = 0
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('autoresearch_reports', {'status': 'done'}, ['decision_quality_score', 'data_quality_score', 'llm_performance_score'], sort=[('created_at', -1)], limit=DEGENERATE_THRESHOLD)
+        rows = mongo_query.find_rows('autoresearch_reports', {'status': 'done'}, ['decision_quality_score', 'data_quality_score', 'llm_performance_score'], sort=[('created_at', -1)], limit=DEGENERATE_THRESHOLD)
 
-            if len(rows) < DEGENERATE_THRESHOLD:
-                return 0
+        if len(rows) < DEGENERATE_THRESHOLD:
+            return 0
 
-            score_names = ["decision_quality", "data_quality", "llm_performance"]
-            for col_idx, name in enumerate(score_names):
-                scores = [r[col_idx] for r in rows]
-                if all(s is not None and s == 0 for s in scores):
-                    logger.warning(
-                        "[JANITOR] DEGENERATE SCORE: %s has been 0 for %d consecutive reports — "
-                        "this is likely a system bug, not a data issue.",
-                        name, DEGENERATE_THRESHOLD,
-                    )
-                    flagged += 1
+        score_names = ["decision_quality", "data_quality", "llm_performance"]
+        for col_idx, name in enumerate(score_names):
+            scores = [r[col_idx] for r in rows]
+            if all(s is not None and s == 0 for s in scores):
+                logger.warning(
+                    "[JANITOR] DEGENERATE SCORE: %s has been 0 for %d consecutive reports — "
+                    "this is likely a system bug, not a data issue.",
+                    name, DEGENERATE_THRESHOLD,
+                )
+                flagged += 1
     except Exception as e:
         logger.warning("[JANITOR] Degenerate score detection failed: %s", e)
     return flagged

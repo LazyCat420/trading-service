@@ -251,22 +251,20 @@ def process_and_store_trace(trace: TraceRecord):
     bucket = classify_failure(trace, score)
     
     try:
-        with get_db() as db:
-            mongo_store.insert_docs('eval_scores', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'completion_score': score["completion_score"], 'tool_correctness_score': score["tool_correctness_score"], 'efficiency_score': score["efficiency_score"], 'error_recovery_score': score["error_recovery_score"], 'stop_quality_score': score["stop_quality_score"], 'final_score': score["final_score"]}])
+        mongo_store.insert_docs('eval_scores', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'completion_score': score["completion_score"], 'tool_correctness_score': score["tool_correctness_score"], 'efficiency_score': score["efficiency_score"], 'error_recovery_score': score["error_recovery_score"], 'stop_quality_score': score["stop_quality_score"], 'final_score': score["final_score"]}])
             
-            if bucket:
-                mongo_store.insert_docs('failure_buckets', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'bucket_type': bucket, 'description': f"Auto-classified based on score {score['final_score']}", 'error_class': classify_error_class(bucket)}])
+        if bucket:
+            mongo_store.insert_docs('failure_buckets', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'bucket_type': bucket, 'description': f"Auto-classified based on score {score['final_score']}", 'error_class': classify_error_class(bucket)}])
     except Exception as e:
         logger.error("Failed to store eval results: %s", e)
         raise EvalStoreError(f"Failed to store eval results: {e}") from e
 
 def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) -> Dict[str, Any]:
     try:
-        with get_db() as db:
-            if ticker:
-                rows = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
-            else:
-                rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
+        if ticker:
+            rows = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
+        else:
+            rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
 
         if len(rows) < 3:
             return {

@@ -36,69 +36,68 @@ async def collect_congress_trades(ticker: str | None = None) -> int:
     Returns number of rows inserted.
     """
     key = _get_key()
-    with get_db() as db:
-        count = 0
+    count = 0
 
-        params = {"apikey": key}
-        url = f"{BASE_URL}/senate-trading"
+    params = {"apikey": key}
+    url = f"{BASE_URL}/senate-trading"
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.get(url, params=params)
-            if r.status_code == 401:
-                logger.info("[fmp] Invalid API key or unauthorized")
-                return 0
-            if r.status_code == 403:
-                logger.info(
-                    "[fmp] Congress trades requires premium FMP plan — falling back to CapitolTrades"
-                )
-                return 0
-            r.raise_for_status()
-            trades = r.json()
-
-        if not trades:
-            logger.info("[fmp] No congress trades returned")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(url, params=params)
+        if r.status_code == 401:
+            logger.info("[fmp] Invalid API key or unauthorized")
             return 0
-
-        for tx in trades:
-            tx_ticker = (
-                tx.get("ticker", tx.get("asset_description", "")).upper().strip()
+        if r.status_code == 403:
+            logger.info(
+                "[fmp] Congress trades requires premium FMP plan — falling back to CapitolTrades"
             )
-            if not tx_ticker:
-                continue
+            return 0
+        r.raise_for_status()
+        trades = r.json()
 
-            if ticker and tx_ticker != ticker.upper():
-                continue
+    if not trades:
+        logger.info("[fmp] No congress trades returned")
+        return 0
 
-            trade_id = hashlib.md5(
-                f"{tx.get('senator', tx.get('representative', ''))}"
-                f"{tx_ticker}{tx.get('transaction_date', '')}"
-                f"{tx.get('type', tx.get('transaction_type', ''))}".encode()
-            ).hexdigest()
-
-            trade_date = _parse_date(
-                tx.get("transaction_date", tx.get("transactionDate", ""))
-            )
-            disclosure_date = _parse_date(
-                tx.get("disclosure_date", tx.get("disclosureDate", ""))
-            )
-
-            days = None
-            if trade_date and disclosure_date:
-                days = (disclosure_date - trade_date).days
-
-            politician = tx.get(
-                "senator", tx.get("representative", tx.get("firstName", "Unknown"))
-            )
-            chamber = "Senate" if "senator" in tx else "House"
-
-            mongo_store.upsert_doc('congress_trades', {'id': trade_id}, {'id': trade_id, 'politician': politician, 'party': tx.get("party", ""), 'chamber': chamber, 'state': tx.get("state", ""), 'ticker': tx_ticker, 'transaction_type': tx.get("type", tx.get("transaction_type", "")), 'amount_range': tx.get("amount", ""), 'trade_date': trade_date, 'disclosure_date': disclosure_date, 'days_to_disclose': days}, insert_only=True)
-            count += 1
-
-        logger.info(
-            f"[fmp] {count} congress trades written"
-            f"{f' (filtered: {ticker})' if ticker else ''}"
+    for tx in trades:
+        tx_ticker = (
+            tx.get("ticker", tx.get("asset_description", "")).upper().strip()
         )
-        return count
+        if not tx_ticker:
+            continue
+
+        if ticker and tx_ticker != ticker.upper():
+            continue
+
+        trade_id = hashlib.md5(
+            f"{tx.get('senator', tx.get('representative', ''))}"
+            f"{tx_ticker}{tx.get('transaction_date', '')}"
+            f"{tx.get('type', tx.get('transaction_type', ''))}".encode()
+        ).hexdigest()
+
+        trade_date = _parse_date(
+            tx.get("transaction_date", tx.get("transactionDate", ""))
+        )
+        disclosure_date = _parse_date(
+            tx.get("disclosure_date", tx.get("disclosureDate", ""))
+        )
+
+        days = None
+        if trade_date and disclosure_date:
+            days = (disclosure_date - trade_date).days
+
+        politician = tx.get(
+            "senator", tx.get("representative", tx.get("firstName", "Unknown"))
+        )
+        chamber = "Senate" if "senator" in tx else "House"
+
+        mongo_store.upsert_doc('congress_trades', {'id': trade_id}, {'id': trade_id, 'politician': politician, 'party': tx.get("party", ""), 'chamber': chamber, 'state': tx.get("state", ""), 'ticker': tx_ticker, 'transaction_type': tx.get("type", tx.get("transaction_type", "")), 'amount_range': tx.get("amount", ""), 'trade_date': trade_date, 'disclosure_date': disclosure_date, 'days_to_disclose': days}, insert_only=True)
+        count += 1
+
+    logger.info(
+        f"[fmp] {count} congress trades written"
+        f"{f' (filtered: {ticker})' if ticker else ''}"
+    )
+    return count
 
 
 async def collect_all(ticker: str | None = None) -> dict:
@@ -161,21 +160,20 @@ async def collect_price_history(ticker: str, days_back: int = 365) -> int:
 
     cutoff = datetime.date.today() - datetime.timedelta(days=days_back)
 
-    with get_db() as db:
-        count = 0
-        for day in historical:
-            try:
-                date_obj = datetime.date.fromisoformat(day.get("date", ""))
-                if date_obj < cutoff:
-                    continue
-
-                mongo_store.upsert_doc('price_history', {'ticker': ticker, 'date': date_obj, 'source': 'fmp'}, {'ticker': ticker, 'date': date_obj, 'open': float(day.get("open", 0)), 'high': float(day.get("high", 0)), 'low': float(day.get("low", 0)), 'close': float(day.get("close", 0)), 'volume': int(day.get("volume", 0)), 'source': 'fmp'}, insert_only=True)
-                count += 1
-            except Exception as e:
+    count = 0
+    for day in historical:
+        try:
+            date_obj = datetime.date.fromisoformat(day.get("date", ""))
+            if date_obj < cutoff:
                 continue
 
-        logger.info(f"[fmp] {ticker}: {count} price rows written")
-        return count
+            mongo_store.upsert_doc('price_history', {'ticker': ticker, 'date': date_obj, 'source': 'fmp'}, {'ticker': ticker, 'date': date_obj, 'open': float(day.get("open", 0)), 'high': float(day.get("high", 0)), 'low': float(day.get("low", 0)), 'close': float(day.get("close", 0)), 'volume': int(day.get("volume", 0)), 'source': 'fmp'}, insert_only=True)
+            count += 1
+        except Exception as e:
+            continue
+
+    logger.info(f"[fmp] {ticker}: {count} price rows written")
+    return count
 
 
 async def collect_fundamentals(ticker: str) -> bool:
@@ -211,11 +209,10 @@ async def collect_fundamentals(ticker: str) -> bool:
     metrics = metrics_data[0] if metrics_data else {}
 
     today = datetime.date.today()
-    with get_db() as db:
-        mongo_store.upsert_doc('fundamentals', {'ticker': ticker, 'snapshot_date': today}, {'ticker': ticker, 'snapshot_date': today, 'source': 'fmp', 'market_cap': prof.get("mktCap"), 'pe_ratio': metrics.get("peRatioTTM"), 'forward_pe': None, 'peg_ratio': metrics.get("pegRatioTTM"), 'price_to_book': metrics.get("pbRatioTTM"), 'price_to_sales': metrics.get("priceToSalesRatioTTM"), 'ev_to_ebitda': metrics.get("enterpriseValueOverEBITDATTM"), 'profit_margin': metrics.get("netIncomePerEBT"), 'roe': metrics.get("roeTTM"), 'roa': metrics.get("returnOnTangibleAssetsTTM"), 'revenue': None, 'revenue_growth': None, 'net_income': None, 'debt_to_equity': metrics.get("debtToEquityTTM"), 'current_ratio': metrics.get("currentRatioTTM"), 'beta': prof.get("beta"), 'week_52_high': None, 'week_52_low': None, 'short_float_pct': None}, insert_only=True)
+    mongo_store.upsert_doc('fundamentals', {'ticker': ticker, 'snapshot_date': today}, {'ticker': ticker, 'snapshot_date': today, 'source': 'fmp', 'market_cap': prof.get("mktCap"), 'pe_ratio': metrics.get("peRatioTTM"), 'forward_pe': None, 'peg_ratio': metrics.get("pegRatioTTM"), 'price_to_book': metrics.get("pbRatioTTM"), 'price_to_sales': metrics.get("priceToSalesRatioTTM"), 'ev_to_ebitda': metrics.get("enterpriseValueOverEBITDATTM"), 'profit_margin': metrics.get("netIncomePerEBT"), 'roe': metrics.get("roeTTM"), 'roa': metrics.get("returnOnTangibleAssetsTTM"), 'revenue': None, 'revenue_growth': None, 'net_income': None, 'debt_to_equity': metrics.get("debtToEquityTTM"), 'current_ratio': metrics.get("currentRatioTTM"), 'beta': prof.get("beta"), 'week_52_high': None, 'week_52_low': None, 'short_float_pct': None}, insert_only=True)
 
-        logger.info(f"[fmp] {ticker}: fundamentals written")
-        return True
+    logger.info(f"[fmp] {ticker}: fundamentals written")
+    return True
 
 
 async def collect_analyst_targets(ticker: str) -> bool:
@@ -284,18 +281,17 @@ async def collect_financials(ticker: str) -> int:
     if not data:
         return 0
 
-    with get_db() as db:
-        count = 0
-        for stmt in data:
-            try:
-                period_end = datetime.date.fromisoformat(stmt.get("date", "")[:10])
-                mongo_store.upsert_doc('financial_history', {'ticker': ticker, 'period_type': 'quarterly', 'period_end': period_end}, {'ticker': ticker, 'period_type': 'quarterly', 'period_end': period_end, 'revenue': stmt.get("revenue"), 'gross_profit': stmt.get("grossProfit"), 'operating_income': stmt.get("operatingIncome"), 'net_income': stmt.get("netIncome"), 'eps': stmt.get("eps"), 'free_cash_flow': None}, insert_only=True)
-                count += 1
-            except Exception:
-                pass
+    count = 0
+    for stmt in data:
+        try:
+            period_end = datetime.date.fromisoformat(stmt.get("date", "")[:10])
+            mongo_store.upsert_doc('financial_history', {'ticker': ticker, 'period_type': 'quarterly', 'period_end': period_end}, {'ticker': ticker, 'period_type': 'quarterly', 'period_end': period_end, 'revenue': stmt.get("revenue"), 'gross_profit': stmt.get("grossProfit"), 'operating_income': stmt.get("operatingIncome"), 'net_income': stmt.get("netIncome"), 'eps': stmt.get("eps"), 'free_cash_flow': None}, insert_only=True)
+            count += 1
+        except Exception:
+            pass
 
-        logger.info(f"[fmp] {ticker}: {count} financial history rows written")
-        return count
+    logger.info(f"[fmp] {ticker}: {count} financial history rows written")
+    return count
 
 
 async def collect_balance_sheet(ticker: str) -> int:
@@ -328,16 +324,15 @@ async def collect_balance_sheet(ticker: str) -> int:
     if not data:
         return 0
 
-    with get_db() as db:
-        count = 0
+    count = 0
 
-        for bs in data:
-            try:
-                period_end = datetime.date.fromisoformat(bs.get("date", "")[:10])
-                mongo_store.upsert_doc('balance_sheet', {'ticker': ticker, 'period_end': period_end}, {'ticker': ticker, 'period_end': period_end, 'total_assets': bs.get("totalAssets"), 'total_liabilities': bs.get("totalLiabilities"), 'total_equity': bs.get("totalStockholdersEquity"), 'cash': bs.get("cashAndCashEquivalents"), 'total_debt': bs.get("totalDebt"), 'working_capital': bs.get("totalWorkingCapital", 0)}, insert_only=True)
-                count += 1
-            except Exception:
-                pass
+    for bs in data:
+        try:
+            period_end = datetime.date.fromisoformat(bs.get("date", "")[:10])
+            mongo_store.upsert_doc('balance_sheet', {'ticker': ticker, 'period_end': period_end}, {'ticker': ticker, 'period_end': period_end, 'total_assets': bs.get("totalAssets"), 'total_liabilities': bs.get("totalLiabilities"), 'total_equity': bs.get("totalStockholdersEquity"), 'cash': bs.get("cashAndCashEquivalents"), 'total_debt': bs.get("totalDebt"), 'working_capital': bs.get("totalWorkingCapital", 0)}, insert_only=True)
+            count += 1
+        except Exception:
+            pass
 
-        logger.info(f"[fmp] {ticker}: {count} balance sheet rows written")
-        return count
+    logger.info(f"[fmp] {ticker}: {count} balance sheet rows written")
+    return count

@@ -29,8 +29,7 @@ def record_fund_alert(
             llm_summary=llm_summary
         )
         
-        with get_db() as db:
-            mongo_store.insert_docs('fund_alerts', [{'id': alert.id, 'created_at': alert.created_at, 'alert_type': alert.alert_type, 'ticker': alert.ticker, 'entity_name': alert.entity_name, 'detail': alert.detail, 'severity': alert.severity, 'llm_summary': alert.llm_summary, 'is_read': alert.is_read}])
+        mongo_store.insert_docs('fund_alerts', [{'id': alert.id, 'created_at': alert.created_at, 'alert_type': alert.alert_type, 'ticker': alert.ticker, 'entity_name': alert.entity_name, 'detail': alert.detail, 'severity': alert.severity, 'llm_summary': alert.llm_summary, 'is_read': alert.is_read}])
         
         logger.info("[alert_service] Recorded %s alert (%s) for entity %s", severity, alert_type, entity_name)
         return alert.model_dump()

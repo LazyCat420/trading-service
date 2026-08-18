@@ -67,8 +67,7 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         # the old subsystem_benchmarks module was deleted in the V3 purge).
         history_scores = []
         try:
-            with get_db() as db:
-                rows = mongo_query.find_rows('autoresearch_reports', {'llm_performance_score': {'$ne': None}}, ['llm_performance_score'], sort=[('created_at', -1)], limit=10)
+            rows = mongo_query.find_rows('autoresearch_reports', {'llm_performance_score': {'$ne': None}}, ['llm_performance_score'], sort=[('created_at', -1)], limit=10)
             history_scores = [float(r[0]) / 100.0 for r in rows if r[0] is not None]
         except Exception as trend_err:
             logger.debug("[LLM-AUDIT] Trend lookup skipped: %s", trend_err)

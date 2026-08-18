@@ -436,11 +436,10 @@ def cancel_scheduled_research(schedule_id: str, reason: str = "") -> dict:
     schedule_id = (schedule_id or "").strip()
     if not schedule_id.startswith("sch-bot-"):
         return {"status": "rejected", "reason": "Only bot-created (sch-bot-*) schedules can be cancelled here."}
-    with get_db() as db:
-        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['is_active'])
-        if not row:
-            return {"status": "rejected", "reason": f"Schedule {schedule_id} not found."}
-        mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': f"cancelled: {reason[:120]}" if reason else "cancelled", 'updated_at': datetime.now(timezone.utc)}})
-        mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id})}])
+    row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['is_active'])
+    if not row:
+        return {"status": "rejected", "reason": f"Schedule {schedule_id} not found."}
+    mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': f"cancelled: {reason[:120]}" if reason else "cancelled", 'updated_at': datetime.now(timezone.utc)}})
+    mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id})}])
     logger.info("[GOVERNOR] Schedule %s cancelled (%s)", schedule_id, reason)
     return {"status": "cancelled", "schedule_id": schedule_id}

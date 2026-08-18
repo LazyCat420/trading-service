@@ -145,12 +145,10 @@ async def startup_market_collect(is_shutting_down: Callable[[], bool]):
     """Background: collect market regime data (indexes, VIX, yields, ETFs)."""
     if is_shutting_down():
         return
-    with get_db() as db:
-        # Check if we have recent data
-        recent = mongo_query.agg_row('asset_prices', {'date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=1))}}, [('count', None)])[0]
+    recent = mongo_query.agg_row('asset_prices', {'date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=1))}}, [('count', None)])[0]
 
-        # Check if we explicitly have commodity data
-        commodities = mongo_query.agg_row('asset_prices', {'asset_class': 'commodity'}, [('count', None)])[0]
+    # Check if we explicitly have commodity data
+    commodities = mongo_query.agg_row('asset_prices', {'asset_class': 'commodity'}, [('count', None)])[0]
 
     needs_collect = recent < 50 or commodities == 0
 
@@ -201,8 +199,7 @@ async def startup_sp500_seed(is_shutting_down: Callable[[], bool]):
     """
     if is_shutting_down():
         return
-    with get_db() as db:
-        sp500_count = mongo_query.agg_row('ticker_metadata', {'sp500': True}, [('count', None)])[0]
+    sp500_count = mongo_query.agg_row('ticker_metadata', {'sp500': True}, [('count', None)])[0]
 
     if sp500_count > 400:
         logger.info(

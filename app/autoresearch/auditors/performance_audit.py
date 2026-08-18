@@ -50,9 +50,8 @@ def _audit_execution_errors(cycle_id: str) -> list[dict]:
             except Exception as me:
                 mongo_store.handle_mongo_read_failure("execution_errors", "_audit_execution_errors", me)
 
-        with get_db() as db:
-            rows = mongo_query.find_rows('execution_errors', {'cycle_id': cycle_id}, ['phase', 'error_type', 'error_message'], sort=[('created_at', -1)], limit=5)
-            return [{"phase": r[0], "error_type": r[1], "error_message": r[2]} for r in rows]
+        rows = mongo_query.find_rows('execution_errors', {'cycle_id': cycle_id}, ['phase', 'error_type', 'error_message'], sort=[('created_at', -1)], limit=5)
+        return [{"phase": r[0], "error_type": r[1], "error_message": r[2]} for r in rows]
     except Exception as e:
         logger.debug("Failed to fetch execution errors: %s", e)
     return []

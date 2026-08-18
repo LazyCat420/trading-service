@@ -193,8 +193,7 @@ def sync_collect_fred(is_shutting_down) -> int:
     # this row for its "last collected" freshness marker. The row had been
     # frozen since 2026-06-20 when the v2 pipeline (its old writer) was removed.
     try:
-        with get_db() as db:
-            mongo_store.update_docs('data_source_status', {'source': 'fred', 'ticker': '_global_'}, {'$set': {'last_success': datetime.datetime.now(datetime.timezone.utc), 'rows_fetched': total}}, upsert=True)
+        mongo_store.update_docs('data_source_status', {'source': 'fred', 'ticker': '_global_'}, {'$set': {'last_success': datetime.datetime.now(datetime.timezone.utc), 'rows_fetched': total}}, upsert=True)
     except Exception as e:
         logger.warning("[fred] data_source_status stamp failed: %s", e)
 

@@ -37,8 +37,7 @@ async def run_autoresearch(job_id: str, payload: dict):
     except Exception as pb_err:
         logger.warning("update_tool_playbook failed (non-fatal): %s", pb_err)
     
-    with get_db() as db:
-        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed'}})
+    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed'}})
 
 async def run_activate_brain_graph(job_id: str, payload: dict):
     """Re-seed + spread-activate the brain graph, persisting activation.
@@ -54,8 +53,7 @@ async def run_activate_brain_graph(job_id: str, payload: dict):
     max_hops = int(payload.get("max_hops") or 3)
 
     def _progress(pct: int, msg: str):
-        with get_db() as db:
-            mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'progress': pct, 'progress_message': msg}})
+        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'progress': pct, 'progress_message': msg}})
 
     seeded = 0
     if ticker:
@@ -64,8 +62,7 @@ async def run_activate_brain_graph(job_id: str, payload: dict):
     _progress(70, "Running spreading activation")
     stats = BrainGraph.activate_and_persist(ticker, max_hops=max_hops)
 
-    with get_db() as db:
-        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'progress': 100, 'progress_message': 'Graph build complete', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"ticker": ticker, "nodes_seeded": seeded, **stats})}})
+    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'progress': 100, 'progress_message': 'Graph build complete', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"ticker": ticker, "nodes_seeded": seeded, **stats})}})
 
 
 async def run_fred_collection(job_id: str, payload: dict):
@@ -74,8 +71,7 @@ async def run_fred_collection(job_id: str, payload: dict):
     from app.collectors.fred_collector import sync_collect_fred
 
     total = await asyncio.to_thread(sync_collect_fred, lambda: False)
-    with get_db() as db:
-        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"rows_written": total})}})
+    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"rows_written": total})}})
 
 
 async def run_market_collection(job_id: str, payload: dict):
@@ -84,8 +80,7 @@ async def run_market_collection(job_id: str, payload: dict):
     from app.collectors.market_regime_collector import collect_market_data
 
     result = await collect_market_data(period=payload.get("period") or "6mo")
-    with get_db() as db:
-        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"total": result.get("total", 0)})}})
+    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"total": result.get("total", 0)})}})
 
 
 async def run_evaluate_strategy(job_id: str, payload: dict):
@@ -98,43 +93,41 @@ async def run_evaluate_strategy(job_id: str, payload: dict):
         evaluate_strategy(cycle_id=payload.get("cycle_id")), timeout=300,
     )
     metrics = result.get("agent_metrics") if isinstance(result, dict) else None
-    with get_db() as db:
-        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({
-                "total_score": (result or {}).get("total_score"),
-                "decisions_evaluated": (metrics or {}).get("total_decisions_evaluated", 0),
-            }, default=str)}})
+    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({
+            "total_score": (result or {}).get("total_score"),
+            "decisions_evaluated": (metrics or {}).get("total_decisions_evaluated", 0),
+        }, default=str)}})
 
 
 async def poll_system_commands():
     logger.info("Starting autoresearch system_commands poller...")
     while True:
         try:
-            with get_db() as db:
-                cmd = mongo_query.find_row('system_commands', {'status': 'pending', 'command_type': {'$in': ['AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', 'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY']}}, ['id', 'command_type', 'payload'])
+            cmd = mongo_query.find_row('system_commands', {'status': 'pending', 'command_type': {'$in': ['AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', 'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY']}}, ['id', 'command_type', 'payload'])
 
-                if cmd:
-                    job_id, cmd_type, payload_str = cmd
-                    logger.info("Found pending %s command: %s", cmd_type, job_id)
-                    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'running', 'started_at': datetime.now(timezone.utc)}})
+            if cmd:
+                job_id, cmd_type, payload_str = cmd
+                logger.info("Found pending %s command: %s", cmd_type, job_id)
+                mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'running', 'started_at': datetime.now(timezone.utc)}})
 
-                    payload = json.loads(payload_str) if payload_str else {}
+                payload = json.loads(payload_str) if payload_str else {}
 
-                    try:
-                        if cmd_type == "AUTORESEARCH":
-                            await run_autoresearch(job_id, payload)
-                        elif cmd_type == "ACTIVATE_BRAIN_GRAPH":
-                            await run_activate_brain_graph(job_id, payload)
-                        elif cmd_type == "RUN_FRED_COLLECTION":
-                            await run_fred_collection(job_id, payload)
-                        elif cmd_type == "RUN_MARKET_COLLECTION":
-                            await run_market_collection(job_id, payload)
-                        elif cmd_type == "EVALUATE_STRATEGY":
-                            await run_evaluate_strategy(job_id, payload)
-                    except Exception as e:
-                        logger.error("%s failed for %s: %s", cmd_type, job_id, e)
-                        # error_message is what trading-client renders in its
-                        # task list; keep payload's error copy for older readers.
-                        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'error', 'error_message': str(e)[:500], 'payload': json.dumps({"error": str(e)})}})
+                try:
+                    if cmd_type == "AUTORESEARCH":
+                        await run_autoresearch(job_id, payload)
+                    elif cmd_type == "ACTIVATE_BRAIN_GRAPH":
+                        await run_activate_brain_graph(job_id, payload)
+                    elif cmd_type == "RUN_FRED_COLLECTION":
+                        await run_fred_collection(job_id, payload)
+                    elif cmd_type == "RUN_MARKET_COLLECTION":
+                        await run_market_collection(job_id, payload)
+                    elif cmd_type == "EVALUATE_STRATEGY":
+                        await run_evaluate_strategy(job_id, payload)
+                except Exception as e:
+                    logger.error("%s failed for %s: %s", cmd_type, job_id, e)
+                    # error_message is what trading-client renders in its
+                    # task list; keep payload's error copy for older readers.
+                    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'error', 'error_message': str(e)[:500], 'payload': json.dumps({"error": str(e)})}})
         except Exception as e:
             logger.error("Error polling system_commands: %s", e)
         

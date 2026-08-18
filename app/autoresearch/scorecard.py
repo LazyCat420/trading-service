@@ -188,12 +188,11 @@ def _version_window(agent_name: str, version: int) -> tuple:
     Used to attribute traces, which carry no version stamp of their own. The
     end is the next version's creation, or open if this is the active one.
     """
-    with get_db() as db:
-        row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(version)}, ['created_at'])
-        if not row:
-            return None, None
-        started = row[0]
-        nxt = mongo_query.agg_row('agent_skills', {'agent_name': agent_name, 'version': {'$gt': int(version)}}, [('min', 'created_at')])
+    row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(version)}, ['created_at'])
+    if not row:
+        return None, None
+    started = row[0]
+    nxt = mongo_query.agg_row('agent_skills', {'agent_name': agent_name, 'version': {'$gt': int(version)}}, [('min', 'created_at')])
     return started, (nxt[0] if nxt else None)
 
 

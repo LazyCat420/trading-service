@@ -68,22 +68,21 @@ async def collect_price_history(ticker: str, days_back: int = 365) -> int:
         logger.info(f"[polygon] No price data for {ticker}")
         return 0
 
-    with get_db() as db:
-        count = 0
-        for day in results:
-            try:
-                # Polygon timestamps are in milliseconds
-                date_obj = datetime.datetime.fromtimestamp(
-                    day["t"] / 1000.0, tz=datetime.UTC
-                ).date()
+    count = 0
+    for day in results:
+        try:
+            # Polygon timestamps are in milliseconds
+            date_obj = datetime.datetime.fromtimestamp(
+                day["t"] / 1000.0, tz=datetime.UTC
+            ).date()
 
-                mongo_store.upsert_doc('price_history', {'ticker': ticker, 'date': date_obj, 'source': 'polygon'}, {'ticker': ticker, 'date': date_obj, 'open': float(day.get("o", 0)), 'high': float(day.get("h", 0)), 'low': float(day.get("l", 0)), 'close': float(day.get("c", 0)), 'volume': int(day.get("v", 0)), 'source': 'polygon'}, insert_only=True)
-                count += 1
-            except Exception as e:
-                continue
+            mongo_store.upsert_doc('price_history', {'ticker': ticker, 'date': date_obj, 'source': 'polygon'}, {'ticker': ticker, 'date': date_obj, 'open': float(day.get("o", 0)), 'high': float(day.get("h", 0)), 'low': float(day.get("l", 0)), 'close': float(day.get("c", 0)), 'volume': int(day.get("v", 0)), 'source': 'polygon'}, insert_only=True)
+            count += 1
+        except Exception as e:
+            continue
 
-        logger.info(f"[polygon] {ticker}: {count} price rows written")
-        return count
+    logger.info(f"[polygon] {ticker}: {count} price rows written")
+    return count
 
 
 async def collect_all(ticker: str) -> dict:

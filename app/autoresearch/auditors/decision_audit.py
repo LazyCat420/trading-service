@@ -120,13 +120,12 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
     if total == 0:
         # No decisions this cycle, but check if we have historical outcomes to score from
         try:
-            with get_db() as db:
-                hist_count = mongo_query.agg_row('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$nin': ['CANCELED', 'DEGRADED_ARTIFACT']}}, [('count', None)])
-                if hist_count and hist_count[0] >= 3:
-                    # Fall through to the outcome-based scoring below
-                    issues.append({"issue": "No decisions produced this cycle (using historical outcomes)", "severity": "info"})
-                else:
-                    return {"score": 0, "issues": [{"issue": "No decisions produced and no historical outcomes to score", "severity": "warning"}]}
+            hist_count = mongo_query.agg_row('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$nin': ['CANCELED', 'DEGRADED_ARTIFACT']}}, [('count', None)])
+            if hist_count and hist_count[0] >= 3:
+                # Fall through to the outcome-based scoring below
+                issues.append({"issue": "No decisions produced this cycle (using historical outcomes)", "severity": "info"})
+            else:
+                return {"score": 0, "issues": [{"issue": "No decisions produced and no historical outcomes to score", "severity": "warning"}]}
         except Exception:
             return {"score": 0, "issues": [{"issue": "No decisions produced", "severity": "critical"}]}
 
@@ -147,8 +146,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
         except Exception:
             rows = None
         if rows is None:
-            with get_db() as db:
-                rows = mongo_query.find_rows('analysis_results', {'cycle_id': cycle_id, 'confidence': {'$ne': None}}, ['confidence'])
+            rows = mongo_query.find_rows('analysis_results', {'cycle_id': cycle_id, 'confidence': {'$ne': None}}, ['confidence'])
         if rows:
             confs = [r[0] for r in rows]
             if max(confs) - min(confs) < 10 and len(confs) >= 3:
@@ -395,10 +393,9 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
     # byte-identically. This is the fast, this-cycle-only signal alongside it.
     per_cycle_judge = None
     try:
-        with get_db() as db:
-            row = mongo_query.agg_row('decision_evaluations', {'cycle_id': cycle_id, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
-            if row and row[1]:
-                per_cycle_judge = round(float(row[0]) * 20.0, 1)  # 0-5 → 0-100
+        row = mongo_query.agg_row('decision_evaluations', {'cycle_id': cycle_id, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
+        if row and row[1]:
+            per_cycle_judge = round(float(row[0]) * 20.0, 1)  # 0-5 → 0-100
     except Exception:
         pass
 
@@ -453,7 +450,6 @@ def write_cycle_summary(cycle_id: str, analysis_results: list[dict]) -> None:
         top_desc = f"Top pick: {top_ticker} @ {top_confidence}%." if top_ticker else "No high-confidence picks."
         lesson = f"{buy_count} BUY / {sell_count} SELL / {hold_count} HOLD. {top_desc}"
 
-        with get_db() as db:
-            mongo_store.update_docs('autoresearch_cycle_summaries', {'cycle_id': cycle_id}, {'$set': {'total_tickers': len(analysis_results), 'buy_count': buy_count, 'sell_count': sell_count, 'hold_count': hold_count, 'avg_confidence': round(avg_conf, 1), 'top_ticker': top_ticker, 'top_confidence': top_confidence, 'lesson_summary': lesson[:500]}, '$setOnInsert': {'id': f"cs-{uuid.uuid4().hex[:12]}"}}, upsert=True)
+        mongo_store.update_docs('autoresearch_cycle_summaries', {'cycle_id': cycle_id}, {'$set': {'total_tickers': len(analysis_results), 'buy_count': buy_count, 'sell_count': sell_count, 'hold_count': hold_count, 'avg_confidence': round(avg_conf, 1), 'top_ticker': top_ticker, 'top_confidence': top_confidence, 'lesson_summary': lesson[:500]}, '$setOnInsert': {'id': f"cs-{uuid.uuid4().hex[:12]}"}}, upsert=True)
     except Exception as e:
         logger.warning("cycle_summaries write failed (non-fatal): %s", e)

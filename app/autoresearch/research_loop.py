@@ -51,20 +51,19 @@ MIN_EVIDENCE_CHARS = 40
 def fetch_pending_questions(limit: int = 10) -> list[dict[str, Any]]:
     """Un-answered questions, most-re-asked first. Never raises."""
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('dossier_question_log', {'status': {'$in': ['open', 'reasked']}}, ['id', 'ticker', 'question_hash', 'question', 'source_agent', 'ask_count', 'status'], sort=[('ask_count', -1), ('last_asked_at', -1)], limit=limit)
-            return [
-                {
-                    "id": r[0],
-                    "ticker": r[1],
-                    "question_hash": r[2],
-                    "question": r[3],
-                    "source_agent": r[4],
-                    "ask_count": r[5],
-                    "status": r[6],
-                }
-                for r in rows or []
-            ]
+        rows = mongo_query.find_rows('dossier_question_log', {'status': {'$in': ['open', 'reasked']}}, ['id', 'ticker', 'question_hash', 'question', 'source_agent', 'ask_count', 'status'], sort=[('ask_count', -1), ('last_asked_at', -1)], limit=limit)
+        return [
+            {
+                "id": r[0],
+                "ticker": r[1],
+                "question_hash": r[2],
+                "question": r[3],
+                "source_agent": r[4],
+                "ask_count": r[5],
+                "status": r[6],
+            }
+            for r in rows or []
+        ]
     except Exception as e:  # noqa: BLE001 — a ledger outage must not fail a desk
         logger.warning("[research_loop] fetch_pending_questions failed: %s", e)
         return []

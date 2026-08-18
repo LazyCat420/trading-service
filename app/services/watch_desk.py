@@ -68,8 +68,7 @@ def _held_tickers() -> set[str]:
         from app.services.bot_manager import get_active_bot_id
 
         bot_id = get_active_bot_id()
-        with get_db() as db:
-            rows = mongo_query.find_rows('positions', {'bot_id': bot_id, 'qty': {'$gt': 0}}, ['ticker'])
+        rows = mongo_query.find_rows('positions', {'bot_id': bot_id, 'qty': {'$gt': 0}}, ['ticker'])
         return {r[0] for r in rows if r and r[0]}
     except Exception as e:  # noqa: BLE001
         logger.warning("[WatchDesk] held-ticker lookup failed, ranking without it: %s", e)
@@ -563,9 +562,8 @@ async def evaluate_watches() -> dict:
 
     now = datetime.now(timezone.utc)
     # Deactivate expired watches first.
-    with get_db() as db:
-        mongo_store.update_docs('ticker_watches', {'is_active': True, 'expiry_at': {'$ne': None, '$lte': now}}, {'$set': {'is_active': False, 'updated_at': now}})
-        rows = mongo_query.find_rows('ticker_watches', {'is_active': True}, ['id', 'ticker', 'bot_id', 'triggers', 'reason', 'thesis_summary', 'cooldown_minutes', 'fire_count', 'last_fired_at', 'created_at'])
+    mongo_store.update_docs('ticker_watches', {'is_active': True, 'expiry_at': {'$ne': None, '$lte': now}}, {'$set': {'is_active': False, 'updated_at': now}})
+    rows = mongo_query.find_rows('ticker_watches', {'is_active': True}, ['id', 'ticker', 'bot_id', 'triggers', 'reason', 'thesis_summary', 'cooldown_minutes', 'fire_count', 'last_fired_at', 'created_at'])
 
     watches = [{
         "id": r[0], "ticker": r[1], "bot_id": r[2], "triggers": json.loads(r[3] or "[]"),
@@ -619,8 +617,7 @@ async def evaluate_watches() -> dict:
             else:
                 _PRICE_FAIL_COUNT.pop(ticker, None)
 
-        with get_db() as db:
-            mongo_store.update_docs('ticker_watches', {'ticker': ticker, 'is_active': True}, {'$set': {'last_evaluated_at': now}})
+        mongo_store.update_docs('ticker_watches', {'ticker': ticker, 'is_active': True}, {'$set': {'last_evaluated_at': now}})
 
         for w in tw:
             # Debounce: respect this watch's cooldown.
@@ -698,24 +695,23 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
     the cycle id, or None if a cycle is already running / enqueue failed."""
     ticker = watch["ticker"]
     try:
-        with get_db() as db:
-            state = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
-            if state and state[0] not in ("idle", "done", "error", "stopped", "interrupted"):
-                logger.info("[WatchDesk] %s trip held — a cycle is already running (%s).", ticker, state[0])
-                return None
+        state = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
+        if state and state[0] not in ("idle", "done", "error", "stopped", "interrupted"):
+            logger.info("[WatchDesk] %s trip held — a cycle is already running (%s).", ticker, state[0])
+            return None
 
-            payload = {
-                "tickers": [ticker],
-                "collect": True,
-                "analyze": True,
-                "trade": True,               # a trip is a real decision moment; downstream gates still apply
-                "dynamic_selection_mode": False,
-                "watch_wake": True,
-                "watch_trigger": {"type": trig["type"], "detail": detail},
-                "research_reason": detail,
-            }
-            cmd_id = f"wd-{uuid.uuid4().hex[:8]}"
-            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
+        payload = {
+            "tickers": [ticker],
+            "collect": True,
+            "analyze": True,
+            "trade": True,               # a trip is a real decision moment; downstream gates still apply
+            "dynamic_selection_mode": False,
+            "watch_wake": True,
+            "watch_trigger": {"type": trig["type"], "detail": detail},
+            "research_reason": detail,
+        }
+        cmd_id = f"wd-{uuid.uuid4().hex[:8]}"
+        mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
         logger.info("[WatchDesk] WAKE %s for %s — %s", cmd_id, ticker, detail)
         return cmd_id
     except Exception as e:
@@ -739,8 +735,7 @@ def _mark_fired(watch: dict, trig: dict, detail: str, value, cycle_id: str) -> N
 
 def _log_event(watch: dict, trig: dict, detail: str, value, cycle_id: str | None) -> None:
     try:
-        with get_db() as db:
-            mongo_store.insert_docs('watch_events', [{'id': f"wev-{uuid.uuid4().hex[:10]}", 'watch_id': watch["id"], 'ticker': watch["ticker"], 'trigger_type': trig["type"], 'detail': detail[:500], 'trigger_json': json.dumps(trig), 'value': value, 'cycle_id': cycle_id}])
+        mongo_store.insert_docs('watch_events', [{'id': f"wev-{uuid.uuid4().hex[:10]}", 'watch_id': watch["id"], 'ticker': watch["ticker"], 'trigger_type': trig["type"], 'detail': detail[:500], 'trigger_json': json.dumps(trig), 'value': value, 'cycle_id': cycle_id}])
     except Exception as e:
         logger.warning("[WatchDesk] log_event failed: %s", e)
 

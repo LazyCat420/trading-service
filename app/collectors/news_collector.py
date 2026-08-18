@@ -817,8 +817,7 @@ async def collect_finnhub_news(
 
         news.sort(key=lambda a: a.get("datetime", 0), reverse=True)
 
-        with get_db() as db:
-            trusted = mongo_query.find_rows('source_trust', {'source_type': 'publisher'}, ['source_name', 'win_rate', 'total_items'])
+        trusted = mongo_query.find_rows('source_trust', {'source_type': 'publisher'}, ['source_name', 'win_rate', 'total_items'])
         bad_publishers = {row[0] for row in trusted if row[2] >= 5 and row[1] < 0.1}
 
         from app.processors.dedup_engine import DedupEngine
@@ -967,8 +966,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
         if not news:
             return 0
 
-        with get_db() as db:
-            trusted = mongo_query.find_rows('source_trust', {'source_type': 'publisher'}, ['source_name', 'win_rate', 'total_items'])
+        trusted = mongo_query.find_rows('source_trust', {'source_type': 'publisher'}, ['source_name', 'win_rate', 'total_items'])
         bad_publishers = {row[0] for row in trusted if row[2] >= 5 and row[1] < 0.1}
 
         # Helper to process a single yfinance article

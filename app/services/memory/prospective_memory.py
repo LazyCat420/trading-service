@@ -23,13 +23,12 @@ class ProspectiveMemoryStore:
         """Store a new prospective memory (future trigger/reminder)."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            mem_id = str(uuid.uuid4())
+        mem_id = str(uuid.uuid4())
 
-            mongo_store.insert_docs('prospective_memory', [{'id': mem_id, 'ticker': ticker, 'intention': intention, 'trigger_condition': trigger_condition, 'priority': priority, 'status': 'pending', 'trigger_at': trigger_at, 'context': context}])
+        mongo_store.insert_docs('prospective_memory', [{'id': mem_id, 'ticker': ticker, 'intention': intention, 'trigger_condition': trigger_condition, 'priority': priority, 'status': 'pending', 'trigger_at': trigger_at, 'context': context}])
 
-            logger.info(f"[PROSPECTIVE] Wrote reminder for {ticker}: {intention}")
-            return mem_id
+        logger.info(f"[PROSPECTIVE] Wrote reminder for {ticker}: {intention}")
+        return mem_id
 
     def add_reminder(
         self,
@@ -110,8 +109,7 @@ class ProspectiveMemoryStore:
         """Mark an item as triggered so it's no longer pending."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            mongo_store.update_docs('prospective_memory', {'id': mem_id}, {'$set': {'status': 'triggered'}})
+        mongo_store.update_docs('prospective_memory', {'id': mem_id}, {'$set': {'status': 'triggered'}})
 
 
 # Singleton instance

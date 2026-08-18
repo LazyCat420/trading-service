@@ -40,8 +40,7 @@ def _audit_triage(cycle_id: str, cycle_summary: dict, tickers: list[str]) -> dic
         except Exception:
             tier_rows = None
         if tier_rows is None:
-            with get_db() as db:
-                tier_rows = mongo_query.group_rows('analysis_results', {'cycle_id': cycle_id}, ['triage_tier'], [('count', None)], [('key', 'triage_tier'), ('agg', 0)])
+            tier_rows = mongo_query.group_rows('analysis_results', {'cycle_id': cycle_id}, ['triage_tier'], [('count', None)], [('key', 'triage_tier'), ('agg', 0)])
         for tier, count in tier_rows:
             tier = (tier or "").lower()
             if "glance" in tier:

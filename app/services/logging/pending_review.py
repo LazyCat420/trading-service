@@ -152,11 +152,10 @@ def get_pending_fixes(status: str = "all", limit: int = 50) -> list[dict]:
     reads ``pending`` for live queued work — the raw ``status`` is preserved
     untouched alongside it, because it is the historical record.
     """
-    with get_db() as db:
-        if status == "all":
-            rows = mongo_query.find_rows('pending_evolution_fixes', {}, ['id', 'cycle_id', 'target_type', 'target_name', 'proposed_fix', 'motivation', 'proposer_model', 'critic_concerns', 'judge_score', 'status', 'created_at', 'resolved_at'], sort=[('created_at', -1)], limit=limit)
-        else:
-            rows = mongo_query.find_rows('pending_evolution_fixes', {'status': status}, ['id', 'cycle_id', 'target_type', 'target_name', 'proposed_fix', 'motivation', 'proposer_model', 'critic_concerns', 'judge_score', 'status', 'created_at', 'resolved_at'], sort=[('created_at', -1)], limit=limit)
+    if status == "all":
+        rows = mongo_query.find_rows('pending_evolution_fixes', {}, ['id', 'cycle_id', 'target_type', 'target_name', 'proposed_fix', 'motivation', 'proposer_model', 'critic_concerns', 'judge_score', 'status', 'created_at', 'resolved_at'], sort=[('created_at', -1)], limit=limit)
+    else:
+        rows = mongo_query.find_rows('pending_evolution_fixes', {'status': status}, ['id', 'cycle_id', 'target_type', 'target_name', 'proposed_fix', 'motivation', 'proposer_model', 'critic_concerns', 'judge_score', 'status', 'created_at', 'resolved_at'], sort=[('created_at', -1)], limit=limit)
 
     cols = [
         "id", "cycle_id", "target_type", "target_name", "proposed_fix",

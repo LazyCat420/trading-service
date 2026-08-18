@@ -2324,8 +2324,7 @@ class PipelineService:
                             }
                         )
                     if mongo_store.writes_pg("system_commands"):
-                        with get_db() as db:
-                            mongo_store.insert_docs('system_commands', [{'id': job_id, 'command_type': 'AUTORESEARCH', 'payload': json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary}), 'status': 'pending'}])
+                        mongo_store.insert_docs('system_commands', [{'id': job_id, 'command_type': 'AUTORESEARCH', 'payload': json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary}), 'status': 'pending'}])
                     logger.info(
                         "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
                     )

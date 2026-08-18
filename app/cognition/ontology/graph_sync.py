@@ -133,8 +133,7 @@ def sync_desk_to_graph(desk, cycle_id: str) -> None:
         # old consumed live-view events. Both non-fatal.
         try:
             BrainGraph.activate_and_persist(ticker)
-            with get_db() as db:
-                mongo_store.delete_docs('graph_node_events', {'consumed': True, 'created_at': {'$lt': (datetime.now(timezone.utc) - timedelta(days=7))}})
+            mongo_store.delete_docs('graph_node_events', {'consumed': True, 'created_at': {'$lt': (datetime.now(timezone.utc) - timedelta(days=7))}})
         except Exception as act_err:
             logger.debug("[GraphSync] %s: activation refresh failed (non-fatal): %s",
                          ticker, act_err)

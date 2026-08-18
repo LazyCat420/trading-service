@@ -220,57 +220,55 @@ def get_latest_market_snapshot() -> dict:
     Get the latest values for key market instruments from asset_prices.
     Returns a dict with VIX, yields, indexes, dollar.
     """
-    with get_db() as db:
-        result = {}
+    result = {}
 
-        key_symbols = {
-            "VIX": "volatility",
-            "VIX3M": "volatility",
-            "GSPC": "index",
-            "IXIC": "index",
-            "RUT": "index",
-            "DJI": "index",
-            "TNX": "yield",
-            "FVX": "yield",
-            "IRX": "yield",
-            "TYX": "yield",
-            "DX": "currency",
-        }
+    key_symbols = {
+        "VIX": "volatility",
+        "VIX3M": "volatility",
+        "GSPC": "index",
+        "IXIC": "index",
+        "RUT": "index",
+        "DJI": "index",
+        "TNX": "yield",
+        "FVX": "yield",
+        "IRX": "yield",
+        "TYX": "yield",
+        "DX": "currency",
+    }
 
-        for sym, aclass in key_symbols.items():
-            try:
-                row = mongo_query.find_row('asset_prices', {'symbol': sym, 'asset_class': aclass}, ['close', 'date'], sort=[('date', -1)])
-                if row:
-                    result[sym] = {"close": row[0], "date": str(row[1])}
-            except Exception:
-                pass
+    for sym, aclass in key_symbols.items():
+        try:
+            row = mongo_query.find_row('asset_prices', {'symbol': sym, 'asset_class': aclass}, ['close', 'date'], sort=[('date', -1)])
+            if row:
+                result[sym] = {"close": row[0], "date": str(row[1])}
+        except Exception:
+            pass
 
-        # Get all sector ETFs
-        etf_syms = list(ETF_TO_SECTOR.keys())
-        for sym in etf_syms:
-            try:
-                row = mongo_query.find_row('asset_prices', {'symbol': sym, 'asset_class': 'sector_etf'}, ['close', 'date'], sort=[('date', -1)])
-                if row:
-                    result[sym] = {"close": row[0], "date": str(row[1])}
-            except Exception:
-                pass
+    # Get all sector ETFs
+    etf_syms = list(ETF_TO_SECTOR.keys())
+    for sym in etf_syms:
+        try:
+            row = mongo_query.find_row('asset_prices', {'symbol': sym, 'asset_class': 'sector_etf'}, ['close', 'date'], sort=[('date', -1)])
+            if row:
+                result[sym] = {"close": row[0], "date": str(row[1])}
+        except Exception:
+            pass
 
-        return result
+    return result
 
 
 def get_asset_history(symbol: str, asset_class: str, days: int = 90) -> list[dict]:
     """Get price history for a specific asset from asset_prices."""
-    with get_db() as db:
-        rows = mongo_query.find_rows('asset_prices', {'symbol': symbol, 'asset_class': asset_class}, ['date', 'open', 'high', 'low', 'close', 'volume'], sort=[('date', -1)], limit=days)
+    rows = mongo_query.find_rows('asset_prices', {'symbol': symbol, 'asset_class': asset_class}, ['date', 'open', 'high', 'low', 'close', 'volume'], sort=[('date', -1)], limit=days)
 
-        return [
-            {
-                "date": str(r[0]),
-                "open": r[1],
-                "high": r[2],
-                "low": r[3],
-                "close": r[4],
-                "volume": r[5],
-            }
-            for r in rows
-        ]
+    return [
+        {
+            "date": str(r[0]),
+            "open": r[1],
+            "high": r[2],
+            "low": r[3],
+            "close": r[4],
+            "volume": r[5],
+        }
+        for r in rows
+    ]

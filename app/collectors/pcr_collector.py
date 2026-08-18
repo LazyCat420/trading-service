@@ -49,8 +49,7 @@ async def collect_spy_pcr() -> bool:
         today = datetime.date.today()
         
         def _insert():
-            with get_db() as db:
-                mongo_store.update_docs('put_call_ratio', {'symbol': "SPY", 'date': today}, {'$set': {'pcr_volume': float(pcr_volume), 'pcr_oi': float(pcr_oi), 'total_put_vol': int(total_put_vol), 'total_call_vol': int(total_call_vol), 'total_put_oi': int(total_put_oi), 'total_call_oi': int(total_call_oi)}}, upsert=True)
+            mongo_store.update_docs('put_call_ratio', {'symbol': "SPY", 'date': today}, {'$set': {'pcr_volume': float(pcr_volume), 'pcr_oi': float(pcr_oi), 'total_put_vol': int(total_put_vol), 'total_call_vol': int(total_call_vol), 'total_put_oi': int(total_put_oi), 'total_call_oi': int(total_call_oi)}}, upsert=True)
                 
         await asyncio.to_thread(_insert)
         logger.info(f"[pcr_collector] SPY PCR updated for {today}. Vol: {pcr_volume:.2f}, OI: {pcr_oi:.2f}")

@@ -387,23 +387,22 @@ class PipelineProfiler:
             from app.db.connection import get_db
             import json
 
-            with get_db() as db:
-                rows = mongo_query.find_rows('pipeline_profiler', {}, ['cycle_id', 'total_ms', 'idle_ms', 'phase_count', 'bottlenecks_json', 'phases_json', 'created_at'], sort=[('created_at', -1)], limit=limit)
+            rows = mongo_query.find_rows('pipeline_profiler', {}, ['cycle_id', 'total_ms', 'idle_ms', 'phase_count', 'bottlenecks_json', 'phases_json', 'created_at'], sort=[('created_at', -1)], limit=limit)
 
-                return [
-                    {
-                        "cycle_id": r[0],
-                        "total_ms": r[1],
-                        "total_s": round(r[1] / 1000, 1),
-                        "idle_ms": r[2],
-                        "idle_pct": round(r[2] / r[1] * 100, 1) if r[1] > 0 else 0,
-                        "phase_count": r[3],
-                        "bottlenecks": json.loads(r[4]) if r[4] else [],
-                        "phases": json.loads(r[5]) if r[5] else [],
-                        "created_at": str(r[6]),
-                    }
-                    for r in rows
-                ]
+            return [
+                {
+                    "cycle_id": r[0],
+                    "total_ms": r[1],
+                    "total_s": round(r[1] / 1000, 1),
+                    "idle_ms": r[2],
+                    "idle_pct": round(r[2] / r[1] * 100, 1) if r[1] > 0 else 0,
+                    "phase_count": r[3],
+                    "bottlenecks": json.loads(r[4]) if r[4] else [],
+                    "phases": json.loads(r[5]) if r[5] else [],
+                    "created_at": str(r[6]),
+                }
+                for r in rows
+            ]
         except Exception as e:
             logger.warning("[PROFILER] Failed to load history: %s", e)
             return []

@@ -25,14 +25,13 @@ class EpisodicMemoryStore:
         """Store a new episode summarize a completed cycle."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            mem_id = str(uuid.uuid4())
-            now = datetime.now(timezone.utc).isoformat()
+        mem_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
 
-            mongo_store.insert_docs('episodic_memory', [{'id': mem_id, 'cycle_id': cycle_id, 'ticker': ticker, 'timestamp': now, 'summary': summary, 'key_decisions': key_decisions, 'outcome': outcome, 'outcome_score': outcome_score, 'agents_involved': agents_involved}])
+        mongo_store.insert_docs('episodic_memory', [{'id': mem_id, 'cycle_id': cycle_id, 'ticker': ticker, 'timestamp': now, 'summary': summary, 'key_decisions': key_decisions, 'outcome': outcome, 'outcome_score': outcome_score, 'agents_involved': agents_involved}])
 
-            logger.info(f"[EPISODIC] Wrote episode for {ticker} (Cycle {cycle_id})")
-            return mem_id
+        logger.info(f"[EPISODIC] Wrote episode for {ticker} (Cycle {cycle_id})")
+        return mem_id
 
     def record_outcome(
         self, cycle_id: str, ticker: str, outcome: str, outcome_score: float
@@ -77,27 +76,22 @@ class EpisodicMemoryStore:
         """Query past episodes by ticker, ranked by most successful outcomes."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            # Pull best-outcome episodes first to show the bot what worked
-            # (Could also pull worst-outcome to show what didn't work)
-            # Recency first: with unresolved ("pending") outcomes all scoring
-            # ties at 0, and best-outcome-first would bury the newest thesis.
-            rows = mongo_query.find_rows('episodic_memory', {'ticker': ticker}, ['id', 'cycle_id', 'timestamp', 'summary', 'outcome_score', 'key_decisions', 'outcome'], sort=[('timestamp', -1)], limit=limit)
+        rows = mongo_query.find_rows('episodic_memory', {'ticker': ticker}, ['id', 'cycle_id', 'timestamp', 'summary', 'outcome_score', 'key_decisions', 'outcome'], sort=[('timestamp', -1)], limit=limit)
 
-            results = []
-            for r in rows:
-                results.append(
-                    {
-                        "id": r[0],
-                        "cycle_id": r[1],
-                        "timestamp": r[2],
-                        "summary": r[3],
-                        "outcome_score": r[4],
-                        "key_decisions": r[5],
-                        "outcome": r[6],
-                    }
-                )
-            return results
+        results = []
+        for r in rows:
+            results.append(
+                {
+                    "id": r[0],
+                    "cycle_id": r[1],
+                    "timestamp": r[2],
+                    "summary": r[3],
+                    "outcome_score": r[4],
+                    "key_decisions": r[5],
+                    "outcome": r[6],
+                }
+            )
+        return results
 
 
 # Singleton instance

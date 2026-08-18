@@ -21,15 +21,14 @@ class ProceduralMemoryStore:
         """Store a new procedural pattern."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            mem_id = str(uuid.uuid4())
+        mem_id = str(uuid.uuid4())
 
-            mongo_store.insert_docs('procedural_memory', [{'id': mem_id, 'ticker': ticker, 'trigger_pattern': trigger_pattern, 'procedure': procedure, 'success_count': 0, 'failure_count': 0, 'success_rate': 0.0, 'created_by_agent': created_by_agent}])
+        mongo_store.insert_docs('procedural_memory', [{'id': mem_id, 'ticker': ticker, 'trigger_pattern': trigger_pattern, 'procedure': procedure, 'success_count': 0, 'failure_count': 0, 'success_rate': 0.0, 'created_by_agent': created_by_agent}])
 
-            logger.info(
-                f"[PROCEDURAL] Wrote new pattern for {ticker}: {trigger_pattern[:50]}..."
-            )
-            return mem_id
+        logger.info(
+            f"[PROCEDURAL] Wrote new pattern for {ticker}: {trigger_pattern[:50]}..."
+        )
+        return mem_id
 
     def write_procedure_if_new(
         self,
@@ -43,10 +42,9 @@ class ProceduralMemoryStore:
         every run (there is no unique constraint on the table)."""
         from app.db.connection import get_db
 
-        with get_db() as db:
-            existing = mongo_query.find_row('procedural_memory', {'ticker': ticker, 'trigger_pattern': trigger_pattern}, ['id'])
-            if existing:
-                return existing[0]
+        existing = mongo_query.find_row('procedural_memory', {'ticker': ticker, 'trigger_pattern': trigger_pattern}, ['id'])
+        if existing:
+            return existing[0]
 
         return self.write_procedure(ticker, trigger_pattern, procedure, created_by_agent)
 

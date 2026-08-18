@@ -156,8 +156,7 @@ async def run_post_cycle_evaluation(cycle_id: str):
             final_lesson = parsed.get("lesson", "")
             
             if final_lesson:
-                with get_db() as db:
-                    mongo_store.insert_docs('evolution_lessons', [{'id': str(uuid.uuid4()), 'session_id': cycle_id, 'round': 1, 'score': final_score, 'status': "audited", 'lesson_text': final_lesson, 'timestamp': datetime.now(timezone.utc).isoformat()}])
+                mongo_store.insert_docs('evolution_lessons', [{'id': str(uuid.uuid4()), 'session_id': cycle_id, 'round': 1, 'score': final_score, 'status': "audited", 'lesson_text': final_lesson, 'timestamp': datetime.now(timezone.utc).isoformat()}])
                 logger.info(f"[Evaluator] Chief Auditor recorded lesson: {final_lesson} (Score: {final_score})")
             else:
                 logger.warning(f"[Evaluator] Chief LLM returned no lesson: {response_text}")

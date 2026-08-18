@@ -33,9 +33,8 @@ MAJOR_ETFS = [
 
 def _seed_major_etfs() -> None:
     """Ensure the curated majors exist in ticker_metadata as ETFs."""
-    with get_db() as db:
-        for t in MAJOR_ETFS:
-            mongo_store.update_docs('ticker_metadata', {'ticker': t}, {'$set': {'asset_class': 'etf'}, '$setOnInsert': {'sp500': False}}, upsert=True)
+    for t in MAJOR_ETFS:
+        mongo_store.update_docs('ticker_metadata', {'ticker': t}, {'$set': {'asset_class': 'etf'}, '$setOnInsert': {'sp500': False}}, upsert=True)
 
 
 async def collect_etf_metadata(ticker: str) -> bool:
@@ -104,8 +103,7 @@ async def collect_all_etfs() -> dict:
         _seed_major_etfs()
     except Exception as e:
         logger.warning(f"[etf] major-ETF seed failed: {e}")
-    with get_db() as db:
-        rows = mongo_query.find_rows('ticker_metadata', {'asset_class': 'etf'}, ['ticker'])
+    rows = mongo_query.find_rows('ticker_metadata', {'asset_class': 'etf'}, ['ticker'])
     tickers = [r[0] for r in rows]
     done = 0
     for t in tickers:

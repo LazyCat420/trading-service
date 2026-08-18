@@ -41,18 +41,16 @@ class MemoryStore:
         ticker = observation.get("ticker")
         source_type = observation.get("source_type")
         if cycle_id and ticker and source_type:
-            with get_db() as cursor:
-                dup = mongo_query.find_row('episodic_observations', {'cycle_id': cycle_id, 'ticker': ticker, 'source_type': source_type}, ['id'])
-                if dup:
-                    mongo_store.update_docs('episodic_observations', {'id': dup[0]}, {'$set': {'observation_text': observation["observation_text"], 'confidence_at_creation': observation.get("confidence_at_creation"), 'outcome_label': observation.get("outcome_label"), 'outcome_score': observation.get("outcome_score")}})
-                    logger.info(
-                        "[MemoryStore] Duplicate observation refreshed (%s/%s/%s)",
-                        cycle_id, ticker, source_type,
-                    )
-                    return dup[0]
+            dup = mongo_query.find_row('episodic_observations', {'cycle_id': cycle_id, 'ticker': ticker, 'source_type': source_type}, ['id'])
+            if dup:
+                mongo_store.update_docs('episodic_observations', {'id': dup[0]}, {'$set': {'observation_text': observation["observation_text"], 'confidence_at_creation': observation.get("confidence_at_creation"), 'outcome_label': observation.get("outcome_label"), 'outcome_score': observation.get("outcome_score")}})
+                logger.info(
+                    "[MemoryStore] Duplicate observation refreshed (%s/%s/%s)",
+                    cycle_id, ticker, source_type,
+                )
+                return dup[0]
 
-        with get_db() as cursor:
-            mongo_store.insert_docs('episodic_observations', [{'id': obs_id, 'created_at': created_at, 'cycle_id': observation["cycle_id"], 'ticker': observation.get("ticker"), 'sector': observation.get("sector"), 'source_type': observation["source_type"], 'observation_text': observation["observation_text"], 'rationale_excerpt': observation.get("rationale_excerpt"), 'confidence_at_creation': observation.get("confidence_at_creation"), 'outcome_label': observation.get("outcome_label"), 'outcome_score': observation.get("outcome_score"), 'promoted_to_memory': observation.get("promoted_to_memory", False)}])
+        mongo_store.insert_docs('episodic_observations', [{'id': obs_id, 'created_at': created_at, 'cycle_id': observation["cycle_id"], 'ticker': observation.get("ticker"), 'sector': observation.get("sector"), 'source_type': observation["source_type"], 'observation_text': observation["observation_text"], 'rationale_excerpt': observation.get("rationale_excerpt"), 'confidence_at_creation': observation.get("confidence_at_creation"), 'outcome_label': observation.get("outcome_label"), 'outcome_score': observation.get("outcome_score"), 'promoted_to_memory': observation.get("promoted_to_memory", False)}])
         return obs_id
 
     def get_unpromoted_observations(self, limit: int = 100) -> list[dict]:
@@ -67,8 +65,7 @@ class MemoryStore:
 
     def mark_observation_promoted(self, obs_id: str):
         """Marks observation as having triggered or supplemented a canonical memory."""
-        with get_db() as cursor:
-            mongo_store.update_docs('episodic_observations', {'id': obs_id}, {'$set': {'promoted_to_memory': True}})
+        mongo_store.update_docs('episodic_observations', {'id': obs_id}, {'$set': {'promoted_to_memory': True}})
 
     def delete_promoted_observations_older_than(self, days: int) -> int:
         """Retention: drop observations already distilled into canonical
@@ -100,8 +97,7 @@ class MemoryStore:
 
         now = datetime.now(timezone.utc).isoformat()
 
-        with get_db() as cursor:
-            mongo_store.insert_docs('canonical_memories', [{'id': mem_id, 'type': memory["type"], 'ticker': memory.get("ticker"), 'sector': memory.get("sector"), 'summary': memory["summary"], 'tags': tags_json, 'confidence_score': memory["confidence_score"], 'evidence_count': memory.get("evidence_count", 1), 'status': memory.get("status", "tentative"), 'last_used_at': memory.get("last_used_at"), 'last_validated_at': memory.get("last_validated_at"), 'created_at': memory.get("created_at", now), 'updated_at': memory.get("updated_at", now)}])
+        mongo_store.insert_docs('canonical_memories', [{'id': mem_id, 'type': memory["type"], 'ticker': memory.get("ticker"), 'sector': memory.get("sector"), 'summary': memory["summary"], 'tags': tags_json, 'confidence_score': memory["confidence_score"], 'evidence_count': memory.get("evidence_count", 1), 'status': memory.get("status", "tentative"), 'last_used_at': memory.get("last_used_at"), 'last_validated_at': memory.get("last_validated_at"), 'created_at': memory.get("created_at", now), 'updated_at': memory.get("updated_at", now)}])
         
         try:
             from app.services.embedding_service import embedder
@@ -139,13 +135,11 @@ class MemoryStore:
             validated_at = datetime.now(timezone.utc).isoformat()
 
         now = datetime.now(timezone.utc).isoformat()
-        with get_db() as cursor:
-            mongo_store.update_docs('canonical_memories', {'id': mem_id}, {'$set': {'confidence_score': new_confidence, 'status': new_status, 'last_validated_at': validated_at, 'updated_at': now}})
+        mongo_store.update_docs('canonical_memories', {'id': mem_id}, {'$set': {'confidence_score': new_confidence, 'status': new_status, 'last_validated_at': validated_at, 'updated_at': now}})
 
     def record_memory_usage(self, mem_id: str):
         """
         Touch the 'last_used_at' column when extracted for RAG context.
         """
         now = datetime.now(timezone.utc).isoformat()
-        with get_db() as cursor:
-            mongo_store.update_docs('canonical_memories', {'id': mem_id}, {'$set': {'last_used_at': now}})
+        mongo_store.update_docs('canonical_memories', {'id': mem_id}, {'$set': {'last_used_at': now}})
