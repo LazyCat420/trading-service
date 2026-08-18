@@ -1,0 +1,66 @@
+{
+ "root": "/home/lazycat/github/projects/sun/.worktrees/ts-quality-purge",
+ "total": 6,
+ "counts": {
+  "driver_import": 4,
+  "connection_import": 0,
+  "get_db_call": 0,
+  "execute_call": 2
+ },
+ "files": [
+  "app/db/connection.py"
+ ],
+ "file_count": 1,
+ "sqlite_excluded": [
+  "app/scraper/core/failure_cache.py",
+  "app/trading/sandbox_executor.py"
+ ],
+ "schema_files_present": [
+  "app/db/init_db.py",
+  "app/db/migrations.py",
+  "app/db/schema_pg.sql",
+  "app/utils/db_migrations.py"
+ ],
+ "migration_tooling": [
+  "app/db/table_spec.py"
+ ],
+ "errors": [],
+ "findings": [
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 34,
+   "detail": "import psycopg"
+  },
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 35,
+   "detail": "import psycopg.rows"
+  },
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 36,
+   "detail": "from psycopg_pool import ConnectionPool"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/connection.py",
+   "line": 140,
+   "detail": ".execute(<sql>)"
+  },
+  {
+   "kind": "execute_call",
+   "file": "app/db/connection.py",
+   "line": 168,
+   "detail": ".executemany(<sql>)"
+  },
+  {
+   "kind": "driver_import",
+   "file": "app/db/connection.py",
+   "line": 269,
+   "detail": "from pgvector.psycopg import register_vector"
+  }
+ ]
+}

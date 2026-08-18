@@ -70,6 +70,24 @@ SCHEMA_FILES = {
     "app/utils/db_migrations.py",
 }
 
+# Files that must KEEP talking to Postgres, and why. These are not unfinished
+# work and counting them would make the gate's target unreachable — but they
+# are printed on every run, because an exemption nobody re-reads is how a
+# permanent exception gets granted to something temporary.
+#
+# `table_spec` reads `information_schema.columns` to build the column list and
+# type mappers the PG->Mongo backfill uses. Its only callers are
+# pg_to_mongo_backfill.py, migrate_all.py and check_generated_specs.py.
+# Converting it to Mongo would mean asking the destination store to describe
+# the source schema, which it cannot do — and would break the migration
+# itself. It moves to scripts/migration/ at teardown, with psycopg, so the
+# application image can drop the driver while the parity tooling keeps working
+# against the frozen Postgres backup.
+MIGRATION_TOOLING = {
+    "app/db/table_spec.py": "reads information_schema for the backfill mappers; "
+                            "moves to scripts/migration/ at teardown",
+}
+
 DRIVER_ROOTS = {"psycopg", "psycopg2", "pgvector", "psycopg_pool"}
 
 KINDS = ("driver_import", "connection_import", "get_db_call", "execute_call")
@@ -166,12 +184,16 @@ def scan(root: Path, targets: tuple[str, ...] = DEFAULT_TARGETS) -> dict:
     findings: list[Finding] = []
     sqlite_excluded: list[str] = []
     schema_files_present: list[str] = []
+    migration_tooling_present: list[str] = []
     errors: list[str] = []
 
     for path in _iter_python_files(root, targets):
         rel = path.relative_to(root).as_posix()
         if rel in SCHEMA_FILES:
             schema_files_present.append(rel)
+            continue
+        if rel in MIGRATION_TOOLING:
+            migration_tooling_present.append(rel)
             continue
         try:
             source = path.read_text(encoding="utf-8")
@@ -205,6 +227,7 @@ def scan(root: Path, targets: tuple[str, ...] = DEFAULT_TARGETS) -> dict:
         "file_count": len({f.file for f in findings}),
         "sqlite_excluded": sorted(sqlite_excluded),
         "schema_files_present": sorted(schema_files_present),
+        "migration_tooling": sorted(migration_tooling_present),
         "errors": errors,
         "findings": [asdict(f) for f in findings],
     }
@@ -223,6 +246,10 @@ def render(result: dict, show: str | None, limit: int) -> None:
         print("  schema files still on disk (deleted at teardown, not converted):")
         for rel in result["schema_files_present"]:
             print(f"    {rel}")
+        print()
+    for rel in result.get("migration_tooling", []):
+        print(f"  migration tooling, keeps Postgres deliberately:")
+        print(f"    {rel} — {MIGRATION_TOOLING[rel]}")
         print()
     if result["sqlite_excluded"]:
         print(f"  sqlite3 files excluded from execute_call ({len(result['sqlite_excluded'])}):")
