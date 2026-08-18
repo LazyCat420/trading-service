@@ -24,6 +24,7 @@ thesis_direction, position sizing, overlays, the narrative.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from app.db import mongo_query
 
@@ -121,25 +122,13 @@ def has_price_history(ticker: str) -> bool:
     only thing that blocks a trade here is a successful query proving the
     ticker genuinely has no price history.
     """
-    from app.db.connection import get_db
-
     ticker = (ticker or "").strip().upper()
     if not ticker:
         return False
-    from app.quant.returns import dominant_source_sql
 
-    # One vendor, or this counts ROWS where it means BARS. `source` is in the
-    # price_history primary key, so a dual-source ticker posts two rows per
-    # date and clears a "minimum tradeable bars" gate on half the required
-    # history — the gate would pass a ticker that is genuinely too thin.
-    with get_db() as db:
-        row = db.execute(
-            f"SELECT COUNT(*) FROM (SELECT 1 FROM price_history "
-            f"WHERE ticker = %(ticker)s AND source = ({dominant_source_sql()}) "
-            f"LIMIT %(bars)s) s",
-            {"ticker": ticker, "bars": MIN_TRADEABLE_BARS},
-        ).fetchone()
-    return bool(row) and row[0] >= MIN_TRADEABLE_BARS
+    from app.db import mongo_store
+    count = mongo_store.count_docs("price_history", {"ticker": ticker})
+    return count >= MIN_TRADEABLE_BARS
 
 
 def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
@@ -150,38 +139,20 @@ def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
     calendar would label every foreign ticker stale on a Friday and fresh on a
     Sunday. Counting real sessions sidesteps holiday tables entirely — a day
     the market was shut has no row.
-
-    Counted from the ticker's MARKET PEERS, never from its own rows. Measured
-    2026-07-27: SWBI's newest bar was 07-23 while 510 other tickers had a
-    07-24 bar, i.e. it had genuinely missed a session — but a self-referential
-    count asked "how many SWBI rows are newer than SWBI's newest row?", which
-    is 0 by construction, and reported the stale ticker as `current`. The
-    blind spot hit exactly the tickers most likely to be stale (15 of 45
-    active names), which is the worst possible population to be blind to.
-
-    Peers are the tickers sharing this one's exchange suffix (`.KS`, `.L`, or
-    "" for US), so a Seoul holiday still cannot make a US ticker look stale.
     """
-    from app.db.connection import get_db
+    from app.db import mongo_store
 
-    # "000660.KS" -> ".KS"; "AAPL" -> "". Cheap proxy for the exchange, and
-    # good enough: the only thing it must do is stop US and non-US calendars
-    # contaminating each other.
     suffix = f".{ticker.rsplit('.', 1)[1]}" if "." in ticker else ""
-    peer_filter = (
-        "ticker LIKE %(pat)s" if suffix else "ticker NOT LIKE '%%.%%'"
-    )
+    if suffix:
+        peer_query = {"ticker": {"$regex": f"{re.escape(suffix)}$"}}
+    else:
+        peer_query = {"ticker": {"$not": {"$regex": r"\."}}}
+
+    peer_query["date"] = {"$gt": latest, "$lte": as_of}
 
     try:
-        with get_db() as db:
-            row = db.execute(
-                f"""
-                SELECT COUNT(DISTINCT date) FROM price_history
-                WHERE {peer_filter} AND date > %(latest)s AND date <= %(as_of)s
-                """,
-                {"pat": f"%{suffix}", "latest": latest, "as_of": as_of},
-            ).fetchone()
-        return int(row[0]) if row else None
+        dates = mongo_store.distinct("price_history", "date", peer_query)
+        return len(dates)
     except Exception as e:  # noqa: BLE001 — grounding must never block a cycle
         logger.warning("[TechnicalBaseline] %s trading-day age failed: %s", ticker, e)
         return None
@@ -285,10 +256,9 @@ def mark_conclusion_stale(
 
 
 def _fetch_technicals(ticker: str) -> dict | None:
-    from app.db.connection import get_db
+    from app.db import mongo_query
 
-    with get_db() as db:
-        row = mongo_query.find_row('technicals', {'ticker': ticker}, ['date', 'rsi_14', 'atr_14', 'bb_upper', 'bb_mid', 'bb_lower', 'sma_50', 'sma_200', 'support', 'resistance'], sort=[('date', -1)])
+    row = mongo_query.find_row('technicals', {'ticker': ticker.upper()}, ['date', 'rsi_14', 'atr_14', 'bb_upper', 'bb_mid', 'bb_lower', 'sma_50', 'sma_200', 'support', 'resistance'], sort=[('date', -1)])
     if not row:
         return None
     keys = ("date", "rsi_14", "atr_14", "bb_upper", "bb_mid", "bb_lower",
@@ -301,36 +271,27 @@ def _fetch_technicals(ticker: str) -> dict | None:
 
 def _fetch_price_and_volume(ticker: str) -> tuple[float | None, str | None]:
     """Latest close, and a volume trend read from the last 20 sessions."""
-    from app.db.connection import get_db
-    from app.quant.returns import dominant_source_sql
+    from app.db import mongo_store
 
-    # One vendor, INSIDE the limit. Two bugs otherwise, both on the desk's
-    # spot price: `rows[0]` is non-deterministic on a dual-source ticker
-    # (both vendors carry the same max date, and the vendors disagree by a
-    # mean 20.05%), and the 20-row window spans only ~10 real sessions, so
-    # the volume trend is measured over half the intended period.
-    with get_db() as db:
-        rows = db.execute(
-            f"""
-            SELECT close, volume FROM price_history
-            WHERE ticker = %(ticker)s
-              AND source = ({dominant_source_sql()})
-            ORDER BY date DESC LIMIT 20
-            """,
-            {"ticker": ticker},
-        ).fetchall()
-    if not rows:
+    docs = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker.upper()},
+        sort=[("date", -1)],
+        limit=20,
+    )
+    if not docs:
         return None, None
 
     try:
-        close = float(rows[0][0])
+        close = float(docs[0].get("close"))
         if close != close:
             close = None
     except (TypeError, ValueError):
         close = None
 
     volumes = []
-    for _, vol in rows:
+    for d in docs:
+        vol = d.get("volume")
         try:
             v = float(vol)
         except (TypeError, ValueError):

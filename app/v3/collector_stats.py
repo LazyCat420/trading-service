@@ -62,19 +62,19 @@ def _record_source_status(ticker: str, ok: list[str], errored: list[str],
     affect the collection it is describing.
     """
     try:
-        from app.db.connection import get_db
+        from datetime import datetime, timezone
+        from app.db import mongo_store
 
         rows = ([(n, True) for n in ok]
                 + [(n, False) for n in errored]
                 + [(n, False) for n in timed_out])
         if not rows:
             return
-        with get_db() as db:
-            for name, succeeded in rows:
-                if succeeded:
-                    mongo_store.update_docs('data_source_status', {'source': name, 'ticker': ticker}, {'$set': {'last_success': datetime.now(timezone.utc), 'error_msg': None}}, upsert=True)
-                else:
-                    mongo_store.update_docs('data_source_status', {'source': name, 'ticker': ticker}, {'$set': {'last_failure': datetime.now(timezone.utc), 'error_msg': "no data or past pre-collect deadline"}}, upsert=True)
+        for name, succeeded in rows:
+            if succeeded:
+                mongo_store.update_docs('data_source_status', {'source': name, 'ticker': ticker}, {'$set': {'last_success': datetime.now(timezone.utc), 'error_msg': None}}, upsert=True)
+            else:
+                mongo_store.update_docs('data_source_status', {'source': name, 'ticker': ticker}, {'$set': {'last_failure': datetime.now(timezone.utc), 'error_msg': "no data or past pre-collect deadline"}}, upsert=True)
     except Exception:  # pragma: no cover - bookkeeping must never break collection
         logger.debug("[collector_stats] data_source_status update failed for %s",
                      ticker, exc_info=True)

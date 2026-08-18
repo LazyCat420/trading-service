@@ -130,60 +130,55 @@ def _sanitize(d: dict) -> dict:
 
 
 def _fetch_fundamentals(ticker: str) -> dict | None:
-    from app.db.connection import get_db
+    from app.db import mongo_store
 
-    with get_db() as db:
-        row = db.execute(
-            f"SELECT {', '.join(_FUNDAMENTAL_COLS)} FROM fundamentals "
-            "WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-            [ticker],
-        ).fetchone()
-    if not row:
+    docs = mongo_store.find_docs(
+        "fundamentals",
+        {"ticker": ticker.upper()},
+        sort=[("snapshot_date", -1)],
+        limit=1,
+    )
+    if not docs:
         return None
+    d = docs[0]
     return {
-        k: (v if k == "snapshot_date" else _finite(v))
-        for k, v in zip(_FUNDAMENTAL_COLS, row)
+        k: (d.get(k) if k == "snapshot_date" else _finite(d.get(k)))
+        for k in _FUNDAMENTAL_COLS
     }
 
 
 def _fetch_balance_sheet(ticker: str) -> dict | None:
-    """Latest balance sheet row, whatever its cadence.
+    """Latest balance sheet row, whatever its cadence."""
+    from app.db import mongo_store
 
-    `balance_sheet` has NO period_type column, and the two writers disagree:
-    yfinance_collector writes ANNUAL rows, fmp_collector writes QUARTERLY. So a
-    200-day-old row is the normal case for a yfinance-sourced ticker, not an
-    outage. The age is reported; nothing gates on it.
-    """
-    from app.db.connection import get_db
-
-    with get_db() as db:
-        row = db.execute(
-            f"SELECT {', '.join(_BALANCE_COLS)} FROM balance_sheet "
-            "WHERE ticker = %s ORDER BY period_end DESC LIMIT 1",
-            [ticker],
-        ).fetchone()
-    if not row:
+    docs = mongo_store.find_docs(
+        "balance_sheet",
+        {"ticker": ticker.upper()},
+        sort=[("period_end", -1)],
+        limit=1,
+    )
+    if not docs:
         return None
+    d = docs[0]
     return {
-        k: (v if k == "period_end" else _finite(v))
-        for k, v in zip(_BALANCE_COLS, row)
+        k: (d.get(k) if k == "period_end" else _finite(d.get(k)))
+        for k in _BALANCE_COLS
     }
 
 
 def _fetch_periods(ticker: str, period_type: str, limit: int) -> list[dict]:
-    from app.db.connection import get_db
+    from app.db import mongo_store
 
-    with get_db() as db:
-        rows = db.execute(
-            f"SELECT {', '.join(_HISTORY_COLS)} FROM financial_history "
-            "WHERE ticker = %s AND period_type = %s "
-            "ORDER BY period_end DESC LIMIT %s",
-            [ticker, period_type, limit],
-        ).fetchall()
+    docs = mongo_store.find_docs(
+        "financial_history",
+        {"ticker": ticker.upper(), "period_type": period_type},
+        sort=[("period_end", -1)],
+        limit=limit,
+    )
     return [
-        {k: (v if k == "period_end" else _finite(v))
-         for k, v in zip(_HISTORY_COLS, r)}
-        for r in rows
+        {k: (d.get(k) if k == "period_end" else _finite(d.get(k)))
+         for k in _HISTORY_COLS}
+        for d in docs
     ]
 
 
@@ -259,11 +254,8 @@ def _fetch_ttm(ticker: str) -> dict:
 
 def _fetch_risk_free() -> float | None:
     """10Y Treasury as a decimal. Stored in PERCENT by fred_collector (DGS10)."""
-    from app.db.connection import get_db
-
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('macro_indicators', {'indicator': 'TREASURY_10Y', 'country': 'US'}, ['value'], sort=[('date', -1)])
+        row = mongo_query.find_row('macro_indicators', {'indicator': 'TREASURY_10Y', 'country': 'US'}, ['value'], sort=[('date', -1)])
         val = _finite(row[0]) if row else None
         return val / 100.0 if val is not None else None
     except Exception as e:  # noqa: BLE001 — an assumption, never a blocker

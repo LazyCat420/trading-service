@@ -41,77 +41,7 @@ _MAX_TEXT = 20000
 
 
 def _ensure_shadow_table() -> None:
-    global _TABLE_ENSURED
-    if _TABLE_ENSURED:
-        return
-    from app.db.connection import get_db
-    try:
-        with get_db() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS model_shadow_runs (
-                    id SERIAL PRIMARY KEY,
-                    cycle_id TEXT NOT NULL,
-                    ticker TEXT NOT NULL,
-                    agent_name TEXT NOT NULL,
-                    endpoint TEXT NOT NULL,
-                    primary_model TEXT,
-                    primary_provider TEXT,
-                    primary_elapsed_ms INTEGER DEFAULT 0,
-                    primary_tokens INTEGER DEFAULT 0,
-                    primary_loops INTEGER DEFAULT 0,
-                    primary_text TEXT,
-                    shadow_model TEXT,
-                    shadow_provider TEXT,
-                    shadow_elapsed_ms INTEGER DEFAULT 0,
-                    shadow_tokens INTEGER DEFAULT 0,
-                    shadow_loops INTEGER DEFAULT 0,
-                    shadow_outcome TEXT NOT NULL,
-                    shadow_error TEXT,
-                    shadow_text TEXT,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            """)
-            # The prompt that was actually compared (2026-08-05). Without it a
-            # row records two answers to a question nobody kept, so the run can
-            # never be replayed or re-scored — and replay is the only way to
-            # reach a useful n: a real cycle costs ~8 minutes per sample, the
-            # same prompt replayed costs seconds.
-            db.execute("""
-                DO $$ BEGIN
-                    ALTER TABLE model_shadow_runs ADD COLUMN IF NOT EXISTS system_prompt TEXT;
-                    ALTER TABLE model_shadow_runs ADD COLUMN IF NOT EXISTS user_prompt TEXT;
-                EXCEPTION WHEN others THEN NULL;
-                END $$;
-            """)
-            # Which bot the comparison came from (2026-08-08, open item 1e).
-            # `bot_id` was accepted by `_run_and_record` and by both call
-            # sites, and dropped here — advertised at three levels, honoured at
-            # none, the same shape as the `endpoint_override` that sat dead in
-            # three signatures for months.
-            #
-            # The 22 pre-existing rows are backfilled to 'unknown' rather than
-            # left NULL: NULL reads as "not recorded yet" and would make the
-            # column look broken for as long as those rows survive, whereas
-            # 'unknown' says the row predates the column. `cycle_id` was always
-            # recorded, so those rows remain traceable by join if it matters.
-            db.execute("""
-                DO $$ BEGIN
-                    ALTER TABLE model_shadow_runs ADD COLUMN IF NOT EXISTS bot_id TEXT;
-                    UPDATE model_shadow_runs SET bot_id = 'unknown' WHERE bot_id IS NULL;
-                EXCEPTION WHEN others THEN NULL;
-                END $$;
-            """)
-            db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_model_shadow_agent
-                ON model_shadow_runs (agent_name, created_at)
-            """)
-            db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_model_shadow_cycle
-                ON model_shadow_runs (cycle_id)
-            """)
-        _TABLE_ENSURED = True
-    except Exception as e:
-        logger.warning("[ModelShadow] Failed to ensure table: %s", e)
+    pass
 
 
 def shadow_endpoint_for(agent_name: str) -> str | None:
@@ -167,11 +97,9 @@ def classify_shadow(text: str, tokens: int, loops: int) -> tuple[str, str | None
 
 
 def _record(row: dict) -> None:
-    _ensure_shadow_table()
     try:
-        from app.db.connection import get_db
-        with get_db() as db:
-            mongo_store.insert_docs('model_shadow_runs', [{'cycle_id': row["cycle_id"], 'ticker': row["ticker"], 'agent_name': row["agent_name"], 'endpoint': row["endpoint"], 'bot_id': row.get("bot_id") or "unknown", 'primary_model': row.get("primary_model"), 'primary_provider': row.get("primary_provider"), 'primary_elapsed_ms': row.get("primary_elapsed_ms") or 0, 'primary_tokens': row.get("primary_tokens") or 0, 'primary_loops': row.get("primary_loops") or 0, 'primary_text': (row.get("primary_text") or "")[:_MAX_TEXT], 'shadow_model': row.get("shadow_model"), 'shadow_provider': row.get("shadow_provider"), 'shadow_elapsed_ms': row.get("shadow_elapsed_ms") or 0, 'shadow_tokens': row.get("shadow_tokens") or 0, 'shadow_loops': row.get("shadow_loops") or 0, 'shadow_outcome': row["shadow_outcome"], 'shadow_error': row.get("shadow_error") or None, 'shadow_text': (row.get("shadow_text") or "")[:_MAX_TEXT], 'system_prompt': row.get("system_prompt"), 'user_prompt': row.get("user_prompt")}])
+        from app.db import mongo_store
+        mongo_store.insert_docs('model_shadow_runs', [{'cycle_id': row["cycle_id"], 'ticker': row["ticker"], 'agent_name': row["agent_name"], 'endpoint': row["endpoint"], 'bot_id': row.get("bot_id") or "unknown", 'primary_model': row.get("primary_model"), 'primary_provider': row.get("primary_provider"), 'primary_elapsed_ms': row.get("primary_elapsed_ms") or 0, 'primary_tokens': row.get("primary_tokens") or 0, 'primary_loops': row.get("primary_loops") or 0, 'primary_text': (row.get("primary_text") or "")[:_MAX_TEXT], 'shadow_model': row.get("shadow_model"), 'shadow_provider': row.get("shadow_provider"), 'shadow_elapsed_ms': row.get("shadow_elapsed_ms") or 0, 'shadow_tokens': row.get("shadow_tokens") or 0, 'shadow_loops': row.get("shadow_loops") or 0, 'shadow_outcome': row["shadow_outcome"], 'shadow_error': row.get("shadow_error") or None, 'shadow_text': (row.get("shadow_text") or "")[:_MAX_TEXT], 'system_prompt': row.get("system_prompt"), 'user_prompt': row.get("user_prompt")}])
     except Exception as e:
         logger.warning("[ModelShadow] Failed to record %s: %s", row.get("agent_name"), e)
 

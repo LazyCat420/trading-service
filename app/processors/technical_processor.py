@@ -6,208 +6,133 @@ Pure Python + ta library. No LLM calls. No hallucinations.
 
 import pandas as pd
 import ta
-from app.db.connection import get_db
-from app.quant.returns import dominant_source_sql
-
-
 import logging
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
 # Minimum sessions before the `ta` indicators are computable at all.
-#
-# NOT 14. ADX smooths an already-smoothed series, so at window=14 it needs
-# ~2x the window to warm up: measured, it raises at n=25 and succeeds at n=28.
-# `ta` raises (IndexError / "negative dimensions are not allowed") rather than
-# returning NaN on a short frame, so this is a hard floor, not a quality bar.
-# The old >=5 floor let 12 thin tickers (9-24 rows) crash the writer instead of
-# skipping cleanly.
 _MIN_SESSIONS = 28
 
 
 def compute_technicals(ticker: str, period: int = 500) -> int:
     """
-    Compute all technical indicators for a ticker and write to technicals table.
-    Needs at least 5 rows (more = better indicators).
+    Compute all technical indicators for a ticker and write to technicals collection in MongoDB.
+    Needs at least 28 rows.
     Returns number of rows written.
-
-    2026-07-25 — this function had been computing the WRONG END of history.
-    `ORDER BY date ASC LIMIT 500` takes the OLDEST 500 sessions, so for MSFT
-    (10,169 rows back to 1986) every run recomputed 1986-03-13 .. 1988-03-03
-    and never touched a recent date. Combined with `ON CONFLICT DO NOTHING`,
-    which cannot correct an existing row, the table was effectively append-only
-    from ancient history: only 5 of 503 tickers were fresher than 3 days while
-    `price_history` was current for all of them.
-
-    The window is now the most recent `period` sessions, re-sorted ascending
-    because every `ta` indicator is order-dependent.
     """
-    with get_db() as db:
-        # Most recent `period` sessions (inner ORDER BY DESC), then flipped to
-        # chronological order for the indicator math.
-        #
-        # 2026-07-30 — the vendor filter is NOT optional here. `source` is part
-        # of the price_history primary key, so on the 38 dual-source tickers
-        # this query returned `period` ROWS spanning roughly half as many DATES
-        # (the LIMIT is applied before any de-duplication), and those rows
-        # alternated between two adjustment conventions: yfinance publishes
-        # dividend/split-adjusted closes, polygon raw. Mean absolute close
-        # difference between them is 20.05%.
-        #
-        # Both halves corrupt an indicator. The short calendar means a "200-day"
-        # SMA covers ~100 sessions. The alternating convention manufactures
-        # jumps that never happened — DRIP reads 133 daily moves over 15%
-        # unfiltered, against 1 once a vendor is pinned — so RSI, ATR and
-        # Bollinger width are computed from fabricated volatility. These rows
-        # feed the `technicals` table, which `technical_baseline.py` injects
-        # into every desk, so the error lands in front of the Board.
-        rows = db.execute(
-            f"""
-            SELECT date, open, high, low, close, volume FROM (
-                SELECT date, open, high, low, close, volume
-                FROM price_history
-                WHERE ticker = %(ticker)s
-                  AND source = ({dominant_source_sql()})
-                ORDER BY date DESC
-                LIMIT %(period)s
-            ) recent
-            ORDER BY date ASC
-        """,
-            {"ticker": ticker, "period": period},
-        ).fetchall()
+    docs = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker.upper()},
+        sort=[("date", -1)],
+        limit=period,
+    )
 
-        if not rows or len(rows) < _MIN_SESSIONS:
-            logger.debug(
-                "[tech] %s: not enough price data (%d rows, need >=%d)",
-                ticker,
-                len(rows) if rows else 0,
-                _MIN_SESSIONS,
-            )
-            return 0
-
-        df = pd.DataFrame(
-            rows, columns=["date", "open", "high", "low", "close", "volume"]
+    if not docs or len(docs) < _MIN_SESSIONS:
+        logger.debug(
+            "[tech] %s: not enough price data (%d rows, need >=%d)",
+            ticker,
+            len(docs) if docs else 0,
+            _MIN_SESSIONS,
         )
+        return 0
 
-        # ── Trend indicators ──
-        df["sma_20"] = ta.trend.sma_indicator(df["close"], window=20)
-        df["sma_50"] = ta.trend.sma_indicator(df["close"], window=50)
-        df["sma_200"] = ta.trend.sma_indicator(df["close"], window=200)
-        df["ema_12"] = ta.trend.ema_indicator(df["close"], window=12)
-        df["ema_26"] = ta.trend.ema_indicator(df["close"], window=26)
+    # Reverse to chronological order (ASC)
+    docs.reverse()
+    df = pd.DataFrame(
+        [
+            {
+                "date": d.get("date"),
+                "open": d.get("open"),
+                "high": d.get("high"),
+                "low": d.get("low"),
+                "close": d.get("close"),
+                "volume": d.get("volume"),
+            }
+            for d in docs
+        ]
+    )
 
-        # MACD
-        macd = ta.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
-        df["macd"] = macd.macd()
-        df["macd_signal"] = macd.macd_signal()
-        df["macd_hist"] = macd.macd_diff()
+    # ── Trend indicators ──
+    df["sma_20"] = ta.trend.sma_indicator(df["close"], window=20)
+    df["sma_50"] = ta.trend.sma_indicator(df["close"], window=50)
+    df["sma_200"] = ta.trend.sma_indicator(df["close"], window=200)
+    df["ema_12"] = ta.trend.ema_indicator(df["close"], window=12)
+    df["ema_26"] = ta.trend.ema_indicator(df["close"], window=26)
 
-        # ADX
-        adx = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-        df["adx_14"] = adx.adx()
+    # MACD
+    macd = ta.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
+    df["macd"] = macd.macd()
+    df["macd_signal"] = macd.macd_signal()
+    df["macd_hist"] = macd.macd_diff()
 
-        # ── Momentum indicators ──
-        df["rsi_14"] = ta.momentum.rsi(df["close"], window=14)
+    # ADX
+    adx = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
+    df["adx_14"] = adx.adx()
 
-        stoch = ta.momentum.StochasticOscillator(
-            df["high"], df["low"], df["close"], window=14, smooth_window=3
-        )
-        df["stoch_k"] = stoch.stoch()
-        df["stoch_d"] = stoch.stoch_signal()
+    # ── Momentum indicators ──
+    df["rsi_14"] = ta.momentum.rsi(df["close"], window=14)
 
-        # ── Volatility indicators ──
-        bb = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
-        df["bb_upper"] = bb.bollinger_hband()
-        df["bb_mid"] = bb.bollinger_mavg()
-        df["bb_lower"] = bb.bollinger_lband()
+    stoch = ta.momentum.StochasticOscillator(
+        df["high"], df["low"], df["close"], window=14, smooth_window=3
+    )
+    df["stoch_k"] = stoch.stoch()
+    df["stoch_d"] = stoch.stoch_signal()
 
-        atr = ta.volatility.AverageTrueRange(
-            df["high"], df["low"], df["close"], window=14
-        )
-        df["atr_14"] = atr.average_true_range()
+    # ── Volatility indicators ──
+    bb = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+    df["bb_upper"] = bb.bollinger_hband()
+    df["bb_mid"] = bb.bollinger_mavg()
+    df["bb_lower"] = bb.bollinger_lband()
 
-        # ── Volume indicators ──
-        df["obv"] = ta.volume.on_balance_volume(df["close"], df["volume"].astype(float))
-        df["vwap"] = (df["close"] * df["volume"]).rolling(window=20, min_periods=1).sum() / df["volume"].rolling(window=20, min_periods=1).sum()
+    atr = ta.volatility.AverageTrueRange(
+        df["high"], df["low"], df["close"], window=14
+    )
+    df["atr_14"] = atr.average_true_range()
 
-        # ── Support / Resistance (simple: recent swing low/high) ──
-        lookback = min(20, len(df))
-        df["support"] = df["low"].rolling(lookback).min()
-        df["resistance"] = df["high"].rolling(lookback).max()
+    # ── Volume indicators ──
+    df["obv"] = ta.volume.on_balance_volume(df["close"], df["volume"].astype(float))
+    df["vwap"] = (df["close"] * df["volume"]).rolling(window=20, min_periods=1).sum() / df["volume"].rolling(window=20, min_periods=1).sum()
 
-        # ── Write to DB (only rows with valid RSI, i.e. skip first 13) ──
-        valid = df.dropna(subset=["rsi_14"])
+    # ── Support / Resistance (simple: recent swing low/high) ──
+    lookback = min(20, len(df))
+    df["support"] = df["low"].rolling(lookback).min()
+    df["resistance"] = df["high"].rolling(lookback).max()
 
-        rows_to_insert = []
-        for _, row in valid.iterrows():
-            rows_to_insert.append(
-                [
-                    ticker,
-                    row["date"],
-                    _f(row["rsi_14"]),
-                    _f(row["macd"]),
-                    _f(row["macd_signal"]),
-                    _f(row["macd_hist"]),
-                    _f(row["sma_20"]),
-                    _f(row["sma_50"]),
-                    _f(row["sma_200"]),
-                    _f(row["ema_12"]),
-                    _f(row["ema_26"]),
-                    _f(row["bb_upper"]),
-                    _f(row["bb_mid"]),
-                    _f(row["bb_lower"]),
-                    _f(row["atr_14"]),
-                    _f(row["adx_14"]),
-                    _f(row["stoch_k"]),
-                    _f(row["stoch_d"]),
-                    _f(row["obv"]),
-                    _f(row["vwap"]),
-                    _f(row["support"]),
-                    _f(row["resistance"]),
-                ]
-            )
+    # ── Write to DB (only rows with valid RSI, i.e. skip first 13) ──
+    valid = df.dropna(subset=["rsi_14"])
 
-        if rows_to_insert:
-            # executemany, not a loop of execute: at ~490 rows per ticker the
-            # per-statement round trip dominated (22.6s/ticker measured), which
-            # made a full-universe repair a ~16h job instead of minutes.
-            db.executemany(
-                    """
-                    INSERT INTO technicals
-                    (ticker, date, rsi_14, macd, macd_signal, macd_hist,
-                     sma_20, sma_50, sma_200, ema_12, ema_26,
-                     bb_upper, bb_mid, bb_lower, atr_14, adx_14,
-                     stoch_k, stoch_d, obv, vwap, support, resistance)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, date) DO UPDATE SET
-                        rsi_14 = EXCLUDED.rsi_14,
-                        macd = EXCLUDED.macd,
-                        macd_signal = EXCLUDED.macd_signal,
-                        macd_hist = EXCLUDED.macd_hist,
-                        sma_20 = EXCLUDED.sma_20,
-                        sma_50 = EXCLUDED.sma_50,
-                        sma_200 = EXCLUDED.sma_200,
-                        ema_12 = EXCLUDED.ema_12,
-                        ema_26 = EXCLUDED.ema_26,
-                        bb_upper = EXCLUDED.bb_upper,
-                        bb_mid = EXCLUDED.bb_mid,
-                        bb_lower = EXCLUDED.bb_lower,
-                        atr_14 = EXCLUDED.atr_14,
-                        adx_14 = EXCLUDED.adx_14,
-                        stoch_k = EXCLUDED.stoch_k,
-                        stoch_d = EXCLUDED.stoch_d,
-                        obv = EXCLUDED.obv,
-                        vwap = EXCLUDED.vwap,
-                        support = EXCLUDED.support,
-                        resistance = EXCLUDED.resistance
-                """,
-                rows_to_insert,
-            )
+    count = 0
+    for _, row in valid.iterrows():
+        doc = {
+            "ticker": ticker.upper(),
+            "date": row["date"],
+            "rsi_14": _f(row["rsi_14"]),
+            "macd": _f(row["macd"]),
+            "macd_signal": _f(row["macd_signal"]),
+            "macd_hist": _f(row["macd_hist"]),
+            "sma_20": _f(row["sma_20"]),
+            "sma_50": _f(row["sma_50"]),
+            "sma_200": _f(row["sma_200"]),
+            "ema_12": _f(row["ema_12"]),
+            "ema_26": _f(row["ema_26"]),
+            "bb_upper": _f(row["bb_upper"]),
+            "bb_mid": _f(row["bb_mid"]),
+            "bb_lower": _f(row["bb_lower"]),
+            "atr_14": _f(row["atr_14"]),
+            "adx_14": _f(row["adx_14"]),
+            "stoch_k": _f(row["stoch_k"]),
+            "stoch_d": _f(row["stoch_d"]),
+            "obv": _f(row["obv"]),
+            "vwap": _f(row["vwap"]),
+            "support": _f(row["support"]),
+            "resistance": _f(row["resistance"]),
+        }
+        mongo_store.upsert_doc("technicals", {"ticker": ticker.upper(), "date": row["date"]}, doc)
+        count += 1
 
-        count = len(rows_to_insert)
-
-        logger.debug("[tech] %s: %d technical rows written", ticker, count)
-        return count
+    logger.debug("[tech] %s: %d technical rows written", ticker, count)
+    return count
 
 
 def get_signals(ticker: str) -> str:
@@ -215,99 +140,81 @@ def get_signals(ticker: str) -> str:
     Get the latest technical signals as pre-formatted text for the LLM.
     Returns a human-readable summary string the agent can analyze.
     """
-    with get_db() as db:
-        row = db.execute(
-            """
-            SELECT * FROM technicals
-            WHERE ticker = %s
-            ORDER BY date DESC
-            LIMIT 1
-        """,
-            [ticker],
-        ).fetchone()
+    tech_docs = mongo_store.find_docs(
+        "technicals",
+        {"ticker": ticker.upper()},
+        sort=[("date", -1)],
+        limit=1,
+    )
 
-        if not row:
-            return f"No technical data available for {ticker}."
+    if not tech_docs:
+        return f"No technical data available for {ticker}."
 
-        cols = [
-            d[0] for d in db.execute("SELECT * FROM technicals LIMIT 0").description
-        ]
-        data = dict(zip(cols, row))
+    data = tech_docs[0]
 
-        # Build labeled signal text
-        lines = [f"=== TECHNICAL ANALYSIS: {ticker} (as of {data['date']}) ==="]
+    # Build labeled signal text
+    lines = [f"=== TECHNICAL ANALYSIS: {ticker} (as of {data.get('date')}) ==="]
 
-        # RSI
-        rsi = data.get("rsi_14")
-        if rsi is not None:
-            label = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
-            lines.append(f"RSI-14: {rsi:.1f} ({label})")
+    # RSI
+    rsi = data.get("rsi_14")
+    if rsi is not None:
+        label = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
+        lines.append(f"RSI-14: {rsi:.1f} ({label})")
 
-        # MACD
-        macd_h = data.get("macd_hist")
-        if macd_h is not None:
-            signal = "BULLISH" if macd_h > 0 else "BEARISH"
-            lines.append(f"MACD histogram: {macd_h:.4f} ({signal})")
+    # MACD
+    macd_h = data.get("macd_hist")
+    if macd_h is not None:
+        signal = "BULLISH" if macd_h > 0 else "BEARISH"
+        lines.append(f"MACD histogram: {macd_h:.4f} ({signal})")
 
-        # Moving averages.
-        #
-        # Same vendor as the indicators above, deliberately: this close is
-        # compared against sma_20/50/200 to emit ABOVE/BELOW, and those were
-        # computed from the dominant-vendor series. Reading the spot price from
-        # the other vendor would compare an adjusted price to a raw moving
-        # average and flip the label on a 20%-mean spread. Without the filter
-        # the row is also simply non-deterministic — both vendors carry the
-        # same max date, so whichever the planner emits first wins.
-        close = db.execute(
-            f"""
-            SELECT close FROM price_history
-            WHERE ticker = %(ticker)s
-              AND source = ({dominant_source_sql()})
-            ORDER BY date DESC LIMIT 1
-            """,
-            {"ticker": ticker},
-        ).fetchone()
-        if close:
-            price = close[0]
-            lines.append(f"Price: ${price:.2f}")
-            for ma_name in ["sma_20", "sma_50", "sma_200"]:
-                val = data.get(ma_name)
-                if val:
-                    pos = "ABOVE" if price > val else "BELOW"
-                    lines.append(f"  {ma_name.upper()}: ${val:.2f} (price {pos})")
+    price_docs = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker.upper()},
+        sort=[("date", -1)],
+        limit=1,
+    )
+    close_price = price_docs[0].get("close") if price_docs else None
+    if close_price is not None:
+        price = float(close_price)
+        lines.append(f"Price: ${price:.2f}")
+        for ma_name in ["sma_20", "sma_50", "sma_200"]:
+            val = data.get(ma_name)
+            if val:
+                pos = "ABOVE" if price > val else "BELOW"
+                lines.append(f"  {ma_name.upper()}: ${val:.2f} (price {pos})")
 
-        # Bollinger Bands
-        bb_u, bb_l = data.get("bb_upper"), data.get("bb_lower")
-        if bb_u and bb_l and close:
-            pct = (price - bb_l) / (bb_u - bb_l) * 100 if bb_u != bb_l else 50
-            band_pos = (
-                "UPPER BAND" if pct > 80 else "LOWER BAND" if pct < 20 else "MID RANGE"
-            )
-            lines.append(f"Bollinger: {band_pos} ({pct:.0f}% width)")
+    # Bollinger Bands
+    bb_u, bb_l = data.get("bb_upper"), data.get("bb_lower")
+    if bb_u and bb_l and close_price is not None:
+        pct = (price - bb_l) / (bb_u - bb_l) * 100 if bb_u != bb_l else 50
+        band_pos = (
+            "UPPER BAND" if pct > 80 else "LOWER BAND" if pct < 20 else "MID RANGE"
+        )
+        lines.append(f"Bollinger: {band_pos} ({pct:.0f}% width)")
 
-        # Stochastic
-        k, d = data.get("stoch_k"), data.get("stoch_d")
-        if k is not None:
-            label = "OVERBOUGHT" if k > 80 else "OVERSOLD" if k < 20 else "NEUTRAL"
-            lines.append(f"Stochastic K/D: {k:.1f}/{d:.1f} ({label})")
+    # Stochastic
+    k, d = data.get("stoch_k"), data.get("stoch_d")
+    if k is not None:
+        label = "OVERBOUGHT" if k > 80 else "OVERSOLD" if k < 20 else "NEUTRAL"
+        lines.append(f"Stochastic K/D: {k:.1f}/{d:.1f} ({label})" if d is not None else f"Stochastic K: {k:.1f} ({label})")
 
-        # ATR
-        atr = data.get("atr_14")
-        if atr is not None:
-            lines.append(f"ATR-14: ${atr:.2f} (daily volatility)")
+    # ATR
+    atr = data.get("atr_14")
+    if atr is not None:
+        lines.append(f"ATR-14: ${atr:.2f} (daily volatility)")
 
-        # ADX
-        adx = data.get("adx_14")
-        if adx is not None:
-            strength = "STRONG TREND" if adx > 25 else "WEAK/NO TREND"
-            lines.append(f"ADX-14: {adx:.1f} ({strength})")
+    # ADX
+    adx = data.get("adx_14")
+    if adx is not None:
+        strength = "STRONG TREND" if adx > 25 else "WEAK/NO TREND"
+        lines.append(f"ADX-14: {adx:.1f} ({strength})")
 
-        # Support/Resistance
-        sup, res = data.get("support"), data.get("resistance")
-        if sup and res:
-            lines.append(f"Support: ${sup:.2f} | Resistance: ${res:.2f}")
+    # Support/Resistance
+    sup, res = data.get("support"), data.get("resistance")
+    if sup and res:
+        lines.append(f"Support: ${sup:.2f} | Resistance: ${res:.2f}")
 
-        return "\n".join(lines)
+    return "\n".join(lines)
 
 
 def _f(val) -> float | None:

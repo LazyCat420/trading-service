@@ -59,19 +59,18 @@ def _finite(val) -> float | None:
 
 def _load_series(symbols: list[str], lookback: int) -> dict[str, list[float]]:
     """Closes per symbol, oldest→newest, NaNs dropped."""
-    from app.db.connection import get_db
+    from app.db import mongo_query
 
     series: dict[str, list[float]] = {}
-    with get_db() as db:
-        for sym in symbols:
-            try:
-                rows = mongo_query.find_rows('asset_prices', {'symbol': sym}, ['close'], sort=[('date', -1)], limit=lookback)
-            except Exception as e:  # noqa: BLE001 — grounding is advisory
-                logger.debug("[MacroTrend] %s series fetch failed: %s", sym, e)
-                continue
-            closes = [c for c in (_finite(r[0]) for r in rows) if c is not None]
-            if closes:
-                series[sym] = list(reversed(closes))
+    for sym in symbols:
+        try:
+            rows = mongo_query.find_rows('asset_prices', {'symbol': sym}, ['close'], sort=[('date', -1)], limit=lookback)
+        except Exception as e:  # noqa: BLE001 — grounding is advisory
+            logger.debug("[MacroTrend] %s series fetch failed: %s", sym, e)
+            continue
+        closes = [c for c in (_finite(r[0]) for r in rows) if c is not None]
+        if closes:
+            series[sym] = list(reversed(closes))
     return series
 
 

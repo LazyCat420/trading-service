@@ -297,18 +297,21 @@ def _get_tool_playbook_tips(agent_name: str, limit: int = 3) -> str:
         return cached[0]
     tips = ""
     try:
-        from app.db.connection import get_db
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT DISTINCT ON (recommended_tool_sequence) recommended_tool_sequence, "
-                "       COALESCE(last_validated_at, created_at) AS freshness "
-                "  FROM tool_playbook "
-                " WHERE agent_role = %s "
-                " ORDER BY recommended_tool_sequence, freshness DESC "
-                " LIMIT %s",
-                [agent_name, limit],
-            ).fetchall()
-        tips = "\n".join(f"- {r[0]}" for r in rows if r and r[0])
+        from app.db import mongo_store
+        docs = mongo_store.find_docs(
+            "tool_playbook",
+            {"agent_role": agent_name},
+            sort=[("last_validated_at", -1), ("created_at", -1)],
+            limit=limit,
+        )
+        seen_seq = set()
+        unique_tips = []
+        for d in docs:
+            seq = d.get("recommended_tool_sequence")
+            if seq and seq not in seen_seq:
+                seen_seq.add(seq)
+                unique_tips.append(f"- {seq}")
+        tips = "\n".join(unique_tips)
     except Exception as e:  # noqa: BLE001 — advisory context, never blocks the agent
         logger.debug("[V3Runner] tool_playbook fetch failed: %s", e)
     # Belt-and-braces cap. This is advisory context appended to every agent

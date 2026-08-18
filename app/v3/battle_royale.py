@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
 from app.db import mongo_query
 from app.db import mongo_store
@@ -25,20 +24,14 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
     rows = None
     try:
         from app.db import mongo_store
-        if mongo_store.reads_mongo("analysis_results"):
-            rows = [
-                (d.get("ticker"), d.get("result_json"))
-                for d in mongo_store.find_docs(
-                    "analysis_results", {"cycle_id": cycle_id},
-                    projection={"_id": 0, "ticker": 1, "result_json": 1},
-                )
-            ]
+        docs = mongo_store.find_docs(
+            "analysis_results", {"cycle_id": cycle_id},
+            projection={"_id": 0, "ticker": 1, "result_json": 1},
+        )
+        rows = [(d.get("ticker"), d.get("result_json")) for d in docs]
     except Exception as me:
-        handle_mongo_read_failure("analysis_results", "[BattleRoyale] mongo results read", me)
-        rows = None
-    if rows is None:
-        with get_db() as db:
-            rows = mongo_query.find_rows('analysis_results', {'cycle_id': cycle_id}, ['ticker', 'result_json'])
+        logger.warning("[BattleRoyale] mongo results read failed: %s", me)
+        rows = []
 
 
     if not rows:
@@ -118,9 +111,15 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
     regime_summary: dict[str, Any] = {}
     quant_risk: dict[str, Any] = {}
     try:
-        with get_db() as db:
-            wb_rows = mongo_query.find_rows('whiteboard_entries', {'cycle_id': cycle_id, 'superseded_by': None, 'section': {'$in': ['regime_classification', 'quant_report']}}, ['ticker', 'section', 'content'])
-        for wb_ticker, wb_section, wb_content in wb_rows:
+        from app.db import mongo_store
+        wb_docs = mongo_store.find_docs(
+            'whiteboard_entries',
+            {'cycle_id': cycle_id, 'superseded_by': None, 'section': {'$in': ['regime_classification', 'quant_report']}},
+        )
+        for d in wb_docs:
+            wb_ticker = d.get('ticker')
+            wb_section = d.get('section')
+            wb_content = d.get('content')
             try:
                 content = wb_content if isinstance(wb_content, dict) else json.loads(wb_content)
             except Exception:
@@ -156,8 +155,6 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
     except Exception as enrich_err:
         logger.warning("[BattleRoyale] Summary regime/quant enrichment skipped: %s", enrich_err)
 
-    # Structured counterpart of the markdown (was hardcoded '{}'). Consumers may
-    # ignore it today, but recording it stops the field being permanently dead.
     result_summary = json.dumps({
         "analyzed": len(tickers_data),
         "buy": len(buys),
@@ -170,58 +167,33 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
         "quant_risk": quant_risk,
     })
 
-    # Save to ticker_reports
     report_id = str(uuid.uuid4())
-    # ONE timestamp for both stores (parity audit 2026-08-16).
     _saved_at = datetime.now(timezone.utc)
 
     try:
-        with get_db() as db:
-            # Idempotent per cycle: a re-run of the same cycle_id replaces the
-            # prior summary instead of leaving duplicate is_summary rows for the
-            # reader's ORDER BY created_at DESC to disambiguate.
-            mongo_store.delete_docs('ticker_reports', {'cycle_id': cycle_id, 'is_summary': True})
-            mongo_store.insert_docs('ticker_reports', [{'id': report_id, 'cycle_id': cycle_id, 'ticker': "GLOBAL", 'action': "HOLD", 'confidence': 0, 'report_markdown': report_content, 'result_summary': result_summary, 'is_summary': True, 'created_at': _saved_at}])
-        # Best-effort Mongo mirror — replace the cycle's summary row to match the
-        # PG delete-first upsert (keyed on cycle_id + is_summary).
-        try:
-            from app.db import mongo_store
-            if mongo_store.writes_mongo("ticker_reports"):
-                # PG stores result_summary as a JSON string; Mongo wants the object.
-                _summary = result_summary
-                if isinstance(_summary, str):
-                    try:
-                        _summary = json.loads(_summary)
-                    except (ValueError, TypeError):
-                        pass
-                mongo_store.upsert_doc("ticker_reports", {"cycle_id": cycle_id, "is_summary": True}, {
-                    "id": report_id, "cycle_id": cycle_id, "ticker": "GLOBAL", "action": "HOLD",
-                    "confidence": 0, "report_markdown": report_content, "result_summary": _summary,
-                    "is_summary": True, "created_at": _saved_at,
-                })
-        except Exception as me:
-            logger.warning("[BattleRoyale] Mongo mirror failed (non-fatal): %s", me)
+        from app.db import mongo_store
+        _summary = result_summary
+        if isinstance(_summary, str):
+            try:
+                _summary = json.loads(_summary)
+            except (ValueError, TypeError):
+                pass
+        mongo_store.upsert_doc("ticker_reports", {"cycle_id": cycle_id, "is_summary": True}, {
+            "id": report_id, "cycle_id": cycle_id, "ticker": "GLOBAL", "action": "HOLD",
+            "confidence": 0, "report_markdown": report_content, "result_summary": _summary,
+            "is_summary": True, "created_at": _saved_at,
+        })
         logger.info("[BattleRoyale] Report saved with ID %s", report_id)
         return True
     except Exception as e:
-        # Fail loud: a swallowed report-write is exactly why cycle summaries
-        # went blank unnoticed. Surface it in the cycle's own event stream (the
-        # reports UI reads /reports/cycle/{id}/events) so the failure is visible,
-        # then still return False so the caller's report_generated flag is honest.
         logger.error("[BattleRoyale] Failed to save report for %s: %s", cycle_id, e)
         _record_report_failure(cycle_id, str(e))
         return False
 
 
 def _record_report_failure(cycle_id: str, detail: str) -> None:
-    """Best-effort terminal event so a failed report write is observable.
-
-    Wrapped in its own guard: if even this write fails we only log — surfacing
-    the failure must never itself break the cycle.
-    """
+    """Best-effort terminal event so a failed report write is observable."""
     try:
-        # pipeline_events.id is TEXT PRIMARY KEY with no default — supply it
-        # explicitly. Build once so the PG row and the Mongo mirror share an id.
         _evt = {
             "id": str(uuid.uuid4()),
             "cycle_id": cycle_id,
@@ -231,9 +203,7 @@ def _record_report_failure(cycle_id: str, detail: str) -> None:
             "detail": f"Cycle summary report failed to persist: {detail[:300]}",
             "status": "error",
         }
-        with get_db() as db:
-            mongo_store.insert_docs('pipeline_events', [{'id': _evt["id"], 'cycle_id': _evt["cycle_id"], 'timestamp': _evt["timestamp"], 'phase': _evt["phase"], 'step': _evt["step"], 'detail': _evt["detail"], 'status': _evt["status"]}])
         from app.db import mongo_store
-        mongo_store.mirror_pipeline_event(_evt)
+        mongo_store.insert_docs('pipeline_events', [_evt])
     except Exception as ev_err:  # pragma: no cover - diagnostics only
         logger.error("[BattleRoyale] Could not record report-failure event for %s: %s", cycle_id, ev_err)

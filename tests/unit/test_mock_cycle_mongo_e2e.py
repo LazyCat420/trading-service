@@ -1472,3 +1472,10 @@ class TestMockTradingCycleMongoE2E:
         metrics = compute_agent_metrics(None, cycle_id)
         assert "total_decisions_evaluated" in metrics
         assert "model_benchmarks" in metrics
+
+        # 51. Pre-Collected Ticker Data Report in MongoDB
+        from app.v3.data_report import build_ticker_data_report
+
+        report_md = await build_ticker_data_report("AAPL", cycle_id=cycle_id)
+        assert "Pre-Collected Ticker Data Report" in report_md
+        assert "AAPL" in report_md

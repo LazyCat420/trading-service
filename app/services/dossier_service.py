@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.db.connection import get_db
+from app.db import mongo_store
 from app.schemas.dossier_schemas import (
     DecisionHistoryEntry,
     LifecycleState,
@@ -24,18 +24,17 @@ class DossierService:
 
     @classmethod
     def get_dossier(cls, ticker: str) -> TickerDossier:
-        """Retrieves a ticker's dossier from PG DB or returns a fresh default dossier."""
+        """Retrieves a ticker's dossier from MongoDB or returns a fresh default dossier."""
         ticker = ticker.upper().strip()
-        with get_db() as db:
-            row = db.execute(
-                "SELECT ticker, lifecycle_state, canonical_thesis, lead_analyst_id, "
-                "open_questions, monitoring_triggers, hold_spec, decision_history, "
-                "attached_artifact_ids, created_at, updated_at "
-                "FROM ticker_dossiers WHERE ticker = %s",
-                [ticker],
-            ).fetchone()
+        doc = None
+        try:
+            docs = mongo_store.find_docs("ticker_dossiers", {"ticker": ticker}, limit=1)
+            if docs:
+                doc = docs[0]
+        except Exception as e:
+            logger.warning("[dossier] mongo read failed for %s: %s", ticker, e)
 
-        if not row:
+        if not doc:
             return TickerDossier(
                 ticker=ticker,
                 lifecycle_state=LifecycleState.NEW,
@@ -46,93 +45,65 @@ class DossierService:
                 attached_artifact_ids=[],
             )
 
-        (
-            tkr,
-            state_str,
-            thesis_raw,
-            lead_analyst,
-            questions_raw,
-            triggers_raw,
-            hold_spec_raw,
-            decisions_raw,
-            artifacts_raw,
-            created_at,
-            updated_at,
-        ) = row
-
+        state_str = doc.get("lifecycle_state", "NEW")
         try:
             state = LifecycleState(state_str)
         except ValueError:
             state = LifecycleState.NEW
 
         hold_spec = None
-        if hold_spec_raw:
+        hold_dict = doc.get("hold_spec")
+        if hold_dict:
             try:
-                hold_dict = json.loads(hold_spec_raw) if isinstance(hold_spec_raw, str) else hold_spec_raw
+                if isinstance(hold_dict, str):
+                    hold_dict = json.loads(hold_dict)
                 if hold_dict and isinstance(hold_dict, dict) and "positive_rationale" in hold_dict:
                     hold_spec = WatchlistHoldSpec(**hold_dict)
             except Exception as e:
                 logger.warning("[dossier] Failed to parse hold_spec for %s: %s", ticker, e)
 
+        thesis_raw = doc.get("canonical_thesis") or {}
+        questions_raw = doc.get("open_questions") or []
+        triggers_raw = doc.get("monitoring_triggers") or {}
+        decisions_raw = doc.get("decision_history") or []
+        artifacts_raw = doc.get("attached_artifact_ids") or []
+
         return TickerDossier(
-            ticker=tkr,
+            ticker=ticker,
             lifecycle_state=state,
-            canonical_thesis=json.loads(thesis_raw) if isinstance(thesis_raw, str) else (thesis_raw or {}),
-            lead_analyst_id=lead_analyst,
-            open_questions=json.loads(questions_raw) if isinstance(questions_raw, str) else (questions_raw or []),
-            monitoring_triggers=json.loads(triggers_raw) if isinstance(triggers_raw, str) else (triggers_raw or {}),
+            canonical_thesis=json.loads(thesis_raw) if isinstance(thesis_raw, str) else thesis_raw,
+            lead_analyst_id=doc.get("lead_analyst_id"),
+            open_questions=json.loads(questions_raw) if isinstance(questions_raw, str) else questions_raw,
+            monitoring_triggers=json.loads(triggers_raw) if isinstance(triggers_raw, str) else triggers_raw,
             hold_spec=hold_spec,
             decision_history=[
-                DecisionHistoryEntry(**d) for d in (json.loads(decisions_raw) if isinstance(decisions_raw, str) else (decisions_raw or []))
+                DecisionHistoryEntry(**d) for d in (json.loads(decisions_raw) if isinstance(decisions_raw, str) else decisions_raw)
             ],
-            attached_artifact_ids=json.loads(artifacts_raw) if isinstance(artifacts_raw, str) else (artifacts_raw or []),
-            created_at=str(created_at) if created_at else None,
-            updated_at=str(updated_at) if updated_at else None,
+            attached_artifact_ids=json.loads(artifacts_raw) if isinstance(artifacts_raw, str) else artifacts_raw,
+            created_at=str(doc.get("created_at")) if doc.get("created_at") else None,
+            updated_at=str(doc.get("updated_at")) if doc.get("updated_at") else None,
         )
 
     @classmethod
     def save_dossier(cls, dossier: TickerDossier) -> None:
-        """Upserts a TickerDossier into PostgreSQL."""
+        """Upserts a TickerDossier into MongoDB."""
         now = datetime.now(timezone.utc).isoformat()
-        thesis_json = json.dumps(dossier.canonical_thesis)
-        questions_json = json.dumps(dossier.open_questions)
-        triggers_json = json.dumps(dossier.monitoring_triggers)
-        hold_spec_json = json.dumps(dossier.hold_spec.model_dump() if dossier.hold_spec else {})
-        decisions_json = json.dumps([d.model_dump() for d in dossier.decision_history])
-        artifacts_json = json.dumps(dossier.attached_artifact_ids)
-
-        with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO ticker_dossiers (
-                    ticker, lifecycle_state, canonical_thesis, lead_analyst_id,
-                    open_questions, monitoring_triggers, hold_spec, decision_history,
-                    attached_artifact_ids, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ticker) DO UPDATE SET
-                    lifecycle_state = EXCLUDED.lifecycle_state,
-                    canonical_thesis = EXCLUDED.canonical_thesis,
-                    lead_analyst_id = EXCLUDED.lead_analyst_id,
-                    open_questions = EXCLUDED.open_questions,
-                    monitoring_triggers = EXCLUDED.monitoring_triggers,
-                    hold_spec = EXCLUDED.hold_spec,
-                    decision_history = EXCLUDED.decision_history,
-                    attached_artifact_ids = EXCLUDED.attached_artifact_ids,
-                    updated_at = EXCLUDED.updated_at
-                """,
-                [
-                    dossier.ticker,
-                    dossier.lifecycle_state.value,
-                    thesis_json,
-                    dossier.lead_analyst_id,
-                    questions_json,
-                    triggers_json,
-                    hold_spec_json,
-                    decisions_json,
-                    artifacts_json,
-                    now,
-                ],
-            )
+        doc = {
+            "ticker": dossier.ticker,
+            "lifecycle_state": dossier.lifecycle_state.value,
+            "canonical_thesis": dossier.canonical_thesis,
+            "lead_analyst_id": dossier.lead_analyst_id,
+            "open_questions": dossier.open_questions,
+            "monitoring_triggers": dossier.monitoring_triggers,
+            "hold_spec": dossier.hold_spec.model_dump() if dossier.hold_spec else {},
+            "decision_history": [d.model_dump() for d in dossier.decision_history],
+            "attached_artifact_ids": dossier.attached_artifact_ids,
+            "updated_at": now,
+        }
+        try:
+            mongo_store.upsert_doc("ticker_dossiers", {"ticker": dossier.ticker}, doc)
+        except Exception as e:
+            logger.warning("[dossier] mongo save failed for %s: %s", dossier.ticker, e)
 
     @classmethod
     def record_decision(

@@ -65,43 +65,7 @@ _TABLE_ENSURED = False
 
 
 def _ensure_table() -> None:
-    """Create `agent_directives` if it is not there yet.
-
-    Same shape as the guardrail-firings table: created on first use rather
-    than in a boot migration, because a failing boot migration is logged as a
-    warning and the service starts anyway (see CLAUDE.md) — so a table that
-    only exists if the migration ran is a table that might not exist.
-    """
-    global _TABLE_ENSURED
-    if _TABLE_ENSURED:
-        return
-    try:
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS agent_directives (
-                    id SERIAL PRIMARY KEY,
-                    cycle_id TEXT,
-                    ticker TEXT,
-                    agent_name TEXT,
-                    directive TEXT NOT NULL,
-                    author TEXT DEFAULT 'operator',
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    consumed_by TEXT,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    consumed_at TIMESTAMP WITH TIME ZONE
-                )
-            """)
-            # The read is "pending directives for this cycle/ticker", run once
-            # per agent prompt build — the hot path this index exists for.
-            db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_agent_directives_pending
-                ON agent_directives (status, cycle_id, ticker)
-            """)
-        _TABLE_ENSURED = True
-    except Exception as e:  # noqa: BLE001 — never block a cycle on this
-        logger.warning("[AgentChat] could not ensure agent_directives: %s", e)
+    pass
 
 
 def emit_agent_message(
@@ -243,55 +207,41 @@ def pending_directives(
     resolved by the caller passing the live cycle_id, so a directive written
     while nothing is running does not ambush the next cycle hours later.
     """
-    _ensure_table()
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_store
 
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT id, directive, ticker, agent_name, author
-                FROM agent_directives
-                WHERE status = 'pending'
-                  AND (cycle_id IS NULL OR cycle_id = %s)
-                  AND (ticker IS NULL OR ticker = %s)
-                  AND (agent_name IS NULL OR agent_name = %s)
-                ORDER BY created_at
-                """,
-                [cycle_id, ticker, agent_name],
-            ).fetchall()
+        query = {
+            "status": "pending",
+            "$or": [{"cycle_id": None}, {"cycle_id": cycle_id}],
+            "$and": [
+                {"$or": [{"ticker": None}, {"ticker": ticker}]},
+                {"$or": [{"agent_name": None}, {"agent_name": agent_name}]},
+            ],
+        }
+        docs = mongo_store.find_docs("agent_directives", query, sort=[("created_at", 1)])
         return [
-            {"id": r[0], "directive": r[1], "ticker": r[2],
-             "agent_name": r[3], "author": r[4]}
-            for r in rows
+            {"id": d.get("id") or str(d.get("_id")), "directive": d.get("directive"), "ticker": d.get("ticker"),
+             "agent_name": d.get("agent_name"), "author": d.get("author")}
+            for d in docs
         ]
     except Exception as e:  # noqa: BLE001
         logger.warning("[AgentChat] directive read failed (ignored): %s", e)
         return []
 
 
-def mark_directives_consumed(ids: list[int], *, consumed_by: str) -> None:
-    """Retire directives that have been injected into a prompt.
-
-    Called AFTER the prompt is built, so a directive is not burned by a run
-    that then fails to start. It can therefore be delivered twice if the run
-    dies between injection and this call — the honest trade, because the other
-    ordering loses the directive entirely and the operator has no way to know.
-    """
+def mark_directives_consumed(ids: list[Any], *, consumed_by: str) -> None:
+    """Retire directives that have been injected into a prompt."""
     if not ids:
         return
     try:
-        from app.db.connection import get_db
+        from datetime import datetime, timezone
+        from app.db import mongo_store
 
-        with get_db() as db:
-            db.execute(
-                """
-                UPDATE agent_directives
-                SET status = 'consumed', consumed_at = NOW(), consumed_by = %s
-                WHERE id = ANY(%s)
-                """,
-                [consumed_by, list(ids)],
-            )
+        mongo_store.update_docs(
+            "agent_directives",
+            {"$or": [{"id": {"$in": ids}}, {"_id": {"$in": ids}}]},
+            {"$set": {"status": "consumed", "consumed_at": datetime.now(timezone.utc), "consumed_by": consumed_by}},
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("[AgentChat] directive retire failed (ignored): %s", e)
 

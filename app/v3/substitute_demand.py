@@ -44,43 +44,32 @@ def recent_substitute_demand(
     hours: int = DEFAULT_LOOKBACK_HOURS,
     limit: int = MAX_CARRIED,
 ) -> dict[str, int]:
-    """`{ticker: times a bear named it}` over the window, newest window first.
-
-    An empty dict is a real answer — most cycles are Watch Desk wakes with no
-    candidate pool at all (`NOT_ASKED`), and no bear names anything.
-    """
+    """`{ticker: times a bear named it}` over the window, newest window first."""
     try:
-        from app.db.connection import get_db
+        from datetime import datetime, timezone, timedelta
+        from collections import Counter
+        from app.db import mongo_store
 
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT upper(pa->>'ticker') AS ticker, COUNT(*) AS n
-                  FROM shared_desk,
-                       LATERAL (
-                           SELECT desk_data->'bear_rebuttal'->'preferred_alternative'
-                       ) AS s(pa)
-                 WHERE created_at >= NOW() - (%s * INTERVAL '1 hour')
-                   AND pa->>'status' = 'NAMED'
-                   AND COALESCE(pa->>'ticker', '') <> ''
-                 GROUP BY 1
-                 ORDER BY n DESC, ticker ASC
-                 LIMIT %s
-                """,
-                [int(hours), int(limit)],
-            ).fetchall()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=int(hours))
+        docs = mongo_store.find_docs(
+            "shared_desk",
+            {"created_at": {"$gte": cutoff}},
+            projection={"desk_data.bear_rebuttal.preferred_alternative": 1},
+        )
+        counts: Counter[str] = Counter()
+        for d in docs:
+            desk = d.get("desk_data") or {}
+            pa = (desk.get("bear_rebuttal") or {}).get("preferred_alternative") or {}
+            if pa.get("status") == "NAMED":
+                tkr = (pa.get("ticker") or "").strip().upper()
+                if tkr:
+                    counts[tkr] += 1
+        return dict(counts.most_common(int(limit)))
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "[SubstituteDemand] read failed (non-fatal, pool un-boosted): %s", e
         )
         return {}
-
-    out: dict[str, int] = {}
-    for r in rows or []:
-        ticker = (r[0] or "").strip()
-        if ticker:
-            out[ticker] = int(r[1])
-    return out
 
 
 def merge_into_pool(all_pool: dict, demand: dict[str, int]) -> list[str]:

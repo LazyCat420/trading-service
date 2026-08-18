@@ -33,7 +33,6 @@ def get_timeout_session(timeout=15.0) -> requests.Session:
     return session
 
 _yf_session = get_timeout_session(15.0)
-from app.db.connection import get_db
 from app.db import mongo_store
 
 
@@ -276,16 +275,26 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
         )
 
     if rows:
-
         def _insert():
-            with get_db() as db:
-                db.executemany(
-                    """
-                    INSERT INTO price_history (ticker, date, open, high, low, close, volume, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance')
-                    ON CONFLICT (ticker, date, source) DO NOTHING
-                """,
-                    rows,
+            docs = [
+                {
+                    "ticker": r[0],
+                    "date": r[1],
+                    "open": r[2],
+                    "high": r[3],
+                    "low": r[4],
+                    "close": r[5],
+                    "volume": r[6],
+                    "source": "yfinance",
+                }
+                for r in rows
+            ]
+            for doc in docs:
+                mongo_store.upsert_doc(
+                    "price_history",
+                    {"ticker": doc["ticker"], "date": doc["date"], "source": doc["source"]},
+                    doc,
+                    insert_only=True,
                 )
 
         await asyncio.to_thread(_insert)
@@ -380,9 +389,8 @@ async def collect_fundamentals_finnhub(ticker: str) -> bool:
         beta = metric.get("beta") or profile.get("beta")
         
         # Map fields to fundamentals table structure
-        with get_db() as db:
-            mongo_store.upsert_doc('fundamentals', {'ticker': ticker.upper(), 'snapshot_date': today}, {'ticker': ticker.upper(), 'snapshot_date': today, 'source': 'finnhub', 'market_cap': mkt_cap, 'pe_ratio': pe, 'forward_pe': None, 'peg_ratio': None, 'price_to_book': metric.get("bookValuePerShareAnnual"), 'price_to_sales': metric.get("psTTM"), 'ev_to_ebitda': None, 'profit_margin': metric.get("netProfitMarginTTM"), 'roe': metric.get("roeTTM"), 'roa': metric.get("roaTTM"), 'revenue': None, 'revenue_growth': None, 'net_income': None, 'debt_to_equity': metric.get("debtEquityTTM") / 100.0
-                     if metric.get("debtEquityTTM") is not None else None, 'current_ratio': metric.get("currentRatioAnnual"), 'beta': beta, 'week_52_high': metric.get("52WeekHigh"), 'week_52_low': metric.get("52WeekLow"), 'short_float_pct': None}, insert_only=True)
+        mongo_store.upsert_doc('fundamentals', {'ticker': ticker.upper(), 'snapshot_date': today}, {'ticker': ticker.upper(), 'snapshot_date': today, 'source': 'finnhub', 'market_cap': mkt_cap, 'pe_ratio': pe, 'forward_pe': None, 'peg_ratio': None, 'price_to_book': metric.get("bookValuePerShareAnnual"), 'price_to_sales': metric.get("psTTM"), 'ev_to_ebitda': None, 'profit_margin': metric.get("netProfitMarginTTM"), 'roe': metric.get("roeTTM"), 'roa': metric.get("roaTTM"), 'revenue': None, 'revenue_growth': None, 'net_income': None, 'debt_to_equity': metric.get("debtEquityTTM") / 100.0
+                 if metric.get("debtEquityTTM") is not None else None, 'current_ratio': metric.get("currentRatioAnnual"), 'beta': beta, 'week_52_high': metric.get("52WeekHigh"), 'week_52_low': metric.get("52WeekLow"), 'short_float_pct': None}, insert_only=True)
         logger.info(f"[finnhub] Successfully stored fundamentals fallback for {ticker}")
         return True
     except Exception as e:
@@ -458,19 +466,11 @@ async def collect_fundamentals(ticker: str) -> bool:
             "target_price": info.get("targetMeanPrice"),
             "earnings_date": earnings_date,
         }
-        cols = list(fields.keys())
-        updates = ", ".join(
-            f"{c} = COALESCE(EXCLUDED.{c}, fundamentals.{c})" for c in cols
+        mongo_store.upsert_doc(
+            "fundamentals",
+            {"ticker": ticker, "snapshot_date": today},
+            {"ticker": ticker, "snapshot_date": today, "source": "yfinance", **fields},
         )
-        with get_db() as db:
-            db.execute(
-                f"""
-                INSERT INTO fundamentals (ticker, snapshot_date, source, {', '.join(cols)})
-                VALUES (%s, %s, 'yfinance', {', '.join(['%s'] * len(cols))})
-                ON CONFLICT (ticker, snapshot_date) DO UPDATE SET {updates}
-                """,
-                [ticker, today] + [fields[c] for c in cols],
-            )
         logger.info(
             f"[yfinance] {ticker}: fundamentals written (mkt_cap={info.get('marketCap')})"
         )
@@ -541,25 +541,22 @@ async def collect_financials(ticker: str) -> int:
             )
 
     if rows:
-
         def _insert():
-            with get_db() as db:
-                db.executemany(
-                    """
-                    INSERT INTO financial_history (
-                        ticker, period_type, period_end,
-                        revenue, gross_profit, operating_income,
-                        net_income, eps, free_cash_flow
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ticker, period_type, period_end) DO UPDATE SET
-                    revenue = EXCLUDED.revenue,
-                    gross_profit = EXCLUDED.gross_profit,
-                    operating_income = EXCLUDED.operating_income,
-                    net_income = EXCLUDED.net_income,
-                    eps = EXCLUDED.eps,
-                    free_cash_flow = EXCLUDED.free_cash_flow
-                """,
-                    rows,
+            for r in rows:
+                mongo_store.upsert_doc(
+                    "financial_history",
+                    {"ticker": r[0], "period_type": r[1], "period_end": r[2]},
+                    {
+                        "ticker": r[0],
+                        "period_type": r[1],
+                        "period_end": r[2],
+                        "revenue": r[3],
+                        "gross_profit": r[4],
+                        "operating_income": r[5],
+                        "net_income": r[6],
+                        "eps": r[7],
+                        "free_cash_flow": r[8],
+                    },
                 )
 
         await asyncio.to_thread(_insert)
@@ -606,24 +603,21 @@ async def collect_balance_sheet(ticker: str) -> int:
         )
 
     if rows:
-
         def _insert():
-            with get_db() as db:
-                db.executemany(
-                    """
-                    INSERT INTO balance_sheet (
-                        ticker, period_end, total_assets, total_liabilities,
-                        total_equity, cash, total_debt, working_capital
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, period_end) DO UPDATE SET
-                        total_assets = EXCLUDED.total_assets,
-                        total_liabilities = EXCLUDED.total_liabilities,
-                        total_equity = EXCLUDED.total_equity,
-                        cash = EXCLUDED.cash,
-                        total_debt = EXCLUDED.total_debt,
-                        working_capital = EXCLUDED.working_capital
-                """,
-                    rows,
+            for r in rows:
+                mongo_store.upsert_doc(
+                    "balance_sheet",
+                    {"ticker": r[0], "period_end": r[1]},
+                    {
+                        "ticker": r[0],
+                        "period_end": r[1],
+                        "total_assets": r[2],
+                        "total_liabilities": r[3],
+                        "total_equity": r[4],
+                        "cash": r[5],
+                        "total_debt": r[6],
+                        "working_capital": r[7],
+                    },
                 )
 
         await asyncio.to_thread(_insert)

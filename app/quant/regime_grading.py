@@ -29,41 +29,36 @@ EXPECTED_BREACH_RATE = 0.05
 
 def market_closes(ticker: str) -> list[tuple]:
     """The SAME single-vendor series the HMM was fitted on."""
-    from app.db.connection import get_db
-    from app.quant.returns import dominant_source_sql
+    from app.db import mongo_store
 
-    with get_db() as db:
-        rows = db.execute(
-            f"""
-            SELECT date, close FROM price_history
-            WHERE ticker = %(ticker)s AND close IS NOT NULL AND close > 0
-              AND source = ({dominant_source_sql()})
-            ORDER BY date ASC
-            """,
-            # `ticker` is the name dominant_source_sql()'s embedded subquery
-            # binds too — renaming it here silently breaks the vendor pin.
-            {"ticker": ticker},
-        ).fetchall()
-    return [(d, float(c)) for d, c in rows if c == c]
+    docs = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker.upper(), "close": {"$gt": 0}},
+        sort=[("date", 1)],
+    )
+    return [(d.get("date"), float(d.get("close"))) for d in docs if d.get("close") is not None]
 
 
 def load_posteriors(ticker: str) -> list[dict]:
-    from app.db.connection import get_db
+    from app.db import mongo_store
 
-    with get_db() as db:
-        rows = mongo_query.find_rows('regime_hmm_posteriors', {'ticker': ticker}, ['as_of', 'regime', 'confidence', 'mean_daily_return_pct', 'annualized_vol_pct', 'state_probabilities', 'state_stats', 'transition_matrix', 'stale_sessions'], sort=[('as_of', 1)])
+    docs = mongo_store.find_docs(
+        "regime_hmm_posteriors",
+        {"ticker": ticker.upper()},
+        sort=[("as_of", 1)],
+    )
 
     def _j(v):
         return json.loads(v) if isinstance(v, (str, bytes)) else v
 
     return [
         {
-            "as_of": r[0], "regime": r[1], "confidence": r[2],
-            "mean_daily_return_pct": r[3], "annualized_vol_pct": r[4],
-            "state_probabilities": _j(r[5]), "state_stats": _j(r[6]),
-            "transition_matrix": _j(r[7]), "stale_sessions": r[8],
+            "as_of": d.get("as_of"), "regime": d.get("regime"), "confidence": d.get("confidence"),
+            "mean_daily_return_pct": d.get("mean_daily_return_pct"), "annualized_vol_pct": d.get("annualized_vol_pct"),
+            "state_probabilities": _j(d.get("state_probabilities")), "state_stats": _j(d.get("state_stats")),
+            "transition_matrix": _j(d.get("transition_matrix")), "stale_sessions": d.get("stale_sessions"),
         }
-        for r in rows
+        for d in docs
     ]
 
 

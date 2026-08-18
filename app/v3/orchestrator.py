@@ -641,9 +641,9 @@ async def run_v3_pipeline(
     desk.cycle_metadata["triage_tier"] = triage_tier
     if settings.TRIAGE_ENABLED:
         try:
-            from app.db.connection import get_db
-            with get_db() as db:
-                news_count = mongo_query.agg_row('news_articles', {'ticker': ticker, 'published_at': {'$gte': (datetime.now(timezone.utc) - timedelta(hours=24))}}, [('count', None)])[0]
+            from app.db import mongo_store
+            since = datetime.now(timezone.utc) - timedelta(hours=24)
+            news_count = mongo_store.count_docs("news_articles", {"ticker": ticker, "published_at": {"$gte": since}})
         except Exception as e:
             logger.warning("[V3] %s: Triage news_count query failed (defaulting to 0): %s", ticker, e)
             news_count = 0
@@ -2781,36 +2781,15 @@ def _persist_policy_action(cycle_id: str, ticker: str, policy_action: str) -> No
     call site, and it needs its own verification; this makes the hole VISIBLE so
     it cannot silently regrow.
     """
-    from app.db.connection import get_db
-
-    with get_db() as db:
-        cur = db.execute(
-            "UPDATE trade_results SET policy_action = %s WHERE cycle_id = %s AND ticker = %s",
-            [policy_action, cycle_id, ticker],
-        )
-        # PooledCursor returns `self` from execute() and defines neither
-        # `rowcount` nor a `__getattr__` proxy, so it must be read off the
-        # wrapped driver cursor. Verified: `getattr(cur, "rowcount", -1)` on the
-        # wrapper alone always yields the -1 default, and this check would
-        # silently never fire — the exact failure class it exists to catch.
-        # -1 means "driver could not report"; only 0 is a real miss.
-        rowcount = getattr(getattr(cur, "_cursor", None), "rowcount", -1)
-        if rowcount == 0:
-            logger.warning(
-                "[V3] %s: policy_action=%s matched NO trade_results row "
-                "(cycle=%s) — this decision is invisible to every funnel query. "
-                "Expected for triage tiers that never publish a trade_decision.",
-                ticker, policy_action, cycle_id,
-            )
     try:
         from app.db import mongo_store
-        if mongo_store.writes_mongo("trade_results"):
-            mongo_store.get_doc_db()["trade_results"].update_many(
-                {"cycle_id": cycle_id, "ticker": ticker},
-                {"$set": {"policy_action": policy_action}},
-            )
+        mongo_store.update_docs(
+            "trade_results",
+            {"cycle_id": cycle_id, "ticker": ticker},
+            {"$set": {"policy_action": policy_action}},
+        )
     except Exception as me:
-        logger.warning("[V3] mongo policy_action mirror failed (non-fatal): %s", me)
+        logger.warning("[V3] mongo policy_action update failed (non-fatal): %s", me)
 
 
 # "Not scoreable" and "degraded" are DIFFERENT questions, and conflating them
@@ -3116,10 +3095,8 @@ def _drop_implausible_levels(desk: SharedDesk) -> list[str]:
     }
     _last_close = None
     try:
-        from app.db.connection import get_db
-
-        with get_db() as _db:
-            _row = mongo_query.find_row('price_history', {'ticker': desk.ticker}, ['close'], sort=[('date', -1)])
+        from app.db import mongo_query
+        _row = mongo_query.find_row('price_history', {'ticker': desk.ticker}, ['close'], sort=[('date', -1)])
         _last_close = float(_row[0]) if _row and _row[0] else None
     except Exception as _e:  # noqa: BLE001 — a price lookup must never block
         logger.debug("[V3] %s: stop/target sanity lookup failed: %s",

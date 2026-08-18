@@ -45,7 +45,6 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-from app.db.connection import get_db
 from app.quant.returns import keep_dominant_source
 
 logger = logging.getLogger(__name__)
@@ -102,24 +101,19 @@ def load_price_panel(
 
     end = as_of or date.today()
     start = end - timedelta(days=int(lookback_sessions * 1.6))
-    placeholders = ",".join(["%s"] * len(tickers))
+    from app.db import mongo_store
 
-    with get_db() as db:
-        rows = db.execute(
-            f"""
-            SELECT ticker, date, close, source FROM price_history
-            WHERE ticker IN ({placeholders})
-              AND date >= %s AND date <= %s
-              AND close IS NOT NULL AND close > 0
-            ORDER BY date ASC
-            """,
-            [*tickers, start, end],
-        ).fetchall()
+    query = {
+        "ticker": {"$in": tickers},
+        "date": {"$gte": start, "$lte": end},
+        "close": {"$gt": 0},
+    }
+    docs = mongo_store.find_docs("price_history", query, sort=[("date", 1)])
 
-    if not rows:
+    if not docs:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows, columns=["ticker", "date", "close", "source"])
+    df = pd.DataFrame(docs)
     # One vendor per ticker BEFORE the pivot. `aggfunc="last"` silently picks
     # whichever vendor's row the sort happens to leave last for a shared date,
     # so on the 38 dual-source tickers the panel mixed adjusted and raw closes

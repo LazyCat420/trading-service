@@ -769,7 +769,7 @@ class CompanyRegistry:
         return len(self._by_symbol)
 
     def load(self):
-        """Load registry from PostgreSQL cache or scrape fresh."""
+        """Load registry from MongoDB cache or scrape fresh."""
         if self._loaded:
             return
 
@@ -800,24 +800,27 @@ class CompanyRegistry:
         )
 
     def _load_from_db(self) -> int:
-        """Load from company_registry table if it exists."""
+        """Load from company_registry collection in MongoDB."""
         try:
-            from app.db.connection import get_db
+            docs = mongo_store.find_docs("company_registry", {})
+            for d in docs:
+                sym = d.get("symbol")
+                if not sym:
+                    continue
+                name = d.get("company_name", "")
+                aliases_raw = d.get("aliases", [])
+                if isinstance(aliases_raw, str):
+                    try:
+                        aliases = json.loads(aliases_raw)
+                    except Exception:
+                        aliases = []
+                else:
+                    aliases = aliases_raw or []
+                sector = d.get("sector", "")
+                mcap = d.get("market_cap", 0)
+                is_sp = d.get("is_sp500", False)
+                rejected = d.get("rejected", False)
 
-            with get_db() as db:
-                # Check if table exists
-                tables = [
-                    r[0]
-                    for r in mongo_query.find_rows('pg_tables', {'schemaname': 'public'}, ['tablename'])
-                ]
-                if "company_registry" not in tables:
-                    return 0
-
-                rows = mongo_query.find_rows('company_registry', {}, ['symbol', 'company_name', 'aliases', 'sector', 'market_cap', 'is_sp500', 'verified', 'rejected'])
-
-            for row in rows:
-                sym, name, aliases_json, sector, mcap, is_sp, verified, rejected = row
-                aliases = json.loads(aliases_json) if aliases_json else []
                 if rejected:
                     self._rejected.add(sym.upper())
                     # Auto-ban: also add to runtime FALSE_TICKERS set
@@ -1003,20 +1006,37 @@ class CompanyRegistry:
                 self.add_company(c)
 
     def _save_to_db(self):
-        """Persist registry to PostgreSQL."""
+        """Persist registry to MongoDB."""
         try:
-            from app.db.connection import get_db
-
-            with get_db() as db:
-                # Clear and re-insert
-                db.execute("DELETE FROM company_registry")
-                for c in self._by_symbol.values():
-                    mongo_store.upsert_doc('company_registry', {'symbol': c.symbol}, {'symbol': c.symbol, 'company_name': c.name, 'aliases': json.dumps(c.aliases), 'sector': c.sector, 'market_cap': c.market_cap, 'is_sp500': c.is_sp500, 'verified': True, 'source': 'sp500_load'}, insert_only=True)
-                # Also save rejected
-                for sym in self._rejected:
-                    mongo_store.upsert_doc('company_registry', {'symbol': sym}, {'symbol': sym, 'company_name': f"REJECTED_{sym}", 'aliases': '[]', 'rejected': True, 'source': 'yfinance_reject'}, insert_only=True)
+            for c in self._by_symbol.values():
+                mongo_store.upsert_doc(
+                    'company_registry',
+                    {'symbol': c.symbol},
+                    {
+                        'symbol': c.symbol,
+                        'company_name': c.name,
+                        'aliases': c.aliases,
+                        'sector': c.sector,
+                        'market_cap': c.market_cap,
+                        'is_sp500': c.is_sp500,
+                        'verified': True,
+                        'source': 'sp500_load',
+                    },
+                )
+            for sym in self._rejected:
+                mongo_store.upsert_doc(
+                    'company_registry',
+                    {'symbol': sym},
+                    {
+                        'symbol': sym,
+                        'company_name': f"REJECTED_{sym}",
+                        'aliases': [],
+                        'rejected': True,
+                        'source': 'yfinance_reject',
+                    },
+                )
             logger.info(
-                "[ticker_extractor] Saved %d companies + %d rejected to DB",
+                "[ticker_extractor] Saved %d companies + %d rejected to MongoDB",
                 self.size,
                 len(self._rejected),
             )
@@ -1461,23 +1481,43 @@ async def validate_unknown_tickers(tickers: list[str]) -> dict[str, bool]:
 
 
 def _save_verified_to_db(company: Company):
-    """Save a yfinance-verified company to the DB cache."""
+    """Save a yfinance-verified company to the MongoDB cache."""
     try:
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            mongo_store.upsert_doc('company_registry', {'symbol': company.symbol}, {'symbol': company.symbol, 'company_name': company.name, 'aliases': json.dumps(company.aliases), 'sector': company.sector, 'market_cap': company.market_cap, 'is_sp500': False, 'verified': True, 'rejected': False, 'source': 'yfinance'}, insert_only=True)
+        mongo_store.upsert_doc(
+            'company_registry',
+            {'symbol': company.symbol},
+            {
+                'symbol': company.symbol,
+                'company_name': company.name,
+                'aliases': company.aliases,
+                'sector': company.sector,
+                'market_cap': company.market_cap,
+                'is_sp500': False,
+                'verified': True,
+                'rejected': False,
+                'source': 'yfinance',
+            },
+            insert_only=True,
+        )
     except Exception as e:
         logger.warning(f"Failed to save verified {company.symbol} to DB: {e}")
 
 
 def _save_rejected_to_db(sym: str):
-    """Save a rejected symbol to the DB cache."""
+    """Save a rejected symbol to the MongoDB cache."""
     try:
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            mongo_store.upsert_doc('company_registry', {'symbol': sym}, {'symbol': sym, 'company_name': f"REJECTED_{sym}", 'aliases': '[]', 'rejected': True, 'source': 'yfinance_reject'}, insert_only=True)
+        mongo_store.upsert_doc(
+            'company_registry',
+            {'symbol': sym},
+            {
+                'symbol': sym,
+                'company_name': f"REJECTED_{sym}",
+                'aliases': [],
+                'rejected': True,
+                'source': 'yfinance_reject',
+            },
+            insert_only=True,
+        )
     except Exception as e:
         logger.warning(f"Failed to save rejected {sym} to DB: {e}")
 

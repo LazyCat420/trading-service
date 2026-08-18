@@ -74,14 +74,13 @@ def reconcile_cycle(cycle_id: str, desks: dict[str, dict] | None = None) -> Reco
     """
     result = ReconciliationResult(cycle_id=cycle_id)
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_query
 
-        with get_db() as db:
-            if desks is None:
-                rows = mongo_query.find_rows('shared_desk', {'cycle_id': cycle_id}, ['ticker', 'desk_data'])
-                desks = {r[0]: (r[1] or {}) for r in rows}
+        if desks is None:
+            rows = mongo_query.find_rows('shared_desk', {'cycle_id': cycle_id}, ['ticker', 'desk_data'])
+            desks = {r[0]: (r[1] or {}) for r in rows}
 
-            tr_rows = mongo_query.find_rows('trade_results', {'cycle_id': cycle_id}, ['ticker', 'action', 'decision_provenance'])
+        tr_rows = mongo_query.find_rows('trade_results', {'cycle_id': cycle_id}, ['ticker', 'action', 'decision_provenance'])
     except Exception as e:  # noqa: BLE001 — an observer must never break a cycle
         result.error = str(e)[:200]
         return result

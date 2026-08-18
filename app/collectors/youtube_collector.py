@@ -15,7 +15,6 @@ from app.processors.ticker_extractor import (
     get_ticker_symbols,
     FALSE_TICKERS as SHARED_FALSE_TICKERS,
 )
-from app.db.connection import get_db
 from app.db import mongo_query
 from app.db import mongo_store
 
@@ -52,45 +51,37 @@ TICKER_PATTERN = re.compile(r"\b([A-Z]{2,5})\b")
 
 
 def _ensure_seed_channels():
-    """Ensure all default channels exist in youtube_channels table."""
-    with get_db() as db:
-        added = 0
-        for handle, name in DEFAULT_CHANNELS:
-            result = db.execute(
-                "SELECT 1 FROM youtube_channels WHERE channel_handle = %s", [handle]
-            ).fetchone()
-            if not result:
-                mongo_store.insert_docs('youtube_channels', [{'channel_handle': handle, 'display_name': name, 'added_by': 'system', 'is_active': True}])
-                added += 1
-        if added:
-            logger.info(
-                f"[youtube] Added {added} new seed channels (total {len(DEFAULT_CHANNELS)})"
-            )
+    """Ensure all default channels exist in youtube_channels collection."""
+    added = 0
+    for handle, name in DEFAULT_CHANNELS:
+        doc = mongo_query.find_row('youtube_channels', {'channel_handle': handle}, ['channel_handle'])
+        if not doc:
+            mongo_store.insert_docs('youtube_channels', [{'channel_handle': handle, 'display_name': name, 'added_by': 'system', 'is_active': True}])
+            added += 1
+    if added:
+        logger.info(
+            f"[youtube] Added {added} new seed channels (total {len(DEFAULT_CHANNELS)})"
+        )
 
 
 def _is_channel_blocked(channel_handle: str) -> bool:
     """Check if a channel is on the blocklist."""
-    with get_db() as db:
-        blocked = db.execute(
-            "SELECT 1 FROM discovered_channels WHERE channel_handle = %s AND status = 'blocked'",
-            [channel_handle],
-        ).fetchone()
-        return blocked is not None
+    blocked = mongo_query.find_row('discovered_channels', {'channel_handle': channel_handle, 'status': 'blocked'}, ['channel_handle'])
+    return blocked is not None
 
 
 def _log_discovered_channel(
     channel_handle: str, display_name: str, view_count: int = 0
 ):
     """Log a channel found via search to discovered_channels for review."""
-    with get_db() as db:
-        existing = mongo_query.find_row('discovered_channels', {'channel_handle': channel_handle}, ['discovery_count', 'avg_view_count'])
+    existing = mongo_query.find_row('discovered_channels', {'channel_handle': channel_handle}, ['discovery_count', 'avg_view_count'])
 
-        if existing:
-            new_count = existing[0] + 1
-            new_avg = ((existing[1] or 0) * existing[0] + view_count) / new_count
-            mongo_store.update_docs('discovered_channels', {'channel_handle': channel_handle}, {'$set': {'discovery_count': new_count, 'avg_view_count': new_avg, 'last_seen': datetime.datetime.now(datetime.timezone.utc)}})
-        else:
-            mongo_store.insert_docs('discovered_channels', [{'channel_handle': channel_handle, 'display_name': display_name, 'discovery_count': 1, 'avg_view_count': view_count, 'status': 'pending'}])
+    if existing:
+        new_count = existing[0] + 1
+        new_avg = ((existing[1] or 0) * existing[0] + view_count) / new_count
+        mongo_store.update_docs('discovered_channels', {'channel_handle': channel_handle}, {'$set': {'discovery_count': new_count, 'avg_view_count': new_avg, 'last_seen': datetime.datetime.now(datetime.timezone.utc)}})
+    else:
+        mongo_store.insert_docs('discovered_channels', [{'channel_handle': channel_handle, 'display_name': display_name, 'discovery_count': 1, 'avg_view_count': view_count, 'status': 'pending'}])
 
 
 async def collect_channel(
@@ -106,42 +97,39 @@ async def collect_channel(
 
     stats = {"videos_found": 0, "skipped_old": 0, "skipped_in_db": 0, "no_caption": 0, "stored": 0, "blocked": 0, "missing_id": 0}
 
-    with get_db() as db:
-        if _is_channel_blocked(channel):
-            logger.info(f"[youtube] {channel}: blocked, skipping")
-            stats["blocked"] += 1
-            return stats
+    if _is_channel_blocked(channel):
+        logger.info(f"[youtube] {channel}: blocked, skipping")
+        stats["blocked"] += 1
+        return stats
 
-        try:
-            items = await scraper_client.collect(
-                source="youtube",
-                req_data={
-                    "channels": [channel],
-                    "limit": max_videos,
-                    "days_back": days_back,
-                }
+    try:
+        items = await scraper_client.collect(
+            source="youtube",
+            req_data={
+                "channels": [channel],
+                "limit": max_videos,
+                "days_back": days_back,
+            }
+        )
+
+        stats["videos_found"] = len(items)
+
+        for video in items:
+            status = await _process_video(video, channel, days_back)
+            if status in stats:
+                stats[status] += 1
+
+        if stats.get("stored", 0) > 0:
+            mongo_store.update_docs(
+                'youtube_channels',
+                {'channel_handle': channel},
+                {'$set': {'last_scraped': datetime.datetime.now(datetime.timezone.utc)}, '$inc': {'total_videos': stats["stored"]}}
             )
 
-            stats["videos_found"] = len(items)
+    except Exception as e:
+        logger.info(f"[youtube] {channel} error: {e}")
 
-            for video in items:
-                status = await _process_video(db, video, channel, days_back)
-                if status in stats:
-                    stats[status] += 1
-
-            if stats.get("stored", 0) > 0:
-                db.execute(
-                    """
-                    UPDATE youtube_channels SET last_scraped = CURRENT_TIMESTAMP, total_videos = total_videos + %s
-                    WHERE channel_handle = %s
-                """,
-                    [stats["stored"], channel],
-                )
-
-        except Exception as e:
-            logger.info(f"[youtube] {channel} error: {e}")
-
-        return stats
+    return stats
 
 
 async def collect_for_ticker(ticker: str, max_results: int = 15, since: datetime.datetime | None = None) -> dict[str, int]:
@@ -150,82 +138,75 @@ async def collect_for_ticker(ticker: str, max_results: int = 15, since: datetime
 
     stats = {"videos_found": 0, "skipped_old": 0, "skipped_in_db": 0, "no_caption": 0, "stored": 0, "blocked": 0, "missing_id": 0}
 
-    with get_db() as db:
-        try:
-            current_year = datetime.datetime.now().year
-            search_queries = [
-                f"{ticker} stock analysis {current_year}",
-                f"{ticker} stock news today",
-            ]
+    try:
+        current_year = datetime.datetime.now().year
+        search_queries = [
+            f"{ticker} stock analysis {current_year}",
+            f"{ticker} stock news today",
+        ]
 
-            for query in search_queries:
-                await asyncio.sleep(2.0)
+        for query in search_queries:
+            await asyncio.sleep(2.0)
 
-                items = await scraper_client.collect(
-                    source="youtube",
-                    req_data={
-                        "query": query,
-                        "limit": max_results,
-                        "days_back": 90,
-                    }
-                )
+            items = await scraper_client.collect(
+                source="youtube",
+                req_data={
+                    "query": query,
+                    "limit": max_results,
+                    "days_back": 90,
+                }
+            )
 
-                if not items:
-                    logger.info(f"[youtube] search '{query}': 0 results from scraper-service")
+            if not items:
+                logger.info(f"[youtube] search '{query}': 0 results from scraper-service")
+                continue
+
+            logger.info(f"[youtube] search '{query}': got {len(items)} results")
+            stats["videos_found"] += len(items)
+
+            items.sort(
+                key=lambda v: v.get("published_at") or "",
+                reverse=True,
+            )
+
+            for video in items:
+                channel_name = video.get("channel", "unknown")
+                channel_handle = video.get("channel", channel_name)
+
+                if _is_channel_blocked(channel_handle):
+                    logger.info(f"[youtube] {channel_name}: blocked, skipping")
+                    stats["blocked"] += 1
                     continue
 
-                logger.info(f"[youtube] search '{query}': got {len(items)} results")
-                stats["videos_found"] += len(items)
-
-                # Sort by published date descending
-                items.sort(
-                    key=lambda v: v.get("published_at") or "",
-                    reverse=True,
-                )
-
-                for video in items:
-                    channel_name = video.get("channel", "unknown")
-                    channel_handle = video.get("channel", channel_name)
-
-                    if _is_channel_blocked(channel_handle):
-                        logger.info(f"[youtube] {channel_name}: blocked, skipping")
-                        stats["blocked"] += 1
-                        continue
-
-                    is_seed = db.execute(
-                        "SELECT 1 FROM youtube_channels WHERE channel_handle = %s",
-                        [channel_handle],
-                    ).fetchone()
-                    if not is_seed:
-                        view_count = video.get("view_count", 0) or 0
-                        _log_discovered_channel(
-                            channel_handle, channel_name, view_count
-                        )
-
-                    status = await _process_video(
-                        db,
-                        video,
-                        channel_name,
-                        days_back=90,
-                        force_ticker=ticker.upper(),
-                        since=since,
+                is_seed = mongo_query.find_row('youtube_channels', {'channel_handle': channel_handle}, ['channel_handle'])
+                if not is_seed:
+                    view_count = video.get("view_count", 0) or 0
+                    _log_discovered_channel(
+                        channel_handle, channel_name, view_count
                     )
-                    if status in stats:
-                        stats[status] += 1
 
-                if stats["stored"] >= 2:
-                    logger.info(f"[youtube] search short-circuit: stored {stats['stored']} transcripts so far.")
-                    break
+                status = await _process_video(
+                    video,
+                    channel_name,
+                    days_back=90,
+                    force_ticker=ticker.upper(),
+                    since=since,
+                )
+                if status in stats:
+                    stats[status] += 1
 
-        except Exception as e:
-            logger.info(f"[youtube] search for {ticker} error: {e}")
+            if stats["stored"] >= 2:
+                logger.info(f"[youtube] search short-circuit: stored {stats['stored']} transcripts so far.")
+                break
 
-        logger.info(f"[youtube] search for {ticker} finished. Stats: {stats}")
-        return stats
+    except Exception as e:
+        logger.info(f"[youtube] search for {ticker} error: {e}")
+
+    logger.info(f"[youtube] search for {ticker} finished. Stats: {stats}")
+    return stats
 
 
 async def _process_video(
-    db,
     video: dict,
     channel: str,
     days_back: int = 7,
@@ -266,15 +247,6 @@ async def _process_video(
         if published_at < cutoff:
             return "skipped_old"
 
-    # A per-video block check used to live here as
-    # `from app.routers.data import is_blocked` wrapped in `except: pass`.
-    # That module is trading-CLIENT's (trading-client/app/routers/data.py:796);
-    # this service has no app.routers.data, so the import raised every time,
-    # the bare except swallowed it, and the guard has never once run. Removed
-    # rather than left as a comforting no-op — if per-video blocking is wanted
-    # in this service it needs a real implementation against `data_flags`, and
-    # a dead branch that reads like a guard is worse than no guard at all.
-
     raw_transcript = _strip_promo_content(raw_transcript)
 
     primary_ticker = force_ticker or await _extract_primary_ticker(
@@ -290,27 +262,23 @@ async def _process_video(
     if not thumbnail_url:
         thumbnail_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
-    from app.db import mongo_store
     now_dt = datetime.datetime.now(datetime.UTC)
-    if mongo_store.writes_mongo("youtube_transcripts"):
-        mongo_store.upsert_doc(
-            "youtube_transcripts",
-            {"video_id": row_video_id},
-            {
-                "video_id": row_video_id,
-                "ticker": primary_ticker,
-                "title": title,
-                "channel": channel_name,
-                "raw_transcript": raw_transcript,
-                "thumbnail_url": thumbnail_url,
-                "published_at": published_at,
-                "duration_secs": duration,
-                "collected_at": now_dt,
-            },
-            insert_only=True,
-        )
-    if mongo_store.writes_pg("youtube_transcripts"):
-        mongo_store.upsert_doc('youtube_transcripts', {'video_id': row_video_id}, {'video_id': row_video_id, 'ticker': primary_ticker, 'title': title, 'channel': channel_name, 'raw_transcript': raw_transcript, 'thumbnail_url': thumbnail_url, 'published_at': published_at, 'duration_secs': duration, 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, insert_only=True)
+    mongo_store.upsert_doc(
+        "youtube_transcripts",
+        {"video_id": row_video_id},
+        {
+            "video_id": row_video_id,
+            "ticker": primary_ticker,
+            "title": title,
+            "channel": channel_name,
+            "raw_transcript": raw_transcript,
+            "thumbnail_url": thumbnail_url,
+            "published_at": published_at,
+            "duration_secs": duration,
+            "collected_at": now_dt,
+        },
+        insert_only=True,
+    )
 
     tickers = await _extract_tickers(raw_transcript[:5000])
     for t in tickers:
@@ -348,75 +316,29 @@ _PROMO_PATTERNS = [
 
 def _strip_promo_content(transcript: str) -> str:
     """Remove promotional/spam content from a YouTube transcript."""
-    if not transcript or len(transcript) < 100:
-        return transcript
-
-    original_len = len(transcript)
-
-    paragraphs = re.split(r"\n{2,}", transcript)
-    if not paragraphs:
-        return transcript
-
-    cleaned_paragraphs = []
-    stripped_sentences_count = 0
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
+    lines = transcript.split(". ")
+    clean_lines = []
+    for line in lines:
+        if any(p.search(line) for p in _PROMO_PATTERNS):
             continue
-
-        sentences = re.split(r"(?<=[.!?])\s+", para)
-
-        cleaned_sentences = []
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-
-            is_promo = False
-            for pattern in _PROMO_PATTERNS:
-                if pattern.search(sentence):
-                    is_promo = True
-                    stripped_sentences_count += 1
-                    break
-
-            if not is_promo:
-                cleaned_sentences.append(sentence)
-
-        if cleaned_sentences:
-            cleaned_paragraphs.append(" ".join(cleaned_sentences))
-
-    separator = "\n\n" if len(paragraphs) > 1 else " "
-    result = separator.join(cleaned_paragraphs)
-    final_len = len(result)
-
-    if stripped_sentences_count > 0:
-        if final_len < (0.5 * original_len):
-            return transcript
-        logger.debug(
-            f"[youtube] Cleaned transcript: {original_len} -> {final_len} chars "
-            f"(-{stripped_sentences_count} promo sentences)"
-        )
-
-    return result
-
-
-async def _extract_tickers(text: str) -> set[str]:
-    """Extract tickers from text using shared ticker_extractor."""
-    symbols = await get_ticker_symbols(text)
-    return set(symbols)
+        clean_lines.append(line)
+    return ". ".join(clean_lines)
 
 
 async def _extract_primary_ticker(text: str) -> str | None:
-    """Get the most relevant ticker from title + beginning of transcript."""
-    syms = await get_ticker_symbols(text)
-    return syms[0] if syms else None
+    """Extract the most prominent ticker from text using the shared ticker extractor."""
+    tickers = await get_ticker_symbols(text)
+    return tickers[0] if tickers else None
 
 
-# General financial search queries
+async def _extract_tickers(text: str) -> list[str]:
+    """Extract ticker mentions from text using the shared ticker extractor."""
+    return await get_ticker_symbols(text)
+
+
+# Search queries for discovery
 GENERAL_SEARCH_QUERIES = [
-    "stock market analysis today {year}",
-    "market news earnings this week",
+    "stock market analysis {year}",
     "best stocks to buy now {year}",
     "market outlook investing this week",
     "stock market crash or rally {year}",
@@ -434,14 +356,11 @@ async def collect_all(
 
     _ensure_seed_channels()
 
-    with get_db() as db:
-        year = datetime.datetime.now().year
-        # Fetch active channels (both handle and display_name)
-        channels = mongo_query.find_rows('youtube_channels', {'is_active': True}, ['channel_handle', 'display_name'])
+    year = datetime.datetime.now().year
+    channels = mongo_query.find_rows('youtube_channels', {'is_active': True}, ['channel_handle', 'display_name'])
 
     total = 0
 
-    # 1. Direct channel collection for all active channels
     logger.info(
         f"[youtube] Starting direct channel scrape for {len(channels)} active channels (max_videos={max_videos}, days_back={days_back})"
     )
@@ -454,11 +373,9 @@ async def collect_all(
         except Exception as e:
             logger.error(f"[youtube] Error scraping channel '{handle}': {e}")
         
-        # Throttle between channel scrapes
         if i < len(channels) - 1:
             await asyncio.sleep(2.0)
 
-    # 2. Search-based sweep for discovery
     channel_queries = [f'"{name}" stock analysis' for (_, name) in channels if name]
     general_queries = [q.format(year=year) for q in GENERAL_SEARCH_QUERIES]
 
@@ -486,17 +403,16 @@ async def collect_all(
             )
 
             if items:
-                with get_db() as db:
-                    for video in items:
-                        vid = video.get("video_id", video.get("id"))
-                        if not vid or vid in seen_ids:
-                            continue
-                        seen_ids.add(vid)
+                for video in items:
+                    vid = video.get("video_id", video.get("id"))
+                    if not vid or vid in seen_ids:
+                        continue
+                    seen_ids.add(vid)
 
-                        channel_name = video.get("channel", "unknown")
-                        stored = await _process_video(db, video, channel_name, days_back)
-                        if stored == "stored":
-                            total += 1
+                    channel_name = video.get("channel", "unknown")
+                    stored = await _process_video(video, channel_name, days_back)
+                    if stored == "stored":
+                        total += 1
         except Exception as e:
             logger.info(f"[youtube] Error in sweep query '{query}': {e}")
 

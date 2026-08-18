@@ -97,6 +97,7 @@ from __future__ import annotations
 
 import logging
 import math
+import numpy as np
 from itertools import pairwise
 from typing import Any
 
@@ -1079,36 +1080,27 @@ def refresh_anchors() -> dict[str, tuple[float, float, int]]:
     produced them is executable rather than a comment. It does not mutate
     module state — the caller decides whether to adopt the result.
     """
-    from app.db.connection import get_db
+    from app.db import mongo_store
+
+    docs = mongo_store.find_docs("fundamentals", {}, sort=[("snapshot_date", -1)])
+    latest_by_ticker: dict[str, dict] = {}
+    for d in docs:
+        t = d.get("ticker")
+        if t and t not in latest_by_ticker:
+            latest_by_ticker[t] = d
 
     out: dict[str, tuple[float, float, int]] = {}
     for metric, (_, _, direction) in _ANCHORS.items():
-        try:
-            with get_db() as db:
-                row = db.execute(
-                    f"""
-                    WITH latest AS (
-                        SELECT DISTINCT ON (ticker) ticker, {metric} AS v
-                          FROM fundamentals
-                         ORDER BY ticker, snapshot_date DESC
-                    )
-                    SELECT percentile_cont(0.10) WITHIN GROUP (ORDER BY v),
-                           percentile_cont(0.90) WITHIN GROUP (ORDER BY v),
-                           count(v)
-                      FROM latest
-                    """
-                ).fetchone()
-        except Exception as e:  # noqa: BLE001 — advisory helper, never fatal
-            logger.warning("[DecisionScore] anchor refresh failed for %s: %s",
-                           metric, e)
+        vals = [
+            float(d[metric])
+            for d in latest_by_ticker.values()
+            if d.get(metric) is not None and isinstance(d.get(metric), (int, float)) and not np.isnan(d.get(metric))
+        ]
+        if len(vals) < 100:
             continue
-        if not row or row[0] is None or row[1] is None or row[0] == row[1]:
+        p10 = float(np.percentile(vals, 10))
+        p90 = float(np.percentile(vals, 90))
+        if p10 == p90:
             continue
-        # Too thin a sample produces anchors that move with a handful of rows.
-        if (row[2] or 0) < 100:
-            logger.info("[DecisionScore] %s: only %s values — anchor kept "
-                        "pinned", metric, row[2])
-            continue
-        out[metric] = (round(float(row[0]), 4), round(float(row[1]), 4),
-                       direction)
+        out[metric] = (round(p10, 4), round(p90, 4), direction)
     return out

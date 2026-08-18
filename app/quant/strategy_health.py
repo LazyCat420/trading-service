@@ -50,34 +50,19 @@ _cache: dict[str, tuple[float, dict]] = {}
 def _fetch_scores(agent_name: str, lookback: int = LOOKBACK) -> list[float]:
     """Most-recent-last quality scores for an agent (unscored -1 rows excluded)."""
     from app.db import mongo_store
-    if mongo_store.reads_mongo("v3_agent_telemetry"):
-        try:
-            docs = mongo_store.find_docs(
-                "v3_agent_telemetry",
-                {"agent_name": agent_name, "quality_score": {"$gte": 0}},
-                sort=[("created_at", -1)],
-                limit=int(lookback),
-                projection={"quality_score": 1, "created_at": 1},
-            )
-            docs.sort(key=lambda d: d.get("created_at") or "")
-            return [float(d["quality_score"]) for d in docs if d.get("quality_score") is not None]
-        except Exception as e:
-            mongo_store.handle_mongo_read_failure("v3_agent_telemetry", "strategy_health _fetch_scores", e)
-
-    from app.db.connection import get_db
-
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT quality_score FROM (
-                SELECT quality_score, created_at FROM v3_agent_telemetry
-                WHERE agent_name = %s AND quality_score >= 0
-                ORDER BY created_at DESC LIMIT %s
-            ) recent ORDER BY created_at ASC
-            """,
-            [agent_name, int(lookback)],
-        ).fetchall()
-    return [float(r[0]) for r in rows]
+    try:
+        docs = mongo_store.find_docs(
+            "v3_agent_telemetry",
+            {"agent_name": agent_name, "quality_score": {"$gte": 0}},
+            sort=[("created_at", -1)],
+            limit=int(lookback),
+            projection={"quality_score": 1, "created_at": 1},
+        )
+        docs.sort(key=lambda d: d.get("created_at") or "")
+        return [float(d["quality_score"]) for d in docs if d.get("quality_score") is not None]
+    except Exception as e:
+        logger.warning("Failed to fetch quality scores from MongoDB: %s", e)
+        return []
 
 
 def score_series_health(scores: list[float]) -> dict:

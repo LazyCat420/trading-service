@@ -8,321 +8,288 @@ Scans ALL congress trades in the DB (not just our watchlist tickers) and produce
   4. Watchlist comparison — overlap between congress trades and our tickers
   5. Discovery — tickers congress is trading that we're NOT watching
 
-Data source: congress_trades table (populated by congress_collector.py)
+Data source: congress_trades collection (populated by congress_collector.py)
 """
 
 import datetime
-from app.db.connection import get_db
+from collections import defaultdict
+from app.db import mongo_store
 
 
 def scan_recent_trades(days: int = 30) -> dict:
     """Get all congress trades from the last N days, grouped by ticker."""
-    with get_db() as db:
-        cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
 
-        rows = db.execute(
-            """
-            SELECT politician, party, chamber, state, ticker,
-                   transaction_type, amount_range, trade_date, disclosure_date
-            FROM congress_trades
-            WHERE trade_date >= %s AND party != '' AND party IS NOT NULL
-            ORDER BY trade_date DESC
-        """,
-            [cutoff],
-        ).fetchall()
+    query = {
+        "trade_date": {"$gte": cutoff},
+        "party": {"$nin": ["", None]},
+    }
+    docs = mongo_store.find_docs("congress_trades", query, sort=[("trade_date", -1)])
 
-        trades = []
-        for r in rows:
-            trades.append(
-                {
-                    "politician": r[0],
-                    "party": r[1],
-                    "chamber": r[2],
-                    "state": r[3],
-                    "ticker": r[4],
-                    "type": r[5],
-                    "amount": r[6],
-                    "trade_date": str(r[7]) if r[7] else None,
-                    "disclosure_date": str(r[8]) if r[8] else None,
-                }
-            )
+    trades = []
+    for d in docs:
+        trades.append(
+            {
+                "politician": d.get("politician"),
+                "party": d.get("party"),
+                "chamber": d.get("chamber"),
+                "state": d.get("state"),
+                "ticker": d.get("ticker"),
+                "type": d.get("transaction_type"),
+                "amount": d.get("amount_range"),
+                "trade_date": str(d.get("trade_date")) if d.get("trade_date") else None,
+                "disclosure_date": str(d.get("disclosure_date")) if d.get("disclosure_date") else None,
+            }
+        )
 
-        return {
-            "total_trades": len(trades),
-            "period_days": days,
-            "cutoff_date": str(cutoff),
-            "trades": trades,
-        }
+    return {
+        "total_trades": len(trades),
+        "period_days": days,
+        "cutoff_date": str(cutoff),
+        "trades": trades,
+    }
 
 
 def find_consensus_trades(days: int = 30, min_members: int = 2) -> list[dict]:
-    """Find tickers that multiple congress members traded in the same direction.
+    """Find tickers that multiple congress members traded in the same direction."""
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
 
-    A "consensus BUY" = 2+ members buying the same ticker within the period.
-    This is a strong signal — if 3 senators all bought the same stock, pay attention.
-    """
-    with get_db() as db:
-        cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
+    query = {
+        "trade_date": {"$gte": cutoff},
+        "party": {"$nin": ["", None]},
+    }
+    docs = mongo_store.find_docs("congress_trades", query)
 
-        rows = db.execute(
-            """
-            SELECT ticker, transaction_type, 
-                   COUNT(DISTINCT politician) as member_count,
-                   STRING_AGG(DISTINCT politician, ', ') as members,
-                   STRING_AGG(DISTINCT party, ', ') as parties,
-                   MIN(trade_date) as earliest,
-                   MAX(trade_date) as latest
-            FROM congress_trades
-            WHERE trade_date >= %s AND party != '' AND party IS NOT NULL
-            GROUP BY ticker, transaction_type
-            HAVING COUNT(DISTINCT politician) >= %s
-            ORDER BY member_count DESC
-        """,
-            [cutoff, min_members],
-        ).fetchall()
+    # Group by (ticker, transaction_type)
+    groups = defaultdict(lambda: {"politicians": set(), "parties": set(), "dates": []})
+    for d in docs:
+        ticker = d.get("ticker")
+        tx_type = d.get("transaction_type")
+        pol = d.get("politician")
+        party = d.get("party")
+        t_date = d.get("trade_date")
+        if not ticker or not tx_type or not pol:
+            continue
+        key = (ticker, tx_type)
+        groups[key]["politicians"].add(pol)
+        if party:
+            groups[key]["parties"].add(party)
+        if t_date:
+            groups[key]["dates"].append(t_date)
 
-        consensus = []
-        for r in rows:
+    consensus = []
+    for (ticker, direction), data in groups.items():
+        if len(data["politicians"]) >= min_members:
+            dates = sorted(data["dates"])
             consensus.append(
                 {
-                    "ticker": r[0],
-                    "direction": r[1],  # buy or sell
-                    "member_count": r[2],
-                    "members": r[3].split(",") if r[3] else [],
-                    "parties": r[4].split(",") if r[4] else [],
-                    "earliest_trade": str(r[5]) if r[5] else None,
-                    "latest_trade": str(r[6]) if r[6] else None,
+                    "ticker": ticker,
+                    "direction": direction,
+                    "member_count": len(data["politicians"]),
+                    "members": list(data["politicians"]),
+                    "parties": list(data["parties"]),
+                    "earliest_trade": str(dates[0]) if dates else None,
+                    "latest_trade": str(dates[-1]) if dates else None,
                 }
             )
 
-        return consensus
+    consensus.sort(key=lambda x: x["member_count"], reverse=True)
+    return consensus
 
 
 def build_politician_portfolios(top_n: int = 20) -> list[dict]:
-    """Estimate current holdings per politician based on buy/sell history.
+    """Estimate current holdings per politician based on buy/sell history."""
+    query = {"party": {"$nin": ["", None]}}
+    docs = mongo_store.find_docs("congress_trades", query)
 
-    This is a rough estimate — we don't know exact share counts,
-    only the amount range and direction.
-    """
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT politician, party, chamber, state,
-                   COUNT(*) as total_trades,
-                   COUNT(CASE WHEN transaction_type = 'buy' THEN 1 END) as buys,
-                   COUNT(CASE WHEN transaction_type = 'sell' THEN 1 END) as sells,
-                   STRING_AGG(DISTINCT ticker, ', ') as all_tickers,
-                   MIN(trade_date) as earliest_trade,
-                   MAX(trade_date) as latest_trade
-            FROM congress_trades
-            WHERE party != '' AND party IS NOT NULL
-            GROUP BY politician, party, chamber, state
-            ORDER BY total_trades DESC
-            LIMIT %s
-        """,
-            [top_n],
-        ).fetchall()
+    # Group by politician
+    pols = defaultdict(lambda: {
+        "party": None,
+        "chamber": None,
+        "state": None,
+        "trades": [],
+        "ticker_buys": defaultdict(int),
+        "ticker_sells": defaultdict(int),
+        "ticker_last_date": {},
+    })
 
-        portfolios = []
-        for r in rows:
-            politician = r[0]
-            # Get their current "held" tickers (bought but not subsequently sold)
-            held = db.execute(
-                """
-                SELECT ticker, COUNT(CASE WHEN transaction_type = 'buy' THEN 1 END) as buy_count,
-                       COUNT(CASE WHEN transaction_type = 'sell' THEN 1 END) as sell_count,
-                       MAX(trade_date) as last_trade
-                FROM congress_trades
-                WHERE politician = %s AND party != '' AND party IS NOT NULL
-                GROUP BY ticker
-                HAVING COUNT(CASE WHEN transaction_type = 'buy' THEN 1 END) > COUNT(CASE WHEN transaction_type = 'sell' THEN 1 END)
-                ORDER BY last_trade DESC
-            """,
-                [politician],
-            ).fetchall()
+    for d in docs:
+        pol = d.get("politician")
+        if not pol:
+            continue
+        p = pols[pol]
+        p["party"] = d.get("party") or p["party"]
+        p["chamber"] = d.get("chamber") or p["chamber"]
+        p["state"] = d.get("state") or p["state"]
+        p["trades"].append(d)
 
-            held_tickers = [h[0] for h in held]
+        ticker = d.get("ticker")
+        tx_type = d.get("transaction_type")
+        t_date = d.get("trade_date")
+        if ticker:
+            if tx_type == "buy":
+                p["ticker_buys"][ticker] += 1
+            elif tx_type == "sell":
+                p["ticker_sells"][ticker] += 1
+            if t_date:
+                if ticker not in p["ticker_last_date"] or str(t_date) > str(p["ticker_last_date"][ticker]):
+                    p["ticker_last_date"][ticker] = t_date
 
-            portfolios.append(
-                {
-                    "politician": politician,
-                    "party": r[1],
-                    "chamber": r[2],
-                    "state": r[3],
-                    "total_trades": r[4],
-                    "buys": r[5],
-                    "sells": r[6],
-                    "all_tickers_traded": r[7].split(",") if r[7] else [],
-                    "estimated_holdings": held_tickers,
-                    "holding_count": len(held_tickers),
-                    "earliest_trade": str(r[8]) if r[8] else None,
-                    "latest_trade": str(r[9]) if r[9] else None,
-                }
-            )
+    sorted_pols = sorted(pols.items(), key=lambda item: len(item[1]["trades"]), reverse=True)[:top_n]
 
-        return portfolios
+    portfolios = []
+    for pol, data in sorted_pols:
+        buys = sum(1 for d in data["trades"] if d.get("transaction_type") == "buy")
+        sells = sum(1 for d in data["trades"] if d.get("transaction_type") == "sell")
+        all_tickers = list({d.get("ticker") for d in data["trades"] if d.get("ticker")})
+
+        held_tickers = [
+            t for t, buy_count in data["ticker_buys"].items()
+            if buy_count > data["ticker_sells"].get(t, 0)
+        ]
+        held_tickers.sort(key=lambda t: str(data["ticker_last_date"].get(t, "")), reverse=True)
+
+        dates = sorted([d.get("trade_date") for d in data["trades"] if d.get("trade_date")])
+        portfolios.append(
+            {
+                "politician": pol,
+                "party": data["party"],
+                "chamber": data["chamber"],
+                "state": data["state"],
+                "total_trades": len(data["trades"]),
+                "buys": buys,
+                "sells": sells,
+                "all_tickers_traded": all_tickers,
+                "estimated_holdings": held_tickers,
+                "holding_count": len(held_tickers),
+                "earliest_trade": str(dates[0]) if dates else None,
+                "latest_trade": str(dates[-1]) if dates else None,
+            }
+        )
+
+    return portfolios
 
 
 def compare_with_watchlist(watchlist_tickers: list[str], days: int = 90) -> dict:
-    """Compare congress trades against our watchlist.
+    """Compare congress trades against our watchlist."""
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
 
-    Returns:
-      - overlap: tickers in both watchlist and congress trades
-      - discovery: tickers congress is trading that we're NOT watching
-      - not_traded: watchlist tickers with no congress activity
-    """
-    with get_db() as db:
-        cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
+    query = {
+        "trade_date": {"$gte": cutoff},
+        "party": {"$nin": ["", None]},
+    }
+    docs = mongo_store.find_docs("congress_trades", query, sort=[("trade_date", -1)])
 
-        # All tickers traded by congress recently
-        congress_tickers = db.execute(
-            """
-            SELECT DISTINCT ticker FROM congress_trades
-            WHERE trade_date >= %s AND party != '' AND party IS NOT NULL
-        """,
-            [cutoff],
-        ).fetchall()
-        congress_set = {r[0] for r in congress_tickers}
+    congress_set = {d.get("ticker").upper() for d in docs if d.get("ticker")}
+    watchlist_set = {t.upper() for t in watchlist_tickers}
 
-        watchlist_set = {t.upper() for t in watchlist_tickers}
+    overlap = congress_set & watchlist_set
+    discovery = congress_set - watchlist_set
+    not_traded = watchlist_set - congress_set
 
-        overlap = congress_set & watchlist_set
-        discovery = congress_set - watchlist_set
-        not_traded = watchlist_set - congress_set
+    # Trades by ticker
+    trades_by_ticker = defaultdict(list)
+    for d in docs:
+        t = d.get("ticker")
+        if t:
+            trades_by_ticker[t.upper()].append(d)
 
-        # Get details for overlap tickers
-        overlap_details = []
-        for ticker in sorted(overlap):
-            trades = db.execute(
-                """
-                SELECT politician, transaction_type, amount_range, trade_date
-                FROM congress_trades
-                WHERE ticker = %s AND trade_date >= %s AND party != '' AND party IS NOT NULL
-                ORDER BY trade_date DESC
-            """,
-                [ticker, cutoff],
-            ).fetchall()
-            overlap_details.append(
+    overlap_details = []
+    for ticker in sorted(overlap):
+        trades = trades_by_ticker[ticker]
+        overlap_details.append(
+            {
+                "ticker": ticker,
+                "trade_count": len(trades),
+                "trades": [
+                    {
+                        "politician": t.get("politician"),
+                        "type": t.get("transaction_type"),
+                        "amount": t.get("amount_range"),
+                        "date": str(t.get("trade_date")),
+                    }
+                    for t in trades[:5]
+                ],
+            }
+        )
+
+    discovery_details = []
+    for ticker in sorted(discovery):
+        trades = trades_by_ticker[ticker]
+        if trades:
+            discovery_details.append(
                 {
                     "ticker": ticker,
                     "trade_count": len(trades),
-                    "trades": [
-                        {
-                            "politician": t[0],
-                            "type": t[1],
-                            "amount": t[2],
-                            "date": str(t[3]),
-                        }
-                        for t in trades[:5]  # Top 5 most recent
-                    ],
+                    "traders": list({t.get("politician") for t in trades if t.get("politician")}),
+                    "latest_trade": str(trades[0].get("trade_date")) if trades[0].get("trade_date") else None,
                 }
             )
 
-        # Get details for discovery tickers (congress trades we're not watching)
-        discovery_details = []
-        for ticker in sorted(discovery):
-            trades = db.execute(
-                """
-                SELECT politician, transaction_type, amount_range, trade_date
-                FROM congress_trades
-                WHERE ticker = %s AND trade_date >= %s AND party != '' AND party IS NOT NULL
-                ORDER BY trade_date DESC
-            """,
-                [ticker, cutoff],
-            ).fetchall()
-            if trades:
-                discovery_details.append(
-                    {
-                        "ticker": ticker,
-                        "trade_count": len(trades),
-                        "traders": list({t[0] for t in trades}),
-                        "latest_trade": str(trades[0][3]) if trades[0][3] else None,
-                    }
-                )
+    discovery_details.sort(key=lambda x: x["trade_count"], reverse=True)
 
-        # Sort discovery by trade count (most traded = most interesting)
-        discovery_details.sort(key=lambda x: x["trade_count"], reverse=True)
-
-        return {
-            "overlap": overlap_details,
-            "overlap_count": len(overlap),
-            "discovery": discovery_details[:30],  # Top 30 discoveries
-            "discovery_count": len(discovery),
-            "not_traded": sorted(not_traded),
-            "not_traded_count": len(not_traded),
-            "congress_total_tickers": len(congress_set),
-            "watchlist_total": len(watchlist_set),
-        }
+    return {
+        "overlap": overlap_details,
+        "overlap_count": len(overlap),
+        "discovery": discovery_details[:30],
+        "discovery_count": len(discovery),
+        "not_traded": sorted(not_traded),
+        "not_traded_count": len(not_traded),
+        "congress_total_tickers": len(congress_set),
+        "watchlist_total": len(watchlist_set),
+    }
 
 
 def flag_notable_activity(days: int = 14) -> list[dict]:
-    """Flag notable congress trading activity.
+    """Flag notable congress trading activity."""
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
 
-    Flags:
-      - Large trades ($50K+)
-      - Rapid disclosure (traded and disclosed within 7 days = unusual transparency)
-      - Cluster trades (same politician, 3+ trades in a week)
-    """
-    with get_db() as db:
-        cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).date()
+    query = {
+        "trade_date": {"$gte": cutoff},
+        "party": {"$nin": ["", None]},
+    }
+    docs = mongo_store.find_docs("congress_trades", query, sort=[("trade_date", -1)])
 
-        flags = []
-
-        # Large trades
-        large = db.execute(
-            """
-            SELECT politician, party, ticker, transaction_type, amount_range, trade_date
-            FROM congress_trades
-            WHERE trade_date >= %s AND party != '' AND party IS NOT NULL
-              AND (amount_range LIKE '%%50K%%' OR amount_range LIKE '%%100K%%' 
-                   OR amount_range LIKE '%%250K%%' OR amount_range LIKE '%%500K%%'
-                   OR amount_range LIKE '%%1M%%' OR amount_range LIKE '%%5M%%')
-            ORDER BY trade_date DESC
-        """,
-            [cutoff],
-        ).fetchall()
-
-        for r in large:
+    flags = []
+    large_keywords = ("50K", "100K", "250K", "500K", "1M", "5M")
+    for d in docs:
+        amt = d.get("amount_range") or ""
+        if any(k in amt for k in large_keywords):
             flags.append(
                 {
                     "type": "LARGE_TRADE",
-                    "politician": r[0],
-                    "party": r[1],
-                    "ticker": r[2],
-                    "direction": r[3],
-                    "amount": r[4],
-                    "date": str(r[5]),
+                    "politician": d.get("politician"),
+                    "party": d.get("party"),
+                    "ticker": d.get("ticker"),
+                    "direction": d.get("transaction_type"),
+                    "amount": amt,
+                    "date": str(d.get("trade_date")),
                 }
             )
 
-        # Cluster trades — same politician, 3+ trades in the period
-        clusters = db.execute(
-            """
-            SELECT politician, COUNT(*) as cnt,
-                   STRING_AGG(DISTINCT ticker, ', ') as tickers,
-                   MIN(trade_date) as first, MAX(trade_date) as last
-            FROM congress_trades
-            WHERE trade_date >= %s AND party != '' AND party IS NOT NULL
-            GROUP BY politician
-            HAVING COUNT(*) >= 3
-            ORDER BY COUNT(*) DESC
-        """,
-            [cutoff],
-        ).fetchall()
+    # Cluster trades
+    pol_trades = defaultdict(list)
+    for d in docs:
+        pol = d.get("politician")
+        if pol:
+            pol_trades[pol].append(d)
 
-        for r in clusters:
+    for pol, trades in pol_trades.items():
+        if len(trades) >= 3:
+            dates = sorted([d.get("trade_date") for d in trades if d.get("trade_date")])
+            tickers = list({d.get("ticker") for d in trades if d.get("ticker")})
             flags.append(
                 {
                     "type": "CLUSTER_TRADE",
-                    "politician": r[0],
-                    "trade_count": r[1],
-                    "tickers": r[2].split(",") if r[2] else [],
-                    "first_date": str(r[3]),
-                    "last_date": str(r[4]),
+                    "politician": pol,
+                    "trade_count": len(trades),
+                    "tickers": tickers,
+                    "first_date": str(dates[0]) if dates else None,
+                    "last_date": str(dates[-1]) if dates else None,
                 }
             )
 
-        return flags
+    return flags
 
 
 def generate_report(watchlist_tickers: list[str] | None = None) -> str:
@@ -332,18 +299,15 @@ def generate_report(watchlist_tickers: list[str] | None = None) -> str:
     lines.append("CONGRESS TRADING SCANNER REPORT")
     lines.append("=" * 70)
 
-    # Recent activity
     recent = scan_recent_trades(days=30)
     lines.append(
         f"\n📊 Recent Activity (last 30 days): {recent['total_trades']} trades"
     )
 
-    # Buy/sell breakdown
     buys = [t for t in recent["trades"] if t["type"] == "buy"]
     sells = [t for t in recent["trades"] if t["type"] == "sell"]
     lines.append(f"   Buys: {len(buys)} | Sells: {len(sells)}")
 
-    # Consensus signals
     consensus = find_consensus_trades(days=30, min_members=2)
     if consensus:
         lines.append(f"\n🎯 Consensus Signals ({len(consensus)} found):")
@@ -353,7 +317,6 @@ def generate_report(watchlist_tickers: list[str] | None = None) -> str:
                 f"{', '.join(c['members'][:3])}"
             )
 
-    # Notable flags
     flags = flag_notable_activity(days=14)
     if flags:
         large = [f for f in flags if f["type"] == "LARGE_TRADE"]
@@ -373,7 +336,6 @@ def generate_report(watchlist_tickers: list[str] | None = None) -> str:
                     f"{', '.join(f['tickers'][:5])}"
                 )
 
-    # Portfolios
     portfolios = build_politician_portfolios(top_n=10)
     if portfolios:
         lines.append("\n👤 Top 10 Active Traders:")
@@ -384,7 +346,6 @@ def generate_report(watchlist_tickers: list[str] | None = None) -> str:
                 f"{', '.join(p['estimated_holdings'][:5])}"
             )
 
-    # Watchlist comparison
     if watchlist_tickers:
         comp = compare_with_watchlist(watchlist_tickers)
         lines.append("\n🔍 Watchlist Comparison:")

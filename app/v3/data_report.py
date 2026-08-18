@@ -4,10 +4,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
 from app.utils.text_utils import format_db_section
-from app.db import mongo_store
+from app.db import mongo_store, mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -201,38 +200,20 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     is_fast_path = False
 
     recent = None
-    _mongo_hit = False
     try:
-        from app.db import mongo_store
-        if mongo_store.reads_mongo("analysis_results"):
-            docs = mongo_store.find_docs(
-                "analysis_results", {"ticker": ticker},
-                sort=[("created_at", -1)], limit=1,
-                projection={"_id": 0, "thesis_summary": 1, "created_at": 1},
-            )
-            if docs:
-                ca = docs[0].get("created_at")
-                # pymongo returns naive-UTC datetimes; compare like-with-like.
-                _now = datetime.utcnow() if (ca is not None and ca.tzinfo is None) \
-                    else datetime.now(timezone.utc)
-                is_recent = bool(ca and ca >= _now - timedelta(hours=48))
-                recent = (docs[0].get("thesis_summary"), ca, is_recent)
-            _mongo_hit = True
+        docs = mongo_store.find_docs(
+            "analysis_results", {"ticker": ticker},
+            sort=[("created_at", -1)], limit=1,
+            projection={"_id": 0, "thesis_summary": 1, "created_at": 1},
+        )
+        if docs:
+            ca = docs[0].get("created_at")
+            _now = datetime.utcnow() if (ca is not None and ca.tzinfo is None) \
+                else datetime.now(timezone.utc)
+            is_recent = bool(ca and ca >= _now - timedelta(hours=48))
+            recent = (docs[0].get("thesis_summary"), ca, is_recent)
     except Exception as me:
-        handle_mongo_read_failure("analysis_results", "[data_report] mongo thesis read", me)
-        _mongo_hit = False
-    if not _mongo_hit:
-        with get_db() as db:
-            recent = db.execute(
-                """
-                SELECT thesis_summary, created_at,
-                       created_at >= NOW() - INTERVAL '48 hours' AS is_recent
-                FROM analysis_results
-                WHERE ticker = %s
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                [ticker]
-            ).fetchone()
+        logger.debug("[data_report] mongo thesis read failed: %s", me)
 
     if recent and recent[0]:
         if recent[2]:
@@ -379,36 +360,23 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     reddit_md = "No recent Reddit sentiment found."
     youtube_md = "No recent YouTube transcripts found."
     
-    with get_db() as db:
-        # Reddit formatting.
-        #
-        # What this section deliberately does NOT carry: score, upvote_ratio and
-        # comment_count. Reddit's .json API is 403-walled, so posts arrive over
-        # RSS, which publishes none of those -- they were previously stored as
-        # constants (100/1.0/10) and the old ORDER BY score DESC therefore
-        # ranked on a value that was identical for every row. sentiment_score
-        # and summary are dropped too: nothing has written either since
-        # 2026-06-20, and format_db_section silently skips NULLs, so they read
-        # as absent data rather than as dead columns.
-        #
-        # What replaces them is the post body -- the actual argument, which RSS
-        # does carry. The desk's agents can weigh a claim on its merits; a
-        # keyword-derived score would only invent a precision that competes
-        # with their own reading. Ranked by recency, which is real parsed data.
-        # 5 posts x 280 chars renders to ~1.9k, just under _SOCIAL_FLOOR_CHARS.
-        # Reddit is second of three social sections, so a larger section eats
-        # the remaining budget and truncates YouTube to nothing (measured: 10
-        # posts at 400 chars renders 4,516 against a 4,900 total cap).
-        reddit_rows = db.execute(
-            """
-            SELECT subreddit, title, LEFT(body, 280), created_utc
-            FROM reddit_posts
-            WHERE ticker = %s
-              AND collected_at > NOW() - INTERVAL '30 days'
-            ORDER BY created_utc DESC LIMIT 5
-            """,
-            [ticker]
-        ).fetchall()
+    # Reddit formatting
+    try:
+        reddit_docs = mongo_store.find_docs(
+            "reddit_posts",
+            {"ticker": ticker},
+            sort=[("created_utc", -1)],
+            limit=5,
+        )
+        reddit_rows = [
+            (
+                d.get("subreddit"),
+                d.get("title"),
+                (d.get("body") or "")[:280],
+                d.get("created_utc"),
+            )
+            for d in reddit_docs
+        ]
         if reddit_rows:
             reddit_md = format_db_section(
                 "Recent Reddit Posts (newest first; Reddit publishes no "
@@ -416,63 +384,65 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
                 reddit_rows,
                 ["Subreddit", "Title", "Post", "Posted"]
             )
-            
-        # YouTube formatting
-        # Recency-windowed: without the filter, three-week-old transcripts (the
-        # collector was starved by the 45s pre-collect cancel from 06-28 to
-        # 07-17) were presented to agents as "Recent YouTube Analyses".
-        # COALESCE onto the raw transcript: `summary` has had no writer since
-        # the V2 summarizer was deleted (2026-06-24), so the one column agents
-        # were shown was permanently NULL — titles-only at best. The first
-        # ~700 chars of a transcript carry the thesis statement.
-        yt_rows = db.execute(
-            """
-            SELECT channel, title, published_at,
-                   COALESCE(NULLIF(summary, ''), LEFT(raw_transcript, 700)) AS summary
-            FROM youtube_transcripts
-            WHERE ticker = %s
-              AND published_at > NOW() - INTERVAL '21 days'
-            ORDER BY published_at DESC LIMIT 3
-            """,
-            [ticker]
-        ).fetchall()
+    except Exception as e:
+        logger.warning("[V3] %s: Failed to fetch reddit posts: %s", ticker, e)
+        
+    # YouTube formatting
+    try:
+        yt_docs = mongo_store.find_docs(
+            "youtube_transcripts",
+            {"ticker": ticker},
+            sort=[("published_at", -1)],
+            limit=3,
+        )
+        yt_rows = [
+            (
+                d.get("channel"),
+                d.get("title"),
+                d.get("published_at"),
+                d.get("summary") or (d.get("raw_transcript") or "")[:700],
+            )
+            for d in yt_docs
+        ]
         if yt_rows:
             youtube_md = format_db_section(
                 "Recent YouTube Analyses",
                 yt_rows,
                 ["Channel", "Title", "Published", "Summary"]
             )
+    except Exception as e:
+        logger.warning("[V3] %s: Failed to fetch youtube transcripts: %s", ticker, e)
 
-        # Institutional fund holdings (DB-only, no API call)
-        institutional_md = "No institutional fund holdings data available."
-        try:
-            from app.collectors.fund_scanner import get_institutional_signal, get_fund_momentum
-            inst_signal = get_institutional_signal(ticker)
-            if inst_signal["fund_count"] > 0:
-                inst_lines = []
-                inst_lines.append(f"**{inst_signal['fund_count']}** tracked hedge fund(s) hold this stock.")
-                inst_lines.append(f"Total institutional value: ${inst_signal['total_institutional_value']:,.0f}")
-                inst_lines.append(f"Momentum: **{inst_signal['momentum']}**")
-                if inst_signal["has_top_performer"]:
-                    inst_lines.append(f"⭐ Top-performing fund(s): {', '.join(inst_signal['top_performer_names'])}")
-                if inst_signal["has_new_position"]:
-                    inst_lines.append("🆕 New position opened this quarter by at least one fund.")
-                # Top 5 holders
-                for h in inst_signal["holders"][:5]:
-                    val_fmt = f"${h['value_usd']:,.0f}" if h['value_usd'] else '$0'
-                    new_flag = ' 🆕' if h['is_new'] else ''
-                    inst_lines.append(f"  - {h['fund']}: {h['shares']:,} shares ({val_fmt}){new_flag}")
-                # Quarterly momentum
-                momentum = get_fund_momentum(ticker)
-                if momentum["direction"] != "NO_HISTORY":
-                    inst_lines.append(f"Q/Q trend: {momentum['direction']} ({momentum['latest_quarter']} vs {momentum['previous_quarter']})")
-                    if momentum["new_buyers"]:
-                        inst_lines.append(f"  New buyers: {', '.join(momentum['new_buyers'][:3])}")
-                    if momentum["exiters"]:
-                        inst_lines.append(f"  Exited: {', '.join(momentum['exiters'][:3])}")
-                institutional_md = "\n".join(inst_lines)
-        except Exception as e:
-            logger.warning("[V3] %s: Failed to build institutional section (non-fatal): %s", ticker, e)
+    # Institutional fund holdings (DB-only, no API call)
+    institutional_md = "No institutional fund holdings data available."
+    try:
+        from app.collectors.fund_scanner import get_institutional_signal, get_fund_momentum
+        inst_signal = get_institutional_signal(ticker)
+        if inst_signal["fund_count"] > 0:
+            inst_lines = []
+            inst_lines.append(f"**{inst_signal['fund_count']}** tracked hedge fund(s) hold this stock.")
+            inst_lines.append(f"Total institutional value: ${inst_signal['total_institutional_value']:,.0f}")
+            inst_lines.append(f"Momentum: **{inst_signal['momentum']}**")
+            if inst_signal["has_top_performer"]:
+                inst_lines.append(f"⭐ Top-performing fund(s): {', '.join(inst_signal['top_performer_names'])}")
+            if inst_signal["has_new_position"]:
+                inst_lines.append("🆕 New position opened this quarter by at least one fund.")
+            # Top 5 holders
+            for h in inst_signal["holders"][:5]:
+                val_fmt = f"${h['value_usd']:,.0f}" if h['value_usd'] else '$0'
+                new_flag = ' 🆕' if h['is_new'] else ''
+                inst_lines.append(f"  - {h['fund']}: {h['shares']:,} shares ({val_fmt}){new_flag}")
+            # Quarterly momentum
+            momentum = get_fund_momentum(ticker)
+            if momentum["direction"] != "NO_HISTORY":
+                inst_lines.append(f"Q/Q trend: {momentum['direction']} ({momentum['latest_quarter']} vs {momentum['previous_quarter']})")
+                if momentum["new_buyers"]:
+                    inst_lines.append(f"  New buyers: {', '.join(momentum['new_buyers'][:3])}")
+                if momentum["exiters"]:
+                    inst_lines.append(f"  Exited: {', '.join(momentum['exiters'][:3])}")
+            institutional_md = "\n".join(inst_lines)
+    except Exception as e:
+        logger.warning("[V3] %s: Failed to build institutional section (non-fatal): %s", ticker, e)
 
     # 4. Construct Final Document — with size cap to prevent context overflow
     #
@@ -524,16 +494,17 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         pass
     lessons_md = ""
     try:
-        with get_db() as db:
-            # NB: evolution_lessons.timestamp is TEXT (ISO strings) — a
-            # NOW()-interval comparison type-errors. ISO strings sort
-            # lexicographically, so ORDER BY alone gets the freshest.
-            lrows = db.execute(
-                "SELECT lesson_text FROM evolution_lessons "
-                "WHERE status = 'audited' AND lesson_text IS NOT NULL "
-                "AND length(trim(lesson_text)) > 20 "
-                "ORDER BY timestamp DESC NULLS LAST LIMIT 12"
-            ).fetchall()
+        l_docs = mongo_store.find_docs(
+            "evolution_lessons",
+            {"status": "audited"},
+            sort=[("timestamp", -1)],
+            limit=12,
+        )
+        lrows = [
+            (d.get("lesson_text"),)
+            for d in l_docs
+            if d.get("lesson_text") and len(str(d.get("lesson_text")).strip()) > 20
+        ]
         # The audit writes near-identical rephrasings of the same lesson on
         # consecutive cycles ("downstream engines must wait for
         # pre-collection" x3) — greedy Jaccard filter keeps 3 DISTINCT ones.

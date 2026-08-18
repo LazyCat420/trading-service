@@ -80,15 +80,12 @@ def build_book_brief(ticker: str, bot_id: str = "") -> str:
 
     # Sector tilt from company_registry (best-effort).
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_store
 
         held = [r[0] for r in rows]
-        with get_db() as db:
-            sec_rows = db.execute(
-                "SELECT symbol, sector FROM company_registry WHERE symbol = ANY(%s)",
-                [held + [ticker]],
-            ).fetchall()
-        sec_map = {r[0]: (r[1] or "?") for r in sec_rows}
+        symbols = [s.upper() for s in (held + [ticker]) if s]
+        docs = mongo_store.find_docs("company_registry", {"symbol": {"$in": symbols}}, projection={"symbol": 1, "sector": 1})
+        sec_map = {d.get("symbol"): (d.get("sector") or "?") for d in docs if d.get("symbol")}
         by_sector: dict[str, float] = {}
         for t, mv, _ in rows:
             s = sec_map.get(t, "?")

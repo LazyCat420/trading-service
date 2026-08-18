@@ -149,24 +149,22 @@ def compute_fundamental_baseline(ticker: str) -> dict | None:
     if not ticker:
         return None
 
-    from app.db.connection import get_db
+    from app.db import mongo_store
 
     try:
-        with get_db() as db:
-            row = db.execute(
-                f"SELECT {', '.join(_COLS)} FROM fundamentals "
-                "WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-                [ticker],
-            ).fetchone()
+        docs = mongo_store.find_docs(
+            "fundamentals",
+            {"ticker": ticker.upper()},
+            sort=[("snapshot_date", -1)],
+            limit=1,
+        )
+        if not docs:
+            return None
+        raw = {k: docs[0].get(k) for k in _COLS}
     except Exception as e:
         logger.warning("[FundamentalBlock] %s: query failed: %s: %s",
                        ticker, type(e).__name__, e)
         return None
-
-    if not row:
-        return None
-
-    raw = dict(zip(_COLS, row))
     b: dict = {
         "ticker": ticker,
         "as_of": raw.get("snapshot_date"),

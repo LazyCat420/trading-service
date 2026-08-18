@@ -13,8 +13,6 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-from app.db.connection import get_db
-
 logger = logging.getLogger(__name__)
 
 # Calendar-day multiplier so `lookback_days` trading rows survive weekends,
@@ -155,38 +153,22 @@ def load_returns_matrix(
     tickers: list[str],
     lookback_days: int = 252,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """Aligned daily log-returns for `tickers` from price_history.
-
-    Returns (returns_df [date x ticker], dropped) where dropped lists tickers
-    excluded for having under 60% coverage of the window — a thin column
-    would poison every pairwise estimate in the covariance matrix.
-    """
+    """Aligned daily log-returns for `tickers` from price_history."""
     tickers = sorted({t.strip().upper() for t in tickers if t and t.strip()})
     if not tickers:
         return pd.DataFrame(), []
 
-    cutoff = date.today() - timedelta(days=int(lookback_days * _CALENDAR_PAD))
-    placeholders = ",".join(["%s"] * len(tickers))
-    with get_db() as db:
-        rows = db.execute(
-            f"""
-            SELECT ticker, date, close, source FROM price_history
-            WHERE ticker IN ({placeholders}) AND date >= %s
-            ORDER BY date ASC
-            """,
-            [*tickers, cutoff],
-        ).fetchall()
+    from app.db import mongo_store
 
-    if not rows:
+    cutoff = date.today() - timedelta(days=int(lookback_days * _CALENDAR_PAD))
+    query = {"ticker": {"$in": tickers}, "date": {"$gte": cutoff}}
+    docs = mongo_store.find_docs("price_history", query, sort=[("date", 1)])
+
+    if not docs:
         return pd.DataFrame(), list(tickers)
 
-    df = pd.DataFrame(rows, columns=["ticker", "date", "close", "source"])
+    df = pd.DataFrame(docs)
     df["close"] = df["close"].astype(float)
-    # Before this, `aggfunc="last"` collapsed duplicate ticker-dates to one
-    # value but picked the vendor by row order — undefined, since the query
-    # only sorts by date. A column could therefore switch adjustment
-    # convention between dates. Pin the vendor first; the pivot's collapse is
-    # now a defensive no-op.
     df = _keep_dominant_source(df)
     prices = (
         df.pivot_table(index="date", columns="ticker", values="close", aggfunc="last")
@@ -207,28 +189,20 @@ def load_returns_matrix(
 
 
 def load_close_returns(ticker: str, lookback_days: int = 500) -> np.ndarray:
-    """Daily log-return series for one ticker (for GARCH fitting).
+    """Daily log-return series for one ticker (for GARCH fitting)."""
+    from app.db import mongo_store
 
-    One vendor, one row per date. The vendor filter has to sit INSIDE the
-    subquery: `LIMIT` is applied before any de-duplication, so on a
-    dual-source ticker the old form returned `lookback_days` ROWS spanning only
-    half as many dates (CRH: 253 rows over ~127 dates). See the module header
-    for the measured effect on volatility.
-    """
     ticker = ticker.strip().upper()
-    with get_db() as db:
-        rows = db.execute(
-            f"""
-            SELECT close FROM (
-                SELECT date, close FROM price_history
-                WHERE ticker = %(ticker)s
-                  AND source = ({_dominant_source_sql()})
-                ORDER BY date DESC LIMIT %(limit)s
-            ) recent ORDER BY date ASC
-            """,
-            {"ticker": ticker, "limit": int(lookback_days) + 1},
-        ).fetchall()
-    closes = np.array([float(r[0]) for r in rows if r[0] is not None], dtype=float)
+    docs = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker},
+        sort=[("date", -1)],
+        limit=int(lookback_days) + 1,
+    )
+    if not docs:
+        return np.array([])
+    docs = list(reversed(docs))
+    closes = np.array([float(d.get("close")) for d in docs if d.get("close") is not None], dtype=float)
     closes = closes[closes > 0]
     if closes.size < 2:
         return np.array([])
@@ -236,60 +210,38 @@ def load_close_returns(ticker: str, lookback_days: int = 500) -> np.ndarray:
 
 
 def latest_close(ticker: str) -> float | None:
-    """Most recent close for `ticker`, from ONE vendor.
+    """Most recent close for `ticker`."""
+    from app.db import mongo_store
 
-    `ORDER BY date DESC LIMIT 1` without a source filter is non-deterministic on
-    a dual-source ticker: both vendors carry the same max date, and whichever
-    row the planner emits first wins. The vendors disagree by a mean 20.05%
-    (ALLY 1.11%, CRH ~1%, DRIP 718%) — see the module header — so an entry price
-    read one way and an exit price read the other turns a vendor spread into
-    P&L. 19% of completed desks sit on such a ticker.
-    """
     ticker = ticker.strip().upper()
-    with get_db() as db:
-        row = db.execute(
-            f"""
-            SELECT close FROM price_history
-            WHERE ticker = %(ticker)s AND close IS NOT NULL AND close > 0
-              AND source = ({_dominant_source_sql()})
-            ORDER BY date DESC LIMIT 1
-            """,
-            {"ticker": ticker},
-        ).fetchone()
-    if not row or row[0] is None:
+    docs = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker, "close": {"$gt": 0}},
+        sort=[("date", -1)],
+        limit=1,
+    )
+    if not docs or docs[0].get("close") is None:
         return None
-    val = float(row[0])
+    val = float(docs[0]["close"])
     return val if val == val and val > 0 else None
 
 
 def forward_window(ticker: str, start, sessions: int) -> list[float] | None:
-    """`sessions` consecutive closes from the first bar on/after `start`.
+    """`sessions` consecutive closes from the first bar on/after `start`."""
+    from app.db import mongo_store
 
-    Returns None unless the FULL window exists — a short window silently scored
-    as a full one is how a "+7 session" move becomes a 3-session move on a
-    dual-source ticker, where `LIMIT 8` returns 8 ROWS spanning ~4 dates.
-    Measured on CRH: the unfiltered read gives +0.970% where the truth is
-    -2.358%, a sign flip, on 19% of scored desks.
-
-    One bar per date, one vendor for the whole window — mixing conventions
-    mid-window manufactures a jump (DRIP: 133 daily moves over 15%).
-    """
     ticker = ticker.strip().upper()
     n = int(sessions)
     if n < 2:
         return None
-    with get_db() as db:
-        rows = db.execute(
-            f"""
-            SELECT close FROM price_history
-            WHERE ticker = %(ticker)s AND close IS NOT NULL AND close > 0
-              AND date >= %(start)s
-              AND source = ({_dominant_source_sql()})
-            ORDER BY date ASC LIMIT %(n)s
-            """,
-            {"ticker": ticker, "start": start, "n": n},
-        ).fetchall()
-    closes = [float(r[0]) for r in rows if r[0] is not None]
+
+    docs = mongo_store.find_docs(
+        "price_history",
+        {"ticker": ticker, "close": {"$gt": 0}, "date": {"$gte": start}},
+        sort=[("date", 1)],
+        limit=n,
+    )
+    closes = [float(d.get("close")) for d in docs if d.get("close") is not None]
     closes = [c for c in closes if c == c and c > 0]
     if len(closes) < n:
         return None  # window has not closed yet

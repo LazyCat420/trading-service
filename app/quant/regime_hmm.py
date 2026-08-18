@@ -46,8 +46,6 @@ from datetime import date, timedelta
 import numpy as np
 from scipy.special import logsumexp
 
-from app.db.connection import get_db
-from app.quant.returns import dominant_source_sql
 from app.db import mongo_store
 from datetime import datetime, timezone
 
@@ -79,31 +77,20 @@ def load_market_returns(
     as_of: date | None = None,
 ) -> tuple[np.ndarray, list]:
     """Daily log returns for the market proxy, plus their dates."""
+    from app.db import mongo_store
+
     end = as_of or date.today()
     start = end - timedelta(days=int(lookback_sessions * 1.6))
-    with get_db() as db:
-        # One vendor. Without the filter a dual-source ticker yields two rows
-        # per shared date, and the log-returns below are then taken across a
-        # pair of same-date prints from different adjustment conventions —
-        # which both injects near-zero returns (diluting the variance the HMM
-        # regimes are defined by) and manufactures jumps where the convention
-        # alternates. A volatility-state model is exactly the consumer this
-        # corrupts most.
-        rows = db.execute(
-            f"""
-            SELECT date, close FROM price_history
-            WHERE ticker = %(ticker)s AND date >= %(start)s AND date <= %(end)s
-              AND close IS NOT NULL AND close > 0
-              AND source = ({dominant_source_sql()})
-            ORDER BY date ASC
-            """,
-            {"ticker": ticker.strip().upper(), "start": start, "end": end},
-        ).fetchall()
-
-    if len(rows) < 2:
+    query = {
+        "ticker": ticker.strip().upper(),
+        "date": {"$gte": start, "$lte": end},
+        "close": {"$gt": 0},
+    }
+    docs = mongo_store.find_docs("price_history", query, sort=[("date", 1)])
+    if len(docs) < 2:
         return np.array([]), []
-    dates = [r[0] for r in rows]
-    closes = np.array([float(r[1]) for r in rows], dtype=float)
+    dates = [d.get("date") for d in docs]
+    closes = np.array([float(d["close"]) for d in docs if d.get("close") is not None], dtype=float)
     returns = np.diff(np.log(closes))
     return returns, dates[1:]
 
@@ -502,53 +489,43 @@ def build_hmm_context_line(
 # is idempotent and a corrected vendor feed can be re-fitted in place.
 
 def ensure_posterior_table() -> None:
-    with get_db() as db:
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS regime_hmm_posteriors (
-                ticker              TEXT NOT NULL,
-                as_of               DATE NOT NULL,
-                regime              TEXT NOT NULL,
-                confidence          DOUBLE PRECISION,
-                n_states            INTEGER,
-                state_probabilities JSONB,
-                -- the state's own claims, which are what gets graded
-                mean_daily_return_pct DOUBLE PRECISION,
-                annualized_vol_pct    DOUBLE PRECISION,
-                expected_duration_days DOUBLE PRECISION,
-                -- ALL states, not just the current one: the honest one-step
-                -- predictive variance is the mixture over where the chain
-                -- goes next (gamma_T @ A), so grading needs every state's
-                -- mean and variance plus the transition matrix.
-                state_stats         JSONB,
-                transition_matrix   JSONB,
-                observations        INTEGER,
-                stale_sessions      INTEGER,
-                bic                 DOUBLE PRECISION,
-                computed_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (ticker, as_of)
-            )
-            """
-        )
+    pass
 
 
 def persist_posterior(result: dict) -> bool:
-    """Store one classification. False on any failure — never raises.
-
-    Fail-open like everything else in this module: a desk must not stall
-    because a measurement table is unavailable.
-    """
+    """Store one classification in MongoDB. False on any failure — never raises."""
     if not result or not result.get("ok") or not result.get("as_of"):
         return False
     try:
-        import json
+        from datetime import datetime, timezone
+        from app.db import mongo_store
 
         stats = result.get("state_stats", {}).get(result["regime"], {})
         bic_map = result.get("bic_by_states") or {}
         bic = bic_map.get(result.get("n_states"))
-        ensure_posterior_table()
-        with get_db() as db:
-            mongo_store.update_docs('regime_hmm_posteriors', {'ticker': result["ticker"], 'as_of': result["as_of"]}, {'$set': {'regime': result["regime"], 'confidence': result.get("confidence"), 'n_states': result.get("n_states"), 'state_probabilities': json.dumps(result.get("state_probabilities") or {}), 'mean_daily_return_pct': stats.get("mean_daily_return_pct"), 'annualized_vol_pct': stats.get("annualized_vol_pct"), 'expected_duration_days': stats.get("expected_duration_days"), 'state_stats': json.dumps(result.get("state_stats") or {}), 'transition_matrix': json.dumps(result.get("transition_matrix") or []), 'observations': result.get("observations"), 'stale_sessions': result.get("stale_sessions"), 'bic': bic, 'computed_at': datetime.now(timezone.utc)}}, upsert=True)
+
+        doc = {
+            "ticker": result["ticker"],
+            "as_of": result["as_of"],
+            "regime": result["regime"],
+            "confidence": result.get("confidence"),
+            "n_states": result.get("n_states"),
+            "state_probabilities": result.get("state_probabilities") or {},
+            "mean_daily_return_pct": stats.get("mean_daily_return_pct"),
+            "annualized_vol_pct": stats.get("annualized_vol_pct"),
+            "expected_duration_days": stats.get("expected_duration_days"),
+            "state_stats": result.get("state_stats") or {},
+            "transition_matrix": result.get("transition_matrix") or [],
+            "observations": result.get("observations"),
+            "stale_sessions": result.get("stale_sessions"),
+            "bic": bic,
+            "computed_at": datetime.now(timezone.utc),
+        }
+        mongo_store.upsert_doc(
+            "regime_hmm_posteriors",
+            {"ticker": result["ticker"], "as_of": result["as_of"]},
+            doc,
+        )
         return True
     except Exception as e:
         logger.warning("[RegimeHMM] posterior persist failed (non-fatal): %s", e)

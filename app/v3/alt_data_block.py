@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 
-from app.db.connection import get_db
 from app.db import mongo_query
 from datetime import datetime, timedelta, timezone
 
@@ -28,87 +27,78 @@ def build_alt_data_block(ticker: str) -> str:
         return ""
     parts: list[str] = []
 
+    from datetime import date, datetime, timedelta, timezone
+    from app.db import mongo_store
+
+    today = date.today()
+    cutoff_30d = today - timedelta(days=30)
+    cutoff_7d = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff_90d = today - timedelta(days=90)
+
     try:
-        with get_db() as db:
-            row = db.execute(
-                """
-                SELECT COUNT(*), COALESCE(SUM(value), 0), MAX(trade_date),
-                       MAX(insider_name)
-                FROM insider_trades
-                WHERE ticker = %s
-                  AND trade_type = 'P'
-                  AND trade_date >= CURRENT_DATE - INTERVAL '30 days'
-                """,
-                [ticker],
-            ).fetchone()
-        if row and row[0]:
+        insider_docs = mongo_store.find_docs(
+            "insider_trades",
+            {"ticker": ticker, "trade_type": "P", "trade_date": {"$gte": cutoff_30d}},
+            sort=[("trade_date", -1)],
+        )
+        if insider_docs:
+            count = len(insider_docs)
+            total_val = sum(float(d.get("value") or 0) for d in insider_docs)
+            latest_date = insider_docs[0].get("trade_date")
+            latest_insider = insider_docs[0].get("insider_name")
             parts.append(
-                f"- Insider cluster buying (30d): {row[0]} filing(s) totaling "
-                f"${row[1]:,.0f}, most recent {row[2]} ({row[3]}). Cluster buys "
+                f"- Insider cluster buying (30d): {count} filing(s) totaling "
+                f"${total_val:,.0f}, most recent {latest_date} ({latest_insider}). Cluster buys "
                 f"(multiple insiders) are among the strongest insider signals."
             )
     except Exception as e:
         logger.debug("[AltDataBlock] %s: insider query failed (non-fatal): %s", ticker, e)
 
     try:
-        with get_db() as db:
-            row = db.execute(
-                """
-                SELECT COUNT(*), AVG(sentiment_score),
-                       COALESCE(SUM(COALESCE(like_count,0) + COALESCE(repost_count,0)), 0)
-                FROM social_posts
-                WHERE ticker = %s
-                  AND posted_at >= NOW() - INTERVAL '7 days'
-                """,
-                [ticker],
-            ).fetchone()
-        if row and row[0]:
-            sent = f", avg sentiment {row[1]:+.2f}" if row[1] is not None else ""
+        social_docs = mongo_store.find_docs(
+            "social_posts",
+            {"ticker": ticker, "posted_at": {"$gte": cutoff_7d}},
+        )
+        if social_docs:
+            count = len(social_docs)
+            sentiments = [float(d["sentiment_score"]) for d in social_docs if d.get("sentiment_score") is not None]
+            avg_sent = sum(sentiments) / len(sentiments) if sentiments else None
+            total_eng = sum(int(d.get("like_count") or 0) + int(d.get("repost_count") or 0) for d in social_docs)
+            sent_str = f", avg sentiment {avg_sent:+.2f}" if avg_sent is not None else ""
             parts.append(
-                f"- Social chatter (7d): {row[0]} posts{sent}, "
-                f"{row[2]:,} total engagements. Treat as crowd positioning, not truth."
+                f"- Social chatter (7d): {count} posts{sent_str}, "
+                f"{total_eng:,} total engagements. Treat as crowd positioning, not truth."
             )
     except Exception as e:
         logger.debug("[AltDataBlock] %s: social query failed (non-fatal): %s", ticker, e)
 
-    # Congress disclosures. 30k rows and by far the deepest alt-data set we
-    # hold, but it was the one domain with no reader on the per-ticker path —
-    # it reached ticker SELECTION via _inject_smart_money_leads and then
-    # vanished before the desk ever reasoned about it.
-    #
-    # trade_date <= CURRENT_DATE because the table carries future-dated rows
-    # (max was 2026-12-26 on 2026-07-27, open since the 07-23 audit); without
-    # the guard a bad row would present as the most recent disclosure.
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT transaction_type, COUNT(*), MAX(trade_date), MAX(politician)
-                FROM congress_trades
-                WHERE ticker = %s
-                  AND trade_date >= CURRENT_DATE - INTERVAL '90 days'
-                  AND trade_date <= CURRENT_DATE
-                GROUP BY transaction_type
-                ORDER BY COUNT(*) DESC
-                """,
-                [ticker],
-            ).fetchall()
-        if rows:
+        congress_docs = mongo_store.find_docs(
+            "congress_trades",
+            {"ticker": ticker, "trade_date": {"$gte": cutoff_90d, "$lte": today}},
+            sort=[("trade_date", -1)],
+        )
+        if congress_docs:
+            from collections import defaultdict
+            by_type = defaultdict(list)
+            for d in congress_docs:
+                tt = d.get("transaction_type") or "unknown"
+                by_type[tt].append(d)
+            rows = sorted(by_type.items(), key=lambda x: len(x[1]), reverse=True)
             detail = ", ".join(
-                f"{r[1]}× {r[0] or 'unknown'} (latest {r[2]}, e.g. {r[3]})"
-                for r in rows[:3]
+                f"{len(docs)}× {tt} (latest {docs[0].get('trade_date')}, e.g. {docs[0].get('politician')})"
+                for tt, docs in rows[:3]
             )
             parts.append(
-                f"- Congressional disclosures (90d): {detail}. Disclosure lags "
-                f"the trade by up to 45 days — treat as slow confirmation, "
-                f"never as a timing signal."
+                f"- Congressional activity (90d): {len(congress_docs)} trade(s) — "
+                f"{detail}. Disclosures lag 15-45d; treats as thematic positioning, not alpha."
             )
     except Exception as e:
         logger.debug("[AltDataBlock] %s: congress query failed (non-fatal): %s", ticker, e)
 
-    quality = smart_money_quality_line(ticker)
-    if quality:
-        parts.append(quality)
+    sq = smart_money_quality_line(ticker)
+    if sq:
+        parts.append(sq)
 
     if not parts:
         return ""
@@ -157,42 +147,63 @@ def smart_money_quality_line(ticker: str) -> str:
     if not ticker:
         return ""
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                WITH cohort AS (
-                    SELECT actor_type, actor_id,
-                           PERCENT_RANK() OVER (
-                               PARTITION BY actor_type ORDER BY avg_alpha
-                           ) AS pctile
-                    FROM smart_money_performance
-                    WHERE horizon = '1y' AND rankable AND avg_alpha IS NOT NULL
-                ),
-                sized AS (
-                    SELECT actor_type, COUNT(*) AS cohort_n
-                    FROM cohort GROUP BY actor_type
-                ),
-                actors AS (
-                    SELECT DISTINCT s.actor_type, s.actor_id, s.direction, c.pctile
-                    FROM smart_money_trade_scores s
-                    JOIN cohort c
-                      ON c.actor_type = s.actor_type AND c.actor_id = s.actor_id
-                    WHERE s.ticker = %s
-                      AND s.event_date >= CURRENT_DATE - MAKE_INTERVAL(days => %s)
-                      -- congress_trades carries future-dated rows and the
-                      -- scores inherit them. Same guard as the congress query.
-                      AND s.event_date <= CURRENT_DATE
-                )
-                SELECT a.direction, a.actor_type, COUNT(*) AS n,
-                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY a.pctile) AS med,
-                       MAX(z.cohort_n) AS cohort_n
-                FROM actors a
-                JOIN sized z ON z.actor_type = a.actor_type
-                GROUP BY a.direction, a.actor_type
-                ORDER BY n DESC
-                """,
-                [ticker, _QUALITY_WINDOW_DAYS],
-            ).fetchall()
+        from app.db import mongo_store
+
+        today = date.today()
+        cutoff = today - timedelta(days=_QUALITY_WINDOW_DAYS)
+
+        cohort_docs = mongo_store.find_docs(
+            "smart_money_performance",
+            {"horizon": "1y", "rankable": True, "avg_alpha": {"$ne": None}},
+        )
+        if not cohort_docs:
+            return ""
+
+        by_type: dict[str, list[float]] = {}
+        for d in cohort_docs:
+            at = d.get("actor_type")
+            alpha = float(d["avg_alpha"])
+            by_type.setdefault(at, []).append(alpha)
+
+        pctile_by_actor: dict[tuple[str, str], float] = {}
+        cohort_n: dict[str, int] = {}
+        for at, alphas in by_type.items():
+            alphas_sorted = sorted(alphas)
+            n_tot = len(alphas_sorted)
+            cohort_n[at] = n_tot
+            for d in cohort_docs:
+                if d.get("actor_type") == at:
+                    aid = d.get("actor_id")
+                    alpha = float(d["avg_alpha"])
+                    rank = sum(1 for a in alphas_sorted if a < alpha)
+                    pctile_by_actor[(at, aid)] = rank / max(1, n_tot - 1)
+
+        score_docs = mongo_store.find_docs(
+            "smart_money_trade_scores",
+            {"ticker": ticker, "event_date": {"$gte": cutoff, "$lte": today}},
+        )
+        if not score_docs:
+            return ""
+
+        actors_map: dict[tuple[str, str, str], float] = {}
+        for s in score_docs:
+            at = s.get("actor_type")
+            aid = s.get("actor_id")
+            dirn = s.get("direction") or "unknown"
+            key = (at, aid)
+            if key in pctile_by_actor:
+                actors_map[(at, aid, dirn)] = pctile_by_actor[key]
+
+        grouped: dict[tuple[str, str], list[float]] = {}
+        for (at, aid, dirn), pct in actors_map.items():
+            grouped.setdefault((dirn, at), []).append(pct)
+
+        rows = []
+        for (dirn, at), pcts in grouped.items():
+            pcts_sorted = sorted(pcts)
+            mid = len(pcts_sorted) // 2
+            med = pcts_sorted[mid] if len(pcts_sorted) % 2 != 0 else (pcts_sorted[mid - 1] + pcts_sorted[mid]) / 2.0
+            rows.append((dirn, at, len(pcts), med, cohort_n.get(at, len(pcts))))
     except Exception as e:
         logger.debug(
             "[AltDataBlock] %s: smart-money quality query failed (non-fatal): %s",
@@ -206,8 +217,8 @@ def smart_money_quality_line(ticker: str) -> str:
     segments = [
         f"{n} {(direction or 'unknown').lower()}-side "
         f"{'fund' if actor_type == 'fund' else 'congress'} actor(s) at the "
-        f"{_ordinal(round(med * 100))} percentile of their cohort (n={cohort_n})"
-        for direction, actor_type, n, med, cohort_n in rows
+        f"{_ordinal(round(med * 100))} percentile of their cohort (n={cohort_count})"
+        for direction, actor_type, n, med, cohort_count in rows
         if n and med is not None
     ]
     if not segments:
@@ -230,8 +241,8 @@ def alt_macro_lines() -> list[str]:
     lines: list[str] = []
 
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('put_call_ratio', {'symbol': 'SPY'}, ['date', 'pcr_volume', 'pcr_oi'], sort=[('date', -1)])
+        from app.db import mongo_query, mongo_store
+        row = mongo_query.find_row('put_call_ratio', {'symbol': 'SPY'}, ['date', 'pcr_volume', 'pcr_oi'], sort=[('date', -1)])
         if row and row[1] is not None:
             lines.append(
                 f"- SPY put/call ratio ({row[0]}): volume {row[1]:.2f}, "
@@ -241,8 +252,8 @@ def alt_macro_lines() -> list[str]:
         logger.debug("[AltDataBlock] PCR line failed (non-fatal): %s", e)
 
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('economic_calendar', {'country': {'$in': ['US', 'USD']}, 'importance': 'high', 'event_date': {'$gte': datetime.now(timezone.utc), '$lte': (datetime.now(timezone.utc) + timedelta(days=7))}}, ['event_date', 'event_name', 'forecast', 'previous'], sort=[('event_date', 1)], limit=5)
+        from app.db import mongo_query
+        rows = mongo_query.find_rows('economic_calendar', {'country': {'$in': ['US', 'USD']}, 'importance': 'high', 'event_date': {'$gte': datetime.now(timezone.utc), '$lte': (datetime.now(timezone.utc) + timedelta(days=7))}}, ['event_date', 'event_name', 'forecast', 'previous'], sort=[('event_date', 1)], limit=5)
         if rows:
             lines.append("Upcoming high-impact US events (7d):")
             for r in rows:
@@ -260,19 +271,6 @@ def alt_macro_lines() -> list[str]:
 
 
 # ── The consumption half (2026-07-28) ────────────────────────────────────────
-#
-# The block above was widened from 2 agents to 6 and then MEASURED: zero of the
-# newly-added agents cited it. Injection alone is not enough — optional context
-# loses to a 7,962-char compressed desk view every time.
-#
-# What worked for fundamentals was three things together, not one: the block,
-# a REQUIRED schema field, and a reconcile pass that overwrites and counts
-# disagreement. That took the fundamental desk from 0 numeric fields to 23
-# reconciled ones. This is the same shape for positioning evidence.
-#
-# The counts below are the verifiable half. The agent's READ of them
-# (bullish/bearish/neutral) is judgment and is never touched — the same
-# boundary every other reconcile pass holds.
 
 VERIFIED_POSITIONING_FIELDS = (
     "insider_buy_filings_30d",
@@ -282,36 +280,41 @@ VERIFIED_POSITIONING_FIELDS = (
 
 
 def compute_positioning_facts(ticker: str) -> dict:
-    """The countable facts behind the alt-data block, as a dict.
-
-    Same queries as `build_alt_data_block`, returning numbers instead of prose
-    so an artifact claim can be checked against them. Absent evidence is 0, not
-    None: "no congressional disclosures" is a fact about the world, whereas a
-    missing multiple is a gap in ours.
-    """
+    """The countable facts behind the alt-data block, as a dict."""
     ticker = (ticker or "").strip().upper()
     facts = {f: 0 for f in VERIFIED_POSITIONING_FIELDS}
     if not ticker:
         return facts
 
+    from datetime import date, datetime, timedelta, timezone
+    from app.db import mongo_store
+
+    today = date.today()
+    cutoff_30d = today - timedelta(days=30)
+    cutoff_7d = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff_90d = today - timedelta(days=90)
+
     try:
-        with get_db() as db:
-            row = mongo_query.agg_row('insider_trades', {'ticker': ticker, 'trade_type': 'P', 'trade_date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=30))}}, [('count', None)])
-            facts["insider_buy_filings_30d"] = int(row[0]) if row else 0
+        facts["insider_buy_filings_30d"] = mongo_store.count_docs(
+            "insider_trades",
+            {"ticker": ticker, "trade_type": "P", "trade_date": {"$gte": cutoff_30d}},
+        )
     except Exception as e:
         logger.debug("[AltData] %s: insider facts failed: %s", ticker, e)
 
     try:
-        with get_db() as db:
-            row = mongo_query.agg_row('congress_trades', {'ticker': ticker, 'trade_date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=90)), '$lte': datetime.now(timezone.utc)}}, [('count', None)])
-            facts["congress_disclosures_90d"] = int(row[0]) if row else 0
+        facts["congress_disclosures_90d"] = mongo_store.count_docs(
+            "congress_trades",
+            {"ticker": ticker, "trade_date": {"$gte": cutoff_90d, "$lte": today}},
+        )
     except Exception as e:
         logger.debug("[AltData] %s: congress facts failed: %s", ticker, e)
 
     try:
-        with get_db() as db:
-            row = mongo_query.agg_row('social_posts', {'ticker': ticker, 'posted_at': {'$gte': (datetime.now(timezone.utc) - timedelta(days=7))}}, [('count', None)])
-            facts["social_posts_7d"] = int(row[0]) if row else 0
+        facts["social_posts_7d"] = mongo_store.count_docs(
+            "social_posts",
+            {"ticker": ticker, "posted_at": {"$gte": cutoff_7d}},
+        )
     except Exception as e:
         logger.debug("[AltData] %s: social facts failed: %s", ticker, e)
 

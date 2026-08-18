@@ -37,7 +37,6 @@ from __future__ import annotations
 import json
 import logging
 
-from app.db.connection import get_db
 from app.db import mongo_store
 from app.db import mongo_query
 
@@ -70,21 +69,7 @@ KNOWN_PRIOR_TRIALS: tuple[tuple[str, str, str], ...] = (
 
 
 def ensure_table() -> None:
-    with get_db() as db:
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS research_trials (
-                family      TEXT NOT NULL,
-                label       TEXT NOT NULL,
-                source      TEXT,
-                meta        JSONB,
-                run_count   INTEGER DEFAULT 1,
-                first_run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_run_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (family, label)
-            )
-            """
-        )
+    pass
 
 
 def record_trial(
@@ -93,31 +78,23 @@ def record_trial(
     source: str = "",
     meta: dict | None = None,
 ) -> bool:
-    """Register one hypothesis. Idempotent on (family, label).
-
-    Returns True when the row was written or bumped. Never raises — a ledger
-    outage must not stop research, it just means the count is stale, and the
-    count being stale is visible in `trial_count`'s own return value.
-    """
+    """Register one hypothesis in MongoDB. Idempotent on (family, label)."""
     label = (label or "").strip()
     if not label:
         return False
     try:
-        ensure_table()
-        with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO research_trials (family, label, source, meta)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (family, label) DO UPDATE SET
-                    run_count = research_trials.run_count + 1,
-                    last_run_at = CURRENT_TIMESTAMP,
-                    source = COALESCE(NULLIF(EXCLUDED.source, ''),
-                                      research_trials.source),
-                    meta = COALESCE(EXCLUDED.meta, research_trials.meta)
-                """,
-                [family, label, source, json.dumps(meta) if meta else None],
-            )
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        mongo_store.update_docs(
+            "research_trials",
+            {"family": family, "label": label},
+            {
+                "$inc": {"run_count": 1},
+                "$set": {"source": source, "meta": meta or {}, "last_run_at": now},
+                "$setOnInsert": {"first_run_at": now, "family": family, "label": label},
+            },
+            upsert=True,
+        )
         return True
     except Exception as e:
         logger.warning("[TrialRegistry] record_trial(%s/%s) failed: %s",
@@ -126,38 +103,32 @@ def record_trial(
 
 
 def seed_known_trials() -> int:
-    """Insert the pre-ledger trials. Idempotent; returns rows now present."""
+    """Insert the pre-ledger trials in MongoDB."""
     for family, label, source in KNOWN_PRIOR_TRIALS:
         try:
-            ensure_table()
-            with get_db() as db:
-                mongo_store.upsert_doc('research_trials', {'family': family, 'label': label}, {'family': family, 'label': label, 'source': source}, insert_only=True)
+            mongo_store.upsert_doc(
+                'research_trials',
+                {'family': family, 'label': label},
+                {'family': family, 'label': label, 'source': source, 'run_count': 1},
+                insert_only=True,
+            )
         except Exception as e:
             logger.warning("[TrialRegistry] seed %s failed: %s", label, e)
     return trial_count()
 
 
 def trial_count(family: str = DEFAULT_FAMILY, include: str | None = None) -> int:
-    """Distinct hypotheses recorded in `family`.
-
-    `include` is a label that should be counted even if it has not been
-    recorded yet — the trial you are about to deflate. Returns at least 1, so
-    a caller can always pass the result straight to deflated_sharpe_ratio.
-    """
+    """Distinct hypotheses recorded in `family`."""
     try:
-        ensure_table()
-        with get_db() as db:
-            row = mongo_query.agg_row('research_trials', {'family': family}, [('count', None)])
-            n = int(row[0]) if row else 0
-            if include:
-                seen = db.execute(
-                    "SELECT 1 FROM research_trials WHERE family = %s AND label = %s",
-                    [family, include],
-                ).fetchone()
-                if not seen:
-                    n += 1
+        n = mongo_store.count_docs("research_trials", {"family": family})
+        if include:
+            seen = mongo_store.count_docs("research_trials", {"family": family, "label": include}) > 0
+            if not seen:
+                n += 1
         return max(1, n)
     except Exception as e:
+        logger.warning("[TrialRegistry] count failed: %s", e)
+        return 1
         logger.warning("[TrialRegistry] trial_count(%s) failed: %s", family, e)
         return 1
 

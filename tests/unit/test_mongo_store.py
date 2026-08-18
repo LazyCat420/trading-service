@@ -121,7 +121,7 @@ def test_forced_outage_on_mongo_mode_table_raises_through_a_real_reader(monkeypa
     monkeypatch.setattr(ms, "find_docs", lambda *a, **k: (_ for _ in ()).throw(boom))
 
     with pytest.raises(RuntimeError):
-        crr._trade_actions(None, "cycle-x")
+        crr._trade_actions("cycle-x")
 
 
 # ── Phase 1: new helpers (pure logic, mocked collection) ────────────────────

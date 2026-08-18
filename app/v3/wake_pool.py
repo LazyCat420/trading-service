@@ -93,20 +93,21 @@ def build_wake_pool(
     empty = {"tickers": [], "cycle_id": "", "as_of": None, "age_hours": None}
 
     try:
-        from app.db.connection import get_db
+        from datetime import datetime, timezone, timedelta
+        from app.db import mongo_store
 
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT cycle_id, created_at, desk_data
-                  FROM shared_desk
-                 WHERE created_at >= now() - (%s * interval '1 hour')
-                   AND cycle_id <> %s
-                 ORDER BY created_at DESC
-                 LIMIT 200
-                """,
-                [max_age_hours, exclude_cycle_id or ""],
-            ).fetchall()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=int(max_age_hours))
+        query = {
+            "created_at": {"$gte": cutoff},
+            "cycle_id": {"$ne": exclude_cycle_id or ""},
+        }
+        docs = mongo_store.find_docs(
+            "shared_desk",
+            query,
+            sort=[("created_at", -1)],
+            limit=200,
+        )
+        rows = [(d.get("cycle_id"), d.get("created_at"), d.get("desk_data")) for d in docs]
     except Exception as e:  # noqa: BLE001
         logger.warning("[WakePool] %s: pool lookup failed (non-fatal): %s: %s",
                        me, type(e).__name__, e)
@@ -114,8 +115,6 @@ def build_wake_pool(
 
     if not rows:
         return {**empty, "reason": "no_recent_desks"}
-
-    from datetime import datetime, timezone
 
     for cycle_id, created_at, desk_data in rows:
         meta = _as_dict(_as_dict(desk_data).get("cycle_metadata"))

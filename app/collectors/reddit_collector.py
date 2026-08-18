@@ -12,7 +12,6 @@ import hashlib
 import re
 import datetime
 import asyncio
-from app.db.connection import get_db
 from app.processors.ticker_extractor import (
     get_ticker_symbols,
     FALSE_TICKERS as SHARED_FALSE_TICKERS,
@@ -174,50 +173,49 @@ async def collect_subreddit(
     """
     from app.services.scraper_client import scraper_client
 
-    with get_db() as db:
-        count = 0
-        try:
-            items = await scraper_client.collect(
-                source="reddit",
-                req_data={
-                    "subreddits": [subreddit],
-                    "limit": limit,
-                    "time_filter": time_filter,
-                    "sort": "top",
-                }
-            )
+    count = 0
+    try:
+        items = await scraper_client.collect(
+            source="reddit",
+            req_data={
+                "subreddits": [subreddit],
+                "limit": limit,
+                "time_filter": time_filter,
+                "sort": "top",
+            }
+        )
 
-            for post in items:
-                title = post.get("title", "")
-                body = post.get("body", post.get("selftext", ""))
-                full_text = f"{title} {body}"
+        for post in items:
+            title = post.get("title", "")
+            body = post.get("body", post.get("selftext", ""))
+            full_text = f"{title} {body}"
 
-                # Extract ticker mentions (shared extractor)
-                tickers_found = set(await get_ticker_symbols(full_text, title=title))
+            # Extract ticker mentions (shared extractor)
+            tickers_found = set(await get_ticker_symbols(full_text, title=title))
 
-                # If filtering by ticker, skip posts without it
-                if ticker_filter and ticker_filter.upper() not in tickers_found:
-                    if ticker_filter.upper() not in full_text.upper():
-                        continue
-
-                # Assign primary ticker
-                primary_ticker = (
-                    ticker_filter.upper()
-                    if ticker_filter
-                    else (list(tickers_found)[0] if tickers_found else None)
-                )
-
-                if not primary_ticker:
+            # If filtering by ticker, skip posts without it
+            if ticker_filter and ticker_filter.upper() not in tickers_found:
+                if ticker_filter.upper() not in full_text.upper():
                     continue
 
-                count += _store_post(
-                    db, post, primary_ticker, subreddit, tickers_found
-                )
+            # Assign primary ticker
+            primary_ticker = (
+                ticker_filter.upper()
+                if ticker_filter
+                else (list(tickers_found)[0] if tickers_found else None)
+            )
 
-        except Exception as e:
-            logger.info(f"[reddit] r/{subreddit} error: {e}")
+            if not primary_ticker:
+                continue
 
-        return count
+            count += _store_post(
+                post, primary_ticker, subreddit, tickers_found
+            )
+
+    except Exception as e:
+        logger.info(f"[reddit] r/{subreddit} error: {e}")
+
+    return count
 
 
 async def search_subreddit_for_ticker(
@@ -231,66 +229,65 @@ async def search_subreddit_for_ticker(
     """Search WITHIN a specific subreddit list for a ticker via scraper-service."""
     from app.services.scraper_client import scraper_client
 
-    with get_db() as db:
-        count = 0
-        seen_ids = set()
+    count = 0
+    seen_ids = set()
 
-        try:
-            subreddits = [s.strip() for s in subreddit.split("+") if s.strip()]
+    try:
+        subreddits = [s.strip() for s in subreddit.split("+") if s.strip()]
 
-            for query in queries:
-                items = await scraper_client.collect(
-                    source="reddit",
-                    req_data={
-                        "query": query,
-                        "subreddits": subreddits,
-                        "limit": limit,
-                        "time_filter": time_filter,
-                    }
+        for query in queries:
+            items = await scraper_client.collect(
+                source="reddit",
+                req_data={
+                    "query": query,
+                    "subreddits": subreddits,
+                    "limit": limit,
+                    "time_filter": time_filter,
+                }
+            )
+
+            for post in items:
+                post_id = post.get("id", "")
+                if post_id in seen_ids:
+                    continue
+                seen_ids.add(post_id)
+
+                created_val = post.get("created_at", post.get("created_utc"))
+                if isinstance(created_val, (int, float)):
+                    created_utc = datetime.datetime.fromtimestamp(created_val, tz=datetime.UTC)
+                elif isinstance(created_val, str):
+                    created_utc = datetime.datetime.fromisoformat(created_val)
+                    if created_utc.tzinfo is None:
+                        created_utc = created_utc.replace(tzinfo=datetime.UTC)
+                else:
+                    created_utc = datetime.datetime.now(datetime.UTC)
+
+                if since and created_utc < since:
+                    continue
+
+                if not _is_quality_post(post):
+                    continue
+
+                if not _is_relevant_to_ticker(post, ticker):
+                    continue
+
+                title = post.get("title", "")
+                body = post.get("body", post.get("selftext", ""))
+                full_text = f"{title} {body}"
+                tickers_found = set(await get_ticker_symbols(full_text, title=title))
+                tickers_found.add(ticker.upper())
+
+                actual_sub = post.get("subreddit", subreddits[0] if subreddits else "")
+                count += _store_post(
+                    post, ticker.upper(), actual_sub, tickers_found
                 )
 
-                for post in items:
-                    post_id = post.get("id", "")
-                    if post_id in seen_ids:
-                        continue
-                    seen_ids.add(post_id)
+            await asyncio.sleep(1.0)  # Pace between queries
 
-                    created_val = post.get("created_at", post.get("created_utc"))
-                    if isinstance(created_val, (int, float)):
-                        created_utc = datetime.datetime.fromtimestamp(created_val, tz=datetime.UTC)
-                    elif isinstance(created_val, str):
-                        created_utc = datetime.datetime.fromisoformat(created_val)
-                        if created_utc.tzinfo is None:
-                            created_utc = created_utc.replace(tzinfo=datetime.UTC)
-                    else:
-                        created_utc = datetime.datetime.now(datetime.UTC)
+    except Exception as e:
+        logger.info(f"[reddit] r/{subreddit} search error: {e}")
 
-                    if since and created_utc <= since:
-                        continue
-
-                    if not _is_quality_post(post):
-                        continue
-
-                    if not _is_relevant_to_ticker(post, ticker):
-                        continue
-
-                    title = post.get("title", "")
-                    body = post.get("body", post.get("selftext", ""))
-                    full_text = f"{title} {body}"
-                    tickers_found = set(await get_ticker_symbols(full_text, title=title))
-                    tickers_found.add(ticker.upper())
-
-                    actual_sub = post.get("subreddit", subreddits[0] if subreddits else "")
-                    count += _store_post(
-                        db, post, ticker.upper(), actual_sub, tickers_found
-                    )
-
-                await asyncio.sleep(1.0)  # Pace between queries
-
-        except Exception as e:
-            logger.info(f"[reddit] r/{subreddit} search error: {e}")
-
-        return count
+    return count
 
 
 async def collect_for_ticker(ticker: str, limit: int = 15, since: datetime.datetime | None = None) -> int:
@@ -335,9 +332,9 @@ async def collect_for_ticker(ticker: str, limit: int = 15, since: datetime.datet
 
 
 def _store_post(
-    db, post: dict, primary_ticker: str, subreddit: str, tickers_found: set
+    post: dict, primary_ticker: str, subreddit: str, tickers_found: set
 ) -> int:
-    """Store a Reddit post and its discovered tickers. Returns 1 on success, 0 on skip."""
+    """Store a Reddit post and its discovered tickers in pure MongoDB. Returns 1 on success, 0 on skip."""
     title = post.get("title", "")
     body = post.get("body", post.get("selftext", ""))
     raw_post_id = post.get("id", hashlib.md5(title.encode()).hexdigest()[:12])
@@ -359,10 +356,6 @@ def _store_post(
     flair = post.get("flair", post.get("link_flair_text", ""))
     awards = post.get("awards", post.get("total_awards_received", 0))
 
-    # Comment velocity (rough: comments / hours since posted). RSS carries no
-    # comment count, so num_comments is None on that path and there is no
-    # velocity to compute -- dividing would raise inside the except below and
-    # silently drop the post.
     comment_velocity = None
     if num_comments is not None:
         age_hours = max(
@@ -371,39 +364,39 @@ def _store_post(
         comment_velocity = round(num_comments / age_hours, 2)
 
     try:
-        from app.db import mongo_store
         now_dt = datetime.datetime.now(datetime.UTC)
-        if mongo_store.writes_mongo("reddit_posts"):
-            mongo_store.upsert_doc(
-                "reddit_posts",
-                {"id": post_id},
-                {
-                    "id": post_id,
-                    "ticker": primary_ticker,
-                    "subreddit": subreddit,
-                    "title": title,
-                    "body": body,
-                    "score": score,
-                    "upvote_ratio": upvote_ratio,
-                    "comment_count": num_comments,
-                    "flair": flair,
-                    "sentiment_score": None,
-                    "award_count": awards,
-                    "comment_velocity": comment_velocity,
-                    "created_utc": created_utc,
-                    "collected_at": now_dt,
-                },
-                insert_only=True,
-            )
-        if mongo_store.writes_pg("reddit_posts"):
-            mongo_store.upsert_doc('reddit_posts', {'id': post_id}, {'id': post_id, 'ticker': primary_ticker, 'subreddit': subreddit, 'title': title, 'body': body, 'score': score, 'upvote_ratio': upvote_ratio, 'comment_count': num_comments, 'flair': flair, 'sentiment_score': None, 'award_count': awards, 'comment_velocity': comment_velocity, 'created_utc': created_utc, 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, insert_only=True)
+        mongo_store.upsert_doc(
+            "reddit_posts",
+            {"id": post_id},
+            {
+                "id": post_id,
+                "ticker": primary_ticker,
+                "subreddit": subreddit,
+                "title": title,
+                "body": body,
+                "score": score,
+                "upvote_ratio": upvote_ratio,
+                "comment_count": num_comments,
+                "flair": flair,
+                "sentiment_score": None,
+                "award_count": awards,
+                "comment_velocity": comment_velocity,
+                "created_utc": created_utc,
+                "collected_at": now_dt,
+            },
+            insert_only=True,
+        )
 
-        # Write discovered tickers (filter through shared FALSE_TICKERS)
         for t in tickers_found:
-            if t in FALSE_TICKERS or len(t) < 2:
+            if t in SHARED_FALSE_TICKERS or len(t) < 2:
                 continue
             confidence = min(round(upvote_ratio, 2), 1.0) if upvote_ratio else 0.5
-            mongo_store.upsert_doc('discovered_tickers', {'ticker': t, 'source': 'reddit'}, {'ticker': t, 'source': 'reddit', 'context': f"r/{subreddit}: {title[:80]}", 'score': confidence, 'discovered_at': created_utc}, insert_only=True)
+            mongo_store.upsert_doc(
+                'discovered_tickers',
+                {'ticker': t, 'source': 'reddit'},
+                {'ticker': t, 'source': 'reddit', 'context': f"r/{subreddit}: {title[:80]}", 'score': confidence, 'discovered_at': created_utc},
+                insert_only=True,
+            )
 
         return 1
     except Exception as e:
@@ -429,12 +422,7 @@ async def collect_all(
 
 
 async def run_reddit_purge_discovery(limit: int = 15, use_llm: bool = False) -> int:
-    """Runs general sweep Reddit ticker discovery using the scraper-service's reddit-purge endpoint.
-    
-    Extracts trending ticker symbols and matches them, writing back to:
-      - reddit_posts (raw post data matching the tickers)
-      - discovered_tickers (discovered ticker signals)
-    """
+    """Runs general sweep Reddit ticker discovery using the scraper-service's reddit-purge endpoint."""
     from app.services.scraper_client import scraper_client
     
     logger.info("[reddit-purge] Running Reddit purge discovery sweep...")
@@ -453,36 +441,37 @@ async def run_reddit_purge_discovery(limit: int = 15, use_llm: bool = False) -> 
             
         logger.info(f"[reddit-purge] Discovered {len(items)} tickers from Reddit sweep.")
         
-        with get_db() as db:
-            stored_posts = 0
-            stored_tickers = 0
+        stored_posts = 0
+        stored_tickers = 0
+        
+        for item in items:
+            ticker = item.get("ticker", "").upper().strip()
+            score = item.get("score", 0)
+            posts = item.get("posts", [])
             
-            for item in items:
-                ticker = item.get("ticker", "").upper().strip()
-                score = item.get("score", 0)
-                posts = item.get("posts", [])
-                
-                # Insert ticker into discovered_tickers
-                try:
-                    confidence = min(round(score / 30.0, 2), 1.0) if score else 0.5
-                    mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': 'reddit-purge'}, {'$set': {'score': confidence, 'context': f"Reddit Purge score: {score}", 'discovered_at': datetime.datetime.now(datetime.timezone.utc)}}, upsert=True)
-                    stored_tickers += 1
-                except Exception as e:
-                    logger.warning(f"[reddit-purge] Failed to save discovered ticker {ticker}: {e}")
-                
-                # Save associated posts
-                for post in posts:
-                    stored_posts += _store_post(
-                        db,
-                        post,
-                        ticker,
-                        post.get("subreddit", "reddit"),
-                        {ticker}
-                    )
-                    
-            logger.info(f"[reddit-purge] Stored {stored_tickers} tickers and {stored_posts} post associations.")
-            return stored_tickers
+            try:
+                confidence = min(round(score / 30.0, 2), 1.0) if score else 0.5
+                mongo_store.update_docs(
+                    'discovered_tickers',
+                    {'ticker': ticker, 'source': 'reddit-purge'},
+                    {'$set': {'score': confidence, 'context': f"Reddit Purge score: {score}", 'discovered_at': datetime.datetime.now(datetime.timezone.utc)}},
+                    upsert=True,
+                )
+                stored_tickers += 1
+            except Exception as e:
+                logger.warning(f"[reddit-purge] Failed to save discovered ticker {ticker}: {e}")
             
+            for post in posts:
+                stored_posts += _store_post(
+                    post,
+                    ticker,
+                    post.get("subreddit", "reddit"),
+                    {ticker},
+                )
+                
+        logger.info(f"[reddit-purge] Stored {stored_tickers} tickers and {stored_posts} post associations.")
+        return stored_tickers
+        
     except Exception as e:
         logger.error(f"[reddit-purge] Error running Reddit purge discovery: {e}", exc_info=True)
         return 0

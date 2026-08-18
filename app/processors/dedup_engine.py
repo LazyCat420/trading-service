@@ -11,7 +11,7 @@ import hashlib
 import re
 import logging
 from datetime import datetime, timezone, timedelta
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -78,18 +78,14 @@ class DedupEngine:
 
         # Tier 1: Check content_hash in DB (exact match)
         if self.has_content_hash:
-            with get_db() as db:
-                query = f"SELECT id FROM {self.table} WHERE content_hash = %s"
-                params = [h]
-                if self.ticker:
-                    query += " AND ticker = %s"
-                    params.append(self.ticker)
-                
-                db.execute(query, params)
-                if db.fetchone():
-                    self.seen_hashes.add(h)
-                    logger.debug(f"[dedup] Match found via content_hash on {self.table} for '{title[:30]}...'")
-                    return True
+            query = {"content_hash": h}
+            if self.ticker:
+                query["ticker"] = self.ticker.upper()
+            
+            if mongo_store.count_docs(self.table, query) > 0:
+                self.seen_hashes.add(h)
+                logger.debug(f"[dedup] Match found via content_hash on {self.table} for '{title[:30]}...'")
+                return True
 
         # Normalize target title
         target_words = self.get_word_set(title)
@@ -166,19 +162,15 @@ class DedupEngine:
             content_col = "summary"
             date_col = "collected_at"
             
-        query = f"SELECT {title_col}, {content_col} FROM {self.table} WHERE {date_col} >= %s"
-        params = [since_time]
-        
+        query = {date_col: {"$gte": since_time}}
         if self.ticker:
-            query += " AND ticker = %s"
-            params.append(self.ticker)
+            query["ticker"] = self.ticker.upper()
             
         recent = []
         try:
-            with get_db() as db:
-                db.execute(query, params)
-                for r in db.fetchall():
-                    recent.append((r[0] or "", r[1] or ""))
+            docs = mongo_store.find_docs(self.table, query)
+            for d in docs:
+                recent.append((d.get(title_col) or "", d.get(content_col) or ""))
         except Exception as e:
             logger.warning(f"[dedup] Failed to fetch recent items from {self.table}: {e}")
             

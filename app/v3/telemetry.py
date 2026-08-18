@@ -105,8 +105,6 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
     if not entries:
         return
 
-    from app.db.connection import get_db
-
     try:
         now_utc = datetime.now(timezone.utc)
         import uuid
@@ -190,32 +188,7 @@ _GUARDRAIL_TABLE_ENSURED = False
 
 
 def _ensure_guardrail_table() -> None:
-    """Create the v3_guardrail_firings table if it doesn't exist."""
-    global _GUARDRAIL_TABLE_ENSURED
-    if _GUARDRAIL_TABLE_ENSURED:
-        return
-
-    from app.db.connection import get_db
-
-    try:
-        with get_db() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS v3_guardrail_firings (
-                    id SERIAL PRIMARY KEY,
-                    guardrail TEXT NOT NULL,
-                    cycle_id TEXT,
-                    ticker TEXT,
-                    detail JSONB,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            """)
-            db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_v3_guardrail_name
-                ON v3_guardrail_firings (guardrail, created_at)
-            """)
-        _GUARDRAIL_TABLE_ENSURED = True
-    except Exception as e:
-        logger.warning("[V3Telemetry] Failed to ensure guardrail table: %s", e)
+    pass
 
 
 def record_guardrail_firing(

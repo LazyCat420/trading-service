@@ -62,46 +62,23 @@ KIND_FIELD_LOST = "ARTIFACT_FIELD_LOST_ON_PERSIST"
 
 
 def _ensure_table() -> None:
-    global _TABLE_ENSURED
-    if _TABLE_ENSURED:
-        return
-    from app.db.connection import get_db
-
-    try:
-        with get_db() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS v3_invariant_violations (
-                    id SERIAL PRIMARY KEY,
-                    kind TEXT NOT NULL,
-                    cycle_id TEXT,
-                    ticker TEXT,
-                    detail JSONB,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            """)
-            db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_v3_invariant_kind
-                ON v3_invariant_violations (kind, created_at)
-            """)
-        _TABLE_ENSURED = True
-    except Exception as e:
-        logger.warning("[Invariants] Failed to ensure table: %s", e)
+    pass
 
 
 def record_violation(kind: str, *, ticker: str = "", cycle_id: str = "",
                      **detail: Any) -> str:
-    """Record one violation and return its kind unchanged.
-
-    Returning the kind keeps every call site a one-liner, so recording can
-    never alter control flow — the failure mode that would turn an observer
-    into a trading bug.
-    """
+    """Record one violation and return its kind unchanged."""
     try:
-        _ensure_table()
-        from app.db.connection import get_db
+        from datetime import datetime, timezone
+        from app.db import mongo_store
 
-        with get_db() as db:
-            mongo_store.insert_docs('v3_invariant_violations', [{'kind': kind, 'cycle_id': cycle_id or None, 'ticker': ticker or None, 'detail': json.dumps(detail, default=str)}])
+        mongo_store.insert_docs('v3_invariant_violations', [{
+            'kind': kind,
+            'cycle_id': cycle_id or None,
+            'ticker': ticker or None,
+            'detail': detail,
+            'created_at': datetime.now(timezone.utc),
+        }])
         logger.error(
             "[Invariants] %s VIOLATED for %s (cycle=%s): %s",
             kind, ticker or "?", cycle_id or "?", detail,
@@ -114,30 +91,19 @@ def record_violation(kind: str, *, ticker: str = "", cycle_id: str = "",
 def check_ticker_complete(
     *, ticker: str, cycle_id: str, desk: Any = None, result: dict | None = None,
 ) -> list[str]:
-    """Postconditions for one finished ticker. Returns the violations found.
-
-    Called at the END of the per-ticker pipeline, where "what should exist by
-    now" is unambiguous. Reads the database rather than trusting in-memory
-    state on purpose: the bugs this catches are precisely the ones where the
-    in-memory object looked fine and the write never landed.
-    """
+    """Postconditions for one finished ticker. Returns the violations found."""
     violations: list[str] = []
     if not ticker or not cycle_id:
         return violations
 
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_store
 
-        with get_db() as db:
-            has_desk = bool(db.execute(
-                "SELECT 1 FROM shared_desk WHERE cycle_id = %s AND ticker = %s LIMIT 1",
-                [cycle_id, ticker],
-            ).fetchone())
-            has_row = bool(db.execute(
-                "SELECT 1 FROM trade_results WHERE cycle_id = %s AND ticker = %s LIMIT 1",
-                [cycle_id, ticker],
-            ).fetchone())
+        has_desk = mongo_store.count_docs("shared_desk", {"cycle_id": cycle_id, "ticker": ticker}) > 0
+        has_row = mongo_store.count_docs("trade_results", {"cycle_id": cycle_id, "ticker": ticker}) > 0
     except Exception as e:  # noqa: BLE001 — a probe failure is not a violation
+        logger.debug("[Invariants] %s complete probe failed: %s", ticker, e)
+        return violations
         logger.debug("[Invariants] %s: probe failed (%s) — skipping", ticker, e)
         return violations
 
@@ -310,80 +276,54 @@ def check_cycle_complete(*, cycle_id: str) -> list[str]:
 
 
 def _check_universe_coverage(cycle_id: str) -> list[str]:
-    """Every analysed ticker must have a price bar this week.
+    """Every analysed ticker must have a price bar this week."""
+    from datetime import date, timedelta
+    from app.db import mongo_store
 
-    The 07-20 collapse (2,642 -> 509 distinct tickers) ran for nine days while
-    the bot reasoned over stale technicals. It was a *stock vs flow* confusion:
-    509 was always the S&P-500 daily refresh set, and 2,642 was a one-off
-    backfill draining away. A set-difference catches it on the first cycle.
-    """
-    from app.db.connection import get_db
+    cutoff = date.today() - timedelta(days=7)
+    docs = mongo_store.find_docs("analysis_results", {"cycle_id": cycle_id}, projection={"ticker": 1})
+    tickers = [d.get("ticker") for d in docs if d.get("ticker")]
+    stale = []
+    for t in tickers:
+        has_recent = mongo_store.count_docs("price_history", {"ticker": t, "date": {"$gt": cutoff}}) > 0
+        if not has_recent:
+            stale.append(t)
 
-    with get_db() as db:
-        stale = db.execute(
-            """
-            SELECT a.ticker FROM analysis_results a
-            WHERE a.cycle_id = %s
-              AND NOT EXISTS (
-                SELECT 1 FROM price_history p
-                WHERE p.ticker = a.ticker AND p.date > CURRENT_DATE - 7)
-            """,
-            [cycle_id],
-        ).fetchall()
     if not stale:
         return []
     return [record_violation(
         KIND_UNIVERSE_NOT_COVERED, cycle_id=cycle_id,
-        stale_tickers=[r[0] for r in stale][:20], count=len(stale),
+        stale_tickers=stale[:20], count=len(stale),
     )]
 
 
 def _check_tool_failure_rates(cycle_id: str) -> list[str]:
-    """No tool may sit above the failure ceiling.
-
-    Reads `tool_usage_stats` deliberately: tool_name/success/called_at are the
-    columns that table gets RIGHT (see the note in app/tools/registry.py). Its
-    broken agent attribution is irrelevant here.
-    """
+    """No tool may sit above the failure ceiling."""
     from datetime import datetime, timezone, timedelta
     from app.db import mongo_store
     rows = []
 
-    if mongo_store.reads_mongo("tool_usage_stats"):
-        try:
-            since = datetime.now(timezone.utc) - timedelta(hours=24)
-            pipeline = [
-                {"$match": {"called_at": {"$gte": since}}},
-                {"$group": {
-                    "_id": "$tool_name",
-                    "n": {"$sum": 1},
-                    "fails": {"$sum": {"$cond": ["$success", 0, 1]}},
-                }},
-                {"$match": {"n": {"$gte": TOOL_FAIL_MIN_CALLS}}},
-                {"$project": {
-                    "tool_name": "$_id",
-                    "n": 1,
-                    "fail_pct": {"$round": [{"$multiply": [100.0, {"$divide": ["$fails", "$n"]}]}]},
-                }}
-            ]
-            mongo_rows = mongo_store.aggregate("tool_usage_stats", pipeline)
-            rows = [(r["tool_name"], r["n"], r["fail_pct"]) for r in mongo_rows]
-        except Exception as e:
-            mongo_store.handle_mongo_read_failure("tool_usage_stats", "_check_tool_failure_rates", e)
+    try:
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        pipeline = [
+            {"$match": {"called_at": {"$gte": since}}},
+            {"$group": {
+                "_id": "$tool_name",
+                "n": {"$sum": 1},
+                "fails": {"$sum": {"$cond": ["$success", 0, 1]}},
+            }},
+            {"$match": {"n": {"$gte": TOOL_FAIL_MIN_CALLS}}},
+            {"$project": {
+                "tool_name": "$_id",
+                "n": 1,
+                "fail_pct": {"$round": [{"$multiply": [100.0, {"$divide": ["$fails", "$n"]}]}]},
+            }}
+        ]
+        mongo_rows = mongo_store.aggregate("tool_usage_stats", pipeline)
+        rows = [(r["tool_name"], r["n"], r["fail_pct"]) for r in mongo_rows]
+    except Exception as e:
+        logger.warning("[Invariants] tool failure check failed: %s", e)
 
-    if not rows and not mongo_store.reads_mongo("tool_usage_stats"):
-        from app.db.connection import get_db
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT tool_name, COUNT(*) n,
-                       ROUND(100.0 * COUNT(*) FILTER (WHERE NOT success) / COUNT(*)) fail_pct
-                FROM tool_usage_stats
-                WHERE called_at > NOW() - INTERVAL '24 hours'
-                GROUP BY 1 HAVING COUNT(*) >= %s
-                """,
-                [TOOL_FAIL_MIN_CALLS],
-            ).fetchall()
     out = []
     for name, n, pct in rows:
         if pct is not None and float(pct) > TOOL_FAIL_PCT_CEILING:
@@ -396,20 +336,10 @@ def _check_tool_failure_rates(cycle_id: str) -> list[str]:
 
 
 def _check_decision_drift(cycle_id: str) -> list[str]:
-    """The HOLD share must not lurch between rolling windows.
+    """The HOLD share must not lurch between rolling windows."""
+    from app.db import mongo_query
 
-    Compares the last DRIFT_WINDOW decisions against the DRIFT_WINDOW before
-    them. Deliberately NOT per-cycle: a cycle carries 3-6 decisions, so one
-    all-HOLD cycle is 100% and perfectly normal — an absolute threshold would
-    fire on almost every healthy cycle.
-
-    The 07-25 -> 07-28 ramp (58% -> 100% HOLD) is exactly this shape, and it
-    was the most consequential change of the month.
-    """
-    from app.db.connection import get_db
-
-    with get_db() as db:
-        rows = mongo_query.find_rows('trade_results', {'action': {'$ne': None}}, ['action'], sort=[('created_at', -1)], limit=DRIFT_WINDOW + DRIFT_BASELINE)
+    rows = mongo_query.find_rows('trade_results', {'action': {'$ne': None}}, ['action'], sort=[('created_at', -1)], limit=DRIFT_WINDOW + DRIFT_BASELINE)
     if len(rows) < DRIFT_WINDOW + DRIFT_BASELINE:
         return []  # not enough history to compare — silence, not a guess
     recent = [r[0] for r in rows[:DRIFT_WINDOW]]
@@ -427,27 +357,23 @@ def _check_decision_drift(cycle_id: str) -> list[str]:
 
 
 def _check_agent_cost(cycle_id: str) -> list[str]:
-    """Flag an agent that spent heavily without calling a single tool.
+    """Flag an agent that spent heavily without calling a single tool."""
+    from app.db import mongo_store
 
-    Not a bug on its own — a synthesizer SHOULD deliberate. It is a budget fact
-    that should be chosen rather than discovered: the tournament consumed 31%
-    of all tokens at 242k per call with loops=1.0, and nobody knew until
-    someone went looking.
-    """
-    from app.db.connection import get_db
-
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT agent_name, AVG(token_usage) tok, AVG(loops_used) loops
-            FROM v3_agent_telemetry
-            WHERE cycle_id = %s
-            GROUP BY 1
-            """,
-            [cycle_id],
-        ).fetchall()
+    pipeline = [
+        {"$match": {"cycle_id": cycle_id}},
+        {"$group": {
+            "_id": "$agent_name",
+            "tok": {"$avg": "$token_usage"},
+            "loops": {"$avg": "$loops_used"},
+        }}
+    ]
+    docs = mongo_store.aggregate("v3_agent_telemetry", pipeline)
     out = []
-    for name, tok, loops in rows:
+    for d in docs:
+        name = d.get("_id")
+        tok = d.get("tok")
+        loops = d.get("loops")
         if tok and int(tok) > COST_NO_RESEARCH_TOKENS and (loops or 0) <= 1.0:
             out.append(record_violation(
                 KIND_AGENT_COST_NO_RESEARCH, cycle_id=cycle_id,
@@ -496,10 +422,9 @@ def record_ticker_crash(*, ticker: str, cycle_id: str, error: BaseException) -> 
 
     phase = "NO_DESK"
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_query
 
-        with get_db() as db:
-            row = mongo_query.find_row('shared_desk', {'cycle_id': cycle_id, 'ticker': ticker}, ['phase'])
+        row = mongo_query.find_row('shared_desk', {'cycle_id': cycle_id, 'ticker': ticker}, ['phase'])
         if row and row[0]:
             phase = str(row[0])
     except Exception as e:  # noqa: BLE001 — a probe failure must not lose the record
@@ -509,21 +434,12 @@ def record_ticker_crash(*, ticker: str, cycle_id: str, error: BaseException) -> 
         KIND_DESK_ABANDONED, ticker=ticker, cycle_id=cycle_id,
         phase_at_crash=phase,
         error_type=type(error).__name__,
-        # asyncio.TimeoutError stringifies to "" — the type is the only signal
-        # there, which is why it is recorded separately.
         error=str(error)[:500],
     )]
 
 
 def _terminal_phases() -> tuple[frozenset[str], str]:
-    """The phases a finished desk is allowed to sit in, plus the skip phase.
-
-    Derived from the orchestrator's own transition table — a terminal phase is
-    one with nowhere left to go — so adding a phase to `DeskPhase` cannot
-    silently leave this check asserting an out-of-date vocabulary. Falls back to
-    the literals if the import fails, because a check that raises here is a
-    check that reports "no stalls" on every cycle.
-    """
+    """The phases a finished desk is allowed to sit in, plus the skip phase."""
     try:
         from app.v3.shared_desk import _VALID_TRANSITIONS, DeskPhase
 
@@ -536,101 +452,37 @@ def _terminal_phases() -> tuple[frozenset[str], str]:
 
 
 def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
-    """Every desk this cycle built must have reached a terminal phase.
-
-    THE HOLE THIS CLOSES, and why it existed
-    ----------------------------------------
-    `HOOD` on 07-30 wrote a desk, advanced it to `DEBATE_DONE`, and stopped:
-    no `analysis_results` row, no `trade_results` row, the research and debate
-    already paid for and thrown away. **6 of 204 desks over 7 days, in 3 of 48
-    cycles** — and invisible to all seven of the checks that existed, for one
-    reason worth stating plainly:
-
-        `check_ticker_complete` runs at the END of a pipeline these tickers
-        never reached, and every cycle-level check above keys off
-        `analysis_results` — the table whose ABSENCE IS THE SYMPTOM.
-
-    Keying observability off the same table the bug corrupts builds a blind
-    spot exactly the shape of the bug. So this check reads `shared_desk`, the
-    one table a stalled desk is guaranteed to appear in: the desk row is
-    written on the way IN, so it exists precisely when everything downstream
-    does not.
-
-    CALIBRATION (measured, not guessed — 7 days to 2026-07-30)
-    ---------------------------------------------------------
-        PM_DONE        176   terminal, healthy       -> silent
-        INIT            22   triage skip, healthy    -> silent
-        DEBATE_DONE      5   abandoned mid-flight    -> FIRES
-        RESEARCH_DONE    1   abandoned mid-flight    -> FIRES
-
-    `INIT` is NOT a stall: the Triage Gate legitimately declines a ticker
-    before any phase advances, and 22 healthy skips a week would mute this
-    check within days. The distinction is that a stall has *already spent* the
-    research budget — which is what makes it worth an alert.
-
-    TWO KINDS OF LOSS, and why one number cannot carry both
-    -------------------------------------------------------
-    The first live firing (NVDA, `cycle-observe-1785396275`, 2026-07-30 07:28)
-    was not the shape this was calibrated on:
-
-        HOOD  DEBATE_DONE    no analysis, no telemetry, no decision
-        NVDA  RESEARCH_DONE  analysis + 7 telemetry rows, but NO decision
-
-    NVDA also carried a `pipeline_incomplete` stamp ("Invalid transition:
-    RESEARCH_DONE → PM_DONE"), which looks like the 2026-07-29 ORCL fix behaving
-    as designed. It was not benign: the root cause was a same-day regression
-    (`6a9bd82`) where the DEBATE_ENGINE=3 branch returned early and skipped the
-    `tournament_result` whiteboard write — and that write is the CHAIN TRIGGER
-    that dispatches the Board. Seven agents ran, the Board never did, and no
-    decision was produced.
-
-    So a `pipeline_incomplete` stamp **explains the phase, not the outcome**, and
-    "the analysis landed" is not "nothing was lost". A desk can lose:
-
-        its research   — nothing persisted, the spend is simply gone
-        its decision   — research persisted, but the thing the pipeline
-                         EXISTS to produce never happened
-
-    Reporting one `lost` count flattens those, and flattening is what let a live
-    regression read as benign for as long as it took to find the real cause. Each
-    desk therefore carries `work_landed`, `decided` and `explained`, and the
-    violation carries BOTH `lost_research` and `undecided`. `explained` is
-    recorded because it is diagnostic, never because it excuses anything.
-    """
-    from app.db.connection import get_db
+    """Every desk this cycle built must have reached a terminal phase."""
+    from app.db import mongo_store
 
     terminal, skip_phase = _terminal_phases()
     allowed = set(terminal) | {skip_phase}
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT d.ticker, d.phase,
-                   EXISTS (SELECT 1 FROM analysis_results a
-                           WHERE a.cycle_id = d.cycle_id AND a.ticker = d.ticker) landed,
-                   EXISTS (SELECT 1 FROM trade_results t
-                           WHERE t.cycle_id = d.cycle_id AND t.ticker = d.ticker) decided,
-                   (d.desk_data #> '{cycle_metadata,pipeline_incomplete}') IS NOT NULL explained
-            FROM shared_desk d
-            WHERE d.cycle_id = %s AND d.phase <> ALL(%s)
-            ORDER BY d.ticker
-            """,
-            [cycle_id, sorted(allowed)],
-        ).fetchall()
-    if not rows:
+    docs = mongo_store.find_docs(
+        "shared_desk",
+        {"cycle_id": cycle_id, "phase": {"$nin": list(allowed)}},
+        sort=[("ticker", 1)],
+    )
+    if not docs:
         return []
 
-    stalled = [
-        {"ticker": r[0], "phase": r[1], "work_landed": bool(r[2]),
-         "decided": bool(r[3]), "explained": bool(r[4])}
-        for r in rows
-    ]
-    # Two distinct losses, never summed into one alarm.
+    stalled = []
+    for d in docs:
+        tk = d.get("ticker")
+        ph = d.get("phase")
+        landed = mongo_store.count_docs("analysis_results", {"cycle_id": cycle_id, "ticker": tk}) > 0
+        decided = mongo_store.count_docs("trade_results", {"cycle_id": cycle_id, "ticker": tk}) > 0
+        desk_data = d.get("desk_data") or {}
+        explained = (desk_data.get("cycle_metadata") or {}).get("pipeline_incomplete") is not None
+        stalled.append({
+            "ticker": tk, "phase": ph, "work_landed": landed,
+            "decided": decided, "explained": explained,
+        })
+
     lost_research = [s for s in stalled if not s["work_landed"]]
     undecided = [s for s in stalled if s["work_landed"] and not s["decided"]]
     return [record_violation(
         KIND_DESK_STALLED, cycle_id=cycle_id,
-        # One row per cycle: a deploy mid-cycle strands every live desk at once.
         ticker=(stalled[0]["ticker"] if len(stalled) == 1 else ""),
         count=len(stalled),
         lost_research=len(lost_research),
@@ -644,31 +496,27 @@ def _check_desks_reached_terminal(cycle_id: str) -> list[str]:
 
 
 def _check_attribution(cycle_id: str) -> list[str]:
-    """The telemetry that answers "which agent researches" must keep working.
+    """The telemetry that answers "which agent researches" must keep working."""
+    from datetime import datetime, timezone, timedelta
+    from app.db import mongo_store
 
-    Attribution in `agent_tool_telemetry` was 100% in June and decayed to 0.6%
-    by late July, unnoticed, because a decaying observability layer produces no
-    symptom other than answers quietly becoming wrong.
-    """
-    from app.db.connection import get_db
-
-    with get_db() as db:
-        row = db.execute(
-            """
-            SELECT COUNT(*) n,
-                   COUNT(*) FILTER (WHERE agent_name IS NOT NULL
-                                      AND agent_name <> 'unknown') named
-            FROM agent_tool_telemetry
-            WHERE created_at > NOW() - INTERVAL '24 hours'
-            """,
-        ).fetchone()
-    if not row or not row[0] or int(row[0]) < TOOL_FAIL_MIN_CALLS:
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    total_calls = mongo_store.count_docs("agent_tool_telemetry", {"created_at": {"$gt": since}})
+    if total_calls < TOOL_FAIL_MIN_CALLS:
         return []
-    pct = 100.0 * int(row[1]) / int(row[0])
+
+    named_calls = mongo_store.count_docs(
+        "agent_tool_telemetry",
+        {
+            "created_at": {"$gt": since},
+            "agent_name": {"$nin": [None, "", "unknown"]},
+        },
+    )
+    pct = 100.0 * named_calls / total_calls
     if pct >= ATTRIBUTION_MIN_PCT:
         return []
     return [record_violation(
         KIND_ATTRIBUTION_DECAY, cycle_id=cycle_id,
-        attributed_pct=round(pct, 1), calls=int(row[0]),
+        attributed_pct=round(pct, 1), calls=total_calls,
         floor=ATTRIBUTION_MIN_PCT,
     )]

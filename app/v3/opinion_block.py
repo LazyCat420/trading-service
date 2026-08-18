@@ -56,10 +56,9 @@ def fetch_opinions(ticker: str, limit: int = _MAX_CARDS) -> list[dict]:
     if not ticker:
         return []
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_query
 
-        with get_db() as db:
-            rows = mongo_query.find_rows('shkreli_opinions', {'ticker': ticker}, ['recorded_on', 'company_name', 'stance', 'thesis', 'valuation_view', 'likes', 'dislikes', 'price_context', 'source_title', 'confidence'], sort=[('recorded_on', -1)], limit=limit)
+        rows = mongo_query.find_rows('shkreli_opinions', {'ticker': ticker}, ['recorded_on', 'company_name', 'stance', 'thesis', 'valuation_view', 'likes', 'dislikes', 'price_context', 'source_title', 'confidence'], sort=[('recorded_on', -1)], limit=limit)
     except Exception as e:  # noqa: BLE001 — advisory context, never blocks
         logger.debug("[OpinionBlock] %s fetch failed: %s", ticker, e)
         return []
