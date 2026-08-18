@@ -1314,3 +1314,12 @@ class TestMockTradingCycleMongoE2E:
 
         b_size = backlog_size()
         assert isinstance(b_size, int)
+
+        # 43. Embedding Ingest Backfill in MongoDB
+        from app.services.embedding_ingest import backfill_source, backfill_all
+
+        backfilled_n = backfill_source("news_articles", limit=5)
+        assert backfilled_n >= 0
+
+        all_backfills = backfill_all(limit_per_source=2)
+        assert "news_articles" in all_backfills

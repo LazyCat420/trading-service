@@ -116,46 +116,33 @@ def backfill_source(
         return 0
     id_col, ticker_col, text_expr, recency_col = cfg
 
-    from app.db.connection import get_db
-    from app.db.mongo_store import reads_mongo
+    from app.db import mongo_store
+    from app.db.vector_store import vector_store
 
     try:
-        with get_db() as db:
-            if reads_mongo("embeddings"):
-                # Embeddings live in Mongo — the SQL anti-join can't see them.
-                # Pull recent candidates from the (still-PG) source table, then
-                # filter out already-embedded ids with one Mongo round-trip.
-                from app.db.vector_store import vector_store
-
-                candidates = db.execute(
-                    f"""
-                    SELECT src.{id_col}, src.{ticker_col}, {text_expr} AS content
-                    FROM {source_table} src
-                    WHERE {text_expr} IS NOT NULL
-                    ORDER BY src.{recency_col} DESC NULLS LAST
-                    LIMIT %s
-                    """,
-                    [limit * 4],
-                ).fetchall()
-                done = vector_store.existing_source_ids(
-                    source_table, [str(r[0]) for r in candidates]
-                )
-                rows = [r for r in candidates if str(r[0]) not in done][:limit]
+        docs = mongo_store.find_docs(
+            source_table,
+            {},
+            sort=[(recency_col, -1)],
+            limit=limit * 4,
+        )
+        candidates = []
+        for d in docs:
+            cid = str(d.get(id_col) or "")
+            ticker = d.get(ticker_col)
+            if source_table == "news_articles":
+                content = d.get("summary") or d.get("title") or ""
+            elif source_table == "analysis_results":
+                content = d.get("thesis_summary") or ""
             else:
-                rows = db.execute(
-                    f"""
-                    SELECT src.{id_col}, src.{ticker_col}, {text_expr} AS content
-                    FROM {source_table} src
-                    WHERE {text_expr} IS NOT NULL
-                      AND NOT EXISTS (
-                            SELECT 1 FROM embeddings e
-                            WHERE e.source_table = %s AND e.source_id = src.{id_col}
-                      )
-                    ORDER BY src.{recency_col} DESC NULLS LAST
-                    LIMIT %s
-                    """,
-                    [source_table, limit],
-                ).fetchall()
+                content = d.get("content") or d.get("summary") or ""
+            if cid and content:
+                candidates.append((cid, ticker, content))
+
+        done = vector_store.existing_source_ids(
+            source_table, [c[0] for c in candidates]
+        )
+        rows = [c for c in candidates if c[0] not in done][:limit]
     except Exception as e:
         logger.warning("[embed-ingest] backfill query failed for %s: %s", source_table, e)
         return 0
