@@ -1,29 +1,37 @@
+"""
+Trading Constitution — Active rules formatting and prompt injection.
+
+Pure MongoDB implementation for trading_constitution collection.
+"""
+
 import json
 import logging
-from app.db.connection import get_db
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
 
 def get_active_constitution_rules() -> list[dict]:
-    """Fetch all active trading constitution rules."""
+    """Fetch all active trading constitution rules from MongoDB."""
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('trading_constitution', {'is_active': True}, ['id', 'rule_category', 'rule_text', 'rule_params'])
-            rules = []
-            for row in rows:
-                params = row[3]
-                if isinstance(params, str):
-                    try:
-                        params = json.loads(params)
-                    except Exception:
-                        params = {}
+        rows = mongo_query.find_rows(
+            'trading_constitution',
+            {'is_active': True},
+            ['id', 'rule_category', 'rule_text', 'rule_params']
+        )
+        rules = []
+        for row in rows:
+            params = row[3]
+            if isinstance(params, str):
+                try:
+                    params = json.loads(params)
+                except Exception:
+                    params = {}
 
-                rules.append(
-                    {"id": row[0], "category": row[1], "text": row[2], "params": params}
-                )
-            return rules
+            rules.append(
+                {"id": row[0], "category": row[1], "text": row[2], "params": params}
+            )
+        return rules
     except Exception as e:
         logger.error("[CONSTITUTION] Failed to fetch rules: %s", e)
         return []
@@ -40,7 +48,7 @@ def format_constitution_for_prompt() -> str:
     # Group by category
     categories = {}
     for r in rules:
-        cat = r["category"].upper()
+        cat = str(r["category"]).upper()
         if cat not in categories:
             categories[cat] = []
         categories[cat].append(r["text"])

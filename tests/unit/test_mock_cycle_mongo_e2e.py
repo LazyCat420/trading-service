@@ -1121,3 +1121,45 @@ class TestMockTradingCycleMongoE2E:
 
         cleared_n = checkpoint_manager.clear_cycle(cycle_id)
         assert cleared_n >= 1
+
+        # 36. Constitution & Memory Repository in MongoDB
+        from app.db.constitution import format_constitution_for_prompt
+        from app.db.memory_repo import (
+            upsert_canonical_memories,
+            get_active_canonical_memories,
+            deprecate_canonical_memories,
+            mark_observations_promoted,
+            get_unpromoted_observations,
+        )
+
+        mongo_store.insert_docs("trading_constitution", [{
+            "id": 1,
+            "rule_category": "risk",
+            "rule_text": "Never risk more than 2% of capital on a single position.",
+            "rule_params": "{}",
+            "is_active": True,
+        }])
+
+        const_prompt = format_constitution_for_prompt()
+        assert "[RISK]" in const_prompt
+        assert "Never risk more than 2%" in const_prompt
+
+        upsert_canonical_memories([{
+            "id": "mem-001",
+            "type": "earnings_pattern",
+            "ticker": "AAPL",
+            "sector": "Technology",
+            "summary": "Consistently beats revenue during Q4 holiday quarters.",
+            "tags": ["earnings", "q4"],
+            "confidence_score": 0.92,
+            "evidence_count": 5,
+            "status": "active",
+        }])
+
+        active_mems = get_active_canonical_memories("AAPL")
+        assert len(active_mems) >= 1
+        assert active_mems[0]["id"] == "mem-001"
+
+        deprecate_canonical_memories(["mem-001"])
+        active_mems_after = get_active_canonical_memories("AAPL")
+        assert len(active_mems_after) == 0
