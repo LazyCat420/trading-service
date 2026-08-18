@@ -712,3 +712,26 @@ class TestMockTradingCycleMongoE2E:
         assert len(shadow_docs) == 1
         assert shadow_docs[0]["overlap_live_free"] == 1
         assert shadow_docs[0]["worker_id"] == "worker-001"
+
+        # 17. Candidate Discovery Mode in MongoDB
+        from app.services.discovery_mode import run_discovery
+
+        # Seed discovered_tickers in MongoDB
+        mongo_store.insert_docs("discovered_tickers", [{
+            "ticker": "AMD",
+            "score": 85.0,
+            "context": "AI chip momentum and data center expansion",
+            "discovered_at": now - datetime.timedelta(hours=2),
+            "validation_status": "approved",
+        }])
+
+        # Seed news articles for trending discovery
+        mongo_store.insert_docs("news_articles", [
+            {"ticker": "AMD", "headline": "AMD launches MI300X AI accelerator", "published_at": now - datetime.timedelta(hours=4)},
+            {"ticker": "AMD", "headline": "Hyperscalers adopt AMD Instinct GPUs", "published_at": now - datetime.timedelta(hours=3)},
+            {"ticker": "AMD", "headline": "AMD data center revenue surges", "published_at": now - datetime.timedelta(hours=2)},
+        ])
+
+        discovered = await run_discovery(existing_tickers=["AAPL", "MSFT"])
+        discovered_tickers = [d["ticker"] for d in discovered]
+        assert "AMD" in discovered_tickers

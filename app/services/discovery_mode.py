@@ -2,25 +2,15 @@
 Discovery Mode — Finds new stock leads when the Freshness Gate
 determines all current stocks are STALE (< 3 eligible).
 
-Leverages existing infrastructure:
-  1. Reddit Purge (fresh scrape via scraper-service)
-  2. discovered_tickers table (populated by Reddit/YouTube collectors)
-  3. news_articles DB (last 12h trending tickers)
-  4. reddit_posts DB (last 12h trending tickers)
-  5. Institutional fund scanner (hedge fund consensus)
-  6. Web search (lazy_web_search fallback)
-
-No new external dependencies — just wires existing collectors into the pipeline.
+Pure MongoDB implementation for discovered_tickers, news_articles, reddit_posts.
 """
 
 import logging
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-from app.db.connection import get_db
 from app.processors.ticker_extractor import FALSE_TICKERS
-from app.db import mongo_query
-from datetime import timedelta
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +21,7 @@ async def run_discovery(
     existing_tickers: list[str],
     emit: object = None,
 ) -> list[dict]:
-    """Find new stock leads from existing data sources.
-
-    Args:
-        existing_tickers: Tickers already in the Top 20 (to deduplicate).
-        emit: Optional SSE emitter for real-time logging.
-
-    Returns:
-        List of new stock dicts with at least {ticker, score, src, freshness}.
-    """
+    """Find new stock leads from existing data sources."""
     existing_set = set(t.upper() for t in existing_tickers)
     source_tracker: dict[str, dict] = {}  # ticker -> {sources: set, mentions: int}
 
@@ -56,70 +38,82 @@ async def run_discovery(
 
     # ── Source 2: discovered_tickers table (populated by Reddit/YouTube) ──
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('discovered_tickers', {'discovered_at': {'$gt': (datetime.now(timezone.utc) - timedelta(hours=24))}, '$or': [{'validation_status': None}, {'validation_status': {'$ne': 'rejected'}}]}, ['ticker', 'score', 'context'], sort=[('score', -1)], limit=20)
-            for ticker, score, context in rows:
-                tkr = ticker.upper().strip()
-                if tkr in existing_set or tkr in FALSE_TICKERS:
-                    continue
-                if tkr not in source_tracker:
-                    source_tracker[tkr] = {"sources": set(), "mentions": 0}
-                source_tracker[tkr]["sources"].add("discovered_tickers")
-                source_tracker[tkr]["mentions"] += score or 1
-            if rows:
-                logger.info("[DiscoveryMode] discovered_tickers: %d candidates", len(rows))
+        rows = mongo_query.find_rows(
+            'discovered_tickers',
+            {
+                'discovered_at': {'$gt': (datetime.now(timezone.utc) - timedelta(hours=24))},
+                '$or': [{'validation_status': None}, {'validation_status': {'$ne': 'rejected'}}],
+            },
+            ['ticker', 'score', 'context'],
+            sort=[('score', -1)],
+            limit=20,
+        )
+        for ticker, score, context in rows:
+            tkr = ticker.upper().strip()
+            if tkr in existing_set or tkr in FALSE_TICKERS:
+                continue
+            if tkr not in source_tracker:
+                source_tracker[tkr] = {"sources": set(), "mentions": 0}
+            source_tracker[tkr]["sources"].add("discovered_tickers")
+            source_tracker[tkr]["mentions"] += score or 1
+        if rows:
+            logger.info("[DiscoveryMode] discovered_tickers: %d candidates", len(rows))
     except Exception as e:
         logger.warning("[DiscoveryMode] discovered_tickers query failed: %s", e)
 
     # ── Source 3: News articles (last 12h, 3+ mentions) ──
     try:
-        with get_db() as db:
-            rows = db.execute("""
-                SELECT ticker, COUNT(*) as mentions
-                FROM news_articles
-                WHERE ticker IS NOT NULL
-                  AND published_at > NOW() - INTERVAL '12 hours'
-                GROUP BY ticker
-                HAVING COUNT(*) >= 3
-                ORDER BY COUNT(*) DESC
-                LIMIT 15
-            """).fetchall()
-            for ticker, mentions in rows:
-                tkr = ticker.upper().strip()
-                if tkr in existing_set or tkr in FALSE_TICKERS:
-                    continue
-                if tkr not in source_tracker:
-                    source_tracker[tkr] = {"sources": set(), "mentions": 0}
-                source_tracker[tkr]["sources"].add("News")
-                source_tracker[tkr]["mentions"] += mentions
-            if rows:
-                logger.info("[DiscoveryMode] News articles: %d trending tickers", len(rows))
+        cutoff_news = datetime.now(timezone.utc) - timedelta(hours=12)
+        pipeline_news = [
+            {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": cutoff_news}}},
+            {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+            {"$match": {"mentions": {"$gte": 3}}},
+            {"$sort": {"mentions": -1}},
+            {"$limit": 15},
+        ]
+        news_docs = mongo_store.aggregate("news_articles", pipeline_news)
+        for doc in news_docs:
+            ticker = doc.get("_id")
+            mentions = doc.get("mentions", 0)
+            if not ticker:
+                continue
+            tkr = str(ticker).upper().strip()
+            if tkr in existing_set or tkr in FALSE_TICKERS:
+                continue
+            if tkr not in source_tracker:
+                source_tracker[tkr] = {"sources": set(), "mentions": 0}
+            source_tracker[tkr]["sources"].add("News")
+            source_tracker[tkr]["mentions"] += mentions
+        if news_docs:
+            logger.info("[DiscoveryMode] News articles: %d trending tickers", len(news_docs))
     except Exception as e:
         logger.warning("[DiscoveryMode] News query failed: %s", e)
 
     # ── Source 4: Reddit posts (last 12h, 3+ mentions) ──
     try:
-        with get_db() as db:
-            rows = db.execute("""
-                SELECT ticker, COUNT(*) as mentions
-                FROM reddit_posts
-                WHERE ticker IS NOT NULL
-                  AND created_utc > NOW() - INTERVAL '12 hours'
-                GROUP BY ticker
-                HAVING COUNT(*) >= 3
-                ORDER BY COUNT(*) DESC
-                LIMIT 15
-            """).fetchall()
-            for ticker, mentions in rows:
-                tkr = ticker.upper().strip()
-                if tkr in existing_set or tkr in FALSE_TICKERS:
-                    continue
-                if tkr not in source_tracker:
-                    source_tracker[tkr] = {"sources": set(), "mentions": 0}
-                source_tracker[tkr]["sources"].add("Reddit")
-                source_tracker[tkr]["mentions"] += mentions
-            if rows:
-                logger.info("[DiscoveryMode] Reddit posts: %d trending tickers", len(rows))
+        cutoff_reddit = datetime.now(timezone.utc) - timedelta(hours=12)
+        pipeline_reddit = [
+            {"$match": {"ticker": {"$ne": None}, "created_utc": {"$gt": cutoff_reddit}}},
+            {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
+            {"$match": {"mentions": {"$gte": 3}}},
+            {"$sort": {"mentions": -1}},
+            {"$limit": 15},
+        ]
+        reddit_docs = mongo_store.aggregate("reddit_posts", pipeline_reddit)
+        for doc in reddit_docs:
+            ticker = doc.get("_id")
+            mentions = doc.get("mentions", 0)
+            if not ticker:
+                continue
+            tkr = str(ticker).upper().strip()
+            if tkr in existing_set or tkr in FALSE_TICKERS:
+                continue
+            if tkr not in source_tracker:
+                source_tracker[tkr] = {"sources": set(), "mentions": 0}
+            source_tracker[tkr]["sources"].add("Reddit")
+            source_tracker[tkr]["mentions"] += mentions
+        if reddit_docs:
+            logger.info("[DiscoveryMode] Reddit posts: %d trending tickers", len(reddit_docs))
     except Exception as e:
         logger.warning("[DiscoveryMode] Reddit query failed: %s", e)
 
@@ -141,15 +135,6 @@ async def run_discovery(
         logger.warning("[DiscoveryMode] Institutional scan failed: %s", e)
 
     # ── Filter: US-tradeable only ──
-    # This imported app.validation.ticker_validator, a module that does not
-    # exist in this service, and fell back to `return True` on ImportError —
-    # so the filter admitted EVERY candidate, including the foreign tickers it
-    # was written to drop, and logged nothing. The real implementation was in
-    # app/utils/us_ticker_resolver.py the whole time (same function name; it
-    # rejects exchange suffixes like .KS/.T/.HK and numeric codes).
-    #
-    # No try/except: if this import breaks, the filter must fail loudly rather
-    # than silently pass everything through again.
     from app.utils.us_ticker_resolver import is_us_tradeable
 
     valid_candidates = {}
@@ -222,10 +207,8 @@ async def _web_search_fallback(
             return []
 
         text = str(result)
-        # Extract potential ticker symbols (1-5 uppercase letters)
         raw_tickers = re.findall(r'\b([A-Z]{1,5})\b', text)
 
-        # Filter
         candidates = []
         seen = set()
         for t in raw_tickers:
