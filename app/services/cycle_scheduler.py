@@ -1653,6 +1653,7 @@ class SchedulerService:
         (30k disclosures vs 8k holdings rows). Both cohorts now land here, each
         under its own source label so downstream scoring can weight them apart.
         """
+        from app.db.connection import get_db as _get_db
 
         def _work() -> int:
             with _get_db() as db:

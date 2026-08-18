@@ -86,6 +86,7 @@ async def _probe_postgres() -> dict:
     """Probe PostgreSQL connectivity."""
     start = time.monotonic()
     try:
+        from app.db.connection import get_db
         with get_db() as db:
             db.execute("SELECT 1").fetchone()
         elapsed_ms = int((time.monotonic() - start) * 1000)

@@ -23,6 +23,7 @@ class EpisodicMemoryStore:
         agents_involved: str = "[]",
     ) -> str:
         """Store a new episode summarize a completed cycle."""
+        from app.db.connection import get_db
 
         mem_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -52,6 +53,7 @@ class EpisodicMemoryStore:
 
         Returns rows updated.
         """
+        from app.db.connection import get_db
 
         with get_db() as db:
             result = db.execute(
@@ -72,6 +74,7 @@ class EpisodicMemoryStore:
 
     def retrieve(self, ticker: str, limit: int = 4) -> list[dict]:
         """Query past episodes by ticker, ranked by most successful outcomes."""
+        from app.db.connection import get_db
 
         rows = mongo_query.find_rows('episodic_memory', {'ticker': ticker}, ['id', 'cycle_id', 'timestamp', 'summary', 'outcome_score', 'key_decisions', 'outcome'], sort=[('timestamp', -1)], limit=limit)
 

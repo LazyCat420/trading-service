@@ -15,6 +15,7 @@ import logging
 
 import yfinance as yf
 
+from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)

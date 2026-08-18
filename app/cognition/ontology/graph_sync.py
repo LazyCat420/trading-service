@@ -14,6 +14,7 @@ import json
 import logging
 
 from app.cognition.ontology.ontology_builder import BrainGraph
+from app.db.connection import get_db
 from app.db import mongo_store
 from datetime import datetime, timedelta, timezone
 

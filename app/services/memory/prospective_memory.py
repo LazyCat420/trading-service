@@ -21,6 +21,7 @@ class ProspectiveMemoryStore:
         context: str = "",
     ) -> str:
         """Store a new prospective memory (future trigger/reminder)."""
+        from app.db.connection import get_db
 
         mem_id = str(uuid.uuid4())
 
@@ -68,6 +69,7 @@ class ProspectiveMemoryStore:
 
     def retrieve_pending(self, ticker: str) -> list[dict]:
         """Query pending items for a ticker that should be evaluated."""
+        from app.db.connection import get_db
 
         with get_db() as db:
             # We also might want to pull 'global' triggers
@@ -105,6 +107,7 @@ class ProspectiveMemoryStore:
 
     def mark_triggered(self, mem_id: str):
         """Mark an item as triggered so it's no longer pending."""
+        from app.db.connection import get_db
 
         mongo_store.update_docs('prospective_memory', {'id': mem_id}, {'$set': {'status': 'triggered'}})
 

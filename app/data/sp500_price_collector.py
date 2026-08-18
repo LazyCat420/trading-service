@@ -2,6 +2,7 @@ import asyncio
 import logging
 import pandas as pd
 import yfinance as yf
+from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 

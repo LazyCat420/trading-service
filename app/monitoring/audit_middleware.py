@@ -176,6 +176,7 @@ def log_audit_event(
 def _persist_audit_event(event: dict):
     """Best-effort write to agent_audit_log table."""
     try:
+        from app.db.connection import get_db
         with get_db() as db:
             # RETURNING id: the serial only exists after the insert, and the
             # mirror doc must carry it — 31,637 id-less docs accumulated in

@@ -38,6 +38,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from app.db.connection import get_db
 from app.db import mongo_store
 
 logger = logging.getLogger(__name__)

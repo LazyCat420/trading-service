@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from app.db.connection import get_db
 from app.autoresearch.eval_engine import process_pending_traces
 from app.db import mongo_query, mongo_store
 from datetime import datetime, timezone

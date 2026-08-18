@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 from datetime import datetime, timezone
 
+from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
 from app.services.prism_agent_caller import llm, Priority
 from app.utils.text_utils import parse_json_response

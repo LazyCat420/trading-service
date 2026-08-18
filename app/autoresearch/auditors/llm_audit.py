@@ -1,5 +1,6 @@
 import logging
 
+from app.db.connection import get_db
 from app.db import mongo_query
 from datetime import datetime, timedelta, timezone
 

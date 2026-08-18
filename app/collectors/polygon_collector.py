@@ -9,6 +9,7 @@ Requires: POLYGON_API_KEY in .env (free tier = 5 calls/min)
 import logging
 import datetime
 from app.config import settings
+from app.db.connection import get_db
 from app.services.request_utils import SmartClient
 from app.db import mongo_store
 

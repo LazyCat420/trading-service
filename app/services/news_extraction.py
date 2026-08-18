@@ -34,6 +34,7 @@ import re
 import time
 from typing import Any
 
+from app.db.connection import get_db
 from app.utils.text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)

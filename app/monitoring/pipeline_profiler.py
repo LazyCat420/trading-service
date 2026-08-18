@@ -357,6 +357,7 @@ class PipelineProfiler:
     def _persist_to_db(self):
         """Save the timing report to PostgreSQL for cross-cycle comparison."""
         try:
+            from app.db.connection import get_db
             import json
 
             with get_db() as db:
@@ -383,6 +384,7 @@ class PipelineProfiler:
     def get_history(self, limit: int = 10) -> list[dict]:
         """Get timing reports from previous cycles."""
         try:
+            from app.db.connection import get_db
             import json
 
             rows = mongo_query.find_rows('pipeline_profiler', {}, ['cycle_id', 'total_ms', 'idle_ms', 'phase_count', 'bottlenecks_json', 'phases_json', 'created_at'], sort=[('created_at', -1)], limit=limit)

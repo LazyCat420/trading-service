@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 import hashlib
 import datetime
 import re
+from app.db.connection import get_db
 import cloudscraper
 import asyncio
 from app.db import mongo_store

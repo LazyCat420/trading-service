@@ -174,6 +174,7 @@ class BootService:
 
         # Close PostgreSQL connection pool
         try:
+            from app.db.connection import close_db
 
             close_db()
             logger.info("[Boot] PostgreSQL connection pool closed.")

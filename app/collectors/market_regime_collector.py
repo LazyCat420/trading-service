@@ -8,6 +8,7 @@ All data fetched via yfinance batch download for efficiency.
 import logging
 import yfinance as yf
 import asyncio
+from app.db.connection import get_db
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
