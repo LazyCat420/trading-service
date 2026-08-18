@@ -1457,3 +1457,11 @@ class TestMockTradingCycleMongoE2E:
         packet = await build_evidence_packet("AAPL")
         assert packet is not None
         assert packet.entity_id == "AAPL"
+
+        # 49. Data Completeness Oracle in MongoDB
+        from app.cognition.evaluation.oracle import DataCompletenessOracle
+
+        oracle_res = DataCompletenessOracle.verify_ground_truth("AAPL")
+        assert "checklist" in oracle_res
+        assert "completeness_score" in oracle_res
+        assert oracle_res["completeness_score"] >= 2.0

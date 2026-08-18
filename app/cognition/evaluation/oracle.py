@@ -1,80 +1,87 @@
 import logging
 from typing import Dict, Any
-from app.db.connection import get_db
+from datetime import datetime, date, timedelta, timezone
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
 
+def _is_recent(val: Any, min_dt: datetime) -> bool:
+    if val is None:
+        return False
+    if isinstance(val, str):
+        try:
+            val = datetime.fromisoformat(val)
+        except Exception:
+            return False
+    if isinstance(val, date) and not isinstance(val, datetime):
+        val = datetime.combine(val, datetime.min.time(), tzinfo=timezone.utc)
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            val = val.replace(tzinfo=timezone.utc)
+        if min_dt.tzinfo is None:
+            min_dt = min_dt.replace(tzinfo=timezone.utc)
+        return val >= min_dt
+    return False
+
+
 class DataCompletenessOracle:
     """
-    Deterministically cross-references PostgreSQL to verify the 'Ground Truth'
+    Deterministically cross-references MongoDB to verify the 'Ground Truth'
     of what data was actually collected during a cycle for a specific ticker.
     """
-
-    # Define what "Complete Evidence" means functionally.
-    # We can expand this per-asset_class later.
-    #
-    # Each check is FRESHNESS-AWARE: the old existence-only probes ("a row has
-    # ever existed for this ticker") scored stale tickers as complete, which
-    # poisoned 50% of every judge score. Windows are sized per data cadence:
-    # daily bars/technicals allow weekends+holidays, fundamentals snapshots
-    # are infrequent, news must be recent to count as this cycle's evidence.
-    EXPECTED_TABLES = {
-        "price_history": (
-            "SELECT 1 FROM price_history WHERE ticker = %s "
-            "AND date >= CURRENT_DATE - INTERVAL '5 days' LIMIT 1"
-        ),
-        "technicals": (
-            "SELECT 1 FROM technicals WHERE ticker = %s AND rsi_14 IS NOT NULL "
-            "AND date >= CURRENT_DATE - INTERVAL '5 days' LIMIT 1"
-        ),
-        "fundamentals": (
-            "SELECT 1 FROM fundamentals WHERE ticker = %s "
-            "AND (pe_ratio IS NOT NULL OR market_cap IS NOT NULL) "
-            "AND snapshot_date >= CURRENT_DATE - INTERVAL '30 days' LIMIT 1"
-        ),
-        "news": (
-            "SELECT 1 FROM news_articles WHERE ticker = %s "
-            "AND collected_at >= NOW() - INTERVAL '7 days' LIMIT 1"
-        ),
-    }
 
     @staticmethod
     def verify_ground_truth(ticker: str) -> Dict[str, Any]:
         """
-        Query PostgreSQL to produce a deterministic scorecard of whether FRESH
-        evidence was actually gathered for this ticker (see window comments on
-        EXPECTED_TABLES — existence-only probes previously counted stale data).
+        Query MongoDB to produce a deterministic scorecard of whether FRESH
+        evidence was actually gathered for this ticker.
         """
-        with get_db() as db:
-            results = {
-                "ticker": ticker,
-                "checklist": {},
-                "completeness_score": 0.0,
-                "missing_critical": [],
+        results = {
+            "ticker": ticker,
+            "checklist": {},
+            "completeness_score": 0.0,
+            "missing_critical": [],
+        }
+
+        try:
+            ticker_upper = ticker.upper().strip()
+            now_utc = datetime.now(timezone.utc)
+
+            # 1. Price history
+            prices = mongo_store.find_docs("price_history", {"ticker": ticker_upper}, sort=[("date", -1)], limit=1)
+            has_price = bool(prices and _is_recent(prices[0].get("date"), now_utc - timedelta(days=5)))
+
+            # 2. Technicals
+            techs = mongo_store.find_docs("technicals", {"ticker": ticker_upper}, sort=[("date", -1)], limit=1)
+            has_tech = bool(techs and techs[0].get("rsi_14") is not None and _is_recent(techs[0].get("date"), now_utc - timedelta(days=5)))
+
+            # 3. Fundamentals
+            funds = mongo_store.find_docs("fundamentals", {"ticker": ticker_upper}, sort=[("snapshot_date", -1)], limit=1)
+            has_fund = bool(funds and (funds[0].get("pe_ratio") is not None or funds[0].get("market_cap") is not None) and _is_recent(funds[0].get("snapshot_date"), now_utc - timedelta(days=30)))
+
+            # 4. News
+            news = mongo_store.find_docs("news_articles", {"ticker": ticker_upper}, sort=[("collected_at", -1)], limit=1)
+            has_news = bool(news and _is_recent(news[0].get("collected_at") or news[0].get("published_at"), now_utc - timedelta(days=7)))
+
+            checks = {
+                "price_history": has_price,
+                "technicals": has_tech,
+                "fundamentals": has_fund,
+                "news": has_news,
             }
 
-            try:
-                total_checks = len(DataCompletenessOracle.EXPECTED_TABLES)
-                passed_checks = 0
+            passed_checks = 0
+            for key, passed in checks.items():
+                results["checklist"][key] = passed
+                if passed:
+                    passed_checks += 1
+                else:
+                    results["missing_critical"].append(key)
 
-                for key, query in DataCompletenessOracle.EXPECTED_TABLES.items():
-                    row = db.execute(query, [ticker]).fetchone()
-                    passed = row is not None
-                    results["checklist"][key] = passed
+            results["completeness_score"] = round((passed_checks / len(checks)) * 5.0, 2)
+            return results
 
-                    if passed:
-                        passed_checks += 1
-                    else:
-                        results["missing_critical"].append(key)
-
-                if total_checks > 0:
-                    results["completeness_score"] = round(
-                        (passed_checks / total_checks) * 5.0, 2
-                    )
-
-                return results
-
-            except Exception as e:
-                logger.error(f"Oracle failed to verify ground truth for {ticker}: {e}")
-                return results
+        except Exception as e:
+            logger.error(f"Oracle failed to verify ground truth for {ticker}: {e}")
+            return results
