@@ -1323,3 +1323,28 @@ class TestMockTradingCycleMongoE2E:
 
         all_backfills = backfill_all(limit_per_source=2)
         assert "news_articles" in all_backfills
+
+        # 44. RLM Audit Trail & Context Blobs in MongoDB
+        from app.services.rlm_audit import log_rlm_audit_trail
+
+        log_rlm_audit_trail(
+            cycle_id=cycle_id,
+            bot_id="bot-001",
+            ticker="AAPL",
+            context="AAPL RSI is 68.4 with strong Q3 momentum.",
+            trading_system_prompt="You are an analyst.",
+            active_model="qwen-2.5-72b",
+            response_text="BUY AAPL due to RSI divergence.",
+            tokens_used=150,
+            execution_time=1.25,
+            agent_step="analysis",
+            prompt_tokens=100,
+            completion_tokens=50,
+        )
+
+        audit_docs = mongo_store.find_docs("llm_audit_logs", {"cycle_id": cycle_id, "ticker": "AAPL"})
+        assert len(audit_docs) >= 1
+        assert audit_docs[0]["model"] == "qwen-2.5-72b"
+
+        blob_docs = mongo_store.find_docs("context_blobs", {})
+        assert len(blob_docs) >= 1

@@ -2,7 +2,6 @@ import logging
 import uuid
 import hashlib
 from datetime import datetime, timezone
-from app.db.connection import get_db
 from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
@@ -24,84 +23,67 @@ def log_rlm_audit_trail(
     completion_tokens: int = 0,
     queue_wait_ms: int = 0,
 ) -> None:
-    """Log to PostgreSQL (with context dedup + per-box telemetry)."""
+    """Log to MongoDB context_blobs and llm_audit_logs with context dedup + telemetry."""
     from app.utils.text_utils import sanitize_surrogates
     context = sanitize_surrogates(context)
     trading_system_prompt = sanitize_surrogates(trading_system_prompt)
     response_text = sanitize_surrogates(response_text)
 
     try:
-        with get_db() as db:
-            # SHA256-hash context and system prompt for dedup storage
-            ctx_hash = hashlib.sha256(context.encode("utf-8")).hexdigest()
-            prompt_hash = hashlib.sha256(
-                trading_system_prompt.encode("utf-8")
-            ).hexdigest()
+        # SHA256-hash context and system prompt for dedup storage
+        ctx_hash = hashlib.sha256(context.encode("utf-8")).hexdigest()
+        prompt_hash = hashlib.sha256(
+            trading_system_prompt.encode("utf-8")
+        ).hexdigest()
 
-            # Insert blobs only if they don't already exist (dedup)
-            _blob_recs = []
-            # ONE timestamp, written to both stores. This used to let PG take
-            # the column default (CURRENT_TIMESTAMP) while Mongo took a Python
-            # datetime.now() computed moments earlier — two clocks for one fact.
-            # They agreed only when both landed in the same millisecond, so it
-            # read as parity: an exhaustive sweep found 117 of 56,452 rows
-            # drifted, Mongo always the EARLIER of the two, by 1.0-6.3 ms. (The
-            # spread is the tell: millisecond rounding cannot exceed 1 ms, and
-            # CURRENT_TIMESTAMP is transaction-start time, not statement time.)
-            # Naive UTC because the column is `timestamp without time zone` and
-            # pymongo stores naive datetimes as UTC — so both sides hold the
-            # identical value by construction rather than by luck.
-            _blob_ts = datetime.now(timezone.utc).replace(tzinfo=None)
-            for blob_hash, blob_content in [
-                (ctx_hash, context),
-                (prompt_hash, trading_system_prompt),
-            ]:
-                _blob_recs.append({
-                    "context_hash": blob_hash, "content": blob_content,
+        now_utc = datetime.now(timezone.utc)
+        for blob_hash, blob_content in [
+            (ctx_hash, context),
+            (prompt_hash, trading_system_prompt),
+        ]:
+            mongo_store.upsert_doc(
+                "context_blobs",
+                {"context_hash": blob_hash},
+                {
+                    "context_hash": blob_hash,
+                    "content": blob_content,
                     "byte_size": len(blob_content.encode("utf-8")),
-                    "created_at": _blob_ts,
-                })
-                mongo_store.upsert_doc('context_blobs', {'context_hash': blob_hash}, {'context_hash': blob_hash, 'content': blob_content, 'byte_size': len(blob_content.encode("utf-8")), 'created_at': _blob_ts}, insert_only=True)
-            # Best-effort Mongo mirror — upsert by content_hash (dedup, like the
-            # ON CONFLICT DO NOTHING above).
-            try:
-                from app.db import mongo_store
-                if mongo_store.writes_mongo("context_blobs"):
-                    for _r in _blob_recs:
-                        mongo_store.upsert_doc(
-                            "context_blobs", {"context_hash": _r["context_hash"]}, _r,
-                            insert_only=True,
-                        )
-            except Exception:
-                pass
-
-            # Compute tokens per second
-            exec_ms = int(execution_time * 1000)
-            tok_per_sec = None
-            if completion_tokens > 0 and exec_ms > 0:
-                tok_per_sec = round(completion_tokens / (exec_ms / 1000), 1)
-
-            # Store only hashes in the audit log row. Build once so PG + Mongo share the id.
-            _rec = {
-                "id": str(uuid.uuid4()), "cycle_id": cycle_id, "bot_id": bot_id, "ticker": ticker,
-                "agent_step": agent_step, "model": active_model, "system_prompt_hash": prompt_hash,
-                "context_hash": ctx_hash, "raw_response": response_text, "tokens_used": tokens_used,
-                "execution_ms": exec_ms, "created_at": datetime.now(timezone.utc),
-                "endpoint_name": endpoint_name or None, "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens, "queue_wait_ms": queue_wait_ms,
-                "tokens_per_second": tok_per_sec,
-            }
-            mongo_store.insert_docs('llm_audit_logs', [{'id': _rec["id"], 'cycle_id': _rec["cycle_id"], 'bot_id': _rec["bot_id"], 'ticker': _rec["ticker"], 'agent_step': _rec["agent_step"], 'model': _rec["model"], 'system_prompt_hash': _rec["system_prompt_hash"], 'context_hash': _rec["context_hash"], 'raw_response': _rec["raw_response"], 'tokens_used': _rec["tokens_used"], 'execution_ms': _rec["execution_ms"], 'created_at': _rec["created_at"], 'endpoint_name': _rec["endpoint_name"], 'prompt_tokens': _rec["prompt_tokens"], 'completion_tokens': _rec["completion_tokens"], 'queue_wait_ms': _rec["queue_wait_ms"], 'tokens_per_second': _rec["tokens_per_second"]}])
-            try:
-                from app.db import mongo_store
-                if mongo_store.writes_mongo("llm_audit_logs"):
-                    mongo_store.insert_docs("llm_audit_logs", [_rec])
-            except Exception:
-                pass
-            logger.debug(
-                "[DB] Successfully wrote trace to llm_audit_logs for %s (ctx_hash=%s...)",
-                ticker,
-                ctx_hash[:12],
+                    "created_at": now_utc,
+                },
+                insert_only=True,
             )
+
+        # Compute tokens per second
+        exec_ms = int(execution_time * 1000)
+        tok_per_sec = None
+        if completion_tokens > 0 and exec_ms > 0:
+            tok_per_sec = round(completion_tokens / (exec_ms / 1000), 1)
+
+        # Store only hashes in the audit log row
+        _rec = {
+            "id": str(uuid.uuid4()),
+            "cycle_id": cycle_id,
+            "bot_id": bot_id,
+            "ticker": ticker,
+            "agent_step": agent_step,
+            "model": active_model,
+            "system_prompt_hash": prompt_hash,
+            "context_hash": ctx_hash,
+            "raw_response": response_text,
+            "tokens_used": tokens_used,
+            "execution_ms": exec_ms,
+            "created_at": now_utc,
+            "endpoint_name": endpoint_name or None,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "queue_wait_ms": queue_wait_ms,
+            "tokens_per_second": tok_per_sec,
+        }
+        mongo_store.insert_docs("llm_audit_logs", [_rec])
+        logger.debug(
+            "[DB] Successfully wrote trace to llm_audit_logs for %s (ctx_hash=%s...)",
+            ticker,
+            ctx_hash[:12],
+        )
     except Exception as db_e:
         logger.error("[RLM] [DB] Audit log un-writable for %s: %s", ticker, db_e)
