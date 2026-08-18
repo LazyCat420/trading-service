@@ -986,3 +986,11 @@ class TestMockTradingCycleMongoE2E:
 
         jan_summary = _get_agent_recent_activity_summary("data_janitor")
         assert "ACTIVITY TRACES" in jan_summary
+
+        # 28. Market Tools & Sector Map in MongoDB
+        from app.tools.market_tools import get_market_map_data
+
+        mmap_tool_res = await get_market_map_data(top_n_per_sector=3)
+        assert mmap_tool_res["status"] == "success"
+        assert "Technology" in mmap_tool_res["data"]
+        assert len(mmap_tool_res["data"]["Technology"]["top_gainers"]) >= 1
