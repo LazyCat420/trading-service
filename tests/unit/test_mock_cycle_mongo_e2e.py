@@ -624,3 +624,28 @@ class TestMockTradingCycleMongoE2E:
         assert len(agent_tel) == 1
         assert agent_tel[0]["agent_name"] == "v3_junior_analyst"
         assert agent_tel[0]["token_usage"] == 4500
+
+        # 14. Watchlist CRUD & Ban Lifecycle in MongoDB
+        from app.trading.watchlist import add_ticker, ban_ticker, is_banned, get_active, unban_ticker
+
+        # Add ticker to watchlist
+        added = add_ticker("MSFT", source="scan", notes="Top tech candidate")
+        assert added is True
+
+        active_list = get_active()
+        active_tickers = [item["ticker"] for item in active_list]
+        assert "MSFT" in active_tickers
+
+        # Ban a problematic ticker
+        banned = ban_ticker("PUMP", reason="Penny stock pump-and-dump")
+        assert banned is True
+        assert is_banned("PUMP") is True
+
+        # Ensure banned ticker cannot be added
+        refused = add_ticker("PUMP", source="manual")
+        assert refused is False
+
+        # Unban ticker
+        unbanned = unban_ticker("PUMP")
+        assert unbanned is True
+        assert is_banned("PUMP") is False
