@@ -1163,3 +1163,41 @@ class TestMockTradingCycleMongoE2E:
         deprecate_canonical_memories(["mem-001"])
         active_mems_after = get_active_canonical_memories("AAPL")
         assert len(active_mems_after) == 0
+
+        # 37. Evolution Repository in MongoDB
+        from app.db.evolution_repo import (
+            append_node,
+            get_best_node,
+            get_session_summary,
+            get_all_nodes,
+            get_sessions,
+        )
+        from app.schemas.evolution import EvolutionNode, EvolutionMetrics
+
+        evo_node = EvolutionNode(
+            id="evo-node-001",
+            session_id="session-alpha",
+            round=1,
+            motivation="Test mean-reversion parameter optimization",
+            code="def strategy(): pass",
+            metrics=EvolutionMetrics(sharpe=1.85, win_rate=0.62, total_return=0.15),
+            score=1.85,
+            status="KEEP",
+            analysis="Good Sharpe ratio improvement",
+            timestamp=now.isoformat(),
+        )
+        append_node(evo_node)
+
+        best_evo = get_best_node("session-alpha")
+        assert best_evo is not None
+        assert best_evo.score == 1.85
+
+        evo_summary = get_session_summary("session-alpha")
+        assert evo_summary["kept_count"] >= 1
+        assert evo_summary["best_score"] == 1.85
+
+        all_evo_nodes = get_all_nodes(session_id="session-alpha")
+        assert len(all_evo_nodes) >= 1
+
+        all_evo_sessions = get_sessions()
+        assert len(all_evo_sessions) >= 1
