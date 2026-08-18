@@ -183,6 +183,12 @@ def _where(node, ctx: _Ctx) -> dict:
 
     if isinstance(node, exp.Is):
         if isinstance(node.expression, exp.Null):
+            # sqlglot encodes `IS NOT NULL` as Is(negate=True), NOT as
+            # Not(Is(...)). Ignoring the flag turned every IS NOT NULL into
+            # IS NULL — a silent inversion that returned the complement of the
+            # intended rows. Caught by the differential check, never by parsing.
+            if node.args.get("negate"):
+                return {_column(node.this): {"$ne": None}}
             return {_column(node.this): None}
         raise Unsupported("IS over a non-NULL expression")
 
@@ -283,7 +289,13 @@ def _translate_select(tree, ctx: _Ctx) -> Translation:
             # never read; only whether a row came back. Project nothing.
             continue
         else:
-            raise Unsupported(f"SELECT item {type(node).__name__}")
+            # A computed column (`NOW() - x`, a CASE, a cast). Postgres names it
+            # `?column?` when unaliased and the caller reads it positionally;
+            # Mongo has no such field, so the row would silently lose it.
+            raise Unsupported(
+                f"SELECT item {type(node).__name__} is a computed column — "
+                "compute it in Python after the find_docs()"
+            )
     if not star and fields:
         projection = {f: 1 for f in fields}
         projection["_id"] = 0
@@ -304,6 +316,12 @@ def _translate_select(tree, ctx: _Ctx) -> Translation:
     limit = None
     if tree.args.get("limit"):
         limit = _value(tree.args["limit"].expression, ctx)
+        # find_docs() treats limit=0 as "no limit" (the pymongo convention),
+        # while SQL LIMIT 0 means "no rows". Passing it through returned the
+        # whole collection where the caller asked for nothing.
+        if limit == "0":
+            raise Unsupported("LIMIT 0 — pymongo reads 0 as unlimited, the "
+                              "inverse of SQL; write the empty result by hand")
     if tree.args.get("offset"):
         raise Unsupported("OFFSET — find_docs has no skip parameter")
 

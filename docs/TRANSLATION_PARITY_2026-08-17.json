@@ -1,0 +1,2261 @@
+{
+  "counts": {
+    "ERROR": 6,
+    "MATCH": 163,
+    "NOT_SEEDED": 52,
+    "UNTESTED": 19,
+    "DIFFER": 10
+  },
+  "results": [
+    {
+      "file": "app/agents/base_agent.py",
+      "line": 198,
+      "table": "decision_outcomes",
+      "sql": "SELECT outcome, entry_price, exit_price, pnl_pct, confidence, resolved_at FROM decision_outcomes WHERE ticker = %s AND outcome IN ('WIN', 'LOSS', 'FLAT', 'HOLD_",
+      "call": "mongo_store.find_docs('decision_outcomes', {'ticker': {p0}, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_AVOIDED_DECLINE', 'HOLD_MISS']}}, sort=[('reso', 1)], projection={'outcome'",
+      "verdict": "ERROR",
+      "detail": "UndefinedColumn: column \"reso\" does not exist\nLINE 1: ...CORRECT', 'HOLD_AVOIDED_DECLINE', 'HOLD_MISS') ORDER BY reso\n                                                                   ^"
+    },
+    {
+      "file": "app/agents/whiteboard.py",
+      "line": 204,
+      "table": "whiteboard_entries",
+      "sql": "SELECT id, author_agent, content, version, edited_by FROM whiteboard_entries WHERE cycle_id = %s AND ticker = %s AND section = %s AND superseded_by IS NULL",
+      "call": "mongo_store.find_docs('whiteboard_entries', {'cycle_id': {p0}, 'ticker': {p1}, 'section': {p2}, 'superseded_by': None}, projection={'id': 1, 'author_agent': 1, 'content': 1, 'version': 1, 'edited_by':",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/agents/whiteboard.py",
+      "line": 296,
+      "table": "whiteboard_entries",
+      "sql": "SELECT id, section, author_agent, content, version, edited_by FROM whiteboard_entries WHERE cycle_id = %s AND ticker = %s AND superseded_by IS NULL",
+      "call": "mongo_store.find_docs('whiteboard_entries', {'cycle_id': {p0}, 'ticker': {p1}, 'superseded_by': None}, projection={'id': 1, 'section': 1, 'author_agent': 1, 'content': 1, 'version': 1, 'edited_by': 1,",
+      "verdict": "MATCH",
+      "detail": "12 rows"
+    },
+    {
+      "file": "app/agents/whiteboard.py",
+      "line": 248,
+      "table": "whiteboard_entries",
+      "sql": "SELECT ticker, section, cycle_id FROM whiteboard_entries WHERE id = %s",
+      "call": "mongo_store.find_docs('whiteboard_entries', {'id': {p0}}, projection={'ticker': 1, 'section': 1, 'cycle_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/agents/whiteboard.py",
+      "line": 116,
+      "table": "whiteboard_entries",
+      "sql": "SELECT id, version, edited_by FROM whiteboard_entries WHERE cycle_id = %s AND ticker = %s AND section = %s AND superseded_by IS NULL",
+      "call": "mongo_store.find_docs('whiteboard_entries', {'cycle_id': {p0}, 'ticker': {p1}, 'section': {p2}, 'superseded_by': None}, projection={'id': 1, 'version': 1, 'edited_by': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/auditors/data_audit.py",
+      "line": 73,
+      "table": "price_history",
+      "sql": "SELECT date, open, high, low, close, volume FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'open': 1, 'high': 1, 'low': 1, 'close': 1, 'volume': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/autoresearch/auditors/data_audit.py",
+      "line": 193,
+      "table": "fundamentals",
+      "sql": "SELECT * FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/auditors/decision_audit.py",
+      "line": 152,
+      "table": "analysis_results",
+      "sql": "SELECT confidence FROM analysis_results WHERE cycle_id=%s AND confidence IS NOT NULL",
+      "call": "mongo_store.find_docs('analysis_results', {'cycle_id': {p0}, 'confidence': {'$ne': None}}, projection={'confidence': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/auditors/llm_audit.py",
+      "line": 77,
+      "table": "autoresearch_reports",
+      "sql": "SELECT llm_performance_score FROM autoresearch_reports WHERE llm_performance_score IS NOT NULL ORDER BY created_at DESC LIMIT 10",
+      "call": "mongo_store.find_docs('autoresearch_reports', {'llm_performance_score': {'$ne': None}}, sort=[('created_at', -1)], projection={'llm_performance_score': 1, '_id': 0}, limit=10)",
+      "verdict": "MATCH",
+      "detail": "10 rows"
+    },
+    {
+      "file": "app/autoresearch/auditors/performance_audit.py",
+      "line": 52,
+      "table": "execution_errors",
+      "sql": "SELECT phase, error_type, error_message FROM execution_errors WHERE cycle_id = %s ORDER BY created_at DESC LIMIT 5",
+      "call": "mongo_store.find_docs('execution_errors', {'cycle_id': {p0}}, sort=[('created_at', -1)], projection={'phase': 1, 'error_type': 1, 'error_message': 1, '_id': 0}, limit=5)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/auditors/schedule_audit.py",
+      "line": 21,
+      "table": "cycle_schedules",
+      "sql": "SELECT id, name, schedule_type, cron_expression, interval_hours, is_active, last_run_at, next_run_at FROM cycle_schedules ORDER BY is_active DESC",
+      "call": "mongo_store.find_docs('cycle_schedules', {}, sort=[('is_active', -1)], projection={'id': 1, 'name': 1, 'schedule_type': 1, 'cron_expression': 1, 'interval_hours': 1, 'is_active': 1, 'last_run_at': 1, ",
+      "verdict": "MATCH",
+      "detail": "13 rows"
+    },
+    {
+      "file": "app/autoresearch/component_health.py",
+      "line": 429,
+      "table": "component_health_reports",
+      "sql": "SELECT evaluated_at, window_start, window_end, observations, verdict, failure_kinds, consecutive_failing, metrics, action, note FROM component_health_reports WH",
+      "call": "mongo_store.find_docs('component_health_reports', {'component': {p0}}, sort=[('evaluated_at', -1)], projection={'evaluated_at': 1, 'window_start': 1, 'window_end': 1, 'observations': 1, 'verdict': 1, ",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/autoresearch/component_health.py",
+      "line": 309,
+      "table": "component_health_reports",
+      "sql": "SELECT verdict FROM component_health_reports WHERE component = %s ORDER BY evaluated_at DESC LIMIT %s",
+      "call": "mongo_store.find_docs('component_health_reports', {'component': {p0}}, sort=[('evaluated_at', -1)], projection={'verdict': 1, '_id': 0}, limit={p1})",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/autoresearch/core.py",
+      "line": 50,
+      "table": "autoresearch_reports",
+      "sql": "SELECT cycle_id, status, phase, error, created_at FROM autoresearch_reports ORDER BY created_at DESC LIMIT 1",
+      "call": "mongo_store.find_docs('autoresearch_reports', {}, sort=[('created_at', -1)], projection={'cycle_id': 1, 'status': 1, 'phase': 1, 'error': 1, 'created_at': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/core.py",
+      "line": 390,
+      "table": "autoresearch_reports",
+      "sql": "SELECT status FROM autoresearch_reports WHERE id=%s",
+      "call": "mongo_store.find_docs('autoresearch_reports', {'id': {p0}}, projection={'status': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/eval_engine.py",
+      "line": 283,
+      "table": "decision_outcomes",
+      "sql": "SELECT confidence, outcome, pnl_pct FROM decision_outcomes WHERE ticker = %s AND resolved_at IS NOT NULL AND outcome IN ('WIN', 'LOSS') ORDER BY resolved_at DES",
+      "call": "mongo_store.find_docs('decision_outcomes', {'ticker': {p0}, 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, sort=[('resolved_at', -1)], projection={'confidence': 1, 'outcome': 1, '",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/autoresearch/eval_engine.py",
+      "line": 294,
+      "table": "decision_outcomes",
+      "sql": "SELECT confidence, outcome, pnl_pct FROM decision_outcomes WHERE resolved_at IS NOT NULL AND outcome IN ('WIN', 'LOSS') ORDER BY resolved_at DESC LIMIT %s",
+      "call": "mongo_store.find_docs('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, sort=[('resolved_at', -1)], projection={'confidence': 1, 'outcome': 1, 'pnl_pct': 1, '_i",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/autoresearch/eval_engine.py",
+      "line": 390,
+      "table": "decision_outcomes",
+      "sql": "SELECT action, confidence, pnl_pct FROM decision_outcomes WHERE cycle_id = %s LIMIT 1",
+      "call": "mongo_store.find_docs('decision_outcomes', {'cycle_id': {p0}}, projection={'action': 1, 'confidence': 1, 'pnl_pct': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/janitor.py",
+      "line": 135,
+      "table": "autoresearch_reports",
+      "sql": "SELECT decision_quality_score, data_quality_score, llm_performance_score FROM autoresearch_reports WHERE status = 'done' ORDER BY created_at DESC LIMIT %s",
+      "call": "mongo_store.find_docs('autoresearch_reports', {'status': 'done'}, sort=[('created_at', -1)], projection={'decision_quality_score': 1, 'data_quality_score': 1, 'llm_performance_score': 1, '_id': 0}, li",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/autoresearch/outcome_tracker.py",
+      "line": 293,
+      "table": "trade_results",
+      "sql": "SELECT policy_action FROM trade_results WHERE cycle_id = %s AND ticker = %s LIMIT 1",
+      "call": "mongo_store.find_docs('trade_results', {'cycle_id': {p0}, 'ticker': {p1}}, projection={'policy_action': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/outcome_tracker.py",
+      "line": 670,
+      "table": "decision_outcomes",
+      "sql": "SELECT id, action, entry_price, cycle_id, confidence FROM decision_outcomes WHERE ticker = %s AND resolved_at IS NULL",
+      "call": "mongo_store.find_docs('decision_outcomes', {'ticker': {p0}, 'resolved_at': None}, projection={'id': 1, 'action': 1, 'entry_price': 1, 'cycle_id': 1, 'confidence': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/autoresearch/outcome_tracker.py",
+      "line": 454,
+      "table": "decision_outcomes",
+      "sql": "SELECT id FROM decision_outcomes WHERE cycle_id = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('decision_outcomes', {'cycle_id': {p0}, 'ticker': {p1}}, projection={'id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/outcome_tracker.py",
+      "line": 552,
+      "table": "decision_outcomes",
+      "sql": "SELECT id, ticker, action, entry_price, created_at, cycle_id, confidence FROM decision_outcomes WHERE resolved_at IS NULL AND created_at < %s ORDER BY created_a",
+      "call": "mongo_store.find_docs('decision_outcomes', {'resolved_at': None, 'created_at': {'$lt': {p0}}}, sort=[('created_at', 1)], projection={'id': 1, 'ticker': 1, 'action': 1, 'entry_price': 1, 'created_at': ",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/autoresearch/outcome_tracker.py",
+      "line": 373,
+      "table": "v3_agent_telemetry",
+      "sql": "SELECT ticker, agent_name, model_used FROM v3_agent_telemetry WHERE cycle_id = %s AND model_used IS NOT NULL ORDER BY created_at",
+      "call": "mongo_store.find_docs('v3_agent_telemetry', {'cycle_id': {p0}, 'model_used': {'$ne': None}}, sort=[('created_at', 1)], projection={'ticker': 1, 'agent_name': 1, 'model_used': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/autoresearch/research_loop.py",
+      "line": 54,
+      "table": "dossier_question_log",
+      "sql": "SELECT id, ticker, question_hash, question, source_agent, ask_count, status FROM dossier_question_log WHERE status IN ('open', 'reasked') ORDER BY ask_count DES",
+      "call": "mongo_store.find_docs('dossier_question_log', {'status': {'$in': ['open', 'reasked']}}, sort=[('ask_count', -1), ('last_asked_at', -1)], projection={'id': 1, 'ticker': 1, 'question_hash': 1, 'question",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/autoresearch/scorecard.py",
+      "line": 191,
+      "table": "agent_skills",
+      "sql": "SELECT created_at FROM agent_skills WHERE agent_name = %s AND version = %s",
+      "call": "mongo_store.find_docs('agent_skills', {'agent_name': {p0}, 'version': {p1}}, projection={'created_at': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/skill_loader.py",
+      "line": 66,
+      "table": "agent_skills",
+      "sql": "SELECT skill_text, version FROM agent_skills WHERE agent_name = %s AND status = 'active' ORDER BY version DESC LIMIT 1",
+      "call": "mongo_store.find_docs('agent_skills', {'agent_name': {p0}, 'status': 'active'}, sort=[('version', -1)], projection={'skill_text': 1, 'version': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/skill_optimizer.py",
+      "line": 755,
+      "table": "agent_skills",
+      "sql": "SELECT skill_text, skill_hash FROM agent_skills WHERE agent_name = %s AND version = %s",
+      "call": "mongo_store.find_docs('agent_skills', {'agent_name': {p0}, 'version': {p1}}, projection={'skill_text': 1, 'skill_hash': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/skill_optimizer.py",
+      "line": 766,
+      "table": "agent_skills",
+      "sql": "SELECT skill_hash, rationale FROM agent_skills WHERE agent_name = %s AND version = %s",
+      "call": "mongo_store.find_docs('agent_skills', {'agent_name': {p0}, 'version': {p1}}, projection={'skill_hash': 1, 'rationale': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/autoresearch/skill_optimizer.py",
+      "line": 233,
+      "table": "decision_outcomes",
+      "sql": "SELECT outcome, confidence FROM decision_outcomes WHERE resolved_at IS NOT NULL AND action IN ('BUY', 'SELL') AND outcome IN ('WIN', 'LOSS', 'FLAT') ORDER BY re",
+      "call": "mongo_store.find_docs('decision_outcomes', {'resolved_at': {'$ne': None}, 'action': {'$in': ['BUY', 'SELL']}, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT']}}, sort=[('resolved_at', -1)], projection={'out",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/autoresearch/skill_optimizer.py",
+      "line": 293,
+      "table": "decision_outcomes",
+      "sql": "SELECT 1 FROM decision_outcomes WHERE skill_versions IS NOT NULL LIMIT 1",
+      "call": "mongo_store.find_docs('decision_outcomes', {'skill_versions': {'$ne': None}}, projection={'_id': 1}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/autoresearch/skill_optimizer.py",
+      "line": 702,
+      "table": "agent_skills",
+      "sql": "SELECT skill_text, version FROM agent_skills WHERE agent_name = %s AND status = 'active' ORDER BY version DESC LIMIT 1",
+      "call": "mongo_store.find_docs('agent_skills', {'agent_name': {p0}, 'status': 'active'}, sort=[('version', -1)], projection={'skill_text': 1, 'version': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/debate/equation_library.py",
+      "line": 265,
+      "table": "quant_equation_library",
+      "sql": "SELECT id, name, description, code, parameters FROM quant_equation_library WHERE name = %s",
+      "call": "mongo_store.find_docs('quant_equation_library', {'name': {p0}}, projection={'id': 1, 'name': 1, 'description': 1, 'code': 1, 'parameters': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/debate/equation_library.py",
+      "line": 220,
+      "table": "quant_equation_library",
+      "sql": "SELECT id, name, description, code, parameters, author_agent, ticker_origin, backtest_results, usage_count, avg_pnl_pct, win_rate_pct, sharpe_ratio, created_at ",
+      "call": "mongo_store.find_docs('quant_equation_library', {}, sort=[('win_rate_pct', -1), ('usag', 1)], projection={'id': 1, 'name': 1, 'description': 1, 'code': 1, 'parameters': 1, 'author_agent': 1, 'ticker_o",
+      "verdict": "ERROR",
+      "detail": "UndefinedColumn: column \"usag\" does not exist\nLINE 1: ...FROM quant_equation_library ORDER BY win_rate_pct DESC, usag\n                                                                   ^"
+    },
+    {
+      "file": "app/cognition/evaluation/judge_agent.py",
+      "line": 571,
+      "table": "decision_evaluations",
+      "sql": "SELECT decision_id FROM decision_evaluations WHERE decision_id = %s",
+      "call": "mongo_store.find_docs('decision_evaluations', {'decision_id': {p0}}, projection={'decision_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/evaluation/judge_agent.py",
+      "line": 233,
+      "table": "llm_audit_logs",
+      "sql": "SELECT cycle_id, ticker, context_hash, raw_response, created_at FROM llm_audit_logs WHERE id = %s",
+      "call": "mongo_store.find_docs('llm_audit_logs', {'id': {p0}}, projection={'cycle_id': 1, 'ticker': 1, 'context_hash': 1, 'raw_response': 1, 'created_at': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/evaluation/judge_agent.py",
+      "line": 285,
+      "table": "context_blobs",
+      "sql": "SELECT content FROM context_blobs WHERE context_hash = %s",
+      "call": "mongo_store.find_docs('context_blobs', {'context_hash': {p0}}, projection={'content': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/evaluation/judge_agent.py",
+      "line": 361,
+      "table": "decision_evaluations",
+      "sql": "SELECT decision_id FROM decision_evaluations WHERE decision_id = %s",
+      "call": "mongo_store.find_docs('decision_evaluations', {'decision_id': {p0}}, projection={'decision_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/evaluation/strategy_auditor.py",
+      "line": 30,
+      "table": "cycle_benchmarks",
+      "sql": "SELECT cycle_id FROM cycle_benchmarks ORDER BY started_at DESC NULLS LAST LIMIT 1",
+      "call": "mongo_store.find_docs('cycle_benchmarks', {}, sort=[('started_at', -1)], projection={'cycle_id': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/evaluation/strategy_auditor.py",
+      "line": 565,
+      "table": "decision_evaluations",
+      "sql": "SELECT decision_id, ticker, judge_a_score, final_quality_score, red_cards, evidence_gathering FROM decision_evaluations ORDER BY timestamp DESC LIMIT 100",
+      "call": "mongo_store.find_docs('decision_evaluations', {}, sort=[('timestamp', -1)], projection={'decision_id': 1, 'ticker': 1, 'judge_a_score': 1, 'final_quality_score': 1, 'red_cards': 1, 'evidence_gathering",
+      "verdict": "MATCH",
+      "detail": "100 rows"
+    },
+    {
+      "file": "app/cognition/evidence/packet_builder.py",
+      "line": 57,
+      "table": "price_history",
+      "sql": "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'close': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/cognition/evidence/packet_builder.py",
+      "line": 76,
+      "table": "fundamentals",
+      "sql": "SELECT * FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/evidence/packet_builder.py",
+      "line": 114,
+      "table": "technicals",
+      "sql": "SELECT * FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/cognition/evolution/coral/attempts.py",
+      "line": 86,
+      "table": "evolution_repair_queue",
+      "sql": "SELECT id, cycle_id, error_message, traceback_text, target_path, target_symbol, status, attempts FROM evolution_repair_queue WHERE status IN ('queued','running'",
+      "call": "mongo_store.find_docs('evolution_repair_queue', {'status': {'$in': ['queued', 'running']}}, sort=[('created_at', 1)], projection={'id': 1, 'cycle_id': 1, 'error_message': 1, 'traceback_text': 1, 'targ",
+      "verdict": "MATCH",
+      "detail": "2 rows"
+    },
+    {
+      "file": "app/cognition/lesson_store.py",
+      "line": 151,
+      "table": "evolution_lessons",
+      "sql": "SELECT id, session_id, round, score, status, lesson_text, timestamp FROM evolution_lessons WHERE id = %s",
+      "call": "mongo_store.find_docs('evolution_lessons', {'id': {p0}}, projection={'id': 1, 'session_id': 1, 'round': 1, 'score': 1, 'status': 1, 'lesson_text': 1, 'timestamp': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 267,
+      "table": "ontology_edges",
+      "sql": "SELECT source_id, target_id, weight, decay, relation, evidence_count FROM ontology_edges",
+      "call": "mongo_store.find_docs('ontology_edges', {}, projection={'source_id': 1, 'target_id': 1, 'weight': 1, 'decay': 1, 'relation': 1, 'evidence_count': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "16602 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 118,
+      "table": "ontology_nodes",
+      "sql": "SELECT id FROM ontology_nodes WHERE id = %s",
+      "call": "mongo_store.find_docs('ontology_nodes', {'id': {p0}}, projection={'id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 167,
+      "table": "ontology_nodes",
+      "sql": "SELECT 1 FROM ontology_nodes WHERE id = %s",
+      "call": "mongo_store.find_docs('ontology_nodes', {'id': {p0}}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 170,
+      "table": "ontology_nodes",
+      "sql": "SELECT 1 FROM ontology_nodes WHERE id = %s",
+      "call": "mongo_store.find_docs('ontology_nodes', {'id': {p0}}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 202,
+      "table": "ontology_edges",
+      "sql": "SELECT id, weight, evidence_count FROM ontology_edges WHERE source_id = %s AND target_id = %s AND relation = %s",
+      "call": "mongo_store.find_docs('ontology_edges', {'source_id': {p0}, 'target_id': {p1}, 'relation': {p2}}, projection={'id': 1, 'weight': 1, 'evidence_count': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 313,
+      "table": "ontology_nodes",
+      "sql": "SELECT node_type, label, metadata_json, validated_count, contradicted_count, disproven FROM ontology_nodes WHERE id = %s",
+      "call": "mongo_store.find_docs('ontology_nodes', {'id': {p0}}, projection={'node_type': 1, 'label': 1, 'metadata_json': 1, 'validated_count': 1, 'contradicted_count': 1, 'disproven': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 375,
+      "table": "ontology_nodes",
+      "sql": "SELECT id FROM ontology_nodes WHERE node_type = 'Ticker'",
+      "call": "mongo_store.find_docs('ontology_nodes', {'node_type': 'Ticker'}, projection={'id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "192 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 492,
+      "table": "ticker_metadata",
+      "sql": "SELECT name, sector, industry, market_cap_tier, asset_class FROM ticker_metadata WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_metadata', {'ticker': {p0}}, projection={'name': 1, 'sector': 1, 'industry': 1, 'market_cap_tier': 1, 'asset_class': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 567,
+      "table": "news_articles",
+      "sql": "SELECT id, title, publisher, url FROM news_articles WHERE ticker = %s AND quality_status != 'discarded' ORDER BY published_at DESC LIMIT 5",
+      "call": "mongo_store.find_docs('news_articles', {'ticker': {p0}, 'quality_status': {'$ne': 'discarded'}}, sort=[('published_at', -1)], projection={'id': 1, 'title': 1, 'publisher': 1, 'url': 1, '_id': 0}, limi",
+      "verdict": "DIFFER",
+      "detail": "5 rows only in pg, 5 only in mongo"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 591,
+      "table": "ticker_metadata",
+      "sql": "SELECT ticker FROM ticker_metadata WHERE sector = %s AND ticker != %s LIMIT 5",
+      "call": "mongo_store.find_docs('ticker_metadata', {'sector': {p0}, 'ticker': {'$ne': {p1}}}, projection={'ticker': 1, '_id': 0}, limit=5)",
+      "verdict": "DIFFER",
+      "detail": "1 rows only in pg, 1 only in mongo"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 188,
+      "table": "ontology_nodes",
+      "sql": "SELECT embedding FROM ontology_nodes WHERE id = %s",
+      "call": "mongo_store.find_docs('ontology_nodes', {'id': {p0}}, projection={'embedding': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/cognition/ontology/ontology_builder.py",
+      "line": 192,
+      "table": "ontology_nodes",
+      "sql": "SELECT embedding FROM ontology_nodes WHERE id = %s",
+      "call": "mongo_store.find_docs('ontology_nodes', {'id': {p0}}, projection={'embedding': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/collectors/etf_collector.py",
+      "line": 114,
+      "table": "ticker_metadata",
+      "sql": "SELECT ticker FROM ticker_metadata WHERE asset_class = 'etf'",
+      "call": "mongo_store.find_docs('ticker_metadata', {'asset_class': 'etf'}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "85 rows"
+    },
+    {
+      "file": "app/collectors/fund_scanner.py",
+      "line": 34,
+      "table": "sec_13f_holdings",
+      "sql": "SELECT ticker, shares, value_usd, pct_change, is_new_position, is_exit FROM sec_13f_holdings WHERE cik = %s AND filing_quarter = %s ORDER BY value_usd DESC LIMI",
+      "call": "mongo_store.find_docs('sec_13f_holdings', {'cik': {p0}, 'filing_quarter': {p1}}, sort=[('value_usd', -1)], projection={'ticker': 1, 'shares': 1, 'value_usd': 1, 'pct_change': 1, 'is_new_position': 1, ",
+      "verdict": "NOT_SEEDED",
+      "detail": "sec_13f_holdings has no documents yet"
+    },
+    {
+      "file": "app/collectors/market_regime_collector.py",
+      "line": 277,
+      "table": "asset_prices",
+      "sql": "SELECT date, open, high, low, close, volume FROM asset_prices WHERE symbol = %s AND asset_class = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('asset_prices', {'symbol': {p0}, 'asset_class': {p1}}, sort=[('date', -1)], projection={'date': 1, 'open': 1, 'high': 1, 'low': 1, 'close': 1, 'volume': 1, '_id': 0}, limit={p2})",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/collectors/market_regime_collector.py",
+      "line": 241,
+      "table": "asset_prices",
+      "sql": "SELECT close, date FROM asset_prices WHERE symbol = %s AND asset_class = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('asset_prices', {'symbol': {p0}, 'asset_class': {p1}}, sort=[('date', -1)], projection={'close': 1, 'date': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/collectors/market_regime_collector.py",
+      "line": 258,
+      "table": "asset_prices",
+      "sql": "SELECT close, date FROM asset_prices WHERE symbol = %s AND asset_class = 'sector_etf' ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('asset_prices', {'symbol': {p0}, 'asset_class': 'sector_etf'}, sort=[('date', -1)], projection={'close': 1, 'date': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/collectors/news_collector.py",
+      "line": 841,
+      "table": "source_trust",
+      "sql": "SELECT source_name, win_rate, total_items FROM source_trust WHERE source_type='publisher'",
+      "call": "mongo_store.find_docs('source_trust', {'source_type': 'publisher'}, projection={'source_name': 1, 'win_rate': 1, 'total_items': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "161 rows"
+    },
+    {
+      "file": "app/collectors/news_collector.py",
+      "line": 1011,
+      "table": "source_trust",
+      "sql": "SELECT source_name, win_rate, total_items FROM source_trust WHERE source_type='publisher'",
+      "call": "mongo_store.find_docs('source_trust', {'source_type': 'publisher'}, projection={'source_name': 1, 'win_rate': 1, 'total_items': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "161 rows"
+    },
+    {
+      "file": "app/collectors/twitter_collector.py",
+      "line": 203,
+      "table": "watchlist",
+      "sql": "SELECT ticker FROM watchlist WHERE status = 'active'",
+      "call": "mongo_store.find_docs('watchlist', {'status': 'active'}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "61 rows"
+    },
+    {
+      "file": "app/collectors/youtube_collector.py",
+      "line": 308,
+      "table": "youtube_transcripts",
+      "sql": "SELECT video_id FROM youtube_transcripts WHERE video_id = %s",
+      "call": "mongo_store.find_docs('youtube_transcripts', {'video_id': {p0}}, projection={'video_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/collectors/youtube_collector.py",
+      "line": 79,
+      "table": "discovered_channels",
+      "sql": "SELECT 1 FROM discovered_channels WHERE channel_handle = %s AND status = 'blocked'",
+      "call": "mongo_store.find_docs('discovered_channels', {'channel_handle': {p0}, 'status': 'blocked'}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/collectors/youtube_collector.py",
+      "line": 91,
+      "table": "discovered_channels",
+      "sql": "SELECT discovery_count, avg_view_count FROM discovered_channels WHERE channel_handle = %s",
+      "call": "mongo_store.find_docs('discovered_channels', {'channel_handle': {p0}}, projection={'discovery_count': 1, 'avg_view_count': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/collectors/youtube_collector.py",
+      "line": 494,
+      "table": "youtube_channels",
+      "sql": "SELECT channel_handle, display_name FROM youtube_channels WHERE is_active = TRUE",
+      "call": "mongo_store.find_docs('youtube_channels', {'is_active': True}, projection={'channel_handle': 1, 'display_name': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "17 rows"
+    },
+    {
+      "file": "app/collectors/youtube_collector.py",
+      "line": 57,
+      "table": "youtube_channels",
+      "sql": "SELECT 1 FROM youtube_channels WHERE channel_handle = %s",
+      "call": "mongo_store.find_docs('youtube_channels', {'channel_handle': {p0}}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/collectors/youtube_collector.py",
+      "line": 217,
+      "table": "youtube_channels",
+      "sql": "SELECT 1 FROM youtube_channels WHERE channel_handle = %s",
+      "call": "mongo_store.find_docs('youtube_channels', {'channel_handle': {p0}}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/data/market_data_store.py",
+      "line": 97,
+      "table": "market_snapshots",
+      "sql": "SELECT * FROM market_snapshots WHERE ticker = %s AND fetched_at >= %s ORDER BY fetched_at DESC LIMIT 1",
+      "call": "mongo_store.find_docs('market_snapshots', {'ticker': {p0}, 'fetched_at': {'$gte': {p1}}}, sort=[('fetched_at', -1)], limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/data/market_regime_engine.py",
+      "line": 12,
+      "table": "market_regime",
+      "sql": "SELECT * FROM market_regime ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('market_regime', {}, sort=[('date', -1)], limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/data/market_regime_engine.py",
+      "line": 34,
+      "table": "cross_asset_correlations",
+      "sql": "SELECT * FROM cross_asset_correlations WHERE period = %s",
+      "call": "mongo_store.find_docs('cross_asset_correlations', {'period': {p0}})",
+      "verdict": "NOT_SEEDED",
+      "detail": "cross_asset_correlations has no documents yet"
+    },
+    {
+      "file": "app/data/sector_aggregator.py",
+      "line": 14,
+      "table": "sector_performance",
+      "sql": "SELECT * FROM sector_performance WHERE date = %s",
+      "call": "mongo_store.find_docs('sector_performance', {'date': {p0}})",
+      "verdict": "ERROR",
+      "detail": "InvalidDocument: cannot encode object: datetime.date(2025, 5, 7), of type: <class 'datetime.date'>"
+    },
+    {
+      "file": "app/data/sector_correlation_engine.py",
+      "line": 10,
+      "table": "sector_correlations",
+      "sql": "SELECT * FROM sector_correlations WHERE period = %s",
+      "call": "mongo_store.find_docs('sector_correlations', {'period': {p0}})",
+      "verdict": "MATCH",
+      "detail": "55 rows"
+    },
+    {
+      "file": "app/data/sp500_universe.py",
+      "line": 49,
+      "table": "ticker_metadata",
+      "sql": "SELECT market_cap, market_cap_tier FROM ticker_metadata WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_metadata', {'ticker': {p0}}, projection={'market_cap': 1, 'market_cap_tier': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/db/checkpoints.py",
+      "line": 154,
+      "table": "cycle_checkpoints",
+      "sql": "SELECT 1 FROM cycle_checkpoints WHERE cycle_id = %s AND step_name = %s AND ticker = %s LIMIT 1",
+      "call": "mongo_store.find_docs('cycle_checkpoints', {'cycle_id': {p0}, 'step_name': {p1}, 'ticker': {p2}}, projection={'_id': 1}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "cycle_checkpoints has no documents yet"
+    },
+    {
+      "file": "app/db/checkpoints.py",
+      "line": 184,
+      "table": "cycle_checkpoints",
+      "sql": "SELECT state_blob FROM cycle_checkpoints WHERE cycle_id = %s AND step_name = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('cycle_checkpoints', {'cycle_id': {p0}, 'step_name': {p1}, 'ticker': {p2}}, projection={'state_blob': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "cycle_checkpoints has no documents yet"
+    },
+    {
+      "file": "app/db/checkpoints.py",
+      "line": 213,
+      "table": "cycle_checkpoints",
+      "sql": "SELECT step_name, ticker, state_blob, completed_at FROM cycle_checkpoints WHERE cycle_id = %s ORDER BY completed_at DESC LIMIT 1",
+      "call": "mongo_store.find_docs('cycle_checkpoints', {'cycle_id': {p0}}, sort=[('completed_at', -1)], projection={'step_name': 1, 'ticker': 1, 'state_blob': 1, 'completed_at': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "cycle_checkpoints has no documents yet"
+    },
+    {
+      "file": "app/db/checkpoints.py",
+      "line": 250,
+      "table": "cycle_checkpoints",
+      "sql": "SELECT step_name, ticker, completed_at FROM cycle_checkpoints WHERE cycle_id = %s ORDER BY completed_at ASC",
+      "call": "mongo_store.find_docs('cycle_checkpoints', {'cycle_id': {p0}}, sort=[('completed_at', 1)], projection={'step_name': 1, 'ticker': 1, 'completed_at': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "cycle_checkpoints has no documents yet"
+    },
+    {
+      "file": "app/db/constitution.py",
+      "line": 12,
+      "table": "trading_constitution",
+      "sql": "SELECT id, rule_category, rule_text, rule_params FROM trading_constitution WHERE is_active = TRUE",
+      "call": "mongo_store.find_docs('trading_constitution', {'is_active': True}, projection={'id': 1, 'rule_category': 1, 'rule_text': 1, 'rule_params': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "7 rows"
+    },
+    {
+      "file": "app/db/evolution_repo.py",
+      "line": 214,
+      "table": "evolution_nodes",
+      "sql": "SELECT id, session_id, round, parent_id, motivation, code, metrics, score, status, analysis, timestamp FROM evolution_nodes WHERE session_id = %s ORDER BY round",
+      "call": "mongo_store.find_docs('evolution_nodes', {'session_id': {p0}}, sort=[('round', -1)], projection={'id': 1, 'session_id': 1, 'round': 1, 'parent_id': 1, 'motivation': 1, 'code': 1, 'metrics': 1, 'score'",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/db/evolution_repo.py",
+      "line": 221,
+      "table": "evolution_nodes",
+      "sql": "SELECT id, session_id, round, parent_id, motivation, code, metrics, score, status, analysis, timestamp FROM evolution_nodes ORDER BY timestamp DESC LIMIT %s",
+      "call": "mongo_store.find_docs('evolution_nodes', {}, sort=[('timestamp', -1)], projection={'id': 1, 'session_id': 1, 'round': 1, 'parent_id': 1, 'motivation': 1, 'code': 1, 'metrics': 1, 'score': 1, 'status':",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/db/memory_repo.py",
+      "line": 66,
+      "table": "episodic_observations",
+      "sql": "SELECT * FROM episodic_observations WHERE ticker = %s AND promoted_to_memory = FALSE ORDER BY created_at ASC",
+      "call": "mongo_store.find_docs('episodic_observations', {'ticker': {p0}, 'promoted_to_memory': False}, sort=[('created_at', 1)])",
+      "verdict": "MATCH",
+      "detail": "3 rows"
+    },
+    {
+      "file": "app/db/memory_repo.py",
+      "line": 80,
+      "table": "canonical_memories",
+      "sql": "SELECT * FROM canonical_memories WHERE ticker = %s AND status != 'deprecated'",
+      "call": "mongo_store.find_docs('canonical_memories', {'ticker': {p0}, 'status': {'$ne': 'deprecated'}})",
+      "verdict": "MATCH",
+      "detail": "3 rows"
+    },
+    {
+      "file": "app/db/table_spec.py",
+      "line": 172,
+      "table": "columns",
+      "sql": "SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position",
+      "call": "mongo_store.find_docs('columns', {'table_schema': 'public', 'table_name': {p0}}, sort=[('ordinal_position', 1)], projection={'column_name': 1, 'data_type': 1, 'udt_name': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "columns has no documents yet"
+    },
+    {
+      "file": "app/db/vector_store.py",
+      "line": 286,
+      "table": "embeddings",
+      "sql": "SELECT 1 FROM embeddings WHERE source_table = %s AND source_id = %s LIMIT 1",
+      "call": "mongo_store.find_docs('embeddings', {'source_table': {p0}, 'source_id': {p1}}, projection={'_id': 1}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/monitoring/pipeline_profiler.py",
+      "line": 406,
+      "table": "pipeline_profiler",
+      "sql": "SELECT cycle_id, total_ms, idle_ms, phase_count, bottlenecks_json, phases_json, created_at FROM pipeline_profiler ORDER BY created_at DESC LIMIT %s",
+      "call": "mongo_store.find_docs('pipeline_profiler', {}, sort=[('created_at', -1)], projection={'cycle_id': 1, 'total_ms': 1, 'idle_ms': 1, 'phase_count': 1, 'bottlenecks_json': 1, 'phases_json': 1, 'created_at",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/processors/data_sanity.py",
+      "line": 73,
+      "table": "fundamentals",
+      "sql": "SELECT market_cap FROM fundamentals WHERE ticker = 'AAPL' ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': 'AAPL'}, sort=[('snapshot_date', -1)], projection={'market_cap': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/processors/data_sanity.py",
+      "line": 92,
+      "table": "fundamentals",
+      "sql": "SELECT ticker, pe_ratio FROM fundamentals WHERE pe_ratio IS NOT NULL AND (pe_ratio < -100 OR pe_ratio > 1000) LIMIT 5",
+      "call": "mongo_store.find_docs('fundamentals', {'pe_ratio': {'$ne': None}, '$or': [{'pe_ratio': {'$lt': -100}}, {'pe_ratio': {'$gt': 1000}}]}, projection={'ticker': 1, 'pe_ratio': 1, '_id': 0}, limit=5)",
+      "verdict": "DIFFER",
+      "detail": "3 rows only in pg, 3 only in mongo"
+    },
+    {
+      "file": "app/processors/fund_scanner.py",
+      "line": 34,
+      "table": "sec_13f_holdings",
+      "sql": "SELECT ticker, shares, value_usd, pct_change, is_new_position, is_exit FROM sec_13f_holdings WHERE cik = %s AND filing_quarter = %s ORDER BY value_usd DESC LIMI",
+      "call": "mongo_store.find_docs('sec_13f_holdings', {'cik': {p0}, 'filing_quarter': {p1}}, sort=[('value_usd', -1)], projection={'ticker': 1, 'shares': 1, 'value_usd': 1, 'pct_change': 1, 'is_new_position': 1, ",
+      "verdict": "NOT_SEEDED",
+      "detail": "sec_13f_holdings has no documents yet"
+    },
+    {
+      "file": "app/processors/market_regime.py",
+      "line": 26,
+      "table": "technicals",
+      "sql": "SELECT sma_50, sma_200 FROM technicals WHERE ticker = 'SPY' ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': 'SPY'}, sort=[('date', -1)], projection={'sma_50': 1, 'sma_200': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/processors/market_regime.py",
+      "line": 32,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = 'SPY' ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': 'SPY'}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/market_regime.py",
+      "line": 52,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = '^VIX' OR ticker = 'VIX' ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'$or': [{'ticker': '^VIX'}, {'ticker': 'VIX'}]}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/market_regime.py",
+      "line": 65,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = 'SPY' ORDER BY date DESC LIMIT 21",
+      "call": "mongo_store.find_docs('price_history', {'ticker': 'SPY'}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=21)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 38,
+      "table": "price_history",
+      "sql": "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'close': 1, '_id': 0}, limit={p1})",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 61,
+      "table": "price_history",
+      "sql": "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'close': 1, '_id': 0}, limit={p1})",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 328,
+      "table": "price_history",
+      "sql": "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'close': 1, '_id': 0}, limit={p1})",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 338,
+      "table": "price_history",
+      "sql": "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'close': 1, '_id': 0}, limit={p1})",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 417,
+      "table": "price_history",
+      "sql": "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'close': 1, '_id': 0}, limit={p1})",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 117,
+      "table": "price_history",
+      "sql": "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'close': 1, '_id': 0}, limit={p1})",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 270,
+      "table": "technicals",
+      "sql": "SELECT atr_14, support, resistance FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], projection={'atr_14': 1, 'support': 1, 'resistance': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 480,
+      "table": "technicals",
+      "sql": "SELECT rsi_14, macd_hist, stoch_k, adx_14 FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], projection={'rsi_14': 1, 'macd_hist': 1, 'stoch_k': 1, 'adx_14': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 501,
+      "table": "fundamentals",
+      "sql": "SELECT pe_ratio, forward_pe, price_to_book, revenue_growth FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], projection={'pe_ratio': 1, 'forward_pe': 1, 'price_to_book': 1, 'revenue_growth': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 583,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT %s",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit={p1})",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 258,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/processors/quant_processor.py",
+      "line": 349,
+      "table": "fundamentals",
+      "sql": "SELECT beta FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], projection={'beta': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/processors/technical_processor.py",
+      "line": 219,
+      "table": "technicals",
+      "sql": "SELECT * FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/processors/ticker_extractor.py",
+      "line": 818,
+      "table": "company_registry",
+      "sql": "SELECT symbol, company_name, aliases, sector, market_cap, is_sp500, verified, rejected FROM company_registry",
+      "call": "mongo_store.find_docs('company_registry', {}, projection={'symbol': 1, 'company_name': 1, 'aliases': 1, 'sector': 1, 'market_cap': 1, 'is_sp500': 1, 'verified': 1, 'rejected': 1, '_id': 0})",
+      "verdict": "DIFFER",
+      "detail": "row count pg=10733 mongo=10689"
+    },
+    {
+      "file": "app/processors/ticker_extractor.py",
+      "line": 810,
+      "table": "pg_tables",
+      "sql": "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'",
+      "call": "mongo_store.find_docs('pg_tables', {'schemaname': 'public'}, projection={'tablename': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "pg_tables has no documents yet"
+    },
+    {
+      "file": "app/quant/regime_grading.py",
+      "line": 53,
+      "table": "regime_hmm_posteriors",
+      "sql": "SELECT as_of, regime, confidence, mean_daily_return_pct, annualized_vol_pct, state_probabilities, state_stats, transition_matrix, stale_sessions FROM regime_hmm",
+      "call": "mongo_store.find_docs('regime_hmm_posteriors', {'ticker': {p0}}, sort=[('as_of', 1)], projection={'as_of': 1, 'regime': 1, 'confidence': 1, 'mean_daily_return_pct': 1, 'annualized_vol_pct': 1, 'state_",
+      "verdict": "MATCH",
+      "detail": "253 rows"
+    },
+    {
+      "file": "app/quant/technical_baseline.py",
+      "line": 290,
+      "table": "technicals",
+      "sql": "SELECT date, rsi_14, atr_14, bb_upper, bb_mid, bb_lower, sma_50, sma_200, support, resistance FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], projection={'date': 1, 'rsi_14': 1, 'atr_14': 1, 'bb_upper': 1, 'bb_mid': 1, 'bb_lower': 1, 'sma_50': 1, 'sma_200': 1, 'suppo",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/quant/trial_registry.py",
+      "line": 161,
+      "table": "research_trials",
+      "sql": "SELECT 1 FROM research_trials WHERE family = %s AND label = %s",
+      "call": "mongo_store.find_docs('research_trials', {'family': {p0}, 'label': {p1}}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/quant/valuation_block.py",
+      "line": 265,
+      "table": "macro_indicators",
+      "sql": "SELECT value FROM macro_indicators WHERE indicator = 'TREASURY_10Y' AND country = 'US' ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('macro_indicators', {'indicator': 'TREASURY_10Y', 'country': 'US'}, sort=[('date', -1)], projection={'value': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/routers/cycle_replay_router.py",
+      "line": 128,
+      "table": "trade_results",
+      "sql": "SELECT ticker, action, confidence FROM trade_results WHERE cycle_id = %s",
+      "call": "mongo_store.find_docs('trade_results', {'cycle_id': {p0}}, projection={'ticker': 1, 'action': 1, 'confidence': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/routers/cycle_replay_router.py",
+      "line": 173,
+      "table": "trade_results",
+      "sql": "SELECT action, confidence, reasoning, signal_weights, risk_flags, regime, persona_used, created_at, decision_provenance FROM trade_results WHERE cycle_id = %s A",
+      "call": "mongo_store.find_docs('trade_results', {'cycle_id': {p0}, 'ticker': {p1}}, sort=[('created_at', -1)], projection={'action': 1, 'confidence': 1, 'reasoning': 1, 'signal_weights': 1, 'risk_flags': 1, 'r",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/routers/cycle_replay_router.py",
+      "line": 229,
+      "table": "v3_agent_telemetry",
+      "sql": "SELECT agent_name, outcome, elapsed_ms FROM v3_agent_telemetry WHERE cycle_id = %s ORDER BY created_at",
+      "call": "mongo_store.find_docs('v3_agent_telemetry', {'cycle_id': {p0}}, sort=[('created_at', 1)], projection={'agent_name': 1, 'outcome': 1, 'elapsed_ms': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "36 rows"
+    },
+    {
+      "file": "app/routers/cycle_replay_router.py",
+      "line": 218,
+      "table": "v3_agent_telemetry",
+      "sql": "SELECT agent_name, phase, outcome, elapsed_ms, loops_used, token_usage, created_at, error_message, failure_reason, attempt_no FROM v3_agent_telemetry WHERE cycl",
+      "call": "mongo_store.find_docs('v3_agent_telemetry', {'cycle_id': {p0}, 'ticker': {p1}}, sort=[('created_at', 1), ('attempt_n', 1)], projection={'agent_name': 1, 'phase': 1, 'outcome': 1, 'elapsed_ms': 1, 'loo",
+      "verdict": "ERROR",
+      "detail": "UndefinedColumn: column \"attempt_n\" does not exist\nLINE 1: ...e_id = $1 AND ticker = $2 ORDER BY created_at ASC, attempt_n\n                                                              ^\nHINT:  Perhap"
+    },
+    {
+      "file": "app/routers/cycle_replay_router.py",
+      "line": 698,
+      "table": "shared_desk",
+      "sql": "SELECT desk_id, phase, desk_data, created_at, updated_at FROM shared_desk WHERE cycle_id = %s AND ticker = %s ORDER BY created_at DESC LIMIT 1",
+      "call": "mongo_store.find_docs('shared_desk', {'cycle_id': {p0}, 'ticker': {p1}}, sort=[('created_at', -1)], projection={'desk_id': 1, 'phase': 1, 'desk_data': 1, 'created_at': 1, 'updated_at': 1, '_id': 0}, l",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/routers/cycle_replay_router.py",
+      "line": 833,
+      "table": "whiteboard_entries",
+      "sql": "SELECT id, section, content, author_agent, version, edited_by, created_at FROM whiteboard_entries WHERE cycle_id = %s AND ticker = %s ORDER BY created_at ASC",
+      "call": "mongo_store.find_docs('whiteboard_entries', {'cycle_id': {p0}, 'ticker': {p1}}, sort=[('created_at', 1)], projection={'id': 1, 'section': 1, 'content': 1, 'author_agent': 1, 'version': 1, 'edited_by':",
+      "verdict": "MATCH",
+      "detail": "13 rows"
+    },
+    {
+      "file": "app/routers/cycle_replay_router.py",
+      "line": 854,
+      "table": "whiteboard_annotations",
+      "sql": "SELECT author_agent, note, created_at FROM whiteboard_annotations WHERE entry_id = %s ORDER BY created_at ASC",
+      "call": "mongo_store.find_docs('whiteboard_annotations', {'entry_id': {p0}}, sort=[('created_at', 1)], projection={'author_agent': 1, 'note': 1, 'created_at': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/routers/eval_trust_router.py",
+      "line": 154,
+      "table": "decision_outcomes",
+      "sql": "SELECT ticker, action, confidence, pnl_pct, outcome, cycle_id, created_at, resolved_at FROM decision_outcomes WHERE resolved_at IS NOT NULL ORDER BY resolved_at",
+      "call": "mongo_store.find_docs('decision_outcomes', {'resolved_at': {'$ne': None}}, sort=[('resolved_at', -1)], projection={'ticker': 1, 'action': 1, 'confidence': 1, 'pnl_pct': 1, 'outcome': 1, 'cycle_id': 1,",
+      "verdict": "MATCH",
+      "detail": "25 rows"
+    },
+    {
+      "file": "app/routers/eval_trust_router.py",
+      "line": 315,
+      "table": "decision_evaluations",
+      "sql": "SELECT red_cards, evidence_gathering FROM decision_evaluations WHERE timestamp >= %s",
+      "call": "mongo_store.find_docs('decision_evaluations', {'timestamp': {'$gte': {p0}}}, projection={'red_cards': 1, 'evidence_gathering': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "988 rows"
+    },
+    {
+      "file": "app/routers/eval_trust_router.py",
+      "line": 404,
+      "table": "variance_runs",
+      "sql": "SELECT id, cycle_id, ticker, runs, completed, actions, majority_action, action_flip_rate, confidence_mean, confidence_stdev, confidence_range, status, error, cr",
+      "call": "mongo_store.find_docs('variance_runs', {}, sort=[('created_at', 1)], projection={'id': 1, 'cycle_id': 1, 'ticker': 1, 'runs': 1, 'completed': 1, 'actions': 1, 'majority_action': 1, 'action_flip_rate':",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/routers/verdict_router.py",
+      "line": 69,
+      "table": "ticker_user_notes",
+      "sql": "SELECT ticker, note, updated_at FROM ticker_user_notes ORDER BY updated_at DESC",
+      "call": "mongo_store.find_docs('ticker_user_notes', {}, sort=[('updated_at', -1)], projection={'ticker': 1, 'note': 1, 'updated_at': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "ticker_user_notes has no documents yet"
+    },
+    {
+      "file": "app/routers/verdict_router.py",
+      "line": 86,
+      "table": "ticker_user_notes",
+      "sql": "SELECT ticker, note, updated_at FROM ticker_user_notes WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_user_notes', {'ticker': {p0}}, projection={'ticker': 1, 'note': 1, 'updated_at': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "ticker_user_notes has no documents yet"
+    },
+    {
+      "file": "app/routers/verdict_router.py",
+      "line": 127,
+      "table": "ticker_user_notes",
+      "sql": "SELECT ticker FROM ticker_user_notes WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_user_notes', {'ticker': {p0}}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "ticker_user_notes has no documents yet"
+    },
+    {
+      "file": "app/routers/vllm_router.py",
+      "line": 586,
+      "table": "janitor_run_log",
+      "sql": "SELECT run_time, details FROM janitor_run_log ORDER BY run_time DESC LIMIT 3",
+      "call": "mongo_store.find_docs('janitor_run_log', {}, sort=[('run_time', -1)], projection={'run_time': 1, 'details': 1, '_id': 0}, limit=3)",
+      "verdict": "NOT_SEEDED",
+      "detail": "janitor_run_log has no documents yet"
+    },
+    {
+      "file": "app/services/boot_service.py",
+      "line": 108,
+      "table": "stable_harnesses",
+      "sql": "SELECT target_type, target_name, stable_content FROM stable_harnesses",
+      "call": "mongo_store.find_docs('stable_harnesses', {}, projection={'target_type': 1, 'target_name': 1, 'stable_content': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "stable_harnesses has no documents yet"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 167,
+      "table": "bots",
+      "sql": "SELECT 1 FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 209,
+      "table": "bots",
+      "sql": "SELECT bot_id, display_name, model_name, status, cash_balance, starting_cash, total_pnl, win_rate, total_trades, is_active, created_at, last_run_at, description",
+      "call": "mongo_store.find_docs('bots', {}, sort=[('is_active', -1), ('created_at', 1)], projection={'bot_id': 1, 'display_name': 1, 'model_name': 1, 'status': 1, 'cash_balance': 1, 'starting_cash': 1, 'total_p",
+      "verdict": "MATCH",
+      "detail": "6 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 251,
+      "table": "bots",
+      "sql": "SELECT 1 FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'_id': 1})",
+      "verdict": "MATCH",
+      "detail": "1 rows (existence probe, count only)"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 313,
+      "table": "bots",
+      "sql": "SELECT display_name, description, starting_cash, total_trades FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'display_name': 1, 'description': 1, 'starting_cash': 1, 'total_trades': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 362,
+      "table": "bots",
+      "sql": "SELECT starting_cash FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'starting_cash': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 467,
+      "table": "bots",
+      "sql": "SELECT starting_cash FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'starting_cash': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 629,
+      "table": "bots",
+      "sql": "SELECT is_active FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'is_active': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 66,
+      "table": "bots",
+      "sql": "SELECT bot_id FROM bots WHERE is_active = TRUE ORDER BY created_at ASC",
+      "call": "mongo_store.find_docs('bots', {'is_active': True}, sort=[('created_at', 1)], projection={'bot_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 123,
+      "table": "bots",
+      "sql": "SELECT starting_cash FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'starting_cash': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 141,
+      "table": "bots",
+      "sql": "SELECT description FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'description': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/bot_manager.py",
+      "line": 493,
+      "table": "positions",
+      "sql": "SELECT id, qty, avg_entry_price FROM positions WHERE bot_id = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}, 'ticker': {p1}}, projection={'id': 1, 'qty': 1, 'avg_entry_price': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/cycle_scheduler.py",
+      "line": 227,
+      "table": "pipeline_state",
+      "sql": "SELECT status FROM pipeline_state WHERE singleton_id = 'current'",
+      "call": "mongo_store.find_docs('pipeline_state', {'singleton_id': 'current'}, projection={'status': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/cycle_scheduler.py",
+      "line": 1788,
+      "table": "pipeline_state",
+      "sql": "SELECT status FROM pipeline_state WHERE singleton_id = 'current'",
+      "call": "mongo_store.find_docs('pipeline_state', {'singleton_id': 'current'}, projection={'status': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 67,
+      "table": "data_flags",
+      "sql": "SELECT id FROM data_flags WHERE source_table = %s AND source_id = %s",
+      "call": "mongo_store.find_docs('data_flags', {'source_table': {p0}, 'source_id': {p1}}, projection={'id': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "data_flags has no documents yet"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 106,
+      "table": "data_flags",
+      "sql": "SELECT id, source_table, source_id FROM data_flags WHERE id = %s",
+      "call": "mongo_store.find_docs('data_flags', {'id': {p0}}, projection={'id': 1, 'source_table': 1, 'source_id': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "data_flags has no documents yet"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 200,
+      "table": "data_flags",
+      "sql": "SELECT df.source_table, df.source_id, df.flag_type, df.reason, df.flagged_at FROM data_flags df WHERE df.ticker = %s ORDER BY df.flagged_at DESC",
+      "call": "mongo_store.find_docs('data_flags', {'ticker': {p0}}, sort=[('flagged_at', -1)], projection={'source_table': 1, 'source_id': 1, 'flag_type': 1, 'reason': 1, 'flagged_at': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "data_flags has no documents yet"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 222,
+      "table": "source_trust",
+      "sql": "SELECT source_type, source_name, trust_score, total_flags, total_items, flag_rate FROM source_trust WHERE trust_score < 0.5 ORDER BY trust_score ASC",
+      "call": "mongo_store.find_docs('source_trust', {'trust_score': {'$lt': 0.5}}, sort=[('trust_score', 1)], projection={'source_type': 1, 'source_name': 1, 'trust_score': 1, 'total_flags': 1, 'total_items': 1, 'f",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 252,
+      "table": "source_trust",
+      "sql": "SELECT trust_score FROM source_trust WHERE source_type = %s AND source_name = %s",
+      "call": "mongo_store.find_docs('source_trust', {'source_type': {p0}, 'source_name': {p1}}, projection={'trust_score': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 266,
+      "table": "source_trust",
+      "sql": "SELECT source_type, source_name, trust_score, total_flags, total_items, flag_rate FROM source_trust WHERE trust_score < %s ORDER BY trust_score ASC",
+      "call": "mongo_store.find_docs('source_trust', {'trust_score': {'$lt': {p0}}}, sort=[('trust_score', 1)], projection={'source_type': 1, 'source_name': 1, 'trust_score': 1, 'total_flags': 1, 'total_items': 1, '",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 174,
+      "table": "data_flags",
+      "sql": "SELECT source_id FROM data_flags WHERE source_table = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('data_flags', {'source_table': {p0}, 'ticker': {p1}}, projection={'source_id': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "data_flags has no documents yet"
+    },
+    {
+      "file": "app/services/data_flag_service.py",
+      "line": 180,
+      "table": "data_flags",
+      "sql": "SELECT source_id FROM data_flags WHERE source_table = %s",
+      "call": "mongo_store.find_docs('data_flags', {'source_table': {p0}}, projection={'source_id': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "data_flags has no documents yet"
+    },
+    {
+      "file": "app/services/discovery_mode.py",
+      "line": 58,
+      "table": "discovered_tickers",
+      "sql": "SELECT ticker, score, context FROM discovered_tickers WHERE discovered_at > NOW() - INTERVAL '24 hours' AND (validation_status IS NULL OR validation_status != '",
+      "call": "mongo_store.find_docs('discovered_tickers', {'discovered_at': {'$gt': (datetime.now(timezone.utc) - timedelta(hours=24))}, '$or': [{'validation_status': None}, {'validation_status': {'$ne': 'rejected'",
+      "verdict": "DIFFER",
+      "detail": "4 rows only in pg, 4 only in mongo"
+    },
+    {
+      "file": "app/services/dossier_service.py",
+      "line": 30,
+      "table": "ticker_dossiers",
+      "sql": "SELECT ticker, lifecycle_state, canonical_thesis, lead_analyst_id, open_questions, monitoring_triggers, hold_spec, decision_history, attached_artifact_ids, crea",
+      "call": "mongo_store.find_docs('ticker_dossiers', {'ticker': {p0}}, projection={'ticker': 1, 'lifecycle_state': 1, 'canonical_thesis': 1, 'lead_analyst_id': 1, 'open_questions': 1, 'monitoring_triggers': 1, 'h",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/flash_briefing.py",
+      "line": 26,
+      "table": "watchlist",
+      "sql": "SELECT ticker FROM watchlist WHERE status = 'active'",
+      "call": "mongo_store.find_docs('watchlist', {'status': 'active'}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "61 rows"
+    },
+    {
+      "file": "app/services/flash_briefing.py",
+      "line": 28,
+      "table": "positions",
+      "sql": "SELECT ticker FROM positions",
+      "call": "mongo_store.find_docs('positions', {}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "16 rows"
+    },
+    {
+      "file": "app/services/flash_briefing.py",
+      "line": 252,
+      "table": "flash_briefings",
+      "sql": "SELECT id, created_at, report_content, source_urls, article_count FROM flash_briefings ORDER BY created_at DESC LIMIT %s",
+      "call": "mongo_store.find_docs('flash_briefings', {}, sort=[('created_at', -1)], projection={'id': 1, 'created_at': 1, 'report_content': 1, 'source_urls': 1, 'article_count': 1, '_id': 0}, limit={p0})",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/services/freshness_gate.py",
+      "line": 58,
+      "table": "freshness_gate_config",
+      "sql": "SELECT threshold_name, threshold_value, weight FROM freshness_gate_config",
+      "call": "mongo_store.find_docs('freshness_gate_config', {}, projection={'threshold_name': 1, 'threshold_value': 1, 'weight': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "6 rows"
+    },
+    {
+      "file": "app/services/logging/pending_review.py",
+      "line": 77,
+      "table": "news_articles",
+      "sql": "SELECT publisher FROM news_articles WHERE id = %s",
+      "call": "mongo_store.find_docs('news_articles', {'id': {p0}}, projection={'publisher': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/logging/pending_review.py",
+      "line": 91,
+      "table": "news_articles",
+      "sql": "SELECT publisher FROM news_articles WHERE id = %s",
+      "call": "mongo_store.find_docs('news_articles', {'id': {p0}}, projection={'publisher': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/logging/pending_review.py",
+      "line": 108,
+      "table": "news_articles",
+      "sql": "SELECT ticker, publisher FROM news_articles WHERE id = %s",
+      "call": "mongo_store.find_docs('news_articles', {'id': {p0}}, projection={'ticker': 1, 'publisher': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/logging/pending_review.py",
+      "line": 159,
+      "table": "pending_evolution_fixes",
+      "sql": "SELECT id, cycle_id, target_type, target_name, proposed_fix, motivation, proposer_model, critic_concerns, judge_score, status, created_at, resolved_at FROM pend",
+      "call": "mongo_store.find_docs('pending_evolution_fixes', {}, sort=[('created_at', -1)], projection={'id': 1, 'cycle_id': 1, 'target_type': 1, 'target_name': 1, 'proposed_fix': 1, 'motivation': 1, 'proposer_mo",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/services/logging/tool_logging.py",
+      "line": 81,
+      "table": "tool_usage_stats",
+      "sql": "SELECT 1 FROM tool_usage_stats WHERE tool_name = %s AND agent_name = %s AND cycle_id = %s AND called_at > NOW() - INTERVAL '5 seconds' LIMIT 1",
+      "call": "mongo_store.find_docs('tool_usage_stats', {'tool_name': {p0}, 'agent_name': {p1}, 'cycle_id': {p2}, 'called_at': {'$gt': (datetime.now(timezone.utc) - timedelta(seconds=5))}}, projection={'_id': 1}, l",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/services/memory/episodic_memory.py",
+      "line": 101,
+      "table": "episodic_memory",
+      "sql": "SELECT id, cycle_id, timestamp, summary, outcome_score, key_decisions, outcome FROM episodic_memory WHERE ticker = %s ORDER BY timestamp DESC LIMIT %s",
+      "call": "mongo_store.find_docs('episodic_memory', {'ticker': {p0}}, sort=[('timestamp', -1)], projection={'id': 1, 'cycle_id': 1, 'timestamp': 1, 'summary': 1, 'outcome_score': 1, 'key_decisions': 1, 'outcome'",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/services/memory/procedural_memory.py",
+      "line": 53,
+      "table": "procedural_memory",
+      "sql": "SELECT id FROM procedural_memory WHERE ticker = %s AND trigger_pattern = %s LIMIT 1",
+      "call": "mongo_store.find_docs('procedural_memory', {'ticker': {p0}, 'trigger_pattern': {p1}}, projection={'id': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/memory/semantic_memory.py",
+      "line": 62,
+      "table": "semantic_memory",
+      "sql": "SELECT id, ticker, type, content, confidence FROM semantic_memory WHERE ticker = %s OR ticker = 'global' ORDER BY confidence DESC, last_accessed_at DESC LIMIT %",
+      "call": "mongo_store.find_docs('semantic_memory', {'$or': [{'ticker': {p0}}, {'ticker': 'global'}]}, sort=[('confidence', -1), ('last_accessed_at', -1)], projection={'id': 1, 'ticker': 1, 'type': 1, 'content':",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/services/memory/store.py",
+      "line": 99,
+      "table": "episodic_observations",
+      "sql": "SELECT id, created_at, cycle_id, ticker, sector, source_type, observation_text, rationale_excerpt, confidence_at_creation, outcome_label, outcome_score, promote",
+      "call": "mongo_store.find_docs('episodic_observations', {'promoted_to_mem': True}, projection={'id': 1, 'created_at': 1, 'cycle_id': 1, 'ticker': 1, 'sector': 1, 'source_type': 1, 'observation_text': 1, 'ratio",
+      "verdict": "ERROR",
+      "detail": "UndefinedColumn: column \"promoted_to_mem\" does not exist\nLINE 1: ...omoted_to_memory FROM episodic_observations WHERE promoted_t...\n                                                             ^\nHINT:"
+    },
+    {
+      "file": "app/services/memory/store.py",
+      "line": 44,
+      "table": "episodic_observations",
+      "sql": "SELECT id FROM episodic_observations WHERE cycle_id = %s AND ticker = %s AND source_type = %s LIMIT 1",
+      "call": "mongo_store.find_docs('episodic_observations', {'cycle_id': {p0}, 'ticker': {p1}, 'source_type': {p2}}, projection={'id': 1, '_id': 0}, limit=1)",
+      "verdict": "DIFFER",
+      "detail": "1 rows only in pg, 1 only in mongo"
+    },
+    {
+      "file": "app/services/news_backfill.py",
+      "line": 134,
+      "table": "pipeline_state",
+      "sql": "SELECT status FROM pipeline_state ORDER BY updated_at DESC LIMIT 1",
+      "call": "mongo_store.find_docs('pipeline_state', {}, sort=[('updated_at', -1)], projection={'status': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/parameter_store.py",
+      "line": 336,
+      "table": "runtime_parameters",
+      "sql": "SELECT value FROM runtime_parameters WHERE param_key = %s AND status = 'active' AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY created_at DESC LIMIT 1",
+      "call": "mongo_store.find_docs('runtime_parameters', {'param_key': {p0}, 'status': 'active', '$or': [{'expires_at': None}, {'expires_at': {'$gt': datetime.now(timezone.utc)}}]}, sort=[('created_at', -1)], proj",
+      "verdict": "NOT_SEEDED",
+      "detail": "runtime_parameters has no documents yet"
+    },
+    {
+      "file": "app/services/parameter_store.py",
+      "line": 394,
+      "table": "runtime_parameters",
+      "sql": "SELECT value, set_by, reason, status, expires_at, created_at FROM runtime_parameters WHERE param_key = %s ORDER BY created_at DESC LIMIT 1",
+      "call": "mongo_store.find_docs('runtime_parameters', {'param_key': {p0}}, sort=[('created_at', -1)], projection={'value': 1, 'set_by': 1, 'reason': 1, 'status': 1, 'expires_at': 1, 'created_at': 1, '_id': 0}, ",
+      "verdict": "NOT_SEEDED",
+      "detail": "runtime_parameters has no documents yet"
+    },
+    {
+      "file": "app/services/pipeline_state.py",
+      "line": 198,
+      "table": "pipeline_state",
+      "sql": "SELECT * FROM pipeline_state WHERE singleton_id = %s",
+      "call": "mongo_store.find_docs('pipeline_state', {'singleton_id': {p0}})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/pipeline_state.py",
+      "line": 228,
+      "table": "pipeline_events",
+      "sql": "SELECT timestamp, phase, step, detail, status, data_json, elapsed_ms FROM pipeline_events WHERE cycle_id = %s ORDER BY timestamp ASC",
+      "call": "mongo_store.find_docs('pipeline_events', {'cycle_id': {p0}}, sort=[('timestamp', 1)], projection={'timestamp': 1, 'phase': 1, 'step': 1, 'detail': 1, 'status': 1, 'data_json': 1, 'elapsed_ms': 1, '_id",
+      "verdict": "DIFFER",
+      "detail": "row count pg=5 mongo=17"
+    },
+    {
+      "file": "app/services/pipeline_state.py",
+      "line": 272,
+      "table": "analysis_results",
+      "sql": "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
+      "call": "mongo_store.find_docs('analysis_results', {'cycle_id': {p0}}, projection={'ticker': 1, 'result_json': 1, '_id': 0})",
+      "verdict": "DIFFER",
+      "detail": "1 rows only in pg, 1 only in mongo"
+    },
+    {
+      "file": "app/services/research_governor.py",
+      "line": 460,
+      "table": "cycle_schedules",
+      "sql": "SELECT is_active FROM cycle_schedules WHERE id = %s",
+      "call": "mongo_store.find_docs('cycle_schedules', {'id': {p0}}, projection={'is_active': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/research_queue_service.py",
+      "line": 79,
+      "table": "v3_research_queues",
+      "sql": "SELECT id, status FROM v3_research_queues WHERE ticker = %s AND queue_type = %s AND status IN ('pending', 'processing')",
+      "call": "mongo_store.find_docs('v3_research_queues', {'ticker': {p0}, 'queue_type': {p1}, 'status': {'$in': ['pending', 'processing']}}, projection={'id': 1, 'status': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/research_queue_service.py",
+      "line": 141,
+      "table": "v3_research_queues",
+      "sql": "SELECT id, ticker, queue_type, priority, reason, source_agent, payload FROM v3_research_queues WHERE queue_type = %s AND status = 'pending' ORDER BY priority DE",
+      "call": "mongo_store.find_docs('v3_research_queues', {'queue_type': {p0}, 'status': 'pending'}, sort=[('priority', -1), ('created_at', 1)], projection={'id': 1, 'ticker': 1, 'queue_type': 1, 'priority': 1, 're",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/services/trading_skills.py",
+      "line": 135,
+      "table": "ticker_metadata",
+      "sql": "SELECT sector FROM ticker_metadata WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_metadata', {'ticker': {p0}}, projection={'sector': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/services/verdict_service.py",
+      "line": 81,
+      "table": "analysis_results",
+      "sql": "SELECT ar.ticker, ar.result_json, ar.confidence, ar.created_at, ar.cycle_id, ar.triage_tier, ar.price_at_analysis, ar.thesis_verdict, ar.thesis_confidence, ar.t",
+      "call": "mongo_store.find_docs('analysis_results', {'ticker': {p0}}, projection={'ticker': 1, 'result_json': 1, 'confidence': 1, 'created_at': 1, 'cycle_id': 1, 'triage_tier': 1, 'price_at_analysis': 1, 'thesi",
+      "verdict": "DIFFER",
+      "detail": "152 rows only in pg, 152 only in mongo"
+    },
+    {
+      "file": "app/services/watch_desk.py",
+      "line": 587,
+      "table": "ticker_watches",
+      "sql": "SELECT id, ticker, bot_id, triggers, reason, thesis_summary, cooldown_minutes, fire_count, last_fired_at, created_at FROM ticker_watches WHERE is_active = TRUE",
+      "call": "mongo_store.find_docs('ticker_watches', {'is_active': True}, projection={'id': 1, 'ticker': 1, 'bot_id': 1, 'triggers': 1, 'reason': 1, 'thesis_summary': 1, 'cooldown_minutes': 1, 'fire_count': 1, 'la",
+      "verdict": "MATCH",
+      "detail": "197 rows"
+    },
+    {
+      "file": "app/services/watch_desk.py",
+      "line": 71,
+      "table": "positions",
+      "sql": "SELECT ticker FROM positions WHERE bot_id = %s AND qty > 0",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}, 'qty': {'$gt': 0}}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "15 rows"
+    },
+    {
+      "file": "app/services/watch_desk.py",
+      "line": 728,
+      "table": "pipeline_state",
+      "sql": "SELECT status FROM pipeline_state WHERE singleton_id = 'current'",
+      "call": "mongo_store.find_docs('pipeline_state', {'singleton_id': 'current'}, projection={'status': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/tools/finance_tools.py",
+      "line": 52,
+      "table": "fundamentals",
+      "sql": "SELECT snapshot_date, market_cap, pe_ratio, forward_pe, peg_ratio, price_to_book, profit_margin, roe, revenue, revenue_growth, debt_to_equity, beta, week_52_hig",
+      "call": "mongo_store.find_docs('fundamentals', {'tick': True}, projection={'snapshot_date': 1, 'market_cap': 1, 'pe_ratio': 1, 'forward_pe': 1, 'peg_ratio': 1, 'price_to_book': 1, 'profit_margin': 1, 'roe': 1,",
+      "verdict": "ERROR",
+      "detail": "UndefinedColumn: column \"tick\" does not exist\nLINE 1: ...h, week_52_low, short_float_pct FROM fundamentals WHERE tick\n                                                                   ^\nHINT:  Perhap"
+    },
+    {
+      "file": "app/tools/portfolio_tools.py",
+      "line": 53,
+      "table": "positions",
+      "sql": "SELECT qty, avg_entry_price, stop_loss_pct, opened_at FROM positions WHERE bot_id = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}, 'ticker': {p1}}, projection={'qty': 1, 'avg_entry_price': 1, 'stop_loss_pct': 1, 'opened_at': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/tools/portfolio_tools.py",
+      "line": 107,
+      "table": "trade_history",
+      "sql": "SELECT thesis, timestamp, confidence_score FROM trade_history WHERE bot_id = %s AND ticker = %s AND action = 'BUY' ORDER BY timestamp DESC LIMIT 1",
+      "call": "mongo_store.find_docs('trade_history', {'bot_id': {p0}, 'ticker': {p1}, 'action': 'BUY'}, sort=[('timestamp', -1)], projection={'thesis': 1, 'timestamp': 1, 'confidence_score': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "trade_history has no documents yet"
+    },
+    {
+      "file": "app/tools/research_tools.py",
+      "line": 254,
+      "table": "economic_calendar",
+      "sql": "SELECT event_date, event_name, country, importance, forecast, previous FROM economic_calendar WHERE event_date >= CURRENT_DATE AND importance IN ('high', 'mediu",
+      "call": "mongo_store.find_docs('economic_calendar', {'event_date': {'$gte': datetime.now(timezone.utc)}, 'importance': {'$in': ['high', 'medium']}}, sort=[('event_date', 1)], projection={'event_date': 1, 'even",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/tools/trading_tools.py",
+      "line": 299,
+      "table": "congress_trades",
+      "sql": "SELECT politician, party, chamber, state, transaction_type, amount_range, trade_date, disclosure_date, days_to_disclose FROM congress_trades WHERE ticker = %s O",
+      "call": "mongo_store.find_docs('congress_trades', {'ticker': {p0}}, sort=[('disclosure_date', -1)], projection={'politician': 1, 'party': 1, 'chamber': 1, 'state': 1, 'transaction_type': 1, 'amount_range': 1, ",
+      "verdict": "MATCH",
+      "detail": "40 rows"
+    },
+    {
+      "file": "app/tools/trading_tools.py",
+      "line": 381,
+      "table": "fundamentals",
+      "sql": "SELECT * FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/order_triggers.py",
+      "line": 136,
+      "table": "price_triggers",
+      "sql": "SELECT id, ticker, dynamic_trigger_type FROM price_triggers WHERE trigger_type = 'dynamic' AND active = TRUE",
+      "call": "mongo_store.find_docs('price_triggers', {'trigger_type': 'dynamic', 'active': True}, projection={'id': 1, 'ticker': 1, 'dynamic_trigger_type': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "89 rows"
+    },
+    {
+      "file": "app/trading/order_triggers.py",
+      "line": 337,
+      "table": "price_triggers",
+      "sql": "SELECT id, ticker, trigger_type, trigger_price, action, qty_pct, trailing_pct, highest_price, reason, dynamic_trigger_type, dynamic_trigger_value FROM price_tri",
+      "call": "mongo_store.find_docs('price_triggers', {'bot_id': {p0}, 'active': True}, projection={'id': 1, 'ticker': 1, 'trigger_type': 1, 'trigger_price': 1, 'action': 1, 'qty_pct': 1, 'trailing_pct': 1, 'highes",
+      "verdict": "MATCH",
+      "detail": "78 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 230,
+      "table": "bots",
+      "sql": "SELECT bot_id FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'bot_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 330,
+      "table": "price_history",
+      "sql": "SELECT close, date FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'close': 1, 'date': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 380,
+      "table": "bots",
+      "sql": "SELECT cash_balance, total_pnl FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'cash_balance': 1, 'total_pnl': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 384,
+      "table": "positions",
+      "sql": "SELECT ticker, qty, avg_entry_price, stop_loss_pct, opened_at FROM positions WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}}, projection={'ticker': 1, 'qty': 1, 'avg_entry_price': 1, 'stop_loss_pct': 1, 'opened_at': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "15 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 562,
+      "table": "positions",
+      "sql": "SELECT ticker, qty FROM positions WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}}, projection={'ticker': 1, 'qty': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "15 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 852,
+      "table": "positions",
+      "sql": "SELECT id, qty, avg_entry_price FROM positions WHERE bot_id = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}, 'ticker': {p1}}, projection={'id': 1, 'qty': 1, 'avg_entry_price': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 1176,
+      "table": "positions",
+      "sql": "SELECT id, ticker, qty, avg_entry_price, stop_loss_pct, exit_style FROM positions WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}}, projection={'id': 1, 'ticker': 1, 'qty': 1, 'avg_entry_price': 1, 'stop_loss_pct': 1, 'exit_style': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "15 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 1271,
+      "table": "positions",
+      "sql": "SELECT id, ticker, qty, avg_entry_price, stop_loss_pct, take_profit_pct, exit_style FROM positions WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}}, projection={'id': 1, 'ticker': 1, 'qty': 1, 'avg_entry_price': 1, 'stop_loss_pct': 1, 'take_profit_pct': 1, 'exit_style': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "15 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 57,
+      "table": "technicals",
+      "sql": "SELECT atr_14 FROM technicals WHERE ticker = %s AND atr_14 IS NOT NULL ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}, 'atr_14': {'$ne': None}}, sort=[('date', -1)], projection={'atr_14': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 337,
+      "table": "asset_prices",
+      "sql": "SELECT close, date FROM asset_prices WHERE symbol = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('asset_prices', {'symbol': {p0}}, sort=[('date', -1)], projection={'close': 1, 'date': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 467,
+      "table": "trade_fills",
+      "sql": "SELECT fill_id FROM trade_fills WHERE cycle_id = %s AND ticker = %s AND side = 'BUY'",
+      "call": "mongo_store.find_docs('trade_fills', {'cycle_id': {p0}, 'ticker': {p1}, 'side': 'BUY'}, projection={'fill_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 476,
+      "table": "bots",
+      "sql": "SELECT cash_balance FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'cash_balance': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 843,
+      "table": "trade_fills",
+      "sql": "SELECT fill_id FROM trade_fills WHERE cycle_id = %s AND ticker = %s AND side = 'SELL'",
+      "call": "mongo_store.find_docs('trade_fills', {'cycle_id': {p0}, 'ticker': {p1}, 'side': 'SELL'}, projection={'fill_id': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 1352,
+      "table": "positions",
+      "sql": "SELECT id, avg_entry_price FROM positions WHERE bot_id = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}, 'ticker': {p1}}, projection={'id': 1, 'avg_entry_price': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 656,
+      "table": "positions",
+      "sql": "SELECT id, qty, avg_entry_price FROM positions WHERE bot_id = %s AND ticker = %s",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}, 'ticker': {p1}}, projection={'id': 1, 'qty': 1, 'avg_entry_price': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/paper_trader.py",
+      "line": 923,
+      "table": "position_lots",
+      "sql": "SELECT lot_id, remaining_qty, entry_price, opened_at FROM position_lots WHERE bot_id = %s AND ticker = %s AND status IN ('open', 'partial') ORDER BY opened_at A",
+      "call": "mongo_store.find_docs('position_lots', {'bot_id': {p0}, 'ticker': {p1}, 'status': {'$in': ['open', 'partial']}}, sort=[('opened_at', 1)], projection={'lot_id': 1, 'remaining_qty': 1, 'entry_price': 1,",
+      "verdict": "MATCH",
+      "detail": "2 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 65,
+      "table": "bots",
+      "sql": "SELECT cash_balance, total_pnl, total_trades FROM bots WHERE bot_id = %s LIMIT 1",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'cash_balance': 1, 'total_pnl': 1, 'total_trades': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 80,
+      "table": "portfolio_snapshots",
+      "sql": "SELECT snapshot_ts FROM portfolio_snapshots WHERE bot_id = %s ORDER BY snapshot_ts DESC LIMIT 1",
+      "call": "mongo_store.find_docs('portfolio_snapshots', {'bot_id': {p0}}, sort=[('snapshot_ts', -1)], projection={'snapshot_ts': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 225,
+      "table": "orders",
+      "sql": "SELECT ticker, side, qty, price, signal, created_at, filled_at, realized_pnl FROM orders WHERE bot_id = %s ORDER BY created_at DESC LIMIT %s",
+      "call": "mongo_store.find_docs('orders', {'bot_id': {p0}}, sort=[('created_at', -1)], projection={'ticker': 1, 'side': 1, 'qty': 1, 'price': 1, 'signal': 1, 'created_at': 1, 'filled_at': 1, 'realized_pnl': 1, ",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 348,
+      "table": "bots",
+      "sql": "SELECT total_trades, total_pnl, win_rate FROM bots WHERE bot_id = %s",
+      "call": "mongo_store.find_docs('bots', {'bot_id': {p0}}, projection={'total_trades': 1, 'total_pnl': 1, 'win_rate': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 454,
+      "table": "trade_fills",
+      "sql": "SELECT fill_id, order_id, ticker, side, fill_qty, fill_price, fill_value, fees, filled_at, cycle_id FROM trade_fills WHERE bot_id = %s ORDER BY filled_at DESC L",
+      "call": "mongo_store.find_docs('trade_fills', {'bot_id': {p0}}, sort=[('filled_at', -1)], projection={'fill_id': 1, 'order_id': 1, 'ticker': 1, 'side': 1, 'fill_qty': 1, 'fill_price': 1, 'fill_value': 1, 'fees",
+      "verdict": "UNTESTED",
+      "detail": "no real parameter values"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 94,
+      "table": "positions",
+      "sql": "SELECT ticker, qty, avg_entry_price, stop_loss_pct FROM positions WHERE bot_id = %s AND qty > 0 ORDER BY ticker",
+      "call": "mongo_store.find_docs('positions', {'bot_id': {p0}, 'qty': {'$gt': 0}}, sort=[('ticker', 1)], projection={'ticker': 1, 'qty': 1, 'avg_entry_price': 1, 'stop_loss_pct': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "15 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 234,
+      "table": "ticker_metadata",
+      "sql": "SELECT sector, market_cap_tier, market_cap FROM ticker_metadata WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_metadata', {'ticker': {p0}}, projection={'sector': 1, 'market_cap_tier': 1, 'market_cap': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 238,
+      "table": "fundamentals",
+      "sql": "SELECT pe_ratio, revenue_growth FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], projection={'pe_ratio': 1, 'revenue_growth': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 242,
+      "table": "technicals",
+      "sql": "SELECT rsi_14 FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], projection={'rsi_14': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 379,
+      "table": "position_lots",
+      "sql": "SELECT lot_id, ticker, opened_at, original_qty, remaining_qty, entry_price, status, cycle_id, is_legacy FROM position_lots WHERE bot_id = %s AND ticker = %s AND",
+      "call": "mongo_store.find_docs('position_lots', {'bot_id': {p0}, 'ticker': {p1}, 'status': {'$in': ['open', 'partial']}}, sort=[('opened_at', 1)], projection={'lot_id': 1, 'ticker': 1, 'opened_at': 1, 'origina",
+      "verdict": "MATCH",
+      "detail": "2 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 388,
+      "table": "position_lots",
+      "sql": "SELECT lot_id, ticker, opened_at, original_qty, remaining_qty, entry_price, status, cycle_id, is_legacy FROM position_lots WHERE bot_id = %s AND status IN ('ope",
+      "call": "mongo_store.find_docs('position_lots', {'bot_id': {p0}, 'status': {'$in': ['open', 'partial']}}, sort=[('ticker', 1), ('opened_at', 1)], projection={'lot_id': 1, 'ticker': 1, 'opened_at': 1, 'original",
+      "verdict": "MATCH",
+      "detail": "22 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 117,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 155,
+      "table": "ticker_metadata",
+      "sql": "SELECT sector, market_cap_tier, market_cap FROM ticker_metadata WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_metadata', {'ticker': {p0}}, projection={'sector': 1, 'market_cap_tier': 1, 'market_cap': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 159,
+      "table": "fundamentals",
+      "sql": "SELECT pe_ratio, revenue_growth FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], projection={'pe_ratio': 1, 'revenue_growth': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 163,
+      "table": "technicals",
+      "sql": "SELECT rsi_14 FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], projection={'rsi_14': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/trading/portfolio.py",
+      "line": 123,
+      "table": "asset_prices",
+      "sql": "SELECT close FROM asset_prices WHERE symbol = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('asset_prices', {'symbol': {p0}}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/portfolio_drawdown.py",
+      "line": 33,
+      "table": "lot_closures",
+      "sql": "SELECT realized_pnl FROM lot_closures WHERE bot_id = %s ORDER BY closed_at ASC",
+      "call": "mongo_store.find_docs('lot_closures', {'bot_id': {p0}}, sort=[('closed_at', 1)], projection={'realized_pnl': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "12 rows"
+    },
+    {
+      "file": "app/trading/quant_edge_verifier.py",
+      "line": 48,
+      "table": "technicals",
+      "sql": "SELECT date, rsi_14, macd, macd_signal, macd_hist, atr_14, support, resistance FROM technicals WHERE ticker = %s ORDER BY date ASC",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', 1)], projection={'date': 1, 'rsi_14': 1, 'macd': 1, 'macd_signal': 1, 'macd_hist': 1, 'atr_14': 1, 'support': 1, 'resistance': 1, '",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/trading/scoring_engine.py",
+      "line": 87,
+      "table": "fundamentals",
+      "sql": "SELECT revenue_growth, profit_margin, market_cap FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], projection={'revenue_growth': 1, 'profit_margin': 1, 'market_cap': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/scoring_engine.py",
+      "line": 106,
+      "table": "technicals",
+      "sql": "SELECT rsi_14, atr_14, support, resistance FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('technicals', {'ticker': {p0}}, sort=[('date', -1)], projection={'rsi_14': 1, 'atr_14': 1, 'support': 1, 'resistance': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "technicals has no documents yet"
+    },
+    {
+      "file": "app/trading/scoring_engine.py",
+      "line": 111,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/trading/scoring_engine.py",
+      "line": 138,
+      "table": "price_history",
+      "sql": "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 60",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'close': 1, '_id': 0}, limit=60)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/trading/strategy_tracker.py",
+      "line": 120,
+      "table": "strategy_performance",
+      "sql": "SELECT id, entry_price, signal, agent_prompt_hash FROM strategy_performance WHERE ticker = %s AND signal = 'BUY' AND resolved_at IS NULL AND active = TRUE",
+      "call": "mongo_store.find_docs('strategy_performance', {'ticker': {p0}, 'signal': 'BUY', 'resolved_at': None, 'active': True}, projection={'id': 1, 'entry_price': 1, 'signal': 1, 'agent_prompt_hash': 1, '_id':",
+      "verdict": "MATCH",
+      "detail": "2 rows"
+    },
+    {
+      "file": "app/trading/strategy_tracker.py",
+      "line": 148,
+      "table": "strategy_performance",
+      "sql": "SELECT created_at FROM strategy_performance WHERE id = %s",
+      "call": "mongo_store.find_docs('strategy_performance', {'id': {p0}}, projection={'created_at': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/strategy_tracker.py",
+      "line": 267,
+      "table": "generated_agent_prompts",
+      "sql": "SELECT name, lens_type FROM generated_agent_prompts WHERE prompt_hash = %s",
+      "call": "mongo_store.find_docs('generated_agent_prompts', {'prompt_hash': {p0}}, projection={'name': 1, 'lens_type': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 62,
+      "table": "watchlist",
+      "sql": "SELECT ticker, status FROM watchlist WHERE ticker = %s",
+      "call": "mongo_store.find_docs('watchlist', {'ticker': {p0}}, projection={'ticker': 1, 'status': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 87,
+      "table": "watchlist",
+      "sql": "SELECT ticker FROM watchlist WHERE ticker = %s AND status IN ('active', 'paused')",
+      "call": "mongo_store.find_docs('watchlist', {'ticker': {p0}, 'status': {'$in': ['active', 'paused']}}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 113,
+      "table": "watchlist",
+      "sql": "SELECT ticker FROM watchlist WHERE ticker = %s AND status IN ('active', 'paused')",
+      "call": "mongo_store.find_docs('watchlist', {'ticker': {p0}, 'status': {'$in': ['active', 'paused']}}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 134,
+      "table": "watchlist",
+      "sql": "SELECT ticker, source, notes, added_at, health_score FROM watchlist WHERE status = 'active' ORDER BY added_at DESC",
+      "call": "mongo_store.find_docs('watchlist', {'status': 'active'}, sort=[('added_at', -1)], projection={'ticker': 1, 'source': 1, 'notes': 1, 'added_at': 1, 'health_score': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "61 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 180,
+      "table": "watchlist",
+      "sql": "SELECT ticker FROM watchlist WHERE ticker = %s",
+      "call": "mongo_store.find_docs('watchlist', {'ticker': {p0}}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 300,
+      "table": "watchlist",
+      "sql": "SELECT ticker, source, notes, added_at, status_reason FROM watchlist WHERE status = 'paused' ORDER BY added_at DESC",
+      "call": "mongo_store.find_docs('watchlist', {'status': 'paused'}, sort=[('added_at', -1)], projection={'ticker': 1, 'source': 1, 'notes': 1, 'added_at': 1, 'status_reason': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "87 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 321,
+      "table": "watchlist",
+      "sql": "SELECT ticker FROM watchlist WHERE ticker = %s AND status = 'active'",
+      "call": "mongo_store.find_docs('watchlist', {'ticker': {p0}, 'status': 'active'}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 339,
+      "table": "watchlist",
+      "sql": "SELECT ticker FROM watchlist WHERE ticker = %s AND status = 'paused'",
+      "call": "mongo_store.find_docs('watchlist', {'ticker': {p0}, 'status': 'paused'}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 224,
+      "table": "ticker_bans",
+      "sql": "SELECT ticker FROM ticker_bans WHERE ticker = %s",
+      "call": "mongo_store.find_docs('ticker_bans', {'ticker': {p0}}, projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 237,
+      "table": "ticker_bans",
+      "sql": "SELECT ticker, reason, ban_type, pattern_tags, market_cap, price_at_ban, volume_at_ban, banned_at FROM ticker_bans ORDER BY banned_at DESC",
+      "call": "mongo_store.find_docs('ticker_bans', {}, sort=[('banned_at', -1)], projection={'ticker': 1, 'reason': 1, 'ban_type': 1, 'pattern_tags': 1, 'market_cap': 1, 'price_at_ban': 1, 'volume_at_ban': 1, 'bann",
+      "verdict": "MATCH",
+      "detail": "63 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 267,
+      "table": "ban_patterns",
+      "sql": "SELECT pattern_name, conditions FROM ban_patterns WHERE auto_filter = TRUE",
+      "call": "mongo_store.find_docs('ban_patterns', {'auto_filter': True}, projection={'pattern_name': 1, 'conditions': 1, '_id': 0})",
+      "verdict": "NOT_SEEDED",
+      "detail": "ban_patterns has no documents yet"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 363,
+      "table": "discovered_tickers",
+      "sql": "SELECT ticker FROM discovered_tickers WHERE score >= %s ORDER BY score DESC",
+      "call": "mongo_store.find_docs('discovered_tickers', {'score': {'$gte': {p0}}}, sort=[('score', -1)], projection={'ticker': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "671 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 419,
+      "table": "fundamentals",
+      "sql": "SELECT market_cap FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('fundamentals', {'ticker': {p0}}, sort=[('snapshot_date', -1)], projection={'market_cap': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/trading/watchlist.py",
+      "line": 430,
+      "table": "price_history",
+      "sql": "SELECT close, volume FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('price_history', {'ticker': {p0}}, sort=[('date', -1)], projection={'close': 1, 'volume': 1, '_id': 0}, limit=1)",
+      "verdict": "NOT_SEEDED",
+      "detail": "price_history has no documents yet"
+    },
+    {
+      "file": "app/utils/politician_matcher.py",
+      "line": 27,
+      "table": "congress_members",
+      "sql": "SELECT bioguide_id, full_name, last_name, chamber FROM congress_members",
+      "call": "mongo_store.find_docs('congress_members', {}, projection={'bioguide_id': 1, 'full_name': 1, 'last_name': 1, 'chamber': 1, '_id': 0})",
+      "verdict": "MATCH",
+      "detail": "906 rows"
+    },
+    {
+      "file": "app/v3/alt_data_block.py",
+      "line": 232,
+      "table": "put_call_ratio",
+      "sql": "SELECT date, pcr_volume, pcr_oi FROM put_call_ratio WHERE symbol = 'SPY' ORDER BY date DESC LIMIT 1",
+      "call": "mongo_store.find_docs('put_call_ratio', {'symbol': 'SPY'}, sort=[('date', -1)], projection={'date': 1, 'pcr_volume': 1, 'pcr_oi': 1, '_id': 0}, limit=1)",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/v3/alt_data_block.py",
+      "line": 248,
+      "table": "economic_calendar",
+      "sql": "SELECT event_date, event_name, forecast, previous FROM economic_calendar WHERE country IN ('US', 'USD') AND importance = 'high' AND event_date >= NOW() AND even",
+      "call": "mongo_store.find_docs('economic_calendar', {'country': {'$in': ['US', 'USD']}, 'importance': 'high', 'event_date': {'$gte': datetime.now(timezone.utc), '$lte': (datetime.now(timezone.utc) + timedelta(",
+      "verdict": "MATCH",
+      "detail": "1 rows"
+    },
+    {
+      "file": "app/v3/battle_royale.py",
+      "line": 39,
+      "table": "analysis_results",
+      "sql": "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
+      "call": "mongo_store.find_docs('analysis_results', {'cycle_id': {p0}}, projection={'ticker': 1, 'result_json': 1, '_id': 0})",
+      "verdict": "DIFFER",
+      "detail": "1 rows only in pg, 1 only in mongo"
+    },
+    {
+      "file": "app/v3/battle_royale.py",
+      "line": 123,
+      "table": "whiteboard_entries",
+      "sql": "SELECT ticker, section, content FROM whiteboard_entries WHERE cycle_id = %s AND superseded_by IS NULL AND section IN ('regime_classification', 'quant_report')",
+      "call": "mongo_store.find_docs('whiteboard_entries', {'cycle_id': {p0}, 'superseded_by': None, 'section': {'$in': ['regime_classification', 'quant_report']}}, projection={'ticker': 1, 'section': 1, 'content': ",
+      "verdict": "MATCH",
+      "detail": "2 rows"
+    },
+    {
+      "file": "app/v3/challenger.py",
+      "line": 228,
+      "table": "challenger_decisions",
+      "sql": "SELECT id, ticker, challenger_action, entry_price FROM challenger_decisions WHERE resolved_at IS NULL AND created_at < %s ORDER BY created_at ASC LIMIT 50",
+      "call": "mongo_store.find_docs('challenger_decisions', {'resolved_at': None, 'created_at': {'$lt': {p0}}}, sort=[('created_at', 1)], projection={'id': 1, 'ticker': 1, 'challenger_action': 1, 'entry_price': 1, ",
+      "verdict": "MATCH",
+      "detail": "both empty"
+    }
+  ]
+}
