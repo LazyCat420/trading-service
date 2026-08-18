@@ -640,29 +640,31 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     from app.db import mongo_store
                     now_dt = datetime.datetime.now(datetime.UTC)
                     attr_val = "general" if item.get("is_general") else "detected"
-                    if mongo_store.writes_mongo("news_articles"):
-                        mongo_store.upsert_doc(
-                            "news_articles",
-                            {"id": item["id"]},
-                            {
-                                "id": item["id"],
-                                "ticker": item["ticker"],
-                                "title": item["title"][:500],
-                                "publisher": item["publisher"],
-                                "url": item["url"],
-                                "published_at": item["published_at"],
-                                "summary": item["summary"],
-                                "source": "rss",
-                                "content_hash": item["content_hash"],
-                                "collected_at": now_dt,
-                                "quality_status": _qs,
-                                "quality_reason": _qr,
-                                "ticker_attribution": attr_val,
-                            },
-                            insert_only=True,
-                        )
-                    if mongo_store.writes_pg("news_articles"):
-                        mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'rss', 'content_hash': item["content_hash"], 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': attr_val}, insert_only=True)
+                    # One upsert. The conversion left a second, near-identical
+                    # one behind a writes_pg() gate that also lands in Mongo,
+                    # so in dual/mongo_read mode every article was written
+                    # twice — idempotent on the id key, but a wasted round trip
+                    # per article, and a writes_pg flag controlling nothing.
+                    mongo_store.upsert_doc(
+                        "news_articles",
+                        {"id": item["id"]},
+                        {
+                            "id": item["id"],
+                            "ticker": item["ticker"],
+                            "title": item["title"][:500],
+                            "publisher": item["publisher"],
+                            "url": item["url"],
+                            "published_at": item["published_at"],
+                            "summary": item["summary"],
+                            "source": "rss",
+                            "content_hash": item["content_hash"],
+                            "collected_at": now_dt,
+                            "quality_status": _qs,
+                            "quality_reason": _qr,
+                            "ticker_attribution": attr_val,
+                        },
+                        insert_only=True,
+                    )
                     count += 1
 
                 # Emit news scraped log for this unique item list

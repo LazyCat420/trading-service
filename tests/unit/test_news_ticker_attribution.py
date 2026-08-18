@@ -14,6 +14,7 @@ import datetime
 import sys
 import types
 from contextlib import contextmanager
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,6 +24,8 @@ from app.collectors import news_collector
 class _RecorderDb:
     def __init__(self):
         self.executed: list[tuple[str, list]] = []
+        #: (collection, key, document) for every Mongo upsert the writer issued
+        self.mongo_writes: list[tuple[str, dict, dict]] = []
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params or []))
@@ -49,6 +52,26 @@ def finnhub_env(monkeypatch):
     monkeypatch.setenv("FINNHUB_API_KEY", "test-key")
     monkeypatch.setattr(news_collector, "get_db", fake_get_db)
     monkeypatch.setattr(news_collector, "url_fanout_exceeded", lambda db_, url, cap=None: False)
+
+    # The finnhub writer upserts into Mongo now. Record the documents so the
+    # attribution assertions can read the field instead of a SQL param index.
+    store = MagicMock()
+    store.upsert_doc.side_effect = (
+        lambda coll, key, doc, **kw: db.mongo_writes.append((coll, key, doc))
+    )
+    store.writes_mongo.return_value = True
+    store.writes_pg.return_value = False
+    monkeypatch.setattr(news_collector, "mongo_store", store)
+
+    # The reads have to be stubbed too. `collect_finnhub_news` pulls
+    # `source_trust` through mongo_query before it writes anything, and that
+    # read is inside the function's broad `except`, so an unstubbed one is
+    # swallowed as "[news] Finnhub LLY error" and the writer is simply never
+    # reached — the assertion then fails on an empty list with no clue why.
+    query = MagicMock()
+    query.find_rows.return_value = []
+    query.agg_row.return_value = (0,)
+    monkeypatch.setattr(news_collector, "mongo_query", query)
 
     article = {
         "headline": "Earnings, PMI and Other Key Things to Watch this Week",
@@ -106,12 +129,11 @@ def test_unmatched_article_is_stamped_query_fallback(finnhub_env, monkeypatch):
     monkeypatch.setattr(news_collector, "_detect_tickers_in_text", no_tickers)
     asyncio.run(news_collector.collect_finnhub_news("LLY"))
 
-    inserts = _news_inserts(finnhub_env)
-    assert len(inserts) == 1
-    sql, params = inserts[0]
-    assert "ticker_attribution" in sql
-    assert params[1] == "LLY"           # inherited the queried ticker...
-    assert params[-1] == "query_fallback"  # ...but wears the mark
+    writes = [w for w in finnhub_env.mongo_writes if w[0] == "news_articles"]
+    assert len(writes) == 1
+    doc = writes[0][2]
+    assert doc["ticker"] == "LLY"                      # inherited the queried ticker...
+    assert doc["ticker_attribution"] == "query_fallback"  # ...but wears the mark
 
 
 def test_detected_article_is_stamped_detected(finnhub_env, monkeypatch):
@@ -122,13 +144,18 @@ def test_detected_article_is_stamped_detected(finnhub_env, monkeypatch):
     monkeypatch.setattr(news_collector, "_is_article_relevant_to_ticker", lambda t, txt: True)
     asyncio.run(news_collector.collect_finnhub_news("LLY"))
 
-    inserts = _news_inserts(finnhub_env)
-    assert len(inserts) == 1
-    assert inserts[0][1][-1] == "detected"
+    writes = [w for w in finnhub_env.mongo_writes if w[0] == "news_articles"]
+    assert len(writes) == 1
+    assert writes[0][2]["ticker_attribution"] == "detected"
 
 
 def _rotator_env(monkeypatch, db):
-    """Fake DB + seams so `_persist_articles` runs hermetically."""
+    """Fake store + seams so `_persist_articles` runs hermetically.
+
+    The rotator writes through `mongo_store.upsert_doc` now. `db` is still
+    passed so `_rotator_writes` can read what was recorded, but the recorder
+    captures Mongo documents rather than SQL and params.
+    """
     from app.collectors import news_api_rotator
 
     @contextmanager
@@ -136,6 +163,10 @@ def _rotator_env(monkeypatch, db):
         yield db
 
     monkeypatch.setattr(news_api_rotator, "get_db", fake_get_db)
+
+    store = MagicMock()
+    store.upsert_doc.side_effect = lambda coll, key, doc, **kw: db.mongo_writes.append((coll, key, doc))
+    monkeypatch.setattr(news_api_rotator, "mongo_store", store)
 
     from app.collectors import news_collector as nc
     monkeypatch.setattr(nc, "url_fanout_exceeded", lambda db_, url, cap=None: False)
@@ -180,12 +211,11 @@ def test_rotator_marks_vendor_supplied_tickers_as_provider(monkeypatch):
 
     asyncio.run(rotator._persist_articles([_rotator_article(["NVDA"])]))
 
-    inserts = _news_inserts(db)
-    assert len(inserts) == 1
-    sql, params = inserts[0]
-    assert "ticker_attribution" in sql
-    assert params[1] == "NVDA"
-    assert params[-1] == "provider"
+    writes = [w for w in db.mongo_writes if w[0] == "news_articles"]
+    assert len(writes) == 1
+    _coll, _key, doc = writes[0]
+    assert doc["ticker"] == "NVDA"
+    assert doc["ticker_attribution"] == "provider"
 
 
 def test_rotator_marks_self_detected_tickers_as_detected(monkeypatch):
@@ -202,9 +232,9 @@ def test_rotator_marks_self_detected_tickers_as_detected(monkeypatch):
 
     asyncio.run(rotator._persist_articles([_rotator_article([])]))
 
-    inserts = _news_inserts(db)
-    assert len(inserts) == 1
-    assert inserts[0][1][-1] == "detected"
+    writes = [w for w in db.mongo_writes if w[0] == "news_articles"]
+    assert len(writes) == 1
+    assert writes[0][2]["ticker_attribution"] == "detected"
 
 
 def test_rotator_general_market_row_is_marked_not_null(monkeypatch):
@@ -222,52 +252,84 @@ def test_rotator_general_market_row_is_marked_not_null(monkeypatch):
 
     asyncio.run(rotator._persist_articles([_rotator_article([])]))
 
-    inserts = _news_inserts(db)
-    assert len(inserts) == 1
-    _sql, params = inserts[0]
-    assert params[1] is None          # general market news
-    assert params[-1] == "general"    # ...still stamped
+    writes = [w for w in db.mongo_writes if w[0] == "news_articles"]
+    assert len(writes) == 1
+    doc = writes[0][2]
+    assert doc["ticker"] is None            # general market news
+    assert doc["ticker_attribution"] == "general"   # ...still stamped
 
 
-def test_every_news_insert_writes_ticker_attribution():
-    """EVERY writer must stamp the column — not just the one with a unit test.
+def test_every_news_write_stamps_ticker_attribution():
+    """EVERY writer must stamp the field — not just the one with a unit test.
 
-    The two tests above passed continuously while three of the five
-    `INSERT INTO news_articles` paths never wrote `ticker_attribution` at all
+    The per-writer tests above passed continuously while three of the five
+    news_articles write paths never wrote `ticker_attribution` at all
     (`news_api_rotator.py` x2, the RSS writer in `news_collector.py`). They
     only ever exercised `collect_finnhub_news`, so they proved the concept on
     one writer and were blind to the other three. Measured 2026-08-07: 74.4%
     of rows collected in the previous 48 hours had NULL attribution, and
     `watch_desk._recent_news` admits NULL into a TRADE-ENABLED wake.
 
-    This is a SCAN, not another per-writer case, so a sixth insert site added
+    This is a SCAN, not another per-writer case, so a sixth write site added
     later fails here instead of silently reopening the hole.
+
+    It reads the AST rather than the source text. The Postgres version matched
+    `INSERT INTO news_articles (...)` with a regex and counted the columns; the
+    Mongo writers pass a dict literal to `upsert_doc`/`insert_docs`, so the
+    regex found nothing and the scan would have reported success over zero
+    sites — which is why it carries its own floor.
     """
-    import re
+    import ast
     from pathlib import Path
 
     app_dir = Path(__file__).resolve().parents[2] / "app"
-    pattern = re.compile(r"INSERT\s+INTO\s+news_articles\s*\(([^)]*)\)", re.I | re.S)
+
+    def _writes_news_articles(node: ast.Call) -> ast.Dict | None:
+        """The document dict for a news_articles write, if this call is one."""
+        fn = getattr(node.func, "attr", None)
+        if fn not in ("upsert_doc", "insert_docs", "bulk_upsert"):
+            return None
+        if not node.args:
+            return None
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and first.value == "news_articles"):
+            return None
+        for arg in node.args[1:]:
+            if isinstance(arg, ast.Dict) and len(arg.keys) > 3:
+                return arg          # upsert_doc(coll, key, DOC)
+            if isinstance(arg, ast.List) and arg.elts:
+                inner = arg.elts[0]
+                if isinstance(inner, ast.Dict):
+                    return inner    # insert_docs(coll, [DOC])
+        return None
 
     offenders: list[str] = []
     found = 0
-    for path in app_dir.rglob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        for match in pattern.finditer(text):
+    for path in sorted(app_dir.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            doc = _writes_news_articles(node)
+            if doc is None:
+                continue
             found += 1
-            columns = {c.strip().lower() for c in match.group(1).split(",")}
-            if "ticker_attribution" not in columns:
-                line = text[: match.start()].count("\n") + 1
-                offenders.append(f"{path.relative_to(app_dir.parent)}:{line}")
+            fields = {k.value for k in doc.keys
+                      if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            if "ticker_attribution" not in fields:
+                offenders.append(f"{path.relative_to(app_dir.parent)}:{node.lineno}")
 
     assert found >= 5, (
-        f"expected to find the known news_articles insert sites, saw {found} — "
-        "the regex probably stopped matching, which would make this test "
+        f"expected to find the known news_articles write sites, saw {found} — "
+        "the matcher probably stopped matching, which would make this test "
         "vacuous rather than passing"
     )
     assert not offenders, (
-        "these INSERT INTO news_articles sites do not write ticker_attribution, "
-        "so their rows arrive NULL and are admitted by the watch desk's "
+        "these news_articles writes do not stamp ticker_attribution, "
+        "so their rows arrive without it and are admitted by the watch desk's "
         f"trade-enabled wake filter: {offenders}"
     )
 

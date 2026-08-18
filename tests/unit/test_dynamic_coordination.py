@@ -8,24 +8,25 @@ from app.v3.orchestrator import run_v3_pipeline
 
 @pytest.mark.asyncio
 async def test_whiteboard_subscription():
-    # Test subscribe / unsubscribe and event notifications by directly patching whiteboard's get_db
+    # Subscribe / unsubscribe and event notifications, with the whiteboard's
+    # Mongo layer stubbed. This used to patch `app.agents.whiteboard.get_db`,
+    # a symbol the module no longer imports: the mock intercepted nothing and
+    # both writes below landed in the live database.
     events = []
-    
+
     async def sub_cb(evt):
         events.append(evt)
-        
+
     whiteboard.subscribe(sub_cb)
-    
+
     try:
-        with patch("app.agents.whiteboard.get_db") as mock_get_db:
-            mock_conn = MagicMock()
-            mock_transaction = MagicMock()
-            mock_conn.transaction.return_value = mock_transaction
-            mock_get_db.return_value.__enter__.return_value = mock_conn
-            
-            # Mock database select (empty section) then insert returning ID 123
-            mock_conn.execute.return_value.fetchone.side_effect = [None, (123,)]
-            
+        query = MagicMock()
+        store = MagicMock()
+        with patch("app.agents.whiteboard.mongo_query", query), \
+             patch("app.agents.whiteboard.mongo_store", store):
+            # No existing version of this section → a v1 insert.
+            query.find_row.return_value = None
+
             # Trigger update
             await whiteboard.write_section(
                 ticker="AAPL",
@@ -39,11 +40,25 @@ async def test_whiteboard_subscription():
             assert events[0]["type"] == "whiteboard_update"
             assert events[0]["section"] == "test_section"
             assert events[0]["author"] == "test_agent"
-            
-            # Test annotation notification
+
+            # The write itself, structurally: collection, scope, and the v1
+            # document — the old SQL-free mock asserted none of this.
+            collection, docs = store.insert_docs.call_args[0][:2]
+            assert collection == "whiteboard_entries"
+            assert docs[0]["ticker"] == "AAPL"
+            assert docs[0]["cycle_id"] == "test-cycle"
+            assert docs[0]["section"] == "test_section"
+            assert docs[0]["author_agent"] == "test_agent"
+            assert docs[0]["version"] == 1
+            assert docs[0]["content"] == {"text": "test content"}
+
+            # Test annotation notification. `annotate` resolves the entry via
+            # find_row, which returns a TUPLE in the requested column order:
+            # (ticker, section, cycle_id).
             events.clear()
-            mock_conn.execute.return_value.fetchone.side_effect = [("AAPL", "test_section", "test-cycle")]
-            
+            store.insert_docs.reset_mock()
+            query.find_row.return_value = ("AAPL", "test_section", "test-cycle")
+
             await whiteboard.annotate(
                 entry_id=123,
                 agent="annotator_agent",
@@ -55,7 +70,16 @@ async def test_whiteboard_subscription():
             assert events[0]["section"] == "test_section"
             assert events[0]["author"] == "annotator_agent"
             assert events[0]["note"] == "annotated note"
-            
+
+            collection, docs = store.insert_docs.call_args[0][:2]
+            assert collection == "whiteboard_annotations"
+            assert docs[0]["entry_id"] == 123
+            assert docs[0]["ticker"] == "AAPL"
+            assert docs[0]["section"] == "test_section"
+            assert docs[0]["cycle_id"] == "test-cycle"
+            assert docs[0]["author_agent"] == "annotator_agent"
+            assert docs[0]["note"] == "annotated note"
+
     finally:
         whiteboard.unsubscribe(sub_cb)
 

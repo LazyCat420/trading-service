@@ -261,7 +261,11 @@ class TestPositioningIsConsumedNotJustInjected:
         gap would teach the agent to read silence as unknown."""
         from app.v3.alt_data_block import compute_positioning_facts
 
-        with patch("app.v3.alt_data_block.get_db", side_effect=RuntimeError):
+        # The module counts via `mongo_store.count_docs`, imported inside the
+        # function, so it must be broken at its source module — the old
+        # `alt_data_block.get_db` patch hit a symbol that no longer exists and
+        # the "unreachable database" it claimed to simulate was the live one.
+        with patch("app.db.mongo_store.count_docs", side_effect=RuntimeError):
             facts = compute_positioning_facts("NOPE")
 
         assert facts == {"insider_buy_filings_30d": 0,

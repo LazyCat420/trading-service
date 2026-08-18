@@ -55,11 +55,17 @@ def test_target_agents_use_v3_prefixed_names():
 # ── Baseline scoring ──
 
 def _patch_baseline(rows):
-    @contextmanager
-    def fake_get_db():
-        with _mock_db(rows=rows) as db:
-            yield db
-    return patch.object(so, "get_db", fake_get_db)
+    """Feed `_compute_baseline_score` its decision_outcomes rows.
+
+    It reads through `mongo_query.find_rows` now, which returns tuples in the
+    column order the caller asked for — ('outcome', 'confidence') here, the
+    same shape the SQL cursor yielded, so the row fixtures are unchanged. The
+    old `get_db` patch still applied cleanly (the module imports get_db for
+    other functions) and simply intercepted nothing.
+    """
+    q = MagicMock()
+    q.find_rows.return_value = rows
+    return patch.object(so, "mongo_query", q)
 
 
 def test_baseline_cold_start_returns_none():

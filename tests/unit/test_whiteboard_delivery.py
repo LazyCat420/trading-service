@@ -13,7 +13,7 @@ artifact type in another file never joined.
 """
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -143,30 +143,22 @@ def test_an_explicit_read_gets_the_whole_board():
 
 # ── summarize() end to end, against a fake board ─────────────────────────
 
-class _FakeDB:
-    """Enough of the db handle for summarize(): entries, then annotations."""
-
-    def __init__(self, entries, annotations=()):
-        self._entries = entries
-        self._annotations = annotations
-
-    def execute(self, sql, params=None):
-        self._last = "annotations" if "whiteboard_annotations" in sql else "entries"
-        return self
-
-    def fetchall(self):
-        return list(self._annotations if self._last == "annotations" else self._entries)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
 def _entry(eid, section, body, version=1):
-    return (eid, section, "v3_junior_analyst", json.dumps({"text": body}),
-            version, ["v3_junior_analyst"])
+    """One `whiteboard_entries` document as `mongo_store.find_docs` returns it.
+
+    These used to be tuples fed through a fake `db.execute`/`fetchall` handle
+    that dispatched on SQL text. `summarize()` reads `mongo_store.find_docs`
+    now, which returns DICTS — a patched `get_db` intercepted nothing and the
+    board under test was whatever production held.
+    """
+    return {
+        "id": eid,
+        "section": section,
+        "author_agent": "v3_junior_analyst",
+        "content": json.dumps({"text": body}),
+        "version": version,
+        "edited_by": ["v3_junior_analyst"],
+    }
 
 
 BOARD = [
@@ -175,16 +167,47 @@ BOARD = [
     _entry(3, "final_decision", "DECISION BODY " * 20),
     _entry(4, "signals", "QUANT SIGNAL"),
 ]
-ANNS = [("desk_note", "v3_quant_analyst", "DISPUTE: leverage is worse")]
+ANNS = [{
+    "section": "desk_note",
+    "author_agent": "v3_quant_analyst",
+    "note": "DISPUTE: leverage is worse",
+}]
 
 
 async def _summarize(entries, anns=(), *, for_agent_prompt):
+    """Run the real summarize() against a fake board.
+
+    Dispatch is on the COLLECTION name, never on query text: entries and
+    annotations are two different collections, so a summarize() that read the
+    wrong one gets the wrong list instead of silently the right one.
+    """
     from app.agents.whiteboard import whiteboard
 
-    with patch("app.agents.whiteboard.get_db", return_value=_FakeDB(entries, anns)):
-        return await whiteboard.summarize(
+    store = MagicMock()
+    store.find_docs.side_effect = lambda coll, *a, **k: {
+        "whiteboard_entries": list(entries),
+        "whiteboard_annotations": list(anns),
+    }[coll]
+    query = MagicMock()
+    query.find_row.return_value = None
+    query.find_rows.return_value = []
+
+    with patch("app.agents.whiteboard.mongo_store", store), \
+         patch("app.agents.whiteboard.mongo_query", query):
+        out = await whiteboard.summarize(
             ticker="TSLA", cycle_id="c1", for_agent_prompt=for_agent_prompt
         )
+
+    # The read must be scoped to the ticker and cycle asked for, and must
+    # exclude superseded versions — a board that leaked another ticker's
+    # entries would still satisfy every content assertion below.
+    entries_call = next(
+        c for c in store.find_docs.call_args_list if c[0][0] == "whiteboard_entries"
+    )
+    assert entries_call[0][1] == {
+        "cycle_id": "c1", "ticker": "TSLA", "superseded_by": None
+    }
+    return out
 
 
 @pytest.mark.asyncio

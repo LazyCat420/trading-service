@@ -74,36 +74,64 @@ def test_tournament_without_nuance_still_renders():
 
 # ── Drawdown circuit breaker ─────────────────────────────────────────
 
-def _mock_peak(peak_value):
-    db = MagicMock()
-    db.execute.return_value.fetchone.return_value = (peak_value,)
-    ctx = MagicMock()
-    ctx.__enter__ = MagicMock(return_value=db)
-    ctx.__exit__ = MagicMock(return_value=False)
-    return ctx
+def _mock_peak(peak_value, error=None):
+    """Patch the breaker's peak read.
+
+    The breaker used to run `SELECT MAX(total_value) FROM portfolio_snapshots`
+    through `get_db`; it now issues
+    `mongo_query.agg_row('portfolio_snapshots', {'bot_id': ...}, [('max','total_value')])`,
+    which returns a TUPLE in the requested aggregate order. Patching `get_db`
+    (a symbol paper_trader no longer imports) intercepted nothing — these four
+    tests were scoring the REAL portfolio_snapshots collection, so the peak
+    they measured against was whatever production held, not 100k.
+    """
+    q = MagicMock()
+    if error is not None:
+        q.agg_row.side_effect = error
+    else:
+        q.agg_row.return_value = (peak_value,)
+    return patch("app.trading.paper_trader.mongo_query", q), q
+
+
+def _assert_peak_read(q):
+    """The breaker must read the MAX total_value of THIS bot's snapshots."""
+    collection, query, aggs = q.agg_row.call_args[0][:3]
+    assert collection == "portfolio_snapshots"
+    assert query == {"bot_id": "bot1"}
+    assert aggs == [("max", "total_value")]
 
 
 def test_breaker_blocks_buy_beyond_drawdown_limit():
-    with patch("app.trading.paper_trader.get_db", return_value=_mock_peak(100_000.0)):
+    ctx, q = _mock_peak(100_000.0)
+    with ctx:
         result = _check_drawdown_breaker("bot1", portfolio_value=70_000.0)
     assert result is not None
     assert "drawdown breaker" in result["error"].lower()
     assert result["drawdown_pct"] == -30.0
+    assert result["peak_value"] == 100_000.0
+    assert result["reason_code"] == "DRAWDOWN_BREAKER"
     assert "SELLs allowed" in result["error"]
+    _assert_peak_read(q)
 
 
 def test_breaker_allows_buy_within_limit():
-    with patch("app.trading.paper_trader.get_db", return_value=_mock_peak(100_000.0)):
+    ctx, q = _mock_peak(100_000.0)
+    with ctx:
         assert _check_drawdown_breaker("bot1", portfolio_value=90_000.0) is None
+    _assert_peak_read(q)
 
 
 def test_breaker_fails_open_without_snapshots():
-    with patch("app.trading.paper_trader.get_db", return_value=_mock_peak(None)):
+    # agg_row over an empty match returns SQL's answer for an empty group:
+    # (None,) for a MAX. No peak → no block.
+    ctx, q = _mock_peak(None)
+    with ctx:
         assert _check_drawdown_breaker("bot1", portfolio_value=50_000.0) is None
 
 
 def test_breaker_fails_open_on_db_error():
-    with patch("app.trading.paper_trader.get_db", side_effect=RuntimeError("db down")):
+    ctx, q = _mock_peak(None, error=RuntimeError("mongo down"))
+    with ctx:
         assert _check_drawdown_breaker("bot1", portfolio_value=1.0) is None
 
 

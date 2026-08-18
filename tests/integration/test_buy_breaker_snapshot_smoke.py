@@ -10,12 +10,19 @@ where `_check_drawdown_breaker` (gate) and `_record_portfolio_snapshot` (writer)
 actually fire together — and proves the wiring:
 
   * a seeded peak that puts the book past the drawdown limit BLOCKS the BUY
-    (no trade_fills row written), with the REAL breaker running; and
+    (no trade_fills document written), with the REAL breaker running; and
   * a healthy book lets the BUY through and fires the snapshot writer afterward.
 
-Uses an order-independent DB mock keyed on SQL text (not call order), so it
-survives refactors of the read sequence inside buy(). Marked `integration`
-because it exercises the whole execution path, not one function.
+The reads are dispatched on the COLLECTION NAME, not on call order and not on
+SQL text — buy() issues several ordered reads (dup-check, cash, price sanity,
+positions, then the breaker's peak read) and keying on the collection keeps the
+test robust if that order changes.
+
+This file used to patch `paper_trader.get_db` and key a fake cursor on SQL
+substrings. paper_trader calls `mongo_query`/`mongo_store` now, so `get_db` was
+not even importable there: the patch raised, and before the autouse Mongo guard
+landed the fake cursor intercepted nothing. Marked `integration` because it
+exercises the whole execution path, not one function.
 """
 import os
 import sys
@@ -31,74 +38,82 @@ from app.trading import paper_trader
 pytestmark = pytest.mark.integration
 
 
-class _SmartCursor:
-    """A cursor whose reads are keyed on SQL substrings, not call order.
+class _MongoDouble:
+    """Collection-keyed stand-in for paper_trader's mongo_query + mongo_store.
 
-    buy() issues several ordered reads (dup-check, cash, price sanity, positions,
-    then the breaker's peak read). Keying on the SQL keeps the test robust if
-    that order changes.
+    Reads answer by collection name and return TUPLES in the column order the
+    caller asked for — that positional contract is what `app/db/mongo_query.py`
+    guarantees, so a fixture returning documents would be testing a shape the
+    module never sees.
     """
 
-    def __init__(self, cash, peak, positions_rows):
+    def __init__(self, cash, peak):
         self.cash = cash
         self.peak = peak
-        self.positions_rows = positions_rows
-        self._last_sql = ""
-        self.executed = []  # (sql, params) for every execute()
+        self.query = MagicMock()
+        self.store = MagicMock()
 
-    def execute(self, sql, params=None):
-        self._last_sql = sql
-        self.executed.append((sql, params))
-        return self
+        self.query.find_row.side_effect = self._find_row
+        self.query.find_rows.side_effect = self._find_rows
+        self.query.agg_row.side_effect = self._agg_row
 
-    def fetchone(self):
-        s = self._last_sql
-        if "cash_balance FROM bots" in s:
-            return (self.cash,)
-        if "FROM price_history" in s:
-            return (None,)  # no history → skip the price-sanity gate
-        if "MAX(total_value) FROM portfolio_snapshots" in s:
-            return (self.peak,) if self.peak is not None else None
-        if "FROM trade_fills" in s:
-            return None  # no duplicate BUY in cycle
-        if "SELECT id, qty, avg_entry_price FROM positions" in s:
-            return None  # no existing position → INSERT branch
+        self.store.with_txn.side_effect = self._with_txn
+        # dec128 is value-PRESERVING here so monetary assertions can read the
+        # number the money path actually stored. A bare MagicMock would swallow
+        # every amount behind an opaque sentinel.
+        self.store.dec128.side_effect = lambda v: v
+        # writes_mongo/writes_pg are BRANCH PREDICATES. A bare MagicMock is
+        # truthy for both, silently exercising the dual-write path.
+        self.store.writes_mongo.side_effect = lambda _t: True
+        self.store.writes_pg.side_effect = lambda _t: False
+        self.store.reads_mongo.side_effect = lambda _t: True
+        self.store.find_docs.side_effect = lambda *_a, **_k: []
+
+    # ── reads ──
+    def _find_row(self, collection, query, columns, **kwargs):
+        if collection == "trade_fills":
+            return None            # no duplicate BUY in cycle
+        if collection == "bots":
+            return (self.cash,) if columns == ["cash_balance"] else ("bot-1",)
+        if collection == "positions":
+            return None            # no existing position → INSERT branch
+        if collection == "price_history":
+            return None            # no history → skip the price-sanity gate
         return None
 
-    def fetchall(self):
-        if "FROM positions" in self._last_sql:
-            return self.positions_rows
+    def _find_rows(self, collection, query, columns, **kwargs):
+        if collection == "positions":
+            return []
         return []
 
-    # ── context-manager + transaction plumbing ──
-    def __enter__(self):
-        return self
+    def _agg_row(self, collection, query, aggs, **kwargs):
+        if collection == "portfolio_snapshots":
+            return (self.peak,)
+        if collection == "price_history":
+            return (None,)         # no 30d average → sanity gate skipped
+        return (None,)
 
-    def __exit__(self, *a):
-        return False
-
-    def transaction(self):
-        cur = self
-
-        @contextmanager
-        def _txn():
-            yield cur
-
-        return _txn()
-
-    def executed_sql(self):
-        return [sql for sql, _ in self.executed]
-
-
-def _patch_buy(cursor):
-    """Patch get_db + the external helpers buy() reaches, leaving the real
-    breaker and the real execution/gating logic intact."""
+    # ── transaction plumbing ──
     @contextmanager
-    def _get_db():
-        yield cursor
+    def _with_txn(self):
+        yield "session-sentinel"
 
+    # ── write inspection ──
+    def inserted(self, collection):
+        """Every document inserted into `collection`."""
+        out = []
+        for call in self.store.insert_docs.call_args_list:
+            if call[0][0] == collection:
+                out.extend(call[0][1])
+        return out
+
+
+def _patch_buy(double):
+    """Patch the Mongo layer + the external helpers buy() reaches, leaving the
+    real breaker and the real execution/gating logic intact."""
     return [
-        patch("app.trading.paper_trader.get_db", _get_db),
+        patch("app.trading.paper_trader.mongo_query", double.query),
+        patch("app.trading.paper_trader.mongo_store", double.store),
         patch("app.trading.paper_trader._ensure_bot", lambda *_a, **_k: None),
         patch("app.trading.paper_trader._compute_stop_loss_pct", return_value=0.08),
     ]
@@ -107,12 +122,12 @@ def _patch_buy(cursor):
 @pytest.mark.asyncio
 async def test_breaker_blocks_buy_on_the_live_path():
     # Book is 50k against a 100k peak → -50% drawdown, past the 25% limit.
-    cursor = _SmartCursor(cash=50_000.0, peak=100_000.0, positions_rows=[])
-    patches = _patch_buy(cursor)
+    double = _MongoDouble(cash=50_000.0, peak=100_000.0)
+    patches = _patch_buy(double)
     for p in patches:
         p.start()
     try:
-        with patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.25):
+        with patch("app.trading.paper_trader.get_param", lambda k: 0.25):
             result = await paper_trader.buy("bot-1", "AAPL", size_pct=0.10, current_price=150.0)
     finally:
         for p in patches:
@@ -122,22 +137,29 @@ async def test_breaker_blocks_buy_on_the_live_path():
     # was written to the broker ledger.
     assert "error" in result
     assert "drawdown breaker" in result["error"].lower()
-    assert not any("INSERT INTO trade_fills" in s for s in cursor.executed_sql()), \
-        "a blocked BUY must not write a fill"
+    assert result["reason_code"] == "DRAWDOWN_BREAKER"
+    assert double.inserted("trade_fills") == [], "a blocked BUY must not write a fill"
+    assert double.inserted("position_lots") == [], "a blocked BUY must not open a lot"
+    assert double.inserted("positions") == [], "a blocked BUY must not open a position"
+    # A refused BUY must not touch the cash ledger either.
+    assert double.store.update_docs.call_args_list == []
 
 
 @pytest.mark.asyncio
 async def test_healthy_book_executes_and_snapshots():
     # Book is at its 100k peak → 0% drawdown → breaker allows the BUY.
-    cursor = _SmartCursor(cash=100_000.0, peak=100_000.0, positions_rows=[])
-    patches = _patch_buy(cursor)
+    double = _MongoDouble(cash=100_000.0, peak=100_000.0)
+    patches = _patch_buy(double)
     for p in patches:
         p.start()
     snap = MagicMock()
     snap_patch = patch("app.trading.paper_trader._record_portfolio_snapshot", snap)
     snap_patch.start()
     try:
-        with patch.object(paper_trader.settings, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.25):
+        # MAX_PORTFOLIO_DRAWDOWN_PCT gates the breaker; MAX_CONCENTRATION_PCT
+        # gates the per-ticker cap. Both resolve through the parameter store.
+        params = {"MAX_PORTFOLIO_DRAWDOWN_PCT": 0.25, "MAX_CONCENTRATION_PCT": 0.25}
+        with patch("app.trading.paper_trader.get_param", lambda k: params[k]):
             result = await paper_trader.buy("bot-1", "AAPL", size_pct=0.10, current_price=150.0)
     finally:
         snap_patch.stop()
@@ -146,7 +168,48 @@ async def test_healthy_book_executes_and_snapshots():
 
     # BUY went through the real path...
     assert result.get("action") == "BUY", f"expected a BUY, got {result}"
-    assert any("INSERT INTO trade_fills" in s for s in cursor.executed_sql()), \
-        "a cleared BUY must write a fill"
+
+    # ...and wrote exactly one fill for the intended notional. 10% of a 100k
+    # book = $10,000; the fill lands at or ABOVE the $150 reference because
+    # execution costs make a BUY fill WORSE than the reference price.
+    fills = double.inserted("trade_fills")
+    assert len(fills) == 1, "a cleared BUY must write exactly one fill"
+    fill = fills[0]
+    assert fill["side"] == "BUY"
+    assert fill["ticker"] == "AAPL"
+    assert fill["bot_id"] == "bot-1"
+    assert fill["fill_value"] == pytest.approx(10_000.0)
+    assert fill["decision_price"] == 150.0
+    assert fill["fill_price"] >= 150.0, "a BUY must not fill better than the reference"
+    assert fill["fill_qty"] == pytest.approx(10_000.0 / fill["fill_price"])
+
+    # The lot that the FIFO matcher will later consume, and the position.
+    lots = double.inserted("position_lots")
+    assert len(lots) == 1
+    assert lots[0]["fill_id"] == fill["fill_id"]
+    assert lots[0]["remaining_qty"] == lots[0]["original_qty"] == fill["fill_qty"]
+    assert lots[0]["status"] == "open"
+
+    positions = double.inserted("positions")
+    assert len(positions) == 1
+    assert positions[0]["ticker"] == "AAPL"
+    assert positions[0]["qty"] == pytest.approx(fill["fill_qty"])
+    assert positions[0]["avg_entry_price"] == fill["fill_price"]
+
+    # Cash was debited by exactly the notional, on the bot's own row.
+    cash_updates = [
+        c for c in double.store.update_docs.call_args_list
+        if c[0][0] == "bots" and "$inc" in c[0][2]
+    ]
+    assert len(cash_updates) == 1
+    assert cash_updates[0][0][1] == {"bot_id": "bot-1"}
+    assert cash_updates[0][0][2]["$inc"]["cash_balance"] == pytest.approx(-10_000.0)
+    assert cash_updates[0][0][2]["$inc"]["total_trades"] == 1
+
+    # Every ledger write rode inside the ONE transaction (Tier F atomicity):
+    # a fill written outside the session could survive a rolled-back position.
+    for call in double.store.insert_docs.call_args_list:
+        assert call.kwargs.get("session") == "session-sentinel"
+
     # ...and the snapshot writer fired afterward (feeding the breaker's peak).
     snap.assert_called_once_with("bot-1")

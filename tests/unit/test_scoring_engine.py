@@ -95,22 +95,32 @@ class TestCalculatePillarScore:
         assert 1.0 <= result <= 10.0 or result == 5.0  # 5.0 if spec not found
 
 
+def _mongo_query(find_row=None, find_rows=None):
+    """Patch scoring_engine's Mongo read layer, dispatching on COLLECTION.
+
+    These tests used to patch `app.trading.scoring_engine.get_db`, a symbol the
+    module no longer imports: the mock intercepted nothing, `compute_normalized_
+    features` read the LIVE database, and "no DB data" was whatever production
+    happened to hold for AAPL.
+
+    `find_row` returns a TUPLE in the column order the caller listed, and
+    `find_rows` a list of them — that positional contract is what
+    `app/db/mongo_query.py` exists for, so the fixtures return tuples.
+    """
+    q = MagicMock()
+    q.find_row.side_effect = lambda coll, *a, **k: (find_row or {}).get(coll)
+    q.find_rows.side_effect = lambda coll, *a, **k: (find_rows or {}).get(coll, [])
+    return patch("app.trading.scoring_engine.mongo_query", q), q
+
+
 class TestBuildHierarchicalPillarProfiles:
     """build_hierarchical_pillar_profiles should return the correct structure."""
 
     def test_profile_structure(self):
         from app.trading.scoring_engine import build_hierarchical_pillar_profiles
 
-        # Mock get_db to avoid real DB calls
-        mock_cursor = MagicMock()
-        mock_cursor.execute.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None
-        mock_cursor.fetchall.return_value = []
-        mock_ctx = MagicMock()
-        mock_ctx.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_ctx.__exit__ = MagicMock(return_value=False)
-
-        with patch("app.trading.scoring_engine.get_db", return_value=mock_ctx):
+        ctx, q = _mongo_query()          # empty store: every read misses
+        with ctx:
             result = build_hierarchical_pillar_profiles("AAPL")
 
         assert "ticker" in result
@@ -124,16 +134,14 @@ class TestBuildHierarchicalPillarProfiles:
     def test_pillar_has_required_fields(self):
         from app.trading.scoring_engine import build_hierarchical_pillar_profiles
 
-        mock_cursor = MagicMock()
-        mock_cursor.execute.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None
-        mock_cursor.fetchall.return_value = []
-        mock_ctx = MagicMock()
-        mock_ctx.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_ctx.__exit__ = MagicMock(return_value=False)
-
-        with patch("app.trading.scoring_engine.get_db", return_value=mock_ctx):
+        ctx, q = _mongo_query()
+        with ctx:
             result = build_hierarchical_pillar_profiles("NVDA")
+
+        # The reads must be scoped to the ticker asked for — a profile built
+        # from another ticker's rows would satisfy every field check below.
+        for call in q.find_row.call_args_list + q.find_rows.call_args_list:
+            assert call[0][1] == {"ticker": "NVDA"}
 
         for pillar_name in ("edge", "risk", "regime"):
             pillar = result["pillars"][pillar_name]
@@ -145,15 +153,8 @@ class TestBuildHierarchicalPillarProfiles:
     def test_default_features_when_no_db_data(self):
         from app.trading.scoring_engine import compute_normalized_features
 
-        mock_cursor = MagicMock()
-        mock_cursor.execute.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None
-        mock_cursor.fetchall.return_value = []
-        mock_ctx = MagicMock()
-        mock_ctx.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_ctx.__exit__ = MagicMock(return_value=False)
-
-        with patch("app.trading.scoring_engine.get_db", return_value=mock_ctx):
+        ctx, q = _mongo_query()          # nothing stored for this ticker
+        with ctx:
             features = compute_normalized_features("AAPL")
 
         # All norms should be at defaults (0.5)
@@ -165,26 +166,33 @@ class TestBuildHierarchicalPillarProfiles:
     def test_veto_flags_on_extreme_risk(self):
         from app.trading.scoring_engine import build_hierarchical_pillar_profiles
 
-        # Simulate high drawdown data
-        mock_cursor = MagicMock()
-        mock_cursor.execute.return_value = mock_cursor
-        # Fundamentals: low growth
-        mock_cursor.fetchone.side_effect = [
-            (0.01, 0.02, 1e9),  # fundamentals
-            (30.0, 5.0, 100.0, 200.0),  # technicals
-            (150.0,),  # price
-        ]
-        # Price history for z-score and drawdown: simulate 45% drawdown
-        prices = [(100.0,)] * 5  # Current price is much lower than peak
-        prices[0] = (55.0,)  # Current price = 55, peak was 100
-        mock_cursor.fetchall.return_value = prices * 12  # Enough rows
+        from app.trading.scoring_engine import compute_normalized_features
 
-        mock_ctx = MagicMock()
-        mock_ctx.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_ctx.__exit__ = MagicMock(return_value=False)
+        # Price history is returned newest-first (sort=[('date', -1)]), so the
+        # 45% drawdown is "latest close 55 against a peak of 100".
+        prices = [(55.0,)] + [(100.0,)] * 59
 
-        with patch("app.trading.scoring_engine.get_db", return_value=mock_ctx):
+        ctx, q = _mongo_query(
+            find_row={
+                # (revenue_growth, profit_margin, market_cap) — low growth
+                "fundamentals": (0.01, 0.02, 1e9),
+                # (rsi_14, atr_14, support, resistance)
+                "technicals": (30.0, 5.0, 100.0, 200.0),
+                # (close)
+                "price_history": (150.0,),
+            },
+            find_rows={"price_history": prices},
+        )
+        with ctx:
             result = build_hierarchical_pillar_profiles("RISKY_STOCK")
+            features = compute_normalized_features("RISKY_STOCK")
 
         # The structure should still be valid even with extreme data
         assert isinstance(result["pillars"]["risk"]["veto_flags"], list)
+
+        # The extreme data must actually REACH the features — the old mock
+        # intercepted nothing, so this test could not tell a 45% drawdown from
+        # an empty database.
+        assert features["raw_dd"] == pytest.approx(0.45)
+        assert features["dd_norm"] == pytest.approx(0.9)
+        assert features["raw_rsi"] == 30.0

@@ -192,11 +192,15 @@ async def test_triage_override_survives_its_own_degradation_note():
     board = Whiteboard()
     board.subscribe(subscriber, ticker="CRH")
 
-    with patch("app.agents.whiteboard.get_db") as mock_get_db:
-        db = MagicMock()
-        db.transaction.return_value = MagicMock()
-        mock_get_db.return_value.__enter__.return_value = db
-        db.execute.return_value.fetchone.side_effect = [None, (1,)]
+    # `write_section` calls `mongo_query.find_row` for the current version and
+    # `mongo_store.insert_docs` to write the new one. This used to patch
+    # `get_db`, a symbol the module no longer imports, so nothing was
+    # intercepted and the write went to the live store.
+    query = MagicMock()
+    query.find_row.return_value = None          # no prior version → v1 insert
+    store = MagicMock()
+    with patch("app.agents.whiteboard.mongo_query", query), \
+         patch("app.agents.whiteboard.mongo_store", store):
         await board.write_section(
             ticker="CRH",
             cycle_id="cycle-test-1",
@@ -204,6 +208,15 @@ async def test_triage_override_survives_its_own_degradation_note():
             content={"triage_recommendation": "QUANT_ONLY", "summary": "…"},
             author_agent="v3_junior_analyst",
         )
+
+    # The board really wrote the section the subscriber then reacted to.
+    collection, docs = store.insert_docs.call_args[0][:2]
+    assert collection == "whiteboard_entries"
+    assert docs[0]["ticker"] == "CRH"
+    assert docs[0]["cycle_id"] == "cycle-test-1"
+    assert docs[0]["section"] == "desk_note"
+    assert docs[0]["version"] == 1
+    assert docs[0]["content"]["triage_recommendation"] == "QUANT_ONLY"
 
     assert reached_dispatch == ["FULL"], (
         "the triage override died on its own append_artifact call and the "

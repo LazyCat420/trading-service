@@ -152,5 +152,10 @@ async def test_the_backfill_stands_down_while_a_cycle_runs():
 async def test_an_unreadable_pipeline_state_does_not_stop_the_worker_forever():
     """Fail-open. A cycle check that errors closed would silently retire the
     job, and the only symptom would be a backlog that stops shrinking."""
-    with patch.object(nb, "get_db", side_effect=RuntimeError("db down")):
+    # `_cycle_is_running` reads pipeline_state from Mongo now, and imports
+    # mongo_store INSIDE the function, so the failure has to be injected at
+    # `app.db.mongo_store.find_docs` — patching the name on `nb` binds nothing
+    # (there is no module-level reference to rebind) and the old `nb.get_db`
+    # patch stopped applying when the import was removed.
+    with patch("app.db.mongo_store.find_docs", side_effect=RuntimeError("db down")):
         assert nb._cycle_is_running() is False

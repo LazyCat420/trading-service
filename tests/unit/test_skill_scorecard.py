@@ -279,29 +279,27 @@ def test_rollback_appends_rather_than_reactivating():
     """Append-only. Reactivating the old row would stamp two disjoint periods
     with the same version number, and every scorecard query would silently pool
     them into one sample."""
-    from unittest.mock import patch
+    from unittest.mock import MagicMock, patch
 
     import app.autoresearch.skill_optimizer as S
 
-    class _Cur:
-        def __init__(self):
-            self.q = []
-        def execute(self, sql, params=None):
-            self.q.append(sql)
-            return self
-        def fetchone(self):
-            return ("predecessor doc", "hash4")
+    # Reads go through mongo_query.find_row, which returns a TUPLE in the
+    # column order the caller listed — ('skill_text', 'skill_hash') for the
+    # predecessor lookup. The old fake cursor patched `S.get_db`, which the
+    # module still imports but no longer reads through, so the fake
+    # intercepted nothing and the lookup went to the live database.
+    q = MagicMock()
+    q.find_row.return_value = ("predecessor doc", "hash4")
 
-    cur = _Cur()
-
-    class _Ctx:
-        def __enter__(self): return cur
-        def __exit__(self, *a): return False
-
-    with patch.object(S, "get_db", lambda: _Ctx()), \
+    with patch.object(S, "mongo_query", q), \
          patch.object(S, "_save_skill") as save, \
          patch.object(S, "_log_rejection"):
         assert S._rollback_skill("v3_bull_agent", 5, "cyc-1", "worse") is True
+
+    # The predecessor is v(n-1): rolling back v5 must read v4, not v5.
+    assert q.find_row.call_args_list[0][0][1] == {
+        "agent_name": "v3_bull_agent", "version": 4
+    }
 
     kwargs = save.call_args.kwargs
     assert kwargs["new_version"] == 6, "rollback must mint a NEW version number"

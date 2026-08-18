@@ -260,16 +260,53 @@ class TestCollectFeed:
             }
         ]
 
-        # Patch at module-levels, re-import location, and deduplication engine
-        with patch("app.db.connection.get_db", return_value=mock_db_ctx):
-            with patch("app.collectors.news_collector.get_db", return_value=mock_db_ctx):
-                with patch("app.processors.dedup_engine.get_db", return_value=mock_db_ctx):
-                    count = await collect_feed("Test Feed", "https://example.com/rss")
+        # news_collector still opens a `get_db()` cursor around the loop, but
+        # the ARTICLE WRITE goes through mongo_store.upsert_doc now, and the
+        # DedupEngine reads/counts through mongo_store too. Patching
+        # `dedup_engine.get_db` — a symbol that module no longer imports —
+        # raised, and before that the dedup engine was reading the live
+        # collection to decide whether these fixture articles were duplicates.
+        # collect_feed re-imports `mongo_store` INSIDE the write loop
+        # (`from app.db import mongo_store`), so a module-level patch on
+        # news_collector is rebound out from under the test. Patch the
+        # functions on app.db.mongo_store itself, which every binding shares.
+        upsert = MagicMock()
+        query = MagicMock()
+        # url_fanout_exceeded counts prior articles on the URL: 0 → not capped.
+        query.agg_row.return_value = (0,)
+        query.find_rows.return_value = []
+        query.find_row.return_value = None
+
+        with patch("app.collectors.news_collector.get_db", return_value=mock_db_ctx), \
+             patch("app.db.mongo_store.upsert_doc", upsert), \
+             patch("app.collectors.news_collector.mongo_query", query), \
+             patch("app.db.mongo_store.ensure_indexes", MagicMock()), \
+             patch("app.db.mongo_store.count_docs", return_value=0), \
+             patch("app.db.mongo_store.find_docs", return_value=[]), \
+             patch("app.db.mongo_store.writes_mongo", lambda _t: True), \
+             patch("app.db.mongo_store.writes_pg", lambda _t: False), \
+             patch("app.db.mongo_store.reads_mongo", lambda _t: True):
+            count = await collect_feed("Test Feed", "https://example.com/rss")
 
         # Should have processed both entries
         assert count >= 2
-        # DB execute should have been called with INSERT
-        assert mock_db_ctx.execute.called
+        # ...and each one was written as a news_articles document, keyed on its
+        # own id and insert-only so a re-collect cannot overwrite a stored
+        # article. The old assertion (`mock_db_ctx.execute.called`) only proved
+        # SOME SQL ran; this pins the collection, the upsert key and the source.
+        upserts = [c for c in upsert.call_args_list if c[0][0] == "news_articles"]
+        assert len(upserts) == count
+        titles = set()
+        for call in upserts:
+            _coll, key, doc = call[0][:3]
+            assert key == {"id": doc["id"]}
+            assert call.kwargs.get("insert_only") is True
+            assert doc["source"] == "rss"
+            assert doc["publisher"] == "Test Feed"
+            assert doc["content_hash"]
+            titles.add(doc["title"])
+        assert "Apple beats earnings" in titles
+        assert "Markets rally on jobs data" in titles
 
     @pytest.mark.asyncio
     @patch("app.services.scraper_client.scraper_client.collect")
@@ -402,7 +439,15 @@ class TestNewsApiRotator:
         asyncio.run(exhaust())
 
     def test_persist_articles_deduplicates(self):
-        """_persist_articles with mock DB should call execute for each article."""
+        """_persist_articles should write one news_articles document per
+        article that survives dedup.
+
+        The write moved from `db.execute(INSERT ...)` to
+        `mongo_store.upsert_doc('news_articles', {'id': ...}, ..., insert_only=True)`,
+        so `mock_db.execute.called` no longer proves anything — the rotator
+        still opens a `get_db()` cursor, but the article never travels through
+        it. This reads the document the rotator actually stored.
+        """
         import asyncio
         from app.collectors.news_api_rotator import _persist_articles, NewsArticle
 
@@ -429,12 +474,35 @@ class TestNewsApiRotator:
         mock_dedup.is_duplicate.return_value = False
         mock_dedup.compute_hash.return_value = "testhash"
 
+        store = MagicMock()
+        # url_fanout_exceeded (news_collector) counts prior articles on the
+        # URL through mongo_query.agg_row — 0 means the ticker fan-out is
+        # not capped, so the AAPL row is written.
+        nc_query = MagicMock()
+        nc_query.agg_row.return_value = (0,)
+
         async def run_persist():
             with patch("app.collectors.news_api_rotator.get_db", return_value=mock_db), \
+                 patch("app.collectors.news_api_rotator.mongo_store", store), \
+                 patch("app.collectors.news_collector.mongo_query", nc_query), \
                  patch("app.processors.dedup_engine.DedupEngine", return_value=mock_dedup):
                 return await _persist_articles(articles)
 
         count = asyncio.run(run_persist())
 
         assert count == 1
-        assert mock_db.execute.called
+        upserts = [c for c in store.upsert_doc.call_args_list if c[0][0] == "news_articles"]
+        assert len(upserts) == 1
+        _coll, key, doc = upserts[0][0][:3]
+        assert key == {"id": doc["id"]}
+        assert upserts[0].kwargs.get("insert_only") is True
+        assert doc["ticker"] == "AAPL"
+        assert doc["title"] == "Test Article"
+        assert doc["source"] == "test"
+        # The content_hash is what lets the OTHER collectors' DedupEngine see
+        # rotator articles at all — a rotator row that stored an empty hash
+        # was invisible to them and the same story got double-stored.
+        assert doc["content_hash"] == "testhash"
+        # Provider-supplied tickers must be labelled as such, never as our own
+        # 'detected' verification.
+        assert doc["ticker_attribution"] == "provider"
