@@ -68,6 +68,63 @@ Executed before any further conversion so that only good data is ever migrated.
 - [ ] Work the collection-defect checklist (fixes the *collectors*, so we stop
       producing bad rows). Open — 15 defects listed, worst first.
 
+## A2. Code conversion — **459 sites done, branch `quality-purge`**
+
+- [x] **SQL inventory** (`scripts/sql_inventory.py`). 1,274 call sites: 305 in
+      schema-building files (retired, not converted), 659 mechanical, 170
+      needing redesign, 94 unknown (86 dynamic f-strings, 8 unparsed). The 94
+      are reported separately and never folded into a convertible percentage.
+- [x] **Translator** (`scripts/sql_to_mongo.py`). Refuses rather than
+      approximates: LIKE, INTERVAL in months, OFFSET, LIMIT 0, `DELETE` with no
+      WHERE, unaliased computed columns. Covers 462/659 mechanical (70%).
+- [x] **Row-shape compatibility layer** (`app/db/mongo_query.py`). Returns
+      TUPLES in the SQL's column order, so positional access (`r[0]`) at 459
+      call sites keeps working. This is what made the rewrite mechanical.
+- [x] **Differential verification** (`scripts/verify_translations.py`). Runs
+      each translation against BOTH stores and compares rows. Caught three real
+      bugs, incl. `IS NOT NULL` inverted (sqlglot's `Is(negate=True)`) and
+      `LIMIT 0` returning the whole collection. **94.2% of comparable
+      statements match** after fixes.
+- [x] **Codemod applied** (`scripts/codemod_pg_to_mongo.py`): 459 sites across
+      122 files, −3,711 lines of SQL. All compile. Smoke-tested 9/9 against
+      live Mongo including a real converted call site.
+- [x] **Backfill made non-quadratic.** Collections had only `_id`, so every
+      upsert was a collection scan (~29 rows/sec, degrading). Indexing the
+      natural key first: ~65 tables in 45 seconds.
+- [ ] **~370 refused statements** — 39 GROUP BY, 34 JOIN, 25 aggregates, 19
+      RETURNING, 14 DISTINCT, 11 LIKE. Python-side rewrites, one at a time.
+- [ ] **94 dynamic/unparsed sites** need a human read before classification.
+- [ ] **Vestigial `with get_db() as db:` blocks.** The codemod replaced the
+      statements inside them but left the block, so a Postgres connection is
+      still opened and unused at those sites. Removing one means re-indenting
+      its body — do it deliberately, not with a regex.
+
+### Test suite — 134 failing, all triaged
+
+Baseline before conversion was 4,071 pass / 2 fail. Now **4,016 pass / 134
+fail**. Every failing file was classified; none is an unexplained failure:
+
+- [x] **21 source-shape guards** — count SQL patterns in files, so the counts
+      moved when the SQL did. `test_price_history_one_vendor_guard.py` done:
+      9 ratchet budgets LOWERED to the measured values (never raised — raising
+      a ratchet to make it pass defeats it), 5 entries deleted on reaching 0.
+      **584 pass, was 10 failing.**
+- [x] **Template for the mock-based ports**: `tests/unit/test_watchlist.py`,
+      8 pass (was 5 failing). The old mock patched `get_db` and is INERT after
+      the codemod — reads went to the LIVE database and the test measured
+      production data. Port patches `mongo_query` AND `mongo_store` together;
+      stubbing only the read leaves writes pointed at the real store.
+- [ ] **25 remaining mock-based files** follow that template. Some (e.g.
+      `test_scoring_formula.py`) use a factory that dispatches on SQL text and
+      need per-file judgement, not a regex.
+- [ ] **2 files needing individual review**: `test_mongo_store.py`,
+      `test_prompt_split.py`. Both look pinned to old behaviour rather than
+      code bugs; neither is confirmed.
+
+> Not merged to master. A branch with 134 failing tests is not a branch to
+> merge, and the flag map is still untouched — `master` reads Postgres exactly
+> as before, so the cycle is NOT split across two stores today.
+
 ## B. Migration platform
 
 - [ ] Every migration target has exactly one `collection_map.json` entry.
