@@ -1,5 +1,18 @@
+"""Watchlist tests against the Mongo read/write layer.
+
+These used to patch `watchlist.get_db` and stub `db.execute(...).fetchone()`.
+That mock is inert now: the module calls `mongo_query`/`mongo_store`, so a
+patched `get_db` intercepts nothing and every read went to the LIVE database —
+`add_ticker("AAPL")` found the real row, took the reactivate branch, and
+returned False. The tests failed for the right reason.
+
+They patch the Mongo functions now. `find_row` returns a TUPLE in the column
+order the caller asked for, exactly as `cursor.fetchone()` did, so the stub
+values below are unchanged from the Postgres versions — that shape-compatibility
+is the whole point of `app/db/mongo_query.py`.
+"""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from app.trading.watchlist import (
     add_ticker,
@@ -10,66 +23,74 @@ from app.trading.watchlist import (
     ban_ticker,
     is_banned,
     check_ban_patterns,
-    get_paused
+    get_paused,
 )
 
-@pytest.fixture
-def mock_db():
-    db = MagicMock()
-    return db
 
-@patch("app.trading.watchlist.get_db")
+@pytest.fixture
+def mq():
+    """Patch the module's Mongo read + write surface together.
+
+    Both are needed: a test that stubs only the read lets the write reach the
+    real database, which is how a unit test quietly becomes an integration
+    test that mutates production data.
+    """
+    with patch("app.trading.watchlist.mongo_query") as q, \
+         patch("app.trading.watchlist.mongo_store") as s:
+        yield q, s
+
+
 @patch("app.trading.watchlist.is_banned", return_value=False)
-def test_add_ticker_success(mock_is_banned, mock_get_db, mock_db):
-    mock_get_db.return_value.__enter__.return_value = mock_db
-    mock_db.execute.return_value.fetchone.return_value = None
-    
+def test_add_ticker_success(mock_is_banned, mq):
+    q, s = mq
+    q.find_row.return_value = None          # not already on the watchlist
     assert add_ticker("AAPL", source="test") is True
-    
-    from unittest.mock import ANY
-    mock_db.execute.assert_called_with(
-        "INSERT INTO watchlist (ticker, source, notes, added_at, status) VALUES (%s, %s, %s, %s, 'active')",
-        ["AAPL", "test", "", ANY]
+    s.insert_docs.assert_called_once_with(
+        "watchlist",
+        [{"ticker": "AAPL", "source": "test", "notes": "",
+          "added_at": ANY, "status": "active"}],
     )
+
+
+@patch("app.trading.watchlist.is_banned", return_value=False)
+def test_add_ticker_reactivates_existing(mock_is_banned, mq):
+    q, s = mq
+    q.find_row.return_value = ("AAPL", "removed")
+    assert add_ticker("AAPL") is False       # already known -> reactivated
+    s.update_docs.assert_called_once()
+    s.insert_docs.assert_not_called()
+
 
 @patch("app.trading.watchlist.is_banned", return_value=True)
 def test_add_ticker_banned(mock_is_banned):
     assert add_ticker("AAPL") is False
 
-@patch("app.trading.watchlist.get_db")
-def test_remove_ticker(mock_get_db, mock_db):
-    mock_get_db.return_value.__enter__.return_value = mock_db
-    
-    # Exists
-    mock_db.execute.return_value.fetchone.return_value = ("AAPL",)
+
+def test_remove_ticker(mq):
+    q, s = mq
+    q.find_row.return_value = ("AAPL",)
     assert remove_ticker("AAPL") is True
-    
-    # Doesn't exist
-    mock_db.execute.return_value.fetchone.return_value = None
+
+    q.find_row.return_value = None
     assert remove_ticker("INVALID") is False
 
-@patch("app.trading.watchlist.get_db")
-def test_auto_purge_ticker(mock_get_db, mock_db):
-    mock_get_db.return_value.__enter__.return_value = mock_db
-    
-    mock_db.execute.return_value.fetchone.return_value = ("AAPL",)
+
+def test_auto_purge_ticker(mq):
+    q, s = mq
+    q.find_row.return_value = ("AAPL",)
     assert auto_purge_ticker("AAPL", "Low confidence") is True
 
-@patch("app.trading.watchlist.get_db")
-def test_pause_resume_ticker(mock_get_db, mock_db):
-    mock_get_db.return_value.__enter__.return_value = mock_db
-    
-    # Pause
-    mock_db.execute.return_value.fetchone.return_value = ("AAPL",)
+
+def test_pause_resume_ticker(mq):
+    q, s = mq
+    q.find_row.return_value = ("AAPL",)
     assert pause_ticker("AAPL") is True
-    
-    # Resume
     assert resume_ticker("AAPL") is True
 
-@patch("app.trading.watchlist.get_db")
-def test_get_paused(mock_get_db, mock_db):
-    mock_get_db.return_value.__enter__.return_value = mock_db
-    mock_db.execute.return_value.fetchall.return_value = [
+
+def test_get_paused(mq):
+    q, s = mq
+    q.find_rows.return_value = [
         ("AAPL", "manual", "Notes", None, "user paused")
     ]
     paused = get_paused()
@@ -77,14 +98,9 @@ def test_get_paused(mock_get_db, mock_db):
     assert paused[0]["ticker"] == "AAPL"
     assert paused[0]["status_reason"] == "user paused"
 
-@patch("app.trading.watchlist.get_db")
+
 @patch("app.trading.watchlist._snapshot_market_data", return_value=(None, 0.5, None))
-def test_check_ban_patterns(mock_snapshot, mock_get_db, mock_db):
-    mock_get_db.return_value.__enter__.return_value = mock_db
-    
-    # Mock pattern: price < 1.0
-    mock_db.execute.return_value.fetchall.return_value = [
-        ("penny_stock", '{"price_lt": 1.0}')
-    ]
-    
+def test_check_ban_patterns(mock_snapshot, mq):
+    q, s = mq
+    q.find_rows.return_value = [("penny_stock", '{"price_lt": 1.0}')]
     assert check_ban_patterns("PENN") == "penny_stock"
