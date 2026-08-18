@@ -695,3 +695,20 @@ class TestMockTradingCycleMongoE2E:
         assert cong_tool_res["status"] == "success"
         assert cong_tool_res["trade_count"] == 1
         assert cong_tool_res["trades"][0]["politician"] == "Pelosi"
+
+        # 16. Worklist Shadow Runs in MongoDB
+        from app.services.worklist_shadow import record as record_worklist_shadow
+
+        shadow_summary = record_worklist_shadow(
+            cycle_id=cycle_id,
+            live_tickers=["AAPL", "MSFT"],
+            top_scorers=[{"ticker": "AAPL"}, {"ticker": "NVDA"}],
+            worker_id="worker-001",
+        )
+        assert shadow_summary["recorded"] is True
+        assert shadow_summary["overlap_live_free"] == 1
+
+        shadow_docs = mongo_store.find_docs("worklist_shadow_runs", {"cycle_id": cycle_id})
+        assert len(shadow_docs) == 1
+        assert shadow_docs[0]["overlap_live_free"] == 1
+        assert shadow_docs[0]["worker_id"] == "worker-001"
