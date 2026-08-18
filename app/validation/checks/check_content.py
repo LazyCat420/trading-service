@@ -1,28 +1,29 @@
+"""Candidate Content Check — Synchronous and async existence checks across news, reddit, youtube.
+
+Pure MongoDB implementation.
+"""
+
 import asyncio
-from app.db.connection import get_db
+from app.db import mongo_store
+
 
 def _sync_check_content(ticker: str) -> bool:
     """
-    Synchronous DB check for existing content.
+    Synchronous DB check for existing content in MongoDB.
     Returns True if any news, reddit, or youtube content exists for the ticker.
     """
-    with get_db() as db:
-        # Check news
-        db.execute("SELECT 1 FROM news_articles WHERE ticker = %s LIMIT 1", (ticker,))
-        if db.fetchone():
-            return True
-        
-        # Check reddit
-        db.execute("SELECT 1 FROM reddit_posts WHERE ticker = %s LIMIT 1", (ticker,))
-        if db.fetchone():
-            return True
-            
-        # Check youtube
-        db.execute("SELECT 1 FROM youtube_transcripts WHERE ticker = %s LIMIT 1", (ticker,))
-        if db.fetchone():
-            return True
-            
+    ticker = ticker.upper().strip()
+    if mongo_store.find_docs('news_articles', {'ticker': ticker}, limit=1):
+        return True
+
+    if mongo_store.find_docs('reddit_posts', {'ticker': ticker}, limit=1):
+        return True
+
+    if mongo_store.find_docs('youtube_transcripts', {'ticker': ticker}, limit=1):
+        return True
+
     return False
+
 
 async def check_content(ticker: str) -> bool:
     """

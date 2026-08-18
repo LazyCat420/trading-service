@@ -1077,3 +1077,19 @@ class TestMockTradingCycleMongoE2E:
         release_ticker("PENNY")
         quarantined_after = get_quarantine_summary()
         assert not any(q["ticker"] == "PENNY" for q in quarantined_after)
+
+        # 34. Content Existence Checks & Schedule Validator in MongoDB
+        from app.validation.checks.check_content import check_content
+        from app.validation.schedule_validator import ScheduleValidator
+
+        has_aapl_content = await check_content("AAPL")
+        assert has_aapl_content is True
+
+        is_valid, _ = ScheduleValidator.validate_proposal({
+            "schedule_scope": "single_ticker",
+            "review_intent": "earnings_preview",
+            "urgency": "medium",
+            "earliest_window": "after_hours",
+            "reason_codes": ["EARNINGS_RELEASE"],
+        })
+        assert is_valid is True
