@@ -107,19 +107,36 @@ def test_no_writes_pg_branch_issues_a_mongo_write():
     )
 
 
-def test_the_scan_can_actually_see_a_writes_pg_branch():
-    """Negative control for the scan above.
+def test_the_scan_would_catch_the_pattern_if_it_came_back():
+    """Negative control: prove the scanner can still see the shape it hunts.
 
-    Once the flag apparatus is deleted at cutover there will be no writes_pg
-    guards left, and the first test will pass because it has nothing to check
-    rather than because the code is clean. This asserts the scanner is still
-    looking at something; when it fails, delete BOTH tests — the pattern it
-    guards cannot exist without the flags.
+    `app/` now contains ZERO writes_pg guards — the last of them went with
+    vector_store's dead pgvector branch — so the test above passes over an
+    empty set. That is the state where a check quietly stops being a check:
+    it would keep passing if someone reintroduced the pattern tomorrow and the
+    matcher had rotted in the meantime.
+
+    So instead of asserting the guards exist (they should not), this runs the
+    scanner against a synthetic module that DOES contain one and requires it
+    to be found. When app/ is clean the suite still proves the detector works.
     """
-    _, guards_seen = _scan()
-    assert guards_seen > 0, (
-        "no writes_pg() guards found anywhere in app/. Either the flag "
-        "apparatus is gone (in which case delete this file — the duplicate-"
-        "writer pattern it guards is impossible without the flags) or the "
-        "matcher broke and the test above is now vacuous."
+    sample = '''
+def save(doc):
+    if mongo_store.writes_mongo("thing"):
+        mongo_store.upsert_doc("thing", {"id": doc["id"]}, doc)
+    if mongo_store.writes_pg("thing"):
+        mongo_store.upsert_doc("thing", {"id": doc["id"]}, doc)
+'''
+    tree = ast.parse(sample)
+    found = []
+    for node in ast.walk(tree):
+        table = _writes_pg_guard(node)
+        if table is None:
+            continue
+        found.extend(_mongo_writes_in(node))
+
+    assert found, (
+        "the scanner failed to flag a synthetic duplicate writer, so the test "
+        "above is passing because it cannot see the pattern, not because the "
+        "pattern is absent"
     )
