@@ -303,8 +303,17 @@ def _pins_source(call_src: str) -> bool:
     that feeds `keep_dominant_source` — all count. The guard's job is to catch
     reads that never consider the vendor at all, which is the shape that
     actually shipped.
+
+    `_one_vendor(...)` counts too. It is the canonical pin helper from
+    `app.quant.returns` — it resolves the dominant vendor and merges
+    `{"source": src}` into the filter — so a read wrapped in it is pinned even
+    though the literal `source` no longer appears at the call site. Without
+    this the scanner condemns correctly-pinned code, which is exactly the
+    false positive that made `technical_processor.py` look like a regression.
     """
-    return "'source'" in call_src or '"source"' in call_src
+    if "'source'" in call_src or '"source"' in call_src:
+        return True
+    return "_one_vendor(" in call_src
 
 
 def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
@@ -377,7 +386,12 @@ KNOWN_UNPINNED_MONGO: dict[str, int] = {
     "app/processors/data_sanity.py": 1,
     "app/processors/market_regime.py": 3,
     "app/processors/quant_processor.py": 2,
-    "app/processors/technical_processor.py": 2,
+    # Was budgeted 2 on the reading that its Mongo port had dropped the pin.
+    # It had not: both indicator reads go through `_one_vendor(...)`, and the
+    # scanner's text grep simply could not see through that helper. The one
+    # remaining read is the dominant-vendor CENSUS itself (`$group` on
+    # `$source`), which must stay vendor-agnostic to do its job.
+    "app/processors/technical_processor.py": 1,
     "app/quant/regime_grading.py": 1,
     "app/quant/regime_hmm.py": 1,
     "app/quant/technical_baseline.py": 3,

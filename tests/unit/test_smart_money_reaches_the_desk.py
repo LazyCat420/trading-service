@@ -70,9 +70,14 @@ def test_registered_smart_money_tools_match_the_whitelisted_set():
 # `smart_money_trade_scores` (who traded THIS ticker) — so the fixtures below
 # are the two raw collections and the ranking itself is under test.
 #
-# rank/(cohort_n - 1) is the percentile, so a fund cohort of 15 puts the 9th
-# lowest alpha at 8/14 = 0.571 -> "57th", and a congress cohort of 164 puts the
-# 22nd lowest at 21/163 = 0.129 -> "13th".
+# rank/(cohort_n - 1) is the percentile, where `rank` counts the actors
+# STRICTLY BELOW the subject's alpha and `cohort_n` is the number of ACTORS in
+# the cohort — ties included. An earlier version of this fixture assumed the
+# denominator was the number of DISTINCT alphas, so appending 11 tied buyers to
+# a 15-actor cohort silently made it 25 and the line read "33rd percentile".
+# The cohorts below are sized against the real rule:
+#   funds:    16 below + 11 tied subjects + 2 above = 29 actors, 16/28 = 0.571 -> "57th"
+#   congress: 21 below +  2 tied subjects + 141 above = 164 actors, 21/163 = 0.129 -> "13th"
 
 
 def _cohort(actor_type: str, n: int, subject_rank: int, subject_id: str):
@@ -117,16 +122,17 @@ def _patch_docs(monkeypatch, perf, scores):
 
 def _nvda_fixture():
     """11 buy-side funds at the 57th percentile, 2 sell-side congress at the 13th."""
-    # All 11 funds share one alpha rank, so the median IS that percentile.
-    fund_cohort = _cohort("fund", 15, 8, "fund-subject")
-    # Ten more funds tied at the subject's alpha, appended so the cohort stays
-    # 15 distinct ALPHAS while 11 actors sit on the same rank.
-    fund_cohort = fund_cohort[:8] + [
+    # 16 funds strictly below, then the 11 tied buyers, then 2 above: 29 actors
+    # with the subjects at rank 16, so 16/28 = 0.571. All 11 share one rank, so
+    # the median across them IS that percentile.
+    fund_cohort = _cohort("fund", 19, 16, "fund-subject")
+    fund_cohort = fund_cohort[:16] + [
         {"actor_type": "fund", "actor_id": f"fund-buyer-{i}", "horizon": "1y",
-         "rankable": True, "avg_alpha": 8.0}
+         "rankable": True, "avg_alpha": 16.0}
         for i in range(11)
-    ] + fund_cohort[9:]
-    congress_cohort = _cohort("congress", 164, 21, "congress-subject")
+    ] + fund_cohort[17:]
+    # 21 below, 2 tied sellers, 141 above: 164 actors, 21/163 = 0.129.
+    congress_cohort = _cohort("congress", 163, 21, "congress-subject")
     congress_cohort = congress_cohort[:21] + [
         {"actor_type": "congress", "actor_id": f"congress-seller-{i}",
          "horizon": "1y", "rankable": True, "avg_alpha": 21.0}
@@ -149,7 +155,8 @@ def test_quality_line_reports_percentile_not_alpha(monkeypatch):
     assert "57th percentile" in line
     assert "13th percentile" in line
     assert "11 buy-side fund actor(s)" in line
-    assert "n=15" in line and "n=164" in line
+    # Cohort sizes are ACTOR counts (ties included), matching the fixture above.
+    assert "n=29" in line and "n=164" in line
     # The caveat is part of the payload, not decoration: the desk must not
     # read a percentile as proof of skill.
     assert "not 'skilled'" in line

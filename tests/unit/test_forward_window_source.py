@@ -16,11 +16,16 @@ and `outcome_tracker` writes the persisted `decision_outcomes.pnl_pct` that
 `parameter_store` cites to justify the confidence floor.
 """
 
-from unittest.mock import patch
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.quant import returns as R
+
+# Newest bar shared by both stubbed vendors, so `dominant_source_for` ranks on
+# row count (yfinance) rather than on freshness.
+_NEWEST = datetime(2026, 7, 1, tzinfo=timezone.utc)
 
 
 # ── contract of the helpers ──────────────────────────────────────────
@@ -97,11 +102,33 @@ def test_every_helper_filters_by_source(fn):
         and n.args[0].value == "price_history"
     ]
     assert reads, f"{fn} no longer reads price_history — has it been renamed?"
-    for call in reads:
-        assert "'source'" in call or '"source"' in call, (
-            f"{fn} must pin ONE vendor; an unfiltered price_history read is "
-            f"the bug. Offending read:\n    {call}"
-        )
+
+    # The pin used to be a `source` literal at the call site, so a source-text
+    # grep could see it. It lives inside `_one_vendor()` now, and a grep for
+    # "'source'" reads only the call site and fails on correct code — while
+    # ALSO passing if `_one_vendor` were gutted into a no-op that returns the
+    # query unchanged. Assert on the filter that actually reaches Mongo
+    # instead: run the helper against a two-vendor ticker and read the dict
+    # `find_docs` was called with. That catches both the missing pin and a
+    # silently-neutered helper.
+    find_docs = MagicMock(return_value=[
+        {"close": 100.0}, {"close": 101.0}, {"close": 110.0}
+    ])
+    with patch("app.db.mongo_store.find_docs", find_docs), \
+         patch("app.db.mongo_store.aggregate", return_value=[
+             {"_id": "yfinance", "n": 900, "mx": _NEWEST},
+             {"_id": "fmp", "n": 40, "mx": _NEWEST},
+         ]):
+        if fn == "latest_close":
+            R.latest_close("X")
+        else:
+            R.forward_window("X", "2026-07-01", 3)
+    filt = find_docs.call_args[0][1]
+
+    assert filt.get("source") == "yfinance", (
+        f"{fn} must pin ONE vendor; an unfiltered price_history read is "
+        f"the bug. Filter actually issued:\n    {filt}"
+    )
 
 
 def test_evaluation_paths_do_not_read_price_history_directly():
@@ -148,6 +175,27 @@ def _closes(*values):
     function body, so patching a module attribute on `app.quant.returns` would
     be a silent no-op. The patch target has to be `app.db.mongo_store.find_docs`
     itself.
+
+    `_one_vendor` also reaches Mongo, via `dominant_source_for` ->
+    `mongo_store.aggregate`. Patching only `find_docs` leaves that read
+    pointed at the live client, which is what the production-Mongo guard was
+    tripping on. Both reads are stubbed together; `aggregate` returns two
+    vendors so the dominant-source pin is genuinely exercised rather than
+    short-circuited by the `len(stats) <= 1` early return.
     """
     docs = [{"close": v} for v in values]
-    return patch("app.db.mongo_store.find_docs", return_value=docs)
+    return _patch_reads(docs)
+
+
+def _patch_reads(docs, stats=None):
+    """Patch both Mongo reads `app.quant.returns` performs."""
+    if stats is None:
+        stats = [
+            {"_id": "yfinance", "n": 900, "mx": _NEWEST},
+            {"_id": "fmp", "n": 40, "mx": _NEWEST},
+        ]
+    return patch.multiple(
+        "app.db.mongo_store",
+        find_docs=MagicMock(return_value=docs),
+        aggregate=MagicMock(return_value=stats),
+    )
