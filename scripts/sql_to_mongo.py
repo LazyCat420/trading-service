@@ -142,6 +142,31 @@ def _value(node, ctx: _Ctx) -> str:
     raise Unsupported(f"value {type(node).__name__} is not a literal or placeholder")
 
 
+def _and_merge(left: dict, right: dict) -> dict:
+    """AND two query documents.
+
+    Shared by the WHERE builder and the JOIN splitter, which has to merge the
+    predicates it sorted onto one side. Duplicating this was the alternative,
+    and a copied merge cannot see the original drift.
+    """
+    if not set(left) & set(right):
+        return {**left, **right}
+    # Same field constrained twice (a BETWEEN-style range) — merge only when
+    # both sides are operator maps, else the second would silently win.
+    merged = dict(left)
+    for k, v in right.items():
+        if k in merged:
+            if isinstance(merged[k], dict) and isinstance(v, dict) and not (
+                set(merged[k]) & set(v)
+            ):
+                merged[k] = {**merged[k], **v}
+            else:
+                raise Unsupported(f"conflicting conditions on {k!r}")
+        else:
+            merged[k] = v
+    return merged
+
+
 def _where(node, ctx: _Ctx) -> dict:
     """Build a Mongo query document from a WHERE tree. Refuses anything whose
     Mongo equivalent is not exact."""
@@ -151,24 +176,7 @@ def _where(node, ctx: _Ctx) -> dict:
         return _where(node.this, ctx)
 
     if isinstance(node, exp.And):
-        left, right = _where(node.left, ctx), _where(node.right, ctx)
-        overlap = set(left) & set(right)
-        if not overlap:
-            return {**left, **right}
-        # Same field constrained twice (a BETWEEN-style range) — merge only when
-        # both sides are operator maps, else the second would silently win.
-        merged = dict(left)
-        for k, v in right.items():
-            if k in merged:
-                if isinstance(merged[k], dict) and isinstance(v, dict) and not (
-                    set(merged[k]) & set(v)
-                ):
-                    merged[k] = {**merged[k], **v}
-                else:
-                    raise Unsupported(f"conflicting conditions on {k!r}")
-            else:
-                merged[k] = v
-        return merged
+        return _and_merge(_where(node.left, ctx), _where(node.right, ctx))
 
     if isinstance(node, exp.Or):
         return {"$or": [_where(node.left, ctx), _where(node.right, ctx)]}
@@ -399,12 +407,181 @@ class _FakeSelect:
         self.args = {}
 
 
+def _and_leaves(node) -> list:
+    """Flatten a top-level AND chain, left to right — i.e. in SQL order."""
+    if isinstance(node, exp.Paren):
+        return _and_leaves(node.this)
+    if isinstance(node, exp.And):
+        return _and_leaves(node.left) + _and_leaves(node.right)
+    return [node]
+
+
+def _translate_join(tree, ctx: _Ctx) -> Translation:
+    """A two-table INNER JOIN on one equality -> mongo_query.join_rows().
+
+    Deliberately narrow, because join_rows() is an INNER join done as two
+    queries and a Python stitch. Anything whose result set differs from that
+    shape is refused BY NAME rather than approximated:
+
+    - LEFT/RIGHT/FULL keep non-matching rows and an inner stitch drops them,
+      which silently turns a reporting query into a filter. Worse,
+      `LEFT JOIN ... WHERE right.col IS NULL` is an ANTI-join: translated as an
+      inner join it returns the exact COMPLEMENT of the intended rows. That is
+      the same shape as the `IS NOT NULL` inversion the differential checker
+      caught, and it is why LEFT is refused here instead of being approximated
+      with a flag.
+    - ORDER BY may only name LEFT-side columns. join_rows sorts the left
+      collection and then stitches, so a sort key on the right table would be
+      accepted and silently ignored.
+    - Unqualified columns are refused: without the schema there is no way to
+      tell which side owns one, and guessing wrong picks a field that does not
+      exist, which Mongo answers with null rather than an error.
+    """
+    joins = list(tree.find_all(exp.Join))
+    if len(joins) != 1:
+        raise Unsupported(
+            f"{len(joins)} JOINs — join_rows() joins exactly two tables")
+    join = joins[0]
+
+    side = (join.side or "").upper()
+    if side:
+        raise Unsupported(
+            f"{side} JOIN — join_rows() is an INNER join, which drops the "
+            f"non-matching rows a {side} JOIN keeps")
+    kind = (join.kind or "").upper()
+    if kind and kind != "INNER":
+        raise Unsupported(f"{kind} JOIN")
+
+    for cls, why in ((exp.Group, "GROUP BY"), (exp.Having, "HAVING"),
+                     (exp.With, "CTE"), (exp.Window, "window function"),
+                     (exp.Union, "UNION"), (exp.Subquery, "subquery")):
+        if list(tree.find_all(cls)):
+            raise Unsupported(f"{why} together with a JOIN")
+    if tree.args.get("distinct"):
+        raise Unsupported("SELECT DISTINCT with a JOIN")
+
+    # sqlglot 30 renamed this arg to `from_`; accept both so a version bump
+    # cannot silently turn every JOIN into "derived table" and refuse it.
+    from_node = tree.args.get("from_") or tree.args.get("from")
+    left_node = from_node.this if from_node is not None else None
+    right_node = join.this
+    if not isinstance(left_node, exp.Table) or not isinstance(right_node, exp.Table):
+        raise Unsupported("JOIN over a derived table")
+    left_table, right_table = left_node.name, right_node.name
+    left_alias = left_node.alias or left_table
+    right_alias = right_node.alias or right_table
+    if left_alias == right_alias:
+        raise Unsupported("self-join — both sides carry the same name")
+
+    def side_of(col) -> str:
+        q = col.table
+        if not q:
+            raise Unsupported(
+                f"unqualified column {col.name!r} in a JOIN — which table owns "
+                "it is not decidable from the statement")
+        if q == left_alias:
+            return "l"
+        if q == right_alias:
+            return "r"
+        raise Unsupported(f"unknown table qualifier {q!r}")
+
+    on = join.args.get("on")
+    if on is None:
+        raise Unsupported("JOIN without ON")
+    if not isinstance(on, exp.EQ):
+        raise Unsupported("JOIN ON is not a single equality")
+    a, b = on.left, on.right
+    if not (isinstance(a, exp.Column) and isinstance(b, exp.Column)):
+        raise Unsupported("JOIN ON compares something other than two columns")
+    if side_of(a) == side_of(b):
+        raise Unsupported("JOIN ON names the same table twice")
+    left_key = a.name if side_of(a) == "l" else b.name
+    right_key = b.name if side_of(b) == "r" else a.name
+
+    select: list[tuple[str, str]] = []
+    for e in tree.expressions:
+        node = e.this if isinstance(e, exp.Alias) else e
+        if isinstance(node, exp.Star) or node.find(exp.Star) is not None:
+            raise Unsupported("SELECT * in a JOIN")
+        if not isinstance(node, exp.Column):
+            raise Unsupported(f"SELECT item {type(node).__name__} in a JOIN")
+        select.append((side_of(node), node.name))
+    if not select:
+        raise Unsupported("JOIN with no selected columns")
+
+    # Placeholders are numbered in the order next_param() is CALLED, so the
+    # WHERE leaves must be walked in SQL order and bucketed afterwards. Building
+    # one side's query fully and then the other would renumber every parameter
+    # that crosses the split -- a mis-binding no parse or type check can see.
+    left_q: dict = {}
+    right_q: dict = {}
+    where = tree.args.get("where")
+    if where is not None:
+        for leaf in _and_leaves(where.this):
+            sides = {side_of(c) for c in leaf.find_all(exp.Column)}
+            if len(sides) != 1:
+                raise Unsupported(
+                    "a WHERE condition spans both tables — that is a join "
+                    "predicate, not a filter, and join_rows() takes one key")
+            doc = _where(leaf, ctx)
+            if sides == {"l"}:
+                left_q = _and_merge(left_q, doc)
+            else:
+                right_q = _and_merge(right_q, doc)
+
+    sort = None
+    if tree.args.get("order"):
+        pairs = []
+        for o in tree.args["order"].expressions:
+            col = o.this
+            if not isinstance(col, exp.Column):
+                raise Unsupported("ORDER BY over an expression in a JOIN")
+            if side_of(col) != "l":
+                raise Unsupported(
+                    "ORDER BY names the joined table — join_rows() sorts the "
+                    "left collection only, so this sort would be dropped")
+            pairs.append(f"({col.name!r}, {-1 if o.args.get('desc') else 1})")
+        sort = "[" + ", ".join(pairs) + "]"
+
+    def _uniq(items):
+        out = []
+        for x in items:
+            if x not in out:
+                out.append(x)
+        return out
+
+    left_fields = _uniq([c for s, c in select if s == "l"])
+    right_fields = _uniq([c for s, c in select if s == "r"])
+
+    args = [repr(left_table), _render(left_q), repr(left_key),
+            repr(right_table), repr(right_key)]
+    if right_q:
+        args.append(f"right_query={_render(right_q)}")
+    args.append("left_fields=[" + ", ".join(repr(f) for f in left_fields) + "]")
+    args.append("right_fields=[" + ", ".join(repr(f) for f in right_fields) + "]")
+    args.append("select=[" + ", ".join(f"({s!r}, {c!r})" for s, c in select) + "]")
+    if sort:
+        args.append(f"sort={sort}")
+    if tree.args.get("limit"):
+        args.append(f"limit={_value(tree.args['limit'].expression, ctx)}")
+
+    return Translation("select", left_table,
+                       f"mongo_query.join_rows({', '.join(args)})",
+                       ctx.count, "rows")
+
+
 def _translate_select(tree, ctx: _Ctx) -> Translation:
     # GROUP BY is handled, so it must be checked BEFORE the blanket rejection —
     # _reject_hard_features lists exp.Group and was vetoing every grouped
     # statement before the branch that knows how to translate it could run.
     if tree.args.get("group") and not list(tree.find_all(exp.Join)):
         return _translate_group_by(tree, _one_table(tree), ctx)
+    # Same reason, same trap: _reject_hard_features lists exp.Join, so this
+    # must come first or the branch that knows how to translate a JOIN can
+    # never run. _translate_join refuses the shapes it cannot express, and its
+    # reasons are more specific than a blanket "JOIN".
+    if list(tree.find_all(exp.Join)) and not tree.args.get("group"):
+        return _translate_join(tree, ctx)
     _reject_hard_features(tree)
     table = _one_table(tree)
 
