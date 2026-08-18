@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from app.db.connection import get_db
 from app.trading.paper_trader import _get_current_price
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +134,7 @@ def retire_inert_dynamic_triggers(db) -> int:
     alive here, or the reverse.
     """
     try:
-        rows = db.execute(
-            "SELECT id, ticker, dynamic_trigger_type FROM price_triggers "
-            "WHERE trigger_type = 'dynamic' AND active = TRUE"
-        ).fetchall()
+        rows = mongo_query.find_rows('price_triggers', {'trigger_type': 'dynamic', 'active': True}, ['id', 'ticker', 'dynamic_trigger_type'])
     except Exception as e:  # noqa: BLE001 — a sweep must never break the checker
         logger.warning("[TRIGGER] inert-trigger sweep could not read: %s", e)
         return 0
@@ -258,48 +256,15 @@ async def create_trigger(
         # (observed on C). Discrete buy/sell limits can legitimately ladder, so
         # they are NOT superseded.
         if trigger_type in ("stop_loss", "take_profit", "trailing_stop"):
-            db.execute(
-                "UPDATE price_triggers SET active = FALSE "
-                "WHERE bot_id = %s AND ticker = %s AND trigger_type = %s AND active = TRUE",
-                [bot_id, ticker, trigger_type],
-            )
+            mongo_store.update_docs('price_triggers', {'bot_id': bot_id, 'ticker': ticker, 'trigger_type': trigger_type, 'active': True}, {'$set': {'active': False}})
         # Dynamic triggers (e.g. sma_200_reclaim) are re-armed by the pipeline
         # every time it re-analyses a ticker. Supersede the prior active row of the
         # SAME dynamic setup so re-runs don't stack identical rows. Distinct setups
         # (a different dynamic_trigger_type) may coexist, but a stale-thesis sweep
         # (see _expire_stale_dynamic_triggers) bounds their accumulation.
         elif trigger_type == "dynamic" and dynamic_trigger_type:
-            db.execute(
-                "UPDATE price_triggers SET active = FALSE "
-                "WHERE bot_id = %s AND ticker = %s AND trigger_type = 'dynamic' "
-                "AND dynamic_trigger_type = %s AND active = TRUE",
-                [bot_id, ticker, dynamic_trigger_type],
-            )
-        db.execute(
-            """
-            INSERT INTO price_triggers (
-                id, bot_id, ticker, trigger_type, trigger_price, action,
-                qty_pct, trailing_pct, highest_price, reason, active,
-                created_at, created_by, dynamic_trigger_type, dynamic_trigger_value
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s)
-            """,
-            [
-                trigger_id,
-                bot_id,
-                ticker,
-                trigger_type,
-                trigger_price,
-                action,
-                qty_pct,
-                trailing_pct,
-                highest_price,
-                reason,
-                now,
-                created_by,
-                dynamic_trigger_type,
-                dynamic_trigger_value,
-            ],
-        )
+            mongo_store.update_docs('price_triggers', {'bot_id': bot_id, 'ticker': ticker, 'trigger_type': 'dynamic', 'dynamic_trigger_type': dynamic_trigger_type, 'active': True}, {'$set': {'active': False}})
+        mongo_store.insert_docs('price_triggers', [{'id': trigger_id, 'bot_id': bot_id, 'ticker': ticker, 'trigger_type': trigger_type, 'trigger_price': trigger_price, 'action': action, 'qty_pct': qty_pct, 'trailing_pct': trailing_pct, 'highest_price': highest_price, 'reason': reason, 'active': True, 'created_at': now, 'created_by': created_by, 'dynamic_trigger_type': dynamic_trigger_type, 'dynamic_trigger_value': dynamic_trigger_value}])
 
     logger.info(
         "[TRIGGER] Created %s trigger for %s: %s @ $%.2f (id=%s, by=%s)",
@@ -334,16 +299,7 @@ async def check_triggers(bot_id: str) -> list[dict]:
     with get_db() as db:
         _expire_stale_dynamic_triggers(db)
         retire_inert_dynamic_triggers(db)
-        triggers = db.execute(
-            """
-            SELECT id, ticker, trigger_type, trigger_price, action,
-                   qty_pct, trailing_pct, highest_price, reason,
-                   dynamic_trigger_type, dynamic_trigger_value
-            FROM price_triggers
-            WHERE bot_id = %s AND active = TRUE
-            """,
-            [bot_id],
-        ).fetchall()
+        triggers = mongo_query.find_rows('price_triggers', {'bot_id': bot_id, 'active': True}, ['id', 'ticker', 'trigger_type', 'trigger_price', 'action', 'qty_pct', 'trailing_pct', 'highest_price', 'reason', 'dynamic_trigger_type', 'dynamic_trigger_value'])
 
     if not triggers:
         return []
@@ -396,10 +352,7 @@ async def check_triggers(bot_id: str) -> list[dict]:
             if highest_price is None or current_price > highest_price:
                 highest_price = current_price
                 with get_db() as db:
-                    db.execute(
-                        "UPDATE price_triggers SET highest_price = %s WHERE id = %s",
-                        [highest_price, trigger_id],
-                    )
+                    mongo_store.update_docs('price_triggers', {'id': trigger_id}, {'$set': {'highest_price': highest_price}})
 
             # Check if price dropped trailing_pct from peak
             if trailing_pct and highest_price and highest_price > 0:
@@ -469,10 +422,7 @@ async def check_triggers(bot_id: str) -> list[dict]:
                     if highest_price is None or current_price > highest_price:
                         highest_price = current_price
                         with get_db() as db:
-                            db.execute(
-                                "UPDATE price_triggers SET highest_price = %s WHERE id = %s",
-                                [highest_price, trigger_id],
-                            )
+                            mongo_store.update_docs('price_triggers', {'id': trigger_id}, {'$set': {'highest_price': highest_price}})
                     
                     if highest_price and highest_price > 0:
                         trail_price = highest_price * (1 - dynamic_trigger_value)
@@ -526,16 +476,9 @@ async def check_triggers(bot_id: str) -> list[dict]:
                 # after minute, until every copy had fired.
                 fired_tickers.add(ticker)
                 with get_db() as db:
-                    db.execute(
-                        "UPDATE price_triggers SET active = FALSE, triggered_at = %s WHERE id = %s",
-                        [now, trigger_id],
-                    )
+                    mongo_store.update_docs('price_triggers', {'id': trigger_id}, {'$set': {'active': False, 'triggered_at': now}})
                     if trigger_type in ("stop_loss", "take_profit", "trailing_stop"):
-                        db.execute(
-                            "UPDATE price_triggers SET active = FALSE "
-                            "WHERE bot_id = %s AND ticker = %s AND trigger_type = %s AND active = TRUE",
-                            [bot_id, ticker, trigger_type],
-                        )
+                        mongo_store.update_docs('price_triggers', {'bot_id': bot_id, 'ticker': ticker, 'trigger_type': trigger_type, 'active': True}, {'$set': {'active': False}})
                 
                 trade_result = {
                     "status": "cycle_started",

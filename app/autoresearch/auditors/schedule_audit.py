@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +19,7 @@ def _audit_schedule_health() -> dict:
     }
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT id, name, schedule_type, cron_expression, interval_hours, is_active, last_run_at, next_run_at FROM cycle_schedules ORDER BY is_active DESC"
-            ).fetchall()
+            rows = mongo_query.find_rows('cycle_schedules', {}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'is_active', 'last_run_at', 'next_run_at'], sort=[('is_active', -1)])
 
         result["total_count"] = len(rows)
         active_rows = [r for r in rows if r[5]]

@@ -29,6 +29,8 @@ import time
 from dataclasses import dataclass, field
 
 from app.db.connection import get_db
+from app.db import mongo_query
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -333,15 +335,7 @@ def get_param(key: str) -> float | int:
     value = spec.default
     try:
         with get_db() as db:
-            row = db.execute(
-                """
-                SELECT value FROM runtime_parameters
-                WHERE param_key = %s AND status = 'active'
-                  AND (expires_at IS NULL OR expires_at > NOW())
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                [key],
-            ).fetchone()
+            row = mongo_query.find_row('runtime_parameters', {'param_key': key, 'status': 'active', '$or': [{'expires_at': None}, {'expires_at': {'$gt': datetime.now(timezone.utc)}}]}, ['value'], sort=[('created_at', -1)])
         # Strict type check: only honest numerics count. A junk row (or a
         # mocked cursor in tests — MagicMock happily casts to float(1.0))
         # must fall back to the default, never masquerade as a real value.
@@ -391,14 +385,7 @@ def get_param_record(key: str) -> dict:
     }
     try:
         with get_db() as db:
-            row = db.execute(
-                """
-                SELECT value, set_by, reason, status, expires_at, created_at
-                FROM runtime_parameters WHERE param_key = %s
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                [key],
-            ).fetchone()
+            row = mongo_query.find_row('runtime_parameters', {'param_key': key}, ['value', 'set_by', 'reason', 'status', 'expires_at', 'created_at'], sort=[('created_at', -1)])
         if row:
             record["last_change"] = {
                 "value": row[0], "set_by": row[1], "reason": row[2],

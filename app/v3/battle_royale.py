@@ -6,6 +6,7 @@ from typing import Any
 
 from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
         rows = None
     if rows is None:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
-                [cycle_id]
-            ).fetchall()
+            rows = mongo_query.find_rows('analysis_results', {'cycle_id': cycle_id}, ['ticker', 'result_json'])
 
 
     if not rows:
@@ -120,12 +118,7 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
     quant_risk: dict[str, Any] = {}
     try:
         with get_db() as db:
-            wb_rows = db.execute(
-                "SELECT ticker, section, content FROM whiteboard_entries "
-                "WHERE cycle_id = %s AND superseded_by IS NULL "
-                "AND section IN ('regime_classification', 'quant_report')",
-                [cycle_id],
-            ).fetchall()
+            wb_rows = mongo_query.find_rows('whiteboard_entries', {'cycle_id': cycle_id, 'superseded_by': None, 'section': {'$in': ['regime_classification', 'quant_report']}}, ['ticker', 'section', 'content'])
         for wb_ticker, wb_section, wb_content in wb_rows:
             try:
                 content = wb_content if isinstance(wb_content, dict) else json.loads(wb_content)
@@ -186,27 +179,8 @@ async def run_battle_royale(cycle_id: str, bot_id: str) -> bool:
             # Idempotent per cycle: a re-run of the same cycle_id replaces the
             # prior summary instead of leaving duplicate is_summary rows for the
             # reader's ORDER BY created_at DESC to disambiguate.
-            db.execute(
-                "DELETE FROM ticker_reports WHERE cycle_id = %s AND is_summary = TRUE",
-                [cycle_id],
-            )
-            db.execute(
-                """
-                INSERT INTO ticker_reports (id, cycle_id, ticker, action, confidence, report_markdown, result_summary, is_summary, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    report_id,
-                    cycle_id,
-                    "GLOBAL",
-                    "HOLD",
-                    0,
-                    report_content,
-                    result_summary,
-                    True,
-                    _saved_at
-                ]
-            )
+            mongo_store.delete_docs('ticker_reports', {'cycle_id': cycle_id, 'is_summary': True})
+            mongo_store.insert_docs('ticker_reports', [{'id': report_id, 'cycle_id': cycle_id, 'ticker': "GLOBAL", 'action': "HOLD", 'confidence': 0, 'report_markdown': report_content, 'result_summary': result_summary, 'is_summary': True, 'created_at': _saved_at}])
         # Best-effort Mongo mirror — replace the cycle's summary row to match the
         # PG delete-first upsert (keyed on cycle_id + is_summary).
         try:
@@ -257,14 +231,7 @@ def _record_report_failure(cycle_id: str, detail: str) -> None:
             "status": "error",
         }
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO pipeline_events (id, cycle_id, timestamp, phase, step, detail, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                [_evt["id"], _evt["cycle_id"], _evt["timestamp"], _evt["phase"],
-                 _evt["step"], _evt["detail"], _evt["status"]],
-            )
+            mongo_store.insert_docs('pipeline_events', [{'id': _evt["id"], 'cycle_id': _evt["cycle_id"], 'timestamp': _evt["timestamp"], 'phase': _evt["phase"], 'step': _evt["step"], 'detail': _evt["detail"], 'status': _evt["status"]}])
         from app.db import mongo_store
         mongo_store.mirror_pipeline_event(_evt)
     except Exception as ev_err:  # pragma: no cover - diagnostics only

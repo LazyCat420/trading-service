@@ -41,6 +41,7 @@ from app.cognition.debate.debate_coordinator import (
 )
 
 from app.utils.text_utils import parse_json_response
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -1192,41 +1193,15 @@ async def run_tournament_debate(
             "tokens": total_tokens,
         }
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO debate_history
-                (id, ticker, cycle_id, pro_argument, con_argument, winner, final_action, final_confidence, persona_name, persona_outcomes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ticker, cycle_id) DO UPDATE SET
-                pro_argument = EXCLUDED.pro_argument,
-                con_argument = EXCLUDED.con_argument,
-                winner = EXCLUDED.winner,
-                final_action = EXCLUDED.final_action,
-                final_confidence = EXCLUDED.final_confidence,
-                persona_name = EXCLUDED.persona_name,
-                persona_outcomes = EXCLUDED.persona_outcomes
-                """,
-                [
-                    f"dh-{_uuid.uuid4().hex[:12]}",
-                    ticker,
-                    cycle_id or "manual",
-                    json.dumps({
+            mongo_store.update_docs('debate_history', {'ticker': ticker, 'cycle_id': cycle_id or "manual"}, {'$set': {'pro_argument': json.dumps({
                         "persona": debated_a.get("persona"),
                         "claim": debated_a.get("claim"),
                         "attack_points": debated_a.get("attack_points", []),
-                    }),
-                    json.dumps({
+                    }), 'con_argument': json.dumps({
                         "persona": debated_b.get("persona"),
                         "claim": debated_b.get("claim"),
                         "attack_points": debated_b.get("attack_points", []),
-                    }),
-                    winning_side,
-                    action,
-                    confidence,
-                    "tournament",
-                    json.dumps(persona_outcomes),
-                ],
-            )
+                    }), 'winner': winning_side, 'final_action': action, 'final_confidence': confidence, 'persona_name': "tournament", 'persona_outcomes': json.dumps(persona_outcomes)}, '$setOnInsert': {'id': f"dh-{_uuid.uuid4().hex[:12]}"}}, upsert=True)
     except Exception as db_err:
         logger.error("[TOURNAMENT] Failed to log debate history: %s", db_err)
 

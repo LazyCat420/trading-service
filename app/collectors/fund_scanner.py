@@ -12,6 +12,7 @@ Data source: sec_13f_holdings table (populated by sec_collector.py)
 """
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 
 def get_fund_portfolios(top_holdings: int = 20) -> list[dict]:
@@ -31,17 +32,7 @@ def get_fund_portfolios(top_holdings: int = 20) -> list[dict]:
 
         portfolios = []
         for filer_name, cik, quarter in funds:
-            holdings = db.execute(
-                """
-                SELECT ticker, shares, value_usd, pct_change,
-                       is_new_position, is_exit
-                FROM sec_13f_holdings
-                WHERE cik = %s AND filing_quarter = %s
-                ORDER BY value_usd DESC
-                LIMIT %s
-            """,
-                [cik, quarter, top_holdings],
-            ).fetchall()
+            holdings = mongo_query.find_rows('sec_13f_holdings', {'cik': cik, 'filing_quarter': quarter}, ['ticker', 'shares', 'value_usd', 'pct_change', 'is_new_position', 'is_exit'], sort=[('value_usd', -1)], limit=top_holdings)
 
             total_value = (
                 db.execute(

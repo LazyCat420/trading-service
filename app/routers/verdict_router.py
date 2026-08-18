@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -66,9 +67,7 @@ def verdicts_history(ticker: str, limit: int = Query(default=20, le=100)):
 def list_ticker_notes():
     """List all ticker notes."""
     with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, note, updated_at FROM ticker_user_notes ORDER BY updated_at DESC"
-        ).fetchall()
+        rows = mongo_query.find_rows('ticker_user_notes', {}, ['ticker', 'note', 'updated_at'], sort=[('updated_at', -1)])
     return [
         {
             "ticker": r[0],
@@ -83,10 +82,7 @@ def list_ticker_notes():
 def get_ticker_note(ticker: str):
     """Get user note for a specific ticker."""
     with get_db() as db:
-        row = db.execute(
-            "SELECT ticker, note, updated_at FROM ticker_user_notes WHERE ticker = %s",
-            [ticker.upper().strip()],
-        ).fetchone()
+        row = mongo_query.find_row('ticker_user_notes', {'ticker': ticker.upper().strip()}, ['ticker', 'note', 'updated_at'])
     if not row:
         return {"ticker": ticker.upper().strip(), "note": None, "updated_at": None}
     return {
@@ -106,15 +102,7 @@ def upsert_ticker_note(ticker: str, body: TickerNoteUpsert):
         raise HTTPException(400, "Note cannot be empty")
 
     with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO ticker_user_notes (ticker, note, updated_at)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (ticker) DO UPDATE
-            SET note = EXCLUDED.note, updated_at = EXCLUDED.updated_at
-            """,
-            [ticker_clean, body.note.strip(), now],
-        )
+        mongo_store.update_docs('ticker_user_notes', {'ticker': ticker_clean}, {'$set': {'note': body.note.strip(), 'updated_at': now}}, upsert=True)
     logger.info("ticker note upserted: %s", ticker_clean)
     return {"ticker": ticker_clean, "note": body.note.strip(), "updated_at": now.isoformat(), "saved": True}
 
@@ -124,15 +112,9 @@ def delete_ticker_note(ticker: str):
     """Remove a user note for a ticker."""
     ticker_clean = ticker.upper().strip()
     with get_db() as db:
-        row = db.execute(
-            "SELECT ticker FROM ticker_user_notes WHERE ticker = %s",
-            [ticker_clean],
-        ).fetchone()
+        row = mongo_query.find_row('ticker_user_notes', {'ticker': ticker_clean}, ['ticker'])
         if not row:
             raise HTTPException(404, f"No note found for {ticker_clean}")
-        db.execute(
-            "DELETE FROM ticker_user_notes WHERE ticker = %s",
-            [ticker_clean],
-        )
+        mongo_store.delete_docs('ticker_user_notes', {'ticker': ticker_clean})
     logger.info("ticker note deleted: %s", ticker_clean)
     return {"ticker": ticker_clean, "deleted": True}

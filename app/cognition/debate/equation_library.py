@@ -76,6 +76,7 @@ from app.quant.stat_gates import (  # noqa: E402
     suggest_lag,
 )
 from app.quant.stat_gates import _norm_cdf as _norm_cdf_impl  # noqa: E402
+from app.db import mongo_query, mongo_store
 
 _STAT_HELPERS = {
     "newey_west_tstat": newey_west_tstat,
@@ -162,27 +163,7 @@ def save_equation(
 
     try:
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO quant_equation_library
-                (id, name, description, code, parameters, author_agent,
-                 ticker_origin, backtest_results, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (name) DO UPDATE SET
-                    code = EXCLUDED.code,
-                    description = EXCLUDED.description,
-                    parameters = EXCLUDED.parameters,
-                    backtest_results = EXCLUDED.backtest_results,
-                    updated_at = EXCLUDED.updated_at
-                """,
-                [
-                    eq_id, name, description, code,
-                    json.dumps(parameters or {}),
-                    author_agent, ticker_origin,
-                    json.dumps(backtest_results or {}),
-                    now, now,
-                ],
-            )
+            mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'code': code, 'description': description, 'parameters': json.dumps(parameters or {}), 'backtest_results': json.dumps(backtest_results or {}), 'updated_at': now}, '$setOnInsert': {'id': eq_id, 'author_agent': author_agent, 'ticker_origin': ticker_origin, 'created_at': now}}, upsert=True)
         logger.info("[EQ_LIBRARY] Saved equation '%s' by %s", name, author_agent)
         return {
             "status": "saved",
@@ -217,18 +198,7 @@ def search_equations(query: str = "", top_k: int = 10) -> list[dict]:
                     [f"%{query}%", f"%{query}%", top_k],
                 ).fetchall()
             else:
-                rows = db.execute(
-                    """
-                    SELECT id, name, description, code, parameters,
-                           author_agent, ticker_origin, backtest_results,
-                           usage_count, avg_pnl_pct, win_rate_pct, sharpe_ratio,
-                           created_at
-                    FROM quant_equation_library
-                    ORDER BY win_rate_pct DESC, usage_count DESC
-                    LIMIT %s
-                    """,
-                    [top_k],
-                ).fetchall()
+                rows = mongo_query.find_rows('quant_equation_library', {}, ['id', 'name', 'description', 'code', 'parameters', 'author_agent', 'ticker_origin', 'backtest_results', 'usage_count', 'avg_pnl_pct', 'win_rate_pct', 'sharpe_ratio', 'created_at'], sort=[('win_rate_pct', -1), ('usage_count', -1)], limit=top_k)
 
         results = []
         for row in rows:
@@ -262,10 +232,7 @@ def get_equation_by_name(name: str) -> dict | None:
     """Fetch a single equation by exact name."""
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT id, name, description, code, parameters FROM quant_equation_library WHERE name = %s",
-                [name],
-            ).fetchone()
+            row = mongo_query.find_row('quant_equation_library', {'name': name}, ['id', 'name', 'description', 'code', 'parameters'])
             if not row:
                 return None
             return {
@@ -300,16 +267,7 @@ def update_backtest_stats(
     """Update performance stats for an equation after a backtest run."""
     try:
         with get_db() as db:
-            db.execute(
-                """
-                UPDATE quant_equation_library
-                SET avg_pnl_pct = %s, win_rate_pct = %s, sharpe_ratio = %s,
-                    backtest_results = %s, updated_at = %s
-                WHERE name = %s
-                """,
-                [pnl_pct, win_rate, sharpe, json.dumps(backtest_results),
-                 datetime.now(timezone.utc), name],
-            )
+            mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'avg_pnl_pct': pnl_pct, 'win_rate_pct': win_rate, 'sharpe_ratio': sharpe, 'backtest_results': json.dumps(backtest_results), 'updated_at': datetime.now(timezone.utc)}})
     except Exception as e:
         logger.error("[EQ_LIBRARY] update_backtest_stats failed: %s", e)
 

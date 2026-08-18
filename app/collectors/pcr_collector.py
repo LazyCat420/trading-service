@@ -4,6 +4,7 @@ import datetime
 import yfinance as yf
 
 from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -49,31 +50,7 @@ async def collect_spy_pcr() -> bool:
         
         def _insert():
             with get_db() as db:
-                db.execute(
-                    """
-                    INSERT INTO put_call_ratio (
-                        symbol, date, pcr_volume, pcr_oi, 
-                        total_put_vol, total_call_vol, total_put_oi, total_call_oi
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (symbol, date) DO UPDATE SET
-                        pcr_volume = EXCLUDED.pcr_volume,
-                        pcr_oi = EXCLUDED.pcr_oi,
-                        total_put_vol = EXCLUDED.total_put_vol,
-                        total_call_vol = EXCLUDED.total_call_vol,
-                        total_put_oi = EXCLUDED.total_put_oi,
-                        total_call_oi = EXCLUDED.total_call_oi
-                    """,
-                    [
-                        "SPY",
-                        today,
-                        float(pcr_volume),
-                        float(pcr_oi),
-                        int(total_put_vol),
-                        int(total_call_vol),
-                        int(total_put_oi),
-                        int(total_call_oi)
-                    ]
-                )
+                mongo_store.update_docs('put_call_ratio', {'symbol': "SPY", 'date': today}, {'$set': {'pcr_volume': float(pcr_volume), 'pcr_oi': float(pcr_oi), 'total_put_vol': int(total_put_vol), 'total_call_vol': int(total_call_vol), 'total_put_oi': int(total_put_oi), 'total_call_oi': int(total_call_oi)}}, upsert=True)
                 
         await asyncio.to_thread(_insert)
         logger.info(f"[pcr_collector] SPY PCR updated for {today}. Vol: {pcr_volume:.2f}, OI: {pcr_oi:.2f}")

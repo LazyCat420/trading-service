@@ -97,24 +97,7 @@ def log_tool_call(
                     return
 
             now_utc = datetime.now(timezone.utc)
-            db.execute(
-                """
-                INSERT INTO tool_usage_stats 
-                (tool_name, agent_name, ticker, cycle_id, success, execution_ms, error_message, service_source, called_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    canonical_name,
-                    agent_name or "",
-                    ticker or "",
-                    cycle_id or "",
-                    success,
-                    execution_ms,
-                    error_message,
-                    service_source,
-                    now_utc
-                )
-            )
+            mongo_store.insert_docs('tool_usage_stats', [{'tool_name': canonical_name, 'agent_name': agent_name or "", 'ticker': ticker or "", 'cycle_id': cycle_id or "", 'success': success, 'execution_ms': execution_ms, 'error_message': error_message, 'service_source': service_source, 'called_at': now_utc}])
             try:
                 from app.db import mongo_store
                 if mongo_store.writes_mongo("tool_usage_stats"):

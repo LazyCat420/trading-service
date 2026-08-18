@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +150,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
             rows = None
         if rows is None:
             with get_db() as db:
-                rows = db.execute(
-                    "SELECT confidence FROM analysis_results WHERE cycle_id=%s AND confidence IS NOT NULL",
-                    [cycle_id],
-                ).fetchall()
+                rows = mongo_query.find_rows('analysis_results', {'cycle_id': cycle_id, 'confidence': {'$ne': None}}, ['confidence'])
         if rows:
             confs = [r[0] for r in rows]
             if max(confs) - min(confs) < 10 and len(confs) >= 3:
@@ -462,18 +460,6 @@ def write_cycle_summary(cycle_id: str, analysis_results: list[dict]) -> None:
         lesson = f"{buy_count} BUY / {sell_count} SELL / {hold_count} HOLD. {top_desc}"
 
         with get_db() as db:
-            db.execute(
-                """INSERT INTO autoresearch_cycle_summaries
-                (id, cycle_id, total_tickers, buy_count, sell_count, hold_count, avg_confidence, top_ticker, top_confidence, lesson_summary)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (cycle_id) DO UPDATE SET
-                    total_tickers = EXCLUDED.total_tickers, buy_count = EXCLUDED.buy_count, sell_count = EXCLUDED.sell_count,
-                    hold_count = EXCLUDED.hold_count, avg_confidence = EXCLUDED.avg_confidence, top_ticker = EXCLUDED.top_ticker,
-                    top_confidence = EXCLUDED.top_confidence, lesson_summary = EXCLUDED.lesson_summary""",
-                (
-                    f"cs-{uuid.uuid4().hex[:12]}", cycle_id, len(analysis_results), buy_count, sell_count, hold_count,
-                    round(avg_conf, 1), top_ticker, top_confidence, lesson[:500]
-                )
-            )
+            mongo_store.update_docs('autoresearch_cycle_summaries', {'cycle_id': cycle_id}, {'$set': {'total_tickers': len(analysis_results), 'buy_count': buy_count, 'sell_count': sell_count, 'hold_count': hold_count, 'avg_confidence': round(avg_conf, 1), 'top_ticker': top_ticker, 'top_confidence': top_confidence, 'lesson_summary': lesson[:500]}, '$setOnInsert': {'id': f"cs-{uuid.uuid4().hex[:12]}"}}, upsert=True)
     except Exception as e:
         logger.warning("cycle_summaries write failed (non-fatal): %s", e)

@@ -60,14 +60,7 @@ def log_rlm_audit_trail(
                     "byte_size": len(blob_content.encode("utf-8")),
                     "created_at": _blob_ts,
                 })
-                db.execute(
-                    """
-                    INSERT INTO context_blobs (context_hash, content, byte_size, created_at)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (context_hash) DO NOTHING
-                """,
-                    [blob_hash, blob_content, len(blob_content.encode("utf-8")), _blob_ts],
-                )
+                mongo_store.upsert_doc('context_blobs', {'context_hash': blob_hash}, {'context_hash': blob_hash, 'content': blob_content, 'byte_size': len(blob_content.encode("utf-8")), 'created_at': _blob_ts}, insert_only=True)
             # Best-effort Mongo mirror — upsert by content_hash (dedup, like the
             # ON CONFLICT DO NOTHING above).
             try:
@@ -97,20 +90,7 @@ def log_rlm_audit_trail(
                 "completion_tokens": completion_tokens, "queue_wait_ms": queue_wait_ms,
                 "tokens_per_second": tok_per_sec,
             }
-            db.execute(
-                """
-                INSERT INTO llm_audit_logs (
-                    id, cycle_id, bot_id, ticker, agent_step, model, system_prompt_hash,
-                    context_hash, raw_response, tokens_used, execution_ms, created_at,
-                    endpoint_name, prompt_tokens, completion_tokens,
-                    queue_wait_ms, tokens_per_second
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-                [_rec["id"], _rec["cycle_id"], _rec["bot_id"], _rec["ticker"], _rec["agent_step"],
-                 _rec["model"], _rec["system_prompt_hash"], _rec["context_hash"], _rec["raw_response"],
-                 _rec["tokens_used"], _rec["execution_ms"], _rec["created_at"], _rec["endpoint_name"],
-                 _rec["prompt_tokens"], _rec["completion_tokens"], _rec["queue_wait_ms"], _rec["tokens_per_second"]],
-            )
+            mongo_store.insert_docs('llm_audit_logs', [{'id': _rec["id"], 'cycle_id': _rec["cycle_id"], 'bot_id': _rec["bot_id"], 'ticker': _rec["ticker"], 'agent_step': _rec["agent_step"], 'model': _rec["model"], 'system_prompt_hash': _rec["system_prompt_hash"], 'context_hash': _rec["context_hash"], 'raw_response': _rec["raw_response"], 'tokens_used': _rec["tokens_used"], 'execution_ms': _rec["execution_ms"], 'created_at': _rec["created_at"], 'endpoint_name': _rec["endpoint_name"], 'prompt_tokens': _rec["prompt_tokens"], 'completion_tokens': _rec["completion_tokens"], 'queue_wait_ms': _rec["queue_wait_ms"], 'tokens_per_second': _rec["tokens_per_second"]}])
             try:
                 from app.db import mongo_store
                 if mongo_store.writes_mongo("llm_audit_logs"):

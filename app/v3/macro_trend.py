@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import math
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +65,7 @@ def _load_series(symbols: list[str], lookback: int) -> dict[str, list[float]]:
     with get_db() as db:
         for sym in symbols:
             try:
-                rows = db.execute(
-                    "SELECT close FROM asset_prices WHERE symbol = %s "
-                    "ORDER BY date DESC LIMIT %s",
-                    [sym, lookback],
-                ).fetchall()
+                rows = mongo_query.find_rows('asset_prices', {'symbol': sym}, ['close'], sort=[('date', -1)], limit=lookback)
             except Exception as e:  # noqa: BLE001 — grounding is advisory
                 logger.debug("[MacroTrend] %s series fetch failed: %s", sym, e)
                 continue

@@ -23,10 +23,7 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
         with get_db() as db:
             with db.transaction():
                 # Delete existing record for this ticker and cycle to avoid duplicates
-                db.execute(
-                    "DELETE FROM analysis_results WHERE ticker = %s AND cycle_id = %s",
-                    [ticker, cycle_id]
-                )
+                mongo_store.delete_docs('analysis_results', {'ticker': ticker, 'cycle_id': cycle_id})
                 
                 result_id = str(uuid.uuid4())
                 # Extract snapshot values (Freshness Gate baseline)
@@ -38,32 +35,7 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
                     analysis_rsi = snapshot.get("rsi")
                     analysis_fund_count = snapshot.get("fund_count", 0)
 
-                db.execute(
-                    """
-                    INSERT INTO analysis_results (
-                        id, ticker, cycle_id, bot_id, result_json, confidence,
-                        thesis_verdict, thesis_confidence, thesis_summary,
-                        created_at, triage_tier,
-                        analysis_price, analysis_rsi, analysis_fund_count
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    [
-                        result_id,
-                        ticker,
-                        cycle_id,
-                        result.get("bot_id", "cycle-backend"),
-                        json.dumps(result),
-                        result.get("confidence", 0),
-                        result.get("action", "HOLD"),
-                        result.get("confidence", 0),
-                        result.get("rationale", ""),
-                        _saved_at,
-                        result.get("triage_tier", "standard"),
-                        analysis_price,
-                        analysis_rsi,
-                        analysis_fund_count,
-                    ]
-                )
+                mongo_store.insert_docs('analysis_results', [{'id': result_id, 'ticker': ticker, 'cycle_id': cycle_id, 'bot_id': result.get("bot_id", "cycle-backend"), 'result_json': json.dumps(result), 'confidence': result.get("confidence", 0), 'thesis_verdict': result.get("action", "HOLD"), 'thesis_confidence': result.get("confidence", 0), 'thesis_summary': result.get("rationale", ""), 'created_at': _saved_at, 'triage_tier': result.get("triage_tier", "standard"), 'analysis_price': analysis_price, 'analysis_rsi': analysis_rsi, 'analysis_fund_count': analysis_fund_count}])
         # Best-effort Mongo mirror — one analysis_results doc per (cycle_id, ticker);
         # result_json stored as a native dict.
         try:
@@ -106,14 +78,7 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
                 "status": "error",
             }
             with get_db() as db:
-                db.execute(
-                    """
-                    INSERT INTO pipeline_events (id, cycle_id, timestamp, phase, step, detail, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    [_evt["id"], _evt["cycle_id"], _evt["timestamp"], _evt["phase"],
-                     _evt["step"], _evt["detail"], _evt["status"]],
-                )
+                mongo_store.insert_docs('pipeline_events', [{'id': _evt["id"], 'cycle_id': _evt["cycle_id"], 'timestamp': _evt["timestamp"], 'phase': _evt["phase"], 'step': _evt["step"], 'detail': _evt["detail"], 'status': _evt["status"]}])
             from app.db import mongo_store
             mongo_store.mirror_pipeline_event(_evt)
         except Exception as ev_err:

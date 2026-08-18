@@ -25,6 +25,7 @@ import uuid
 from datetime import datetime, UTC
 
 from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -156,10 +157,7 @@ class VectorStore:
             # One embedding per source row: the conflict key below is a fresh
             # random UUID, so re-embedding an updated memory used to APPEND a
             # new row and leave the stale vector in search. Clear priors first.
-            db.execute(
-                "DELETE FROM embeddings WHERE source_table = %s AND source_id = %s",
-                [source_table, source_id],
-            )
+            mongo_store.delete_docs('embeddings', {'source_table': source_table, 'source_id': source_id})
             db.execute(
                 """
                 INSERT INTO embeddings

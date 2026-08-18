@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
 from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,6 @@ def _expire_old_directives() -> None:
     try:
         with get_db() as db:
             db.execute("UPDATE cycle_directives SET expires_after = expires_after - 1 WHERE status = 'active' AND expires_after > 0")
-            db.execute("UPDATE cycle_directives SET status = 'expired', resolved_at = CURRENT_TIMESTAMP WHERE status = 'active' AND expires_after <= 0")
+            mongo_store.update_docs('cycle_directives', {'status': 'active', 'expires_after': {'$lte': 0}}, {'$set': {'status': 'expired', 'resolved_at': datetime.now(timezone.utc)}})
     except Exception as e:
         logger.debug("Directive expiry failed: %s", e)

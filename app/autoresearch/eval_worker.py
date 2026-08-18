@@ -3,6 +3,8 @@ import json
 import logging
 from app.db.connection import get_db
 from app.autoresearch.eval_engine import process_pending_traces
+from app.db import mongo_query, mongo_store
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,7 @@ async def run_autoresearch(job_id: str, payload: dict):
         logger.warning("update_tool_playbook failed (non-fatal): %s", pb_err)
     
     with get_db() as db:
-        db.execute(
-            "UPDATE system_commands SET status = 'completed' WHERE id = %s",
-            [job_id]
-        )
+        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed'}})
 
 async def run_activate_brain_graph(job_id: str, payload: dict):
     """Re-seed + spread-activate the brain graph, persisting activation.
@@ -56,10 +55,7 @@ async def run_activate_brain_graph(job_id: str, payload: dict):
 
     def _progress(pct: int, msg: str):
         with get_db() as db:
-            db.execute(
-                "UPDATE system_commands SET progress = %s, progress_message = %s WHERE id = %s",
-                [pct, msg, job_id],
-            )
+            mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'progress': pct, 'progress_message': msg}})
 
     seeded = 0
     if ticker:
@@ -69,12 +65,7 @@ async def run_activate_brain_graph(job_id: str, payload: dict):
     stats = BrainGraph.activate_and_persist(ticker, max_hops=max_hops)
 
     with get_db() as db:
-        db.execute(
-            "UPDATE system_commands SET status = 'completed', progress = 100, "
-            "progress_message = 'Graph build complete', completed_at = CURRENT_TIMESTAMP, "
-            "result = %s WHERE id = %s",
-            [json.dumps({"ticker": ticker, "nodes_seeded": seeded, **stats}), job_id],
-        )
+        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'progress': 100, 'progress_message': 'Graph build complete', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"ticker": ticker, "nodes_seeded": seeded, **stats})}})
 
 
 async def run_fred_collection(job_id: str, payload: dict):
@@ -84,11 +75,7 @@ async def run_fred_collection(job_id: str, payload: dict):
 
     total = await asyncio.to_thread(sync_collect_fred, lambda: False)
     with get_db() as db:
-        db.execute(
-            "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, "
-            "result = %s WHERE id = %s",
-            [json.dumps({"rows_written": total}), job_id],
-        )
+        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"rows_written": total})}})
 
 
 async def run_market_collection(job_id: str, payload: dict):
@@ -98,11 +85,7 @@ async def run_market_collection(job_id: str, payload: dict):
 
     result = await collect_market_data(period=payload.get("period") or "6mo")
     with get_db() as db:
-        db.execute(
-            "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, "
-            "result = %s WHERE id = %s",
-            [json.dumps({"total": result.get("total", 0)}), job_id],
-        )
+        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({"total": result.get("total", 0)})}})
 
 
 async def run_evaluate_strategy(job_id: str, payload: dict):
@@ -116,14 +99,10 @@ async def run_evaluate_strategy(job_id: str, payload: dict):
     )
     metrics = result.get("agent_metrics") if isinstance(result, dict) else None
     with get_db() as db:
-        db.execute(
-            "UPDATE system_commands SET status = 'completed', completed_at = CURRENT_TIMESTAMP, "
-            "result = %s WHERE id = %s",
-            [json.dumps({
+        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed', 'completed_at': datetime.now(timezone.utc), 'result': json.dumps({
                 "total_score": (result or {}).get("total_score"),
                 "decisions_evaluated": (metrics or {}).get("total_decisions_evaluated", 0),
-            }, default=str), job_id],
-        )
+            }, default=str)}})
 
 
 async def poll_system_commands():
@@ -131,28 +110,12 @@ async def poll_system_commands():
     while True:
         try:
             with get_db() as db:
-                cmd = db.execute(
-                    "SELECT id, command_type, payload FROM system_commands "
-                    # DEPLOY_FIX/ROLLBACK_FIX dropped 2026-07-31 with the
-                    # evolution deployer. They wrote a row from the frozen
-                    # `pending_evolution_fixes` archive (last written 07-27,
-                    # mostly June) straight onto disk. Nothing has enqueued
-                    # either command since the API legs were severed on 07-28,
-                    # but the handler still would have applied a two-month-old
-                    # LLM patch to a live checkout if anything ever did.
-                    "WHERE status = 'pending' AND command_type IN "
-                    "('AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', "
-                    "'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY') "
-                    "LIMIT 1 FOR UPDATE SKIP LOCKED"
-                ).fetchone()
+                cmd = mongo_query.find_row('system_commands', {'status': 'pending', 'command_type': {'$in': ['AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', 'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY']}}, ['id', 'command_type', 'payload'])
 
                 if cmd:
                     job_id, cmd_type, payload_str = cmd
                     logger.info("Found pending %s command: %s", cmd_type, job_id)
-                    db.execute(
-                        "UPDATE system_commands SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = %s",
-                        [job_id],
-                    )
+                    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'running', 'started_at': datetime.now(timezone.utc)}})
 
                     payload = json.loads(payload_str) if payload_str else {}
 
@@ -171,11 +134,7 @@ async def poll_system_commands():
                         logger.error("%s failed for %s: %s", cmd_type, job_id, e)
                         # error_message is what trading-client renders in its
                         # task list; keep payload's error copy for older readers.
-                        db.execute(
-                            "UPDATE system_commands SET status = 'error', error_message = %s, "
-                            "payload = %s WHERE id = %s",
-                            [str(e)[:500], json.dumps({"error": str(e)}), job_id]
-                        )
+                        mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'error', 'error_message': str(e)[:500], 'payload': json.dumps({"error": str(e)})}})
         except Exception as e:
             logger.error("Error polling system_commands: %s", e)
         

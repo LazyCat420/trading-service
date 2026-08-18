@@ -16,6 +16,7 @@ import datetime
 import httpx
 from app.config import settings
 from app.db.connection import get_db
+from app.db import mongo_store
 
 BASE_URL = "https://financialmodelingprep.com/api/v4"
 
@@ -90,29 +91,7 @@ async def collect_congress_trades(ticker: str | None = None) -> int:
             )
             chamber = "Senate" if "senator" in tx else "House"
 
-            db.execute(
-                """
-                INSERT INTO congress_trades
-                (id, politician, party, chamber, state, ticker,
-                 transaction_type, amount_range, trade_date,
-                 disclosure_date, days_to_disclose)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO NOTHING
-            """,
-                [
-                    trade_id,
-                    politician,
-                    tx.get("party", ""),
-                    chamber,
-                    tx.get("state", ""),
-                    tx_ticker,
-                    tx.get("type", tx.get("transaction_type", "")),
-                    tx.get("amount", ""),
-                    trade_date,
-                    disclosure_date,
-                    days,
-                ],
-            )
+            mongo_store.upsert_doc('congress_trades', {'id': trade_id}, {'id': trade_id, 'politician': politician, 'party': tx.get("party", ""), 'chamber': chamber, 'state': tx.get("state", ""), 'ticker': tx_ticker, 'transaction_type': tx.get("type", tx.get("transaction_type", "")), 'amount_range': tx.get("amount", ""), 'trade_date': trade_date, 'disclosure_date': disclosure_date, 'days_to_disclose': days}, insert_only=True)
             count += 1
 
         logger.info(
@@ -190,22 +169,7 @@ async def collect_price_history(ticker: str, days_back: int = 365) -> int:
                 if date_obj < cutoff:
                     continue
 
-                db.execute(
-                    """
-                    INSERT INTO price_history (ticker, date, open, high, low, close, volume, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'fmp')
-                    ON CONFLICT (ticker, date, source) DO NOTHING
-                    """,
-                    [
-                        ticker,
-                        date_obj,
-                        float(day.get("open", 0)),
-                        float(day.get("high", 0)),
-                        float(day.get("low", 0)),
-                        float(day.get("close", 0)),
-                        int(day.get("volume", 0)),
-                    ],
-                )
+                mongo_store.upsert_doc('price_history', {'ticker': ticker, 'date': date_obj, 'source': 'fmp'}, {'ticker': ticker, 'date': date_obj, 'open': float(day.get("open", 0)), 'high': float(day.get("high", 0)), 'low': float(day.get("low", 0)), 'close': float(day.get("close", 0)), 'volume': int(day.get("volume", 0)), 'source': 'fmp'}, insert_only=True)
                 count += 1
             except Exception as e:
                 continue
@@ -248,41 +212,7 @@ async def collect_fundamentals(ticker: str) -> bool:
 
     today = datetime.date.today()
     with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO fundamentals (
-                ticker, snapshot_date, source, market_cap, pe_ratio, forward_pe, peg_ratio,
-                price_to_book, price_to_sales, ev_to_ebitda, profit_margin,
-                roe, roa, revenue, revenue_growth, net_income,
-                debt_to_equity, current_ratio, beta,
-                week_52_high, week_52_low, short_float_pct
-            ) VALUES (%s, %s, 'fmp', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (ticker, snapshot_date) DO NOTHING
-            """,
-            [
-                ticker,
-                today,
-                prof.get("mktCap"),
-                metrics.get("peRatioTTM"),
-                None,  # Forward PE not directly in profile/ttm
-                metrics.get("pegRatioTTM"),
-                metrics.get("pbRatioTTM"),
-                metrics.get("priceToSalesRatioTTM"),
-                metrics.get("enterpriseValueOverEBITDATTM"),
-                metrics.get("netIncomePerEBT"),  # proxy
-                metrics.get("roeTTM"),
-                metrics.get("returnOnTangibleAssetsTTM"),
-                None,  # Need income statement
-                None,
-                None,
-                metrics.get("debtToEquityTTM"),
-                metrics.get("currentRatioTTM"),
-                prof.get("beta"),
-                None,  # 52w high/low requires another endpoint
-                None,
-                None,
-            ],
-        )
+        mongo_store.upsert_doc('fundamentals', {'ticker': ticker, 'snapshot_date': today}, {'ticker': ticker, 'snapshot_date': today, 'source': 'fmp', 'market_cap': prof.get("mktCap"), 'pe_ratio': metrics.get("peRatioTTM"), 'forward_pe': None, 'peg_ratio': metrics.get("pegRatioTTM"), 'price_to_book': metrics.get("pbRatioTTM"), 'price_to_sales': metrics.get("priceToSalesRatioTTM"), 'ev_to_ebitda': metrics.get("enterpriseValueOverEBITDATTM"), 'profit_margin': metrics.get("netIncomePerEBT"), 'roe': metrics.get("roeTTM"), 'roa': metrics.get("returnOnTangibleAssetsTTM"), 'revenue': None, 'revenue_growth': None, 'net_income': None, 'debt_to_equity': metrics.get("debtToEquityTTM"), 'current_ratio': metrics.get("currentRatioTTM"), 'beta': prof.get("beta"), 'week_52_high': None, 'week_52_low': None, 'short_float_pct': None}, insert_only=True)
 
         logger.info(f"[fmp] {ticker}: fundamentals written")
         return True
@@ -359,26 +289,7 @@ async def collect_financials(ticker: str) -> int:
         for stmt in data:
             try:
                 period_end = datetime.date.fromisoformat(stmt.get("date", "")[:10])
-                db.execute(
-                    """
-                    INSERT INTO financial_history (
-                        ticker, period_type, period_end,
-                        revenue, gross_profit, operating_income,
-                        net_income, eps, free_cash_flow
-                    ) VALUES (%s, 'quarterly', %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, period_type, period_end) DO NOTHING
-                    """,
-                    [
-                        ticker,
-                        period_end,
-                        stmt.get("revenue"),
-                        stmt.get("grossProfit"),
-                        stmt.get("operatingIncome"),
-                        stmt.get("netIncome"),
-                        stmt.get("eps"),
-                        None,  # FCF is in cash flow statement
-                    ],
-                )
+                mongo_store.upsert_doc('financial_history', {'ticker': ticker, 'period_type': 'quarterly', 'period_end': period_end}, {'ticker': ticker, 'period_type': 'quarterly', 'period_end': period_end, 'revenue': stmt.get("revenue"), 'gross_profit': stmt.get("grossProfit"), 'operating_income': stmt.get("operatingIncome"), 'net_income': stmt.get("netIncome"), 'eps': stmt.get("eps"), 'free_cash_flow': None}, insert_only=True)
                 count += 1
             except Exception:
                 pass
@@ -423,25 +334,7 @@ async def collect_balance_sheet(ticker: str) -> int:
         for bs in data:
             try:
                 period_end = datetime.date.fromisoformat(bs.get("date", "")[:10])
-                db.execute(
-                    """
-                    INSERT INTO balance_sheet (
-                        ticker, period_end, total_assets, total_liabilities,
-                        total_equity, cash, total_debt, working_capital
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, period_end) DO NOTHING
-                    """,
-                    [
-                        ticker,
-                        period_end,
-                        bs.get("totalAssets"),
-                        bs.get("totalLiabilities"),
-                        bs.get("totalStockholdersEquity"),
-                        bs.get("cashAndCashEquivalents"),
-                        bs.get("totalDebt"),
-                        bs.get("totalWorkingCapital", 0),  # sometimes missing
-                    ],
-                )
+                mongo_store.upsert_doc('balance_sheet', {'ticker': ticker, 'period_end': period_end}, {'ticker': ticker, 'period_end': period_end, 'total_assets': bs.get("totalAssets"), 'total_liabilities': bs.get("totalLiabilities"), 'total_equity': bs.get("totalStockholdersEquity"), 'cash': bs.get("cashAndCashEquivalents"), 'total_debt': bs.get("totalDebt"), 'working_capital': bs.get("totalWorkingCapital", 0)}, insert_only=True)
                 count += 1
             except Exception:
                 pass

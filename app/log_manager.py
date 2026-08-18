@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 from lazycat.logging import LogManager as SDKLogManager
+from app.db import mongo_store
 
 class LogManager(SDKLogManager):
     """Manages appending logs for V2 and A/B benchmark runs.
@@ -117,77 +118,7 @@ class LogManager(SDKLogManager):
             from psycopg.types.json import Jsonb
             
             with get_db() as db:
-                db.execute(
-                    """
-                    INSERT INTO cycle_run_summaries (
-                        cycle_id, trigger_type, started_at, finished_at, status, elapsed_ms,
-                        tickers_requested, tickers_final, 
-                        collect_requested, analyze_requested, trade_requested,
-                        analysis_results_count, buy_count, sell_count, hold_count,
-                        trade_attempted, trade_executed, trade_failed,
-                        no_trade_reason, primary_failure_reason,
-                        report_generated,
-                        trade_skip_categories,
-                        collector_ok, collector_skipped, collector_error, collector_failures,
-                        summary_json
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s
-                    ) ON CONFLICT (cycle_id) DO UPDATE SET
-                        collector_ok = EXCLUDED.collector_ok,
-                        collector_skipped = EXCLUDED.collector_skipped,
-                        collector_error = EXCLUDED.collector_error,
-                        collector_failures = EXCLUDED.collector_failures,
-                        status = EXCLUDED.status,
-                        finished_at = EXCLUDED.finished_at,
-                        elapsed_ms = EXCLUDED.elapsed_ms,
-                        analysis_results_count = EXCLUDED.analysis_results_count,
-                        buy_count = EXCLUDED.buy_count,
-                        sell_count = EXCLUDED.sell_count,
-                        hold_count = EXCLUDED.hold_count,
-                        trade_attempted = EXCLUDED.trade_attempted,
-                        trade_executed = EXCLUDED.trade_executed,
-                        trade_failed = EXCLUDED.trade_failed,
-                        no_trade_reason = EXCLUDED.no_trade_reason,
-                        primary_failure_reason = EXCLUDED.primary_failure_reason,
-                        report_generated = EXCLUDED.report_generated,
-                        trade_skip_categories = EXCLUDED.trade_skip_categories,
-                        summary_json = EXCLUDED.summary_json
-                    """,
-                    [
-                        cycle_id,
-                        summary.get("trigger_type", "manual"),
-                        summary.get("started_at"),
-                        summary.get("ended_at"),
-                        summary.get("status", "unknown"),
-                        summary.get("elapsed_ms", 0),
-                        Jsonb(summary.get("tickers_requested", [])),
-                        Jsonb(summary.get("tickers", [])),
-                        summary.get("collect_flag", False),
-                        summary.get("analyze_flag", False),
-                        summary.get("trade_flag", False),
-                        summary.get("analysis_results_count", 0),
-                        summary.get("buy_count", 0),
-                        summary.get("sell_count", 0),
-                        summary.get("hold_count", 0),
-                        summary.get("trade_attempted", 0),
-                        summary.get("trade_executed", 0),
-                        summary.get("trade_failed", 0),
-                        summary.get("no_trade_reason"),
-                        summary.get("primary_failure_reason"),
-                        summary.get("report_generated", False),
-                        Jsonb(summary.get("trade_skip_categories") or {}),
-                        summary.get("collector_ok", 0),
-                        summary.get("collector_skipped", 0),
-                        summary.get("collector_error", 0),
-                        Jsonb(summary.get("collector_failures") or []),
-                        Jsonb(summary)
-                    ]
-                )
+                mongo_store.update_docs('cycle_run_summaries', {'cycle_id': cycle_id}, {'$set': {'collector_ok': summary.get("collector_ok", 0), 'collector_skipped': summary.get("collector_skipped", 0), 'collector_error': summary.get("collector_error", 0), 'collector_failures': Jsonb(summary.get("collector_failures") or []), 'status': summary.get("status", "unknown"), 'finished_at': summary.get("ended_at"), 'elapsed_ms': summary.get("elapsed_ms", 0), 'analysis_results_count': summary.get("analysis_results_count", 0), 'buy_count': summary.get("buy_count", 0), 'sell_count': summary.get("sell_count", 0), 'hold_count': summary.get("hold_count", 0), 'trade_attempted': summary.get("trade_attempted", 0), 'trade_executed': summary.get("trade_executed", 0), 'trade_failed': summary.get("trade_failed", 0), 'no_trade_reason': summary.get("no_trade_reason"), 'primary_failure_reason': summary.get("primary_failure_reason"), 'report_generated': summary.get("report_generated", False), 'trade_skip_categories': Jsonb(summary.get("trade_skip_categories") or {}), 'summary_json': Jsonb(summary)}, '$setOnInsert': {'trigger_type': summary.get("trigger_type", "manual"), 'started_at': summary.get("started_at"), 'tickers_requested': Jsonb(summary.get("tickers_requested", [])), 'tickers_final': Jsonb(summary.get("tickers", [])), 'collect_requested': summary.get("collect_flag", False), 'analyze_requested': summary.get("analyze_flag", False), 'trade_requested': summary.get("trade_flag", False)}}, upsert=True)
                 db.commit()
         except Exception as e:
             logger.debug("[LogManager] Failed to write cycle summary to postgres: %s", e)

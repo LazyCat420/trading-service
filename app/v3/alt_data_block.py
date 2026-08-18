@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 
 from app.db.connection import get_db
+from app.db import mongo_query
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -229,12 +231,7 @@ def alt_macro_lines() -> list[str]:
 
     try:
         with get_db() as db:
-            row = db.execute(
-                """
-                SELECT date, pcr_volume, pcr_oi FROM put_call_ratio
-                WHERE symbol = 'SPY' ORDER BY date DESC LIMIT 1
-                """
-            ).fetchone()
+            row = mongo_query.find_row('put_call_ratio', {'symbol': 'SPY'}, ['date', 'pcr_volume', 'pcr_oi'], sort=[('date', -1)])
         if row and row[1] is not None:
             lines.append(
                 f"- SPY put/call ratio ({row[0]}): volume {row[1]:.2f}, "
@@ -245,17 +242,7 @@ def alt_macro_lines() -> list[str]:
 
     try:
         with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT event_date, event_name, forecast, previous
-                FROM economic_calendar
-                WHERE country IN ('US', 'USD')
-                  AND importance = 'high'
-                  AND event_date >= NOW()
-                  AND event_date <= NOW() + INTERVAL '7 days'
-                ORDER BY event_date ASC LIMIT 5
-                """
-            ).fetchall()
+            rows = mongo_query.find_rows('economic_calendar', {'country': {'$in': ['US', 'USD']}, 'importance': 'high', 'event_date': {'$gte': datetime.now(timezone.utc), '$lte': (datetime.now(timezone.utc) + timedelta(days=7))}}, ['event_date', 'event_name', 'forecast', 'previous'], sort=[('event_date', 1)], limit=5)
         if rows:
             lines.append("Upcoming high-impact US events (7d):")
             for r in rows:

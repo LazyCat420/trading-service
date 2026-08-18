@@ -4,6 +4,7 @@ from app.tools.registry import registry, PermissionLevel
 from app.trading.paper_trader import buy, sell
 from app.trading.watchlist import add_ticker, remove_ticker
 from app.tools.portfolio_tools import resolve_bot_id
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -296,17 +297,7 @@ async def get_congress_trades_tool(ticker: str) -> str:
 
     try:
         with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT politician, party, chamber, state, transaction_type,
-                       amount_range, trade_date, disclosure_date, days_to_disclose
-                FROM congress_trades
-                WHERE ticker = %s
-                ORDER BY disclosure_date DESC NULLS LAST
-                LIMIT 40
-                """,
-                (ticker,),
-            ).fetchall()
+            rows = mongo_query.find_rows('congress_trades', {'ticker': ticker}, ['politician', 'party', 'chamber', 'state', 'transaction_type', 'amount_range', 'trade_date', 'disclosure_date', 'days_to_disclose'], sort=[('disclosure_date', -1)], limit=40)
 
         return json.dumps(
             {

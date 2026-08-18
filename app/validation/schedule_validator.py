@@ -2,6 +2,7 @@ import logging
 import json
 from datetime import datetime, timezone, timedelta
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,7 @@ class ScheduleValidator:
         """
         try:
             with get_db() as db:
-                row = db.execute(
-                    "SELECT schedule_scope, review_intent, urgency, tickers, last_run_at "
-                    "FROM cycle_schedules WHERE id = %s", [schedule_id]
-                ).fetchone()
+                row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['schedule_scope', 'review_intent', 'urgency', 'tickers', 'last_run_at'])
                 
                 if not row:
                     return False, "Schedule not found"

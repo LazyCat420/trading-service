@@ -1,6 +1,7 @@
 import uuid
 import logging
 from datetime import datetime, timezone
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -27,24 +28,7 @@ class SemanticMemoryStore:
             mem_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc).isoformat()
 
-            db.execute(
-                """
-                INSERT INTO semantic_memory
-                (id, ticker, type, content, confidence, source_agent, created_at, last_accessed_at, access_count)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-                [
-                    mem_id,
-                    ticker,
-                    mem_type,
-                    content,
-                    confidence,
-                    source_agent,
-                    now,
-                    now,
-                    0,
-                ],
-            )
+            mongo_store.insert_docs('semantic_memory', [{'id': mem_id, 'ticker': ticker, 'type': mem_type, 'content': content, 'confidence': confidence, 'source_agent': source_agent, 'created_at': now, 'last_accessed_at': now, 'access_count': 0}])
 
             logger.info(
                 f"[SEMANTIC] Wrote '{mem_type}' for {ticker}: {content[:50]}..."
@@ -59,16 +43,7 @@ class SemanticMemoryStore:
             now = datetime.now(timezone.utc).isoformat()
 
             # Pull ticker-specific AND global rules
-            rows = db.execute(
-                """
-                SELECT id, ticker, type, content, confidence
-                FROM semantic_memory
-                WHERE ticker = %s OR ticker = 'global'
-                ORDER BY confidence DESC, last_accessed_at DESC
-                LIMIT %s
-            """,
-                [ticker, limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('semantic_memory', {'$or': [{'ticker': ticker}, {'ticker': 'global'}]}, ['id', 'ticker', 'type', 'content', 'confidence'], sort=[('confidence', -1), ('last_accessed_at', -1)], limit=limit)
 
             results = []
             if rows:

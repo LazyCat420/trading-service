@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -78,26 +79,7 @@ def get_latest_verdicts(limit: int = 100) -> list[dict]:
 def get_verdict_history(ticker: str, limit: int = 20) -> list[dict]:
     """Return all verdicts for a specific ticker across cycles."""
     with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT
-                ar.ticker,
-                ar.result_json,
-                ar.confidence,
-                ar.created_at,
-                ar.cycle_id,
-                ar.triage_tier,
-                ar.price_at_analysis,
-                ar.thesis_verdict,
-                ar.thesis_confidence,
-                ar.thesis_summary
-            FROM analysis_results ar
-            WHERE ar.ticker = %s
-            ORDER BY ar.created_at DESC
-            LIMIT %s
-            """,
-            [ticker.upper().strip(), limit],
-        ).fetchall()
+        rows = mongo_query.find_rows('analysis_results', {'ticker': ticker.upper().strip()}, ['ticker', 'result_json', 'confidence', 'created_at', 'cycle_id', 'triage_tier', 'price_at_analysis', 'thesis_verdict', 'thesis_confidence', 'thesis_summary'], sort=[('created_at', -1)], limit=limit)
 
     history = []
     for r in rows:

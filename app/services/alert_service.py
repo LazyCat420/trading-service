@@ -2,6 +2,7 @@ import uuid
 import logging
 from app.db.connection import get_db
 from app.schemas.alerts import FundAlert
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +30,7 @@ def record_fund_alert(
         )
         
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO fund_alerts (
-                    id, created_at, alert_type, ticker, entity_name, 
-                    detail, severity, llm_summary, is_read
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    alert.id,
-                    alert.created_at,
-                    alert.alert_type,
-                    alert.ticker,
-                    alert.entity_name,
-                    alert.detail,
-                    alert.severity,
-                    alert.llm_summary,
-                    alert.is_read
-                ]
-            )
+            mongo_store.insert_docs('fund_alerts', [{'id': alert.id, 'created_at': alert.created_at, 'alert_type': alert.alert_type, 'ticker': alert.ticker, 'entity_name': alert.entity_name, 'detail': alert.detail, 'severity': alert.severity, 'llm_summary': alert.llm_summary, 'is_read': alert.is_read}])
         
         logger.info("[alert_service] Recorded %s alert (%s) for entity %s", severity, alert_type, entity_name)
         return alert.model_dump()

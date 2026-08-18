@@ -15,6 +15,7 @@ from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
 
 from .oracle import DataCompletenessOracle
+from app.db import mongo_query
 
 # Grounding score weights: ROUGE-L precision (textual overlap) vs citation
 # overlap (numeric data point grounding).  Citation is weighted higher because
@@ -230,11 +231,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                 handle_mongo_read_failure("llm_audit_logs", "[Judge] mongo log read", me)
                 _mongo_hit = False
             if not _mongo_hit:
-                log = db.execute(
-                    "SELECT cycle_id, ticker, context_hash, raw_response, created_at "
-                    "FROM llm_audit_logs WHERE id = %s",
-                    [decision_id],
-                ).fetchone()
+                log = mongo_query.find_row('llm_audit_logs', {'id': decision_id}, ['cycle_id', 'ticker', 'context_hash', 'raw_response', 'created_at'])
 
             if not log:
                 logger.error(f"Cannot evaluate {decision_id}. Log not found.")
@@ -282,10 +279,7 @@ async def evaluate_decision(decision_id: str) -> bool:
             context_blob = "Context Blob Missing"
             full_context_blob = ""
             if context_hash:
-                blob = db.execute(
-                    "SELECT content FROM context_blobs WHERE context_hash = %s",
-                    [context_hash],
-                ).fetchone()
+                blob = mongo_query.find_row('context_blobs', {'context_hash': context_hash}, ['content'])
                 if blob:
                     full_context_blob = blob[0]  # full context for ROUGE grounding
                     # Build a representative truncation: take the first 800 chars
@@ -358,10 +352,7 @@ async def evaluate_decision(decision_id: str) -> bool:
                 evidence["skipped_llm"] = True
                 evidence_json = json.dumps(evidence)
 
-                existing = db.execute(
-                    "SELECT decision_id FROM decision_evaluations WHERE decision_id = %s",
-                    [decision_id],
-                ).fetchone()
+                existing = mongo_query.find_row('decision_evaluations', {'decision_id': decision_id}, ['decision_id'])
 
                 eval_row = [
                     0.0,  # judge_a_score
@@ -568,56 +559,12 @@ async def evaluate_decision(decision_id: str) -> bool:
             red_cards_json = json.dumps(red_cards)
 
             # Upsert Evaluator Score
-            existing = db.execute(
-                "SELECT decision_id FROM decision_evaluations WHERE decision_id = %s",
-                [decision_id],
-            ).fetchone()
+            existing = mongo_query.find_row('decision_evaluations', {'decision_id': decision_id}, ['decision_id'])
 
             if existing:
-                db.execute(
-                    """
-                    UPDATE decision_evaluations SET
-                        judge_a_score = %s,
-                        final_quality_score = %s,
-                        red_cards = %s,
-                        first_principles_reasoning = %s,
-                        policy_understanding = %s,
-                        evidence_gathering = %s
-                    WHERE decision_id = %s
-                    """,
-                    [
-                        base_score,
-                        final_quality_score,
-                        red_cards_json,
-                        payload.get("first_principles", ""),
-                        policy_understanding,
-                        evidence_json,
-                        decision_id,
-                    ],
-                )
+                mongo_store.update_docs('decision_evaluations', {'decision_id': decision_id}, {'$set': {'judge_a_score': base_score, 'final_quality_score': final_quality_score, 'red_cards': red_cards_json, 'first_principles_reasoning': payload.get("first_principles", ""), 'policy_understanding': policy_understanding, 'evidence_gathering': evidence_json}})
             else:
-                db.execute(
-                    """
-                    INSERT INTO decision_evaluations (
-                        decision_id, cycle_id, ticker, timestamp, 
-                        judge_a_score, final_quality_score, red_cards, 
-                        first_principles_reasoning, policy_understanding, discrepancy_trigger, evidence_gathering
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    [
-                        decision_id,
-                        cycle_id,
-                        ticker,
-                        created_at,
-                        base_score,
-                        final_quality_score,
-                        red_cards_json,
-                        payload.get("first_principles", ""),
-                        policy_understanding,
-                        False,
-                        evidence_json,
-                    ],
-                )
+                mongo_store.insert_docs('decision_evaluations', [{'decision_id': decision_id, 'cycle_id': cycle_id, 'ticker': ticker, 'timestamp': created_at, 'judge_a_score': base_score, 'final_quality_score': final_quality_score, 'red_cards': red_cards_json, 'first_principles_reasoning': payload.get("first_principles", ""), 'policy_understanding': policy_understanding, 'discrepancy_trigger': False, 'evidence_gathering': evidence_json}])
 
             logger.info(
                 f"Decision {decision_id} Auto-Evaluated: Score {final_quality_score}"

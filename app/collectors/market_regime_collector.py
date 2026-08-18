@@ -9,6 +9,7 @@ import logging
 import yfinance as yf
 import asyncio
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -238,14 +239,7 @@ def get_latest_market_snapshot() -> dict:
 
         for sym, aclass in key_symbols.items():
             try:
-                row = db.execute(
-                    """
-                    SELECT close, date FROM asset_prices
-                    WHERE symbol = %s AND asset_class = %s
-                    ORDER BY date DESC LIMIT 1
-                """,
-                    [sym, aclass],
-                ).fetchone()
+                row = mongo_query.find_row('asset_prices', {'symbol': sym, 'asset_class': aclass}, ['close', 'date'], sort=[('date', -1)])
                 if row:
                     result[sym] = {"close": row[0], "date": str(row[1])}
             except Exception:
@@ -255,14 +249,7 @@ def get_latest_market_snapshot() -> dict:
         etf_syms = list(ETF_TO_SECTOR.keys())
         for sym in etf_syms:
             try:
-                row = db.execute(
-                    """
-                    SELECT close, date FROM asset_prices
-                    WHERE symbol = %s AND asset_class = 'sector_etf'
-                    ORDER BY date DESC LIMIT 1
-                """,
-                    [sym],
-                ).fetchone()
+                row = mongo_query.find_row('asset_prices', {'symbol': sym, 'asset_class': 'sector_etf'}, ['close', 'date'], sort=[('date', -1)])
                 if row:
                     result[sym] = {"close": row[0], "date": str(row[1])}
             except Exception:
@@ -274,16 +261,7 @@ def get_latest_market_snapshot() -> dict:
 def get_asset_history(symbol: str, asset_class: str, days: int = 90) -> list[dict]:
     """Get price history for a specific asset from asset_prices."""
     with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT date, open, high, low, close, volume
-            FROM asset_prices
-            WHERE symbol = %s AND asset_class = %s
-            ORDER BY date DESC
-            LIMIT %s
-        """,
-            [symbol, asset_class, days],
-        ).fetchall()
+        rows = mongo_query.find_rows('asset_prices', {'symbol': symbol, 'asset_class': asset_class}, ['date', 'open', 'high', 'low', 'close', 'volume'], sort=[('date', -1)], limit=days)
 
         return [
             {

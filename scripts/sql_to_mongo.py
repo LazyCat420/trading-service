@@ -270,6 +270,24 @@ def _translate_select(tree, ctx: _Ctx) -> Translation:
     if tree.args.get("distinct"):
         raise Unsupported("SELECT DISTINCT — use distinct_values() by hand")
 
+    # `SELECT count(*) FROM t WHERE ...` is the one aggregate with an exact
+    # Mongo equivalent (count_documents). Every other aggregate is refused and
+    # computed in Python at the call site.
+    if len(tree.expressions) == 1:
+        only = tree.expressions[0]
+        only = only.this if isinstance(only, exp.Alias) else only
+        if isinstance(only, exp.Count) and not only.args.get("distinct"):
+            counted = only.this
+            if counted is None or isinstance(counted, (exp.Star, exp.Column)):
+                q = _where(tree.args["where"].this if tree.args.get("where") else None,
+                           ctx)
+                if isinstance(counted, exp.Column):
+                    # count(col) skips NULLs; count(*) does not.
+                    q = {**q, counted.name: {"$ne": None}}
+                return Translation("select", table,
+                                   f"mongo_query.count({table!r}, {_render(q)})",
+                                   ctx.count, "scalar")
+
     projection = None
     fields = []
     star = False
@@ -325,16 +343,30 @@ def _translate_select(tree, ctx: _Ctx) -> Translation:
     if tree.args.get("offset"):
         raise Unsupported("OFFSET — find_docs has no skip parameter")
 
+    # Emit a ROW-shaped call. Application code indexes results positionally
+    # (`r[0]`), so a dict-returning find_docs() would break every caller; the
+    # rewrite is only mechanical if the replacement keeps the shape.
     args = [f"{table!r}", _render(query)]
+    if fields:
+        args.append("[" + ", ".join(repr(f) for f in fields) + "]")
+        fn = "find_rows"
+    elif star:
+        args.append("")   # placeholder, removed below
+        args.pop()
+        fn = "find_dicts"
+    else:
+        fn = "exists"     # SELECT <literal> — used as a boolean probe
     if sort:
         args.append(f"sort={sort}")
-    if projection:
-        args.append(f"projection={_render(projection)}")
-    if limit:
+    if limit and fn != "exists":
         args.append(f"limit={limit}")
-    call = f"mongo_store.find_docs({', '.join(args)})"
-    return Translation("select", table, call, ctx.count, "rows",
-                       ["projection drops _id"] if projection else [])
+    call = f"mongo_query.{fn}({', '.join(args)})"
+    notes = []
+    if star:
+        notes.append("SELECT * returns documents, not tuples — a caller that "
+                     "unpacks positionally must name its columns first")
+    return Translation("select", table, call, ctx.count,
+                       "rows" if fn != "exists" else "bool", notes)
 
 
 def _translate_insert(tree, ctx: _Ctx) -> Translation:

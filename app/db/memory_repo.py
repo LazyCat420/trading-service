@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, List
 from datetime import datetime, timezone
 from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -106,41 +107,7 @@ def upsert_canonical_memories(memories: List[Dict[str, Any]]):
         for m in memories:
             tags_str = json.dumps(m.get("tags", []))
             # PostgreSQL ON CONFLICT upsert — clean single statement
-            db.execute(
-                """
-                INSERT INTO canonical_memories (
-                    id, type, ticker, sector, summary, tags, confidence_score, evidence_count,
-                    status, last_used_at, last_validated_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    type = EXCLUDED.type,
-                    ticker = EXCLUDED.ticker,
-                    sector = EXCLUDED.sector,
-                    summary = EXCLUDED.summary,
-                    tags = EXCLUDED.tags,
-                    confidence_score = EXCLUDED.confidence_score,
-                    evidence_count = EXCLUDED.evidence_count,
-                    status = EXCLUDED.status,
-                    last_used_at = EXCLUDED.last_used_at,
-                    last_validated_at = EXCLUDED.last_validated_at,
-                    updated_at = EXCLUDED.updated_at
-            """,
-                [
-                    m["id"],
-                    m.get("type"),
-                    m.get("ticker"),
-                    m.get("sector"),
-                    m.get("summary"),
-                    tags_str,
-                    m.get("confidence_score"),
-                    m.get("evidence_count"),
-                    m.get("status", "active"),
-                    m.get("last_used_at"),
-                    m.get("last_validated_at"),
-                    m.get("created_at", now_str),
-                    now_str,
-                ],
-            )
+            mongo_store.update_docs('canonical_memories', {'id': m["id"]}, {'$set': {'type': m.get("type"), 'ticker': m.get("ticker"), 'sector': m.get("sector"), 'summary': m.get("summary"), 'tags': tags_str, 'confidence_score': m.get("confidence_score"), 'evidence_count': m.get("evidence_count"), 'status': m.get("status", "active"), 'last_used_at': m.get("last_used_at"), 'last_validated_at': m.get("last_validated_at"), 'updated_at': now_str}, '$setOnInsert': {'created_at': m.get("created_at", now_str)}}, upsert=True)
             
             try:
                 from app.services.embedding_service import embedder
@@ -166,14 +133,7 @@ def deprecate_canonical_memories(memory_ids: List[str]):
     with get_db() as db:
         now_str = datetime.now(timezone.utc).isoformat()
         for mid in memory_ids:
-            db.execute(
-                """
-                UPDATE canonical_memories 
-                SET status = 'deprecated', updated_at = %s
-                WHERE id = %s
-            """,
-                [now_str, mid],
-            )
+            mongo_store.update_docs('canonical_memories', {'id': mid}, {'$set': {'status': 'deprecated', 'updated_at': now_str}})
         logger.info(f"Deprecated {len(memory_ids)} canonical memories.")
 
 
@@ -183,31 +143,14 @@ def mark_observations_promoted(observation_ids: List[str]):
     _ensure_schema()
     with get_db() as db:
         for oid in observation_ids:
-            db.execute(
-                "UPDATE episodic_observations SET promoted_to_memory = TRUE WHERE id = %s",
-                [oid],
-            )
+            mongo_store.update_docs('episodic_observations', {'id': oid}, {'$set': {'promoted_to_memory': True}})
         logger.info(f"Marked {len(observation_ids)} observations as promoted.")
 
 
 def log_consolidation_run(record: Dict[str, Any]):
     _ensure_schema()
     with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO consolidation_reports (
-                id, run_at, ticker, observations_consumed, memories_created, memories_deprecated
-            ) VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-            [
-                record.get("id"),
-                record.get("run_at", datetime.now(timezone.utc).isoformat()),
-                record.get("ticker"),
-                record.get("observations_consumed", 0),
-                record.get("memories_created", 0),
-                record.get("memories_deprecated", 0),
-            ],
-        )
+        mongo_store.insert_docs('consolidation_reports', [{'id': record.get("id"), 'run_at': record.get("run_at", datetime.now(timezone.utc).isoformat()), 'ticker': record.get("ticker"), 'observations_consumed': record.get("observations_consumed", 0), 'memories_created': record.get("memories_created", 0), 'memories_deprecated': record.get("memories_deprecated", 0)}])
 
 
 def update_memory_validation_stats(
@@ -217,22 +160,4 @@ def update_memory_validation_stats(
     _ensure_schema()
     with get_db() as db:
         now_str = datetime.now(timezone.utc).isoformat()
-        db.execute(
-            """
-            UPDATE canonical_memories 
-            SET confidence_score = %s,
-                evidence_count = %s,
-                status = %s,
-                last_validated_at = %s,
-                updated_at = %s
-            WHERE id = %s
-        """,
-            [
-                new_confidence,
-                new_evidence_count,
-                new_status,
-                now_str,
-                now_str,
-                memory_id,
-            ],
-        )
+        mongo_store.update_docs('canonical_memories', {'id': memory_id}, {'$set': {'confidence_score': new_confidence, 'evidence_count': new_evidence_count, 'status': new_status, 'last_validated_at': now_str, 'updated_at': now_str}})

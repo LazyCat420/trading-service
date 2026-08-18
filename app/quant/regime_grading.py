@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+from app.db import mongo_query
 
 HORIZON_DAYS = 5
 SPX_DEADBAND_PCT = 1.0
@@ -50,16 +51,7 @@ def load_posteriors(ticker: str) -> list[dict]:
     from app.db.connection import get_db
 
     with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT as_of, regime, confidence, mean_daily_return_pct,
-                   annualized_vol_pct, state_probabilities, state_stats,
-                   transition_matrix, stale_sessions
-            FROM regime_hmm_posteriors
-            WHERE ticker = %s ORDER BY as_of ASC
-            """,
-            [ticker],
-        ).fetchall()
+        rows = mongo_query.find_rows('regime_hmm_posteriors', {'ticker': ticker}, ['as_of', 'regime', 'confidence', 'mean_daily_return_pct', 'annualized_vol_pct', 'state_probabilities', 'state_stats', 'transition_matrix', 'stale_sessions'], sort=[('as_of', 1)])
 
     def _j(v):
         return json.loads(v) if isinstance(v, (str, bytes)) else v

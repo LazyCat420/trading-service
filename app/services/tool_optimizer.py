@@ -18,6 +18,7 @@ from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
 # PROBE_SERVICE_SOURCES for why an untagged probe run can take a working tool
 # away from a live agent.
 from app.services.logging.tool_logging import PROBE_EXCLUSION_SQL  # noqa: E402
+from datetime import datetime, timedelta, timezone
 
 # ── Reputation thresholds ──
 # Tools below these success rates get warnings injected into agent prompts
@@ -266,14 +267,7 @@ async def optimize_agent_tools(
 
                 for tool_name in tool_map.keys():
                     if tool_name not in db_stats:
-                        db.execute(
-                            """
-                            INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status)
-                            VALUES (%s, %s, 0, 'active')
-                            ON CONFLICT (agent_name, tool_name) DO NOTHING
-                            """,
-                            (agent_name, tool_name)
-                        )
+                        mongo_store.upsert_doc('agent_tool_optimization', {'agent_name': agent_name, 'tool_name': tool_name}, {'agent_name': agent_name, 'tool_name': tool_name, 'unused_count': 0, 'status': 'active'}, insert_only=True)
 
         # Process status for each tool
         for tool_name in tool_map.keys():
@@ -481,18 +475,7 @@ async def record_tool_optimization_usage(
 
             if mongo_store.writes_pg("agent_tool_optimization"):
                 with get_db() as db:
-                    db.execute(
-                        """
-                        INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status, updated_at)
-                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-                        ON CONFLICT (agent_name, tool_name)
-                        DO UPDATE SET
-                            unused_count = EXCLUDED.unused_count,
-                            status = EXCLUDED.status,
-                            updated_at = CURRENT_TIMESTAMP
-                        """,
-                        (agent_name, tool_name, new_unused_count, new_status)
-                    )
+                    mongo_store.update_docs('agent_tool_optimization', {'agent_name': agent_name, 'tool_name': tool_name}, {'$set': {'unused_count': new_unused_count, 'status': new_status, 'updated_at': datetime.now(timezone.utc)}}, upsert=True)
 
             if mongo_store.writes_mongo("agent_tool_optimization"):
                 mongo_store.upsert_doc(
@@ -590,7 +573,7 @@ def reset_all_pruned() -> int:
                 row = db.fetchone()
                 pg_count = row[0] if row else 0
                 if pg_count > 0:
-                    db.execute("UPDATE agent_tool_optimization SET status = 'active', unused_count = 0 WHERE status = 'pruned'")
+                    mongo_store.update_docs('agent_tool_optimization', {'status': 'pruned'}, {'$set': {'status': 'active', 'unused_count': 0}})
                 if not count:
                     count = pg_count
 
@@ -634,18 +617,7 @@ async def mark_tools_as_used_by_prism(
         if mongo_store.writes_pg("agent_tool_optimization"):
             with get_db() as db:
                 for tool_name in offered_names:
-                    db.execute(
-                        """
-                        INSERT INTO agent_tool_optimization (agent_name, tool_name, unused_count, status, updated_at)
-                        VALUES (%s, %s, 0, 'active', CURRENT_TIMESTAMP)
-                        ON CONFLICT (agent_name, tool_name)
-                        DO UPDATE SET
-                            unused_count = 0,
-                            status = 'active',
-                            updated_at = CURRENT_TIMESTAMP
-                        """,
-                        (agent_name, tool_name)
-                    )
+                    mongo_store.update_docs('agent_tool_optimization', {'agent_name': agent_name, 'tool_name': tool_name}, {'$set': {'unused_count': 0, 'status': 'active', 'updated_at': datetime.now(timezone.utc)}}, upsert=True)
         if mongo_store.writes_mongo("agent_tool_optimization"):
             for tool_name in offered_names:
                 mongo_store.upsert_doc(

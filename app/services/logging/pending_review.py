@@ -35,6 +35,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +73,9 @@ def get_pending_outliers() -> list[dict]:
 def approve_outlier(article_id: str) -> dict:
     """Approve an outlier as valid breaking news."""
     with get_db() as db:
-        db.execute("UPDATE news_articles SET quality_status = 'ok' WHERE id = %s", [article_id])
+        mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'ok'}})
         
-        row = db.execute("SELECT publisher FROM news_articles WHERE id = %s", [article_id]).fetchone()
+        row = mongo_query.find_row('news_articles', {'id': article_id}, ['publisher'])
         if row and row[0]:
             db.execute("""
                 UPDATE source_trust 
@@ -88,8 +89,8 @@ def approve_outlier(article_id: str) -> dict:
 def reject_outlier(article_id: str) -> dict:
     """Reject an outlier as fake news or spam."""
     with get_db() as db:
-        row = db.execute("SELECT publisher FROM news_articles WHERE id = %s", [article_id]).fetchone()
-        db.execute("UPDATE news_articles SET quality_status = 'rejected' WHERE id = %s", [article_id])
+        row = mongo_query.find_row('news_articles', {'id': article_id}, ['publisher'])
+        mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'rejected'}})
         
         if row and row[0]:
             db.execute("""
@@ -105,7 +106,7 @@ def reject_outlier(article_id: str) -> dict:
 def add_outlier_rule(article_id: str, rule_content: str) -> dict:
     """Add a permanent rule based on this outlier, then reject it."""
     with get_db() as db:
-        row = db.execute("SELECT ticker, publisher FROM news_articles WHERE id = %s", [article_id]).fetchone()
+        row = mongo_query.find_row('news_articles', {'id': article_id}, ['ticker', 'publisher'])
         if not row:
             raise HTTPException(404, "Article not found")
             
@@ -113,12 +114,9 @@ def add_outlier_rule(article_id: str, rule_content: str) -> dict:
         fb_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         
-        db.execute("""
-            INSERT INTO user_feedback (id, ticker, feedback_type, content, created_at, is_active)
-            VALUES (%s, %s, 'constraint', %s, %s, TRUE)
-        """, [fb_id, ticker, rule_content, now])
+        mongo_store.insert_docs('user_feedback', [{'id': fb_id, 'ticker': ticker, 'feedback_type': 'constraint', 'content': rule_content, 'created_at': now, 'is_active': True}])
         
-        db.execute("UPDATE news_articles SET quality_status = 'rejected' WHERE id = %s", [article_id])
+        mongo_store.update_docs('news_articles', {'id': article_id}, {'$set': {'quality_status': 'rejected'}})
         
         if publisher:
             db.execute("""
@@ -156,21 +154,9 @@ def get_pending_fixes(status: str = "all", limit: int = 50) -> list[dict]:
     """
     with get_db() as db:
         if status == "all":
-            rows = db.execute(
-                "SELECT id, cycle_id, target_type, target_name, proposed_fix, "
-                "motivation, proposer_model, critic_concerns, judge_score, status, "
-                "created_at, resolved_at "
-                "FROM pending_evolution_fixes ORDER BY created_at DESC LIMIT %s",
-                [limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('pending_evolution_fixes', {}, ['id', 'cycle_id', 'target_type', 'target_name', 'proposed_fix', 'motivation', 'proposer_model', 'critic_concerns', 'judge_score', 'status', 'created_at', 'resolved_at'], sort=[('created_at', -1)], limit=limit)
         else:
-            rows = db.execute(
-                "SELECT id, cycle_id, target_type, target_name, proposed_fix, "
-                "motivation, proposer_model, critic_concerns, judge_score, status, "
-                "created_at, resolved_at "
-                "FROM pending_evolution_fixes WHERE status = %s ORDER BY created_at DESC LIMIT %s",
-                [status, limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('pending_evolution_fixes', {'status': status}, ['id', 'cycle_id', 'target_type', 'target_name', 'proposed_fix', 'motivation', 'proposer_model', 'critic_concerns', 'judge_score', 'status', 'created_at', 'resolved_at'], sort=[('created_at', -1)], limit=limit)
 
     cols = [
         "id", "cycle_id", "target_type", "target_name", "proposed_fix",

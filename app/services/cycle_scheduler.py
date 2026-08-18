@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Use local timezone
 from tzlocal import get_localzone
+from app.db import mongo_query, mongo_store
 
 # Suppress APScheduler execution INFO logs to prevent terminal spam
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
@@ -64,10 +65,7 @@ class SchedulerService:
             if nrt_val:
                 nrt = nrt_val.astimezone(timezone.utc).isoformat()
                 with get_db() as db:
-                    db.execute(
-                        "UPDATE cycle_schedules SET next_run_at = %s WHERE id = %s",
-                        [nrt, job_id],
-                    )
+                    mongo_store.update_docs('cycle_schedules', {'id': job_id}, {'$set': {'next_run_at': nrt}})
                     logger.info(
                         "[SCHEDULER] Job %s next_run_at synced: %s", job_id, nrt
                     )
@@ -113,12 +111,7 @@ class SchedulerService:
         )
         with get_db() as db:
             # Load latest config from DB to ensure it wasn't deleted or paused
-            row = db.execute(
-                "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
-                "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
-                "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
-                "created_at, updated_at, run_at, expiry_at FROM cycle_schedules WHERE id = %s", [schedule_id]
-            ).fetchone()
+            row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
             if not row:
                 logger.warning(
                     "[SCHEDULER] Schedule %s not found in DB, removing from engine.",
@@ -224,17 +217,12 @@ class SchedulerService:
             err_msg = ""
             try:
                 # Check if a cycle is already running before dispatching
-                state_row = db.execute(
-                    "SELECT status FROM pipeline_state WHERE singleton_id = 'current'"
-                ).fetchone()
+                state_row = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
                 if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
                     raise HTTPException(409, f"Cycle already running: {state_row[0]}")
 
                 cmd_id = f"sch-cmd-{uuid.uuid4().hex[:8]}"
-                db.execute(
-                    "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
-                    [cmd_id, "START_CYCLE", json.dumps(payload)]
-                )
+                mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
                 logger.info(
                     "[SCHEDULER] Successfully triggered cycle run for schedule %s.",
                     schedule_id,
@@ -284,19 +272,13 @@ class SchedulerService:
             if s["schedule_type"] in ("once", "policy"):
                 attempts = (s["run_count"] or 0) + 1
                 if run_status == "ok":
-                    db.execute(
-                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, updated_at = %s WHERE id = %s",
-                        [now.isoformat(), schedule_id],
-                    )
+                    mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'updated_at': now.isoformat()}})
                     logger.info(
                         "[SCHEDULER] One-shot schedule %s completed — deactivated.",
                         schedule_id,
                     )
                 elif attempts >= 5:
-                    db.execute(
-                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, last_status = 'gave_up', updated_at = %s WHERE id = %s",
-                        [now.isoformat(), schedule_id],
-                    )
+                    mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': 'gave_up', 'updated_at': now.isoformat()}})
                     logger.warning(
                         "[SCHEDULER] One-shot schedule %s gave up after %d attempts.",
                         schedule_id,
@@ -311,20 +293,7 @@ class SchedulerService:
             # Log to scheduler history
             try:
                 history_id = f"hist-{uuid.uuid4().hex[:8]}"
-                db.execute(
-                    """
-                    INSERT INTO scheduler_history (id, job_name, started_at, finished_at, status, notes)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                    [
-                        history_id,
-                        s["name"],
-                        now.isoformat(),
-                        now.isoformat(),
-                        run_status,
-                        err_msg,
-                    ],
-                )
+                mongo_store.insert_docs('scheduler_history', [{'id': history_id, 'job_name': s["name"], 'started_at': now.isoformat(), 'finished_at': now.isoformat(), 'status': run_status, 'notes': err_msg}])
             except Exception as filter_e:
                 logger.warning("[SCHEDULER] Failed to write history log: %s", filter_e)
 
@@ -333,12 +302,7 @@ class SchedulerService:
         """Load all active schedules from DB into APScheduler."""
         logger.info("[SCHEDULER] Loading schedules from DB...")
         with get_db() as db:
-            rows = db.execute(
-                "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
-                "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
-                "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
-                "created_at, updated_at, run_at, expiry_at FROM cycle_schedules WHERE is_active = TRUE"
-            ).fetchall()
+            rows = mongo_query.find_rows('cycle_schedules', {'is_active': True}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
 
             cols = [
                 "id",
@@ -375,21 +339,14 @@ class SchedulerService:
                 # the Watch Desk (watch_ticker). Deactivate any lingering rows
                 # instead of arming them.
                 if s["schedule_type"] == "policy":
-                    db.execute(
-                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, "
-                        "last_status = 'retired_policy' WHERE id = %s",
-                        [s["id"]],
-                    )
+                    mongo_store.update_docs('cycle_schedules', {'id': s["id"]}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': 'retired_policy'}})
                     logger.info("[SCHEDULER] Retired policy schedule %s — deactivated.", s["id"])
                     continue
                 # A DateTrigger-based schedule that already ran successfully
                 # must not be re-armed at boot (pre-fix rows may still be
                 # active with a spent trigger — see one-shot semantics).
                 if s["schedule_type"] in ("once", "policy") and s["last_status"] == "ok" and s["last_run_at"]:
-                    db.execute(
-                        "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL WHERE id = %s",
-                        [s["id"]],
-                    )
+                    mongo_store.update_docs('cycle_schedules', {'id': s["id"]}, {'$set': {'is_active': False, 'next_run_at': None}})
                     logger.info(
                         "[SCHEDULER] One-shot schedule %s already ran (%s) — deactivating instead of re-arming.",
                         s["id"], s["last_run_at"],
@@ -416,10 +373,7 @@ class SchedulerService:
         if expiry.tzinfo is not None:
             expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
         if expiry <= now_naive:
-            db.execute(
-                "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, last_status = 'expired' WHERE id = %s",
-                [s["id"]],
-            )
+            mongo_store.update_docs('cycle_schedules', {'id': s["id"]}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': 'expired'}})
             try:
                 if scheduler.get_job(s["id"]):
                     scheduler.remove_job(s["id"])
@@ -539,12 +493,7 @@ class SchedulerService:
         with get_db() as db:
             # NB: must select earliest_window — _add_job_to_scheduler KeyErrors
             # on policy-type schedules without it.
-            row = db.execute(
-                "SELECT id, name, schedule_type, cron_expression, interval_hours, earliest_window, "
-                "collect, \"analyze\", trade, tickers, max_tickers, discovered_tickers, market_hours_only, "
-                "is_active, last_run_at, next_run_at, run_count, last_status, last_error, "
-                "created_at, updated_at, run_at, expiry_at FROM cycle_schedules WHERE id = %s", [schedule_id]
-            ).fetchone()
+            row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
             if not row:
                 if scheduler.get_job(schedule_id):
                     scheduler.remove_job(schedule_id)
@@ -1748,17 +1697,7 @@ class SchedulerService:
                         f"({proven or 0} with positive proven 1y alpha); "
                         f"latest disclosure {latest}"
                     )
-                    db.execute(
-                        """
-                        INSERT INTO discovered_tickers (ticker, source, score, context, discovered_at)
-                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-                        ON CONFLICT (ticker, source) DO UPDATE SET
-                            score = EXCLUDED.score,
-                            context = EXCLUDED.context,
-                            discovered_at = CURRENT_TIMESTAMP
-                        """,
-                        (ticker, source, score, context),
-                    )
+                    mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': source}, {'$set': {'score': score, 'context': context, 'discovered_at': datetime.now(timezone.utc)}}, upsert=True)
                     written += 1
                 return written
 
@@ -1785,9 +1724,7 @@ class SchedulerService:
 
         try:
             with get_db() as db:
-                state_row = db.execute(
-                    "SELECT status FROM pipeline_state WHERE singleton_id = 'current'"
-                ).fetchone()
+                state_row = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
                 if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
                     logger.info(
                         "[SCHEDULER] Market-open cycle skipped: a cycle is already running (%s).",
@@ -1803,10 +1740,7 @@ class SchedulerService:
                     "dynamic_selection_mode": True,
                 }
                 cmd_id = f"sch-open-{uuid.uuid4().hex[:8]}"
-                db.execute(
-                    "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
-                    [cmd_id, "START_CYCLE", json.dumps(payload)],
-                )
+                mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
             logger.info("[SCHEDULER] Market-open trading cycle enqueued (START_CYCLE %s).", cmd_id)
         except Exception as e:
             logger.error("[SCHEDULER] Failed to enqueue market-open cycle: %s", e)

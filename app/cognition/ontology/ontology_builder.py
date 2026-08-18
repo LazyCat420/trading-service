@@ -29,6 +29,7 @@ import numpy as np
 
 from app.cognition.base import BaseCognitionModule
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -115,29 +116,15 @@ class BrainGraph:
 
         try:
             with get_db() as db:
-                existing = db.execute(
-                    "SELECT id FROM ontology_nodes WHERE id = %s", [node_id]
-                ).fetchone()
+                existing = mongo_query.find_row('ontology_nodes', {'id': node_id}, ['id'])
 
                 if existing:
                     if embedding:
-                        db.execute(
-                            "UPDATE ontology_nodes SET node_type=%s, label=%s, embedding=%s, "
-                            "metadata_json=%s, updated_at=%s WHERE id=%s",
-                            [node_type, label, embedding, meta_json, now, node_id],
-                        )
+                        mongo_store.update_docs('ontology_nodes', {'id': node_id}, {'$set': {'node_type': node_type, 'label': label, 'embedding': embedding, 'metadata_json': meta_json, 'updated_at': now}})
                     else:
-                        db.execute(
-                            "UPDATE ontology_nodes SET node_type=%s, label=%s, "
-                            "metadata_json=%s, updated_at=%s WHERE id=%s",
-                            [node_type, label, meta_json, now, node_id],
-                        )
+                        mongo_store.update_docs('ontology_nodes', {'id': node_id}, {'$set': {'node_type': node_type, 'label': label, 'metadata_json': meta_json, 'updated_at': now}})
                 else:
-                    db.execute(
-                        "INSERT INTO ontology_nodes (id, node_type, label, activation, embedding, metadata_json, created_at, updated_at) "
-                        "VALUES (%s, %s, %s, 0.0, %s, %s, %s, %s)",
-                        [node_id, node_type, label, embedding, meta_json, now, now],
-                    )
+                    mongo_store.insert_docs('ontology_nodes', [{'id': node_id, 'node_type': node_type, 'label': label, 'activation': 0.0, 'embedding': embedding, 'metadata_json': meta_json, 'created_at': now, 'updated_at': now}])
         except Exception as e:
             logger.error("[BrainGraph] upsert_node error: %s", e)
 
@@ -185,54 +172,25 @@ class BrainGraph:
                 # Compute weight from embeddings if not provided
                 if weight is None:
                     try:
-                        src_row = db.execute(
-                            "SELECT embedding FROM ontology_nodes WHERE id = %s",
-                            [source_id],
-                        ).fetchone()
-                        tgt_row = db.execute(
-                            "SELECT embedding FROM ontology_nodes WHERE id = %s",
-                            [target_id],
-                        ).fetchone()
+                        src_row = mongo_query.find_row('ontology_nodes', {'id': source_id}, ['embedding'])
+                        tgt_row = mongo_query.find_row('ontology_nodes', {'id': target_id}, ['embedding'])
                         emb_a = src_row[0] if src_row and src_row[0] else None
                         emb_b = tgt_row[0] if tgt_row and tgt_row[0] else None
                         weight = _compute_edge_weight(emb_a, emb_b)
                     except Exception:
                         weight = 0.5
 
-                existing = db.execute(
-                    "SELECT id, weight, evidence_count FROM ontology_edges "
-                    "WHERE source_id = %s AND target_id = %s AND relation = %s",
-                    [source_id, target_id, relation],
-                ).fetchone()
+                existing = mongo_query.find_row('ontology_edges', {'source_id': source_id, 'target_id': target_id, 'relation': relation}, ['id', 'weight', 'evidence_count'])
 
                 if existing:
                     old_weight = existing[1]
                     old_count = existing[2]
                     # Exponential moving average: strengthens repeated edges
                     new_weight = min(1.0, 0.7 * old_weight + 0.3 * weight)
-                    db.execute(
-                        "UPDATE ontology_edges SET weight=%s, evidence_count=%s, "
-                        "metadata_json=%s, updated_at=%s WHERE id=%s",
-                        [new_weight, old_count + 1, meta_json, now, existing[0]],
-                    )
+                    mongo_store.update_docs('ontology_edges', {'id': existing[0]}, {'$set': {'weight': new_weight, 'evidence_count': old_count + 1, 'metadata_json': meta_json, 'updated_at': now}})
                 else:
                     edge_id = str(uuid.uuid4())[:12]
-                    db.execute(
-                        "INSERT INTO ontology_edges "
-                        "(id, source_id, target_id, relation, weight, decay, evidence_count, metadata_json, created_at, updated_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s, %s)",
-                        [
-                            edge_id,
-                            source_id,
-                            target_id,
-                            relation,
-                            weight,
-                            decay,
-                            meta_json,
-                            now,
-                            now,
-                        ],
-                    )
+                    mongo_store.insert_docs('ontology_edges', [{'id': edge_id, 'source_id': source_id, 'target_id': target_id, 'relation': relation, 'weight': weight, 'decay': decay, 'evidence_count': 1, 'metadata_json': meta_json, 'created_at': now, 'updated_at': now}])
         except Exception as e:
             logger.error("[BrainGraph] upsert_edge error: %s", e)
 
@@ -264,9 +222,7 @@ class BrainGraph:
         """
         with get_db() as db:
             # Build adjacency from PostgreSQL — include evidence_count for weight boost
-            all_edges = db.execute(
-                "SELECT source_id, target_id, weight, decay, relation, evidence_count FROM ontology_edges"
-            ).fetchall()
+            all_edges = mongo_query.find_rows('ontology_edges', {}, ['source_id', 'target_id', 'weight', 'decay', 'relation', 'evidence_count'])
 
             # ── Fast Numpy GNNEngine Integration ──────
             from app.cognition.ontology.gnn_engine import GNNEngine
@@ -310,12 +266,7 @@ class BrainGraph:
             # Fetch node details
             result_nodes = []
             for nid, act in top_nodes:
-                row = db.execute(
-                    "SELECT node_type, label, metadata_json, "
-                    "validated_count, contradicted_count, disproven "
-                    "FROM ontology_nodes WHERE id = %s",
-                    [nid],
-                ).fetchone()
+                row = mongo_query.find_row('ontology_nodes', {'id': nid}, ['node_type', 'label', 'metadata_json', 'validated_count', 'contradicted_count', 'disproven'])
                 if row:
                     meta = json.loads(row[2]) if row[2] else {}
                     # Merge lifecycle columns into metadata for Claim nodes
@@ -372,9 +323,7 @@ class BrainGraph:
             seeds = [ticker]
         else:
             with get_db() as db:
-                rows = db.execute(
-                    "SELECT id FROM ontology_nodes WHERE node_type = 'Ticker'"
-                ).fetchall()
+                rows = mongo_query.find_rows('ontology_nodes', {'node_type': 'Ticker'}, ['id'])
             seeds = [r[0] for r in rows]
         if not seeds:
             return {"total_activated": 0, "persisted": 0, "seed_nodes": []}
@@ -393,15 +342,9 @@ class BrainGraph:
                     "WHERE activation > 0.001"
                 )
             else:
-                db.execute(
-                    "UPDATE ontology_nodes SET activation = 0 WHERE activation <> 0"
-                )
+                mongo_store.update_docs('ontology_nodes', {'activation': {'$ne': 0}}, {'$set': {'activation': 0}})
             for nid, act in activated:
-                db.execute(
-                    "UPDATE ontology_nodes SET activation = %s, updated_at = %s "
-                    "WHERE id = %s",
-                    [act, now, nid],
-                )
+                mongo_store.update_docs('ontology_nodes', {'id': nid}, {'$set': {'activation': act, 'updated_at': now}})
 
         stats = dict(result["stats"])
         stats["persisted"] = len(activated)
@@ -489,11 +432,7 @@ class BrainGraph:
         with get_db() as db:
             # ── Core Asset node ───────────────────────────────────────────
             try:
-                row = db.execute(
-                    "SELECT name, sector, industry, market_cap_tier, asset_class "
-                    "FROM ticker_metadata WHERE ticker = %s",
-                    [ticker],
-                ).fetchone()
+                row = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['name', 'sector', 'industry', 'market_cap_tier', 'asset_class'])
             except Exception:
                 row = None
 
@@ -564,12 +503,7 @@ class BrainGraph:
         with get_db() as db:
             # ── Recent news as Source nodes ────────────────────────────────
             try:
-                news_rows = db.execute(
-                    "SELECT id, title, publisher, url FROM news_articles "
-                    "WHERE ticker = %s AND quality_status != 'discarded' "
-                    "ORDER BY published_at DESC LIMIT 5",
-                    [ticker],
-                ).fetchall()
+                news_rows = mongo_query.find_rows('news_articles', {'ticker': ticker, 'quality_status': {'$ne': 'discarded'}}, ['id', 'title', 'publisher', 'url'], sort=[('published_at', -1)], limit=5)
             except Exception:
                 news_rows = []
 
@@ -588,10 +522,7 @@ class BrainGraph:
             # ── Sector peers ──────────────────────────────────────────────
             if row and row[1]:  # sector exists
                 try:
-                    peer_rows = db.execute(
-                        "SELECT ticker FROM ticker_metadata WHERE sector = %s AND ticker != %s LIMIT 5",
-                        [row[1], ticker],
-                    ).fetchall()
+                    peer_rows = mongo_query.find_rows('ticker_metadata', {'sector': row[1], 'ticker': {'$ne': ticker}}, ['ticker'], limit=5)
                 except Exception:
                     peer_rows = []
             else:

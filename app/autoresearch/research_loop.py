@@ -36,6 +36,7 @@ import logging
 from typing import Any, Callable
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +52,7 @@ def fetch_pending_questions(limit: int = 10) -> list[dict[str, Any]]:
     """Un-answered questions, most-re-asked first. Never raises."""
     try:
         with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT id, ticker, question_hash, question, source_agent,
-                       ask_count, status
-                  FROM dossier_question_log
-                 WHERE status IN ('open', 'reasked')
-                 ORDER BY ask_count DESC, last_asked_at DESC
-                 LIMIT %s
-                """,
-                [limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('dossier_question_log', {'status': {'$in': ['open', 'reasked']}}, ['id', 'ticker', 'question_hash', 'question', 'source_agent', 'ask_count', 'status'], sort=[('ask_count', -1), ('last_asked_at', -1)], limit=limit)
             return [
                 {
                     "id": r[0],

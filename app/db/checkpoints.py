@@ -30,6 +30,7 @@ Usage:
 import json
 import logging
 from datetime import datetime, timezone
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -181,13 +182,7 @@ class CheckpointManager:
             from app.db.connection import get_db
 
             with get_db() as db:
-                row = db.execute(
-                    """
-                    SELECT state_blob FROM cycle_checkpoints
-                    WHERE cycle_id = %s AND step_name = %s AND ticker = %s
-                    """,
-                    [cycle_id, step_name, ticker or ""],
-                ).fetchone()
+                row = mongo_query.find_row('cycle_checkpoints', {'cycle_id': cycle_id, 'step_name': step_name, 'ticker': ticker or ""}, ['state_blob'])
 
                 if row and row[0]:
                     blob = row[0]
@@ -210,16 +205,7 @@ class CheckpointManager:
             from app.db.connection import get_db
 
             with get_db() as db:
-                row = db.execute(
-                    """
-                    SELECT step_name, ticker, state_blob, completed_at
-                    FROM cycle_checkpoints
-                    WHERE cycle_id = %s
-                    ORDER BY completed_at DESC
-                    LIMIT 1
-                    """,
-                    [cycle_id],
-                ).fetchone()
+                row = mongo_query.find_row('cycle_checkpoints', {'cycle_id': cycle_id}, ['step_name', 'ticker', 'state_blob', 'completed_at'], sort=[('completed_at', -1)])
 
                 if row:
                     blob = row[2]
@@ -247,15 +233,7 @@ class CheckpointManager:
             from app.db.connection import get_db
 
             with get_db() as db:
-                rows = db.execute(
-                    """
-                    SELECT step_name, ticker, completed_at
-                    FROM cycle_checkpoints
-                    WHERE cycle_id = %s
-                    ORDER BY completed_at ASC
-                    """,
-                    [cycle_id],
-                ).fetchall()
+                rows = mongo_query.find_rows('cycle_checkpoints', {'cycle_id': cycle_id}, ['step_name', 'ticker', 'completed_at'], sort=[('completed_at', 1)])
 
                 return [
                     {
@@ -288,10 +266,7 @@ class CheckpointManager:
                 count = count_row[0] if count_row else 0
 
                 if count > 0:
-                    db.execute(
-                        "DELETE FROM cycle_checkpoints WHERE cycle_id = %s",
-                        [cycle_id],
-                    )
+                    mongo_store.delete_docs('cycle_checkpoints', {'cycle_id': cycle_id})
                     logger.info(
                         "[CHECKPOINT] Cleared %d checkpoints for cycle %s",
                         count,

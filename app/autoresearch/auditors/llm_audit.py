@@ -1,6 +1,7 @@
 import logging
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +75,7 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         history_scores = []
         try:
             with get_db() as db:
-                rows = db.execute(
-                    "SELECT llm_performance_score FROM autoresearch_reports "
-                    "WHERE llm_performance_score IS NOT NULL "
-                    "ORDER BY created_at DESC LIMIT 10"
-                ).fetchall()
+                rows = mongo_query.find_rows('autoresearch_reports', {'llm_performance_score': {'$ne': None}}, ['llm_performance_score'], sort=[('created_at', -1)], limit=10)
             history_scores = [float(r[0]) / 100.0 for r in rows if r[0] is not None]
         except Exception as trend_err:
             logger.debug("[LLM-AUDIT] Trend lookup skipped: %s", trend_err)

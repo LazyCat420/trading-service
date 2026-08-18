@@ -21,6 +21,7 @@ from app.autoresearch.reflection import _reflect, _store_lessons
 from app.autoresearch.directives import _generate_directives, _expire_old_directives
 from app.autoresearch.outcome_tracker import record_cycle_decisions, resolve_pending_outcomes
 from app.autoresearch.janitor import run_janitor
+from app.db import mongo_query, mongo_store
 
 def _update_ar_state(report_id: str, **kwargs):
     updates = []
@@ -47,10 +48,7 @@ def _update_ar_state(report_id: str, **kwargs):
 def get_autoresearch_status() -> dict:
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT cycle_id, status, phase, error, created_at "
-                "FROM autoresearch_reports ORDER BY created_at DESC LIMIT 1"
-            ).fetchone()
+            row = mongo_query.find_row('autoresearch_reports', {}, ['cycle_id', 'status', 'phase', 'error', 'created_at'], sort=[('created_at', -1)])
             if row:
                 return {
                     "running": row[1] == "running",
@@ -108,10 +106,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         # Clean up stale reports stuck in 'running' from previous crashed cycles
         with get_db() as db:
             try:
-                db.execute(
-                    "UPDATE autoresearch_reports SET status = 'stale' "
-                    "WHERE status = 'running' AND created_at < NOW() - INTERVAL '30 minutes'"
-                )
+                mongo_store.update_docs('autoresearch_reports', {'status': 'running', 'created_at': {'$lt': (datetime.now(timezone.utc) - timedelta(minutes=30))}}, {'$set': {'status': 'stale'}})
                 cleaned = db.execute(
                     "SELECT COUNT(*) FROM autoresearch_reports WHERE status = 'stale'"
                 ).fetchone()
@@ -123,10 +118,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             except Exception as cleanup_err:
                 logger.debug("[AUTORESEARCH] Stale cleanup skipped: %s", cleanup_err)
 
-            db.execute(
-                "INSERT INTO autoresearch_reports (id, cycle_id, status, phase) VALUES (%s, %s, 'running', 'starting')",
-                (report_id, cycle_id),
-            )
+            mongo_store.insert_docs('autoresearch_reports', [{'id': report_id, 'cycle_id': cycle_id, 'status': 'running', 'phase': 'starting'}])
 
         # Resolve pending decision outcomes before scoring
         _update_ar_state(report_id, phase="outcome_resolution")
@@ -278,26 +270,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             reflection["anomaly_detail"] = f"Degenerate sub-scores at 0.0: {', '.join(degenerate_subs)}"
 
         with get_db() as db:
-            db.execute(
-                """UPDATE autoresearch_reports SET
-                    data_quality_score= %s, decision_quality_score= %s, llm_performance_score= %s,
-                    overall_score= %s, data_gaps= %s, decision_issues= %s, llm_issues= %s,
-                    performance_metrics= %s, reflection= %s, recovery_stats= %s, status='done'
-                WHERE id=%s""",
-                [
-                    round(data_score, 1),
-                    round(decision_score, 1),
-                    round(llm_score, 1),
-                    round(overall, 1),
-                    json.dumps(data_quality.get("gaps", [])),
-                    json.dumps(decision_quality.get("issues", [])),
-                    json.dumps(llm_analysis.get("issues", [])),
-                    json.dumps(perf_metrics),
-                    json.dumps(reflection),
-                    json.dumps(recovery),
-                    report_id,
-                ],
-            )
+            mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})
 
         try:
             _store_lessons(reflection, cycle_id)
@@ -380,14 +353,14 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         _update_ar_state(report_id, error=str(e), phase="error")
         try:
             with get_db() as db:
-                db.execute("UPDATE autoresearch_reports SET status='error' WHERE id=%s", (report_id,))
+                mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'status': 'error'}})
         except Exception:
             pass
         return {"error": str(e)}
     finally:
         try:
             with get_db() as db:
-                status = db.execute("SELECT status FROM autoresearch_reports WHERE id=%s", [report_id]).fetchone()
+                status = mongo_query.find_row('autoresearch_reports', {'id': report_id}, ['status'])
                 if status and status[0] == 'running':
                     _update_ar_state(report_id, running=False)
         except:

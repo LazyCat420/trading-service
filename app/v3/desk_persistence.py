@@ -13,6 +13,8 @@ import logging
 from typing import Any
 
 from app.v3.shared_desk import SharedDesk
+from app.db import mongo_query, mongo_store
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -88,17 +90,7 @@ def save_desk(desk: SharedDesk) -> None:
 
     try:
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO shared_desk (desk_id, cycle_id, ticker, phase, desk_data, updated_at)
-                VALUES (%s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (desk_id) DO UPDATE SET
-                    phase = EXCLUDED.phase,
-                    desk_data = EXCLUDED.desk_data,
-                    updated_at = NOW()
-                """,
-                [desk.desk_id, desk.cycle_id, desk.ticker, desk.phase.value, desk_data],
-            )
+            mongo_store.update_docs('shared_desk', {'desk_id': desk.desk_id}, {'$set': {'phase': desk.phase.value, 'desk_data': desk_data, 'updated_at': datetime.now(timezone.utc)}, '$setOnInsert': {'cycle_id': desk.cycle_id, 'ticker': desk.ticker}}, upsert=True)
         logger.debug(
             "[DeskPersistence] Saved desk %s/%s (phase=%s)",
             desk.cycle_id[:12] if desk.cycle_id else "?",
@@ -120,10 +112,7 @@ def load_desk(cycle_id: str, ticker: str) -> SharedDesk | None:
 
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT desk_data FROM shared_desk WHERE cycle_id = %s AND ticker = %s",
-                [cycle_id, ticker.upper()],
-            ).fetchone()
+            row = mongo_query.find_row('shared_desk', {'cycle_id': cycle_id, 'ticker': ticker.upper()}, ['desk_data'])
 
         if not row:
             return None
@@ -150,10 +139,7 @@ def list_desks(cycle_id: str) -> list[SharedDesk]:
 
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT desk_data FROM shared_desk WHERE cycle_id = %s ORDER BY created_at",
-                [cycle_id],
-            ).fetchall()
+            rows = mongo_query.find_rows('shared_desk', {'cycle_id': cycle_id}, ['desk_data'], sort=[('created_at', 1)])
 
         desks = []
         for (raw,) in rows:
@@ -196,10 +182,7 @@ def load_latest_desk_for_ticker(ticker: str) -> SharedDesk | None:
 
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT desk_data FROM shared_desk WHERE ticker = %s ORDER BY created_at DESC LIMIT 1",
-                [ticker.upper()],
-            ).fetchone()
+            row = mongo_query.find_row('shared_desk', {'ticker': ticker.upper()}, ['desk_data'], sort=[('created_at', -1)])
 
         if not row:
             return None

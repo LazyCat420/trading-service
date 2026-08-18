@@ -31,6 +31,7 @@ from ..contracts.evidence import EvidencePacket
 
 # Import real queries
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +55,7 @@ async def build_evidence_packet(
 
             # -- 1.1 Structural facts (Prices, fundamentals)
             try:
-                price_row = db.execute(
-                    "SELECT date, close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
+                price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['date', 'close'], sort=[('date', -1)])
                 if price_row:
                     d = normalize_structured_row(
                         "price_history",

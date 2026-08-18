@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone
 from app.db.connection import get_db
 from app.services.memory.repository import MemoryRepository
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -41,24 +42,9 @@ class MemoryStore:
         source_type = observation.get("source_type")
         if cycle_id and ticker and source_type:
             with get_db() as cursor:
-                dup = cursor.execute(
-                    "SELECT id FROM episodic_observations "
-                    "WHERE cycle_id = %s AND ticker = %s AND source_type = %s LIMIT 1",
-                    [cycle_id, ticker, source_type],
-                ).fetchone()
+                dup = mongo_query.find_row('episodic_observations', {'cycle_id': cycle_id, 'ticker': ticker, 'source_type': source_type}, ['id'])
                 if dup:
-                    cursor.execute(
-                        "UPDATE episodic_observations SET observation_text = %s, "
-                        "confidence_at_creation = %s, outcome_label = %s, "
-                        "outcome_score = %s WHERE id = %s",
-                        [
-                            observation["observation_text"],
-                            observation.get("confidence_at_creation"),
-                            observation.get("outcome_label"),
-                            observation.get("outcome_score"),
-                            dup[0],
-                        ],
-                    )
+                    mongo_store.update_docs('episodic_observations', {'id': dup[0]}, {'$set': {'observation_text': observation["observation_text"], 'confidence_at_creation': observation.get("confidence_at_creation"), 'outcome_label': observation.get("outcome_label"), 'outcome_score': observation.get("outcome_score")}})
                     logger.info(
                         "[MemoryStore] Duplicate observation refreshed (%s/%s/%s)",
                         cycle_id, ticker, source_type,
@@ -66,29 +52,7 @@ class MemoryStore:
                     return dup[0]
 
         with get_db() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO episodic_observations (
-                    id, created_at, cycle_id, ticker, sector, source_type, 
-                    observation_text, rationale_excerpt, confidence_at_creation, 
-                    outcome_label, outcome_score, promoted_to_memory
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    obs_id,
-                    created_at,
-                    observation["cycle_id"],
-                    observation.get("ticker"),
-                    observation.get("sector"),
-                    observation["source_type"],
-                    observation["observation_text"],
-                    observation.get("rationale_excerpt"),
-                    observation.get("confidence_at_creation"),
-                    observation.get("outcome_label"),
-                    observation.get("outcome_score"),
-                    observation.get("promoted_to_memory", False),
-                ],
-            )
+            mongo_store.insert_docs('episodic_observations', [{'id': obs_id, 'created_at': created_at, 'cycle_id': observation["cycle_id"], 'ticker': observation.get("ticker"), 'sector': observation.get("sector"), 'source_type': observation["source_type"], 'observation_text': observation["observation_text"], 'rationale_excerpt': observation.get("rationale_excerpt"), 'confidence_at_creation': observation.get("confidence_at_creation"), 'outcome_label': observation.get("outcome_label"), 'outcome_score': observation.get("outcome_score"), 'promoted_to_memory': observation.get("promoted_to_memory", False)}])
         return obs_id
 
     def get_unpromoted_observations(self, limit: int = 100) -> list[dict]:
@@ -96,18 +60,7 @@ class MemoryStore:
         Retrieves recent candidate observations that haven't yet been promoted to canonical memory.
         """
         with get_db() as cursor:
-            rows = cursor.execute(
-                """
-                SELECT id, created_at, cycle_id, ticker, sector, source_type, 
-                       observation_text, rationale_excerpt, confidence_at_creation, 
-                       outcome_label, outcome_score, promoted_to_memory
-                FROM episodic_observations
-                WHERE promoted_to_memory = FALSE
-                ORDER BY created_at ASC
-                LIMIT %s
-                """,
-                [limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('episodic_observations', {'promoted_to_memory': False}, ['id', 'created_at', 'cycle_id', 'ticker', 'sector', 'source_type', 'observation_text', 'rationale_excerpt', 'confidence_at_creation', 'outcome_label', 'outcome_score', 'promoted_to_memory'], sort=[('created_at', 1)], limit=limit)
 
             cols = [d[0] for d in cursor.description]
             return [dict(zip(cols, row)) for row in rows]
@@ -115,10 +68,7 @@ class MemoryStore:
     def mark_observation_promoted(self, obs_id: str):
         """Marks observation as having triggered or supplemented a canonical memory."""
         with get_db() as cursor:
-            cursor.execute(
-                "UPDATE episodic_observations SET promoted_to_memory = TRUE WHERE id = %s",
-                [obs_id],
-            )
+            mongo_store.update_docs('episodic_observations', {'id': obs_id}, {'$set': {'promoted_to_memory': True}})
 
     def delete_promoted_observations_older_than(self, days: int) -> int:
         """Retention: drop observations already distilled into canonical
@@ -151,29 +101,7 @@ class MemoryStore:
         now = datetime.now(timezone.utc).isoformat()
 
         with get_db() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO canonical_memories (
-                    id, type, ticker, sector, summary, tags, confidence_score, 
-                    evidence_count, status, last_used_at, last_validated_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    mem_id,
-                    memory["type"],
-                    memory.get("ticker"),
-                    memory.get("sector"),
-                    memory["summary"],
-                    tags_json,
-                    memory["confidence_score"],
-                    memory.get("evidence_count", 1),
-                    memory.get("status", "tentative"),
-                    memory.get("last_used_at"),
-                    memory.get("last_validated_at"),
-                    memory.get("created_at", now),
-                    memory.get("updated_at", now),
-                ],
-            )
+            mongo_store.insert_docs('canonical_memories', [{'id': mem_id, 'type': memory["type"], 'ticker': memory.get("ticker"), 'sector': memory.get("sector"), 'summary': memory["summary"], 'tags': tags_json, 'confidence_score': memory["confidence_score"], 'evidence_count': memory.get("evidence_count", 1), 'status': memory.get("status", "tentative"), 'last_used_at': memory.get("last_used_at"), 'last_validated_at': memory.get("last_validated_at"), 'created_at': memory.get("created_at", now), 'updated_at': memory.get("updated_at", now)}])
         
         try:
             from app.services.embedding_service import embedder
@@ -212,14 +140,7 @@ class MemoryStore:
 
         now = datetime.now(timezone.utc).isoformat()
         with get_db() as cursor:
-            cursor.execute(
-                """
-                UPDATE canonical_memories 
-                SET confidence_score = %s, status = %s, last_validated_at = %s, updated_at = %s
-                WHERE id = %s
-                """,
-                [new_confidence, new_status, validated_at, now, mem_id],
-            )
+            mongo_store.update_docs('canonical_memories', {'id': mem_id}, {'$set': {'confidence_score': new_confidence, 'status': new_status, 'last_validated_at': validated_at, 'updated_at': now}})
 
     def record_memory_usage(self, mem_id: str):
         """
@@ -227,11 +148,4 @@ class MemoryStore:
         """
         now = datetime.now(timezone.utc).isoformat()
         with get_db() as cursor:
-            cursor.execute(
-                """
-                UPDATE canonical_memories 
-                SET last_used_at = %s
-                WHERE id = %s
-                """,
-                [now, mem_id],
-            )
+            mongo_store.update_docs('canonical_memories', {'id': mem_id}, {'$set': {'last_used_at': now}})

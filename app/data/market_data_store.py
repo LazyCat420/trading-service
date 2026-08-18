@@ -3,6 +3,7 @@ import datetime
 from typing import Optional
 from app.db.connection import get_db
 from app.data.market_snapshot import MarketSnapshot
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -10,74 +11,7 @@ logger = logging.getLogger(__name__)
 def save_snapshot(snapshot: MarketSnapshot):
     """Save a market snapshot to the database."""
     with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO market_snapshots (
-                ticker, fetched_at, data_source, candles_used,
-                price, open, high, low, volume, vwap,
-                rsi_14, macd, macd_signal, macd_hist,
-                bb_upper, bb_lower, bb_pct,
-                sma_20, sma_50, sma_200,
-                atr_14, adx_14, stoch_k, stoch_d,
-                returns_1d, returns_5d, returns_20d,
-                volatility_20d, sharpe_20d, max_drawdown_20d, beta_20d,
-                pe_ratio, forward_pe, eps, market_cap,
-                revenue_growth, profit_margin, debt_to_equity
-            ) VALUES (
-                %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s
-            )
-            ON CONFLICT (ticker, fetched_at) DO NOTHING
-            """,
-            [
-                snapshot.ticker,
-                snapshot.fetched_at,
-                snapshot.data_source,
-                snapshot.candles_used,
-                snapshot.price,
-                snapshot.open,
-                snapshot.high,
-                snapshot.low,
-                snapshot.volume,
-                snapshot.vwap,
-                snapshot.rsi_14,
-                snapshot.macd,
-                snapshot.macd_signal,
-                snapshot.macd_hist,
-                snapshot.bb_upper,
-                snapshot.bb_lower,
-                snapshot.bb_pct,
-                snapshot.sma_20,
-                snapshot.sma_50,
-                snapshot.sma_200,
-                snapshot.atr_14,
-                snapshot.adx_14,
-                snapshot.stoch_k,
-                snapshot.stoch_d,
-                snapshot.returns_1d,
-                snapshot.returns_5d,
-                snapshot.returns_20d,
-                snapshot.volatility_20d,
-                snapshot.sharpe_20d,
-                snapshot.max_drawdown_20d,
-                snapshot.beta_20d,
-                snapshot.pe_ratio,
-                snapshot.forward_pe,
-                snapshot.eps,
-                snapshot.market_cap,
-                snapshot.revenue_growth,
-                snapshot.profit_margin,
-                snapshot.debt_to_equity,
-            ],
-        )
+        mongo_store.upsert_doc('market_snapshots', {'ticker': snapshot.ticker, 'fetched_at': snapshot.fetched_at}, {'ticker': snapshot.ticker, 'fetched_at': snapshot.fetched_at, 'data_source': snapshot.data_source, 'candles_used': snapshot.candles_used, 'price': snapshot.price, 'open': snapshot.open, 'high': snapshot.high, 'low': snapshot.low, 'volume': snapshot.volume, 'vwap': snapshot.vwap, 'rsi_14': snapshot.rsi_14, 'macd': snapshot.macd, 'macd_signal': snapshot.macd_signal, 'macd_hist': snapshot.macd_hist, 'bb_upper': snapshot.bb_upper, 'bb_lower': snapshot.bb_lower, 'bb_pct': snapshot.bb_pct, 'sma_20': snapshot.sma_20, 'sma_50': snapshot.sma_50, 'sma_200': snapshot.sma_200, 'atr_14': snapshot.atr_14, 'adx_14': snapshot.adx_14, 'stoch_k': snapshot.stoch_k, 'stoch_d': snapshot.stoch_d, 'returns_1d': snapshot.returns_1d, 'returns_5d': snapshot.returns_5d, 'returns_20d': snapshot.returns_20d, 'volatility_20d': snapshot.volatility_20d, 'sharpe_20d': snapshot.sharpe_20d, 'max_drawdown_20d': snapshot.max_drawdown_20d, 'beta_20d': snapshot.beta_20d, 'pe_ratio': snapshot.pe_ratio, 'forward_pe': snapshot.forward_pe, 'eps': snapshot.eps, 'market_cap': snapshot.market_cap, 'revenue_growth': snapshot.revenue_growth, 'profit_margin': snapshot.profit_margin, 'debt_to_equity': snapshot.debt_to_equity}, insert_only=True)
         from app.telemetry import send_system_log
         send_system_log(
             subsystem="DB",

@@ -25,6 +25,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -290,11 +291,7 @@ def _was_blocked_by_policy(db, cycle_id: str, ticker: str) -> bool:
     must not suppress the other's evidence.
     """
     try:
-        gate_row = db.execute(
-            "SELECT policy_action FROM trade_results "
-            "WHERE cycle_id = %s AND ticker = %s LIMIT 1",
-            [cycle_id, ticker],
-        ).fetchone()
+        gate_row = mongo_query.find_row('trade_results', {'cycle_id': cycle_id, 'ticker': ticker}, ['policy_action'])
         policy_action = gate_row[0] if gate_row else None
         if policy_action and policy_action.startswith("HOLD_POLICY_BLOCKED"):
             return True
@@ -370,15 +367,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                         mongo_store.handle_mongo_read_failure("v3_agent_telemetry", "outcome_tracker model snapshot", me)
 
                 if not models_by_ticker and not mongo_store.reads_mongo("v3_agent_telemetry"):
-                    m_rows = db.execute(
-                        """
-                        SELECT ticker, agent_name, model_used
-                        FROM v3_agent_telemetry
-                        WHERE cycle_id = %s AND model_used IS NOT NULL
-                        ORDER BY created_at
-                        """,
-                        [cycle_id],
-                    ).fetchall()
+                    m_rows = mongo_query.find_rows('v3_agent_telemetry', {'cycle_id': cycle_id, 'model_used': {'$ne': None}}, ['ticker', 'agent_name', 'model_used'], sort=[('created_at', 1)])
                     for _t, _agent, _model in m_rows:
                         models_by_ticker.setdefault(_t, {})[_agent] = _model
             except Exception as e:  # noqa: BLE001 — provenance, never blocks
@@ -451,10 +440,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                     continue
 
                 # Check if we already recorded this cycle+ticker combo
-                existing = db.execute(
-                    "SELECT id FROM decision_outcomes WHERE cycle_id = %s AND ticker = %s",
-                    [cycle_id, ticker],
-                ).fetchone()
+                existing = mongo_query.find_row('decision_outcomes', {'cycle_id': cycle_id, 'ticker': ticker}, ['id'])
                 if existing:
                     continue
 
@@ -468,15 +454,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 _models = models_by_ticker.get(ticker)
                 models_used = _mjson.dumps(_models) if _models else None
                 now_utc = datetime.now(timezone.utc)
-                db.execute(
-                    """INSERT INTO decision_outcomes
-                    (id, cycle_id, ticker, action, confidence, entry_price,
-                     created_at, skill_versions, overridden_from, models_used)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    [outcome_id, cycle_id, ticker, action, confidence,
-                     round(entry_price, 4), now_utc,
-                     skill_versions, overridden_from, models_used],
-                )
+                mongo_store.insert_docs('decision_outcomes', [{'id': outcome_id, 'cycle_id': cycle_id, 'ticker': ticker, 'action': action, 'confidence': confidence, 'entry_price': round(entry_price, 4), 'created_at': now_utc, 'skill_versions': skill_versions, 'overridden_from': overridden_from, 'models_used': models_used}])
                 try:
                     from app.db import mongo_store
                     if mongo_store.writes_mongo("decision_outcomes"):
@@ -549,17 +527,7 @@ def resolve_pending_outcomes() -> dict:
 
         with get_db() as db:
             if not pending and not mongo_store.reads_mongo("decision_outcomes"):
-                pending = db.execute(
-                    """
-                    SELECT id, ticker, action, entry_price, created_at,
-                           cycle_id, confidence
-                    FROM decision_outcomes
-                    WHERE resolved_at IS NULL AND created_at < %s
-                    ORDER BY created_at ASC
-                    LIMIT 50
-                    """,
-                    [cutoff],
-                ).fetchall()
+                pending = mongo_query.find_rows('decision_outcomes', {'resolved_at': None, 'created_at': {'$lt': cutoff}}, ['id', 'ticker', 'action', 'entry_price', 'created_at', 'cycle_id', 'confidence'], sort=[('created_at', 1)], limit=50)
 
             for (outcome_id, ticker, action, entry_price, created_at,
                  cycle_id, confidence) in pending:
@@ -611,13 +579,7 @@ def resolve_pending_outcomes() -> dict:
 
                     now_res = datetime.now(timezone.utc)
                     if mongo_store.writes_pg("decision_outcomes"):
-                        db.execute(
-                            """UPDATE decision_outcomes
-                            SET exit_price = %s, pnl_pct = %s, outcome = %s, resolved_at = %s
-                            WHERE id = %s""",
-                            [round(exit_price, 4), round(pnl_pct, 2), outcome,
-                             now_res, outcome_id],
-                        )
+                        mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res}})
                     if mongo_store.writes_mongo("decision_outcomes"):
                         mongo_store.upsert_doc(
                             "decision_outcomes",
@@ -667,12 +629,7 @@ def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float
     resolved = 0
     try:
         with get_db() as db:
-            pending = db.execute(
-                "SELECT id, action, entry_price, cycle_id, confidence "
-                "FROM decision_outcomes "
-                "WHERE ticker = %s AND resolved_at IS NULL",
-                [ticker],
-            ).fetchall()
+            pending = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': None}, ['id', 'action', 'entry_price', 'cycle_id', 'confidence'])
             for outcome_id, action, entry_price, cycle_id, confidence in pending:
                 if not entry_price or not exit_price:
                     continue
@@ -686,13 +643,7 @@ def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float
                     # exit at day 2 says nothing about it.
                     continue
                 outcome = _classify(action, pnl_pct)
-                db.execute(
-                    """UPDATE decision_outcomes
-                    SET exit_price = %s, pnl_pct = %s, outcome = %s, resolved_at = %s
-                    WHERE id = %s""",
-                    [round(exit_price, 4), round(pnl_pct, 2), outcome,
-                     datetime.now(timezone.utc), outcome_id],
-                )
+                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': datetime.now(timezone.utc)}})
                 resolved += 1
                 write_outcome_to_memory(
                     cycle_id=cycle_id, ticker=ticker, action=action,

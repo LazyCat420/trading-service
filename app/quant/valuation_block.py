@@ -37,6 +37,7 @@ import logging
 from datetime import date
 
 from app.quant.technical_baseline import _finite, mark_conclusion_stale
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -262,11 +263,7 @@ def _fetch_risk_free() -> float | None:
 
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT value FROM macro_indicators "
-                "WHERE indicator = 'TREASURY_10Y' AND country = 'US' "
-                "ORDER BY date DESC LIMIT 1"
-            ).fetchone()
+            row = mongo_query.find_row('macro_indicators', {'indicator': 'TREASURY_10Y', 'country': 'US'}, ['value'], sort=[('date', -1)])
         val = _finite(row[0]) if row else None
         return val / 100.0 if val is not None else None
     except Exception as e:  # noqa: BLE001 — an assumption, never a blocker

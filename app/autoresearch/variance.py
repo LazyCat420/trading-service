@@ -28,6 +28,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -158,32 +159,7 @@ def persist_variance_run(report: dict, status: str = "done",
     _ensure_table()
     run_id = f"vr-{uuid.uuid4().hex[:12]}"
     with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO variance_runs
-            (id, cycle_id, ticker, runs, completed, actions, majority_action,
-             action_flip_rate, confidence_mean, confidence_stdev,
-             confidence_range, raw, status, error, finished_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            [
-                run_id,
-                report.get("cycle_id"),
-                report.get("ticker"),
-                report.get("runs"),
-                report.get("completed"),
-                json.dumps(report.get("actions") or {}),
-                report.get("majority_action"),
-                report.get("action_flip_rate"),
-                report.get("confidence_mean"),
-                report.get("confidence_stdev"),
-                json.dumps(report.get("confidence_range")),
-                json.dumps(report.get("raw") or []),
-                status,
-                error,
-                datetime.now(timezone.utc),
-            ],
-        )
+        mongo_store.insert_docs('variance_runs', [{'id': run_id, 'cycle_id': report.get("cycle_id"), 'ticker': report.get("ticker"), 'runs': report.get("runs"), 'completed': report.get("completed"), 'actions': json.dumps(report.get("actions") or {}), 'majority_action': report.get("majority_action"), 'action_flip_rate': report.get("action_flip_rate"), 'confidence_mean': report.get("confidence_mean"), 'confidence_stdev': report.get("confidence_stdev"), 'confidence_range': json.dumps(report.get("confidence_range")), 'raw': json.dumps(report.get("raw") or []), 'status': status, 'error': error, 'finished_at': datetime.now(timezone.utc)}])
     return run_id
 
 

@@ -363,14 +363,7 @@ def record_guardrail_firing(
         from app.db.connection import get_db
 
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO v3_guardrail_firings (guardrail, cycle_id, ticker, detail)
-                VALUES (%s, %s, %s, %s)
-                """,
-                [guardrail, cycle_id or None, ticker or None,
-                 json.dumps(detail or {}, default=str)],
-            )
+            mongo_store.insert_docs('v3_guardrail_firings', [{'guardrail': guardrail, 'cycle_id': cycle_id or None, 'ticker': ticker or None, 'detail': json.dumps(detail or {}, default=str)}])
     except Exception as e:
         logger.warning(
             "[V3Telemetry] guardrail firing not recorded (non-fatal): %s", e

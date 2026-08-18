@@ -1,5 +1,6 @@
 import uuid
 import logging
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +24,7 @@ class ProceduralMemoryStore:
         with get_db() as db:
             mem_id = str(uuid.uuid4())
 
-            db.execute(
-                """
-                INSERT INTO procedural_memory
-                (id, ticker, trigger_pattern, procedure, success_count, failure_count, success_rate, created_by_agent)
-                VALUES (%s, %s, %s, %s, 0, 0, 0.0, %s)
-            """,
-                [mem_id, ticker, trigger_pattern, procedure, created_by_agent],
-            )
+            mongo_store.insert_docs('procedural_memory', [{'id': mem_id, 'ticker': ticker, 'trigger_pattern': trigger_pattern, 'procedure': procedure, 'success_count': 0, 'failure_count': 0, 'success_rate': 0.0, 'created_by_agent': created_by_agent}])
 
             logger.info(
                 f"[PROCEDURAL] Wrote new pattern for {ticker}: {trigger_pattern[:50]}..."
@@ -50,10 +44,7 @@ class ProceduralMemoryStore:
         from app.db.connection import get_db
 
         with get_db() as db:
-            existing = db.execute(
-                "SELECT id FROM procedural_memory WHERE ticker = %s AND trigger_pattern = %s LIMIT 1",
-                [ticker, trigger_pattern],
-            ).fetchone()
+            existing = mongo_query.find_row('procedural_memory', {'ticker': ticker, 'trigger_pattern': trigger_pattern}, ['id'])
             if existing:
                 return existing[0]
 

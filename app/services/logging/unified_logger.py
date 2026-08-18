@@ -131,14 +131,7 @@ class DbLoggingHandler(logging.Handler):
             }
             with get_db() as db:
                 # 1. Insert into execution_errors
-                db.execute(
-                    """
-                    INSERT INTO execution_errors (id, cycle_id, phase, ticker, error_type, error_message, stack_trace, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (err_rec["id"], err_rec["cycle_id"], err_rec["phase"], err_rec["ticker"],
-                     err_rec["error_type"], err_rec["error_message"], err_rec["stack_trace"], err_rec["created_at"])
-                )
+                mongo_store.insert_docs('execution_errors', [{'id': err_rec["id"], 'cycle_id': err_rec["cycle_id"], 'phase': err_rec["phase"], 'ticker': err_rec["ticker"], 'error_type': err_rec["error_type"], 'error_message': err_rec["error_message"], 'stack_trace': err_rec["stack_trace"], 'created_at': err_rec["created_at"]}])
                 # 2. Duplicate to cycle_audit_log
                 db.execute(
                     """

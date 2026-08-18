@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 
 from app.config import settings
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -66,24 +67,7 @@ def record_strategy(
         now = datetime.now(timezone.utc)
 
         try:
-            db.execute(
-                """
-                INSERT INTO strategy_performance
-                (id, strategy_candidate_id, decision_outcome_id,
-                 agent_prompt_hash, ticker, signal, entry_price, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    perf_id,
-                    strategy_candidate_id,
-                    decision_outcome_id,
-                    agent_prompt_hash,
-                    ticker,
-                    signal,
-                    entry_price,
-                    now,
-                ],
-            )
+            mongo_store.insert_docs('strategy_performance', [{'id': perf_id, 'strategy_candidate_id': strategy_candidate_id, 'decision_outcome_id': decision_outcome_id, 'agent_prompt_hash': agent_prompt_hash, 'ticker': ticker, 'signal': signal, 'entry_price': entry_price, 'created_at': now}])
 
             logger.info(
                 "[STRATEGY] Recorded %s %s @ $%.2f (prompt=%s, id=%s)",
@@ -117,15 +101,7 @@ def evaluate_pnl(ticker: str, exit_price: float) -> list[dict]:
         resolved = []
 
         try:
-            rows = db.execute(
-                """
-                SELECT id, entry_price, signal, agent_prompt_hash
-                FROM strategy_performance
-                WHERE ticker = %s AND signal = 'BUY'
-                  AND resolved_at IS NULL AND active = TRUE
-                """,
-                [ticker],
-            ).fetchall()
+            rows = mongo_query.find_rows('strategy_performance', {'ticker': ticker, 'signal': 'BUY', 'resolved_at': None, 'active': True}, ['id', 'entry_price', 'signal', 'agent_prompt_hash'])
 
             if not rows:
                 return []
@@ -145,10 +121,7 @@ def evaluate_pnl(ticker: str, exit_price: float) -> list[dict]:
                     win = False
 
                 # Calculate hold days
-                created_row = db.execute(
-                    "SELECT created_at FROM strategy_performance WHERE id = %s",
-                    [perf_id],
-                ).fetchone()
+                created_row = mongo_query.find_row('strategy_performance', {'id': perf_id}, ['created_at'])
                 hold_days = 0
                 if created_row and created_row[0]:
                     try:
@@ -161,15 +134,7 @@ def evaluate_pnl(ticker: str, exit_price: float) -> list[dict]:
                     except Exception:
                         pass
 
-                db.execute(
-                    """
-                    UPDATE strategy_performance
-                    SET exit_price = %s, return_pct = %s, win = %s,
-                        hold_days = %s, resolved_at = %s
-                    WHERE id = %s
-                    """,
-                    [exit_price, round(return_pct, 2), win, hold_days, now, perf_id],
-                )
+                mongo_store.update_docs('strategy_performance', {'id': perf_id}, {'$set': {'exit_price': exit_price, 'return_pct': round(return_pct, 2), 'win': win, 'hold_days': hold_days, 'resolved_at': now}})
 
                 resolved.append(
                     {
@@ -264,10 +229,7 @@ def compute_rankings(limit: int = 50) -> list[dict]:
             rankings = []
             for row in rows:
                 # Look up the prompt name if it's a generated prompt
-                name_row = db.execute(
-                    "SELECT name, lens_type FROM generated_agent_prompts WHERE prompt_hash = %s",
-                    [row[0]],
-                ).fetchone()
+                name_row = mongo_query.find_row('generated_agent_prompts', {'prompt_hash': row[0]}, ['name', 'lens_type'])
 
                 rankings.append(
                     {
@@ -362,14 +324,7 @@ def bench_underperformers() -> list[str]:
             for row in rows:
                 prompt_hash, name, total, win_rate = row[0], row[1], row[2], row[3]
 
-                db.execute(
-                    """
-                    UPDATE generated_agent_prompts
-                    SET active = FALSE, benched_at = %s
-                    WHERE prompt_hash = %s
-                    """,
-                    [now, prompt_hash],
-                )
+                mongo_store.update_docs('generated_agent_prompts', {'prompt_hash': prompt_hash}, {'$set': {'active': False, 'benched_at': now}})
                 benched.append(prompt_hash)
 
                 logger.info(

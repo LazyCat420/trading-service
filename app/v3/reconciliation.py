@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -77,17 +78,10 @@ def reconcile_cycle(cycle_id: str, desks: dict[str, dict] | None = None) -> Reco
 
         with get_db() as db:
             if desks is None:
-                rows = db.execute(
-                    "SELECT ticker, desk_data FROM shared_desk WHERE cycle_id = %s",
-                    [cycle_id],
-                ).fetchall()
+                rows = mongo_query.find_rows('shared_desk', {'cycle_id': cycle_id}, ['ticker', 'desk_data'])
                 desks = {r[0]: (r[1] or {}) for r in rows}
 
-            tr_rows = db.execute(
-                "SELECT ticker, action, decision_provenance FROM trade_results "
-                "WHERE cycle_id = %s",
-                [cycle_id],
-            ).fetchall()
+            tr_rows = mongo_query.find_rows('trade_results', {'cycle_id': cycle_id}, ['ticker', 'action', 'decision_provenance'])
     except Exception as e:  # noqa: BLE001 — an observer must never break a cycle
         result.error = str(e)[:200]
         return result

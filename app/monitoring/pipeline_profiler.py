@@ -23,6 +23,7 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -375,23 +376,7 @@ class PipelineProfiler:
                 """)
 
                 report = self._last_report
-                db.execute(
-                    """
-                    INSERT INTO pipeline_profiler
-                    (id, cycle_id, total_ms, idle_ms, phase_count, bottlenecks_json, phases_json, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                    [
-                        str(uuid.uuid4()),
-                        report.get("cycle_id", ""),
-                        report.get("total_ms", 0),
-                        report.get("idle_ms", 0),
-                        report.get("phase_count", 0),
-                        json.dumps(report.get("bottlenecks", [])),
-                        json.dumps(report.get("phases", [])),
-                        datetime.now(timezone.utc).isoformat(),
-                    ],
-                )
+                mongo_store.insert_docs('pipeline_profiler', [{'id': str(uuid.uuid4()), 'cycle_id': report.get("cycle_id", ""), 'total_ms': report.get("total_ms", 0), 'idle_ms': report.get("idle_ms", 0), 'phase_count': report.get("phase_count", 0), 'bottlenecks_json': json.dumps(report.get("bottlenecks", [])), 'phases_json': json.dumps(report.get("phases", [])), 'created_at': datetime.now(timezone.utc).isoformat()}])
                 logger.info("[PROFILER] Timing data persisted to database")
         except Exception as e:
             logger.warning("[PROFILER] Failed to persist timing data: %s", e)
@@ -403,16 +388,7 @@ class PipelineProfiler:
             import json
 
             with get_db() as db:
-                rows = db.execute(
-                    """
-                    SELECT cycle_id, total_ms, idle_ms, phase_count,
-                           bottlenecks_json, phases_json, created_at
-                    FROM pipeline_profiler
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                """,
-                    [limit],
-                ).fetchall()
+                rows = mongo_query.find_rows('pipeline_profiler', {}, ['cycle_id', 'total_ms', 'idle_ms', 'phase_count', 'bottlenecks_json', 'phases_json', 'created_at'], sort=[('created_at', -1)], limit=limit)
 
                 return [
                     {

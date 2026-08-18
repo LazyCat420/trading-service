@@ -13,6 +13,7 @@ from app.config import settings
 
 from app.utils.text_utils import parse_json_response, sanitize_ascii
 from app.utils.resilience import aresilient_call
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -195,21 +196,7 @@ def get_ticker_outcome_context(ticker: str) -> str:
         from app.db.connection import get_db
 
         with get_db() as db:
-            rows = db.execute(
-                # Only real trade outcomes belong in "prior trade history".
-                # DEGRADED_ARTIFACT rows are pipeline crashes scored as
-                # trades (confidence 0, mean -5.75%); rendering them here put
-                # lines like "DEGRADED_ARTIFACT: entry=$X → exit=$Y (-5.8%)
-                # conf=0" into a prompt that tells the analyst not to repeat
-                # past mistakes. That is teaching the desk from our outages.
-                "SELECT outcome, entry_price, exit_price, pnl_pct, confidence, resolved_at "
-                "FROM decision_outcomes "
-                "WHERE ticker = %s "
-                "  AND outcome IN ('WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', "
-                "                  'HOLD_AVOIDED_DECLINE', 'HOLD_MISS') "
-                "ORDER BY resolved_at DESC NULLS LAST LIMIT 5",
-                [ticker],
-            ).fetchall()
+            rows = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_AVOIDED_DECLINE', 'HOLD_MISS']}}, ['outcome', 'entry_price', 'exit_price', 'pnl_pct', 'confidence', 'resolved_at'], sort=[('resolved_at', -1)], limit=5)
         outcomes = [
             {
                 "outcome": r[0],
@@ -574,7 +561,7 @@ async def run_agent(
                         from app.telemetry.schema import TelemetryEvent
                         from datetime import datetime, timezone
                         publish_event(TelemetryEvent(
-                            ts=datetime.now(timezone.utc).isoformat(),
+                            ts=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             cycle_id=cycle_id,
                             ticker=ticker,
                             kind="pipeline",

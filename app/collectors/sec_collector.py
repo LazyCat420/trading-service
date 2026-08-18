@@ -21,6 +21,7 @@ import math
 import pandas as pd
 from edgar import Company, set_identity
 from app.db.connection import get_db
+from app.db import mongo_store
 
 # SEC EDGAR requires a User-Agent header identifying you
 set_identity("TradingBot analysis@example.com")
@@ -296,39 +297,7 @@ async def collect_fund_holdings(
                 )
 
                 for h in holdings:
-                    db.execute(
-                        """
-                        INSERT INTO sec_13f_holdings
-                        (cik, ticker, name_of_issuer, cusip, filing_quarter,
-                         filing_date, shares, share_type, value_usd,
-                         pct_change, is_new_position, is_exit, source)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (cik, ticker, filing_quarter) DO UPDATE SET
-                        name_of_issuer = EXCLUDED.name_of_issuer,
-                        cusip          = EXCLUDED.cusip,
-                        filing_date    = EXCLUDED.filing_date,
-                        shares         = EXCLUDED.shares,
-                        share_type     = EXCLUDED.share_type,
-                        value_usd      = EXCLUDED.value_usd,
-                        source         = EXCLUDED.source,
-                        collected_at   = CURRENT_TIMESTAMP
-                    """,
-                        [
-                            h["cik"],
-                            h["ticker"],
-                            h["name_of_issuer"],
-                            h["cusip"],
-                            h["filing_quarter"],
-                            h["filing_date"],
-                            h["shares"],
-                            h["share_type"],
-                            h["value"],
-                            None,
-                            False,
-                            False,
-                            "edgar",
-                        ],
-                    )
+                    mongo_store.update_docs('sec_13f_holdings', {'cik': h["cik"], 'ticker': h["ticker"], 'filing_quarter': h["filing_quarter"]}, {'$set': {'name_of_issuer': h["name_of_issuer"], 'cusip': h["cusip"], 'filing_date': h["filing_date"], 'shares': h["shares"], 'share_type': h["share_type"], 'value_usd': h["value"], 'source': "edgar", 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, '$setOnInsert': {'pct_change': None, 'is_new_position': False, 'is_exit': False}}, upsert=True)
                 total += len(holdings)
                 quarters.append(filing_quarter)
 
@@ -429,32 +398,7 @@ async def collect_ticker_institutional(ticker: str) -> int:
                 # source='yfinance' — these rows use a SYNTHESIZED pseudo-CIK and
                 # are NOT real EDGAR 13F filings. Any query counting "funds
                 # holding X" must filter source='edgar' or it double-counts.
-                db.execute(
-                    """
-                    INSERT INTO sec_13f_holdings
-                    (cik, ticker, name_of_issuer, filing_quarter, shares,
-                     value_usd, pct_change, is_new_position, is_exit, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (cik, ticker, filing_quarter) DO UPDATE SET
-                    name_of_issuer = EXCLUDED.name_of_issuer,
-                    shares         = EXCLUDED.shares,
-                    value_usd      = EXCLUDED.value_usd,
-                    source         = EXCLUDED.source,
-                    collected_at   = CURRENT_TIMESTAMP
-                """,
-                    [
-                        pseudo_cik,
-                        ticker,
-                        holder,
-                        quarter,
-                        shares,
-                        value,
-                        None,
-                        False,
-                        False,
-                        "yfinance",
-                    ],
-                )
+                mongo_store.update_docs('sec_13f_holdings', {'cik': pseudo_cik, 'ticker': ticker, 'filing_quarter': quarter}, {'$set': {'name_of_issuer': holder, 'shares': shares, 'value_usd': value, 'source': "yfinance", 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, '$setOnInsert': {'pct_change': None, 'is_new_position': False, 'is_exit': False}}, upsert=True)
                 count += 1
 
             from app.telemetry import send_system_log

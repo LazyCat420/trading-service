@@ -16,6 +16,7 @@ import logging
 import yfinance as yf
 
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,7 @@ def _seed_major_etfs() -> None:
     """Ensure the curated majors exist in ticker_metadata as ETFs."""
     with get_db() as db:
         for t in MAJOR_ETFS:
-            db.execute(
-                """
-                INSERT INTO ticker_metadata (ticker, asset_class, sp500)
-                VALUES (%s, 'etf', FALSE)
-                ON CONFLICT (ticker) DO UPDATE SET asset_class = 'etf'
-                """,
-                [t],
-            )
+            mongo_store.update_docs('ticker_metadata', {'ticker': t}, {'$set': {'asset_class': 'etf'}, '$setOnInsert': {'sp500': False}}, upsert=True)
 
 
 async def collect_etf_metadata(ticker: str) -> bool:
@@ -111,9 +105,7 @@ async def collect_all_etfs() -> dict:
     except Exception as e:
         logger.warning(f"[etf] major-ETF seed failed: {e}")
     with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker FROM ticker_metadata WHERE asset_class = 'etf'"
-        ).fetchall()
+        rows = mongo_query.find_rows('ticker_metadata', {'asset_class': 'etf'}, ['ticker'])
     tickers = [r[0] for r in rows]
     done = 0
     for t in tickers:

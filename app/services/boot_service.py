@@ -20,6 +20,7 @@ Shutdown Sequence (Reverse Order):
 import asyncio
 import logging
 import time
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +106,7 @@ class BootService:
 
             logger.info("[Boot] Restoring evolved stable fixes from stable_harnesses...")
             with get_db() as db:
-                rows = db.execute(
-                    "SELECT target_type, target_name, stable_content FROM stable_harnesses"
-                ).fetchall()
+                rows = mongo_query.find_rows('stable_harnesses', {}, ['target_type', 'target_name', 'stable_content'])
 
                 restored_count = 0
                 for r_type, r_name, content in rows:
@@ -241,18 +240,9 @@ class BootService:
         from app.db.connection import get_db
         try:
             with get_db() as db:
-                db.execute(
-                    "UPDATE pipeline_state SET status = 'error', error = 'Container restarted unexpectedly' "
-                    "WHERE singleton_id = 'current' AND status IN ('running', 'blocked', 'starting')"
-                )
-                db.execute(
-                    "UPDATE v3_system_commands SET status = 'error', error_message = 'Container restarted unexpectedly' "
-                    "WHERE status IN ('running', 'pending')"
-                )
-                db.execute(
-                    "UPDATE system_commands SET status = 'error', error_message = 'Container restarted unexpectedly' "
-                    "WHERE status IN ('running', 'pending')"
-                )
+                mongo_store.update_docs('pipeline_state', {'singleton_id': 'current', 'status': {'$in': ['running', 'blocked', 'starting']}}, {'$set': {'status': 'error', 'error': 'Container restarted unexpectedly'}})
+                mongo_store.update_docs('v3_system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
+                mongo_store.update_docs('system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
         except Exception as e:
             logger.error("[Boot] Failed to reset stuck pipeline state on boot: %s", e)
 

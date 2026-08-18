@@ -8,6 +8,7 @@ Optionally offloads embedding to the remote PC server via RemoteEmbedder.
 import logging
 import uuid
 from datetime import datetime, timezone
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -86,19 +87,7 @@ def add_lesson(text: str, metadata: dict) -> str:
         )
 
         # Store the full lesson in the dedicated table (created at schema init)
-        db.execute(
-            "INSERT INTO evolution_lessons (id, session_id, round, score, status, lesson_text, timestamp) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            [
-                lesson_id,
-                session_id,
-                rnd,
-                score,
-                status,
-                text,
-                metadata.get("timestamp", datetime.now(timezone.utc).isoformat()),
-            ],
-        )
+        mongo_store.insert_docs('evolution_lessons', [{'id': lesson_id, 'session_id': session_id, 'round': rnd, 'score': score, 'status': status, 'lesson_text': text, 'timestamp': metadata.get("timestamp", datetime.now(timezone.utc).isoformat())}])
 
         logger.info(
             "[cognition] Stored evolution lesson %s (session=%s round=%d)",
@@ -148,11 +137,7 @@ def retrieve_lessons(query: str, k: int = 5) -> list[dict]:
         results = []
         for source_id, preview, sim in rows:
             try:
-                lesson_row = db.execute(
-                    "SELECT id, session_id, round, score, status, lesson_text, timestamp "
-                    "FROM evolution_lessons WHERE id = %s",
-                    [source_id],
-                ).fetchone()
+                lesson_row = mongo_query.find_row('evolution_lessons', {'id': source_id}, ['id', 'session_id', 'round', 'score', 'status', 'lesson_text', 'timestamp'])
                 if lesson_row:
                     results.append(
                         {

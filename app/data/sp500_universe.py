@@ -8,6 +8,7 @@ Optionally enriches market cap via yfinance.
 import logging
 
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ async def load_sp500_universe(enrich: bool = False):
 
     with get_db() as db:
         # Reset sp500 flag for all stocks first
-        db.execute("UPDATE ticker_metadata SET sp500 = FALSE")
+        mongo_store.update_docs('ticker_metadata', {}, {'$set': {'sp500': False}})
 
         loaded = 0
         for i, entry in enumerate(SP500_TICKERS):
@@ -46,10 +47,7 @@ async def load_sp500_universe(enrich: bool = False):
             market_cap_tier = None
 
             # Grab existing enrichment data if it exists
-            existing = db.execute(
-                "SELECT market_cap, market_cap_tier FROM ticker_metadata WHERE ticker = %s",
-                (ticker,),
-            ).fetchone()
+            existing = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['market_cap', 'market_cap_tier'])
             if existing:
                 market_cap = existing[0]
                 market_cap_tier = existing[1]

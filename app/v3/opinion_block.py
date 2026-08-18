@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +59,7 @@ def fetch_opinions(ticker: str, limit: int = _MAX_CARDS) -> list[dict]:
         from app.db.connection import get_db
 
         with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT recorded_on, company_name, stance, thesis,
-                       valuation_view, likes, dislikes, price_context,
-                       source_title, confidence
-                FROM shkreli_opinions
-                WHERE ticker = %s
-                ORDER BY recorded_on DESC
-                LIMIT %s
-                """,
-                [ticker, limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('shkreli_opinions', {'ticker': ticker}, ['recorded_on', 'company_name', 'stance', 'thesis', 'valuation_view', 'likes', 'dislikes', 'price_context', 'source_title', 'confidence'], sort=[('recorded_on', -1)], limit=limit)
     except Exception as e:  # noqa: BLE001 — advisory context, never blocks
         logger.debug("[OpinionBlock] %s fetch failed: %s", ticker, e)
         return []

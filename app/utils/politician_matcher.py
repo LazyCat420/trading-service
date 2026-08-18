@@ -2,6 +2,7 @@ import re
 import difflib
 import logging
 from typing import Optional, Dict
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,7 @@ def _load_members_cache(db) -> Dict[str, dict]:
     if _members_cache is not None:
         return _members_cache
     
-    rows = db.execute(
-        "SELECT bioguide_id, full_name, last_name, chamber FROM congress_members"
-    ).fetchall()
+    rows = mongo_query.find_rows('congress_members', {}, ['bioguide_id', 'full_name', 'last_name', 'chamber'])
     
     cache = {}
     for r in rows:

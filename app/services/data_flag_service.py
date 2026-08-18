@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -64,21 +65,12 @@ def flag_item(
             raise ValueError(f"source_table must be one of {valid_tables}")
 
         # Check if already flagged
-        existing = db.execute(
-            "SELECT id FROM data_flags WHERE source_table = %s AND source_id = %s",
-            [source_table, source_id],
-        ).fetchone()
+        existing = mongo_query.find_row('data_flags', {'source_table': source_table, 'source_id': source_id}, ['id'])
         if existing:
             return {"flag_id": existing[0], "already_flagged": True}
 
         # Insert flag
-        db.execute(
-            "INSERT INTO data_flags "
-            "(id, source_table, source_id, ticker, flag_type, reason, "
-            "flagged_by, flagged_at, auto_action) "
-            "VALUES (%s, %s, %s, %s, %s, %s, 'user', %s, 'excluded')",
-            [flag_id, source_table, source_id, ticker, flag_type, reason, now],
-        )
+        mongo_store.insert_docs('data_flags', [{'id': flag_id, 'source_table': source_table, 'source_id': source_id, 'ticker': ticker, 'flag_type': flag_type, 'reason': reason, 'flagged_by': 'user', 'flagged_at': now, 'auto_action': 'excluded'}])
 
         # Update source trust
         trust_info = _update_source_trust(source_table, source_id)
@@ -103,15 +95,12 @@ def flag_item(
 def unflag_item(flag_id: str) -> bool:
     """Remove a flag. Returns True if flag existed."""
     with get_db() as db:
-        row = db.execute(
-            "SELECT id, source_table, source_id FROM data_flags WHERE id = %s",
-            [flag_id],
-        ).fetchone()
+        row = mongo_query.find_row('data_flags', {'id': flag_id}, ['id', 'source_table', 'source_id'])
         if not row:
             return False
 
         source_table, source_id = row[1], row[2]
-        db.execute("DELETE FROM data_flags WHERE id = %s", [flag_id])
+        mongo_store.delete_docs('data_flags', {'id': flag_id})
 
         # Recalculate trust after removing flag
         _update_source_trust(source_table, source_id)
@@ -171,16 +160,9 @@ def get_flagged_source_ids(source_table: str, ticker: str | None = None) -> set:
     with get_db() as db:
         try:
             if ticker:
-                rows = db.execute(
-                    "SELECT source_id FROM data_flags "
-                    "WHERE source_table = %s AND ticker = %s",
-                    [source_table, ticker.upper().strip()],
-                ).fetchall()
+                rows = mongo_query.find_rows('data_flags', {'source_table': source_table, 'ticker': ticker.upper().strip()}, ['source_id'])
             else:
-                rows = db.execute(
-                    "SELECT source_id FROM data_flags WHERE source_table = %s",
-                    [source_table],
-                ).fetchall()
+                rows = mongo_query.find_rows('data_flags', {'source_table': source_table}, ['source_id'])
             return {r[0] for r in rows}
         except Exception:
             return set()
@@ -197,13 +179,7 @@ def get_filtered_report(ticker: str) -> dict:
 
         # Flagged items
         try:
-            rows = db.execute(
-                "SELECT df.source_table, df.source_id, df.flag_type, "
-                "df.reason, df.flagged_at "
-                "FROM data_flags df WHERE df.ticker = %s "
-                "ORDER BY df.flagged_at DESC",
-                [t],
-            ).fetchall()
+            rows = mongo_query.find_rows('data_flags', {'ticker': t}, ['source_table', 'source_id', 'flag_type', 'reason', 'flagged_at'], sort=[('flagged_at', -1)])
             report["flagged_items"] = [
                 {
                     "source_table": r[0],
@@ -219,12 +195,7 @@ def get_filtered_report(ticker: str) -> dict:
 
         # Blocked sources (trust_score < 0.5)
         try:
-            rows = db.execute(
-                "SELECT source_type, source_name, trust_score, "
-                "total_flags, total_items, flag_rate "
-                "FROM source_trust WHERE trust_score < 0.5 "
-                "ORDER BY trust_score ASC"
-            ).fetchall()
+            rows = mongo_query.find_rows('source_trust', {'trust_score': {'$lt': 0.5}}, ['source_type', 'source_name', 'trust_score', 'total_flags', 'total_items', 'flag_rate'], sort=[('trust_score', 1)])
             report["blocked_sources"] = [
                 {
                     "source_type": r[0],
@@ -249,11 +220,7 @@ def get_source_trust(source_type: str, source_name: str) -> float:
     """Get trust score for a source. Returns 1.0 (trusted) if unknown."""
     with get_db() as db:
         try:
-            row = db.execute(
-                "SELECT trust_score FROM source_trust "
-                "WHERE source_type = %s AND source_name = %s",
-                [source_type, source_name],
-            ).fetchone()
+            row = mongo_query.find_row('source_trust', {'source_type': source_type, 'source_name': source_name}, ['trust_score'])
             return row[0] if row else 1.0
         except Exception:
             return 1.0
@@ -263,13 +230,7 @@ def get_untrusted_sources(threshold: float = 0.5) -> list[dict]:
     """Get all sources below trust threshold."""
     with get_db() as db:
         try:
-            rows = db.execute(
-                "SELECT source_type, source_name, trust_score, "
-                "total_flags, total_items, flag_rate "
-                "FROM source_trust WHERE trust_score < %s "
-                "ORDER BY trust_score ASC",
-                [threshold],
-            ).fetchall()
+            rows = mongo_query.find_rows('source_trust', {'trust_score': {'$lt': threshold}}, ['source_type', 'source_name', 'trust_score', 'total_flags', 'total_items', 'flag_rate'], sort=[('trust_score', 1)])
             return [
                 {
                     "source_type": r[0],
@@ -340,22 +301,7 @@ def _update_source_trust(source_table: str, source_id: str) -> dict | None:
             trust_score = min(trust_score, 0.3)
 
         now = datetime.now(timezone.utc)
-        db.execute(
-            "INSERT INTO source_trust "
-            "(source_type, source_name, trust_score, total_flags, "
-            "total_items, flag_rate, last_updated) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (source_type, source_name) DO NOTHING",
-            [
-                source_type,
-                source_name,
-                trust_score,
-                total_flags,
-                total_items,
-                flag_rate,
-                now,
-            ],
-        )
+        mongo_store.upsert_doc('source_trust', {'source_type': source_type, 'source_name': source_name}, {'source_type': source_type, 'source_name': source_name, 'trust_score': trust_score, 'total_flags': total_flags, 'total_items': total_items, 'flag_rate': flag_rate, 'last_updated': now}, insert_only=True)
 
         logger.info(
             "source_trust: %s/%s = %.2f (flags=%d/%d)",

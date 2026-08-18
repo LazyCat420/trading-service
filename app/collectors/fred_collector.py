@@ -20,6 +20,7 @@ import datetime
 from fredapi import Fred
 from app.config import settings
 from app.db.connection import get_db
+from app.db import mongo_store
 
 # Key FRED series IDs
 SERIES = {
@@ -193,13 +194,7 @@ def sync_collect_fred(is_shutting_down) -> int:
     # frozen since 2026-06-20 when the v2 pipeline (its old writer) was removed.
     try:
         with get_db() as db:
-            db.execute(
-                "INSERT INTO data_source_status (source, ticker, last_success, rows_fetched) "
-                "VALUES ('fred', '_global_', CURRENT_TIMESTAMP, %s) "
-                "ON CONFLICT (source, ticker) DO UPDATE SET "
-                "last_success = CURRENT_TIMESTAMP, rows_fetched = EXCLUDED.rows_fetched",
-                [total],
-            )
+            mongo_store.update_docs('data_source_status', {'source': 'fred', 'ticker': '_global_'}, {'$set': {'last_success': datetime.datetime.now(datetime.timezone.utc), 'rows_fetched': total}}, upsert=True)
     except Exception as e:
         logger.warning("[fred] data_source_status stamp failed: %s", e)
 

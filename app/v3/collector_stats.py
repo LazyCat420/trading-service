@@ -12,6 +12,8 @@ cross-contaminate.
 
 import logging
 import threading
+from app.db import mongo_store
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -70,26 +72,9 @@ def _record_source_status(ticker: str, ok: list[str], errored: list[str],
         with get_db() as db:
             for name, succeeded in rows:
                 if succeeded:
-                    db.execute(
-                        """
-                        INSERT INTO data_source_status (source, ticker, last_success, error_msg)
-                        VALUES (%s, %s, NOW(), NULL)
-                        ON CONFLICT (source, ticker)
-                        DO UPDATE SET last_success = NOW(), error_msg = NULL
-                        """,
-                        [name, ticker],
-                    )
+                    mongo_store.update_docs('data_source_status', {'source': name, 'ticker': ticker}, {'$set': {'last_success': datetime.now(timezone.utc), 'error_msg': None}}, upsert=True)
                 else:
-                    db.execute(
-                        """
-                        INSERT INTO data_source_status (source, ticker, last_failure, error_msg)
-                        VALUES (%s, %s, NOW(), %s)
-                        ON CONFLICT (source, ticker)
-                        DO UPDATE SET last_failure = NOW(),
-                                      error_msg = EXCLUDED.error_msg
-                        """,
-                        [name, ticker, "no data or past pre-collect deadline"],
-                    )
+                    mongo_store.update_docs('data_source_status', {'source': name, 'ticker': ticker}, {'$set': {'last_failure': datetime.now(timezone.utc), 'error_msg': "no data or past pre-collect deadline"}}, upsert=True)
     except Exception:  # pragma: no cover - bookkeeping must never break collection
         logger.debug("[collector_stats] data_source_status update failed for %s",
                      ticker, exc_info=True)

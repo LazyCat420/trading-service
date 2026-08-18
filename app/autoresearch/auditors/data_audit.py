@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 from app.autoresearch.utils import _grade, _safe_iso
+from app.db import mongo_query
 
 
 def _age_days(max_date) -> int | None:
@@ -70,14 +71,7 @@ def _audit_price_history(db, ticker: str) -> dict:
             [ticker],
         ).fetchone()[0]
 
-        latest = db.execute(
-            """
-            SELECT date, open, high, low, close, volume
-            FROM price_history WHERE ticker = %s
-            ORDER BY date DESC LIMIT 1
-            """,
-            [ticker],
-        ).fetchone()
+        latest = mongo_query.find_row('price_history', {'ticker': ticker}, ['date', 'open', 'high', 'low', 'close', 'volume'], sort=[('date', -1)])
 
         null_pct = (null_close + zero_vol + null_ohlc) / (rows * 3) if rows else 1
         gap_penalty = min(gaps * 0.05, 0.3)

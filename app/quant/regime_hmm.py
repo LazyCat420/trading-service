@@ -48,6 +48,8 @@ from scipy.special import logsumexp
 
 from app.db.connection import get_db
 from app.quant.returns import dominant_source_sql
+from app.db import mongo_store
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -546,45 +548,7 @@ def persist_posterior(result: dict) -> bool:
         bic = bic_map.get(result.get("n_states"))
         ensure_posterior_table()
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO regime_hmm_posteriors (
-                    ticker, as_of, regime, confidence, n_states,
-                    state_probabilities, mean_daily_return_pct,
-                    annualized_vol_pct, expected_duration_days,
-                    state_stats, transition_matrix, observations,
-                    stale_sessions, bic
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-                ON CONFLICT (ticker, as_of) DO UPDATE SET
-                    regime = EXCLUDED.regime,
-                    confidence = EXCLUDED.confidence,
-                    n_states = EXCLUDED.n_states,
-                    state_probabilities = EXCLUDED.state_probabilities,
-                    mean_daily_return_pct = EXCLUDED.mean_daily_return_pct,
-                    annualized_vol_pct = EXCLUDED.annualized_vol_pct,
-                    expected_duration_days = EXCLUDED.expected_duration_days,
-                    state_stats = EXCLUDED.state_stats,
-                    transition_matrix = EXCLUDED.transition_matrix,
-                    observations = EXCLUDED.observations,
-                    stale_sessions = EXCLUDED.stale_sessions,
-                    bic = EXCLUDED.bic,
-                    computed_at = CURRENT_TIMESTAMP
-                """,
-                [
-                    result["ticker"], result["as_of"], result["regime"],
-                    result.get("confidence"), result.get("n_states"),
-                    json.dumps(result.get("state_probabilities") or {}),
-                    stats.get("mean_daily_return_pct"),
-                    stats.get("annualized_vol_pct"),
-                    stats.get("expected_duration_days"),
-                    json.dumps(result.get("state_stats") or {}),
-                    json.dumps(result.get("transition_matrix") or []),
-                    result.get("observations"), result.get("stale_sessions"),
-                    bic,
-                ],
-            )
+            mongo_store.update_docs('regime_hmm_posteriors', {'ticker': result["ticker"], 'as_of': result["as_of"]}, {'$set': {'regime': result["regime"], 'confidence': result.get("confidence"), 'n_states': result.get("n_states"), 'state_probabilities': json.dumps(result.get("state_probabilities") or {}), 'mean_daily_return_pct': stats.get("mean_daily_return_pct"), 'annualized_vol_pct': stats.get("annualized_vol_pct"), 'expected_duration_days': stats.get("expected_duration_days"), 'state_stats': json.dumps(result.get("state_stats") or {}), 'transition_matrix': json.dumps(result.get("transition_matrix") or []), 'observations': result.get("observations"), 'stale_sessions': result.get("stale_sessions"), 'bic': bic, 'computed_at': datetime.now(timezone.utc)}}, upsert=True)
         return True
     except Exception as e:
         logger.warning("[RegimeHMM] posterior persist failed (non-fatal): %s", e)

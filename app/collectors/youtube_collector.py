@@ -16,6 +16,7 @@ from app.processors.ticker_extractor import (
     FALSE_TICKERS as SHARED_FALSE_TICKERS,
 )
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -58,14 +59,7 @@ def _ensure_seed_channels():
                 "SELECT 1 FROM youtube_channels WHERE channel_handle = %s", [handle]
             ).fetchone()
             if not result:
-                db.execute(
-                    """
-                    INSERT INTO youtube_channels
-                    (channel_handle, display_name, added_by, is_active)
-                    VALUES (%s, %s, 'system', TRUE)
-                """,
-                    [handle, name],
-                )
+                mongo_store.insert_docs('youtube_channels', [{'channel_handle': handle, 'display_name': name, 'added_by': 'system', 'is_active': True}])
                 added += 1
         if added:
             logger.info(
@@ -88,31 +82,14 @@ def _log_discovered_channel(
 ):
     """Log a channel found via search to discovered_channels for review."""
     with get_db() as db:
-        existing = db.execute(
-            "SELECT discovery_count, avg_view_count FROM discovered_channels WHERE channel_handle = %s",
-            [channel_handle],
-        ).fetchone()
+        existing = mongo_query.find_row('discovered_channels', {'channel_handle': channel_handle}, ['discovery_count', 'avg_view_count'])
 
         if existing:
             new_count = existing[0] + 1
             new_avg = ((existing[1] or 0) * existing[0] + view_count) / new_count
-            db.execute(
-                """
-                UPDATE discovered_channels
-                SET discovery_count = %s, avg_view_count = %s, last_seen = CURRENT_TIMESTAMP
-                WHERE channel_handle = %s
-            """,
-                [new_count, new_avg, channel_handle],
-            )
+            mongo_store.update_docs('discovered_channels', {'channel_handle': channel_handle}, {'$set': {'discovery_count': new_count, 'avg_view_count': new_avg, 'last_seen': datetime.datetime.now(datetime.timezone.utc)}})
         else:
-            db.execute(
-                """
-                INSERT INTO discovered_channels
-                (channel_handle, display_name, discovery_count, avg_view_count, status)
-                VALUES (%s, %s, 1, %s, 'pending')
-            """,
-                [channel_handle, display_name, view_count],
-            )
+            mongo_store.insert_docs('discovered_channels', [{'channel_handle': channel_handle, 'display_name': display_name, 'discovery_count': 1, 'avg_view_count': view_count, 'status': 'pending'}])
 
 
 async def collect_channel(
@@ -305,9 +282,7 @@ async def _process_video(
     ticker_suffix = primary_ticker.upper() if primary_ticker else "NONE"
     row_video_id = f"{video_id}_{ticker_suffix}"
 
-    existing = db.execute(
-        "SELECT video_id FROM youtube_transcripts WHERE video_id = %s", [row_video_id]
-    ).fetchone()
+    existing = mongo_query.find_row('youtube_transcripts', {'video_id': row_video_id}, ['video_id'])
     if existing:
         return "skipped_in_db"
 
@@ -334,43 +309,13 @@ async def _process_video(
             insert_only=True,
         )
     if mongo_store.writes_pg("youtube_transcripts"):
-        db.execute(
-            """
-            INSERT INTO youtube_transcripts
-            (video_id, ticker, title, channel, raw_transcript,
-             thumbnail_url, published_at, duration_secs, collected_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (video_id) DO NOTHING
-        """,
-            [
-                row_video_id,
-                primary_ticker,
-                title,
-                channel_name,
-                raw_transcript,
-                thumbnail_url,
-                published_at,
-                duration,
-            ],
-        )
+        mongo_store.upsert_doc('youtube_transcripts', {'video_id': row_video_id}, {'video_id': row_video_id, 'ticker': primary_ticker, 'title': title, 'channel': channel_name, 'raw_transcript': raw_transcript, 'thumbnail_url': thumbnail_url, 'published_at': published_at, 'duration_secs': duration, 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, insert_only=True)
 
     tickers = await _extract_tickers(raw_transcript[:5000])
     for t in tickers:
         if t in SHARED_FALSE_TICKERS or len(t) < 2:
             continue
-        db.execute(
-            """
-            INSERT INTO discovered_tickers
-            (ticker, source, context, score, discovered_at)
-            VALUES (%s, 'youtube', %s, 0.80, %s)
-            ON CONFLICT (ticker, source) DO NOTHING
-        """,
-            [
-                t,
-                f"{channel}: {title[:60]}",
-                published_at or datetime.datetime.now(datetime.UTC),
-            ],
-        )
+        mongo_store.upsert_doc('discovered_tickers', {'ticker': t, 'source': 'youtube'}, {'ticker': t, 'source': 'youtube', 'context': f"{channel}: {title[:60]}", 'score': 0.80, 'discovered_at': published_at or datetime.datetime.now(datetime.UTC)}, insert_only=True)
 
     logger.info(
         f"[youtube]   stored: '{title[:80]}' ({len(raw_transcript)} chars, ticker={primary_ticker})"
@@ -491,9 +436,7 @@ async def collect_all(
     with get_db() as db:
         year = datetime.datetime.now().year
         # Fetch active channels (both handle and display_name)
-        channels = db.execute(
-            "SELECT channel_handle, display_name FROM youtube_channels WHERE is_active = TRUE"
-        ).fetchall()
+        channels = mongo_query.find_rows('youtube_channels', {'is_active': True}, ['channel_handle', 'display_name'])
 
     total = 0
 

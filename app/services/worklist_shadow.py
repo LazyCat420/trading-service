@@ -40,6 +40,7 @@ import logging
 from typing import Any, Sequence
 
 from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -126,22 +127,7 @@ def record(
 
         _ensure_table()
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO worklist_shadow_runs (
-                    cycle_id, bot_id, worker_id, budget,
-                    live_tickers, free_tickers, queue_tickers, queue_depth,
-                    overlap_live_free, overlap_live_queue, queue_empty
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    cycle_id, bot_id, worker_id, budget,
-                    json.dumps(live), json.dumps(free), json.dumps(queue),
-                    json.dumps(depth),
-                    summary["overlap_live_free"], summary["overlap_live_queue"],
-                    summary["queue_empty"],
-                ],
-            )
+            mongo_store.insert_docs('worklist_shadow_runs', [{'cycle_id': cycle_id, 'bot_id': bot_id, 'worker_id': worker_id, 'budget': budget, 'live_tickers': json.dumps(live), 'free_tickers': json.dumps(free), 'queue_tickers': json.dumps(queue), 'queue_depth': json.dumps(depth), 'overlap_live_free': summary["overlap_live_free"], 'overlap_live_queue': summary["overlap_live_queue"], 'queue_empty': summary["queue_empty"]}])
 
         logger.info(
             "[worklist-shadow] %s: budget=%d live∩free=%d/%d live∩queue=%d/%d "

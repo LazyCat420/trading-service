@@ -17,6 +17,7 @@ Functions:
 import numpy as np
 import pandas as pd
 from app.db.connection import get_db
+from app.db import mongo_query
 
 
 def _cursor_to_df(cursor) -> pd.DataFrame:
@@ -255,25 +256,13 @@ def get_risk_reward(
     with get_db() as db:
         # Get current price if entry not specified
         if entry_price is None:
-            row = db.execute(
-                """
-                SELECT close FROM price_history
-                WHERE ticker = %s ORDER BY date DESC LIMIT 1
-            """,
-                [ticker],
-            ).fetchone()
+            row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
             if not row:
                 return {"ticker": ticker, "error": "no price data"}
             entry_price = row[0]
 
         # Get ATR for dynamic stop
-        atr_row = db.execute(
-            """
-            SELECT atr_14, support, resistance FROM technicals
-            WHERE ticker = %s ORDER BY date DESC LIMIT 1
-        """,
-            [ticker],
-        ).fetchone()
+        atr_row = mongo_query.find_row('technicals', {'ticker': ticker}, ['atr_14', 'support', 'resistance'], sort=[('date', -1)])
 
         if atr_row and atr_row[0]:
             atr = atr_row[0]
@@ -346,13 +335,7 @@ def get_beta(ticker: str, benchmark: str = "SPY", days: int = 252) -> dict:
 
         if stock_df.empty or bench_df.empty:
             # Fallback: use fundamentals table beta
-            fund_row = db.execute(
-                """
-                SELECT beta FROM fundamentals
-                WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1
-            """,
-                [ticker],
-            ).fetchone()
+            fund_row = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['beta'], sort=[('snapshot_date', -1)])
             if fund_row and fund_row[0]:
                 return {
                     "ticker": ticker,
@@ -477,13 +460,7 @@ def get_ticker_score(ticker: str) -> dict:
         scores = {}
 
         # -- Technical momentum (25%) --
-        tech = db.execute(
-            """
-            SELECT rsi_14, macd_hist, stoch_k, adx_14
-            FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1
-        """,
-            [ticker],
-        ).fetchone()
+        tech = mongo_query.find_row('technicals', {'ticker': ticker}, ['rsi_14', 'macd_hist', 'stoch_k', 'adx_14'], sort=[('date', -1)])
 
         if tech:
             rsi, macd_h, stoch_k, adx = tech
@@ -498,13 +475,7 @@ def get_ticker_score(ticker: str) -> dict:
             scores["technical"] = 50
 
         # -- Valuation (20%) --
-        fund = db.execute(
-            """
-            SELECT pe_ratio, forward_pe, price_to_book, revenue_growth
-            FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1
-        """,
-            [ticker],
-        ).fetchone()
+        fund = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['pe_ratio', 'forward_pe', 'price_to_book', 'revenue_growth'], sort=[('snapshot_date', -1)])
 
         if fund:
             pe, fwd_pe, ptb, rev_growth = fund

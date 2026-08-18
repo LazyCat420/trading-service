@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from app.db.connection import get_db
 from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,9 @@ async def _get_gainers_losers() -> str:
     portfolio_tickers = []
     try:
         with get_db() as db:
-            wl_rows = db.execute("SELECT ticker FROM watchlist WHERE status = 'active'").fetchall()
+            wl_rows = mongo_query.find_rows('watchlist', {'status': 'active'}, ['ticker'])
             watchlist_tickers = [r[0] for r in wl_rows if r[0]]
-            pos_rows = db.execute("SELECT ticker FROM positions").fetchall()
+            pos_rows = mongo_query.find_rows('positions', {}, ['ticker'])
             portfolio_tickers = [r[0] for r in pos_rows if r[0]]
     except Exception as e:
         logger.error(f"[FLASH] Failed to fetch watchlist/portfolio: {e}")
@@ -230,13 +231,7 @@ async def generate_flash_briefing(report_type: str | None = None) -> str | None:
     # Save to DB
     try:
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO flash_briefings (report_content, source_urls, article_count)
-                VALUES (%s, %s, %s)
-                """,
-                [response, source_urls[:10], len(rows)],
-            )
+            mongo_store.insert_docs('flash_briefings', [{'report_content': response, 'source_urls': source_urls[:10], 'article_count': len(rows)}])
         logger.info("[FLASH] Saved flash briefing (%d articles summarized)", len(rows))
     except Exception as e:
         logger.error("[FLASH] Failed to save: %s", e)
@@ -249,15 +244,7 @@ def get_recent_flash_briefings(limit: int = 10) -> list[dict]:
     from app.utils.tz import utc_iso
     try:
         with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT id, created_at, report_content, source_urls, article_count
-                FROM flash_briefings
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                [limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('flash_briefings', {}, ['id', 'created_at', 'report_content', 'source_urls', 'article_count'], sort=[('created_at', -1)], limit=limit)
 
             return [
                 {

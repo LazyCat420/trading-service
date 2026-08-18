@@ -33,6 +33,7 @@ import re
 from app.db.connection import get_db
 import cloudscraper
 import asyncio
+from app.db import mongo_store
 
 BASE_URL = "https://www.capitoltrades.com/trades"
 
@@ -164,30 +165,7 @@ async def collect_trades(
                 from app.utils.politician_matcher import resolve_bioguide_id
                 bio_id = resolve_bioguide_id(db, trade["politician"])
 
-                db.execute(
-                    """
-                    INSERT INTO congress_trades
-                    (id, politician, party, chamber, state, ticker,
-                     transaction_type, amount_range, trade_date,
-                     disclosure_date, days_to_disclose, bioguide_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-                """,
-                    [
-                        trade_id,
-                        trade["politician"],
-                        trade["party"],
-                        trade["chamber"],
-                        trade["state"],
-                        trade["ticker"],
-                        trade["transaction_type"],
-                        trade["amount_range"],
-                        trade["trade_date"],
-                        trade["disclosure_date"],
-                        trade["days_to_disclose"],
-                        bio_id,
-                    ],
-                )
+                mongo_store.upsert_doc('congress_trades', {'id': trade_id}, {'id': trade_id, 'politician': trade["politician"], 'party': trade["party"], 'chamber': trade["chamber"], 'state': trade["state"], 'ticker': trade["ticker"], 'transaction_type': trade["transaction_type"], 'amount_range': trade["amount_range"], 'trade_date': trade["trade_date"], 'disclosure_date': trade["disclosure_date"], 'days_to_disclose': trade["days_to_disclose"], 'bioguide_id': bio_id}, insert_only=True)
                 total_count += 1
                 page_count += 1
 

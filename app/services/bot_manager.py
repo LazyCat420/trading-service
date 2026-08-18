@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from app.config import settings
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +64,7 @@ def get_active_bot_id() -> str:
 
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT bot_id FROM bots WHERE is_active = TRUE ORDER BY created_at ASC"
-            ).fetchall()
+            rows = mongo_query.find_rows('bots', {'is_active': True}, ['bot_id'], sort=[('created_at', 1)])
             if rows:
                 _active_bot_id = rows[0][0]
                 _active_bot_id_ts = now
@@ -78,10 +77,7 @@ def get_active_bot_id() -> str:
                         _active_bot_id,
                         [r[0] for r in rows[1:]],
                     )
-                    db.execute(
-                        "UPDATE bots SET is_active = FALSE WHERE is_active = TRUE AND bot_id != %s",
-                        [_active_bot_id],
-                    )
+                    mongo_store.update_docs('bots', {'is_active': True, 'bot_id': {'$ne': _active_bot_id}}, {'$set': {'is_active': False}})
                 logger.info(
                     "[TRACE][BOT_MANAGER] get_active_bot_id() from DB: %s",
                     _active_bot_id,
@@ -120,9 +116,7 @@ def get_bot_starting_cash(bot_id: str = "") -> float:
     bid = bot_id or get_active_bot_id()
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT starting_cash FROM bots WHERE bot_id = %s", [bid]
-            ).fetchone()
+            row = mongo_query.find_row('bots', {'bot_id': bid}, ['starting_cash'])
             if row and row[0] is not None:
                 return float(row[0])
     except Exception as e:
@@ -138,9 +132,7 @@ def get_bot_description(bot_id: str = "") -> str:
     bid = bot_id or get_active_bot_id()
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT description FROM bots WHERE bot_id = %s", [bid]
-            ).fetchone()
+            row = mongo_query.find_row('bots', {'bot_id': bid}, ['description'])
             if row and row[0]:
                 return str(row[0]).strip()
     except Exception as e:
@@ -169,8 +161,8 @@ def set_active_bot(bot_id: str) -> None:
             raise ValueError(f"Bot profile '{bot_id}' does not exist")
 
         # Deactivate all, activate target
-        db.execute("UPDATE bots SET is_active = FALSE WHERE is_active = TRUE")
-        db.execute("UPDATE bots SET is_active = TRUE WHERE bot_id = %s", [bot_id])
+        mongo_store.update_docs('bots', {'is_active': True}, {'$set': {'is_active': False}})
+        mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'is_active': True}})
     _active_bot_id = bot_id
     _active_bot_id_ts = time.monotonic()
     logger.info("[BOT_MANAGER] Active bot switched to: %s", bot_id)
@@ -206,12 +198,7 @@ def is_cycle_running() -> bool:
 def list_bot_profiles() -> list[dict]:
     """Return all bot profiles with summary stats."""
     with get_db() as db:
-        rows = db.execute(
-            "SELECT bot_id, display_name, model_name, status, "
-            "cash_balance, starting_cash, total_pnl, win_rate, "
-            "total_trades, is_active, created_at, last_run_at, description "
-            "FROM bots ORDER BY is_active DESC, created_at ASC"
-        ).fetchall()
+        rows = mongo_query.find_rows('bots', {}, ['bot_id', 'display_name', 'model_name', 'status', 'cash_balance', 'starting_cash', 'total_pnl', 'win_rate', 'total_trades', 'is_active', 'created_at', 'last_run_at', 'description'], sort=[('is_active', -1), ('created_at', 1)])
     return [
         {
             "bot_id": r[0],
@@ -258,24 +245,7 @@ def create_bot_profile(
 
         now = datetime.now(timezone.utc)
         insert_start = time.perf_counter()
-        db.execute(
-            """
-            INSERT INTO bots (
-                bot_id, display_name, model_name, status,
-                cash_balance, starting_cash, total_pnl, win_rate,
-                total_trades, is_active, created_at, description
-            ) VALUES (%s, %s, %s, 'idle', %s, %s, 0.0, 0.0, 0, FALSE, %s, %s)
-            """,
-            [
-                bot_id,
-                display_name,
-                settings.ACTIVE_MODEL,
-                starting_cash,
-                starting_cash,
-                now,
-                description,
-            ],
-        )
+        mongo_store.insert_docs('bots', [{'bot_id': bot_id, 'display_name': display_name, 'model_name': settings.ACTIVE_MODEL, 'status': 'idle', 'cash_balance': starting_cash, 'starting_cash': starting_cash, 'total_pnl': 0.0, 'win_rate': 0.0, 'total_trades': 0, 'is_active': False, 'created_at': now, 'description': description}])
         insert_end = time.perf_counter()
 
     total_end = time.perf_counter()
@@ -310,11 +280,7 @@ def update_bot_profile(
     starting_cash can only be updated if the bot has 0 trades.
     """
     with get_db() as db:
-        row = db.execute(
-            "SELECT display_name, description, starting_cash, total_trades "
-            "FROM bots WHERE bot_id = %s",
-            [bot_id],
-        ).fetchone()
+        row = mongo_query.find_row('bots', {'bot_id': bot_id}, ['display_name', 'description', 'starting_cash', 'total_trades'])
         if not row:
             raise ValueError(f"Bot profile '{bot_id}' does not exist")
 
@@ -330,18 +296,11 @@ def update_bot_profile(
         new_desc = description if description is not None else current_desc
         new_cash = starting_cash if starting_cash is not None else current_cash
 
-        db.execute(
-            "UPDATE bots SET display_name = %s, description = %s, starting_cash = %s "
-            "WHERE bot_id = %s",
-            [new_name, new_desc, new_cash, bot_id],
-        )
+        mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'display_name': new_name, 'description': new_desc, 'starting_cash': new_cash}})
 
         # If starting_cash changed and no trades, also update cash_balance
         if starting_cash is not None:
-            db.execute(
-                "UPDATE bots SET cash_balance = %s WHERE bot_id = %s",
-                [new_cash, bot_id],
-            )
+            mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'cash_balance': new_cash}})
 
     logger.info("[BOT_MANAGER] Updated profile: %s", bot_id)
     return {"bot_id": bot_id, "display_name": new_name, "updated": True}
@@ -359,9 +318,7 @@ def reset_bot_profile(bot_id: str) -> dict:
         raise ValueError("Cannot reset while a pipeline cycle is running")
 
     with get_db() as db:
-        row = db.execute(
-            "SELECT starting_cash FROM bots WHERE bot_id = %s", [bot_id]
-        ).fetchone()
+        row = mongo_query.find_row('bots', {'bot_id': bot_id}, ['starting_cash'])
         if not row:
             raise ValueError(f"Bot profile '{bot_id}' does not exist")
 
@@ -387,18 +344,7 @@ def reset_bot_profile(bot_id: str) -> dict:
                 cleared[table] = f"error: {e}"
 
         # Reset bot stats
-        db.execute(
-            """
-            UPDATE bots SET
-                cash_balance = %s,
-                total_pnl = 0.0,
-                total_trades = 0,
-                win_rate = 0.0,
-                status = 'idle'
-            WHERE bot_id = %s
-            """,
-            [starting_cash, bot_id],
-        )
+        mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'cash_balance': starting_cash, 'total_pnl': 0.0, 'total_trades': 0, 'win_rate': 0.0, 'status': 'idle'}})
 
     logger.info(
         "[BOT_MANAGER] Reset profile '%s' to $%.2f",
@@ -464,9 +410,7 @@ def import_positions(
     )
 
     with get_db() as db:
-        row = db.execute(
-            "SELECT starting_cash FROM bots WHERE bot_id = %s", [bot_id]
-        ).fetchone()
+        row = mongo_query.find_row('bots', {'bot_id': bot_id}, ['starting_cash'])
         if not row:
             raise ValueError(f"Bot profile '{bot_id}' does not exist")
 
@@ -490,11 +434,7 @@ def import_positions(
                 stop_pct = p.get("stop_loss_pct")
                 stop_pct = float(stop_pct) if stop_pct else _default_stop_pct(ticker)
 
-                existing = db.execute(
-                    "SELECT id, qty, avg_entry_price FROM positions "
-                    "WHERE bot_id = %s AND ticker = %s",
-                    [bot_id, ticker],
-                ).fetchone()
+                existing = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty', 'avg_entry_price'])
 
                 if existing:
                     old_id, old_qty, old_price = existing
@@ -502,74 +442,23 @@ def import_positions(
                     new_avg = (
                         float(old_qty) * float(old_price) + qty * price
                     ) / new_qty
-                    db.execute(
-                        "UPDATE positions SET qty = %s, avg_entry_price = %s WHERE id = %s",
-                        [new_qty, round(new_avg, 6), old_id],
-                    )
+                    mongo_store.update_docs('positions', {'id': old_id}, {'$set': {'qty': new_qty, 'avg_entry_price': round(new_avg, 6)}})
                     merged.append(ticker)
                 else:
-                    db.execute(
-                        """
-                        INSERT INTO positions
-                          (id, bot_id, ticker, qty, avg_entry_price, stop_loss_pct,
-                           stop_source, exit_style, opened_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, 'imported',
-                                'reanalyze_on_breach', %s)
-                        """,
-                        [
-                            str(uuid.uuid4()), bot_id, ticker, qty, price,
-                            stop_pct, opened_at,
-                        ],
-                    )
+                    mongo_store.insert_docs('positions', [{'id': str(uuid.uuid4()), 'bot_id': bot_id, 'ticker': ticker, 'qty': qty, 'avg_entry_price': price, 'stop_loss_pct': stop_pct, 'stop_source': 'imported', 'exit_style': 'reanalyze_on_breach', 'opened_at': opened_at}])
                     imported.append(ticker)
 
                 # Ledger: synthetic BUY fill + the open lot it created.
                 order_id = str(uuid.uuid4())
                 fill_id = str(uuid.uuid4())
-                db.execute(
-                    """
-                    INSERT INTO orders
-                      (id, bot_id, ticker, side, qty, price, signal, created_at, filled_at)
-                    VALUES (%s, %s, %s, 'BUY', %s, %s, 'import', %s, %s)
-                    """,
-                    [order_id, bot_id, ticker, qty, price, opened_at, opened_at],
-                )
-                db.execute(
-                    """
-                    INSERT INTO trade_fills
-                      (fill_id, order_id, bot_id, ticker, side, fill_qty, fill_price,
-                       fill_value, fees, filled_at, source)
-                    VALUES (%s, %s, %s, %s, 'BUY', %s, %s, %s, 0.0, %s, 'import')
-                    """,
-                    [
-                        fill_id, order_id, bot_id, ticker, qty, price,
-                        round(qty * price, 2), opened_at,
-                    ],
-                )
-                db.execute(
-                    """
-                    INSERT INTO position_lots
-                      (lot_id, bot_id, ticker, fill_id, opened_at, original_qty,
-                       remaining_qty, entry_price, status, is_legacy)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'open', TRUE)
-                    """,
-                    [
-                        str(uuid.uuid4()), bot_id, ticker, fill_id, opened_at,
-                        qty, qty, price,
-                    ],
-                )
+                mongo_store.insert_docs('orders', [{'id': order_id, 'bot_id': bot_id, 'ticker': ticker, 'side': 'BUY', 'qty': qty, 'price': price, 'signal': 'import', 'created_at': opened_at, 'filled_at': opened_at}])
+                mongo_store.insert_docs('trade_fills', [{'fill_id': fill_id, 'order_id': order_id, 'bot_id': bot_id, 'ticker': ticker, 'side': 'BUY', 'fill_qty': qty, 'fill_price': price, 'fill_value': round(qty * price, 2), 'fees': 0.0, 'filled_at': opened_at, 'source': 'import'}])
+                mongo_store.insert_docs('position_lots', [{'lot_id': str(uuid.uuid4()), 'bot_id': bot_id, 'ticker': ticker, 'fill_id': fill_id, 'opened_at': opened_at, 'original_qty': qty, 'remaining_qty': qty, 'entry_price': price, 'status': 'open', 'is_legacy': True}])
 
             if set_starting_cash:
-                db.execute(
-                    "UPDATE bots SET cash_balance = %s, starting_cash = %s, status = 'idle' "
-                    "WHERE bot_id = %s",
-                    [cash, round(cash + total_cost, 2), bot_id],
-                )
+                mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'cash_balance': cash, 'starting_cash': round(cash + total_cost, 2), 'status': 'idle'}})
             else:
-                db.execute(
-                    "UPDATE bots SET cash_balance = %s, status = 'idle' WHERE bot_id = %s",
-                    [cash, bot_id],
-                )
+                mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'cash_balance': cash, 'status': 'idle'}})
 
     logger.info(
         "[BOT_MANAGER] Imported %d positions (%d merged) into '%s' — "
@@ -626,9 +515,7 @@ def delete_bot_profile(bot_id: str) -> dict:
         raise ValueError("Cannot delete while a pipeline cycle is running")
 
     with get_db() as db:
-        row = db.execute(
-            "SELECT is_active FROM bots WHERE bot_id = %s", [bot_id]
-        ).fetchone()
+        row = mongo_query.find_row('bots', {'bot_id': bot_id}, ['is_active'])
         if not row:
             raise ValueError(f"Bot profile '{bot_id}' does not exist")
         if row[0]:
@@ -653,7 +540,7 @@ def delete_bot_profile(bot_id: str) -> dict:
                 logger.warning("delete %s for %s: %s", table, bot_id, e)
 
         # Delete the bot row itself
-        db.execute("DELETE FROM bots WHERE bot_id = %s", [bot_id])
+        mongo_store.delete_docs('bots', {'bot_id': bot_id})
     logger.info("[BOT_MANAGER] Deleted profile: %s", bot_id)
 
     return {"bot_id": bot_id, "deleted": True}

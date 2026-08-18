@@ -25,6 +25,7 @@ from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
 from app.services.parameter_store import get_param
 from app.validation.schedule_validator import ScheduleValidator
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -172,10 +173,7 @@ def request_research_now(tickers: list, reason: str, urgency: str = "medium") ->
             "research_request": True,
             "research_reason": (reason or "").strip()[:500],
         }
-        db.execute(
-            "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
-            [cmd_id, "START_CYCLE", json.dumps(payload)],
-        )
+        mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
     logger.info("[GOVERNOR] Immediate research queued %s tickers=%s reason=%s", cmd_id, tickers, reason)
     return {
         "status": "queued",
@@ -338,27 +336,8 @@ async def schedule_research(
         # before it fires (earnings can be weeks out).
         expiry = (run_at + timedelta(days=2)).replace(tzinfo=None)
         name = f"Research: {', '.join(tickers)} ({reason[:60]})"
-        db.execute(
-            """
-            INSERT INTO cycle_schedules
-                (id, name, schedule_type, earliest_window, run_at, expiry_at,
-                 schedule_scope, review_intent, urgency, reason_codes,
-                 collect, "analyze", trade, tickers, market_hours_only, is_active)
-            VALUES (%s, %s, 'once', NULL, %s, %s, %s, %s, %s, %s, TRUE, TRUE, FALSE, %s, FALSE, TRUE)
-            """,
-            [
-                schedule_id, name,
-                run_at.isoformat(), expiry.isoformat(),
-                "single_ticker" if len(tickers) == 1 else "watchlist_subset",
-                review_intent, urgency,
-                json.dumps(reason_codes or [reason[:120]]),
-                json.dumps(tickers),
-            ],
-        )
-        db.execute(
-            "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
-            [f"cmd-{uuid.uuid4().hex[:8]}", "REFRESH_SCHEDULE", json.dumps({"job_id": schedule_id})],
-        )
+        mongo_store.insert_docs('cycle_schedules', [{'id': schedule_id, 'name': name, 'schedule_type': 'once', 'earliest_window': None, 'run_at': run_at.isoformat(), 'expiry_at': expiry.isoformat(), 'schedule_scope': "single_ticker" if len(tickers) == 1 else "watchlist_subset", 'review_intent': review_intent, 'urgency': urgency, 'reason_codes': json.dumps(reason_codes or [reason[:120]]), 'collect': True, 'analyze': True, 'trade': False, 'tickers': json.dumps(tickers), 'market_hours_only': False, 'is_active': True}])
+        mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id})}])
 
     logger.info(
         "[GOVERNOR] Research scheduled %s type=once run_at=%s tickers=%s",
@@ -457,18 +436,10 @@ def cancel_scheduled_research(schedule_id: str, reason: str = "") -> dict:
     if not schedule_id.startswith("sch-bot-"):
         return {"status": "rejected", "reason": "Only bot-created (sch-bot-*) schedules can be cancelled here."}
     with get_db() as db:
-        row = db.execute(
-            "SELECT is_active FROM cycle_schedules WHERE id = %s", [schedule_id]
-        ).fetchone()
+        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['is_active'])
         if not row:
             return {"status": "rejected", "reason": f"Schedule {schedule_id} not found."}
-        db.execute(
-            "UPDATE cycle_schedules SET is_active = FALSE, next_run_at = NULL, last_status = %s, updated_at = NOW() WHERE id = %s",
-            [f"cancelled: {reason[:120]}" if reason else "cancelled", schedule_id],
-        )
-        db.execute(
-            "INSERT INTO system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
-            [f"cmd-{uuid.uuid4().hex[:8]}", "REFRESH_SCHEDULE", json.dumps({"job_id": schedule_id})],
-        )
+        mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': f"cancelled: {reason[:120]}" if reason else "cancelled", 'updated_at': datetime.now(timezone.utc)}})
+        mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id})}])
     logger.info("[GOVERNOR] Schedule %s cancelled (%s)", schedule_id, reason)
     return {"status": "cancelled", "schedule_id": schedule_id}

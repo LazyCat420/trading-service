@@ -15,6 +15,8 @@ import logging
 
 from app.cognition.ontology.ontology_builder import BrainGraph
 from app.db.connection import get_db
+from app.db import mongo_store
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -42,21 +44,9 @@ def _clean_text(text) -> str:
 
 def _emit_event(db, event_type: str, ticker: str, **kwargs) -> None:
     if event_type == "node_added":
-        db.execute(
-            "INSERT INTO graph_node_events "
-            "(event_type, node_id, node_type, label, metadata_json, ticker) "
-            "VALUES ('node_added', %s, %s, %s, %s, %s)",
-            [kwargs.get("node_id"), kwargs.get("node_type"),
-             kwargs.get("label"), kwargs.get("metadata_json"), ticker],
-        )
+        mongo_store.insert_docs('graph_node_events', [{'event_type': 'node_added', 'node_id': kwargs.get("node_id"), 'node_type': kwargs.get("node_type"), 'label': kwargs.get("label"), 'metadata_json': kwargs.get("metadata_json"), 'ticker': ticker}])
     elif event_type == "edge_added":
-        db.execute(
-            "INSERT INTO graph_node_events "
-            "(event_type, source_id, target_id, relation, weight, ticker) "
-            "VALUES ('edge_added', %s, %s, %s, %s, %s)",
-            [kwargs.get("source_id"), kwargs.get("target_id"),
-             kwargs.get("relation"), kwargs.get("weight", 0.5), ticker],
-        )
+        mongo_store.insert_docs('graph_node_events', [{'event_type': 'edge_added', 'source_id': kwargs.get("source_id"), 'target_id': kwargs.get("target_id"), 'relation': kwargs.get("relation"), 'weight': kwargs.get("weight", 0.5), 'ticker': ticker}])
 
 
 def sync_desk_to_graph(desk, cycle_id: str) -> None:
@@ -144,10 +134,7 @@ def sync_desk_to_graph(desk, cycle_id: str) -> None:
         try:
             BrainGraph.activate_and_persist(ticker)
             with get_db() as db:
-                db.execute(
-                    "DELETE FROM graph_node_events "
-                    "WHERE consumed AND created_at < NOW() - INTERVAL '7 days'"
-                )
+                mongo_store.delete_docs('graph_node_events', {'consumed': True, 'created_at': {'$lt': (datetime.now(timezone.utc) - timedelta(days=7))}})
         except Exception as act_err:
             logger.debug("[GraphSync] %s: activation refresh failed (non-fatal): %s",
                          ticker, act_err)

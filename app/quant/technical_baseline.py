@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -287,14 +288,7 @@ def _fetch_technicals(ticker: str) -> dict | None:
     from app.db.connection import get_db
 
     with get_db() as db:
-        row = db.execute(
-            """
-            SELECT date, rsi_14, atr_14, bb_upper, bb_mid, bb_lower,
-                   sma_50, sma_200, support, resistance
-            FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1
-            """,
-            [ticker],
-        ).fetchone()
+        row = mongo_query.find_row('technicals', {'ticker': ticker}, ['date', 'rsi_14', 'atr_14', 'bb_upper', 'bb_mid', 'bb_lower', 'sma_50', 'sma_200', 'support', 'resistance'], sort=[('date', -1)])
     if not row:
         return None
     keys = ("date", "rsi_14", "atr_14", "bb_upper", "bb_mid", "bb_lower",

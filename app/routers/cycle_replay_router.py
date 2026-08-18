@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
+from app.db import mongo_query
 
 
 # ── PG→Mongo read flips (MONGO_STORE_BACKEND mongo_read/mongo) ─────────────
@@ -125,10 +126,7 @@ def _trade_actions(db, cycle_id: str) -> list[tuple]:
             return [(d.get("ticker"), d.get("action"), d.get("confidence")) for d in docs]
         except Exception as e:
             handle_mongo_read_failure("trade_results", "[cycles] mongo actions read", e)
-    return db.execute(
-        "SELECT ticker, action, confidence FROM trade_results WHERE cycle_id = %s",
-        [cycle_id],
-    ).fetchall()
+    return mongo_query.find_rows('trade_results', {'cycle_id': cycle_id}, ['ticker', 'action', 'confidence'])
 
 
 def _distinct_trade_tickers(db, cycle_id: str) -> list[tuple]:
@@ -170,18 +168,7 @@ def _latest_trade_row(db, cycle_id: str, ticker: str):
                     d.get("decision_provenance"))
         except Exception as e:
             handle_mongo_read_failure("trade_results", "[cycles] mongo trade-detail read", e)
-    return db.execute(
-        """
-        SELECT action, confidence, reasoning,
-               signal_weights, risk_flags, regime,
-               persona_used, created_at, decision_provenance
-        FROM trade_results
-        WHERE cycle_id = %s AND ticker = %s
-        ORDER BY created_at DESC
-        LIMIT 1
-        """,
-        [cycle_id, ticker],
-    ).fetchone()
+    return mongo_query.find_row('trade_results', {'cycle_id': cycle_id, 'ticker': ticker}, ['action', 'confidence', 'reasoning', 'signal_weights', 'risk_flags', 'regime', 'persona_used', 'created_at', 'decision_provenance'], sort=[('created_at', -1)])
 
 def _cycle_tickers(db, cycle_id: str) -> list[str]:
     if _mongo_reads("v3_agent_telemetry"):
@@ -215,26 +202,8 @@ def _cycle_agent_rows(db, cycle_id: str, ticker: str = ""):
         except Exception as e:
             handle_mongo_read_failure("v3_agent_telemetry", "[cycles] mongo agent rows", e)
     if ticker:
-        return db.execute(
-            """
-            SELECT agent_name, phase, outcome, elapsed_ms,
-                   loops_used, token_usage, created_at,
-                   error_message, failure_reason, attempt_no
-            FROM v3_agent_telemetry
-            WHERE cycle_id = %s AND ticker = %s
-            ORDER BY created_at ASC, attempt_no ASC NULLS FIRST
-            """,
-            [cycle_id, ticker],
-        ).fetchall()
-    return db.execute(
-        """
-        SELECT agent_name, outcome, elapsed_ms
-        FROM v3_agent_telemetry
-        WHERE cycle_id = %s
-        ORDER BY created_at
-        """,
-        [cycle_id],
-    ).fetchall()
+        return mongo_query.find_rows('v3_agent_telemetry', {'cycle_id': cycle_id, 'ticker': ticker}, ['agent_name', 'phase', 'outcome', 'elapsed_ms', 'loops_used', 'token_usage', 'created_at', 'error_message', 'failure_reason', 'attempt_no'], sort=[('created_at', 1), ('attempt_no', 1)])
+    return mongo_query.find_rows('v3_agent_telemetry', {'cycle_id': cycle_id}, ['agent_name', 'outcome', 'elapsed_ms'], sort=[('created_at', 1)])
 
 
 def _cycle_agent_telemetry_for_flow(db, cycle_id: str, ticker: str = ""):
@@ -695,16 +664,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
     try:
         with get_db() as db:
             # Get SharedDesk snapshot
-            desk_row = db.execute(
-                """
-                SELECT desk_id, phase, desk_data, created_at, updated_at
-                FROM shared_desk
-                WHERE cycle_id = %s AND ticker = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                [cycle_id, ticker],
-            ).fetchone()
+            desk_row = mongo_query.find_row('shared_desk', {'cycle_id': cycle_id, 'ticker': ticker}, ['desk_id', 'phase', 'desk_data', 'created_at', 'updated_at'], sort=[('created_at', -1)])
 
             desk_data = {}
             if desk_row:
@@ -830,15 +790,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
             # Get whiteboard entries & annotations directly
             wb_entries = []
             try:
-                wb_rows = db.execute(
-                    """
-                    SELECT id, section, content, author_agent, version, edited_by, created_at
-                    FROM whiteboard_entries
-                    WHERE cycle_id = %s AND ticker = %s
-                    ORDER BY created_at ASC
-                    """,
-                    [cycle_id, ticker],
-                ).fetchall()
+                wb_rows = mongo_query.find_rows('whiteboard_entries', {'cycle_id': cycle_id, 'ticker': ticker}, ['id', 'section', 'content', 'author_agent', 'version', 'edited_by', 'created_at'], sort=[('created_at', 1)])
 
                 for row in (wb_rows or []):
                     entry_id = row[0]
@@ -851,15 +803,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
                         except Exception:
                             pass
 
-                    ann_rows = db.execute(
-                        """
-                        SELECT author_agent, note, created_at
-                        FROM whiteboard_annotations
-                        WHERE entry_id = %s
-                        ORDER BY created_at ASC
-                        """,
-                        [entry_id],
-                    ).fetchall()
+                    ann_rows = mongo_query.find_rows('whiteboard_annotations', {'entry_id': entry_id}, ['author_agent', 'note', 'created_at'], sort=[('created_at', 1)])
 
                     annotations = [
                         {

@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 from app.db.connection import get_db
 from app.db.mongo_store import handle_mongo_read_failure
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,7 @@ def _load_thresholds() -> dict:
     """Load tunable thresholds from the freshness_gate_config table."""
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT threshold_name, threshold_value, weight FROM freshness_gate_config"
-            ).fetchall()
+            rows = mongo_query.find_rows('freshness_gate_config', {}, ['threshold_name', 'threshold_value', 'weight'])
             if rows:
                 config = {}
                 for name, value, weight in rows:

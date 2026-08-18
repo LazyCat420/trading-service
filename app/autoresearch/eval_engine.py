@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -251,27 +252,10 @@ def process_and_store_trace(trace: TraceRecord):
     
     try:
         with get_db() as db:
-            db.execute(
-                """INSERT INTO eval_scores (id, run_id, completion_score, tool_correctness_score, 
-                   efficiency_score, error_recovery_score, stop_quality_score, final_score)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                [
-                    str(uuid.uuid4()), trace.run_id, score["completion_score"],
-                    score["tool_correctness_score"], score["efficiency_score"],
-                    score["error_recovery_score"], score["stop_quality_score"], score["final_score"]
-                ]
-            )
+            mongo_store.insert_docs('eval_scores', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'completion_score': score["completion_score"], 'tool_correctness_score': score["tool_correctness_score"], 'efficiency_score': score["efficiency_score"], 'error_recovery_score': score["error_recovery_score"], 'stop_quality_score': score["stop_quality_score"], 'final_score': score["final_score"]}])
             
             if bucket:
-                db.execute(
-                    """INSERT INTO failure_buckets (id, run_id, bucket_type, description, error_class)
-                       VALUES (%s, %s, %s, %s, %s)""",
-                    [
-                        str(uuid.uuid4()), trace.run_id, bucket,
-                        f"Auto-classified based on score {score['final_score']}",
-                        classify_error_class(bucket),
-                    ]
-                )
+                mongo_store.insert_docs('failure_buckets', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'bucket_type': bucket, 'description': f"Auto-classified based on score {score['final_score']}", 'error_class': classify_error_class(bucket)}])
     except Exception as e:
         logger.error("Failed to store eval results: %s", e)
         raise EvalStoreError(f"Failed to store eval results: {e}") from e
@@ -280,27 +264,9 @@ def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) 
     try:
         with get_db() as db:
             if ticker:
-                rows = db.execute(
-                    """
-                    SELECT confidence, outcome, pnl_pct
-                    FROM decision_outcomes
-                    WHERE ticker = %s AND resolved_at IS NOT NULL
-                      AND outcome IN ('WIN', 'LOSS')
-                    ORDER BY resolved_at DESC LIMIT %s
-                    """,
-                    [ticker, limit],
-                ).fetchall()
+                rows = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
             else:
-                rows = db.execute(
-                    """
-                    SELECT confidence, outcome, pnl_pct
-                    FROM decision_outcomes
-                    WHERE resolved_at IS NOT NULL
-                      AND outcome IN ('WIN', 'LOSS')
-                    ORDER BY resolved_at DESC LIMIT %s
-                    """,
-                    [limit],
-                ).fetchall()
+                rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
 
         if len(rows) < 3:
             return {
@@ -387,15 +353,7 @@ def process_pending_traces(limit: int = 50) -> int:
                 trace["run_id"] = trace["id"]
                 
                 # Fetch decision info to allow hold_bias check to work
-                decision = db.execute(
-                    """
-                    SELECT action, confidence, pnl_pct 
-                    FROM decision_outcomes 
-                    WHERE cycle_id = %s
-                    LIMIT 1
-                    """,
-                    [trace.get("cycle_id")]
-                ).fetchone()
+                decision = mongo_query.find_row('decision_outcomes', {'cycle_id': trace.get("cycle_id")}, ['action', 'confidence', 'pnl_pct'])
                 
                 if decision:
                     trace["decision_action"] = decision[0] or "HOLD"
@@ -457,26 +415,7 @@ def update_tool_playbook():
             for agent_name, tool_name, uses, avg_score in rows:
                 seq = f"Primary tool: {tool_name} (avg score: {avg_score:.1f} over {uses} uses)"
 
-                db.execute(
-                    """
-                    INSERT INTO tool_playbook (
-                        id, task_type, market_context, agent_role,
-                        tool_name, recommended_tool_sequence,
-                        required_preconditions, score_stats, last_validated_at
-                    )
-                    VALUES (%s, 'general', 'any', %s, %s, %s, 'None', %s, NOW())
-                    ON CONFLICT (agent_role, task_type, market_context, tool_name)
-                    WHERE tool_name IS NOT NULL
-                    DO UPDATE SET
-                        recommended_tool_sequence = EXCLUDED.recommended_tool_sequence,
-                        score_stats               = EXCLUDED.score_stats,
-                        last_validated_at         = NOW()
-                    """,
-                    [
-                        str(uuid.uuid4()), agent_name, tool_name, seq,
-                        json.dumps({"uses": int(uses), "avg_score": round(float(avg_score), 2)}),
-                    ],
-                )
+                mongo_store.update_docs('tool_playbook', {'agent_role': agent_name, 'task_type': 'general', 'market_context': 'any', 'tool_name': tool_name}, {'$set': {'recommended_tool_sequence': seq, 'score_stats': json.dumps({"uses": int(uses), "avg_score": round(float(avg_score), 2)}), 'last_validated_at': datetime.now(timezone.utc)}, '$setOnInsert': {'id': str(uuid.uuid4()), 'required_preconditions': 'None'}}, upsert=True)
 
             logger.info(
                 "[EvalWorker] Updated tool playbook: %d agent/tool pairs upserted.", len(rows)

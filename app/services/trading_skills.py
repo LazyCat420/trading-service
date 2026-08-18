@@ -19,6 +19,7 @@ Usage:
 import logging
 import os
 from pathlib import Path
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -132,10 +133,7 @@ def load_skill_for_ticker(ticker: str) -> str | None:
             from app.db.connection import get_db
 
             with get_db() as db:
-                row = db.execute(
-                    "SELECT sector FROM ticker_metadata WHERE ticker = %s",
-                    [ticker_upper],
-                ).fetchone()
+                row = mongo_query.find_row('ticker_metadata', {'ticker': ticker_upper}, ['sector'])
             if row and row[0]:
                 sector = row[0].lower().replace(" ", "-")
                 # Check if we have a skill matching this sector name

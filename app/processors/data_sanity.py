@@ -16,6 +16,7 @@ Usage:
 
 import logging
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,7 @@ def run_sanity_checks() -> list[str]:
         # ── Fundamentals ──
         try:
             # AAPL market cap > $1T
-            row = db.execute("""
-                SELECT market_cap FROM fundamentals WHERE ticker = 'AAPL'
-                ORDER BY snapshot_date DESC LIMIT 1
-            """).fetchone()
+            row = mongo_query.find_row('fundamentals', {'ticker': 'AAPL'}, ['market_cap'], sort=[('snapshot_date', -1)])
             if row and row[0] and row[0] < 1e12:
                 failures.append(
                     f"Fundamentals: AAPL market cap ${row[0] / 1e9:.1f}B < $1T"
@@ -89,11 +87,7 @@ def run_sanity_checks() -> list[str]:
                 )
 
             # P/E ratio sanity (should be 0-500 or NULL)
-            row = db.execute("""
-                SELECT ticker, pe_ratio FROM fundamentals
-                WHERE pe_ratio IS NOT NULL AND (pe_ratio < -100 OR pe_ratio > 1000)
-                LIMIT 5
-            """).fetchall()
+            row = mongo_query.find_rows('fundamentals', {'pe_ratio': {'$ne': None}, '$or': [{'pe_ratio': {'$lt': -100}}, {'pe_ratio': {'$gt': 1000}}]}, ['ticker', 'pe_ratio'], limit=5)
             if row:
                 tickers = [f"{r[0]}={r[1]:.0f}" for r in row]
                 failures.append(

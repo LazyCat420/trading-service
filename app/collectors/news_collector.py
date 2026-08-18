@@ -16,6 +16,7 @@ import asyncio
 from app.db.connection import get_db
 from app.processors.ticker_extractor import get_ticker_symbols
 from app.utils.text_utils import is_truncated_content, is_scrape_artifact
+from app.db import mongo_query
 
 
 def quality_at_write(title: str, summary: str) -> tuple[str, str]:
@@ -662,27 +663,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                             insert_only=True,
                         )
                     if mongo_store.writes_pg("news_articles"):
-                        db.execute(
-                            """
-                            INSERT INTO news_articles
-                            (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'rss', %s, CURRENT_TIMESTAMP, %s, %s, %s)
-                            ON CONFLICT (id) DO NOTHING
-                            """,
-                            [
-                                item["id"],
-                                item["ticker"],
-                                item["title"][:500],
-                                item["publisher"],
-                                item["url"],
-                                item["published_at"],
-                                item["summary"],
-                                item["content_hash"],
-                                _qs,
-                                _qr,
-                                attr_val,
-                            ],
-                        )
+                        mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'rss', 'content_hash': item["content_hash"], 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': attr_val}, insert_only=True)
                     count += 1
 
                 # Emit news scraped log for this unique item list
@@ -838,7 +819,7 @@ async def collect_finnhub_news(
         news.sort(key=lambda a: a.get("datetime", 0), reverse=True)
 
         with get_db() as db:
-            trusted = db.execute("SELECT source_name, win_rate, total_items FROM source_trust WHERE source_type='publisher'").fetchall()
+            trusted = mongo_query.find_rows('source_trust', {'source_type': 'publisher'}, ['source_name', 'win_rate', 'total_items'])
         bad_publishers = {row[0] for row in trusted if row[2] >= 5 and row[1] < 0.1}
 
         from app.processors.dedup_engine import DedupEngine
@@ -958,27 +939,7 @@ async def collect_finnhub_news(
                     if url_fanout_exceeded(db, item.get("url")):
                         continue
                     _qs, _qr = quality_at_write(item["title"], item["summary"])
-                    db.execute(
-                        """
-                        INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'finnhub', %s, CURRENT_TIMESTAMP, %s, %s, %s)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        [
-                            item["id"],
-                            item["ticker"],
-                            item["title"][:500],
-                            item["publisher"],
-                            item["url"],
-                            item["published_at"],
-                            item["summary"],
-                            item.get("content_hash"),
-                            _qs,
-                            _qr,
-                            item.get("ticker_attribution", "detected"),
-                        ],
-                    )
+                    mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'finnhub', 'content_hash': item.get("content_hash"), 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': item.get("ticker_attribution", "detected")}, insert_only=True)
                     count += 1
 
         logger.info(
@@ -1008,7 +969,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
             return 0
 
         with get_db() as db:
-            trusted = db.execute("SELECT source_name, win_rate, total_items FROM source_trust WHERE source_type='publisher'").fetchall()
+            trusted = mongo_query.find_rows('source_trust', {'source_type': 'publisher'}, ['source_name', 'win_rate', 'total_items'])
         bad_publishers = {row[0] for row in trusted if row[2] >= 5 and row[1] < 0.1}
 
         # Helper to process a single yfinance article
@@ -1117,27 +1078,7 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
                     if url_fanout_exceeded(db, item.get("url")):
                         continue
                     _qs, _qr = quality_at_write(item["title"], item["summary"])
-                    db.execute(
-                        """
-                        INSERT INTO news_articles
-                        (id, ticker, title, publisher, url, published_at, summary, source, content_hash, collected_at, quality_status, quality_reason, ticker_attribution)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance', %s, CURRENT_TIMESTAMP, %s, %s, %s)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        [
-                            item["id"],
-                            item["ticker"],
-                            item["title"][:500],
-                            item["publisher"],
-                            item["url"],
-                            item["published_at"],
-                            item["summary"],
-                            item.get("content_hash"),
-                            _qs,
-                            _qr,
-                            item.get("ticker_attribution", "detected"),
-                        ],
-                    )
+                    mongo_store.upsert_doc('news_articles', {'id': item["id"]}, {'id': item["id"], 'ticker': item["ticker"], 'title': item["title"][:500], 'publisher': item["publisher"], 'url': item["url"], 'published_at': item["published_at"], 'summary': item["summary"], 'source': 'yfinance', 'content_hash': item.get("content_hash"), 'collected_at': datetime.datetime.now(datetime.timezone.utc), 'quality_status': _qs, 'quality_reason': _qr, 'ticker_attribution': item.get("ticker_attribution", "detected")}, insert_only=True)
                     count += 1
 
             logger.info(f"[news] yfinance {ticker}: {count} articles")

@@ -1,5 +1,7 @@
 import uuid
 import logging
+from app.db import mongo_store
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -24,22 +26,7 @@ class ProspectiveMemoryStore:
         with get_db() as db:
             mem_id = str(uuid.uuid4())
 
-            db.execute(
-                """
-                INSERT INTO prospective_memory
-                (id, ticker, intention, trigger_condition, priority, status, trigger_at, context)
-                VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s)
-            """,
-                [
-                    mem_id,
-                    ticker,
-                    intention,
-                    trigger_condition,
-                    priority,
-                    trigger_at,
-                    context,
-                ],
-            )
+            mongo_store.insert_docs('prospective_memory', [{'id': mem_id, 'ticker': ticker, 'intention': intention, 'trigger_condition': trigger_condition, 'priority': priority, 'status': 'pending', 'trigger_at': trigger_at, 'context': context}])
 
             logger.info(f"[PROSPECTIVE] Wrote reminder for {ticker}: {intention}")
             return mem_id
@@ -124,10 +111,7 @@ class ProspectiveMemoryStore:
         from app.db.connection import get_db
 
         with get_db() as db:
-            db.execute(
-                "UPDATE prospective_memory SET status = 'triggered' WHERE id = %s",
-                [mem_id],
-            )
+            mongo_store.update_docs('prospective_memory', {'id': mem_id}, {'$set': {'status': 'triggered'}})
 
 
 # Singleton instance

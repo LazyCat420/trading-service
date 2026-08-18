@@ -28,6 +28,7 @@ from app.services.parameter_store import (
     invalidate_cache,
 )
 from app.validation.parameter_validator import ParameterValidator
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +82,7 @@ def propose_parameter_change(
                     [change.key, change.value, agent, reason, change.ttl_hours],
                 )
             else:
-                db.execute(
-                    """
-                    INSERT INTO runtime_parameters
-                        (param_key, value, set_by, reason, status, expires_at)
-                    VALUES (%s, %s, %s, %s, 'active', NULL)
-                    """,
-                    [change.key, change.value, agent, reason],
-                )
+                mongo_store.insert_docs('runtime_parameters', [{'param_key': change.key, 'value': change.value, 'set_by': agent, 'reason': reason, 'status': 'active', 'expires_at': None}])
     except Exception as e:  # noqa: BLE001
         logger.error("[PARAM-GOV] write failed for %s: %s", key, e)
         return {"status": "error", "message": f"Store write failed: {e}"}

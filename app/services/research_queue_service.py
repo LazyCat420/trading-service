@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 
 from app.db.connection import get_db
 from app.schemas.dossier_schemas import QueueItem, QueueType
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,7 @@ class ResearchQueueService:
 
         with get_db() as db:
             # Dedupe check
-            existing = db.execute(
-                "SELECT id, status FROM v3_research_queues "
-                "WHERE ticker = %s AND queue_type = %s "
-                "AND status IN ('pending', 'processing')",
-                [ticker, queue_type.value],
-            ).fetchone()
+            existing = mongo_query.find_row('v3_research_queues', {'ticker': ticker, 'queue_type': queue_type.value, 'status': {'$in': ['pending', 'processing']}}, ['id', 'status'])
             if existing:
                 logger.info("[queue] Ticker %s already %s in %s, skipping dedupe",
                             ticker, existing[1], queue_type.value)
@@ -91,25 +87,7 @@ class ResearchQueueService:
             now = datetime.now(timezone.utc).isoformat()
             payload_json = json.dumps(payload or {})
 
-            db.execute(
-                """
-                INSERT INTO v3_research_queues (
-                    id, ticker, queue_type, priority, reason, source_agent, status, payload, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    item_id,
-                    ticker,
-                    queue_type.value,
-                    priority,
-                    reason,
-                    source_agent,
-                    "pending",
-                    payload_json,
-                    now,
-                    now,
-                ],
-            )
+            mongo_store.insert_docs('v3_research_queues', [{'id': item_id, 'ticker': ticker, 'queue_type': queue_type.value, 'priority': priority, 'reason': reason, 'source_agent': source_agent, 'status': "pending", 'payload': payload_json, 'created_at': now, 'updated_at': now}])
         logger.info("[queue] Enqueued %s into %s by %s (reason: %s)", ticker, queue_type.value, source_agent, reason)
         return item_id
 
@@ -138,13 +116,7 @@ class ResearchQueueService:
             if len(worklist) >= budget:
                 break
             needed = min(target_count, budget - len(worklist))
-            rows = db.execute(
-                "SELECT id, ticker, queue_type, priority, reason, source_agent, payload "
-                "FROM v3_research_queues "
-                "WHERE queue_type = %s AND status = 'pending' "
-                "ORDER BY priority DESC, created_at ASC LIMIT %s",
-                [queue_type.value, needed * 2],
-            ).fetchall()
+            rows = mongo_query.find_rows('v3_research_queues', {'queue_type': queue_type.value, 'status': 'pending'}, ['id', 'ticker', 'queue_type', 'priority', 'reason', 'source_agent', 'payload'], sort=[('priority', -1), ('created_at', 1)], limit=needed * 2)
 
             for r in rows:
                 item_id, tkr, q_type, prio, reason, src_agent, payload_raw = r
@@ -242,11 +214,7 @@ class ResearchQueueService:
         `RECLAIM_AFTER_SECONDS`.
         """
         with get_db() as db:
-            db.execute(
-                "UPDATE v3_research_queues SET status = 'pending', updated_at = NOW() "
-                "WHERE id = %s AND status = 'processing'",
-                [item_id],
-            )
+            mongo_store.update_docs('v3_research_queues', {'id': item_id, 'status': 'processing'}, {'$set': {'status': 'pending', 'updated_at': datetime.now(timezone.utc)}})
         logger.info("[queue] Reset %s to pending (%s)", item_id, reason)
 
     @classmethod
@@ -302,10 +270,7 @@ class ResearchQueueService:
     def complete_item(cls, item_id: str) -> None:
         """Marks a queue item as completed."""
         with get_db() as db:
-            db.execute(
-                "UPDATE v3_research_queues SET status = 'completed', updated_at = NOW() WHERE id = %s",
-                [item_id],
-            )
+            mongo_store.update_docs('v3_research_queues', {'id': item_id}, {'$set': {'status': 'completed', 'updated_at': datetime.now(timezone.utc)}})
 
     @classmethod
     def get_queue_summary(cls) -> Dict[str, int]:

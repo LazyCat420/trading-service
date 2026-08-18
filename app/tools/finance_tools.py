@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 from app.tools.registry import registry
 from app.db.connection import get_db
 from app.utils.text_utils import format_db_section, fmt_usd
+from app.db import mongo_query
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +51,7 @@ async def get_market_data(ticker: str) -> str:
         sections = []
 
         # Fundamentals
-        rows = db.execute(
-            """
-            SELECT snapshot_date, market_cap, pe_ratio, forward_pe, peg_ratio,
-                   price_to_book, profit_margin, roe, revenue, revenue_growth,
-                   debt_to_equity, beta, week_52_high, week_52_low, short_float_pct
-            FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1
-        """,
-            [ticker],
-        ).fetchall()
+        rows = mongo_query.find_rows('fundamentals', {'ticker': ticker}, ['snapshot_date', 'market_cap', 'pe_ratio', 'forward_pe', 'peg_ratio', 'price_to_book', 'profit_margin', 'roe', 'revenue', 'revenue_growth', 'debt_to_equity', 'beta', 'week_52_high', 'week_52_low', 'short_float_pct'], sort=[('snapshot_date', -1)], limit=1)
         sections.append(
             format_db_section(
                 "Fundamentals",

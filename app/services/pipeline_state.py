@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 from app.db import connection
 from app.db.mongo_store import handle_mongo_read_failure
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -225,11 +226,7 @@ class PipelineStateDB:
                                 # state came from Mongo, and closed even when
                                 # it did not.
                                 with connection.get_db() as ev_db:
-                                    ev_rows = ev_db.execute(
-                                        "SELECT timestamp, phase, step, detail, status, data_json, elapsed_ms "
-                                        "FROM pipeline_events WHERE cycle_id = %s ORDER BY timestamp ASC",
-                                        [cycle_id],
-                                    ).fetchall()
+                                    ev_rows = mongo_query.find_rows('pipeline_events', {'cycle_id': cycle_id}, ['timestamp', 'phase', 'step', 'detail', 'status', 'data_json', 'elapsed_ms'], sort=[('timestamp', 1)])
                                 events = []
                                 for erow in ev_rows:
                                     ts_val = erow[0]
@@ -269,10 +266,7 @@ class PipelineStateDB:
                                     handle_mongo_read_failure("analysis_results", "[PipelineStateDB] mongo results read", me)
                             if ar_rows is None:
                                 with connection.get_db() as ar_db:
-                                    ar_rows = ar_db.execute(
-                                        "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
-                                        [cycle_id],
-                                    ).fetchall()
+                                    ar_rows = mongo_query.find_rows('analysis_results', {'cycle_id': cycle_id}, ['ticker', 'result_json'])
                             results = []
                             for ar in ar_rows:
                                 try:

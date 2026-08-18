@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -38,47 +39,7 @@ def record_decision_score(cycle_id: str, ticker: str, score: dict) -> None:
 
         rr = score.get("risk_reward") or {}
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO decision_scores (
-                    id, cycle_id, ticker, score, band, baseline_confidence,
-                    coverage_pct, percentile, fundamental_score,
-                    technical_score, hybrid_score, risk_reward,
-                    rr_target_source, rr_target_horizon, gates_failed,
-                    gates_unknown, detail
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s
-                )
-                ON CONFLICT (cycle_id, ticker) DO UPDATE SET
-                    score = EXCLUDED.score,
-                    band = EXCLUDED.band,
-                    baseline_confidence = EXCLUDED.baseline_confidence,
-                    coverage_pct = EXCLUDED.coverage_pct,
-                    percentile = EXCLUDED.percentile,
-                    fundamental_score = EXCLUDED.fundamental_score,
-                    technical_score = EXCLUDED.technical_score,
-                    hybrid_score = EXCLUDED.hybrid_score,
-                    risk_reward = EXCLUDED.risk_reward,
-                    rr_target_source = EXCLUDED.rr_target_source,
-                    rr_target_horizon = EXCLUDED.rr_target_horizon,
-                    gates_failed = EXCLUDED.gates_failed,
-                    gates_unknown = EXCLUDED.gates_unknown,
-                    detail = EXCLUDED.detail
-                """,
-                [
-                    str(uuid.uuid4()), cycle_id, ticker.strip().upper(),
-                    score.get("score"), score.get("band", "NOT_SCOREABLE"),
-                    score.get("confidence"), score.get("coverage_pct"),
-                    score.get("percentile"), score.get("fundamental_score"),
-                    score.get("technical_score"), score.get("hybrid_score"),
-                    rr.get("ratio"), (rr.get("sources") or {}).get("target"),
-                    rr.get("target_horizon"),
-                    score.get("gates_failed") or [],
-                    score.get("gates_unknown") or [],
-                    json.dumps(score, default=str),
-                ],
-            )
+            mongo_store.update_docs('decision_scores', {'cycle_id': cycle_id, 'ticker': ticker.strip().upper()}, {'$set': {'score': score.get("score"), 'band': score.get("band", "NOT_SCOREABLE"), 'baseline_confidence': score.get("confidence"), 'coverage_pct': score.get("coverage_pct"), 'percentile': score.get("percentile"), 'fundamental_score': score.get("fundamental_score"), 'technical_score': score.get("technical_score"), 'hybrid_score': score.get("hybrid_score"), 'risk_reward': rr.get("ratio"), 'rr_target_source': (rr.get("sources") or {}).get("target"), 'rr_target_horizon': rr.get("target_horizon"), 'gates_failed': score.get("gates_failed") or [], 'gates_unknown': score.get("gates_unknown") or [], 'detail': json.dumps(score, default=str)}, '$setOnInsert': {'id': str(uuid.uuid4())}}, upsert=True)
     except Exception as e:  # noqa: BLE001 — a shadow row never blocks a cycle
         logger.warning("[DecisionScore] %s/%s: could not record baseline: "
                        "%s: %s", cycle_id, ticker, type(e).__name__, e)
@@ -99,11 +60,7 @@ def attach_board_decision(cycle_id: str, ticker: str, action: str | None,
         from app.db.connection import get_db
 
         with get_db() as db:
-            db.execute(
-                "UPDATE decision_scores SET board_action = %s, "
-                "board_confidence = %s WHERE cycle_id = %s AND ticker = %s",
-                [action, confidence, cycle_id, ticker.strip().upper()],
-            )
+            mongo_store.update_docs('decision_scores', {'cycle_id': cycle_id, 'ticker': ticker.strip().upper()}, {'$set': {'board_action': action, 'board_confidence': confidence}})
     except Exception as e:  # noqa: BLE001
         logger.warning("[DecisionScore] %s/%s: could not attach board "
                        "decision: %s: %s", cycle_id, ticker,

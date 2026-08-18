@@ -9,6 +9,7 @@ from app.services.prism_agent_caller import llm, Priority
 from app.services import bot_manager
 from app.collectors import congress_scanner, fund_scanner
 from app.trading import order_triggers, strategy_tracker
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -583,9 +584,7 @@ def _get_agent_recent_activity_summary(agent_name: str) -> str:
     if agent_name in ("data_janitor", "janitor", "CUSTOM_SYSTEM_JANITOR_AGENT"):
         try:
             with get_db() as db:
-                rows = db.execute(
-                    "SELECT run_time, details FROM janitor_run_log ORDER BY run_time DESC LIMIT 3"
-                ).fetchall()
+                rows = mongo_query.find_rows('janitor_run_log', {}, ['run_time', 'details'], sort=[('run_time', -1)], limit=3)
             if rows:
                 summary_lines.append("### JANITOR CLEANUP RUN LOGS:")
                 for r in rows:

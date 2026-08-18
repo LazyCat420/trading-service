@@ -7,6 +7,7 @@ import os
 import tempfile
 import logging
 from lazycat.tool_registry import ToolRegistry, ToolMeta, PermissionLevel, registry
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -119,23 +120,7 @@ def _db_telemetry_callback(
 
         now_utc = datetime.now(timezone.utc)
         with get_db() as db:
-            db.execute(
-                "INSERT INTO tool_usage_stats "
-                "(tool_name, agent_name, ticker, cycle_id, success, execution_ms, "
-                " error_message, service_source, called_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                [
-                    tool_name,
-                    agent_name,
-                    ticker,
-                    cycle_id,
-                    success,
-                    execution_ms,
-                    error_message,
-                    "lazy-tool-service",
-                    now_utc,
-                ],
-            )
+            mongo_store.insert_docs('tool_usage_stats', [{'tool_name': tool_name, 'agent_name': agent_name, 'ticker': ticker, 'cycle_id': cycle_id, 'success': success, 'execution_ms': execution_ms, 'error_message': error_message, 'service_source': "lazy-tool-service", 'called_at': now_utc}])
         try:
             from app.db import mongo_store
             if mongo_store.writes_mongo("tool_usage_stats"):

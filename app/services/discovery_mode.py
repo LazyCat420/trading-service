@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 
 from app.db.connection import get_db
 from app.processors.ticker_extractor import FALSE_TICKERS
+from app.db import mongo_query
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +57,7 @@ async def run_discovery(
     # ── Source 2: discovered_tickers table (populated by Reddit/YouTube) ──
     try:
         with get_db() as db:
-            rows = db.execute("""
-                SELECT ticker, score, context FROM discovered_tickers
-                WHERE discovered_at > NOW() - INTERVAL '24 hours'
-                  AND (validation_status IS NULL OR validation_status != 'rejected')
-                ORDER BY score DESC
-                LIMIT 20
-            """).fetchall()
+            rows = mongo_query.find_rows('discovered_tickers', {'discovered_at': {'$gt': (datetime.now(timezone.utc) - timedelta(hours=24))}, '$or': [{'validation_status': None}, {'validation_status': {'$ne': 'rejected'}}]}, ['ticker', 'score', 'context'], sort=[('score', -1)], limit=20)
             for ticker, score, context in rows:
                 tkr = ticker.upper().strip()
                 if tkr in existing_set or tkr in FALSE_TICKERS:

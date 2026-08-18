@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,7 @@ def _audit_execution_errors(cycle_id: str) -> list[dict]:
                 mongo_store.handle_mongo_read_failure("execution_errors", "_audit_execution_errors", me)
 
         with get_db() as db:
-            rows = db.execute(
-                "SELECT phase, error_type, error_message FROM execution_errors WHERE cycle_id = %s ORDER BY created_at DESC LIMIT 5",
-                (cycle_id,),
-            ).fetchall()
+            rows = mongo_query.find_rows('execution_errors', {'cycle_id': cycle_id}, ['phase', 'error_type', 'error_message'], sort=[('created_at', -1)], limit=5)
             return [{"phase": r[0], "error_type": r[1], "error_message": r[2]} for r in rows]
     except Exception as e:
         logger.debug("Failed to fetch execution errors: %s", e)

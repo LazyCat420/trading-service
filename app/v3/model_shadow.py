@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -170,34 +171,7 @@ def _record(row: dict) -> None:
     try:
         from app.db.connection import get_db
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO model_shadow_runs (
-                    cycle_id, ticker, agent_name, endpoint, bot_id,
-                    primary_model, primary_provider, primary_elapsed_ms,
-                    primary_tokens, primary_loops, primary_text,
-                    shadow_model, shadow_provider, shadow_elapsed_ms,
-                    shadow_tokens, shadow_loops, shadow_outcome,
-                    shadow_error, shadow_text, system_prompt, user_prompt
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    row["cycle_id"], row["ticker"], row["agent_name"], row["endpoint"],
-                    # 'unknown' rather than NULL when a caller omits it, so the
-                    # column never has two spellings for the same absence.
-                    row.get("bot_id") or "unknown",
-                    row.get("primary_model"), row.get("primary_provider"),
-                    row.get("primary_elapsed_ms") or 0, row.get("primary_tokens") or 0,
-                    row.get("primary_loops") or 0, (row.get("primary_text") or "")[:_MAX_TEXT],
-                    row.get("shadow_model"), row.get("shadow_provider"),
-                    row.get("shadow_elapsed_ms") or 0, row.get("shadow_tokens") or 0,
-                    row.get("shadow_loops") or 0, row["shadow_outcome"],
-                    (row.get("shadow_error") or None), (row.get("shadow_text") or "")[:_MAX_TEXT],
-                    # NOT capped at _MAX_TEXT: a truncated prompt cannot be
-                    # replayed, which is the whole reason it is stored.
-                    row.get("system_prompt"), row.get("user_prompt"),
-                ),
-            )
+            mongo_store.insert_docs('model_shadow_runs', [{'cycle_id': row["cycle_id"], 'ticker': row["ticker"], 'agent_name': row["agent_name"], 'endpoint': row["endpoint"], 'bot_id': row.get("bot_id") or "unknown", 'primary_model': row.get("primary_model"), 'primary_provider': row.get("primary_provider"), 'primary_elapsed_ms': row.get("primary_elapsed_ms") or 0, 'primary_tokens': row.get("primary_tokens") or 0, 'primary_loops': row.get("primary_loops") or 0, 'primary_text': (row.get("primary_text") or "")[:_MAX_TEXT], 'shadow_model': row.get("shadow_model"), 'shadow_provider': row.get("shadow_provider"), 'shadow_elapsed_ms': row.get("shadow_elapsed_ms") or 0, 'shadow_tokens': row.get("shadow_tokens") or 0, 'shadow_loops': row.get("shadow_loops") or 0, 'shadow_outcome': row["shadow_outcome"], 'shadow_error': row.get("shadow_error") or None, 'shadow_text': (row.get("shadow_text") or "")[:_MAX_TEXT], 'system_prompt': row.get("system_prompt"), 'user_prompt': row.get("user_prompt")}])
     except Exception as e:
         logger.warning("[ModelShadow] Failed to record %s: %s", row.get("agent_name"), e)
 

@@ -395,46 +395,14 @@ def _store_post(
                 insert_only=True,
             )
         if mongo_store.writes_pg("reddit_posts"):
-            db.execute(
-                """
-                INSERT INTO reddit_posts
-                (id, ticker, subreddit, title, body, score, upvote_ratio,
-                 comment_count, flair, sentiment_score, award_count,
-                 comment_velocity, created_utc, collected_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (id) DO NOTHING
-            """,
-                [
-                    post_id,
-                    primary_ticker,
-                    subreddit,
-                    title,
-                    body,
-                    score,
-                    upvote_ratio,
-                    num_comments,
-                    flair,
-                    None,
-                    awards,
-                    comment_velocity,
-                    created_utc,
-                ],
-            )
+            mongo_store.upsert_doc('reddit_posts', {'id': post_id}, {'id': post_id, 'ticker': primary_ticker, 'subreddit': subreddit, 'title': title, 'body': body, 'score': score, 'upvote_ratio': upvote_ratio, 'comment_count': num_comments, 'flair': flair, 'sentiment_score': None, 'award_count': awards, 'comment_velocity': comment_velocity, 'created_utc': created_utc, 'collected_at': datetime.datetime.now(datetime.timezone.utc)}, insert_only=True)
 
         # Write discovered tickers (filter through shared FALSE_TICKERS)
         for t in tickers_found:
             if t in FALSE_TICKERS or len(t) < 2:
                 continue
             confidence = min(round(upvote_ratio, 2), 1.0) if upvote_ratio else 0.5
-            db.execute(
-                """
-                INSERT INTO discovered_tickers
-                (ticker, source, context, score, discovered_at)
-                VALUES (%s, 'reddit', %s, %s, %s)
-            ON CONFLICT (ticker, source) DO NOTHING
-            """,
-                [t, f"r/{subreddit}: {title[:80]}", confidence, created_utc],
-            )
+            mongo_store.upsert_doc('discovered_tickers', {'ticker': t, 'source': 'reddit'}, {'ticker': t, 'source': 'reddit', 'context': f"r/{subreddit}: {title[:80]}", 'score': confidence, 'discovered_at': created_utc}, insert_only=True)
 
         return 1
     except Exception as e:
@@ -496,18 +464,7 @@ async def run_reddit_purge_discovery(limit: int = 15, use_llm: bool = False) -> 
                 # Insert ticker into discovered_tickers
                 try:
                     confidence = min(round(score / 30.0, 2), 1.0) if score else 0.5
-                    db.execute(
-                        """
-                        INSERT INTO discovered_tickers
-                        (ticker, source, context, score, discovered_at)
-                        VALUES (%s, 'reddit-purge', %s, %s, CURRENT_TIMESTAMP)
-                        ON CONFLICT (ticker, source) DO UPDATE SET
-                            score = EXCLUDED.score,
-                            context = EXCLUDED.context,
-                            discovered_at = CURRENT_TIMESTAMP
-                        """,
-                        [ticker, f"Reddit Purge score: {score}", confidence]
-                    )
+                    mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': 'reddit-purge'}, {'$set': {'score': confidence, 'context': f"Reddit Purge score: {score}", 'discovered_at': datetime.datetime.now(datetime.timezone.utc)}}, upsert=True)
                     stored_tickers += 1
                 except Exception as e:
                     logger.warning(f"[reddit-purge] Failed to save discovered ticker {ticker}: {e}")

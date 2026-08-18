@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -132,14 +133,7 @@ def _detect_degenerate_scores() -> int:
     flagged = 0
     try:
         with get_db() as db:
-            rows = db.execute(
-                """SELECT decision_quality_score, data_quality_score, llm_performance_score
-                FROM autoresearch_reports
-                WHERE status = 'done'
-                ORDER BY created_at DESC
-                LIMIT %s""",
-                [DEGENERATE_THRESHOLD],
-            ).fetchall()
+            rows = mongo_query.find_rows('autoresearch_reports', {'status': 'done'}, ['decision_quality_score', 'data_quality_score', 'llm_performance_score'], sort=[('created_at', -1)], limit=DEGENERATE_THRESHOLD)
 
             if len(rows) < DEGENERATE_THRESHOLD:
                 return 0

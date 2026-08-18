@@ -11,6 +11,7 @@ import datetime
 from app.config import settings
 from app.db.connection import get_db
 from app.services.request_utils import SmartClient
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -76,22 +77,7 @@ async def collect_price_history(ticker: str, days_back: int = 365) -> int:
                     day["t"] / 1000.0, tz=datetime.UTC
                 ).date()
 
-                db.execute(
-                    """
-                    INSERT INTO price_history (ticker, date, open, high, low, close, volume, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'polygon')
-                    ON CONFLICT (ticker, date, source) DO NOTHING
-                    """,
-                    [
-                        ticker,
-                        date_obj,
-                        float(day.get("o", 0)),
-                        float(day.get("h", 0)),
-                        float(day.get("l", 0)),
-                        float(day.get("c", 0)),
-                        int(day.get("v", 0)),
-                    ],
-                )
+                mongo_store.upsert_doc('price_history', {'ticker': ticker, 'date': date_obj, 'source': 'polygon'}, {'ticker': ticker, 'date': date_obj, 'open': float(day.get("o", 0)), 'high': float(day.get("h", 0)), 'low': float(day.get("l", 0)), 'close': float(day.get("c", 0)), 'volume': int(day.get("v", 0)), 'source': 'polygon'}, insert_only=True)
                 count += 1
             except Exception as e:
                 continue

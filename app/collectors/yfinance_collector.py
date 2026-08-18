@@ -34,6 +34,7 @@ def get_timeout_session(timeout=15.0) -> requests.Session:
 
 _yf_session = get_timeout_session(15.0)
 from app.db.connection import get_db
+from app.db import mongo_store
 
 
 def _is_blocked_ticker(ticker: str) -> bool:
@@ -380,43 +381,8 @@ async def collect_fundamentals_finnhub(ticker: str) -> bool:
         
         # Map fields to fundamentals table structure
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO fundamentals (
-                    ticker, snapshot_date, source, market_cap, pe_ratio, forward_pe, peg_ratio,
-                    price_to_book, price_to_sales, ev_to_ebitda, profit_margin,
-                    roe, roa, revenue, revenue_growth, net_income,
-                    debt_to_equity, current_ratio, beta,
-                    week_52_high, week_52_low, short_float_pct
-                ) VALUES (%s, %s, 'finnhub', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ticker, snapshot_date) DO NOTHING
-                """,
-                [
-                    ticker.upper(),
-                    today,
-                    mkt_cap,
-                    pe,
-                    None,
-                    None,
-                    metric.get("bookValuePerShareAnnual"), # pb proxy
-                    metric.get("psTTM"),
-                    None,
-                    metric.get("netProfitMarginTTM"),
-                    metric.get("roeTTM"),
-                    metric.get("roaTTM"),
-                    None,
-                    None,
-                    None,
-                    # percent-style like yfinance — column convention is ratio
-                    (metric.get("debtEquityTTM") / 100.0
-                     if metric.get("debtEquityTTM") is not None else None),
-                    metric.get("currentRatioAnnual"),
-                    beta,
-                    metric.get("52WeekHigh"),
-                    metric.get("52WeekLow"),
-                    None,
-                ],
-            )
+            mongo_store.upsert_doc('fundamentals', {'ticker': ticker.upper(), 'snapshot_date': today}, {'ticker': ticker.upper(), 'snapshot_date': today, 'source': 'finnhub', 'market_cap': mkt_cap, 'pe_ratio': pe, 'forward_pe': None, 'peg_ratio': None, 'price_to_book': metric.get("bookValuePerShareAnnual"), 'price_to_sales': metric.get("psTTM"), 'ev_to_ebitda': None, 'profit_margin': metric.get("netProfitMarginTTM"), 'roe': metric.get("roeTTM"), 'roa': metric.get("roaTTM"), 'revenue': None, 'revenue_growth': None, 'net_income': None, 'debt_to_equity': metric.get("debtEquityTTM") / 100.0
+                     if metric.get("debtEquityTTM") is not None else None, 'current_ratio': metric.get("currentRatioAnnual"), 'beta': beta, 'week_52_high': metric.get("52WeekHigh"), 'week_52_low': metric.get("52WeekLow"), 'short_float_pct': None}, insert_only=True)
         logger.info(f"[finnhub] Successfully stored fundamentals fallback for {ticker}")
         return True
     except Exception as e:

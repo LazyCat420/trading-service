@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 
 from app.db.connection import get_db
 from app.quant.returns import dominant_source_sql, latest_close
+from app.db import mongo_query, mongo_store
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -180,27 +182,7 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
         _ensure_table()
         agree = bool(champion.get("action")) and champion.get("action") == ch_action
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO challenger_decisions
-                (id, cycle_id, ticker, spec_label, champion_action, champion_confidence,
-                 challenger_action, challenger_confidence, agree, entry_price, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    f"ch-{uuid.uuid4().hex[:12]}",
-                    cycle_id,
-                    ticker,
-                    spec["label"],
-                    champion.get("action"),
-                    champion.get("confidence"),
-                    ch_action,
-                    ch_conf,
-                    agree,
-                    round(entry_price, 4) if entry_price else None,
-                    datetime.now(timezone.utc),
-                ],
-            )
+            mongo_store.insert_docs('challenger_decisions', [{'id': f"ch-{uuid.uuid4().hex[:12]}", 'cycle_id': cycle_id, 'ticker': ticker, 'spec_label': spec["label"], 'champion_action': champion.get("action"), 'champion_confidence': champion.get("confidence"), 'challenger_action': ch_action, 'challenger_confidence': ch_conf, 'agree': agree, 'entry_price': round(entry_price, 4) if entry_price else None, 'created_at': datetime.now(timezone.utc)}])
         logger.info(
             "[Challenger] %s %s: champion=%s@%s challenger=%s@%s (%s) [%s]",
             cycle_id[:12], ticker,
@@ -225,15 +207,7 @@ def resolve_challenger_outcomes() -> int:
         _ensure_table()
         cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
         with get_db() as db:
-            pending = db.execute(
-                """
-                SELECT id, ticker, challenger_action, entry_price
-                FROM challenger_decisions
-                WHERE resolved_at IS NULL AND created_at < %s
-                ORDER BY created_at ASC LIMIT 50
-                """,
-                [cutoff],
-            ).fetchall()
+            pending = mongo_query.find_rows('challenger_decisions', {'resolved_at': None, 'created_at': {'$lt': cutoff}}, ['id', 'ticker', 'challenger_action', 'entry_price'], sort=[('created_at', 1)], limit=50)
             for row_id, ticker, action, entry_price in pending:
                 if not entry_price:
                     continue
@@ -257,21 +231,7 @@ def resolve_challenger_outcomes() -> int:
                     pnl_pct = ((entry_price - exit_price) / entry_price) * 100
                 else:
                     pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-                db.execute(
-                    """
-                    UPDATE challenger_decisions
-                    SET exit_price = %s, challenger_pnl_pct = %s,
-                        challenger_outcome = %s, resolved_at = %s
-                    WHERE id = %s
-                    """,
-                    [
-                        round(exit_price, 4),
-                        round(pnl_pct, 2),
-                        _classify(action or "HOLD", pnl_pct),
-                        datetime.now(timezone.utc),
-                        row_id,
-                    ],
-                )
+                mongo_store.update_docs('challenger_decisions', {'id': row_id}, {'$set': {'exit_price': round(exit_price, 4), 'challenger_pnl_pct': round(pnl_pct, 2), 'challenger_outcome': _classify(action or "HOLD", pnl_pct), 'resolved_at': datetime.now(timezone.utc)}})
                 resolved += 1
         if resolved:
             logger.info("[Challenger] Resolved %d challenger outcomes", resolved)

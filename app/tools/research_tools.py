@@ -17,6 +17,8 @@ import logging
 
 from app.tools.registry import registry, PermissionLevel
 from app.tools.tool_context import current_agent_name
+from app.db import mongo_query
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -251,13 +253,7 @@ def _upcoming_macro_events(limit: int = 8) -> list[dict]:
         from app.db.connection import get_db
 
         with get_db() as db:
-            rows = db.execute(
-                "SELECT event_date, event_name, country, importance, forecast, previous "
-                "FROM economic_calendar "
-                "WHERE event_date >= CURRENT_DATE AND importance IN ('high', 'medium') "
-                "ORDER BY event_date ASC LIMIT %s",
-                [limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('economic_calendar', {'event_date': {'$gte': datetime.now(timezone.utc)}, 'importance': {'$in': ['high', 'medium']}}, ['event_date', 'event_name', 'country', 'importance', 'forecast', 'previous'], sort=[('event_date', 1)], limit=limit)
         return [
             {
                 "date": str(r[0]),

@@ -38,6 +38,7 @@ import json
 import logging
 
 from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -129,14 +130,7 @@ def seed_known_trials() -> int:
         try:
             ensure_table()
             with get_db() as db:
-                db.execute(
-                    """
-                    INSERT INTO research_trials (family, label, source)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (family, label) DO NOTHING
-                    """,
-                    [family, label, source],
-                )
+                mongo_store.upsert_doc('research_trials', {'family': family, 'label': label}, {'family': family, 'label': label, 'source': source}, insert_only=True)
         except Exception as e:
             logger.warning("[TrialRegistry] seed %s failed: %s", label, e)
     return trial_count()

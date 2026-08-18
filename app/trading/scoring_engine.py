@@ -13,6 +13,7 @@ import operator
 import pandas as pd
 from typing import Dict, List, Any
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +85,7 @@ def compute_normalized_features(ticker: str) -> Dict[str, float]:
     try:
         with get_db() as db:
             # 1. Fundamentals (Expected Value, Kelly)
-            fund_row = db.execute(
-                "SELECT revenue_growth, profit_margin, market_cap FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-                [ticker]
-            ).fetchone()
+            fund_row = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['revenue_growth', 'profit_margin', 'market_cap'], sort=[('snapshot_date', -1)])
             
             # Simple EV calculation mock/formula based on growth and margins
             if fund_row:
@@ -103,15 +101,9 @@ def compute_normalized_features(ticker: str) -> Dict[str, float]:
                 features["kelly_norm"] = raw_kelly / 0.25
 
             # 2. Technicals (R/R, Z-Score, Vol, Drawdown, RSI)
-            tech_row = db.execute(
-                "SELECT rsi_14, atr_14, support, resistance FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                [ticker]
-            ).fetchone()
+            tech_row = mongo_query.find_row('technicals', {'ticker': ticker}, ['rsi_14', 'atr_14', 'support', 'resistance'], sort=[('date', -1)])
             
-            price_row = db.execute(
-                "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                [ticker]
-            ).fetchone()
+            price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
             
             if tech_row and price_row:
                 rsi, atr, support, resistance = tech_row
@@ -135,10 +127,7 @@ def compute_normalized_features(ticker: str) -> Dict[str, float]:
                 features["vol_norm"] = min(1.0, max(0.0, (raw_vol - 0.01) / 0.10))
 
             # 3. Z-Score (rolling)
-            price_rows = db.execute(
-                "SELECT close FROM price_history WHERE ticker = %s ORDER BY date DESC LIMIT 60",
-                [ticker]
-            ).fetchall()
+            price_rows = mongo_query.find_rows('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)], limit=60)
             if len(price_rows) >= 20:
                 closes = [r[0] for r in price_rows]
                 mean_price = sum(closes) / len(closes)

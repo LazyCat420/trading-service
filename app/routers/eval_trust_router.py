@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from app.db.connection import get_db
 from app.autoresearch.outcome_tracker import RESOLVE_AFTER_DAYS, WIN_THRESHOLD_PCT
 from app.autoresearch import variance as variance_mod
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -151,12 +152,7 @@ async def hold_outcomes():
                 "SELECT action, COUNT(*), MIN(created_at) FROM decision_outcomes "
                 "WHERE resolved_at IS NULL GROUP BY action"
             ).fetchall()
-            recent = db.execute(
-                "SELECT ticker, action, confidence, pnl_pct, outcome, cycle_id, "
-                "       created_at, resolved_at "
-                "FROM decision_outcomes WHERE resolved_at IS NOT NULL "
-                "ORDER BY resolved_at DESC LIMIT 25"
-            ).fetchall()
+            recent = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}}, ['ticker', 'action', 'confidence', 'pnl_pct', 'outcome', 'cycle_id', 'created_at', 'resolved_at'], sort=[('resolved_at', -1)], limit=25)
 
         counts = {row[0]: row[1] for row in resolved}
         wins = counts.get("WIN", 0)
@@ -312,11 +308,7 @@ async def goodhart_status():
     try:
         since = datetime.now(timezone.utc) - timedelta(days=GOODHART_WINDOW_DAYS)
         with get_db() as db:
-            rows = db.execute(
-                "SELECT red_cards, evidence_gathering FROM decision_evaluations "
-                "WHERE timestamp >= %s",
-                [since.replace(tzinfo=None)],
-            ).fetchall()
+            rows = mongo_query.find_rows('decision_evaluations', {'timestamp': {'$gte': since.replace(tzinfo=None)}}, ['red_cards', 'evidence_gathering'])
 
         evaluated = len(rows)
         faithfulness = relevancy = other = 0
@@ -401,13 +393,7 @@ async def variance_runs():
     try:
         variance_mod._ensure_table()
         with get_db() as db:
-            rows = db.execute(
-                "SELECT id, cycle_id, ticker, runs, completed, actions, "
-                "       majority_action, action_flip_rate, confidence_mean, "
-                "       confidence_stdev, confidence_range, status, error, "
-                "       created_at, finished_at "
-                "FROM variance_runs ORDER BY created_at DESC LIMIT 20"
-            ).fetchall()
+            rows = mongo_query.find_rows('variance_runs', {}, ['id', 'cycle_id', 'ticker', 'runs', 'completed', 'actions', 'majority_action', 'action_flip_rate', 'confidence_mean', 'confidence_stdev', 'confidence_range', 'status', 'error', 'created_at', 'finished_at'], sort=[('created_at', -1)], limit=20)
             desks = db.execute(
                 "SELECT DISTINCT ticker FROM shared_desk "
                 "WHERE updated_at >= NOW() - INTERVAL '14 days' ORDER BY ticker"

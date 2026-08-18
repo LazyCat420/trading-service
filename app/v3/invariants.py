@@ -45,6 +45,8 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from app.db import mongo_query
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +100,7 @@ def record_violation(kind: str, *, ticker: str = "", cycle_id: str = "",
         from app.db.connection import get_db
 
         with get_db() as db:
-            db.execute(
-                "INSERT INTO v3_invariant_violations (kind, cycle_id, ticker, detail) "
-                "VALUES (%s, %s, %s, %s)",
-                [kind, cycle_id or None, ticker or None, json.dumps(detail, default=str)],
-            )
+            mongo_store.insert_docs('v3_invariant_violations', [{'kind': kind, 'cycle_id': cycle_id or None, 'ticker': ticker or None, 'detail': json.dumps(detail, default=str)}])
         logger.error(
             "[Invariants] %s VIOLATED for %s (cycle=%s): %s",
             kind, ticker or "?", cycle_id or "?", detail,
@@ -410,14 +408,7 @@ def _check_decision_drift(cycle_id: str) -> list[str]:
     from app.db.connection import get_db
 
     with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT action FROM trade_results
-            WHERE action IS NOT NULL
-            ORDER BY created_at DESC LIMIT %s
-            """,
-            [DRIFT_WINDOW + DRIFT_BASELINE],
-        ).fetchall()
+        rows = mongo_query.find_rows('trade_results', {'action': {'$ne': None}}, ['action'], sort=[('created_at', -1)], limit=DRIFT_WINDOW + DRIFT_BASELINE)
     if len(rows) < DRIFT_WINDOW + DRIFT_BASELINE:
         return []  # not enough history to compare — silence, not a guess
     recent = [r[0] for r in rows[:DRIFT_WINDOW]]
@@ -507,11 +498,7 @@ def record_ticker_crash(*, ticker: str, cycle_id: str, error: BaseException) -> 
         from app.db.connection import get_db
 
         with get_db() as db:
-            row = db.execute(
-                "SELECT phase FROM shared_desk WHERE cycle_id = %s AND ticker = %s "
-                "LIMIT 1",
-                [cycle_id, ticker],
-            ).fetchone()
+            row = mongo_query.find_row('shared_desk', {'cycle_id': cycle_id, 'ticker': ticker}, ['phase'])
         if row and row[0]:
             phase = str(row[0])
     except Exception as e:  # noqa: BLE001 — a probe failure must not lose the record

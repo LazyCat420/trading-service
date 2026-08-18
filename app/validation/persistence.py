@@ -1,31 +1,17 @@
 from typing import List, Dict, Any
 from app.db.connection import get_db
 from app.validation.models import ValidationResult, ValidationStatus, QuarantineReason
+from app.db import mongo_store
+from datetime import datetime, timezone
 
 def save_validation_result(result: ValidationResult):
     """Save the validation result to the database."""
     with get_db() as conn:
         if result.status == ValidationStatus.QUARANTINE:
-            conn.execute(
-                "UPDATE discovered_tickers SET validation_status = %s WHERE ticker = %s",
-                (result.status.value, result.ticker)
-            )
-            conn.execute(
-                """
-                INSERT INTO ticker_quarantine (ticker, reason, details)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (ticker) DO UPDATE SET
-                    reason = EXCLUDED.reason,
-                    details = EXCLUDED.details,
-                    quarantined_at = CURRENT_TIMESTAMP
-                """,
-                (result.ticker, result.reason.value if result.reason else "other", result.details)
-            )
+            mongo_store.update_docs('discovered_tickers', {'ticker': result.ticker}, {'$set': {'validation_status': result.status.value}})
+            mongo_store.update_docs('ticker_quarantine', {'ticker': result.ticker}, {'$set': {'reason': result.reason.value if result.reason else "other", 'details': result.details, 'quarantined_at': datetime.now(timezone.utc)}}, upsert=True)
         elif result.status == ValidationStatus.VALID:
-            conn.execute(
-                "UPDATE discovered_tickers SET validation_status = %s, rate_limited_count = 0 WHERE ticker = %s",
-                (result.status.value, result.ticker)
-            )
+            mongo_store.update_docs('discovered_tickers', {'ticker': result.ticker}, {'$set': {'validation_status': result.status.value, 'rate_limited_count': 0}})
         elif result.status == ValidationStatus.PENDING:
             if result.reason == QuarantineReason.RATE_LIMIT_EXCEEDED:
                 conn.execute(
@@ -62,11 +48,8 @@ def get_quarantine_summary() -> List[Dict[str, Any]]:
 def release_ticker(ticker: str):
     """Release a ticker from quarantine."""
     with get_db() as conn:
-        conn.execute("DELETE FROM ticker_quarantine WHERE ticker = %s", (ticker,))
-        conn.execute(
-            "UPDATE discovered_tickers SET validation_status = 'pending', rate_limited_count = 0 WHERE ticker = %s",
-            (ticker,)
-        )
+        mongo_store.delete_docs('ticker_quarantine', {'ticker': ticker})
+        mongo_store.update_docs('discovered_tickers', {'ticker': ticker}, {'$set': {'validation_status': 'pending', 'rate_limited_count': 0}})
 
 def increment_rate_limit_and_check(ticker: str) -> bool:
     """Increment rate limit count. Return True if it should be quarantined (count >= 5)."""

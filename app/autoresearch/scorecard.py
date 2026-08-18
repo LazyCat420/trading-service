@@ -48,6 +48,7 @@ import logging
 from dataclasses import dataclass, field, asdict
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -188,11 +189,7 @@ def _version_window(agent_name: str, version: int) -> tuple:
     end is the next version's creation, or open if this is the active one.
     """
     with get_db() as db:
-        row = db.execute(
-            "SELECT created_at FROM agent_skills "
-            "WHERE agent_name = %s AND version = %s",
-            [agent_name, int(version)],
-        ).fetchone()
+        row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(version)}, ['created_at'])
         if not row:
             return None, None
         started = row[0]

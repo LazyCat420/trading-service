@@ -806,43 +806,11 @@ class PipelineService:
                         logger.warning("[PipelineService] Mongo mirror failed (non-fatal), cycle_benchmarks: %s", b_mongo_err)
 
                     if mongo_store.writes_pg("cycle_benchmarks"):
-                        db.execute(
-                            """INSERT INTO cycle_benchmarks
-                            (cycle_id, started_at, finished_at, total_ms, ticker_count, avg_ticker_ms,
-                             collect_ms, analyze_ms, trade_ms,
-                             steps_total, steps_skipped, steps_ok, steps_error, total_tokens, cache_hit_pct, status)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (cycle_id) DO UPDATE SET
-                                finished_at = EXCLUDED.finished_at, total_ms = EXCLUDED.total_ms,
-                                ticker_count = EXCLUDED.ticker_count, avg_ticker_ms = EXCLUDED.avg_ticker_ms,
-                                collect_ms = EXCLUDED.collect_ms, analyze_ms = EXCLUDED.analyze_ms,
-                                trade_ms = EXCLUDED.trade_ms,
-                                steps_total = EXCLUDED.steps_total, steps_skipped = EXCLUDED.steps_skipped,
-                                steps_ok = EXCLUDED.steps_ok, steps_error = EXCLUDED.steps_error,
-                                total_tokens = EXCLUDED.total_tokens, cache_hit_pct = EXCLUDED.cache_hit_pct,
-                                status = EXCLUDED.status""",
-                            [
-                                cycle_id, _started_at_or_fallback(summary), summary.get("ended_at"),
-                                total_ms, ticker_count,
-                                int(total_ms / ticker_count) if total_ms and ticker_count else None,
-                                phase_ms["collecting"], phase_ms["analyzing"], phase_ms["trading"],
-                                steps_total, skipped, ok, err,
-                                int(tokens_row[0]) if tokens_row else 0,
-                                round(skipped / steps_total * 100, 1) if steps_total else 0.0,
-                                summary.get("status"),
-                            ],
-                        )
+                        mongo_store.update_docs('cycle_benchmarks', {'cycle_id': cycle_id}, {'$set': {'finished_at': summary.get("ended_at"), 'total_ms': total_ms, 'ticker_count': ticker_count, 'avg_ticker_ms': int(total_ms / ticker_count) if total_ms and ticker_count else None, 'collect_ms': phase_ms["collecting"], 'analyze_ms': phase_ms["analyzing"], 'trade_ms': phase_ms["trading"], 'steps_total': steps_total, 'steps_skipped': skipped, 'steps_ok': ok, 'steps_error': err, 'total_tokens': int(tokens_row[0]) if tokens_row else 0, 'cache_hit_pct': round(skipped / steps_total * 100, 1) if steps_total else 0.0, 'status': summary.get("status")}, '$setOnInsert': {'started_at': _started_at_or_fallback(summary)}}, upsert=True)
                         for r in (results or []):
                             if not isinstance(r, dict) or not r.get("ticker"):
                                 continue
-                            db.execute(
-                                """INSERT INTO cycle_ticker_benchmarks
-                                (cycle_id, ticker, action, confidence)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (cycle_id, ticker) DO UPDATE SET
-                                    action = EXCLUDED.action, confidence = EXCLUDED.confidence""",
-                                [cycle_id, r["ticker"], r.get("action"), r.get("confidence")],
-                            )
+                            mongo_store.update_docs('cycle_ticker_benchmarks', {'cycle_id': cycle_id, 'ticker': r["ticker"]}, {'$set': {'action': r.get("action"), 'confidence': r.get("confidence")}}, upsert=True)
             except Exception as bench_err:
                 logger.warning("[PipelineService] cycle_benchmarks write failed (non-fatal): %s", bench_err)
 
@@ -2356,11 +2324,7 @@ class PipelineService:
                         )
                     if mongo_store.writes_pg("system_commands"):
                         with get_db() as db:
-                            db.execute(
-                                "INSERT INTO system_commands (id, command_type, payload, status) "
-                                "VALUES (%s, 'AUTORESEARCH', %s, 'pending')",
-                                [job_id, json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary})],
-                            )
+                            mongo_store.insert_docs('system_commands', [{'id': job_id, 'command_type': 'AUTORESEARCH', 'payload': json.dumps({"cycle_id": cycle_id, "cycle_summary": cycle_summary}), 'status': 'pending'}])
                     logger.info(
                         "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
                     )

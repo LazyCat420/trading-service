@@ -1,6 +1,7 @@
 import json
 import logging
 from app.db.connection import get_db
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -9,10 +10,7 @@ def get_active_constitution_rules() -> list[dict]:
     """Fetch all active trading constitution rules."""
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT id, rule_category, rule_text, rule_params "
-                "FROM trading_constitution WHERE is_active = TRUE"
-            ).fetchall()
+            rows = mongo_query.find_rows('trading_constitution', {'is_active': True}, ['id', 'rule_category', 'rule_text', 'rule_params'])
             rules = []
             for row in rows:
                 params = row[3]

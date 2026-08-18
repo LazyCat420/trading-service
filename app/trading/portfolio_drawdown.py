@@ -7,6 +7,7 @@ of "Unknown".
 
 import logging
 from typing import Optional
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +31,7 @@ def compute_portfolio_drawdown(db, initial_cash: float = 100_000.0) -> Optional[
     # reports "no drawdown" rather than "unknown".
     from app.tools.portfolio_tools import resolve_bot_id
 
-    rows = db.execute(
-        """
-        SELECT realized_pnl
-        FROM lot_closures
-        WHERE bot_id = %s
-        ORDER BY closed_at ASC
-        """,
-        [resolve_bot_id()]
-    ).fetchall()
+    rows = mongo_query.find_rows('lot_closures', {'bot_id': resolve_bot_id()}, ['realized_pnl'], sort=[('closed_at', 1)])
 
     if not rows:
         return None

@@ -56,6 +56,7 @@ import json
 import logging
 
 import numpy as np
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -306,11 +307,7 @@ def _failing_streak(component: str) -> int:
 
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT verdict FROM component_health_reports "
-                "WHERE component = %s ORDER BY evaluated_at DESC LIMIT %s",
-                [component, CONSECUTIVE_FAILING_TO_DISABLE],
-            ).fetchall()
+            rows = mongo_query.find_rows('component_health_reports', {'component': component}, ['verdict'], sort=[('evaluated_at', -1)], limit=CONSECUTIVE_FAILING_TO_DISABLE)
         streak = 0
         for (verdict,) in rows:
             if verdict == VERDICT_FAILING:
@@ -387,22 +384,7 @@ def run_component_health_evaluation() -> dict:
 
             ensure_health_table()
             with get_db() as db:
-                db.execute(
-                    """
-                    INSERT INTO component_health_reports (
-                        component, window_start, window_end, observations,
-                        verdict, failure_kinds, consecutive_failing,
-                        metrics, action, note
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    [
-                        COMPONENT_HMM,
-                        metrics.get("window_start"), metrics.get("window_end"),
-                        metrics.get("observations"),
-                        verdict, json.dumps(failures), streak,
-                        json.dumps(metrics, default=str), action, note,
-                    ],
-                )
+                mongo_store.insert_docs('component_health_reports', [{'component': COMPONENT_HMM, 'window_start': metrics.get("window_start"), 'window_end': metrics.get("window_end"), 'observations': metrics.get("observations"), 'verdict': verdict, 'failure_kinds': json.dumps(failures), 'consecutive_failing': streak, 'metrics': json.dumps(metrics, default=str), 'action': action, 'note': note}])
         except Exception as e:  # noqa: BLE001
             logger.warning("[ComponentHealth] report write failed: %s", e)
 
@@ -426,16 +408,7 @@ def report_history(component: str = COMPONENT_HMM, limit: int = 30) -> list[dict
 
     ensure_health_table()
     with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT evaluated_at, window_start, window_end, observations,
-                   verdict, failure_kinds, consecutive_failing, metrics,
-                   action, note
-            FROM component_health_reports
-            WHERE component = %s ORDER BY evaluated_at DESC LIMIT %s
-            """,
-            [component, max(1, min(int(limit), 200))],
-        ).fetchall()
+        rows = mongo_query.find_rows('component_health_reports', {'component': component}, ['evaluated_at', 'window_start', 'window_end', 'observations', 'verdict', 'failure_kinds', 'consecutive_failing', 'metrics', 'action', 'note'], sort=[('evaluated_at', -1)], limit=max(1, min(int(limit), 200)))
 
     def _j(v):
         return json.loads(v) if isinstance(v, (str, bytes)) else v

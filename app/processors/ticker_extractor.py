@@ -16,6 +16,7 @@ import re
 import json
 import logging
 from dataclasses import dataclass
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -807,19 +808,12 @@ class CompanyRegistry:
                 # Check if table exists
                 tables = [
                     r[0]
-                    for r in db.execute(
-                        "SELECT tablename FROM pg_catalog.pg_tables "
-                        "WHERE schemaname = 'public'"
-                    ).fetchall()
+                    for r in mongo_query.find_rows('pg_tables', {'schemaname': 'public'}, ['tablename'])
                 ]
                 if "company_registry" not in tables:
                     return 0
 
-                rows = db.execute("""
-                    SELECT symbol, company_name, aliases, sector, market_cap,
-                           is_sp500, verified, rejected
-                    FROM company_registry
-                """).fetchall()
+                rows = mongo_query.find_rows('company_registry', {}, ['symbol', 'company_name', 'aliases', 'sector', 'market_cap', 'is_sp500', 'verified', 'rejected'])
 
             for row in rows:
                 sym, name, aliases_json, sector, mcap, is_sp, verified, rejected = row
@@ -1017,33 +1011,10 @@ class CompanyRegistry:
                 # Clear and re-insert
                 db.execute("DELETE FROM company_registry")
                 for c in self._by_symbol.values():
-                    db.execute(
-                        """
-                        INSERT INTO company_registry
-                            (symbol, company_name, aliases, sector, market_cap, is_sp500, verified, source)
-                        VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'sp500_load')
-                        ON CONFLICT (symbol) DO NOTHING
-                    """,
-                        [
-                            c.symbol,
-                            c.name,
-                            json.dumps(c.aliases),
-                            c.sector,
-                            c.market_cap,
-                            c.is_sp500,
-                        ],
-                    )
+                    mongo_store.upsert_doc('company_registry', {'symbol': c.symbol}, {'symbol': c.symbol, 'company_name': c.name, 'aliases': json.dumps(c.aliases), 'sector': c.sector, 'market_cap': c.market_cap, 'is_sp500': c.is_sp500, 'verified': True, 'source': 'sp500_load'}, insert_only=True)
                 # Also save rejected
                 for sym in self._rejected:
-                    db.execute(
-                        """
-                        INSERT INTO company_registry
-                            (symbol, company_name, aliases, rejected, source)
-                        VALUES (%s, %s, '[]', TRUE, 'yfinance_reject')
-                        ON CONFLICT (symbol) DO NOTHING
-                    """,
-                        [sym, f"REJECTED_{sym}"],
-                    )
+                    mongo_store.upsert_doc('company_registry', {'symbol': sym}, {'symbol': sym, 'company_name': f"REJECTED_{sym}", 'aliases': '[]', 'rejected': True, 'source': 'yfinance_reject'}, insert_only=True)
             logger.info(
                 "[ticker_extractor] Saved %d companies + %d rejected to DB",
                 self.size,
@@ -1495,21 +1466,7 @@ def _save_verified_to_db(company: Company):
         from app.db.connection import get_db
 
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO company_registry
-                    (symbol, company_name, aliases, sector, market_cap, is_sp500, verified, rejected, source)
-                VALUES (%s, %s, %s, %s, %s, FALSE, TRUE, FALSE, 'yfinance')
-                ON CONFLICT (symbol) DO NOTHING
-            """,
-                [
-                    company.symbol,
-                    company.name,
-                    json.dumps(company.aliases),
-                    company.sector,
-                    company.market_cap,
-                ],
-            )
+            mongo_store.upsert_doc('company_registry', {'symbol': company.symbol}, {'symbol': company.symbol, 'company_name': company.name, 'aliases': json.dumps(company.aliases), 'sector': company.sector, 'market_cap': company.market_cap, 'is_sp500': False, 'verified': True, 'rejected': False, 'source': 'yfinance'}, insert_only=True)
     except Exception as e:
         logger.warning(f"Failed to save verified {company.symbol} to DB: {e}")
 
@@ -1520,15 +1477,7 @@ def _save_rejected_to_db(sym: str):
         from app.db.connection import get_db
 
         with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO company_registry
-                    (symbol, company_name, aliases, rejected, source)
-                VALUES (%s, %s, '[]', TRUE, 'yfinance_reject')
-                ON CONFLICT (symbol) DO NOTHING
-            """,
-                [sym, f"REJECTED_{sym}"],
-            )
+            mongo_store.upsert_doc('company_registry', {'symbol': sym}, {'symbol': sym, 'company_name': f"REJECTED_{sym}", 'aliases': '[]', 'rejected': True, 'source': 'yfinance_reject'}, insert_only=True)
     except Exception as e:
         logger.warning(f"Failed to save rejected {sym} to DB: {e}")
 

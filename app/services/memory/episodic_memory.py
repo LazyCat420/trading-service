@@ -1,6 +1,7 @@
 import uuid
 import logging
 from datetime import datetime, timezone
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -28,24 +29,7 @@ class EpisodicMemoryStore:
             mem_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc).isoformat()
 
-            db.execute(
-                """
-                INSERT INTO episodic_memory
-                (id, cycle_id, ticker, timestamp, summary, key_decisions, outcome, outcome_score, agents_involved)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-                [
-                    mem_id,
-                    cycle_id,
-                    ticker,
-                    now,
-                    summary,
-                    key_decisions,
-                    outcome,
-                    outcome_score,
-                    agents_involved,
-                ],
-            )
+            mongo_store.insert_docs('episodic_memory', [{'id': mem_id, 'cycle_id': cycle_id, 'ticker': ticker, 'timestamp': now, 'summary': summary, 'key_decisions': key_decisions, 'outcome': outcome, 'outcome_score': outcome_score, 'agents_involved': agents_involved}])
 
             logger.info(f"[EPISODIC] Wrote episode for {ticker} (Cycle {cycle_id})")
             return mem_id
@@ -98,16 +82,7 @@ class EpisodicMemoryStore:
             # (Could also pull worst-outcome to show what didn't work)
             # Recency first: with unresolved ("pending") outcomes all scoring
             # ties at 0, and best-outcome-first would bury the newest thesis.
-            rows = db.execute(
-                """
-                SELECT id, cycle_id, timestamp, summary, outcome_score, key_decisions, outcome
-                FROM episodic_memory
-                WHERE ticker = %s
-                ORDER BY timestamp DESC
-                LIMIT %s
-            """,
-                [ticker, limit],
-            ).fetchall()
+            rows = mongo_query.find_rows('episodic_memory', {'ticker': ticker}, ['id', 'cycle_id', 'timestamp', 'summary', 'outcome_score', 'key_decisions', 'outcome'], sort=[('timestamp', -1)], limit=limit)
 
             results = []
             for r in rows:

@@ -23,6 +23,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -59,23 +60,13 @@ def add_ticker(
         return False
 
     with get_db() as db:
-        existing = db.execute(
-            "SELECT ticker, status FROM watchlist WHERE ticker = %s", [ticker]
-        ).fetchone()
+        existing = mongo_query.find_row('watchlist', {'ticker': ticker}, ['ticker', 'status'])
         if existing:
-            db.execute(
-                "UPDATE watchlist SET status = 'active', status_reason = NULL, "
-                "notes = %s, source = %s WHERE ticker = %s",
-                [notes, source, ticker],
-            )
+            mongo_store.update_docs('watchlist', {'ticker': ticker}, {'$set': {'status': 'active', 'status_reason': None, 'notes': notes, 'source': source}})
             logger.info("watchlist: reactivated %s", ticker)
             return False
 
-        db.execute(
-            "INSERT INTO watchlist (ticker, source, notes, added_at, status) "
-            "VALUES (%s, %s, %s, %s, 'active')",
-            [ticker, source, notes, datetime.now(timezone.utc)],
-        )
+        mongo_store.insert_docs('watchlist', [{'ticker': ticker, 'source': source, 'notes': notes, 'added_at': datetime.now(timezone.utc), 'status': 'active'}])
     logger.info("watchlist: added %s (source=%s)", ticker, source)
     return True
 
@@ -84,18 +75,10 @@ def remove_ticker(ticker: str) -> bool:
     """Soft-delete a ticker (status='removed'). Returns True if it existed."""
     ticker = ticker.upper().strip()
     with get_db() as db:
-        row = db.execute(
-            "SELECT ticker FROM watchlist "
-            "WHERE ticker = %s AND status IN ('active', 'paused')",
-            [ticker],
-        ).fetchone()
+        row = mongo_query.find_row('watchlist', {'ticker': ticker, 'status': {'$in': ['active', 'paused']}}, ['ticker'])
         if not row:
             return False
-        db.execute(
-            "UPDATE watchlist SET status = 'removed', "
-            "status_reason = 'user removed' WHERE ticker = %s",
-            [ticker],
-        )
+        mongo_store.update_docs('watchlist', {'ticker': ticker}, {'$set': {'status': 'removed', 'status_reason': 'user removed'}})
     logger.info("watchlist: removed %s", ticker)
     return True
 
@@ -110,20 +93,11 @@ def auto_purge_ticker(ticker: str, reason: str = "") -> bool:
     now = datetime.now(timezone.utc)
 
     with get_db() as db:
-        row = db.execute(
-            "SELECT ticker FROM watchlist "
-            "WHERE ticker = %s AND status IN ('active', 'paused')",
-            [ticker],
-        ).fetchone()
+        row = mongo_query.find_row('watchlist', {'ticker': ticker, 'status': {'$in': ['active', 'paused']}}, ['ticker'])
         if not row:
             return False
 
-        db.execute(
-            "UPDATE watchlist SET status = 'removed', "
-            "status_reason = %s, purged_at = %s, purge_reason = %s "
-            "WHERE ticker = %s",
-            [f"auto_purge: {reason}", now, reason, ticker],
-        )
+        mongo_store.update_docs('watchlist', {'ticker': ticker}, {'$set': {'status': 'removed', 'status_reason': f"auto_purge: {reason}", 'purged_at': now, 'purge_reason': reason}})
     logger.info("watchlist: AUTO-PURGED %s (reason: %s)", ticker, reason)
     return True
 
@@ -131,11 +105,7 @@ def auto_purge_ticker(ticker: str, reason: str = "") -> bool:
 def get_active() -> list[dict]:
     """Return all active watchlist tickers with health scores."""
     with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, source, notes, added_at, health_score "
-            "FROM watchlist WHERE status = 'active' "
-            "ORDER BY added_at DESC"
-        ).fetchall()
+        rows = mongo_query.find_rows('watchlist', {'status': 'active'}, ['ticker', 'source', 'notes', 'added_at', 'health_score'], sort=[('added_at', -1)])
     return [
         {
             "ticker": r[0],
@@ -167,32 +137,14 @@ def ban_ticker(ticker: str, reason: str = "") -> bool:
     market_cap, price, volume = _snapshot_market_data(ticker)
 
     with get_db() as db:
-        db.execute(
-            "INSERT INTO ticker_bans "
-            "(ticker, reason, ban_type, market_cap, price_at_ban, "
-            "volume_at_ban, banned_by, banned_at) "
-            "VALUES (%s, %s, 'manual', %s, %s, %s, 'user', %s) "
-            "ON CONFLICT (ticker) DO NOTHING",
-            [ticker, reason, market_cap, price, volume, now],
-        )
+        mongo_store.upsert_doc('ticker_bans', {'ticker': ticker}, {'ticker': ticker, 'reason': reason, 'ban_type': 'manual', 'market_cap': market_cap, 'price_at_ban': price, 'volume_at_ban': volume, 'banned_by': 'user', 'banned_at': now}, insert_only=True)
 
         # Update or insert watchlist entry
-        existing = db.execute(
-            "SELECT ticker FROM watchlist WHERE ticker = %s", [ticker]
-        ).fetchone()
+        existing = mongo_query.find_row('watchlist', {'ticker': ticker}, ['ticker'])
         if existing:
-            db.execute(
-                "UPDATE watchlist SET status = 'banned', "
-                "status_reason = %s, banned_at = %s WHERE ticker = %s",
-                [reason, now, ticker],
-            )
+            mongo_store.update_docs('watchlist', {'ticker': ticker}, {'$set': {'status': 'banned', 'status_reason': reason, 'banned_at': now}})
         else:
-            db.execute(
-                "INSERT INTO watchlist "
-                "(ticker, status, status_reason, banned_at, added_at, source) "
-                "VALUES (%s, 'banned', %s, %s, %s, 'ban')",
-                [ticker, reason, now, now],
-            )
+            mongo_store.insert_docs('watchlist', [{'ticker': ticker, 'status': 'banned', 'status_reason': reason, 'banned_at': now, 'added_at': now, 'source': 'ban'}])
 
     logger.info("watchlist: BANNED %s (reason: %s)", ticker, reason)
     return True
@@ -206,12 +158,8 @@ def unban_ticker(ticker: str) -> bool:
         return False
 
     with get_db() as db:
-        db.execute("DELETE FROM ticker_bans WHERE ticker = %s", [ticker])
-        db.execute(
-            "UPDATE watchlist SET status = 'removed', "
-            "status_reason = 'unbanned', banned_at = NULL WHERE ticker = %s",
-            [ticker],
-        )
+        mongo_store.delete_docs('ticker_bans', {'ticker': ticker})
+        mongo_store.update_docs('watchlist', {'ticker': ticker}, {'$set': {'status': 'removed', 'status_reason': 'unbanned', 'banned_at': None}})
     logger.info("watchlist: unbanned %s", ticker)
     return True
 
@@ -221,9 +169,7 @@ def is_banned(ticker: str) -> bool:
     ticker = ticker.upper().strip()
     try:
         with get_db() as db:
-            row = db.execute(
-                "SELECT ticker FROM ticker_bans WHERE ticker = %s", [ticker]
-            ).fetchone()
+            row = mongo_query.find_row('ticker_bans', {'ticker': ticker}, ['ticker'])
             return row is not None
     except Exception as e:
         logger.error("watchlist: is_banned lookup failed for %s: %s", ticker, e)
@@ -234,11 +180,7 @@ def get_banned_list() -> list[dict]:
     """Return all banned tickers with reasons."""
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT ticker, reason, ban_type, pattern_tags, "
-                "market_cap, price_at_ban, volume_at_ban, banned_at "
-                "FROM ticker_bans ORDER BY banned_at DESC"
-            ).fetchall()
+            rows = mongo_query.find_rows('ticker_bans', {}, ['ticker', 'reason', 'ban_type', 'pattern_tags', 'market_cap', 'price_at_ban', 'volume_at_ban', 'banned_at'], sort=[('banned_at', -1)])
     except Exception as e:
         logger.error("watchlist: get_banned_list query failed: %s", e)
         return []
@@ -264,9 +206,7 @@ def check_ban_patterns(ticker: str) -> str | None:
     """
     try:
         with get_db() as db:
-            patterns = db.execute(
-                "SELECT pattern_name, conditions FROM ban_patterns WHERE auto_filter = TRUE"
-            ).fetchall()
+            patterns = mongo_query.find_rows('ban_patterns', {'auto_filter': True}, ['pattern_name', 'conditions'])
     except Exception as e:
         logger.error("watchlist: check_ban_patterns query failed: %s", e)
         return None
@@ -297,11 +237,7 @@ def check_ban_patterns(ticker: str) -> str | None:
 def get_paused() -> list[dict]:
     """Return all paused watchlist tickers."""
     with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, source, notes, added_at, status_reason "
-            "FROM watchlist WHERE status = 'paused' "
-            "ORDER BY added_at DESC"
-        ).fetchall()
+        rows = mongo_query.find_rows('watchlist', {'status': 'paused'}, ['ticker', 'source', 'notes', 'added_at', 'status_reason'], sort=[('added_at', -1)])
     return [
         {
             "ticker": r[0],
@@ -318,16 +254,10 @@ def pause_ticker(ticker: str, reason: str = "user paused") -> bool:
     """Temporarily pause a ticker. It won't be scraped this cycle."""
     ticker = ticker.upper().strip()
     with get_db() as db:
-        row = db.execute(
-            "SELECT ticker FROM watchlist WHERE ticker = %s AND status = 'active'",
-            [ticker],
-        ).fetchone()
+        row = mongo_query.find_row('watchlist', {'ticker': ticker, 'status': 'active'}, ['ticker'])
         if not row:
             return False
-        db.execute(
-            "UPDATE watchlist SET status = 'paused', status_reason = %s WHERE ticker = %s",
-            [reason, ticker],
-        )
+        mongo_store.update_docs('watchlist', {'ticker': ticker}, {'$set': {'status': 'paused', 'status_reason': reason}})
     logger.info("watchlist: paused %s", ticker)
     return True
 
@@ -336,16 +266,10 @@ def resume_ticker(ticker: str) -> bool:
     """Resume a paused ticker."""
     ticker = ticker.upper().strip()
     with get_db() as db:
-        row = db.execute(
-            "SELECT ticker FROM watchlist WHERE ticker = %s AND status = 'paused'",
-            [ticker],
-        ).fetchone()
+        row = mongo_query.find_row('watchlist', {'ticker': ticker, 'status': 'paused'}, ['ticker'])
         if not row:
             return False
-        db.execute(
-            "UPDATE watchlist SET status = 'active', status_reason = NULL WHERE ticker = %s",
-            [ticker],
-        )
+        mongo_store.update_docs('watchlist', {'ticker': ticker}, {'$set': {'status': 'active', 'status_reason': None}})
     logger.info("watchlist: resumed %s", ticker)
     return True
 
@@ -360,11 +284,7 @@ def import_from_discovery(min_score: float = 50.0) -> list[str]:
     """
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT ticker FROM discovered_tickers "
-                "WHERE score >= %s ORDER BY score DESC",
-                [min_score],
-            ).fetchall()
+            rows = mongo_query.find_rows('discovered_tickers', {'score': {'$gte': min_score}}, ['ticker'], sort=[('score', -1)])
     except Exception:
         logger.warning("discovered_tickers table not found")
         return []
@@ -416,22 +336,14 @@ def _snapshot_market_data(ticker: str) -> tuple:
 
     with get_db() as db:
         try:
-            fund_row = db.execute(
-                "SELECT market_cap FROM fundamentals "
-                "WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-                [ticker],
-            ).fetchone()
+            fund_row = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['market_cap'], sort=[('snapshot_date', -1)])
             if fund_row:
                 market_cap = fund_row[0]
         except Exception as e:
             logger.warning("watchlist: _snapshot_market_data fundamentals lookup failed for %s: %s", ticker, e)
 
         try:
-            price_row = db.execute(
-                "SELECT close, volume FROM price_history "
-                "WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                [ticker],
-            ).fetchone()
+            price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close', 'volume'], sort=[('date', -1)])
             if price_row:
                 price = price_row[0]
                 volume = price_row[1]

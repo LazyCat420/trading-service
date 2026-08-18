@@ -27,6 +27,7 @@ from app.services.adaptive_concurrency import concurrency_controller
 from app.v3.telemetry import persist_telemetry
 from app.v3.agent_runner import run_v3_agent
 from app.v3.desk_persistence import save_desk
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -3119,10 +3120,7 @@ def _drop_implausible_levels(desk: SharedDesk) -> list[str]:
         from app.db.connection import get_db
 
         with get_db() as _db:
-            _row = _db.execute(
-                "SELECT close FROM price_history WHERE ticker = %s "
-                "ORDER BY date DESC LIMIT 1", [desk.ticker],
-            ).fetchone()
+            _row = mongo_query.find_row('price_history', {'ticker': desk.ticker}, ['close'], sort=[('date', -1)])
         _last_close = float(_row[0]) if _row and _row[0] else None
     except Exception as _e:  # noqa: BLE001 — a price lookup must never block
         logger.debug("[V3] %s: stop/target sanity lookup failed: %s",

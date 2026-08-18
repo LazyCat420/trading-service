@@ -13,6 +13,7 @@ from app.db.connection import get_db
 from app.processors.dedup_engine import DedupEngine
 from app.processors.ticker_extractor import get_ticker_symbols
 from app.services.scraper_client import scraper_client
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -92,24 +93,7 @@ async def _store_tweets(tweets: list[dict], default_ticker: str | None = None) -
             # Insert into database
             try:
                 with get_db() as db:
-                    db.execute("""
-                        INSERT INTO social_posts (
-                            id, platform, platform_post_id, ticker, author_username,
-                            author_display_name, author_followers, content, like_count,
-                            repost_count, reply_count, view_count, cashtags, hashtags,
-                            is_repost, posted_at, content_hash, collected_at
-                        ) VALUES (
-                            %s, 'twitter', %s, %s, %s,
-                            %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s,
-                            %s, %s, %s, CURRENT_TIMESTAMP
-                        ) ON CONFLICT (id) DO NOTHING
-                    """, [
-                        db_id, t["id"], ticker, t["author_username"],
-                        t["author_display_name"], t["author_followers"], content, t["like_count"],
-                        t["retweet_count"], t["reply_count"], t["view_count"], cashtags_json, hashtags_json,
-                        t["is_retweet"], posted_at, content_hash
-                    ])
+                    mongo_store.upsert_doc('social_posts', {'id': db_id}, {'id': db_id, 'platform': 'twitter', 'platform_post_id': t["id"], 'ticker': ticker, 'author_username': t["author_username"], 'author_display_name': t["author_display_name"], 'author_followers': t["author_followers"], 'content': content, 'like_count': t["like_count"], 'repost_count': t["retweet_count"], 'reply_count': t["reply_count"], 'view_count': t["view_count"], 'cashtags': cashtags_json, 'hashtags': hashtags_json, 'is_repost': t["is_retweet"], 'posted_at': posted_at, 'content_hash': content_hash, 'collected_at': datetime.now(timezone.utc)}, insert_only=True)
                     stored_count += 1
             except Exception as e:
                 logger.error(f"Failed to insert tweet {t['id']} to DB: {e}")

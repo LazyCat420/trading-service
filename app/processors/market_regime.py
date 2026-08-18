@@ -11,6 +11,7 @@ The regime affects how aggressive the bot should be:
 """
 
 from app.db.connection import get_db
+from app.db import mongo_query
 
 
 def get_market_regime() -> dict:
@@ -23,16 +24,9 @@ def get_market_regime() -> dict:
     """
     with get_db() as db:
         # Get SPY price and moving averages
-        spy_tech = db.execute("""
-            SELECT sma_50, sma_200
-            FROM technicals WHERE ticker = 'SPY'
-            ORDER BY date DESC LIMIT 1
-        """).fetchone()
+        spy_tech = mongo_query.find_row('technicals', {'ticker': 'SPY'}, ['sma_50', 'sma_200'], sort=[('date', -1)])
 
-        spy_price_row = db.execute("""
-            SELECT close FROM price_history
-            WHERE ticker = 'SPY' ORDER BY date DESC LIMIT 1
-        """).fetchone()
+        spy_price_row = mongo_query.find_row('price_history', {'ticker': 'SPY'}, ['close'], sort=[('date', -1)])
 
         # Fallback if no SPY data
         if not spy_price_row or not spy_tech:
@@ -49,11 +43,7 @@ def get_market_regime() -> dict:
         sma_200 = spy_tech[1] or spy_price
 
         # VIX check (from price_history if we have it, else estimate from ATR)
-        vix_row = db.execute("""
-            SELECT close FROM price_history
-            WHERE ticker = '^VIX' OR ticker = 'VIX'
-            ORDER BY date DESC LIMIT 1
-        """).fetchone()
+        vix_row = mongo_query.find_row('price_history', {'$or': [{'ticker': '^VIX'}, {'ticker': 'VIX'}]}, ['close'], sort=[('date', -1)])
         vix = vix_row[0] if vix_row else None
 
         # Regime classification
@@ -62,10 +52,7 @@ def get_market_regime() -> dict:
         golden_cross = sma_50 > sma_200
 
         # SPY return over last 20 days
-        spy_20d = db.execute("""
-            SELECT close FROM price_history
-            WHERE ticker = 'SPY' ORDER BY date DESC LIMIT 21
-        """).fetchall()
+        spy_20d = mongo_query.find_rows('price_history', {'ticker': 'SPY'}, ['close'], sort=[('date', -1)], limit=21)
 
         recent_return = 0
         if len(spy_20d) >= 2:

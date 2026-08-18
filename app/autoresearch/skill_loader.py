@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +64,7 @@ def _load(agent_name: str, bust_cache: bool) -> tuple[str, int | None]:
         from app.db.connection import get_db
 
         with get_db() as db:
-            row = db.execute(
-                "SELECT skill_text, version FROM agent_skills "
-                "WHERE agent_name = %s AND status = 'active' "
-                "ORDER BY version DESC LIMIT 1",
-                [agent_name],
-            ).fetchone()
+            row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'status': 'active'}, ['skill_text', 'version'], sort=[('version', -1)])
         text = (row[0] or "").strip() if row else ""
         if text:
             prefix = f"{_SKILL_HEADER}{text}\n\n"

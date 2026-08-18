@@ -5,6 +5,7 @@ from app.db.connection import get_db
 from app.config import settings
 from app.tools.registry import registry
 from app.trading.paper_trader import _get_current_price
+from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,7 @@ def get_position_context(ticker: str, bot_id: str = "") -> dict:
         ticker = ticker.upper()
 
         try:
-            row = db.execute(
-                "SELECT qty, avg_entry_price, stop_loss_pct, opened_at "
-                "FROM positions WHERE bot_id = %s AND ticker = %s",
-                [bot_id, ticker],
-            ).fetchone()
+            row = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['qty', 'avg_entry_price', 'stop_loss_pct', 'opened_at'])
         except Exception as e:
             logger.debug(
                 "[POSITION_CTX] Failed to query position for %s: %s",
@@ -104,13 +101,7 @@ def get_position_context(ticker: str, bot_id: str = "") -> dict:
 
         # Try to pull original thesis
         try:
-            thesis_row = db.execute(
-                "SELECT thesis, timestamp, confidence_score "
-                "FROM trade_history "
-                "WHERE bot_id = %s AND ticker = %s AND action = 'BUY' "
-                "ORDER BY timestamp DESC LIMIT 1",
-                [bot_id, ticker],
-            ).fetchone()
+            thesis_row = mongo_query.find_row('trade_history', {'bot_id': bot_id, 'ticker': ticker, 'action': 'BUY'}, ['thesis', 'timestamp', 'confidence_score'], sort=[('timestamp', -1)])
 
             if thesis_row:
                 ctx["original_thesis"] = thesis_row[0]

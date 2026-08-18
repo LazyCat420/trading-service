@@ -74,52 +74,9 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
         with get_db() as db:
             with db.transaction():
                 # Upsert: remove existing for this ticker+cycle to avoid duplicates
-                db.execute(
-                    "DELETE FROM trade_results WHERE ticker = %s AND cycle_id = %s",
-                    [ticker, cycle_id],
-                )
+                mongo_store.delete_docs('trade_results', {'ticker': ticker, 'cycle_id': cycle_id})
 
-                db.execute(
-                    """
-                    INSERT INTO trade_results (
-                        id, ticker, cycle_id, action, confidence,
-                        reasoning, signal_weights, signal_assessments,
-                        risk_flags, stop_loss, take_profit,
-                        position_size_pct, persona_used, regime,
-                        internal_consensus_score, dynamic_trigger,
-                        decision_provenance,
-                        created_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s,
-                        %s,
-                        %s
-                    )
-                    """,
-                    [
-                        result_id,
-                        ticker,
-                        cycle_id,
-                        action,
-                        confidence,
-                        reasoning[:2000] if reasoning else "",
-                        json.dumps(signal_weights),
-                        json.dumps(signal_assessments),
-                        json.dumps(risk_flags),
-                        stop_loss,
-                        take_profit,
-                        position_size_pct,
-                        persona_used,
-                        regime,
-                        consensus,
-                        json.dumps(dynamic_trigger) if dynamic_trigger else None,
-                        provenance,
-                        _saved_at,
-                    ],
-                )
+                mongo_store.insert_docs('trade_results', [{'id': result_id, 'ticker': ticker, 'cycle_id': cycle_id, 'action': action, 'confidence': confidence, 'reasoning': reasoning[:2000] if reasoning else "", 'signal_weights': json.dumps(signal_weights), 'signal_assessments': json.dumps(signal_assessments), 'risk_flags': json.dumps(risk_flags), 'stop_loss': stop_loss, 'take_profit': take_profit, 'position_size_pct': position_size_pct, 'persona_used': persona_used, 'regime': regime, 'internal_consensus_score': consensus, 'dynamic_trigger': json.dumps(dynamic_trigger) if dynamic_trigger else None, 'decision_provenance': provenance, 'created_at': _saved_at}])
 
         # Pair the agents' verdict with the deterministic baseline recorded at
         # desk-build time (2026-08-05). Shadow only — nothing reads it back

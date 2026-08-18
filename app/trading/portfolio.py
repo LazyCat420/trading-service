@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from app.db.connection import get_db
 from app.config import settings
 from app.utils.tz import utc_iso
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +63,7 @@ def get_current_state(bot_id: str = "") -> dict:
 
     # Bot state
     with get_db() as db:
-        bot = db.execute(
-            "SELECT cash_balance, total_pnl, total_trades "
-            "FROM bots WHERE bot_id = %s LIMIT 1",
-            [bid],
-        ).fetchone()
+        bot = mongo_query.find_row('bots', {'bot_id': bid}, ['cash_balance', 'total_pnl', 'total_trades'])
 
     cash = (
         _safe_float(bot[0], fallback=settings.STARTING_CASH)
@@ -77,12 +74,7 @@ def get_current_state(bot_id: str = "") -> dict:
 
     # Latest snapshot timestamp
     with get_db() as db:
-        snap = db.execute(
-            "SELECT snapshot_ts "
-            "FROM portfolio_snapshots "
-            "WHERE bot_id = %s ORDER BY snapshot_ts DESC LIMIT 1",
-            [bid],
-        ).fetchone()
+        snap = mongo_query.find_row('portfolio_snapshots', {'bot_id': bid}, ['snapshot_ts'], sort=[('snapshot_ts', -1)])
 
     updated_at = snap[0] if snap else None
 
@@ -91,12 +83,7 @@ def get_current_state(bot_id: str = "") -> dict:
     equity = 0.0
     try:
         with get_db() as db:
-            pos_rows = db.execute(
-                "SELECT ticker, qty, avg_entry_price, stop_loss_pct "
-                "FROM positions WHERE bot_id = %s AND qty > 0 "
-                "ORDER BY ticker",
-                [bid],
-            ).fetchall()
+            pos_rows = mongo_query.find_rows('positions', {'bot_id': bid, 'qty': {'$gt': 0}}, ['ticker', 'qty', 'avg_entry_price', 'stop_loss_pct'], sort=[('ticker', 1)])
             logger.info(
                 "[TRACE][STATE] raw pos_rows count=%d for bot_id=%s", len(pos_rows), bid
             )
@@ -114,17 +101,9 @@ def get_current_state(bot_id: str = "") -> dict:
                 stop_loss_pct = _safe_float(p[3], fallback=0.0)
 
                 # Fetch live current price
-                price_row = db.execute(
-                    "SELECT close FROM price_history "
-                    "WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
+                price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
                 if not price_row:
-                    price_row = db.execute(
-                        "SELECT close FROM asset_prices "
-                        "WHERE symbol = %s ORDER BY date DESC LIMIT 1",
-                        [ticker],
-                    ).fetchone()
+                    price_row = mongo_query.find_row('asset_prices', {'symbol': ticker}, ['close'], sort=[('date', -1)])
 
                 curr_price = (
                     _safe_float(price_row[0], fallback=avg_entry_price)
@@ -152,18 +131,9 @@ def get_current_state(bot_id: str = "") -> dict:
                 equity += qty * curr_price
 
                 # Fetch extra data for table consistency
-                meta = db.execute(
-                    "SELECT sector, market_cap_tier, market_cap FROM ticker_metadata WHERE ticker = %s",
-                    [ticker],
-                ).fetchone()
-                fund = db.execute(
-                    "SELECT pe_ratio, revenue_growth FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
-                tech = db.execute(
-                    "SELECT rsi_14 FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                    [ticker],
-                ).fetchone()
+                meta = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['sector', 'market_cap_tier', 'market_cap'])
+                fund = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['pe_ratio', 'revenue_growth'], sort=[('snapshot_date', -1)])
+                tech = mongo_query.find_row('technicals', {'ticker': ticker}, ['rsi_14'], sort=[('date', -1)])
 
                 positions.append(
                     {
@@ -222,27 +192,12 @@ def get_recent_trades(bot_id: str = "", limit: int = 50) -> list[dict]:
     bid = bot_id or _get_default_bot_id()
     results = []
     with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, side, qty, price, signal, "
-            "created_at, filled_at, realized_pnl "
-            "FROM orders WHERE bot_id = %s "
-            "ORDER BY created_at DESC LIMIT %s",
-            [bid, limit],
-        ).fetchall()
+        rows = mongo_query.find_rows('orders', {'bot_id': bid}, ['ticker', 'side', 'qty', 'price', 'signal', 'created_at', 'filled_at', 'realized_pnl'], sort=[('created_at', -1)], limit=limit)
         for r in rows:
             ticker = r[0]
-            meta = db.execute(
-                "SELECT sector, market_cap_tier, market_cap FROM ticker_metadata WHERE ticker = %s",
-                [ticker],
-            ).fetchone()
-            fund = db.execute(
-                "SELECT pe_ratio, revenue_growth FROM fundamentals WHERE ticker = %s ORDER BY snapshot_date DESC LIMIT 1",
-                [ticker],
-            ).fetchone()
-            tech = db.execute(
-                "SELECT rsi_14 FROM technicals WHERE ticker = %s ORDER BY date DESC LIMIT 1",
-                [ticker],
-            ).fetchone()
+            meta = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['sector', 'market_cap_tier', 'market_cap'])
+            fund = mongo_query.find_row('fundamentals', {'ticker': ticker}, ['pe_ratio', 'revenue_growth'], sort=[('snapshot_date', -1)])
+            tech = mongo_query.find_row('technicals', {'ticker': ticker}, ['rsi_14'], sort=[('date', -1)])
 
             results.append(
                 {
@@ -306,17 +261,7 @@ def take_snapshot(bot_id: str = "") -> dict:
             # line) could not be decomposed into "trades we closed" versus "marks
             # that moved". A column that exists and is never populated reads as a
             # measurement rather than a gap (2026-07-26 audit).
-            db.execute(
-                "INSERT INTO portfolio_snapshots "
-                "(id, bot_id, snapshot_ts, cash_balance, total_value, "
-                " realized_pnl, unrealized_pnl) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                [
-                    snap_id, bid, now, state["cash"], state["total_value"],
-                    round(state.get("realized_pnl") or 0.0, 4),
-                    round(state.get("unrealized_pnl") or 0.0, 4),
-                ],
-            )
+            mongo_store.insert_docs('portfolio_snapshots', [{'id': snap_id, 'bot_id': bid, 'snapshot_ts': now, 'cash_balance': state["cash"], 'total_value': state["total_value"], 'realized_pnl': round(state.get("realized_pnl") or 0.0, 4), 'unrealized_pnl': round(state.get("unrealized_pnl") or 0.0, 4)}])
         logger.info(
             "snapshot: %s total_value=%.2f realized=%.2f unrealized=%.2f",
             bid,
@@ -345,10 +290,7 @@ def get_performance_summary(bot_id: str = "") -> dict:
 
     # From bots table
     with get_db() as db:
-        bot = db.execute(
-            "SELECT total_trades, total_pnl, win_rate FROM bots WHERE bot_id = %s",
-            [bid],
-        ).fetchone()
+        bot = mongo_query.find_row('bots', {'bot_id': bid}, ['total_trades', 'total_pnl', 'win_rate'])
 
     total_trades = bot[0] if bot else 0
     realized_pnl = bot[1] if bot else 0.0
@@ -376,23 +318,9 @@ def get_position_lots(bot_id: str = "", ticker: str | None = None) -> list[dict]
     bid = bot_id or _get_default_bot_id()
     with get_db() as db:
         if ticker:
-            rows = db.execute(
-                "SELECT lot_id, ticker, opened_at, original_qty, remaining_qty, "
-                "entry_price, status, cycle_id, is_legacy "
-                "FROM position_lots "
-                "WHERE bot_id = %s AND ticker = %s AND status IN ('open', 'partial') "
-                "ORDER BY opened_at ASC",
-                [bid, ticker.upper()],
-            ).fetchall()
+            rows = mongo_query.find_rows('position_lots', {'bot_id': bid, 'ticker': ticker.upper(), 'status': {'$in': ['open', 'partial']}}, ['lot_id', 'ticker', 'opened_at', 'original_qty', 'remaining_qty', 'entry_price', 'status', 'cycle_id', 'is_legacy'], sort=[('opened_at', 1)])
         else:
-            rows = db.execute(
-                "SELECT lot_id, ticker, opened_at, original_qty, remaining_qty, "
-                "entry_price, status, cycle_id, is_legacy "
-                "FROM position_lots "
-                "WHERE bot_id = %s AND status IN ('open', 'partial') "
-                "ORDER BY ticker, opened_at ASC",
-                [bid],
-            ).fetchall()
+            rows = mongo_query.find_rows('position_lots', {'bot_id': bid, 'status': {'$in': ['open', 'partial']}}, ['lot_id', 'ticker', 'opened_at', 'original_qty', 'remaining_qty', 'entry_price', 'status', 'cycle_id', 'is_legacy'], sort=[('ticker', 1), ('opened_at', 1)])
     return [
         {
             "lot_id": r[0],
@@ -451,13 +379,7 @@ def get_trade_fills(bot_id: str = "", limit: int = 50) -> list[dict]:
     bid = bot_id or _get_default_bot_id()
     limit = max(1, min(int(limit), 500))
     with get_db() as db:
-        rows = db.execute(
-            "SELECT fill_id, order_id, ticker, side, fill_qty, fill_price, "
-            "fill_value, fees, filled_at, cycle_id "
-            "FROM trade_fills WHERE bot_id = %s "
-            "ORDER BY filled_at DESC LIMIT %s",
-            [bid, limit],
-        ).fetchall()
+        rows = mongo_query.find_rows('trade_fills', {'bot_id': bid}, ['fill_id', 'order_id', 'ticker', 'side', 'fill_qty', 'fill_price', 'fill_value', 'fees', 'filled_at', 'cycle_id'], sort=[('filled_at', -1)], limit=limit)
     return [
         {
             "fill_id": r[0],

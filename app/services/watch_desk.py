@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.connection import get_db
 from app.utils.tz import ensure_aware
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,7 @@ def _held_tickers() -> set[str]:
 
         bot_id = get_active_bot_id()
         with get_db() as db:
-            rows = db.execute(
-                "SELECT ticker FROM positions WHERE bot_id = %s AND qty > 0",
-                [bot_id],
-            ).fetchall()
+            rows = mongo_query.find_rows('positions', {'bot_id': bot_id, 'qty': {'$gt': 0}}, ['ticker'])
         return {r[0] for r in rows if r and r[0]}
     except Exception as e:  # noqa: BLE001
         logger.warning("[WatchDesk] held-ticker lookup failed, ranking without it: %s", e)
@@ -202,20 +200,7 @@ def create_watch(
             anchors = [ensure_aware(a) for a in inherited + [news_seen_until] if a is not None]
             anchors = [a for a in anchors if a is not None]
             last_fired_seed = max(anchors) if anchors else None
-            db.execute(
-                """
-                INSERT INTO ticker_watches
-                    (id, ticker, bot_id, triggers, reason, thesis_summary,
-                     is_active, cooldown_minutes, source_cycle_id, expiry_at,
-                     last_fired_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    watch_id, ticker, bot_id, json.dumps(clean), (reason or "")[:500],
-                    (thesis_summary or "")[:2000], int(cooldown_minutes),
-                    source_cycle_id, expiry, last_fired_seed, now, now,
-                ],
-            )
+            mongo_store.insert_docs('ticker_watches', [{'id': watch_id, 'ticker': ticker, 'bot_id': bot_id, 'triggers': json.dumps(clean), 'reason': (reason or "")[:500], 'thesis_summary': (thesis_summary or "")[:2000], 'is_active': True, 'cooldown_minutes': int(cooldown_minutes), 'source_cycle_id': source_cycle_id, 'expiry_at': expiry, 'last_fired_at': last_fired_seed, 'created_at': now, 'updated_at': now}])
     except Exception as e:
         logger.error("[WatchDesk] create_watch failed for %s: %s", ticker, e)
         return {"status": "error", "message": str(e)}
@@ -579,16 +564,8 @@ async def evaluate_watches() -> dict:
     now = datetime.now(timezone.utc)
     # Deactivate expired watches first.
     with get_db() as db:
-        db.execute(
-            "UPDATE ticker_watches SET is_active = FALSE, updated_at = %s "
-            "WHERE is_active = TRUE AND expiry_at IS NOT NULL AND expiry_at <= %s",
-            [now, now],
-        )
-        rows = db.execute(
-            "SELECT id, ticker, bot_id, triggers, reason, thesis_summary, "
-            "cooldown_minutes, fire_count, last_fired_at, created_at "
-            "FROM ticker_watches WHERE is_active = TRUE"
-        ).fetchall()
+        mongo_store.update_docs('ticker_watches', {'is_active': True, 'expiry_at': {'$ne': None, '$lte': now}}, {'$set': {'is_active': False, 'updated_at': now}})
+        rows = mongo_query.find_rows('ticker_watches', {'is_active': True}, ['id', 'ticker', 'bot_id', 'triggers', 'reason', 'thesis_summary', 'cooldown_minutes', 'fire_count', 'last_fired_at', 'created_at'])
 
     watches = [{
         "id": r[0], "ticker": r[1], "bot_id": r[2], "triggers": json.loads(r[3] or "[]"),
@@ -643,10 +620,7 @@ async def evaluate_watches() -> dict:
                 _PRICE_FAIL_COUNT.pop(ticker, None)
 
         with get_db() as db:
-            db.execute(
-                "UPDATE ticker_watches SET last_evaluated_at = %s WHERE ticker = %s AND is_active = TRUE",
-                [now, ticker],
-            )
+            mongo_store.update_docs('ticker_watches', {'ticker': ticker, 'is_active': True}, {'$set': {'last_evaluated_at': now}})
 
         for w in tw:
             # Debounce: respect this watch's cooldown.
@@ -725,9 +699,7 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
     ticker = watch["ticker"]
     try:
         with get_db() as db:
-            state = db.execute(
-                "SELECT status FROM pipeline_state WHERE singleton_id = 'current'"
-            ).fetchone()
+            state = mongo_query.find_row('pipeline_state', {'singleton_id': 'current'}, ['status'])
             if state and state[0] not in ("idle", "done", "error", "stopped", "interrupted"):
                 logger.info("[WatchDesk] %s trip held — a cycle is already running (%s).", ticker, state[0])
                 return None
@@ -743,10 +715,7 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
                 "research_reason": detail,
             }
             cmd_id = f"wd-{uuid.uuid4().hex[:8]}"
-            db.execute(
-                "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
-                [cmd_id, "START_CYCLE", json.dumps(payload)],
-            )
+            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload)}])
         logger.info("[WatchDesk] WAKE %s for %s — %s", cmd_id, ticker, detail)
         return cmd_id
     except Exception as e:
@@ -771,12 +740,7 @@ def _mark_fired(watch: dict, trig: dict, detail: str, value, cycle_id: str) -> N
 def _log_event(watch: dict, trig: dict, detail: str, value, cycle_id: str | None) -> None:
     try:
         with get_db() as db:
-            db.execute(
-                "INSERT INTO watch_events (id, watch_id, ticker, trigger_type, detail, trigger_json, value, cycle_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                [f"wev-{uuid.uuid4().hex[:10]}", watch["id"], watch["ticker"], trig["type"],
-                 detail[:500], json.dumps(trig), value, cycle_id],
-            )
+            mongo_store.insert_docs('watch_events', [{'id': f"wev-{uuid.uuid4().hex[:10]}", 'watch_id': watch["id"], 'ticker': watch["ticker"], 'trigger_type': trig["type"], 'detail': detail[:500], 'trigger_json': json.dumps(trig), 'value': value, 'cycle_id': cycle_id}])
     except Exception as e:
         logger.warning("[WatchDesk] log_event failed: %s", e)
 
@@ -821,7 +785,7 @@ def consume_wake_context(ticker: str, within_minutes: int = 180) -> str | None:
             ).fetchone()
             if not row:
                 return None
-            db.execute("UPDATE watch_events SET consumed_at = NOW() WHERE id = %s", [row[0]])
+            mongo_store.update_docs('watch_events', {'id': row[0]}, {'$set': {'consumed_at': datetime.now(timezone.utc)}})
             return row[1]
     except Exception:
         return None

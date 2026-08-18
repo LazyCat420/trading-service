@@ -11,6 +11,7 @@ from app.utils.text_utils import parse_json_response
 from app.db.connection import get_db
 from .judge_agent import evaluate_decision
 from app.trading.portfolio_drawdown import compute_portfolio_drawdown
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,7 @@ def _write_audit_log(audit_id: str, data: dict):
 
 def get_latest_benchmark_cycle_id(db) -> str | None:
     """Return the most recent benchmarked cycle id if one exists."""
-    row = db.execute(
-        "SELECT cycle_id FROM cycle_benchmarks ORDER BY started_at DESC NULLS LAST LIMIT 1"
-    ).fetchone()
+    row = mongo_query.find_row('cycle_benchmarks', {}, ['cycle_id'], sort=[('started_at', -1)])
     return row[0] if row and row[0] else None
 
 
@@ -500,25 +499,7 @@ async def evaluate_strategy(
             eval_id = str(uuid.uuid4())
 
             # Save to database
-            db.execute(
-                """
-                INSERT INTO strategy_evaluations (
-                    id, cycle_id, total_score, risk_score, performance_score, robustness_score, 
-                    logic_score, operational_score, full_analysis
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    eval_id,
-                    latest_cycle_id,
-                    total_score,
-                    risk_score,
-                    perf_score,
-                    rob_score,
-                    log_score,
-                    op_score,
-                    json.dumps(payload),
-                ],
-            )
+            mongo_store.insert_docs('strategy_evaluations', [{'id': eval_id, 'cycle_id': latest_cycle_id, 'total_score': total_score, 'risk_score': risk_score, 'performance_score': perf_score, 'robustness_score': rob_score, 'logic_score': log_score, 'operational_score': op_score, 'full_analysis': json.dumps(payload)}])
 
             logger.info(f"Strategy Evaluated! Total Score: {total_score}")
 
@@ -562,11 +543,7 @@ async def evaluate_strategy(
                 },
             )
             # Log each individual decision evaluation for debugging
-            evals_for_log = db.execute(
-                "SELECT decision_id, ticker, judge_a_score, final_quality_score, "
-                "red_cards, evidence_gathering FROM decision_evaluations "
-                "ORDER BY timestamp DESC LIMIT 100"
-            ).fetchall()
+            evals_for_log = mongo_query.find_rows('decision_evaluations', {}, ['decision_id', 'ticker', 'judge_a_score', 'final_quality_score', 'red_cards', 'evidence_gathering'], sort=[('timestamp', -1)], limit=100)
             for ev in evals_for_log:
                 _write_audit_log(
                     eval_id,
