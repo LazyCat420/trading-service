@@ -1005,3 +1005,19 @@ class TestMockTradingCycleMongoE2E:
 
         bt_res = backtest_zscore_strategy(df)
         assert "error" not in bt_res or "trades" in bt_res
+
+        # 30. Research Tools Macro Events in MongoDB
+        from app.tools.research_tools import _upcoming_macro_events
+
+        mongo_store.insert_docs("economic_calendar", [{
+            "event_date": now + datetime.timedelta(days=2),
+            "event_name": "FOMC Rate Decision",
+            "country": "US",
+            "importance": "high",
+            "forecast": "5.25%",
+            "previous": "5.50%",
+        }])
+
+        macro_events = _upcoming_macro_events(limit=5)
+        assert len(macro_events) >= 1
+        assert macro_events[0]["event"] == "FOMC Rate Decision"

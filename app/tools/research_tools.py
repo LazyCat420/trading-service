@@ -247,13 +247,15 @@ async def get_upcoming_events(ticker: str) -> str:
 
 def _upcoming_macro_events(limit: int = 8) -> list[dict]:
     """High/medium-importance market-wide events from the economic_calendar
-    table (populated by the tradingeconomics collector every 12h). Empty list
-    when the table has no future rows — never blocks the earnings answer."""
+    collection. Empty list when the collection has no future rows."""
     try:
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            rows = mongo_query.find_rows('economic_calendar', {'event_date': {'$gte': datetime.now(timezone.utc)}, 'importance': {'$in': ['high', 'medium']}}, ['event_date', 'event_name', 'country', 'importance', 'forecast', 'previous'], sort=[('event_date', 1)], limit=limit)
+        rows = mongo_query.find_rows(
+            'economic_calendar',
+            {'event_date': {'$gte': datetime.now(timezone.utc)}, 'importance': {'$in': ['high', 'medium']}},
+            ['event_date', 'event_name', 'country', 'importance', 'forecast', 'previous'],
+            sort=[('event_date', 1)],
+            limit=limit,
+        )
         return [
             {
                 "date": str(r[0]),
