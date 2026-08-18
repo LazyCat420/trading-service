@@ -527,3 +527,41 @@ class TestMockTradingCycleMongoE2E:
         assert rec["value"] == 0.08
         assert rec["last_change"] is not None
         assert rec["last_change"]["set_by"] == "v3_portfolio_manager"
+
+        # 12. Freshness Gate Persistence & Execution in MongoDB
+        from app.services.freshness_gate import run_freshness_gate
+
+        # Seed freshness gate threshold config in MongoDB
+        mongo_store.insert_docs("freshness_gate_config", [
+            {"threshold_name": "composite_threshold", "threshold_value": 0.25, "weight": 1.0},
+            {"threshold_name": "price_delta_max_pct", "threshold_value": 5.0, "weight": 0.30},
+        ])
+
+        # Seed previous analysis result in MongoDB
+        mongo_store.insert_docs("analysis_results", [{
+            "ticker": "AAPL",
+            "analysis_price": 140.0,
+            "analysis_rsi": 45.0,
+            "analysis_fund_count": 500,
+            "created_at": now - datetime.timedelta(days=2),
+            "cycle_id": "cycle-prev-001",
+            "result_json": "{}",
+        }])
+
+        # Seed fresh news articles in MongoDB
+        mongo_store.insert_docs("news_articles", [{
+            "ticker": "AAPL",
+            "headline": "Apple announces record services revenue",
+            "published_at": now - datetime.timedelta(hours=12),
+        }])
+
+        # Run Freshness Gate
+        gate_result = run_freshness_gate(
+            top_scorers=[{"ticker": "AAPL", "price": 150.0, "rsi": 55, "rvol": 1.5, "inst_funds": 505}],
+            last_analysis_map={"AAPL": now - datetime.timedelta(days=2)},
+        )
+
+        assert len(gate_result["eligible"]) == 1
+        assert gate_result["eligible"][0]["ticker"] == "AAPL"
+        assert gate_result["eligible"][0]["freshness"] == "CHANGED"
+        assert gate_result["eligible"][0]["delta_score"] >= 0.25

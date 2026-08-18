@@ -1,30 +1,12 @@
 """
 Freshness Gate — Programmatic pre-filter for the Portfolio Manager.
 
-Classifies each scored stock as NEW, CHANGED, or STALE before the PM agent
-sees it. This eliminates the 3,500-token reasoning spiral where the LLM
-tried to figure out recency rules itself.
-
-Classification:
-  - NEW:     Never analyzed (no entry in analysis_results)
-  - CHANGED: Analyzed before, but material change detected (composite delta >= threshold)
-  - STALE:   Analyzed recently, no material change → auto-skip
-
-The composite delta score is computed across 5 signals:
-  - Price delta %  (weight 0.30)
-  - News delta     (weight 0.25)
-  - Volume ratio   (weight 0.20)
-  - RSI boundary   (weight 0.15)
-  - Fund delta     (weight 0.10)
-
-Thresholds are stored in freshness_gate_config table and are LLM-tunable.
+Pure MongoDB implementation for freshness_gate_config, analysis_results, and news_articles.
 """
 
 import logging
 from datetime import datetime, timezone
 
-from app.db.connection import get_db
-from app.db.mongo_store import handle_mongo_read_failure
 from app.db import mongo_query
 from app.db import mongo_store
 
@@ -33,13 +15,10 @@ logger = logging.getLogger(__name__)
 # ── Default thresholds (used if DB config not available) ──
 _DEFAULTS = {
     "price_delta_max_pct": 5.0,
-    # 2 fresh articles = full news signal (was 3 — a ticker with 2 new
-    # articles, flat price and no RSI cross scored ~0.17 → hard STALE).
     "news_count_max": 2.0,
     "volume_ratio_max": 2.0,
     "rsi_boundary_weight": 1.0,
     "fund_delta_max": 3.0,
-    # was 0.40 — too strict; diversity wave 2026-07-23.
     "composite_threshold": 0.25,
 }
 
@@ -53,16 +32,17 @@ _WEIGHTS = {
 }
 
 
-def _load_thresholds() -> dict:
-    """Load tunable thresholds from the freshness_gate_config table."""
+def _load_thresholds() -> dict | None:
+    """Load tunable thresholds from the freshness_gate_config collection."""
     try:
-        with get_db() as db:
-            rows = mongo_query.find_rows('freshness_gate_config', {}, ['threshold_name', 'threshold_value', 'weight'])
-            if rows:
-                config = {}
-                for name, value, weight in rows:
-                    config[name] = {"value": value, "weight": weight}
-                return config
+        rows = mongo_query.find_rows(
+            'freshness_gate_config', {}, ['threshold_name', 'threshold_value', 'weight']
+        )
+        if rows:
+            config = {}
+            for name, value, weight in rows:
+                config[name] = {"value": value, "weight": weight}
+            return config
     except Exception as e:
         logger.warning("[FreshnessGate] Could not load config from DB, using defaults: %s", e)
     return None
@@ -114,7 +94,6 @@ def _compute_delta_score(
     last_rsi = last_analysis.get("analysis_rsi") if last_analysis else None
     rsi_crossed = 0.0
     if last_rsi is not None:
-        # Crossed oversold boundary (30) or overbought boundary (70)
         crossed_30 = (last_rsi >= 30 and current_rsi < 30) or (last_rsi < 30 and current_rsi >= 30)
         crossed_70 = (last_rsi <= 70 and current_rsi > 70) or (last_rsi > 70 and current_rsi <= 70)
         rsi_crossed = 1.0 if (crossed_30 or crossed_70) else 0.0
@@ -157,19 +136,7 @@ def run_freshness_gate(
     last_analysis_map: dict,
     emit: object = None,
 ) -> dict:
-    """Run the Freshness Gate on scored stocks.
-
-    Args:
-        top_scorers: List of scored stock dicts from the scoring engine.
-        last_analysis_map: Dict mapping ticker -> last analysis datetime.
-        emit: Optional SSE emitter for real-time logging.
-
-    Returns:
-        {
-            "eligible": [stocks classified as NEW or CHANGED],
-            "stale": [stocks classified as STALE with skip reasons],
-        }
-    """
+    """Run the Freshness Gate on scored stocks."""
     config = _load_thresholds()
     composite_threshold = _get_threshold(config, "composite_threshold")
 
@@ -179,46 +146,29 @@ def run_freshness_gate(
 
     if tickers:
         try:
-            rows = None
-            try:
-                from app.db import mongo_store
-                if mongo_store.reads_mongo("analysis_results"):
-                    rows = [
-                        (d["_id"], d.get("analysis_price"), d.get("analysis_rsi"),
-                         d.get("analysis_fund_count"), d.get("created_at"))
-                        for d in mongo_store.aggregate("analysis_results", [
-                            {"$match": {"ticker": {"$in": tickers}}},
-                            {"$sort": {"ticker": 1, "created_at": -1}},
-                            {"$group": {"_id": "$ticker",
-                                        "analysis_price": {"$first": "$analysis_price"},
-                                        "analysis_rsi": {"$first": "$analysis_rsi"},
-                                        "analysis_fund_count": {"$first": "$analysis_fund_count"},
-                                        "created_at": {"$first": "$created_at"}}},
-                        ])
-                    ]
-            except Exception as me:
-                handle_mongo_read_failure("analysis_results", "[FreshnessGate] mongo snapshot read", me)
-                rows = None
-            if rows is None:
-                with get_db() as db:
-                    placeholders = ",".join(["%s"] * len(tickers))
-                    rows = db.execute(
-                        f"""
-                        SELECT DISTINCT ON (ticker)
-                            ticker, analysis_price, analysis_rsi, analysis_fund_count, created_at
-                        FROM analysis_results
-                        WHERE ticker IN ({placeholders})
-                        ORDER BY ticker, created_at DESC
-                        """,
-                        tickers,
-                    ).fetchall()
-            for row in rows:
-                analysis_snapshots[row[0]] = {
-                    "analysis_price": row[1],
-                    "analysis_rsi": row[2],
-                    "analysis_fund_count": row[3] or 0,
-                    "created_at": row[4],
-                }
+            pipeline = [
+                {"$match": {"ticker": {"$in": tickers}}},
+                {"$sort": {"ticker": 1, "created_at": -1}},
+                {
+                    "$group": {
+                        "_id": "$ticker",
+                        "analysis_price": {"$first": "$analysis_price"},
+                        "analysis_rsi": {"$first": "$analysis_rsi"},
+                        "analysis_fund_count": {"$first": "$analysis_fund_count"},
+                        "created_at": {"$first": "$created_at"},
+                    }
+                },
+            ]
+            docs = mongo_store.aggregate("analysis_results", pipeline)
+            for d in docs:
+                t = d.get("_id")
+                if t:
+                    analysis_snapshots[t] = {
+                        "analysis_price": d.get("analysis_price"),
+                        "analysis_rsi": d.get("analysis_rsi"),
+                        "analysis_fund_count": d.get("analysis_fund_count") or 0,
+                        "created_at": d.get("created_at"),
+                    }
         except Exception as e:
             logger.warning("[FreshnessGate] Could not fetch analysis snapshots: %s", e)
 
@@ -226,25 +176,17 @@ def run_freshness_gate(
     news_counts = {}
     if tickers:
         try:
-            from app.db import mongo_store
             for ticker in tickers:
                 snap = analysis_snapshots.get(ticker)
                 if snap and snap.get("created_at"):
                     since = snap["created_at"]
                     if hasattr(since, "tzinfo") and since.tzinfo is None:
                         since = since.replace(tzinfo=timezone.utc)
-                    c_val = None
-                    if mongo_store.reads_mongo("news_articles"):
-                        try:
-                            c_val = mongo_store.get_doc_db()["news_articles"].count_documents(
-                                {"ticker": ticker, "published_at": {"$gt": since}}
-                            )
-                        except Exception as me:
-                            mongo_store.handle_mongo_read_failure("news_articles", "freshness_gate news count", me)
-                    if c_val is None:
-                        with get_db() as db:
-                            c_val = mongo_query.agg_row('news_articles', {'ticker': ticker, 'published_at': {'$gt': since}}, [('count', None)])[0]
-                    news_counts[ticker] = c_val
+                    c_val = mongo_store.count_docs(
+                        "news_articles",
+                        {"ticker": ticker, "published_at": {"$gt": since}},
+                    )
+                    news_counts[ticker] = c_val or 0
                 else:
                     news_counts[ticker] = 0
         except Exception as e:
