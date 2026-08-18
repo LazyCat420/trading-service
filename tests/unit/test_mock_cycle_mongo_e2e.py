@@ -499,3 +499,31 @@ class TestMockTradingCycleMongoE2E:
         assert "SHARED WHITEBOARD" in summary
         assert "MACRO_CONTEXT" in summary
         assert "RiskAgent" in summary
+
+        # 11. Parameter Store & Governor Persistence in MongoDB
+        from app.services.parameter_store import get_param, get_param_record, invalidate_cache
+        from app.services.parameter_governor import propose_parameter_change
+
+        # Initial default lookup
+        invalidate_cache("MAX_POSITION_SIZE_PCT")
+        default_pos_size = get_param("MAX_POSITION_SIZE_PCT")
+        assert default_pos_size == 0.10
+
+        # Propose tightening change
+        res = propose_parameter_change(
+            key="MAX_POSITION_SIZE_PCT",
+            value=0.08,
+            reason="Market regime elevated volatility tightening",
+            agent="v3_portfolio_manager",
+        )
+        assert res["status"] == "applied"
+        assert res["new_value"] == 0.08
+
+        # Read back from MongoDB
+        param_val = get_param("MAX_POSITION_SIZE_PCT")
+        assert param_val == 0.08
+
+        rec = get_param_record("MAX_POSITION_SIZE_PCT")
+        assert rec["value"] == 0.08
+        assert rec["last_change"] is not None
+        assert rec["last_change"]["set_by"] == "v3_portfolio_manager"

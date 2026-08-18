@@ -153,34 +153,15 @@ def research_degraded(cycle_id: str, ticker: str, artifact: dict | None) -> str 
     # Fail OPEN on a probe error: an unreachable DB would otherwise force the
     # full panel on every ticker forever.
     try:
-        from app.db import mongo_store
-        if mongo_store.reads_mongo("agent_tool_telemetry"):
-            try:
-                pipeline = [
-                    {"$match": {"cycle_id": cycle_id, "ticker": ticker, "success": False}},
-                    {"$group": {"_id": "$tool_name", "count": {"$sum": 1}}},
-                    {"$sort": {"count": -1}},
-                    {"$limit": 1},
-                ]
-                docs = mongo_store.aggregate("agent_tool_telemetry", pipeline)
-                if docs and docs[0].get("count"):
-                    return f"{docs[0]['count']} failed {docs[0]['_id']} call(s) this cycle"
-            except Exception as me:
-                mongo_store.handle_mongo_read_failure("agent_tool_telemetry", "guardrails degradation probe", me)
-
-        from app.db.connection import get_db
-        with get_db() as db:
-            row = db.execute(
-                """
-                SELECT tool_name, count(*)
-                FROM agent_tool_telemetry
-                WHERE cycle_id = %s AND ticker = %s AND NOT success
-                GROUP BY tool_name ORDER BY count(*) DESC LIMIT 1
-                """,
-                [cycle_id, ticker],
-            ).fetchone()
-        if row and row[1]:
-            return f"{row[1]} failed {row[0]} call(s) this cycle"
+        pipeline = [
+            {"$match": {"cycle_id": cycle_id, "ticker": ticker, "success": False}},
+            {"$group": {"_id": "$tool_name", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 1},
+        ]
+        docs = mongo_store.aggregate("agent_tool_telemetry", pipeline)
+        if docs and docs[0].get("count"):
+            return f"{docs[0]['count']} failed {docs[0]['_id']} call(s) this cycle"
     except Exception as e:  # pragma: no cover - defensive
         logger.debug("[V3][triage] degradation probe failed for %s (fail-open): %s",
                      ticker, e)

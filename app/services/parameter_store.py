@@ -28,7 +28,6 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from app.db.connection import get_db
 from app.db import mongo_query
 from datetime import datetime, timezone
 
@@ -334,20 +333,25 @@ def get_param(key: str) -> float | int:
 
     value = spec.default
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('runtime_parameters', {'param_key': key, 'status': 'active', '$or': [{'expires_at': None}, {'expires_at': {'$gt': datetime.now(timezone.utc)}}]}, ['value'], sort=[('created_at', -1)])
-        # Strict type check: only honest numerics count. A junk row (or a
-        # mocked cursor in tests — MagicMock happily casts to float(1.0))
-        # must fall back to the default, never masquerade as a real value.
+        row = mongo_query.find_row(
+            'runtime_parameters',
+            {
+                'param_key': key,
+                'status': 'active',
+                '$or': [
+                    {'expires_at': None},
+                    {'expires_at': {'$gt': datetime.now(timezone.utc)}},
+                ],
+            },
+            ['value'],
+            sort=[('created_at', -1)],
+        )
         if (
             row
             and isinstance(row[0], (int, float, decimal.Decimal))
             and not isinstance(row[0], bool)
         ):
             value = float(row[0])
-            # Belt-and-braces: a row outside the current envelope (e.g. the
-            # registry bounds were tightened after the row was written) is
-            # clamped, never honored raw.
             value = max(spec.min_value, min(spec.max_value, value))
     except Exception as e:  # noqa: BLE001 — fail to default, never fail the cycle
         logger.warning("[params] %s: store lookup failed (%s) — using default %s",
@@ -384,14 +388,20 @@ def get_param_record(key: str) -> dict:
         "last_change": None,
     }
     try:
-        with get_db() as db:
-            row = mongo_query.find_row('runtime_parameters', {'param_key': key}, ['value', 'set_by', 'reason', 'status', 'expires_at', 'created_at'], sort=[('created_at', -1)])
+        row = mongo_query.find_row(
+            'runtime_parameters',
+            {'param_key': key},
+            ['value', 'set_by', 'reason', 'status', 'expires_at', 'created_at'],
+            sort=[('created_at', -1)],
+        )
         if row:
             record["last_change"] = {
-                "value": row[0], "set_by": row[1], "reason": row[2],
+                "value": row[0],
+                "set_by": row[1],
+                "reason": row[2],
                 "status": row[3],
-                "expires_at": row[4].isoformat() if row[4] else None,
-                "created_at": row[5].isoformat() if row[5] else None,
+                "expires_at": row[4].isoformat() if hasattr(row[4], "isoformat") else str(row[4]) if row[4] else None,
+                "created_at": row[5].isoformat() if hasattr(row[5], "isoformat") else str(row[5]) if row[5] else None,
             }
     except Exception as e:  # noqa: BLE001
         logger.warning("[params] %s: history lookup failed: %s", key, e)

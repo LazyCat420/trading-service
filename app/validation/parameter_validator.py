@@ -21,7 +21,8 @@ import logging
 import math
 from dataclasses import dataclass
 
-from app.db.connection import get_db
+from datetime import datetime, timezone, timedelta
+
 from app.services.parameter_store import (
     PARAMETER_REGISTRY,
     RISK_DOWN,
@@ -38,10 +39,6 @@ STANDARD_TIER_AGENTS = {
     "v3_board_of_directors",
     "v3_decision_synthesizer",
     "user_chat",  # human-driven chat proxy
-    # Not an LLM: app/autoresearch/component_health.py, whose only proposal
-    # is HMM_REGIME_MODE -> 1 after 3 consecutive failing evaluations. It
-    # goes through the governor like everyone else so the change is bounded,
-    # audited, and visible in runtime_parameters.
     "component_health_monitor",
 }
 BOARD_TIER_AGENTS = {
@@ -74,13 +71,17 @@ def _classify(key: str, new_value: float) -> bool:
 
 def _last_change_age_hours(key: str) -> float | None:
     try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(created_at))) / 3600.0 "
-                "FROM runtime_parameters WHERE param_key = %s",
-                [key],
-            ).fetchone()
-        return float(row[0]) if row and row[0] is not None else None
+        from app.db import mongo_query
+        row = mongo_query.find_row('runtime_parameters', {'param_key': key}, ['created_at'], sort=[('created_at', -1)])
+        if row and row[0]:
+            created = row[0]
+            if isinstance(created, str):
+                created = datetime.fromisoformat(created)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            delta = datetime.now(timezone.utc) - created
+            return delta.total_seconds() / 3600.0
+        return None
     except Exception as e:  # noqa: BLE001
         logger.warning("[param-validator] %s: cooldown lookup failed: %s", key, e)
         return None  # fail open on the cooldown only — bounds still enforced
@@ -88,12 +89,9 @@ def _last_change_age_hours(key: str) -> float | None:
 
 def _changes_last_24h() -> int:
     try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT COUNT(*) FROM runtime_parameters "
-                "WHERE created_at >= NOW() - INTERVAL '24 hours'",
-            ).fetchone()
-        return int(row[0]) if row else 0
+        from app.db import mongo_store
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        return mongo_store.count_docs('runtime_parameters', {'created_at': {'$gte': cutoff}})
     except Exception as e:  # noqa: BLE001
         logger.warning("[param-validator] daily-budget lookup failed: %s", e)
         return 0

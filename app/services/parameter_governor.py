@@ -19,8 +19,8 @@ APScheduler job (cycle_scheduler picks up the rest on its periodic sync).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone, timedelta
 
-from app.db.connection import get_db
 from app.services.parameter_store import (
     PARAMETER_REGISTRY,
     get_param,
@@ -70,19 +70,17 @@ def propose_parameter_change(
 
     old_value = get_param(key)
     try:
-        with get_db() as db:
-            if change.ttl_hours is not None:
-                db.execute(
-                    """
-                    INSERT INTO runtime_parameters
-                        (param_key, value, set_by, reason, status, expires_at)
-                    VALUES (%s, %s, %s, %s, 'active',
-                            NOW() + make_interval(hours => %s))
-                    """,
-                    [change.key, change.value, agent, reason, change.ttl_hours],
-                )
-            else:
-                mongo_store.insert_docs('runtime_parameters', [{'param_key': change.key, 'value': change.value, 'set_by': agent, 'reason': reason, 'status': 'active', 'expires_at': None}])
+        now_utc = datetime.now(timezone.utc)
+        expires_at = (now_utc + timedelta(hours=change.ttl_hours)) if change.ttl_hours is not None else None
+        mongo_store.insert_docs('runtime_parameters', [{
+            'param_key': change.key,
+            'value': change.value,
+            'set_by': agent,
+            'reason': reason,
+            'status': 'active',
+            'expires_at': expires_at,
+            'created_at': now_utc,
+        }])
     except Exception as e:  # noqa: BLE001
         logger.error("[PARAM-GOV] write failed for %s: %s", key, e)
         return {"status": "error", "message": f"Store write failed: {e}"}
