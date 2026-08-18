@@ -798,3 +798,30 @@ class TestMockTradingCycleMongoE2E:
 
         mmap_res = get_market_map(days=7)
         assert mmap_res.status_code == 200
+
+        # 20. Challenger Router & Sequential A/B Testing in MongoDB
+        from app.routers.challenger_router import challenger_stats
+        from app.v3.challenger import resolve_challenger_outcomes
+
+        mongo_store.insert_docs("challenger_decisions", [{
+            "id": "ch-test-001",
+            "cycle_id": cycle_id,
+            "ticker": "AAPL",
+            "spec_label": "exp-test-v3",
+            "champion_action": "BUY",
+            "champion_confidence": 85,
+            "challenger_action": "HOLD",
+            "challenger_confidence": 60,
+            "agree": False,
+            "entry_price": 150.0,
+            "created_at": now - datetime.timedelta(days=8),
+            "resolved_at": None,
+        }])
+
+        resolved_count = resolve_challenger_outcomes()
+        assert resolved_count >= 1
+
+        stats_res = await challenger_stats(label="exp-test-v3")
+        assert len(stats_res["experiments"]) == 1
+        assert stats_res["experiments"][0]["spec_label"] == "exp-test-v3"
+        assert stats_res["experiments"][0]["disagreements"] == 1

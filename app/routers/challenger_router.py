@@ -1,34 +1,22 @@
 """Challenger Router — paired champion/challenger experiment results.
 
-Serves the evidence for "is the change actually better": agreement rates,
-disagreement outcomes, an anytime-valid e-value (peek as often as you like),
-and per-sector slices so a change that helps on average but breaks one sector
-is visible. See app/v3/challenger.py for how pairs are produced and
-app/autoresearch/sequential.py for the statistics.
+Pure MongoDB implementation.
 """
 
 import logging
 
 from fastapi import APIRouter, Query
 
-from app.db.connection import get_db
 from app.autoresearch.sequential import paired_disagreement_test
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/challenger", tags=["Challenger"])
 
-# HOLD_AVOIDED_DECLINE joins _CORRECT: this book is long-only, so a hold
-# through a fall forwent nothing (outcome_tracker._classify). Leaving it out of
-# BOTH tuples was the sharper bug — a champion that dodged a drawdown scored
-# neither right nor wrong, so those rows silently left the comparison.
 _CORRECT = ("WIN", "HOLD_CORRECT", "HOLD_AVOIDED_DECLINE")
 _INCORRECT = ("LOSS", "HOLD_MISS")
 
-# ticker_metadata.sector mixes vendor taxonomies (GICS from one collector,
-# Yahoo from another), so the same real sector arrives under two names and
-# the per-sector slice runs on arbitrarily halved buckets. Fold the Yahoo
-# labels into their GICS equivalents before slicing.
 _SECTOR_CANON = {
     "Financial Services": "Financials",
     "Technology": "Information Technology",
@@ -38,17 +26,11 @@ _SECTOR_CANON = {
     "Basic Materials": "Materials",
 }
 
-# Buckets that are not real sectors: a "regression" here is unactionable
-# noise, so they stay visible in the sectors table but never flag.
 _NOT_A_SECTOR = {"Unknown", "ETF", ""}
 
 
 def regressing_sectors(sectors: dict) -> list[str]:
-    """Sectors where the champion beats the challenger by a real margin.
-
-    A net margin of 2 is required so a 2-1 split (indistinguishable from a
-    coin flip) doesn't flag alongside a 4-0. Non-sector buckets never flag.
-    """
+    """Sectors where the champion beats the challenger by a real margin."""
     return [
         s for s, v in sectors.items()
         if s not in _NOT_A_SECTOR
@@ -57,20 +39,7 @@ def regressing_sectors(sectors: dict) -> list[str]:
 
 
 def _champion_correct(action: str | None, outcome: str | None) -> bool | None:
-    """Grade an action against a resolved outcome label; None = ungraded.
-
-    Allow-list, not deny-list. The old form returned `outcome in _CORRECT`
-    for anything that was not FLAT, so every label the grader did not know
-    about silently graded as "this side was WRONG". `DEGRADED_ARTIFACT` — a
-    pipeline crash — would therefore have counted as a loss for the champion
-    and could hand the challenger a win. That cohort happens to predate the
-    challenger table so nothing is mis-scored today, but the shape of the bug
-    does not depend on that accident: the next label added anywhere in the
-    outcome pipeline inherits it.
-
-    An unrecognised outcome is ungraded (None), which drops the pair from the
-    denominator rather than scoring it.
-    """
+    """Grade an action against a resolved outcome label; None = ungraded."""
     if outcome in _CORRECT:
         return True
     if outcome in _INCORRECT:
@@ -82,33 +51,39 @@ def _champion_correct(action: str | None, outcome: str | None) -> bool | None:
 async def challenger_stats(label: str = Query(default=None)):
     """Experiment scoreboard, per spec label (or all labels)."""
     try:
-        # The table is created lazily by the first challenger run; the stats
-        # endpoint must not 500 before that happens.
-        from app.v3.challenger import _ensure_table
-        _ensure_table()
-        with get_db() as db:
-            where = "WHERE spec_label = %s" if label else ""
-            params = [label] if label else []
-            rows = db.execute(
-                f"""
-                SELECT cd.spec_label, cd.ticker, cd.agree,
-                       cd.champion_action, cd.challenger_action,
-                       cd.challenger_outcome,
-                       dco.outcome AS champion_outcome,
-                       COALESCE(tm.sector, 'Unknown') AS sector
-                FROM challenger_decisions cd
-                LEFT JOIN decision_outcomes dco
-                       ON dco.cycle_id = cd.cycle_id AND dco.ticker = cd.ticker
-                LEFT JOIN ticker_metadata tm ON tm.ticker = cd.ticker
-                {where}
-                ORDER BY cd.created_at DESC
-                """,
-                params,
-            ).fetchall()
+        query = {}
+        if label:
+            query["spec_label"] = label
+
+        decisions = mongo_store.find_docs("challenger_decisions", query, sort=[("created_at", -1)])
+        if not decisions:
+            return {"experiments": []}
+
+        cycle_tickers = [(d.get("cycle_id"), d.get("ticker")) for d in decisions if d.get("cycle_id") and d.get("ticker")]
+        tickers = list({d.get("ticker") for d in decisions if d.get("ticker")})
+
+        outcomes = mongo_store.find_docs("decision_outcomes", {
+            "cycle_id": {"$in": list({ct[0] for ct in cycle_tickers})},
+            "ticker": {"$in": tickers},
+        })
+        outcome_map = {(o.get("cycle_id"), o.get("ticker")): o.get("outcome") for o in outcomes}
+
+        meta_docs = mongo_store.find_docs("ticker_metadata", {"ticker": {"$in": tickers}})
+        sector_map = {m.get("ticker"): m.get("sector") for m in meta_docs}
 
         experiments: dict = {}
-        for spec_label, ticker, agree, champ_act, chall_act, chall_out, champ_out, sector in rows:
-            sector = _SECTOR_CANON.get(sector, sector)
+        for cd in decisions:
+            spec_label = cd.get("spec_label")
+            ticker = cd.get("ticker")
+            cycle_id = cd.get("cycle_id")
+            agree = cd.get("agree")
+            champ_act = cd.get("champion_action")
+            chall_act = cd.get("challenger_action")
+            chall_out = cd.get("challenger_outcome")
+            champ_out = outcome_map.get((cycle_id, ticker))
+            raw_sector = sector_map.get(ticker) or "Unknown"
+            sector = _SECTOR_CANON.get(raw_sector, raw_sector)
+
             exp = experiments.setdefault(
                 spec_label,
                 {
@@ -134,7 +109,7 @@ async def challenger_stats(label: str = Query(default=None)):
             champ_ok = _champion_correct(champ_act, champ_out)
             chall_ok = _champion_correct(chall_act, chall_out)
             if champ_ok is None or chall_ok is None:
-                continue  # unresolved (or FLAT) — not yet informative
+                continue
             exp["resolved_disagreements"].append((champ_ok, chall_ok))
             if chall_ok and not champ_ok:
                 slot["challenger_wins"] += 1
@@ -148,10 +123,6 @@ async def challenger_stats(label: str = Query(default=None)):
             agreement_rate = (
                 round(exp["agreements"] / exp["pairs"], 3) if exp["pairs"] else None
             )
-            # Slice guard: any sector where the champion is beating the
-            # challenger on disagreements is flagged even if the aggregate
-            # favours the challenger — "better on average, broken somewhere"
-            # must be visible before promotion.
             regressing = regressing_sectors(exp["sectors"])
             out.append({
                 **exp,
