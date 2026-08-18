@@ -99,45 +99,32 @@ def _db_telemetry_callback(
     """
     try:
         from datetime import datetime, timezone
-        from app.db.connection import get_db
+        from app.db import mongo_store
         from app.tools.tool_context import (
             current_agent_name, current_cycle_id, current_ticker,
         )
 
-        # Passed value wins; context is the fallback. current_agent_name()
-        # already resolves the AGENT_NAME env var and returns "unknown" last.
         agent_name = agent_name or current_agent_name()
         try:
             cycle_id = current_cycle_id()
         except Exception:
             cycle_id = None
-        # current_cycle_id() returns the literal "default_cycle" when it cannot
-        # resolve one. That sentinel is fine for tools that need *a* key, but
-        # storing it here would invent a cycle that never ran and silently pool
-        # unrelated calls under one id. NULL is the honest answer.
         if cycle_id == "default_cycle":
             cycle_id = None
         ticker = current_ticker()
 
         now_utc = datetime.now(timezone.utc)
-        with get_db() as db:
-            mongo_store.insert_docs('tool_usage_stats', [{'tool_name': tool_name, 'agent_name': agent_name, 'ticker': ticker, 'cycle_id': cycle_id, 'success': success, 'execution_ms': execution_ms, 'error_message': error_message, 'service_source': "lazy-tool-service", 'called_at': now_utc}])
-        try:
-            from app.db import mongo_store
-            if mongo_store.writes_mongo("tool_usage_stats"):
-                mongo_store.insert_docs("tool_usage_stats", [{
-                    "tool_name": tool_name,
-                    "agent_name": agent_name,
-                    "ticker": ticker,
-                    "cycle_id": cycle_id,
-                    "success": bool(success),
-                    "execution_ms": execution_ms,
-                    "error_message": error_message,
-                    "service_source": "lazy-tool-service",
-                    "called_at": now_utc,
-                }])
-        except Exception as mongo_err:
-            logger.warning("[ToolRegistry] Mongo mirror failed (non-fatal): %s", mongo_err)
+        mongo_store.insert_docs("tool_usage_stats", [{
+            "tool_name": tool_name,
+            "agent_name": agent_name,
+            "ticker": ticker,
+            "cycle_id": cycle_id,
+            "success": bool(success),
+            "execution_ms": execution_ms,
+            "error_message": error_message,
+            "service_source": "lazy-tool-service",
+            "called_at": now_utc,
+        }])
     except Exception as e:
         logger.debug(f"[ToolRegistry] Usage log failed (non-fatal): {e}")
 

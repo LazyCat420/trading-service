@@ -1021,3 +1021,19 @@ class TestMockTradingCycleMongoE2E:
         macro_events = _upcoming_macro_events(limit=5)
         assert len(macro_events) >= 1
         assert macro_events[0]["event"] == "FOMC Rate Decision"
+
+        # 31. Tool Usage Stats Callback in MongoDB
+        from app.tools.registry import _db_telemetry_callback
+
+        _db_telemetry_callback(
+            tool_name="get_finviz_fundamentals",
+            agent_name="v3_junior_analyst",
+            success=True,
+            execution_ms=45,
+            error_message=None,
+        )
+
+        tool_stat_docs = mongo_store.find_docs("tool_usage_stats", {"tool_name": "get_finviz_fundamentals"})
+        assert len(tool_stat_docs) >= 1
+        assert tool_stat_docs[0]["service_source"] == "lazy-tool-service"
+        assert tool_stat_docs[0]["success"] is True
