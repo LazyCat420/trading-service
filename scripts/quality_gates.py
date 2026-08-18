@@ -75,13 +75,26 @@ def owner_of(table: str) -> str | None:
 
 @dataclass(frozen=True)
 class RowGate:
-    """Rows matching `predicate` are bad and get deleted. The table survives."""
+    """Rows matching `predicate` are bad and get deleted. The table survives.
+
+    `mongo` is the SAME condition as a Mongo query document. Both stores need
+    it: the live mirror had already copied these rows into Mongo before the
+    purge ran, so deleting them from Postgres alone left 183,712 bad documents
+    behind — the opposite of migrating only good data.
+
+    The two forms are written out separately rather than machine-translated
+    because several predicates have no exact translation (a `::text` cast, a
+    column renamed by the backfill mapper). They are held honest by the check
+    that matters: after both purges the Postgres row count and the Mongo
+    document count for the table must be equal.
+    """
 
     table: str
     name: str
     reason: str
     evidence: str
-    predicate: str  # a SQL boolean expression over `table`
+    predicate: str          # a SQL boolean expression over `table`
+    mongo: dict | None = None   # the same condition as a Mongo query document
 
     @property
     def kind(self) -> str:
@@ -105,6 +118,20 @@ class TableGate:
         return "table"
 
 
+def _null_or_blank(field: str) -> dict:
+    """Mongo form of SQL `field IS NULL OR btrim(field) = ''`.
+
+    Deliberately NOT a regex. The first version used `$regex: r"^\\s*$"`, which
+    survived one round of string escaping too many and reached Mongo as a
+    pattern matching a literal backslash — so it found 0 of the 36 empty-body
+    documents and the collection reported clean. `$trim` says what the SQL says,
+    with nothing to escape.
+    """
+    return {"$expr": {"$eq": [
+        {"$trim": {"input": {"$ifNull": [f"${field}", ""]}}}, ""
+    ]}}
+
+
 # ---------------------------------------------------------------------------
 # ROW GATES — bad rows inside tables we keep
 # ---------------------------------------------------------------------------
@@ -121,6 +148,10 @@ ROW_GATES: list[RowGate] = [
         ),
         evidence="183,492 of 372,727 rows (49.2%) have data_json = '{}' (2026-08-17)",
         predicate="data_json::text = '{}'",
+        # The backfill mapper renames data_json -> data, so the Mongo field is
+        # NOT the Postgres column name. Keying on data_json here would have
+        # matched nothing and reported a clean collection.
+        mongo={"data": {}},
     ),
     RowGate(
         table="data_archive",
@@ -131,6 +162,7 @@ ROW_GATES: list[RowGate] = [
         ),
         evidence="58,779 of 72,099 rows (81.5%) have purge_after < now() (2026-08-17)",
         predicate="purge_after IS NOT NULL AND purge_after < now()",
+        mongo={"purge_after": {"$ne": None, "$lt": "NOW"}},
     ),
     RowGate(
         table="news_articles",
@@ -141,6 +173,7 @@ ROW_GATES: list[RowGate] = [
         ),
         evidence="249 rows with quality_status IN ('discarded','noise') (2026-08-17)",
         predicate="quality_status IN ('discarded', 'noise')",
+        mongo={"quality_status": {"$in": ["discarded", "noise"]}},
     ),
     RowGate(
         table="news_articles",
@@ -154,6 +187,10 @@ ROW_GATES: list[RowGate] = [
             "length(coalesce(btrim(summary), '')) < 100 "
             "AND length(coalesce(btrim(llm_summary), '')) < 100"
         ),
+        mongo={"$expr": {"$and": [
+            {"$lt": [{"$strLenCP": {"$trim": {"input": {"$ifNull": ["$summary", ""]}}}}, 100]},
+            {"$lt": [{"$strLenCP": {"$trim": {"input": {"$ifNull": ["$llm_summary", ""]}}}}, 100]},
+        ]}},
     ),
     RowGate(
         table="youtube_transcripts",
@@ -161,6 +198,7 @@ ROW_GATES: list[RowGate] = [
         reason="The quality pipeline already marked these transcripts discarded.",
         evidence="546 rows with quality_status = 'discarded' (2026-08-17)",
         predicate="quality_status = 'discarded'",
+        mongo={"quality_status": "discarded"},
     ),
     RowGate(
         table="youtube_transcripts",
@@ -171,6 +209,7 @@ ROW_GATES: list[RowGate] = [
         ),
         evidence="0 rows at census time; gate kept so the defect cannot creep back",
         predicate="raw_transcript IS NULL OR btrim(raw_transcript) = ''",
+        mongo=_null_or_blank("raw_transcript"),
     ),
     RowGate(
         table="social_posts",
@@ -178,6 +217,7 @@ ROW_GATES: list[RowGate] = [
         reason="The post body is empty — nothing was actually captured.",
         evidence="2 of 6,247 rows have empty content (2026-08-17)",
         predicate="content IS NULL OR btrim(content) = ''",
+        mongo=_null_or_blank("content"),
     ),
     RowGate(
         table="reddit_posts",
@@ -190,6 +230,7 @@ ROW_GATES: list[RowGate] = [
         ),
         evidence="counted at census",
         predicate="body IS NULL OR btrim(body) = ''",
+        mongo=_null_or_blank("body"),
     ),
     RowGate(
         table="reddit_posts",
@@ -197,6 +238,7 @@ ROW_GATES: list[RowGate] = [
         reason="The quality pipeline already marked these posts discarded.",
         evidence="counted at census",
         predicate="quality_status IN ('discarded', 'noise')",
+        mongo={"quality_status": {"$in": ["discarded", "noise"]}},
     ),
     RowGate(
         table="fundamentals",
@@ -215,6 +257,8 @@ ROW_GATES: list[RowGate] = [
             "market_cap IS NULL AND pe_ratio IS NULL "
             "AND forward_pe IS NULL AND revenue IS NULL"
         ),
+        mongo={"market_cap": None, "pe_ratio": None,
+               "forward_pe": None, "revenue": None},
     ),
 ]
 
