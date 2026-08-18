@@ -1037,3 +1037,18 @@ class TestMockTradingCycleMongoE2E:
         assert len(tool_stat_docs) >= 1
         assert tool_stat_docs[0]["service_source"] == "lazy-tool-service"
         assert tool_stat_docs[0]["success"] is True
+
+        # 32. Backtest Data Provider in MongoDB
+        import os
+        import pandas as pd
+        from app.trading.backtest_data import get_backtest_data
+
+        parquet_path = get_backtest_data(
+            tickers=["AAPL"],
+            start_date=(now - datetime.timedelta(days=35)).strftime("%Y-%m-%d"),
+            end_date=(now + datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
+        )
+        assert os.path.exists(parquet_path)
+        read_df = pd.read_parquet(parquet_path)
+        assert not read_df.empty
+        assert "close" in read_df.columns

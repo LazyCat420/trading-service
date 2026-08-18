@@ -1,7 +1,7 @@
 """
 Backtest Data Provider — prepares fixed OOS backtest windows for the evolution loop.
 
-Pulls OHLCV data from the existing PostgreSQL price_history table and exports
+Pulls OHLCV data from the MongoDB price_history collection and exports
 it as a Parquet file for the sandbox executor.
 """
 
@@ -11,7 +11,7 @@ import tempfile
 
 import pandas as pd
 
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -36,43 +36,55 @@ def get_backtest_data(
     Returns:
         Path to the Parquet file.
     """
-    placeholders = ", ".join(["%s" for _ in tickers])
-    with get_db() as db:
-        rows = db.execute(
-            f"SELECT ticker, date, open, high, low, close, volume "
-            f"FROM price_history "
-            f"WHERE ticker IN ({placeholders}) "
-            f"AND date >= %s AND date <= %s "
-            f"ORDER BY date",
-            [*tickers, start_date, end_date],
-        ).fetchall()
+    start_dt = pd.to_datetime(start_date)
+    end_dt = pd.to_datetime(end_date)
 
-        if not rows:
-            # Fallback: try asset_prices table
-            rows = db.execute(
-                f"SELECT symbol as ticker, date, open, high, low, close, volume "
-                f"FROM asset_prices "
-                f"WHERE symbol IN ({placeholders}) "
-                f"AND date >= %s AND date <= %s "
-                f"ORDER BY date",
-                [*tickers, start_date, end_date],
-            ).fetchall()
+    query = {"ticker": {"$in": tickers}}
+    docs = mongo_store.find_docs(
+        "price_history",
+        query,
+        projection={"ticker": 1, "date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1, "_id": 0},
+        sort=[("date", 1)]
+    )
 
-    if not rows:
+    filtered_rows = []
+    for d in docs:
+        raw_dt = d.get("date")
+        if not raw_dt:
+            continue
+        try:
+            dt = pd.to_datetime(raw_dt)
+            if dt.tzinfo is not None:
+                dt = dt.tz_localize(None)
+            if start_dt.tzinfo is not None:
+                start_dt = start_dt.tz_localize(None)
+            if end_dt.tzinfo is not None:
+                end_dt = end_dt.tz_localize(None)
+            if start_dt <= dt <= end_dt:
+                filtered_rows.append({
+                    "ticker": d.get("ticker"),
+                    "date": dt,
+                    "open": d.get("open"),
+                    "high": d.get("high"),
+                    "low": d.get("low"),
+                    "close": d.get("close"),
+                    "volume": d.get("volume"),
+                })
+        except Exception:
+            pass
+
+    if not filtered_rows:
         if not allow_synthetic:
             raise ValueError(
-                f"No price data for {tickers} between {start_date}\u2013{end_date}. "
+                f"No price data for {tickers} between {start_date}–{end_date}. "
                 "Pass allow_synthetic=True only for unit tests."
             )
         logger.warning(
-            "SYNTHETIC DATA IN USE \u2014 evolution scores will be meaningless"
+            "SYNTHETIC DATA IN USE — evolution scores will be meaningless"
         )
         return _generate_synthetic_data(tickers, start_date, end_date, output_path)
 
-    df = pd.DataFrame(
-        rows, columns=["ticker", "date", "open", "high", "low", "close", "volume"]
-    )
-    df["date"] = pd.to_datetime(df["date"])
+    df = pd.DataFrame(filtered_rows)
     df = df.set_index("date").sort_index()
 
     if output_path is None:
