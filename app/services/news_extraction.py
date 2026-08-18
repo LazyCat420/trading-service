@@ -318,12 +318,19 @@ async def extract_article_facts_with_source(
 
 def _store_facts(article_id: str, facts: list[dict[str, Any]], model_note: str) -> None:
     try:
-        with get_db() as db:
-            db.execute(
-                "UPDATE news_articles SET grounded_facts = %s::jsonb, "
-                "facts_extracted_at = NOW() WHERE id = %s",
-                [json.dumps({"v": 1, "facts": facts, "model": model_note}), article_id],
-            )
+        from datetime import datetime, timezone
+        from app.db import mongo_store
+
+        mongo_store.update_docs(
+            "news_articles",
+            {"id": article_id},
+            {"$set": {
+                "id": article_id,
+                "grounded_facts": {"v": 1, "facts": facts, "model": model_note},
+                "facts_extracted_at": datetime.now(timezone.utc),
+            }},
+            upsert=True,
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("[news-extract] store failed for %s: %s", article_id, e)
 
@@ -332,13 +339,7 @@ async def ensure_facts(
     rows: list[tuple[str, str, str, Any]],
     budget_s: float = _BATCH_BUDGET_S,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Ensure grounded facts exist for (id, ticker, title, summary) rows.
-
-    Returns {article_id: facts} for every article that has facts (cached or
-    freshly extracted). Bounded by `budget_s`: extraction that doesn't finish
-    in time is cancelled — those articles are served raw this cycle and picked
-    up on a later one (results land in the DB whenever their task completes).
-    """
+    """Ensure grounded facts exist for (id, ticker, title, summary) rows from MongoDB."""
     if not ENABLED:
         return {}
 
@@ -349,13 +350,14 @@ async def ensure_facts(
     if not ids:
         return {}
     try:
-        with get_db() as db:
-            cached = db.execute(
-                "SELECT id, grounded_facts FROM news_articles "
-                "WHERE id = ANY(%s) AND facts_extracted_at IS NOT NULL",
-                [ids],
-            ).fetchall()
-        cached_map = {c[0]: c[1] for c in cached}
+        from app.db import mongo_store
+
+        cached = mongo_store.find_docs(
+            "news_articles",
+            {"id": {"$in": ids}, "facts_extracted_at": {"$ne": None}},
+            projection={"id": 1, "grounded_facts": 1, "_id": 0}
+        )
+        cached_map = {c.get("id"): c.get("grounded_facts") for c in cached if c.get("id")}
     except Exception as e:  # noqa: BLE001
         logger.warning("[news-extract] cache lookup failed: %s", e)
         cached_map = {}

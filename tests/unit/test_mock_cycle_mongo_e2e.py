@@ -1284,3 +1284,33 @@ class TestMockTradingCycleMongoE2E:
 
         unflag_res = unflag_item(flag_res["flag_id"])
         assert unflag_res is True
+
+        # 42. News Extraction & Backfill Cache in MongoDB
+        from app.services.news_extraction import _store_facts, ensure_facts
+        from app.services.news_backfill import _cycle_is_running, _select_batch, backlog_size
+
+        _store_facts(
+            article_id="news-001",
+            facts=[{
+                "class": "earnings",
+                "statement": "Apple beat Q3 earnings expectations.",
+                "quote": "Apple delivered record revenue.",
+                "direction": "bullish",
+                "char_start": 0,
+                "char_end": 30,
+            }],
+            model_note="test_mock_vllm",
+        )
+
+        facts_dict = await ensure_facts([("news-001", "AAPL", "Q3 Earnings", "Apple delivered record revenue.")])
+        assert "news-001" in facts_dict
+        assert len(facts_dict["news-001"]) >= 1
+
+        is_running = _cycle_is_running()
+        assert isinstance(is_running, bool)
+
+        batch = _select_batch(limit=10)
+        assert isinstance(batch, list)
+
+        b_size = backlog_size()
+        assert isinstance(b_size, int)

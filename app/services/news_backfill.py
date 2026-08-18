@@ -116,48 +116,48 @@ _SELECT_SQL = """
 
 
 def _cycle_is_running() -> bool:
-    """True while a trading cycle is live.
-
-    The backfill yields to it, and not for CPU reasons — the two do not compete
-    for a box, since the cycle extracts on Gold Spark. It is to protect a
-    measurement: `MODEL_SHADOW_AGENTS` sends one gatekeeper prompt per cycle to
-    this same Jetson, and that comparison is still accruing toward n>=10. A box
-    kept permanently busy queues those calls into timeouts, and a timeout is
-    recorded as `AGENT_ERROR` — indistinguishable, later, from the model having
-    failed. The backlog has infinite patience; the shadow evidence does not.
-
-    Fails OPEN (returns False) — an unreadable pipeline_state must not silently
-    stop the worker forever.
-    """
+    """True while a trading cycle is live in MongoDB."""
     try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT status FROM pipeline_state ORDER BY updated_at DESC LIMIT 1"
-            ).fetchone()
-        return bool(row) and str(row[0]).lower() == "running"
+        from app.db import mongo_store
+
+        docs = mongo_store.find_docs(
+            "pipeline_state",
+            {},
+            sort=[("updated_at", -1)],
+            limit=1
+        )
+        return bool(docs) and str(docs[0].get("status", "")).lower() == "running"
     except Exception as e:  # noqa: BLE001
         logger.debug("[news-backfill] cycle check failed, proceeding: %s", e)
         return False
 
 
 def _select_batch(limit: int) -> list[tuple[str, str, str, str]]:
-    with get_db() as db:
-        rows = db.execute(_SELECT_SQL, [_MIN_TEXT_CHARS, limit]).fetchall()
-    return [(r[0], r[1], r[2], r[3]) for r in rows]
+    from app.db import mongo_store
+
+    docs = mongo_store.find_docs(
+        "news_articles",
+        {"facts_extracted_at": None, "summary": {"$ne": None}},
+        sort=[("collected_at", -1)],
+        limit=limit,
+    )
+    return [
+        (d.get("id", ""), d.get("ticker", ""), d.get("title") or "", d.get("summary", ""))
+        for d in docs
+        if len(d.get("summary") or "") >= _MIN_TEXT_CHARS
+    ]
 
 
 def backlog_size() -> int:
-    """Eligible articles with no extraction attempt. Powers the log line that
-    makes this job's progress visible; a worker whose output nobody can see
-    reads as a worker that isn't running."""
+    """Eligible articles with no extraction attempt from MongoDB."""
     try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT count(*) FROM news_articles WHERE facts_extracted_at IS NULL "
-                "AND summary IS NOT NULL AND length(summary) >= %s",
-                [_MIN_TEXT_CHARS],
-            ).fetchone()
-        return int(row[0]) if row else 0
+        from app.db import mongo_store
+
+        docs = mongo_store.find_docs(
+            "news_articles",
+            {"facts_extracted_at": None, "summary": {"$ne": None}},
+        )
+        return sum(1 for d in docs if len(d.get("summary") or "") >= _MIN_TEXT_CHARS)
     except Exception as e:  # noqa: BLE001
         logger.warning("[news-backfill] backlog count failed: %s", e)
         return 0
