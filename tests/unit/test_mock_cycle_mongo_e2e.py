@@ -1093,3 +1093,31 @@ class TestMockTradingCycleMongoE2E:
             "reason_codes": ["EARNINGS_RELEASE"],
         })
         assert is_valid is True
+
+        # 35. Checkpoint Manager in MongoDB
+        from app.db.checkpoints import checkpoint_manager
+
+        saved_cp = checkpoint_manager.save(
+            cycle_id=cycle_id,
+            step_name="agents_complete",
+            ticker="AAPL",
+            state={"decision": "BUY", "confidence": 0.85},
+        )
+        assert saved_cp is True
+
+        assert checkpoint_manager.has_completed(cycle_id, "agents_complete", "AAPL") is True
+        loaded_blob = checkpoint_manager.load_state(cycle_id, "agents_complete", "AAPL")
+        assert loaded_blob["decision"] == "BUY"
+
+        latest_cp = checkpoint_manager.load_latest(cycle_id)
+        assert latest_cp is not None
+        assert latest_cp["step_name"] == "agents_complete"
+
+        steps = checkpoint_manager.get_completed_steps(cycle_id)
+        assert len(steps) >= 1
+
+        stats = checkpoint_manager.get_stats()
+        assert stats["total_checkpoints"] >= 1
+
+        cleared_n = checkpoint_manager.clear_cycle(cycle_id)
+        assert cleared_n >= 1
