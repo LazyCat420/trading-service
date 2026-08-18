@@ -1,51 +1,66 @@
 """url_fanout_exceeded — the per-URL insert cap for news_articles."""
 
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
+
+from app.collectors import news_collector
 from app.collectors.news_collector import url_fanout_exceeded
 
 
-class _FakeDB:
-    def __init__(self, count):
-        self._count = count
-        self.queries = []
+@contextmanager
+def _count(n):
+    """Stub the existing-rows count for the URL.
 
-    def execute(self, sql, params=None):
-        self.queries.append((sql, params))
-        return self
+    `agg_row('news_articles', {'url': url}, [('count', None)])` returns a
+    TUPLE, so the cap compares row[0]. Patching the module's `mongo_query`
+    also asserts the filter is keyed on the url and nothing else — the old
+    fake DB only recorded SQL text, so a count over the wrong filter would
+    have passed.
+    """
+    query = MagicMock()
+    query.agg_row.return_value = (n,)
+    with patch.object(news_collector, "mongo_query", query):
+        yield query
 
-    def fetchone(self):
-        return (self._count,)
 
-
-class _BoomDB:
-    def execute(self, *a, **k):
+class _BoomQuery:
+    def agg_row(self, *a, **k):
         raise RuntimeError("db down")
 
 
 def test_under_cap_allows_insert():
-    assert url_fanout_exceeded(_FakeDB(4), "http://x", cap=5) is False
+    with _count(4):
+        assert url_fanout_exceeded(None, "http://x", cap=5) is False
 
 
 def test_at_cap_blocks_insert():
-    assert url_fanout_exceeded(_FakeDB(5), "http://x", cap=5) is True
+    with _count(5) as query:
+        assert url_fanout_exceeded(None, "http://x", cap=5) is True
+    collection, filt, _agg = query.agg_row.call_args[0][:3]
+    assert collection == "news_articles"
+    assert filt == {"url": "http://x"}
 
 
 def test_no_url_allows():
-    db = _FakeDB(99)
-    assert url_fanout_exceeded(db, None, cap=5) is False
-    assert url_fanout_exceeded(db, "", cap=5) is False
-    assert db.queries == []
+    with _count(99) as query:
+        assert url_fanout_exceeded(None, None, cap=5) is False
+        assert url_fanout_exceeded(None, "", cap=5) is False
+        query.agg_row.assert_not_called()
 
 
 def test_cap_zero_disables():
-    db = _FakeDB(99)
-    assert url_fanout_exceeded(db, "http://x", cap=0) is False
-    assert db.queries == []
+    with _count(99) as query:
+        assert url_fanout_exceeded(None, "http://x", cap=0) is False
+        query.agg_row.assert_not_called()
 
 
 def test_fails_open_on_db_error():
-    assert url_fanout_exceeded(_BoomDB(), "http://x", cap=5) is False
+    with patch.object(news_collector, "mongo_query", _BoomQuery()):
+        assert url_fanout_exceeded(None, "http://x", cap=5) is False
 
 
 def test_default_cap_from_settings():
-    assert url_fanout_exceeded(_FakeDB(1_000), "http://x") is True
-    assert url_fanout_exceeded(_FakeDB(0), "http://x") is False
+    with _count(1_000):
+        assert url_fanout_exceeded(None, "http://x") is True
+    with _count(0):
+        assert url_fanout_exceeded(None, "http://x") is False

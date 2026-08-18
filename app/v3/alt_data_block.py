@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 from app.db import mongo_query
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 

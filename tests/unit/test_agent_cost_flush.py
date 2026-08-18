@@ -139,23 +139,24 @@ def test_save_desk_flushes_before_serialising(monkeypatch):
 
     captured = {}
 
-    monkeypatch.setattr(dp, "_ensure_table", lambda: None)
+    # `save_desk` upserts one document through `mongo_store` now; the desk
+    # JSON is the document's `desk_data` field rather than the 5th positional
+    # bind of a hand-written INSERT. There is no DDL step left to stub out.
     monkeypatch.setattr(tel, "_persist_entries", lambda desk, entries: None)
 
-    class _DB:
-        def execute(self, sql, params=None):
-            captured["desk_data"] = params[4]
-            return self
+    def _upsert_doc(collection, key, doc, *a, **k):
+        captured["collection"] = collection
+        captured["key"] = key
+        captured["desk_data"] = doc["desk_data"]
 
-    from contextlib import contextmanager
-
-    @contextmanager
-    def _get_db():
-        yield _DB()
-
-    monkeypatch.setattr("app.db.connection.get_db", _get_db)
+    monkeypatch.setattr(dp.mongo_store, "upsert_doc", _upsert_doc)
 
     dp.save_desk(_desk(2))
+
+    # The upsert must be keyed on the cycle+ticker identity, or each save
+    # would append a new desk instead of replacing the one it revises.
+    assert captured["collection"] == "shared_desk"
+    assert set(captured["key"]) == {"cycle_id", "ticker"}
 
     stored = _json.loads(captured["desk_data"])
     entries = stored["agent_telemetry"]
@@ -210,24 +211,15 @@ def test_a_flush_failure_never_breaks_the_desk_save(monkeypatch):
     from app.v3 import desk_persistence as dp
 
     captured = {}
-    monkeypatch.setattr(dp, "_ensure_table", lambda: None)
     monkeypatch.setattr(
         tel, "flush_agent_telemetry",
         lambda desk: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
-    class _DB:
-        def execute(self, sql, params=None):
-            captured["desk_data"] = params[4]
-            return self
+    def _upsert_doc(collection, key, doc, *a, **k):
+        captured["desk_data"] = doc["desk_data"]
 
-    from contextlib import contextmanager
-
-    @contextmanager
-    def _get_db():
-        yield _DB()
-
-    monkeypatch.setattr("app.db.connection.get_db", _get_db)
+    monkeypatch.setattr(dp.mongo_store, "upsert_doc", _upsert_doc)
 
     dp.save_desk(_desk(2))          # must not raise
 

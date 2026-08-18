@@ -7,12 +7,49 @@ Pure Python + ta library. No LLM calls. No hallucinations.
 import pandas as pd
 import ta
 import logging
+from datetime import timedelta
 from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
+#: Mirrors app.quant.returns._FRESHNESS_LAG_DAYS.
+_FRESHNESS_LAG_DAYS = 3
+
 # Minimum sessions before the `ta` indicators are computable at all.
 _MIN_SESSIONS = 28
+
+
+def _one_vendor(ticker: str, query: dict) -> dict:
+    """Pin a price_history filter to the ticker's dominant vendor.
+
+    Resolved through THIS module's `mongo_store` rather than by importing
+    app.quant.returns' resolver, so a caller (or a test) that redirects
+    `technical_processor.mongo_store` redirects the vendor lookup with it.
+    Importing the other module's helper split the read across two seams and
+    sent the lookup to the real database while the window read a fake.
+
+    Same rule as `dominant_source_sql`: freshest first, then deepest, then
+    name. Returns the query unchanged when the ticker has one vendor or none.
+    """
+    try:
+        stats = mongo_store.aggregate("price_history", [
+            {"$match": {"ticker": ticker}},
+            {"$group": {"_id": "$source", "n": {"$sum": 1}, "mx": {"$max": "$date"}}},
+        ])
+    except Exception:  # noqa: BLE001 — a vendor lookup must not kill the cycle
+        return query
+    if not stats or len(stats) <= 1:
+        return query
+    dated = [r["mx"] for r in stats if r.get("mx") is not None]
+    if not dated:
+        return query
+    cutoff = max(dated) - timedelta(days=_FRESHNESS_LAG_DAYS)
+    best = sorted(
+        stats,
+        key=lambda r: (not (r.get("mx") is not None and r["mx"] >= cutoff),
+                       -int(r.get("n") or 0), str(r["_id"] or "")),
+    )[0]["_id"]
+    return {**query, "source": best} if best is not None else query
 
 
 def compute_technicals(ticker: str, period: int = 500) -> int:
@@ -21,9 +58,14 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
     Needs at least 28 rows.
     Returns number of rows written.
     """
+    # ONE vendor. price_history is keyed (ticker, date, source), so an
+    # unfiltered `limit=period` returns `period` ROWS spanning only ~period/2
+    # DATES on a dual-source ticker, and mixes adjusted closes with raw ones
+    # inside a single indicator window. The SQL this replaced pinned the
+    # vendor inside the LIMIT subquery; the port dropped it.
     docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker.upper()},
+        _one_vendor(ticker.upper(), {"ticker": ticker.upper()}),
         sort=[("date", -1)],
         limit=period,
     )
@@ -102,7 +144,12 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
     # ── Write to DB (only rows with valid RSI, i.e. skip first 13) ──
     valid = df.dropna(subset=["rsi_14"])
 
-    count = 0
+    # ONE round-trip, not one per row. The SQL this replaced batched its
+    # writes; the port issued a separate upsert per row, so a single ticker's
+    # 287 indicator rows became 287 round-trips — the 22.6s/ticker shape that
+    # turns a universe repair into ~16 hours, and what TestWritesAreBatched
+    # exists to pin.
+    batch: list[dict] = []
     for _, row in valid.iterrows():
         doc = {
             "ticker": ticker.upper(),
@@ -128,8 +175,9 @@ def compute_technicals(ticker: str, period: int = 500) -> int:
             "support": _f(row["support"]),
             "resistance": _f(row["resistance"]),
         }
-        mongo_store.upsert_doc("technicals", {"ticker": ticker.upper(), "date": row["date"]}, doc)
-        count += 1
+        batch.append(doc)
+
+    count = mongo_store.bulk_upsert("technicals", batch, key_field=("ticker", "date"))
 
     logger.debug("[tech] %s: %d technical rows written", ticker, count)
     return count
@@ -169,7 +217,7 @@ def get_signals(ticker: str) -> str:
 
     price_docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker.upper()},
+        _one_vendor(ticker.upper(), {"ticker": ticker.upper()}),
         sort=[("date", -1)],
         limit=1,
     )

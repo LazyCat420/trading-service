@@ -65,28 +65,85 @@ def test_registered_smart_money_tools_match_the_whitelisted_set():
 
 # ── 2. the desk block ────────────────────────────────────────────────
 
-def _fake_db(rows):
-    class _Cur:
-        def execute(self, *_a, **_k):
-            return self
+# The percentile used to arrive precomputed from SQL. It is derived in Python
+# now — from `smart_money_performance` (the cohort's 1y alphas) and
+# `smart_money_trade_scores` (who traded THIS ticker) — so the fixtures below
+# are the two raw collections and the ranking itself is under test.
+#
+# rank/(cohort_n - 1) is the percentile, so a fund cohort of 15 puts the 9th
+# lowest alpha at 8/14 = 0.571 -> "57th", and a congress cohort of 164 puts the
+# 22nd lowest at 21/163 = 0.129 -> "13th".
 
-        def fetchall(self):
-            return rows
 
-    class _Ctx:
-        def __enter__(self):
-            return _Cur()
+def _cohort(actor_type: str, n: int, subject_rank: int, subject_id: str):
+    """`n` actors of `actor_type` with distinct ascending alphas.
 
-        def __exit__(self, *_):
-            return False
+    `subject_id` is placed at `subject_rank` (0-based) so its percentile is a
+    stated number rather than an accident of the fixture's ordering.
+    """
+    ids = [f"{actor_type}-{i}" for i in range(n)]
+    ids[subject_rank] = subject_id
+    return [
+        {"actor_type": actor_type, "actor_id": aid, "horizon": "1y",
+         "rankable": True, "avg_alpha": float(i)}
+        for i, aid in enumerate(ids)
+    ]
 
-    return lambda: _Ctx()
+
+def _scores(ticker, actor_type, direction, actor_ids):
+    return [
+        {"ticker": ticker, "actor_type": actor_type, "actor_id": aid,
+         "direction": direction}
+        for aid in actor_ids
+    ]
+
+
+def _patch_docs(monkeypatch, perf, scores):
+    """Patch the two `mongo_store.find_docs` reads, dispatching on COLLECTION.
+
+    `smart_money_quality_line` imports mongo_store INSIDE the function, so the
+    patch lands on `app.db.mongo_store` rather than on the alt_data_block
+    attribute (which is what the old `get_db` patch tried, and missed).
+    """
+    def _find_docs(collection, *_a, **_k):
+        if collection == "smart_money_performance":
+            return perf
+        if collection == "smart_money_trade_scores":
+            return scores
+        raise AssertionError(f"unexpected collection {collection!r}")
+
+    monkeypatch.setattr("app.db.mongo_store.find_docs", _find_docs)
+
+
+def _nvda_fixture():
+    """11 buy-side funds at the 57th percentile, 2 sell-side congress at the 13th."""
+    # All 11 funds share one alpha rank, so the median IS that percentile.
+    fund_cohort = _cohort("fund", 15, 8, "fund-subject")
+    # Ten more funds tied at the subject's alpha, appended so the cohort stays
+    # 15 distinct ALPHAS while 11 actors sit on the same rank.
+    fund_cohort = fund_cohort[:8] + [
+        {"actor_type": "fund", "actor_id": f"fund-buyer-{i}", "horizon": "1y",
+         "rankable": True, "avg_alpha": 8.0}
+        for i in range(11)
+    ] + fund_cohort[9:]
+    congress_cohort = _cohort("congress", 164, 21, "congress-subject")
+    congress_cohort = congress_cohort[:21] + [
+        {"actor_type": "congress", "actor_id": f"congress-seller-{i}",
+         "horizon": "1y", "rankable": True, "avg_alpha": 21.0}
+        for i in range(2)
+    ] + congress_cohort[22:]
+
+    scores = (
+        _scores("NVDA", "fund", "buy", [f"fund-buyer-{i}" for i in range(11)])
+        + _scores("NVDA", "congress", "sell",
+                  [f"congress-seller-{i}" for i in range(2)])
+    )
+    return fund_cohort + congress_cohort, scores
 
 
 def test_quality_line_reports_percentile_not_alpha(monkeypatch):
-    # (direction, actor_type, n, median_pctile, cohort_n)
-    rows = [("buy", "fund", 11, 0.57, 15), ("sell", "congress", 2, 0.13, 164)]
-    monkeypatch.setattr(alt_data_block, "get_db", _fake_db(rows))
+    perf, scores = _nvda_fixture()
+    _patch_docs(monkeypatch, perf, scores)
 
     line = smart_money_quality_line("NVDA")
     assert "57th percentile" in line
@@ -110,8 +167,8 @@ def test_the_raw_alpha_is_not_shipped(monkeypatch):
     if it were a fact about the ticker. The population median for a rankable
     actor is -0.59pp with 48.6% positive, which is the honest picture.
     """
-    rows = [("buy", "fund", 11, 0.57, 15)]
-    monkeypatch.setattr(alt_data_block, "get_db", _fake_db(rows))
+    perf, scores = _nvda_fixture()
+    _patch_docs(monkeypatch, perf, scores)
 
     line = smart_money_quality_line("NVDA")
     assert "pp" not in line, "a percentage-point alpha figure leaked into the block"
@@ -119,24 +176,27 @@ def test_the_raw_alpha_is_not_shipped(monkeypatch):
 
 
 def test_quiet_ticker_returns_empty(monkeypatch):
-    monkeypatch.setattr(alt_data_block, "get_db", _fake_db([]))
+    """A full cohort but no trades in this name is silence, not a zero score."""
+    perf, _ = _nvda_fixture()
+    _patch_docs(monkeypatch, perf, [])
     assert smart_money_quality_line("NOBODYTRADESTHIS") == ""
 
 
-def test_blank_ticker_never_queries():
-    def _explode():
-        raise AssertionError("must not open a connection for a blank ticker")
+def test_blank_ticker_never_queries(monkeypatch):
+    def _explode(*_a, **_k):
+        raise AssertionError("must not query for a blank ticker")
 
+    monkeypatch.setattr("app.db.mongo_store.find_docs", _explode)
     assert smart_money_quality_line("") == ""
     assert smart_money_quality_line(None) == ""
 
 
 def test_query_failure_is_fail_open(monkeypatch):
     """Every line in this block degrades to "" — never a pipeline error."""
-    def _boom():
+    def _boom(*_a, **_k):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(alt_data_block, "get_db", _boom)
+    monkeypatch.setattr("app.db.mongo_store.find_docs", _boom)
     assert smart_money_quality_line("NVDA") == ""
 
 

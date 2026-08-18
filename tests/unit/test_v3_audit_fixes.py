@@ -28,11 +28,12 @@ def test_c3_trade_result_double_swallowed():
     cycle_id = "test-cycle"
     verdict = {"action": "BUY"}
     
-    with patch("app.db.connection.get_db") as mock_get_db:
-        mock_conn = MagicMock()
-        mock_get_db.return_value.__enter__.return_value = mock_conn
-        mock_conn.transaction.side_effect = Exception("DB DEAD")
-        
+    from app.services import trade_result_saver as trs
+
+    store = MagicMock()
+    store.delete_docs.side_effect = Exception("DB DEAD")
+
+    with patch.object(trs, "mongo_store", store):
         with pytest.raises(Exception, match="DB DEAD"):
             save_trade_result(ticker, cycle_id, verdict)
 

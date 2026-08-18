@@ -220,27 +220,39 @@ def test_injected_edit_is_rejected_and_logged():
 
 # ── Loader ──
 
+def _patch_loader(row=None, raises=None):
+    """Patch the loader's Mongo read.
+
+    `skill_loader` reads `agent_skills` through `mongo_query.find_row`, which
+    returns a TUPLE in the requested column order (`skill_text`, `version`).
+    The old `patch("app.db.connection.get_db", ...)` intercepted nothing here.
+    """
+    q = MagicMock()
+    if raises is not None:
+        q.find_row.side_effect = raises
+    else:
+        q.find_row.side_effect = lambda coll, *a, **k: (
+            row if coll == "agent_skills" else None
+        )
+    return patch.object(sl, "mongo_query", q)
+
+
 def test_loader_returns_empty_on_db_error():
     sl.invalidate_skill_cache()
-    with patch("app.db.connection.get_db", side_effect=RuntimeError("no db")):
+    with _patch_loader(raises=RuntimeError("no db")):
         assert sl.load_skill_prefix("v3_bull_agent", bust_cache=True) == ""
 
 
 def test_loader_formats_and_caches():
     sl.invalidate_skill_cache()
 
-    @contextmanager
-    def fake_get_db():
-        with _mock_db(row=(GOOD_SKILL,)) as db:
-            yield db
-
-    with patch("app.db.connection.get_db", fake_get_db):
+    with _patch_loader(row=(GOOD_SKILL, 4)):
         prefix = sl.load_skill_prefix("v3_bull_agent", bust_cache=True)
     assert prefix.startswith("## Agent Skill Guidance (SkillOpt)\n")
     assert GOOD_SKILL in prefix
 
     # Cached: no DB access needed on the second call
-    with patch("app.db.connection.get_db", side_effect=RuntimeError("no db")):
+    with _patch_loader(raises=RuntimeError("no db")):
         assert sl.load_skill_prefix("v3_bull_agent") == prefix
 
     sl.invalidate_skill_cache("v3_bull_agent")

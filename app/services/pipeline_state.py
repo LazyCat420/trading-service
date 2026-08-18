@@ -134,7 +134,29 @@ class PipelineStateDB:
 
                 return d
         except Exception as e:
+            # A READ FAILURE IS NOT AN IDLE PIPELINE.
+            #
+            # This used to fall through to default_state(), whose status is
+            # "idle" — and "idle" is a member of IDLE_STATUSES in both deploy
+            # interlocks (.claude/hooks/guard_deploy.py:35 and
+            # trading-service/.claude/hooks/_check_cycle_running.py). So a
+            # Mongo outage, or a singleton that has not caught up, told the
+            # guard "no cycle is running, safe to restart" — and the symptom
+            # of a read fault was a deploy killing a live cycle, which is how
+            # EXLS/OWL/CARS/GM were lost on 2026-07-27.
+            #
+            # The conversion to pure Mongo removed the Postgres fallback AND
+            # the handle_mongo_read_failure call that used to sit here, so
+            # there is nothing left between the exception and the wrong
+            # answer. `status: "unknown"` is not in IDLE_STATUSES, so the
+            # guard now refuses the deploy instead of waving it through, and
+            # a caller that genuinely wants "treat unknown as idle" has to say
+            # so explicitly.
             logger.error("[PipelineStateDB] Failed to get state: %s", e)
+            unknown = cls.default_state()
+            unknown["status"] = "unknown"
+            unknown["error"] = f"pipeline_state read failed: {e}"
+            return unknown
         return cls.default_state()
 
     @classmethod

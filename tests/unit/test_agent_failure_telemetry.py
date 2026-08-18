@@ -129,13 +129,18 @@ def test_defaults_keep_a_plain_run_clean():
 
 # ── the INSERT actually carries them ────────────────────────────────────
 
-def test_persisted_insert_binds_every_column_it_names(mock_db):
-    """Column list and parameter list must stay the same length.
+def test_persisted_insert_binds_every_column_it_names():
+    """The persisted document must actually carry the failure fields.
 
-    `_persist_entries` builds its INSERT by hand; adding a column to one list
-    and not the other is a runtime ProgrammingError that no import-time check
-    would catch.
+    This used to build an INSERT by hand and count that the column list and
+    the parameter list were the same length — a hand-written SQL hazard that
+    the Mongo rewrite removed. `_persist_entries` writes a document through
+    `mongo_store.insert_docs` now, so the equivalent (and stronger) check is
+    that every field the diagnosis needs is present in the document with the
+    recorded VALUE, not merely named in a string.
     """
+    from unittest.mock import patch
+
     from app.v3 import telemetry as tel
 
     desk = _desk()
@@ -143,24 +148,24 @@ def test_persisted_insert_binds_every_column_it_names(mock_db):
         desk, "v3_junior_analyst", 181747, 2, 15179, "AGENT_ERROR",
         attempt_no=1, failure_reason=SCHEMA_INVALID, error_message="boom",
     )
-    tel._TABLE_ENSURED = True  # skip the DDL; we are checking the INSERT
-    tel._persist_entries(desk, desk.agent_telemetry)
+    tel._TABLE_ENSURED = True  # skip the DDL; we are checking the write
+    with patch("app.v3.telemetry.mongo_store.insert_docs") as insert_docs:
+        tel._persist_entries(desk, desk.agent_telemetry)
 
-    inserts = [
-        c for c in mock_db.execute.call_args_list
-        if "INSERT INTO v3_agent_telemetry" in str(c.args[0])
-    ]
-    assert inserts, "no INSERT was issued"
-    sql, params = inserts[0].args[0], inserts[0].args[1]
-
-    columns = sql.split("(", 1)[1].split(")", 1)[0]
-    n_columns = len([c for c in columns.split(",") if c.strip()])
-    n_placeholders = sql.count("%s")
-    assert n_columns == n_placeholders == len(params), (
-        f"{n_columns} columns, {n_placeholders} placeholders, {len(params)} params"
-    )
+    assert insert_docs.call_count == 1, "no write was issued"
+    collection, docs = insert_docs.call_args[0][:2]
+    assert collection == "v3_agent_telemetry"
+    assert len(docs) == 1
+    doc = docs[0]
 
     for field in ("error_message", "failure_reason", "attempt_no"):
-        assert field in sql, f"{field} is not persisted"
-    assert SCHEMA_INVALID in params
-    assert 1 in params
+        assert field in doc, f"{field} is not persisted"
+    assert doc["failure_reason"] == SCHEMA_INVALID
+    assert doc["attempt_no"] == 1
+    assert doc["error_message"] == "boom"
+    # The identifying columns must ride along too, or the row cannot be
+    # attributed to a cycle/ticker/agent.
+    assert doc["cycle_id"] == desk.cycle_id
+    assert doc["ticker"] == desk.ticker
+    assert doc["agent_name"] == "v3_junior_analyst"
+    assert doc["outcome"] == "AGENT_ERROR"

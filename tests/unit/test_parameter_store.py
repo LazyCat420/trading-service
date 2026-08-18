@@ -2,6 +2,14 @@
 
 The store must be impossible to break the trading path with: an empty table,
 an unreachable DB, or an out-of-envelope row must all resolve to safe values.
+
+These used to stub `parameter_store.get_db` with a fake connection whose
+`execute(...).fetchone()` returned the row. `get_db` no longer exists — the
+resolver calls `mongo_query.find_row`, which returns the row as a TUPLE in the
+requested column order — so the monkeypatch set an attribute nobody reads and
+every case actually hit the live-DB guard. The fakes now stand in for
+`find_row` directly, and additionally pin the collection and the freshness sort
+the resolver depends on to pick the CURRENT row.
 """
 import os
 import sys
@@ -11,31 +19,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from app.services import parameter_store as ps
 
 
-class _FakeResult:
-    def __init__(self, row):
-        self._row = row
+def _fake_find_row(row, seen=None):
+    """Stand in for mongo_query.find_row, returning `row` (a tuple or None).
 
-    def fetchone(self):
-        return self._row
+    Also checks the resolver asks the store the question it claims to: the
+    active row for THIS key, newest first.
+    """
+    def _find_row(collection, filt, columns, sort=None, **kwargs):
+        assert collection == "runtime_parameters"
+        assert filt["status"] == "active"
+        assert columns == ["value"]
+        # Newest row wins, otherwise a stale expired value could be served.
+        assert sort == [("created_at", -1)]
+        if seen is not None:
+            seen.append(filt["param_key"])
+        return row
 
-
-class _FakeDB:
-    def __init__(self, row):
-        self._row = row
-
-    def execute(self, sql, params=None):
-        return _FakeResult(self._row)
-
-
-def _fake_get_db(row):
-    class _Ctx:
-        def __enter__(self):
-            return _FakeDB(row)
-
-        def __exit__(self, *a):
-            return False
-
-    return lambda: _Ctx()
+    return _find_row
 
 
 def setup_function(_fn):
@@ -75,10 +75,10 @@ def test_defaults_match_previous_hardcoded_values():
 
 
 def test_db_failure_falls_back_to_default(monkeypatch):
-    def _boom():
+    def _boom(*a, **k):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(ps, "get_db", _boom)
+    monkeypatch.setattr(ps.mongo_query, "find_row", _boom)
     assert ps.get_param("MAX_POSITION_SIZE_PCT") == 0.10
     # Reads the registry rather than a literal: this test is about FAIL-OPEN
     # behaviour, not about any particular threshold, and hardcoding the number
@@ -88,29 +88,33 @@ def test_db_failure_falls_back_to_default(monkeypatch):
 
 
 def test_empty_table_returns_default(monkeypatch):
-    monkeypatch.setattr(ps, "get_db", _fake_get_db(None))
+    monkeypatch.setattr(ps.mongo_query, "find_row", _fake_find_row(None))
     assert ps.get_param("MAX_CONCENTRATION_PCT") == 0.25
 
 
 def test_stored_row_wins_and_int_kind_coerces(monkeypatch):
-    monkeypatch.setattr(ps, "get_db", _fake_get_db((70.0,)))
+    seen = []
+    monkeypatch.setattr(ps.mongo_query, "find_row", _fake_find_row((70.0,), seen))
     val = ps.get_param("ANALYSIS_CONFIDENCE_THRESHOLD")
     assert val == 70
     assert isinstance(val, int)
+    # The stored value was fetched for THIS key, not some other row that
+    # happened to carry the same number.
+    assert seen == ["ANALYSIS_CONFIDENCE_THRESHOLD"]
 
 
 def test_out_of_envelope_row_is_clamped_never_honored(monkeypatch):
     # A row wider than the registry bounds (e.g. bounds tightened later)
     # must clamp — a stored 0.90 size cap cannot leak through.
-    monkeypatch.setattr(ps, "get_db", _fake_get_db((0.90,)))
+    monkeypatch.setattr(ps.mongo_query, "find_row", _fake_find_row((0.90,)))
     assert ps.get_param("MAX_POSITION_SIZE_PCT") == 0.20  # registry max
 
 
 def test_cache_and_invalidate(monkeypatch):
-    monkeypatch.setattr(ps, "get_db", _fake_get_db((0.15,)))
+    monkeypatch.setattr(ps.mongo_query, "find_row", _fake_find_row((0.15,)))
     assert ps.get_param("MAX_POSITION_SIZE_PCT") == 0.15
     # New DB value, cache still warm → old value served
-    monkeypatch.setattr(ps, "get_db", _fake_get_db((0.12,)))
+    monkeypatch.setattr(ps.mongo_query, "find_row", _fake_find_row((0.12,)))
     assert ps.get_param("MAX_POSITION_SIZE_PCT") == 0.15
     ps.invalidate_cache("MAX_POSITION_SIZE_PCT")
     assert ps.get_param("MAX_POSITION_SIZE_PCT") == 0.12

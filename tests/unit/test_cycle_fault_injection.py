@@ -50,11 +50,14 @@ class TestIncompleteBarFault:
         monkeypatch.setattr(yc.yf, "Ticker", lambda t: inst)
         monkeypatch.setattr(yc, "_refresh_technicals", _anoop)
 
-        db, ctx = _fake_db()
-        monkeypatch.setattr(yc, "get_db", lambda: ctx)
+        store = _FakeStore()
+        monkeypatch.setattr(yc, "mongo_store", store)
 
         count = await yc.collect_price_history("BLK")
         assert count == 124, "the salvage regressed — one NaN row killed the frame"
+        # And the 124 were really persisted — a return value alone could be
+        # counted off a frame the writer then dropped on the floor.
+        assert len(store.rows_for("price_history")) == 124
 
     @pytest.mark.asyncio
     async def test_a_narrower_fetch_window_does_not_dodge_it(self, monkeypatch):
@@ -80,10 +83,11 @@ class TestIncompleteBarFault:
         inst.history.return_value = _vendor_frame(n_good=0)
         monkeypatch.setattr(yc.yf, "Ticker", lambda t: inst)
         monkeypatch.setattr(yc, "_refresh_technicals", _anoop)
-        _db, ctx = _fake_db()
-        monkeypatch.setattr(yc, "get_db", lambda: ctx)
+        store = _FakeStore()
+        monkeypatch.setattr(yc, "mongo_store", store)
 
         assert await yc.collect_price_history("BLK") == 0
+        assert store.upserts == [], "an empty vendor response wrote rows anyway"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -227,50 +231,51 @@ class TestDegradedArtifactFault:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestStalledTickerFault:
-    def test_a_stalled_ticker_does_not_report_itself_current(self):
+    def _age_and_query(self, ticker, as_of, latest, sessions):
+        """Run `_trading_day_age`, capturing the peer query it issues.
+
+        Only the helper `mongo_store` really exports is stubbed. The function
+        swallows any lookup failure and returns `None`, so an unrun query is
+        indistinguishable from a healthy zero — the age assertion below is what
+        proves the stub was reached at all.
+        """
+        from app.db import mongo_store
         from app.quant import technical_baseline as tb
 
         captured = {}
 
-        def _exec(sql, params=None):
-            captured["sql"] = " ".join(sql.split())
-            cur = MagicMock()
-            cur.fetchone.return_value = (1,)   # one peer session has passed
-            return cur
+        def _distinct(collection, field, query=None, *a, **k):
+            captured["collection"] = collection
+            captured["field"] = field
+            captured["query"] = query
+            return list(sessions)
 
-        db = MagicMock()
-        db.execute.side_effect = _exec
-        ctx = MagicMock()
-        ctx.__enter__.return_value = db
+        with patch.object(mongo_store, "distinct_values", _distinct):
+            age = tb._trading_day_age(ticker, as_of, latest)
+        return age, captured
 
-        with patch("app.db.connection.get_db", return_value=ctx):
-            age = tb._trading_day_age("SWBI", date(2026, 7, 27), date(2026, 7, 23))
-
-        assert age == 1
-        assert "ticker = %s" not in captured["sql"], (
-            "self-referential age is 0 by construction for a stalled ticker"
+    def test_a_stalled_ticker_does_not_report_itself_current(self):
+        # One peer session has passed since the ticker's own newest bar.
+        age, captured = self._age_and_query(
+            "SWBI", date(2026, 7, 27), date(2026, 7, 23),
+            sessions=[date(2026, 7, 24)],
         )
 
+        assert age == 1
+        assert captured["query"].get("ticker") != "SWBI", (
+            "self-referential age is 0 by construction for a stalled ticker"
+        )
+        # The window really is "after the ticker's newest bar, up to as_of".
+        assert captured["query"]["date"] == {"$gt": date(2026, 7, 23),
+                                             "$lte": date(2026, 7, 27)}
+
     def test_a_foreign_market_is_not_judged_by_the_us_calendar(self):
-        from app.quant import technical_baseline as tb
+        _age, captured = self._age_and_query(
+            "000660.KS", date(2026, 7, 27), date(2026, 7, 27), sessions=[],
+        )
 
-        captured = {}
-
-        def _exec(sql, params=None):
-            captured["params"] = params
-            cur = MagicMock()
-            cur.fetchone.return_value = (0,)
-            return cur
-
-        db = MagicMock()
-        db.execute.side_effect = _exec
-        ctx = MagicMock()
-        ctx.__enter__.return_value = db
-
-        with patch("app.db.connection.get_db", return_value=ctx):
-            tb._trading_day_age("000660.KS", date(2026, 7, 27), date(2026, 7, 27))
-
-        assert captured["params"]["pat"] == "%.KS"
+        # Peers are the .KS market, not the US session calendar.
+        assert captured["query"]["ticker"]["$regex"].endswith(r"\.KS$")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -302,8 +307,10 @@ class TestEventLoopStarvationFault:
             _t.sleep(0.25)
             return frame
 
-        _db, ctx = _fake_db(fetchall=[("AAA",)])
-        monkeypatch.setattr(sp, "get_db", lambda: ctx)
+        # The roster is a union of three distinct_values() calls; one ticker
+        # is enough to make the collector do a download and a write pass.
+        store = _FakeStore(distinct={"ticker_metadata": ["AAA"]})
+        monkeypatch.setattr(sp, "mongo_store", store)
         monkeypatch.setattr(sp.yf, "download", slow)
         monkeypatch.setattr(sp, "_refresh_technicals_bulk", _anoop_list)
 
@@ -335,12 +342,31 @@ def _is_ok(name, result, expect_truthy) -> bool:
     return not (name in expect_truthy and not result)
 
 
-def _fake_db(fetchall=None):
-    db = MagicMock()
-    cur = MagicMock()
-    cur.fetchall.return_value = fetchall if fetchall is not None else []
-    cur.fetchone.return_value = None
-    db.execute.return_value = cur
-    ctx = MagicMock()
-    ctx.__enter__.return_value = db
-    return db, ctx
+class _FakeStore:
+    """Stands in for `app.db.mongo_store`, recording every write.
+
+    These collectors used `get_db` before the Mongo conversion; the modules
+    have no such attribute now, so the old `_fake_db` patched nothing and the
+    writes went at the real store. `upserts` holds
+    `(collection, key, doc, insert_only)` so a test can count the rows a
+    collector actually persisted rather than trusting its return value.
+    """
+
+    def __init__(self, distinct=None):
+        self._distinct = distinct or {}
+        self.upserts: list[tuple] = []
+
+    def upsert_doc(self, collection, key, doc, insert_only=False, session=None):
+        self.upserts.append((collection, key, doc, insert_only))
+
+    def distinct_values(self, collection, field, query=None):
+        return list(self._distinct.get(collection, []))
+
+    def count_docs(self, collection, query, **kwargs):
+        return 0
+
+    def find_docs(self, collection, query, **kwargs):
+        return []
+
+    def rows_for(self, collection):
+        return [u for u in self.upserts if u[0] == collection]

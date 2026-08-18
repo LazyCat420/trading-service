@@ -15,8 +15,14 @@ from app.v3.guardrails import research_degraded
 
 
 def _no_telemetry():
-    """Patch the telemetry probe to report a clean cycle."""
-    return patch("app.db.connection.get_db", side_effect=RuntimeError("no db"))
+    """Patch the telemetry probe to report a clean cycle.
+
+    The probe used to run raw SQL through `app.db.connection.get_db`; it is a
+    `mongo_store.aggregate` over `agent_tool_telemetry` now, so patching
+    `get_db` intercepted nothing and every one of these cases was scored
+    against the live store.
+    """
+    return patch("app.v3.guardrails.mongo_store.aggregate", return_value=[])
 
 
 class TestResearchDegraded:
@@ -73,28 +79,29 @@ class TestResearchDegraded:
         NDAQ's artifact admitted nothing, yet the tool telemetry recorded the
         failures. The gate must not depend on the model volunteering it.
         """
-        class _Cur:
-            def execute(self, *a, **k):
-                return self
-
-            def fetchone(self):
-                return ("mcp__lazy-tool-service__lazy_web_search", 4)
-
-        class _Ctx:
-            def __enter__(self):
-                return _Cur()
-
-            def __exit__(self, *a):
-                return False
-
-        with patch("app.db.connection.get_db", return_value=_Ctx()):
+        agg = patch(
+            "app.v3.guardrails.mongo_store.aggregate",
+            return_value=[{"_id": "mcp__lazy-tool-service__lazy_web_search",
+                           "count": 4}],
+        )
+        with agg as mock_agg:
             why = research_degraded("c1", "NDAQ", {"data_gaps": []})
+
         assert why is not None
         assert "lazy_web_search" in why and "4" in why
 
+        # The probe must count only THIS cycle's THIS ticker's FAILED calls.
+        # The old SQL-text assertion could not see a probe that counted every
+        # ticker, or counted successes, and would have passed anyway.
+        collection, pipeline = mock_agg.call_args[0][:2]
+        assert collection == "agent_tool_telemetry"
+        assert pipeline[0]["$match"] == {
+            "cycle_id": "c1", "ticker": "NDAQ", "success": False}
+
     def test_probe_error_fails_open(self):
         """An unreachable DB must not force the full panel on every ticker."""
-        with patch("app.db.connection.get_db", side_effect=RuntimeError("down")):
+        with patch("app.v3.guardrails.mongo_store.aggregate",
+                   side_effect=RuntimeError("down")):
             assert research_degraded("c1", "SBUX", {"data_gaps": []}) is None
 
 

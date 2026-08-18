@@ -234,58 +234,62 @@ class TestProvenanceReachesTradeResults:
     a human actually looks.
     """
 
-    def _save(self, verdict: dict):
-        import contextlib
+    def _save(self, verdict: dict) -> dict:
+        """Run the saver and return the `trade_results` document it wrote.
+
+        The saver writes through `mongo_store.insert_docs` now, so the old
+        `get_db` patch intercepted nothing and the assertions were scored
+        against a FakeDB that never saw a call. Asserting on the document is
+        also stronger than the old substring checks against SQL text: the
+        field has to carry the right VALUE under the right KEY, not merely
+        appear somewhere in a statement.
+        """
         from unittest.mock import MagicMock, patch
 
         import app.services.trade_result_saver as trs
 
-        captured: dict = {}
-
-        class FakeDB:
-            def transaction(self):
-                return contextlib.nullcontext()
-
-            def execute(self, q, p=None):
-                if "INSERT INTO trade_results" in q:
-                    captured["sql"] = q
-                    captured["params"] = p
-                return MagicMock()
-
-        @contextlib.contextmanager
-        def fake_get_db():
-            yield FakeDB()
-
-        with patch("app.db.connection.get_db", fake_get_db):
+        store = MagicMock()
+        with patch.object(trs, "mongo_store", store):
             trs.save_trade_result("T", "c1", verdict)
-        return captured
+
+        store.insert_docs.assert_called_once()
+        collection, docs = store.insert_docs.call_args[0][:2]
+        assert collection == "trade_results"
+        # The write is an upsert-by-hand: the prior row for this ticker+cycle
+        # is removed first, or a re-run duplicates the decision.
+        store.delete_docs.assert_called_once_with(
+            "trade_results", {"ticker": "T", "cycle_id": "c1"}
+        )
+        assert len(docs) == 1
+        return docs[0]
 
     def test_provenance_is_persisted(self):
-        cap = self._save({
+        doc = self._save({
             "action": "HOLD", "confidence": 60,
             "decision_provenance": "board_degraded_fallback",
         })
-        assert "decision_provenance" in cap["sql"]
-        assert "board_degraded_fallback" in cap["params"]
+        assert doc["decision_provenance"] == "board_degraded_fallback"
 
     def test_missing_provenance_is_null_not_defaulted(self):
         """Absent means UNKNOWN. Defaulting it to board_reasoned would assert
         an agent decided when nothing recorded that."""
-        cap = self._save({"action": "HOLD", "confidence": 60})
-        # provenance sits just before created_at
-        assert cap["params"][-2] is None
+        doc = self._save({"action": "HOLD", "confidence": 60})
+        # The key is still written — absent from the document would read as
+        # "this deployment has no provenance", not "this decision has none".
+        assert "decision_provenance" in doc
+        assert doc["decision_provenance"] is None
 
     def test_blank_provenance_is_normalized_to_null(self):
-        cap = self._save({
+        doc = self._save({
             "action": "HOLD", "confidence": 60, "decision_provenance": "   ",
         })
-        assert cap["params"][-2] is None
+        assert doc["decision_provenance"] is None
 
     def test_non_string_provenance_is_rejected(self):
-        cap = self._save({
+        doc = self._save({
             "action": "HOLD", "confidence": 60, "decision_provenance": 123,
         })
-        assert cap["params"][-2] is None
+        assert doc["decision_provenance"] is None
 
 
 class TestTerminalPhaseRecorded:

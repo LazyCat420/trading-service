@@ -206,6 +206,15 @@ def test_every_table_the_service_writes_to_is_created_by_something():
     Scoped to a named list rather than every table in the schema: the point is
     to keep these particular holes closed, not to re-derive the whole schema
     from SQL string parsing.
+
+    Since the Mongo conversion a store is provisioned by being REGISTERED, not
+    by a `CREATE TABLE`: four of these five no longer have DDL in
+    `schema_pg.sql` at all, so the old SQL-text search would now fail for
+    tables that are in fact fully provisioned. What has to hold is that each is
+    reachable through the layer the service actually uses — `collection_map`,
+    which is hand-authored and CI-validated (scripts/check_collection_map.py) —
+    or still carries its Postgres DDL. A table in NEITHER place is the original
+    hole: something the code reads and writes that nothing provisions.
     """
     import re
 
@@ -218,9 +227,20 @@ def test_every_table_the_service_writes_to_is_created_by_something():
     )
     creatable = schema_sql + "\n" + py_ddl
 
+    from app.db import collections as db_collections
+
     for table in ("v3_system_commands", "cycle_checkpoints", "shared_desk",
                   "whiteboard_entries", "v3_agent_telemetry"):
-        assert re.search(rf"CREATE TABLE IF NOT EXISTS {table}\b", creatable, re.I), (
-            f"{table} is used by the service but no statement in this repository "
-            "creates it — a fresh database will not have it"
+        has_ddl = bool(re.search(rf"CREATE TABLE IF NOT EXISTS {table}\b", creatable, re.I))
+        mapped = db_collections.is_mapped(table)
+        assert has_ddl or mapped, (
+            f"{table} is used by the service but nothing in this repository "
+            "provisions it — it is neither in collection_map.json nor created "
+            "by any DDL, so a fresh database will not have it"
         )
+        if mapped:
+            # A registered entry must actually name a destination; a blank one
+            # would satisfy `is_mapped` while provisioning nothing.
+            assert db_collections.target_collection_for(table), (
+                f"{table} is mapped but resolves to no collection name"
+            )

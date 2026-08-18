@@ -95,21 +95,19 @@ _PINNED = (
 # 2026-08-18 with the Mongo port. Their reads are now pinned in pandas via
 # keep_dominant_source() rather than in SQL — the debt was PAID, not moved out
 # of the scanner's sight, which a port off SQL can otherwise do for free.
+# The nine entries that stood here on 2026-08-18 — data_audit, oracle,
+# data_sanity, quant_processor, boot_service, market_tools, backtest_data,
+# paper_trader, invariants — all measured 0 after the Mongo port and were
+# removed. That is NOT nine fixes: every one of those reads still exists, it
+# just moved from a SQL literal into a `mongo_query`/`mongo_store` call this
+# scanner could not see. The debt is now counted by KNOWN_UNPINNED_MONGO below,
+# which is where those files reappear.
 KNOWN_UNPINNED: dict[str, int] = {
-    "app/autoresearch/auditors/data_audit.py": 1,
-    "app/cognition/evaluation/oracle.py": 1,
-    "app/processors/data_sanity.py": 2,
-    "app/processors/quant_processor.py": 7,
-    "app/services/boot_service.py": 2,
     # 0 as of the Mongo conversion: the one unpinned read was the finviz
     # supplement's EXISTS price-freshness subquery, which now spells the
     # source filter out explicitly. Ratchet lowered, per this test's own
     # instruction — do not raise it again.
     "app/services/cycle_scheduler.py": 0,
-    "app/tools/market_tools.py": 1,
-    "app/trading/backtest_data.py": 2,
-    "app/trading/paper_trader.py": 2,
-    "app/v3/invariants.py": 1,
     "scripts/confidence_audit.py": 1,
     "scripts/cycle_healthcheck.py": 1,
     "scripts/factor_backtest.py": 1,
@@ -268,5 +266,215 @@ def test_every_price_history_read_pins_one_vendor(path: Path):
     assert len(bad) == budget, (
         f"{rel} now has {len(bad)} unpinned read(s) but KNOWN_UNPINNED still "
         f"budgets {budget}. Lower it to {len(bad)} "
+        f"({'or delete the entry' if not bad else 'to lock the fix in'})."
+    )
+
+
+# ── the Mongo-side scan ──────────────────────────────────────────────
+#
+# Added 2026-08-18, because the SQL scan above had begun to decay exactly the
+# way its own NOTE warned: nine files dropped to a 0 SQL budget on the Mongo
+# port without a single query being fixed. The reads moved into
+# `mongo_query.*` / `mongo_store.*` calls, which no regex over SQL literals can
+# see, so the guard reported the debt as PAID.
+#
+# The vendor rule is a property of `price_history` — one ticker-date carries
+# several vendor prints and they disagree by 20% on average — not a property of
+# Postgres. It therefore has to be enforced on whichever client reads the
+# collection.
+
+#: Helpers on the Mongo layer that WRITE. `source` is a field they set, not a
+#: filter they apply, so they are not reads.
+_MONGO_WRITES = frozenset({
+    "insert_docs", "upsert_doc", "update_docs", "delete_docs",
+    "find_one_and_update", "bulk_write",
+})
+
+#: Aggregations that cannot be inflated by a second vendor print of the same
+#: date — the Mongo counterpart of `_VENDOR_IMMUNE`. A MAX(date) is the same
+#: date whichever vendor printed it.
+_MONGO_IMMUNE_AGGS = frozenset({"max", "min", "count_distinct"})
+
+
+def _pins_source(call_src: str) -> bool:
+    """Does this call name the `source` field anywhere in its arguments?
+
+    Deliberately generous: a filter, a `$group` key, an `$in`, a projection
+    that feeds `keep_dominant_source` — all count. The guard's job is to catch
+    reads that never consider the vendor at all, which is the shape that
+    actually shipped.
+    """
+    return "'source'" in call_src or '"source"' in call_src
+
+
+def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
+    """Reads of the `price_history` COLLECTION that do not pin a vendor."""
+    try:
+        module_text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    try:
+        tree = ast.parse(module_text)
+    except (SyntaxError, UnicodeDecodeError):
+        return []
+
+    # A module that pins per-ticker in pandas is pinned, same rule the SQL
+    # scan applies — the filter is just downstream of the read.
+    if "keep_dominant_source" in module_text:
+        return []
+
+    bad: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not isinstance(fn, ast.Attribute):
+            continue
+        if not (isinstance(fn.value, ast.Name)
+                and fn.value.id in ("mongo_query", "mongo_store")):
+            continue
+        if not node.args:
+            continue
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and first.value == "price_history"):
+            continue
+        if fn.attr in _MONGO_WRITES:
+            continue
+
+        src = " ".join(ast.unparse(node).split())
+        if _pins_source(src):
+            continue
+        # A pure MAX/MIN/COUNT DISTINCT over `date` is vendor-immune.
+        if fn.attr == "agg_row" and all(
+            op in _MONGO_IMMUNE_AGGS
+            for op in re.findall(r"\('(\w+)'", src)
+        ) and re.findall(r"\('(\w+)'", src):
+            continue
+
+        bad.append((node.lineno, src[:140]))
+    return sorted(bad)
+
+
+# Measured 2026-08-18 by this scanner. Same ratchet contract as KNOWN_UNPINNED:
+# a file may only ever get BETTER, and reaching 0 means deleting the entry.
+#
+# These are NOT approved. Several are on live decision paths — `paper_trader`
+# marks the book, `scoring_engine` and `orchestrator` price every desk,
+# `portfolio` values the positions — and every one of them takes the newest row
+# by date with no vendor filter, so which vendor answers depends on which one
+# published last.
+#
+# Note especially `challenger.py`, `quant_edge_verifier.py`, `regime_hmm.py`,
+# `technical_processor.py` and `technical_baseline.py`: those are five of the
+# seven modules fixed on 2026-07-30 that the header above says "must never
+# regress into this list". They regressed. The SQL fix was real; the Mongo port
+# reintroduced the unpinned read underneath it.
+KNOWN_UNPINNED_MONGO: dict[str, int] = {
+    "app/autoresearch/auditors/data_audit.py": 3,
+    "app/cognition/evaluation/oracle.py": 1,
+    "app/cognition/evidence/packet_builder.py": 1,
+    "app/collectors/data_rotator.py": 1,
+    "app/processors/data_sanity.py": 1,
+    "app/processors/market_regime.py": 3,
+    "app/processors/quant_processor.py": 2,
+    "app/processors/technical_processor.py": 2,
+    "app/quant/regime_grading.py": 1,
+    "app/quant/regime_hmm.py": 1,
+    "app/quant/technical_baseline.py": 3,
+    "app/routers/market_router.py": 2,
+    "app/services/boot_service.py": 2,
+    "app/tools/market_tools.py": 1,
+    "app/trading/backtest_data.py": 1,
+    "app/trading/paper_trader.py": 3,
+    "app/trading/portfolio.py": 1,
+    "app/trading/quant_edge_verifier.py": 1,
+    "app/trading/scoring_engine.py": 2,
+    "app/trading/watchlist.py": 1,
+    "app/v3/challenger.py": 1,
+    "app/v3/invariants.py": 1,
+    "app/v3/orchestrator.py": 1,
+}
+
+
+def test_the_mongo_scanner_actually_finds_reads():
+    """The same floor the SQL scan carries, for the same reason.
+
+    This is the check that would have caught the decay: when nine files went to
+    a 0 SQL budget, the collection was still being read 36 times.
+    """
+    total = sum(len(_unpinned_mongo_reads(f)) + 0 for f in _python_files())
+    found = sum(
+        1
+        for f in _python_files()
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in ("mongo_query", "mongo_store")
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "price_history"
+    )
+    assert found >= 30, (
+        f"scanner found only {found} price_history Mongo calls — it is broken, "
+        "not the codebase that is clean"
+    )
+    assert total >= 1, "every read pins a vendor, which has never been true"
+
+
+def test_the_mongo_scanner_flags_a_known_bad_call(tmp_path):
+    """Negative control: the guard must reject the shape it exists to catch,
+    and accept the pinned form of the SAME call."""
+    bad = tmp_path / "bad.py"
+    bad.write_text(
+        "from app.db import mongo_query\n"
+        "def f(t):\n"
+        "    return mongo_query.find_row('price_history', {'ticker': t},\n"
+        "                                ['close'], sort=[('date', -1)])\n"
+    )
+    assert len(_unpinned_mongo_reads(bad)) == 1
+
+    good = tmp_path / "good.py"
+    good.write_text(
+        "from app.db import mongo_query\n"
+        "def f(t):\n"
+        "    return mongo_query.find_row('price_history',\n"
+        "                                {'ticker': t, 'source': 'yfinance'},\n"
+        "                                ['close'], sort=[('date', -1)])\n"
+    )
+    assert _unpinned_mongo_reads(good) == []
+
+    writer = tmp_path / "writer.py"
+    writer.write_text(
+        "from app.db import mongo_store\n"
+        "def f(docs):\n"
+        "    return mongo_store.insert_docs('price_history', docs)\n"
+    )
+    assert _unpinned_mongo_reads(writer) == []
+
+
+@pytest.mark.parametrize("path", _python_files(), ids=lambda p: p.name)
+def test_every_mongo_price_history_read_pins_one_vendor(path: Path):
+    rel = str(path.relative_to(REPO))
+    if rel in VENDOR_AGNOSTIC:
+        pytest.skip(f"allow-listed: {VENDOR_AGNOSTIC[rel]}")
+
+    bad = _unpinned_mongo_reads(path)
+    budget = KNOWN_UNPINNED_MONGO.get(rel, 0)
+    detail = "\n".join(f"  line {n}: {q}" for n, q in bad)
+
+    if len(bad) > budget:
+        pytest.fail(
+            f"{rel} has {len(bad)} unpinned price_history Mongo read(s), "
+            f"budget {budget}:\n{detail}\n\n"
+            "Add the dominant vendor to the filter, or select `source` and pin "
+            "per-ticker with app.quant.returns.keep_dominant_source(). If the "
+            "read is genuinely vendor-agnostic, add it to VENDOR_AGNOSTIC with "
+            "a reason."
+        )
+
+    assert len(bad) == budget, (
+        f"{rel} now has {len(bad)} unpinned Mongo read(s) but "
+        f"KNOWN_UNPINNED_MONGO still budgets {budget}. Lower it to {len(bad)} "
         f"({'or delete the entry' if not bad else 'to lock the fix in'})."
     )

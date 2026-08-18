@@ -212,12 +212,24 @@ async def test_the_challenger_stays_off_the_delta_path():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _close(price):
-    """Stub the last-close lookup the sanitizer does."""
-    db = MagicMock()
-    db.execute.return_value.fetchone.return_value = (price,)
-    ctx = MagicMock()
-    ctx.__enter__.return_value = db
-    return patch("app.db.connection.get_db", return_value=ctx)
+    """Stub the last-close lookup the sanitizer does.
+
+    The lookup is `mongo_query.find_row('price_history', {'ticker': ...},
+    ['close'], sort=[('date', -1)])`, which returns a TUPLE in the requested
+    column order. The sanitizer swallows a failed lookup and then drops
+    nothing, so a stub that misses the call does not error — it silently
+    disarms the whole sanitizer, which is what the old `get_db` patch did.
+    """
+    from app.db import mongo_query
+
+    def _find_row(collection, filt, columns, **kwargs):
+        assert collection == "price_history", collection
+        assert columns == ["close"], columns
+        # Newest bar first, or "last close" is the oldest close on record.
+        assert kwargs.get("sort") == [("date", -1)], kwargs
+        return (price,)
+
+    return patch.object(mongo_query, "find_row", _find_row)
 
 
 def test_a_decimal_error_stop_is_dropped_not_clamped():

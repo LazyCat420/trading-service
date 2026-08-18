@@ -630,35 +630,58 @@ def test_pooled_cursor_has_no_rowcount_so_counts_must_use_returning():
 
 
 def test_mark_not_reasked_counts_rows_it_actually_closed():
-    cursor = FakeCursor(results=[[(11,), (12,), (13,)]])  # RETURNING id
-    with patch("app.services.question_ledger.get_db", fake_get_db(cursor)):
+    """The count must be the store's own report of what it modified.
+
+    Under Postgres the trap was `cur.rowcount` (see the test above); the
+    updater used `RETURNING id` and counted the rows. `mongo_store.update_docs`
+    returns the modified count directly, so the equivalent check is that the
+    function reports THAT number rather than, say, len(keep) or a constant.
+    """
+    with patch("app.services.question_ledger.mongo_store") as store:
+        store.update_docs.return_value = 3
         n = question_ledger.mark_not_reasked("AAPL", "cycle-9", ["abc123"])
 
     assert n == 3
-    sql, params = cursor.statements[0]
-    assert "RETURNING id" in sql
-    # The cast is load-bearing: an empty list gives Postgres no element type.
-    assert "%s::text[]" in sql
-    assert params[-1] == ["abc123"]
+    collection, filt, update = store.update_docs.call_args[0][:3]
+    assert collection == "dossier_question_log"
+    # The filter is the whole safety property: only THIS ticker's still-open
+    # questions, and only the ones this desk did NOT re-ask. Reading the
+    # filter dict is strictly stronger than the old substring match on SQL —
+    # a query that dropped the ticker clause, or closed answered questions
+    # too, would have passed "RETURNING id" in sql.
+    assert filt["ticker"] == "AAPL"
+    assert set(filt["status"]["$in"]) == {"open", "reasked"}
+    assert filt["question_hash"] == {"$nin": ["abc123"]}
+    assert update["$set"]["status"] == "dropped"
+    assert update["$set"]["resolved_cycle"] == "cycle-9"
 
 
 def test_mark_not_reasked_handles_a_desk_that_asked_nothing():
-    """Empty hash list must still be a valid array parameter, not a crash."""
-    cursor = FakeCursor(results=[[(1,)]])
-    with patch("app.services.question_ledger.get_db", fake_get_db(cursor)):
+    """Empty hash list must still be a valid parameter, not a crash.
+
+    `NOT (question_hash = ANY(%s::text[]))` with an empty array was TRUE for
+    every row; `$nin: []` has the same semantics, so an empty `keep` still
+    correctly drops everything still open.
+    """
+    with patch("app.services.question_ledger.mongo_store") as store:
+        store.update_docs.return_value = 1
         n = question_ledger.mark_not_reasked("AAPL", "cycle-9", [])
     assert n == 1
-    assert cursor.statements[0][1][-1] == []
+    filt = store.update_docs.call_args[0][1]
+    assert filt["question_hash"] == {"$nin": []}
 
 
 def test_stats_never_folds_dropped_into_answered():
     """`dropped` is ambiguous; counting it as resolved makes the metric vacuous."""
-    cursor = FakeCursor(results=[[
+    # group_rows returns TUPLES in the requested select order:
+    # (status, count, max ask_count).
+    rows = [
         ("open", 3, 1),
         ("reasked", 2, 4),
         ("dropped", 5, 1),
-    ]])
-    with patch("app.services.question_ledger.get_db", fake_get_db(cursor)):
+    ]
+    with patch("app.services.question_ledger.mongo_query") as query:
+        query.group_rows.return_value = rows
         s = question_ledger.stats(days=14)
 
     assert s["total"] == 10

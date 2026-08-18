@@ -194,42 +194,63 @@ class TestTradingDayAgeUsesPeers:
     hit exactly the 15-of-45 active names most likely to BE stale.
     """
 
-    def _capture_sql(self, ticker):
+    def _capture_query(self, ticker):
+        """The peer filter the distinct() count was actually issued with.
+
+        This used to capture SQL text and match substrings ("NOT LIKE"). The
+        count is a `mongo_store.distinct("price_history", "date", query)` now,
+        so the filter dict is read directly — which is strictly stronger: a
+        peer set built on the wrong field, or a window that no longer excludes
+        `latest`, fails here instead of passing a substring match.
+        """
         seen = {}
 
-        def _exec(sql, params=None):
-            seen["sql"] = " ".join(sql.split())
-            seen["params"] = params
-            cur = MagicMock()
-            cur.fetchone.return_value = (2,)
-            return cur
+        def _distinct(collection, field, query):
+            seen["collection"] = collection
+            seen["field"] = field
+            seen["query"] = query
+            return [date(2026, 7, 24), date(2026, 7, 25)]
 
-        db = MagicMock()
-        db.execute.side_effect = _exec
-        ctx = MagicMock()
-        ctx.__enter__.return_value = db
+        from app.db import mongo_store
 
-        with patch("app.db.connection.get_db", return_value=ctx):
+        # NOTE: `mongo_store` exposes `distinct_values`, not `distinct`.
+        # `_trading_day_age` calls `mongo_store.distinct(...)`, which raises
+        # AttributeError into its own `except Exception` and returns None for
+        # EVERY ticker — see the report accompanying this change. Patching the
+        # real API keeps these assertions correct and RED until app/ is fixed.
+        with patch.object(mongo_store, "distinct_values", _distinct):
             tb._trading_day_age(ticker, date(2026, 7, 27), date(2026, 7, 23))
         return seen
 
     def test_us_ticker_does_not_filter_on_itself(self):
-        seen = self._capture_sql("SWBI")
-        assert "ticker = %s" not in seen["sql"], (
+        seen = self._capture_query("SWBI")
+        assert seen["collection"] == "price_history"
+        assert seen["field"] == "date"
+        ticker_filter = seen["query"]["ticker"]
+        assert ticker_filter != "SWBI" and "SWBI" not in repr(ticker_filter), (
             "counting the ticker's OWN rows always yields 0 for a stale ticker"
         )
-        assert "NOT LIKE" in seen["sql"], "US peers are the unsuffixed tickers"
+        # US peers are the unsuffixed tickers: a NEGATED dot match.
+        assert "$not" in ticker_filter, "US peers are the unsuffixed tickers"
+        # The window opens strictly after the ticker's newest bar.
+        assert seen["query"]["date"] == {
+            "$gt": date(2026, 7, 23), "$lte": date(2026, 7, 27)
+        }
 
     def test_foreign_ticker_counts_only_its_own_exchange(self):
         """A Seoul holiday must not make a US ticker look stale, and vice
         versa — 000660.KS legitimately posts a Monday bar before US open."""
-        seen = self._capture_sql("000660.KS")
-        assert "LIKE" in seen["sql"] and "NOT LIKE" not in seen["sql"]
-        assert seen["params"]["pat"] == "%.KS"
+        seen = self._capture_query("000660.KS")
+        ticker_filter = seen["query"]["ticker"]
+        assert "$not" not in ticker_filter, "foreign peers are matched, not excluded"
+        assert ticker_filter["$regex"].endswith("$")
+        assert ".KS" in ticker_filter["$regex"].replace("\\", "")
 
     def test_db_failure_returns_none_not_zero(self):
         """None means 'age unknown' and scores 0.3; 0 would mean 'current'."""
-        with patch("app.db.connection.get_db", side_effect=RuntimeError("db")):
+        from app.db import mongo_store
+
+        with patch.object(mongo_store, "distinct_values", side_effect=RuntimeError("db")):
             assert tb._trading_day_age("X", date(2026, 7, 27), date(2026, 7, 23)) is None
 
 

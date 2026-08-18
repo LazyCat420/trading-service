@@ -57,52 +57,48 @@ def test_save_trade_result_database_logic():
         "regime": "HIGH_VOLATILITY"
     }
 
-    with patch("app.db.connection.get_db") as mock_get_db:
-        mock_conn = MagicMock()
-        mock_transaction = MagicMock()
-        mock_conn.transaction.return_value = mock_transaction
-        mock_get_db.return_value.__enter__.return_value = mock_conn
+    # Three writes since 2026-08-05: the delete/insert pair for the result
+    # itself, then the deterministic-baseline pairing — which must be LAST
+    # and must be a separate, non-fatal write, so a shadow write can neither
+    # roll back nor block the decision it annotates. This used to be asserted
+    # against SQL text and positional parameter tuples; it now reads the
+    # collections, filters and documents, which is what actually determines
+    # whether the right row is touched.
+    from app.services import trade_result_saver as trs
+    from app.quant import decision_score_store as dss
 
+    saver_store = MagicMock()
+    score_store = MagicMock()
+    with patch.object(trs, "mongo_store", saver_store), \
+         patch.object(dss, "mongo_store", score_store):
         save_trade_result(ticker, cycle_id, verdict)
 
-        # Ensure transaction was used
-        mock_conn.transaction.assert_called_once()
-        mock_transaction.__enter__.assert_called_once()
+    # Delete-then-insert on the same ticker+cycle: the upsert.
+    del_collection, del_filter = saver_store.delete_docs.call_args[0][:2]
+    assert del_collection == "trade_results"
+    assert del_filter == {"ticker": ticker, "cycle_id": cycle_id}
 
-        # Check executing queries. Three since 2026-08-05: the delete/insert
-        # pair, then the deterministic-baseline pairing — which must be the
-        # LAST statement and must sit OUTSIDE the transaction, so a shadow
-        # write can neither roll back nor block the decision it annotates.
-        calls = mock_conn.execute.call_args_list
-        assert len(calls) == 3
-        assert mock_conn.transaction.call_count == 1
+    ins_collection, ins_docs = saver_store.insert_docs.call_args[0][:2]
+    assert ins_collection == "trade_results"
+    doc = ins_docs[0]
+    assert doc["ticker"] == ticker
+    assert doc["cycle_id"] == cycle_id
+    assert doc["action"] == "BUY"
+    assert doc["confidence"] == 80
+    assert doc["reasoning"] == "Great setup"
+    # Structured fields are stored as documents now, not serialized JSONB.
+    assert doc["signal_weights"] == {"quant": 0.4, "fundamental": 0.6}
+    assert doc["signal_assessments"] == {"quant": "Bullish", "fundamental": "Neutral"}
+    assert doc["risk_flags"] == []
 
-        # First call is DELETE
-        delete_query, delete_args = calls[0][0]
-        assert "DELETE FROM trade_results" in delete_query
-        assert delete_args == [ticker, cycle_id]
-
-        # Second call is INSERT
-        insert_query, insert_args = calls[1][0]
-        assert "INSERT INTO trade_results" in insert_query
-        assert insert_args[1] == ticker
-        assert insert_args[2] == cycle_id
-        assert insert_args[3] == "BUY"
-        assert insert_args[4] == 80
-        assert insert_args[5] == "Great setup"
-        # Check serialized JSONB strings
-        assert json.loads(insert_args[6]) == {"quant": 0.4, "fundamental": 0.6}
-        assert json.loads(insert_args[7]) == {"quant": "Bullish", "fundamental": "Neutral"}
-        assert json.loads(insert_args[8]) == []
-
-        # Third call pairs the agents' verdict with the deterministic baseline
-        # recorded at desk-build time. An UPDATE, never an INSERT: a decision
-        # with no baseline row means the scorer did not run for that desk, and
-        # inserting one here would hide that.
-        pair_query, pair_args = calls[2][0]
-        assert "UPDATE decision_scores" in pair_query
-        assert "INSERT" not in pair_query
-        assert pair_args == ["BUY", 80, cycle_id, ticker]
+    # The baseline pairing is an UPDATE of an existing decision_scores row,
+    # never an insert: a decision with no baseline row means the scorer did
+    # not run for that desk, and creating one here would hide that.
+    score_store.insert_docs.assert_not_called()
+    upd_collection, upd_filter, upd_update = score_store.update_docs.call_args[0][:3]
+    assert upd_collection == "decision_scores"
+    assert upd_filter == {"cycle_id": cycle_id, "ticker": ticker}
+    assert upd_update == {"$set": {"board_action": "BUY", "board_confidence": 80}}
 
 
 @pytest.mark.asyncio

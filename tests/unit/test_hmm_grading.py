@@ -62,14 +62,37 @@ def test_window_that_has_not_closed_yet_returns_none():
     assert _move_after(_closes(), date(2026, 1, 9), 5) is None
 
 
-def test_load_market_returns_never_reads_past_as_of():
-    """The point-in-time guarantee at its source: the SQL is bounded by
-    `date <= as_of`, so a backfilled fit cannot see the future."""
-    import inspect
+def test_load_market_returns_never_reads_past_as_of(monkeypatch):
+    """The point-in-time guarantee at its source: the query is bounded by
+    `date <= as_of`, so a backfilled fit cannot see the future.
 
-    src = inspect.getsource(regime_hmm.load_market_returns)
-    assert "date <= %(end)s" in src
-    assert "end = as_of or date.today()" in src
+    This used to grep the function's source for the SQL fragment
+    `date <= %(end)s`. It now reads the FILTER the query was actually issued
+    with, so a bound that was widened, dropped, or applied to the wrong field
+    fails here instead of passing on a substring that no longer exists.
+    """
+    from app.db import mongo_store
+
+    seen: dict = {}
+
+    def _find_docs(collection, query, **kw):
+        seen["collection"] = collection
+        seen["query"] = query
+        return []
+
+    monkeypatch.setattr(mongo_store, "find_docs", _find_docs)
+
+    as_of = date(2026, 1, 9)
+    regime_hmm.load_market_returns("SPY", lookback_sessions=100, as_of=as_of)
+
+    assert seen["collection"] == "price_history"
+    bounds = seen["query"]["date"]
+    assert bounds["$lte"] == as_of, "the fit must not read a close after as_of"
+    assert bounds["$gte"] < as_of
+
+    # And with no as_of the bound is today — never open-ended.
+    regime_hmm.load_market_returns("SPY", lookback_sessions=100)
+    assert seen["query"]["date"]["$lte"] == date.today()
 
 
 # ── the predictive band is a MIXTURE, not one state ──────────────────
@@ -187,10 +210,16 @@ def test_persist_rejects_a_failed_classification():
 
 def test_persist_never_raises(monkeypatch):
     """A measurement table must never be able to stop a desk."""
-    def _boom():
+    from app.db import mongo_store
+
+    def _boom(*_a, **_kw):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(regime_hmm, "get_db", _boom)
+    # persist_posterior imports mongo_store inside the function body, so the
+    # name resolves from app.db at call time — patching regime_hmm's namespace
+    # would be a silent no-op and the test would pass without a failure to
+    # survive.
+    monkeypatch.setattr(mongo_store, "upsert_doc", _boom)
     ok = regime_hmm.persist_posterior({
         "ok": True, "ticker": "SPY", "as_of": "2026-08-03", "regime": "CALM",
         "state_stats": {"CALM": {}}, "bic_by_states": {}, "n_states": 2,

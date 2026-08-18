@@ -151,7 +151,12 @@ def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
     peer_query["date"] = {"$gt": latest, "$lte": as_of}
 
     try:
-        dates = mongo_store.distinct("price_history", "date", peer_query)
+        # distinct_values, not distinct: mongo_store exports no `distinct`, so
+        # this raised AttributeError into the except below on EVERY call and
+        # _trading_day_age returned None for every ticker — meaning _freshness
+        # scored the whole universe at the 0.3x "unknown" multiplier and
+        # per-market freshness measurement was dead in production.
+        dates = mongo_store.distinct_values("price_history", "date", peer_query)
         return len(dates)
     except Exception as e:  # noqa: BLE001 — grounding must never block a cycle
         logger.warning("[TechnicalBaseline] %s trading-day age failed: %s", ticker, e)

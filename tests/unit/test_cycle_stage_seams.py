@@ -327,41 +327,69 @@ class TestTrackerToScoringSeam:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestFreshnessMeasurementSeam:
-    def _sql_for(self, ticker):
+    def _query_for(self, ticker):
+        """The Mongo query `_trading_day_age` counts distinct sessions with.
+
+        The old version scraped SQL text out of a `db.execute` mock; the
+        function reads `mongo_store` now, so that mock intercepted nothing.
+        Only the helper `mongo_store` ACTUALLY exports is stubbed. Creating a
+        stub for a name the module does not have would manufacture the very
+        API the production code is missing, and the test would then pass
+        against code that cannot run — the result must come back as a real
+        count, because `_trading_day_age` swallows its exceptions and returns
+        `None`, which would make every assertion below score nothing.
+        """
+        from app.db import mongo_store
         from app.quant import technical_baseline as tb
 
         seen = {}
 
-        def _exec(sql, params=None):
-            seen["sql"] = " ".join(sql.split())
-            seen["params"] = params
-            cur = MagicMock()
-            cur.fetchone.return_value = (1,)
-            return cur
+        def _distinct(collection, field, query=None, *a, **k):
+            seen["collection"] = collection
+            seen["field"] = field
+            seen["query"] = query
+            return [date(2026, 7, 24), date(2026, 7, 25)]
 
-        db = MagicMock()
-        db.execute.side_effect = _exec
-        ctx = MagicMock()
-        ctx.__enter__.return_value = db
-        with patch("app.db.connection.get_db", return_value=ctx):
-            tb._trading_day_age(ticker, date(2026, 7, 27), date(2026, 7, 23))
+        with patch.object(mongo_store, "distinct_values", _distinct):
+            age = tb._trading_day_age(ticker, date(2026, 7, 27), date(2026, 7, 23))
+
+        assert age == 2, (
+            f"the session count never reached the caller (got {age!r}) — the "
+            "helper the function calls did not run, so nothing below is "
+            "measuring the real query"
+        )
+        assert seen, "no distinct query was issued"
         return seen
 
     def test_age_is_never_measured_against_the_ticker_itself(self):
         """'How many of X's bars are newer than X's newest bar?' is 0 by
         construction — so a ticker that STOPPED updating read as current.
         It hit the 15-of-45 names most likely to be stale."""
-        assert "ticker = %s" not in self._sql_for("SWBI")["sql"]
+        query = self._query_for("SWBI")
+        assert query["query"].get("ticker") != "SWBI", (
+            "age must be counted over the ticker's MARKET, never over the "
+            f"ticker itself: {query['query']!r}"
+        )
 
     def test_markets_do_not_contaminate_each_other(self):
         """000660.KS legitimately posts a Monday bar before US open. A single
         US calendar marks every foreign ticker stale on Friday and fresh on
         Sunday."""
-        us = self._sql_for("SWBI")
-        kr = self._sql_for("000660.KS")
+        us = self._query_for("SWBI")
+        kr = self._query_for("000660.KS")
 
-        assert "NOT LIKE" in us["sql"]
-        assert kr["params"]["pat"] == "%.KS"
+        # The US peer set is "everything with no market suffix" — the negation
+        # that `NOT LIKE '%.%'` used to express.
+        assert us["query"]["ticker"] == {"$not": {"$regex": r"\."}}
+        # ...and the Korean one is pinned to its own suffix, so the two peer
+        # sets are disjoint rather than one contaminating the other.
+        assert kr["query"]["ticker"]["$regex"].endswith(r"\.KS$")
+        # Both count only sessions in the window under test.
+        for q in (us, kr):
+            assert q["query"]["date"] == {"$gt": date(2026, 7, 23),
+                                          "$lte": date(2026, 7, 27)}
+            assert q["collection"] == "price_history"
+            assert q["field"] == "date"
 
     def test_unknown_age_scores_as_suspect_not_current(self):
         from app.quant import technical_baseline as tb

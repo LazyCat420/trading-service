@@ -16,6 +16,7 @@ forming, and Volume is exactly the field that hasn't settled yet.
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -113,20 +114,17 @@ def test_collect_price_history_salvages_rather_than_discards(monkeypatch, frame_
 
     inserted_rows = []
 
-    class _FakeConn:
-        def executemany(self, _sql, rows):
-            inserted_rows.extend(rows)
+    # Writes go through mongo_store.upsert_doc("price_history", key, doc,
+    # insert_only=True) — one call per bar. Capturing the docs keeps the
+    # original check ("how many rows actually got written") intact.
+    store = MagicMock()
 
-        def commit(self):
-            pass
+    def _upsert(collection, key, doc, **_kw):
+        assert collection == "price_history"
+        inserted_rows.append(doc)
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_a):
-            return False
-
-    monkeypatch.setattr(yc, "get_db", lambda: _FakeConn())
+    store.upsert_doc.side_effect = _upsert
+    monkeypatch.setattr(yc, "mongo_store", store)
 
     async def _noop_refresh(*_a, **_kw):
         return None
@@ -135,3 +133,7 @@ def test_collect_price_history_salvages_rather_than_discards(monkeypatch, frame_
 
     count = _run(yc.collect_price_history("AAPL"))
     assert count == 124, "one bad Volume cell must not zero out the whole collection"
+    # The returned count must reflect rows that were actually written, not a
+    # tally computed beside an empty write path.
+    assert len(inserted_rows) == 124
+    assert all(isinstance(d["volume"], int) for d in inserted_rows)

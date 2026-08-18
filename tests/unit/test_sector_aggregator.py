@@ -1,102 +1,98 @@
+"""backfill_sector_performance: skip, no-data, and the arithmetic.
+
+These used to patch `sector_aggregator.get_db` and dispatch a `db.execute`
+mock on SQL text ("COUNT(DISTINCT date)" in query), then assert on the
+`executemany` payload. `app/data/sector_aggregator.py` calls
+`mongo_query`/`mongo_store` now, so the patched `get_db` intercepted nothing:
+the mock was inert and the assertions were scored against the live database.
+
+Rewritten against the Mongo layer, dispatching reads on the COLLECTION name.
+The write assertions are stronger for it — the backfill upserts one document
+per sector-day, so the test now reads the upsert KEY and the stored fields
+rather than a positional tuple whose meaning depended on the column order in
+a SQL string.
+"""
 import pytest
-from unittest.mock import MagicMock
-import pandas as pd
+from unittest.mock import MagicMock, patch
 
 from app.data.sector_aggregator import backfill_sector_performance
 
 
+def _mongo(distinct_dates=0, join_rows=None):
+    """Patch the module's Mongo read and write helpers together.
+
+    `agg_row('sector_performance', {}, [('count_distinct', 'date')])` is the
+    history probe that decides whether to skip; `join_rows` is the
+    price_history ⋈ ticker_metadata read that feeds the arithmetic.
+    """
+    query = MagicMock()
+    query.agg_row.return_value = (distinct_dates,)
+    query.join_rows.return_value = list(join_rows or [])
+    store = MagicMock()
+    return patch("app.data.sector_aggregator.mongo_query", query), \
+        patch("app.data.sector_aggregator.mongo_store", store), query, store
+
+
+def _upserts(store):
+    """(key, doc) for every sector_performance upsert."""
+    out = []
+    for c in store.upsert_doc.call_args_list:
+        collection, key, doc = c[0][:3]
+        assert collection == "sector_performance"
+        out.append((key, doc))
+    return out
+
+
 @pytest.mark.asyncio
-async def test_backfill_sector_performance_empty_db(monkeypatch, mock_db):
+async def test_backfill_sector_performance_empty_db():
     """Ensure backfill handles an empty price_history gracefully."""
-    from contextlib import contextmanager
+    q_ctx, s_ctx, query, store = _mongo(distinct_dates=0, join_rows=[])
+    with q_ctx, s_ctx:
+        await backfill_sector_performance()
 
-    @contextmanager
-    def mock_get_db():
-        yield mock_db
-
-    monkeypatch.setattr("app.data.sector_aggregator.get_db", mock_get_db)
-    
-    # Mock row count check to return 0 (no history)
-    mock_db.execute.return_value.fetchone.return_value = (0,)
-    
-    # Mock price_history query to return empty
-    mock_db.execute.return_value.fetchall.return_value = []
-    
-    await backfill_sector_performance()
-    
-    # executemany should not be called if there's no data
-    assert mock_db.executemany.call_count == 0
+    # It must have got past the skip check and actually looked at prices...
+    assert query.join_rows.call_count == 1
+    # ...and written nothing, because there was nothing to compute.
+    assert store.upsert_doc.call_count == 0
 
 
 @pytest.mark.asyncio
-async def test_backfill_sector_performance_populates_history(monkeypatch, mock_db):
+async def test_backfill_sector_performance_populates_history():
     """Ensure backfill calculates and inserts historical data."""
-    from contextlib import contextmanager
+    # 2 days of data for 2 tickers in the same sector. The join returns tuples
+    # in the select order (ticker, date, close, sector).
+    rows = [
+        ("AAPL", "2023-01-01", 100.0, "Technology"),
+        ("AAPL", "2023-01-02", 105.0, "Technology"),
+        ("MSFT", "2023-01-01", 200.0, "Technology"),
+        ("MSFT", "2023-01-02", 210.0, "Technology"),
+    ]
+    q_ctx, s_ctx, query, store = _mongo(distinct_dates=0, join_rows=rows)
+    with q_ctx, s_ctx:
+        await backfill_sector_performance()
 
-    @contextmanager
-    def mock_get_db():
-        yield mock_db
+    written = _upserts(store)
 
-    monkeypatch.setattr("app.data.sector_aggregator.get_db", mock_get_db)
-    
-    def mock_execute(query, *args, **kwargs):
-        cursor = MagicMock()
-        if "COUNT(DISTINCT date)" in query:
-            cursor.fetchone.return_value = (0,)
-        elif "SELECT p.ticker, p.date" in query:
-            # Provide some mock price history: 2 days of data for 2 tickers in same sector
-            cursor.description = [("ticker",), ("date",), ("close",), ("sector",)]
-            cursor.fetchall.return_value = [
-                ("AAPL", "2023-01-01", 100.0, "Technology"),
-                ("AAPL", "2023-01-02", 105.0, "Technology"),
-                ("MSFT", "2023-01-01", 200.0, "Technology"),
-                ("MSFT", "2023-01-02", 210.0, "Technology"),
-            ]
-        return cursor
-        
-    mock_db.execute.side_effect = mock_execute
-    
-    await backfill_sector_performance()
-    
-    # Ensure executemany was called to insert data
-    assert mock_db.executemany.call_count == 1
-    
-    # Verify the inserted data
-    insert_query = mock_db.executemany.call_args[0][0]
-    insert_data = mock_db.executemany.call_args[0][1]
-    
-    assert "INSERT INTO sector_performance" in insert_query
-    
-    # We expect 1 row inserted since there's only 1 day of returns (the second day)
-    # Day 1 has no return since pct_change requires a previous row
-    assert len(insert_data) == 1
-    row = insert_data[0]
-    assert row[0] == "Technology"
-    assert row[1] == "2023-01-02"
+    # We expect 1 row written since there's only 1 day of returns (the second
+    # day). Day 1 has no return since pct_change requires a previous row.
+    assert len(written) == 1
+    key, doc = written[0]
+    # The upsert must be keyed on the sector-day identity, or a re-run would
+    # append duplicate history instead of replacing it.
+    assert key == {"sector": "Technology", "date": "2023-01-02"}
+    assert doc["sector"] == "Technology"
+    assert doc["date"] == "2023-01-02"
     # AAPL went 100 -> 105 (5%), MSFT went 200 -> 210 (5%), average is 5% (0.05)
-    assert row[2] == pytest.approx(0.05)
+    assert doc["avg_return_1d"] == pytest.approx(0.05)
+
 
 @pytest.mark.asyncio
-async def test_backfill_skips_if_history_exists(monkeypatch, mock_db):
+async def test_backfill_skips_if_history_exists():
     """Ensure backfill skips if history is already present."""
-    from contextlib import contextmanager
+    q_ctx, s_ctx, query, store = _mongo(distinct_dates=2, join_rows=[])
+    with q_ctx, s_ctx:
+        await backfill_sector_performance()
 
-    @contextmanager
-    def mock_get_db():
-        yield mock_db
-
-    monkeypatch.setattr("app.data.sector_aggregator.get_db", mock_get_db)
-    
-    # Mock row count check to return 2 (history exists)
-    def mock_execute(query, *args, **kwargs):
-        cursor = MagicMock()
-        if "COUNT(DISTINCT date)" in query:
-            cursor.fetchone.return_value = (2,)
-        return cursor
-        
-    mock_db.execute.side_effect = mock_execute
-    
-    await backfill_sector_performance()
-    
-    # price history should not be queried and executemany should not be called
-    assert mock_db.executemany.call_count == 0
+    # price history should not be queried and nothing should be written
+    assert query.join_rows.call_count == 0
+    assert store.upsert_doc.call_count == 0

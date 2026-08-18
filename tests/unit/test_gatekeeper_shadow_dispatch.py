@@ -314,36 +314,39 @@ class TestTheRowCanSayWhichBotItCameFrom:
         assert calls[0]["bot_id"] == "bot-test"
 
     def test_the_insert_actually_writes_it(self):
-        """The half that was broken. Asserted against the emitted SQL and its
-        parameters, because a dispatch that carries the value proves nothing
-        about a writer that discards it."""
+        """The half that was broken. Asserted against the document the writer
+        actually emits, because a dispatch that carries the value proves
+        nothing about a writer that discards it.
+
+        This used to read the SQL string and its positional parameters. The
+        write is `mongo_store.insert_docs('model_shadow_runs', [doc])` now, so
+        the document is read by FIELD NAME — a strictly stronger check: the
+        old version was satisfied by the literal "cycle-backend" appearing
+        anywhere in the parameter tuple, including under the wrong column.
+        """
         from unittest.mock import MagicMock
+
+        from app.db import mongo_store
 
         from app.v3 import model_shadow
 
-        cur = MagicMock()
-        cur.execute = MagicMock()
-
-        from contextlib import contextmanager
-
-        @contextmanager
-        def fake_db():
-            yield cur
-
-        with patch("app.db.connection.get_db", fake_db), \
-             patch.object(model_shadow, "_ensure_shadow_table", lambda: None):
+        store_insert = MagicMock()
+        # _record imports mongo_store inside the function, so patch the source.
+        with patch.object(mongo_store, "insert_docs", store_insert):
             model_shadow._record({
                 "cycle_id": "cycle-test", "ticker": "WATCHLIST",
                 "agent_name": "v3_portfolio_manager", "endpoint": "jetson",
                 "bot_id": "cycle-backend", "shadow_outcome": "SUCCESS",
             })
 
-        sql, params = cur.execute.call_args[0]
-        assert "bot_id" in sql, "the column is not in the INSERT column list"
-        assert "cycle-backend" in params, \
-            "the column is named but the value never reaches the parameters"
-        assert sql.count("%s") == len(params), \
-            "placeholder/parameter mismatch — this INSERT would raise in production"
+        collection, docs = store_insert.call_args[0][:2]
+        assert collection == "model_shadow_runs"
+        assert len(docs) == 1
+        assert docs[0]["bot_id"] == "cycle-backend", \
+            "the value never reaches the written document"
+        # And the rest of the row still identifies the run it came from.
+        assert docs[0]["cycle_id"] == "cycle-test"
+        assert docs[0]["agent_name"] == "v3_portfolio_manager"
 
     def test_the_runner_carries_it_from_the_dispatch_to_the_row(self):
         """The middle level. `_run_and_record` accepted `bot_id` and built the
@@ -372,27 +375,24 @@ class TestTheRowCanSayWhichBotItCameFrom:
     def test_a_missing_bot_id_is_written_as_unknown_not_null(self):
         """One spelling for one absence. NULL would read as 'not recorded yet'
         and make the column look broken for as long as such a row survives."""
-        from contextlib import contextmanager
         from unittest.mock import MagicMock
+
+        from app.db import mongo_store
 
         from app.v3 import model_shadow
 
-        cur = MagicMock()
-
-        @contextmanager
-        def fake_db():
-            yield cur
-
-        with patch("app.db.connection.get_db", fake_db), \
-             patch.object(model_shadow, "_ensure_shadow_table", lambda: None):
+        store_insert = MagicMock()
+        with patch.object(mongo_store, "insert_docs", store_insert):
             model_shadow._record({
                 "cycle_id": "c", "ticker": "T", "agent_name": "a",
                 "endpoint": "jetson", "shadow_outcome": "SUCCESS",
             })
 
-        _sql, params = cur.execute.call_args[0]
-        assert "unknown" in params
-        assert None not in params[:5]
+        doc = store_insert.call_args[0][1][0]
+        assert doc["bot_id"] == "unknown"
+        # The identity fields are never null either.
+        for field in ("cycle_id", "ticker", "agent_name", "endpoint", "shadow_outcome"):
+            assert doc[field] is not None
 
 
 @pytest.mark.parametrize("status,expected", [

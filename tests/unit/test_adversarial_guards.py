@@ -9,6 +9,7 @@ import json
 import math
 import os
 import sys
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -27,9 +28,19 @@ GOOD_REASON = "Adversarial test: volatility regime justification exceeding the l
 
 
 def _no_db(monkeypatch):
-    def _boom():
+    """Take the parameter store's database away.
+
+    A rejection has to come from the guard, not from a lookup that happened to
+    return nothing — so every read raises. `parameter_store` reads through
+    `mongo_query` now; the old `ps.get_db` patch raised AttributeError because
+    that name no longer exists.
+    """
+    def _boom(*a, **k):
         raise RuntimeError("db down")
-    monkeypatch.setattr(ps, "get_db", _boom)
+    q = MagicMock()
+    q.find_row.side_effect = _boom
+    q.find_rows.side_effect = _boom
+    monkeypatch.setattr(ps, "mongo_query", q)
     monkeypatch.setattr(pv, "_last_change_age_hours", lambda key: None)
     monkeypatch.setattr(pv, "_changes_last_24h", lambda: 0)
     ps.invalidate_cache()
@@ -127,7 +138,13 @@ def test_negative_and_zero_stop_prices_fall_back(monkeypatch):
 
 def test_near_zero_vector_all_zeros_rejected(monkeypatch):
     from app.db.vector_store import VectorStore
-    def _boom():
+    def _boom(*a, **k):
         raise AssertionError("DB must not be touched")
-    monkeypatch.setattr("app.db.vector_store.get_db", _boom)
+    # The store writes through mongo_store; the guard has to reject the vector
+    # BEFORE either half of that upsert (the delete AND the insert) is issued.
+    store = MagicMock()
+    store.delete_docs.side_effect = _boom
+    store.update_docs.side_effect = _boom
+    store.insert_docs.side_effect = _boom
+    monkeypatch.setattr("app.db.vector_store.mongo_store", store)
     assert VectorStore().store_embedding("t", "s", "AAPL", "x", [0, 0.0, 0]) == ""

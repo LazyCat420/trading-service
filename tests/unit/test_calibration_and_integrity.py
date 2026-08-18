@@ -126,33 +126,9 @@ def test_unparseable_actions_are_stored_as_hold(bad):
     """Three such rows reached trade_results. Every downstream reader tests
     `action IN ('BUY','SELL')`, so these are invisible to execution and COUNTED
     by accuracy queries — a parse failure laundered into a decision."""
-    from app.services import trade_result_saver as TRS
+    captured = _save("TEST", "cyc-1", {"action": bad, "confidence": 72})
 
-    captured = {}
-
-    class _DB:
-        def execute(self, sql, params=None):
-            return self
-        def fetchone(self): return None
-        def transaction(self): return self
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    # The write is a Mongo insert now, not an INSERT statement, so the action
-    # is a NAMED FIELD rather than params[3]. Reading it by position was always
-    # brittle; the document says which value it is.
-    def _capture_insert(collection, docs):
-        if collection == "trade_results" and docs:
-            captured["action"] = docs[0].get("action")
-        return len(docs)
-
-    with patch.object(TRS, "get_db", lambda: _DB(), create=True), \
-         patch("app.db.connection.get_db", lambda: _DB()), \
-         patch.object(TRS.mongo_store, "insert_docs", _capture_insert), \
-         patch.object(TRS.mongo_store, "upsert_doc", lambda *a, **k: None):
-        TRS.save_trade_result("TEST", "cyc-1", {"action": bad, "confidence": 72})
-
-    assert captured, "the INSERT never ran — this test would pass vacuously"
+    assert captured, "the write never ran — this test would pass vacuously"
     assert captured["action"] in ("BUY", "SELL", "HOLD"), \
         f"unparseable action {bad!r} was stored verbatim as {captured['action']!r}"
 
@@ -162,22 +138,55 @@ def test_unparseable_actions_are_stored_as_hold(bad):
 ])
 def test_valid_actions_survive_normalization(good, expected):
     """The complement — the guard must not mangle real decisions."""
+    captured = _save("TEST", "cyc-1", {"action": good, "confidence": 72})
+
+    assert captured, "the write never ran — this test would pass vacuously"
+    assert captured["action"] == expected
+
+
+# ── helpers ─────────────────────────────────────────────────────────
+
+def _save(ticker, cycle_id, verdict):
+    """Run `save_trade_result` against a stubbed Mongo store, return the doc.
+
+    The write is a Mongo `insert_docs` now, not an `INSERT` statement, so the
+    action is a NAMED FIELD rather than `params[3]`. Reading it by position was
+    always brittle; the document says which value it is.
+
+    BOTH halves of the write are stubbed. `save_trade_result` deletes the
+    ticker+cycle pair before inserting, and leaving that delete pointed at the
+    real store is how a "unit" test comes to remove a production row — and,
+    because the function swallows every exception, the failure would surface
+    only as an empty `captured` dict.
+    """
     from app.services import trade_result_saver as TRS
 
-    captured = {}
+    captured: dict = {}
 
-    class _DB:
-        def execute(self, sql, params=None):
-            if params and "INSERT INTO trade_results" in sql:
-                captured["action"] = params[3]
-            return self
-        def fetchone(self): return None
-        def transaction(self): return self
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+    def _capture_insert(collection, docs, *a, **k):
+        assert collection == "trade_results", (
+            f"the verdict was written to {collection!r}, not trade_results")
+        if docs:
+            captured.update(docs[0])
+        return len(docs)
 
-    with patch("app.db.connection.get_db", lambda: _DB()):
-        TRS.save_trade_result("TEST", "cyc-1", {"action": good, "confidence": 72})
+    deleted: dict = {}
 
-    assert captured, "the INSERT never ran — this test would pass vacuously"
-    assert captured["action"] == expected
+    def _capture_delete(collection, query, *a, **k):
+        deleted["collection"] = collection
+        deleted["query"] = query
+        return 0
+
+    with patch.object(TRS.mongo_store, "delete_docs", _capture_delete), \
+         patch.object(TRS.mongo_store, "insert_docs", _capture_insert), \
+         patch.object(TRS.mongo_store, "upsert_doc", lambda *a, **k: None):
+        TRS.save_trade_result(ticker, cycle_id, verdict)
+
+    if captured:
+        # The de-dupe delete must be scoped to this ticker AND this cycle. An
+        # unscoped one would clear the ticker's whole history on every write.
+        assert deleted["collection"] == "trade_results"
+        assert deleted["query"] == {"ticker": ticker, "cycle_id": cycle_id}
+        assert captured["ticker"] == ticker
+        assert captured["cycle_id"] == cycle_id
+    return captured

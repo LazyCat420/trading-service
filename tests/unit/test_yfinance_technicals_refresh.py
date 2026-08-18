@@ -43,13 +43,9 @@ def _patched_yf(monkeypatch, frame):
     monkeypatch.setattr(yf.yf, "Ticker", lambda *_a, **_k: ticker_obj)
     monkeypatch.setattr(yf, "_is_blocked_ticker", lambda _t: False)
 
-    import contextlib
-
-    @contextlib.contextmanager
-    def fake_get_db():
-        yield MagicMock()
-
-    monkeypatch.setattr(yf, "get_db", fake_get_db, raising=False)
+    # Writes go through mongo_store.upsert_doc now; stub the whole module so
+    # the collection never reaches a real client.
+    monkeypatch.setattr(yf, "mongo_store", MagicMock())
     return yf
 
 

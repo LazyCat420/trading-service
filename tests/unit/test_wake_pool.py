@@ -29,30 +29,25 @@ _ORCH = Path(__file__).resolve().parents[2] / "app" / "v3" / "orchestrator.py"
 
 
 def _row(cycle_id, tickers, *, age_hours=3.0):
+    """One `shared_desk` DOCUMENT, as `mongo_store.find_docs` hands it back.
+
+    `build_wake_pool` reads documents now, not `(cycle_id, ts, desk_data)`
+    cursor tuples, and it imports `mongo_store` INSIDE the function — patching
+    the module attribute would be a silent no-op, so the tests patch
+    `app.db.mongo_store.find_docs` itself.
+    """
     ts = datetime.now(timezone.utc) - timedelta(hours=age_hours)
-    return (cycle_id, ts,
-            {"cycle_metadata": {"cycle_candidate_tickers": list(tickers)}})
-
-
-class _FakeDB:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def execute(self, *_a, **_k):
-        return self
-
-    def fetchall(self):
-        return self._rows
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_a):
-        return False
+    return {
+        "cycle_id": cycle_id,
+        "created_at": ts,
+        "desk_data": {
+            "cycle_metadata": {"cycle_candidate_tickers": list(tickers)}
+        },
+    }
 
 
 def _with_rows(rows):
-    return patch("app.db.connection.get_db", return_value=_FakeDB(rows))
+    return patch("app.db.mongo_store.find_docs", return_value=list(rows))
 
 
 # ── The pool itself ──────────────────────────────────────────────────────
@@ -106,7 +101,7 @@ def test_every_empty_outcome_names_its_reason(rows, reason):
 
 
 def test_a_db_failure_is_non_fatal_and_named():
-    with patch("app.db.connection.get_db", side_effect=RuntimeError("boom")):
+    with patch("app.db.mongo_store.find_docs", side_effect=RuntimeError("boom")):
         rec = build_wake_pool("NVDA")
     assert rec["tickers"] == []
     assert rec["reason"] == "lookup_failed"
@@ -114,20 +109,28 @@ def test_a_db_failure_is_non_fatal_and_named():
 
 def test_the_current_cycle_is_excluded_by_the_query():
     """Borrowing this cycle's own pool would be circular, and on a wake there
-    is nothing to borrow anyway. Asserted on the SQL parameters, because the
-    fake DB cannot enforce a WHERE clause."""
-    captured = {}
-
-    class _Spy(_FakeDB):
-        def execute(self, sql, params=None):
-            captured["sql"] = sql
-            captured["params"] = params
-            return self
-
-    with patch("app.db.connection.get_db", return_value=_Spy([])):
+    is nothing to borrow anyway. Asserted on the Mongo filter, because the
+    stubbed reader cannot enforce the exclusion itself."""
+    with patch("app.db.mongo_store.find_docs", return_value=[]) as find_docs:
         build_wake_pool("NVDA", exclude_cycle_id="cycle-now")
-    assert "cycle_id <> %s" in captured["sql"]
-    assert "cycle-now" in captured["params"]
+
+    collection, query = find_docs.call_args[0][:2]
+    assert collection == "shared_desk"
+    assert query["cycle_id"] == {"$ne": "cycle-now"}
+    # Newest first, or "the most recent full cycle" is whichever row Mongo
+    # happened to return.
+    assert find_docs.call_args[1]["sort"] == [("created_at", -1)]
+
+
+def test_the_age_window_is_pushed_into_the_query():
+    """A 48h cutoff applied in Python would still pay for the scan, and the
+    stale rows would be one edit away from being rendered."""
+    with patch("app.db.mongo_store.find_docs", return_value=[]) as find_docs:
+        build_wake_pool("NVDA", max_age_hours=48)
+
+    cutoff = find_docs.call_args[0][1]["created_at"]["$gte"]
+    hours = (datetime.now(timezone.utc) - cutoff).total_seconds() / 3600.0
+    assert 47.9 < hours < 48.1
 
 
 # ── The rendered block ───────────────────────────────────────────────────

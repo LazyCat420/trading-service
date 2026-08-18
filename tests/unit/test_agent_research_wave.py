@@ -4,7 +4,6 @@ consensus sizing, skip_debate mitigation contract, precomputed quant block,
 FRED curve/credit briefing lines.
 """
 
-import contextlib
 
 import numpy as np
 import pytest
@@ -217,33 +216,57 @@ def test_quant_math_block_empty_on_total_failure(monkeypatch):
 # ── FRED curve/credit lines ──────────────────────────────────────────
 
 def test_fred_curve_credit_lines(monkeypatch):
+    """The reader is `mongo_store.aggregate` over `macro_indicators` now.
+
+    This used to fake a `get_db` cursor; the module never calls it, so the
+    stub was inert and the lines were built from whatever the live store held.
+    `mongo_store` is imported INSIDE the function, so the patch has to land on
+    `app.db.mongo_store.aggregate` — patching the attribute on
+    `retrieval_context` would be a silent no-op.
+    """
+    import app.db.mongo_store as mongo_store
     import app.services.retrieval_context as rc
-    import app.db.connection as conn_mod
 
-    class FakeCursor:
-        def execute(self, *a, **k):
-            return self
-        def fetchall(self):
-            return [("HY_SPREAD", 5.4), ("TREASURY_10Y", 4.10), ("TREASURY_2Y", 4.60)]
+    calls = []
 
-    @contextlib.contextmanager
-    def fake_get_db():
-        yield FakeCursor()
+    def fake_aggregate(collection, pipeline, *a, **k):
+        calls.append((collection, pipeline))
+        return [
+            {"indicator": "HY_SPREAD", "value": 5.4},
+            {"indicator": "TREASURY_10Y", "value": 4.10},
+            {"indicator": "TREASURY_2Y", "value": 4.60},
+        ]
 
-    monkeypatch.setattr(conn_mod, "get_db", fake_get_db)
+    monkeypatch.setattr(mongo_store, "aggregate", fake_aggregate)
     lines = rc.fred_curve_credit_lines()
     joined = "\n".join(lines)
     assert "INVERTED" in joined            # 4.10 - 4.60 < 0
     assert "-0.50pp" in joined
     assert "elevated stress" in joined     # HY 5.4 >= 5.0
 
+    # It must ask FRED's macro_indicators for exactly the three series it
+    # formats — a query that widened to another source would silently mix
+    # a different provider's levels into the curve.
+    assert calls, "no read was issued"
+    collection, pipeline = calls[0]
+    assert collection == "macro_indicators"
+    match = pipeline[0]["$match"]
+    assert match["source"] == "fred"
+    assert set(match["indicator"]["$in"]) == {
+        "TREASURY_10Y", "TREASURY_2Y", "HY_SPREAD"}
+
 
 def test_fred_lines_fail_open(monkeypatch):
-    import app.services.retrieval_context as rc
-    import app.db.connection as conn_mod
+    """A read failure yields no lines rather than breaking the briefing.
 
-    def _boom():
+    Patched at `app.db.mongo_store.aggregate` for the same reason as above;
+    with the old `get_db` stub this passed for the wrong reason.
+    """
+    import app.db.mongo_store as mongo_store
+    import app.services.retrieval_context as rc
+
+    def _boom(*a, **k):
         raise RuntimeError("no db")
 
-    monkeypatch.setattr(conn_mod, "get_db", _boom)
+    monkeypatch.setattr(mongo_store, "aggregate", _boom)
     assert rc.fred_curve_credit_lines() == []

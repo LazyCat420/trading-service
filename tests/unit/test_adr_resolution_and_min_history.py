@@ -114,15 +114,20 @@ class TestMinimumTradeableHistory:
     """Two price rows is not thin data — it is no computable technicals."""
 
     def _probe(self, rows_available: int) -> bool:
-        cur = MagicMock()
-        cur.fetchone.return_value = (rows_available,)
-        db = MagicMock()
-        db.execute.return_value = cur
-        ctx = MagicMock()
-        ctx.__enter__.return_value = db
+        """Run the probe against a `price_history` holding `rows_available` bars.
+
+        `has_price_history` imports `mongo_store` INSIDE the function, so
+        patching the module attribute is a silent no-op — the patch has to land
+        on `app.db.mongo_store.count_docs` itself.
+        """
         probe = _real_has_price_history()
-        with patch("app.db.connection.get_db", return_value=ctx):
-            return probe("X")
+        with patch("app.db.mongo_store.count_docs",
+                   return_value=rows_available) as count:
+            out = probe("X")
+        # The bar count must come from the ticker's OWN rows: a probe counting
+        # the whole collection passes for every ticker on earth.
+        count.assert_called_once_with("price_history", {"ticker": "X"})
+        return out
 
     def test_the_skhyv_case_is_rejected(self):
         assert self._probe(2) is False
@@ -154,6 +159,6 @@ class TestMinimumTradeableHistory:
 
     def test_an_empty_ticker_is_rejected_without_a_query(self):
         probe = _real_has_price_history()
-        with patch("app.db.connection.get_db",
+        with patch("app.db.mongo_store.count_docs",
                    side_effect=AssertionError("must not query")):
             assert probe("") is False

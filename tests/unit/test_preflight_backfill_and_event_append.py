@@ -74,20 +74,19 @@ class TestTslessEventAppend:
     def test_an_event_without_ts_is_written_not_swallowed(self):
         from app.services import pipeline_state as ps
 
+        from datetime import datetime
+
         captured = {}
 
-        class FakeDB:
-            def executemany(self, sql, rows):
-                captured["rows"] = rows
+        def _insert(collection, docs, **_kw):
+            captured["collection"] = collection
+            captured["docs"] = docs
 
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        with patch.object(ps.connection, "get_db", return_value=FakeDB()), \
-             patch("app.db.mongo_store.writes_mongo", return_value=False):
+        # append_events wraps its write in a bare `except Exception` that only
+        # LOGS, so a NameError on the fallback timestamp would leave the event
+        # silently unwritten. Capturing the documents is what proves the write
+        # happened at all.
+        with patch.object(ps.mongo_store, "insert_docs", _insert):
             ps.PipelineStateDB.append_events("cycle-test", [{
                 "phase": "analyzing",
                 "step": "v3_dropped_MGNI",
@@ -96,6 +95,13 @@ class TestTslessEventAppend:
                 "data": {"reason": "no_price_history"},
             }])
 
-        assert "rows" in captured and len(captured["rows"]) == 1
+        assert captured.get("collection") == "pipeline_events"
+        assert len(captured["docs"]) == 1
+        doc = captured["docs"][0]
         # The fallback timestamp must be a real value, not an unraised name.
-        assert captured["rows"][0][2] is not None
+        assert isinstance(doc["timestamp"], datetime)
+        # And the event itself survived the append intact.
+        assert doc["cycle_id"] == "cycle-test"
+        assert doc["step"] == "v3_dropped_MGNI"
+        assert doc["status"] == "skipped"
+        assert doc["data"] == {"reason": "no_price_history"}

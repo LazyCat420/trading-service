@@ -18,49 +18,58 @@ from app.quant import trial_registry
 from app.quant.stat_gates import deflated_sharpe_ratio
 
 
-class _FakeDB:
-    """Minimal stand-in for the (family, label) PK table."""
+class _FakeMongoStore:
+    """In-memory stand-in for the `research_trials` collection.
+
+    Keyed on (family, label) — the uniqueness the registry relies on to make
+    `record_trial` idempotent. Implements only the three calls the module
+    makes: `update_docs` (upsert + $inc), `upsert_doc` (insert_only) and
+    `count_docs`.
+    """
 
     def __init__(self, store):
         self.store = store
 
-    def __enter__(self):
-        return self
+    def update_docs(self, collection, filt, update, upsert=False, **kwargs):
+        assert collection == "research_trials"
+        key = (filt["family"], filt["label"])
+        doc = self.store.get(key)
+        if doc is None:
+            if not upsert:
+                return 0
+            # $setOnInsert seeds the new document, then the normal operators
+            # apply — the same order Mongo uses.
+            doc = dict(update.get("$setOnInsert", {}))
+            doc.setdefault("run_count", 0)
+            self.store[key] = doc
+        for field, delta in update.get("$inc", {}).items():
+            doc[field] = doc.get(field, 0) + delta
+        doc.update(update.get("$set", {}))
+        return 1
 
-    def __exit__(self, *_):
-        return False
+    def upsert_doc(self, collection, filt, doc, insert_only=False, **kwargs):
+        assert collection == "research_trials"
+        key = (filt["family"], filt["label"])
+        if key in self.store and insert_only:
+            # Seeding must not reset an existing row's run_count.
+            return 0
+        self.store[key] = dict(doc)
+        return 1
 
-    def execute(self, sql, params=None):
-        s = " ".join(sql.split()).lower()
-        self._result = None
-        if s.startswith("create table"):
-            return self
-        if s.startswith("insert into research_trials"):
-            family, label = params[0], params[1]
-            key = (family, label)
-            if key in self.store:
-                if "do update" in s:
-                    self.store[key]["run_count"] += 1
-            else:
-                self.store[key] = {"run_count": 1, "source": params[2] if len(params) > 2 else ""}
-            return self
-        if "count(*) from research_trials" in s:
-            family = params[0]
-            self._result = (sum(1 for (f, _) in self.store if f == family),)
-            return self
-        if "select 1 from research_trials" in s:
-            self._result = (1,) if (params[0], params[1]) in self.store else None
-            return self
-        return self
-
-    def fetchone(self):
-        return self._result
+    def count_docs(self, collection, filt=None, **kwargs):
+        assert collection == "research_trials"
+        filt = filt or {}
+        return sum(
+            1 for (family, label) in self.store
+            if ("family" not in filt or family == filt["family"])
+            and ("label" not in filt or label == filt["label"])
+        )
 
 
 @pytest.fixture()
 def store(monkeypatch):
     data: dict = {}
-    monkeypatch.setattr(trial_registry, "get_db", lambda: _FakeDB(data))
+    monkeypatch.setattr(trial_registry, "mongo_store", _FakeMongoStore(data))
     return data
 
 
@@ -167,9 +176,12 @@ def test_registry_dsr_records_the_trial_it_judges(store):
 
 def test_registry_failure_degrades_to_one_not_to_a_crash(monkeypatch):
     """A ledger outage must not stop research; it just means no deflation."""
-    def _boom():
-        raise RuntimeError("db down")
+    class _BrokenStore:
+        def __getattr__(self, _name):
+            def _boom(*a, **k):
+                raise RuntimeError("db down")
+            return _boom
 
-    monkeypatch.setattr(trial_registry, "get_db", _boom)
+    monkeypatch.setattr(trial_registry, "mongo_store", _BrokenStore())
     assert trial_registry.trial_count() == 1
     assert trial_registry.record_trial("x") is False

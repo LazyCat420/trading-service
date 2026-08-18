@@ -9,6 +9,8 @@ Tests pinning the 2026-07-15 deferred-item decisions (plan Section 8).
         triggers require an actual position; the dynamic re-analysis trigger
         remains the "watch for entry" mechanism.
 """
+from unittest.mock import patch
+
 import pytest
 
 from app.services.pipeline_service import (
@@ -99,7 +101,22 @@ def test_executed_sell_registers_no_sell_side():
 
 # ── 8.2: debate/board timeout aborts ─────────────────────────────────
 
-def test_timeout_aborts_from_research_done():
+@pytest.fixture
+def saved_desks():
+    """Capture the desk `_check_abort` persists.
+
+    An abort writes the desk to Mongo (`desk_persistence.save_desk`, which
+    re-raises on failure), so these tests used to reach the real client. The
+    capture is not just a mute: the persisted phase is asserted below, so an
+    abort that forgot to save — or saved before marking the desk ABORTED —
+    now fails here.
+    """
+    saved = []
+    with patch("app.v3.orchestrator.save_desk", side_effect=saved.append):
+        yield saved
+
+
+def test_timeout_aborts_from_research_done(saved_desks):
     """Bull/bear/judge time out while the desk is at RESEARCH_DONE."""
     desk = SharedDesk(ticker="TEST", cycle_id="cycle-abort")
     desk.advance_phase(DeskPhase.RESEARCH_DONE)
@@ -112,9 +129,11 @@ def test_timeout_aborts_from_research_done():
     assert result["action"] == "HOLD"
     assert result["confidence"] == 0
     assert "timed out" in result["v3_metadata"]["abort_reason"]
+    # The aborted desk is persisted, and persisted as ABORTED.
+    assert saved_desks and saved_desks[-1].phase == DeskPhase.ABORTED
 
 
-def test_timeout_aborts_from_debate_done():
+def test_timeout_aborts_from_debate_done(saved_desks):
     """Board of directors times out after the debate layer completed."""
     desk = SharedDesk(ticker="TEST", cycle_id="cycle-abort2")
     desk.advance_phase(DeskPhase.RESEARCH_DONE)
@@ -126,6 +145,7 @@ def test_timeout_aborts_from_debate_done():
     assert result is not None
     assert desk.phase == DeskPhase.ABORTED
     assert result["v3_metadata"]["abort_reason"] == "board_of_directors timed out"
+    assert saved_desks and saved_desks[-1].phase == DeskPhase.ABORTED
 
 
 def test_success_does_not_abort():

@@ -8,6 +8,7 @@ Tests for the 2026-07-15 live-cycle-audit fixes (wave 4).
    portfolio_context every cycle on a naive/aware datetime subtraction).
 """
 from datetime import datetime, timezone, timedelta
+from unittest.mock import MagicMock
 
 from app.services.prism_agent_caller import _extract_token_usage
 from app.v3.orchestrator import _format_macro_briefing
@@ -94,17 +95,17 @@ def test_get_position_context_handles_naive_opened_at(monkeypatch):
 
     naive_opened = datetime.now() - timedelta(days=5)  # tz-naive, like the DB
 
-    class _Cur:
-        def execute(self, *a, **k): return self
-        def fetchone(self):
-            # (qty, avg_entry, stop_loss_pct, opened_at)
+    # `positions` is read through mongo_query.find_row, which returns a TUPLE
+    # in the requested column order: (qty, avg_entry, stop_loss_pct, opened_at).
+    # `trade_history` (the original-thesis lookup) has nothing to return here.
+    def _find_row(coll, *a, **k):
+        if coll == "positions":
             return (10.0, 100.0, 8.0, naive_opened)
+        return None
 
-    class _DB:
-        def __enter__(self): return _Cur()
-        def __exit__(self, *a): return False
-
-    monkeypatch.setattr(pt, "get_db", lambda: _DB())
+    q = MagicMock()
+    q.find_row.side_effect = _find_row
+    monkeypatch.setattr(pt, "mongo_query", q)
     monkeypatch.setattr(pt, "_get_current_price", lambda t: (105.0, None), raising=False)
 
     # Must not raise the naive/aware subtraction error, and holding_days ~5.

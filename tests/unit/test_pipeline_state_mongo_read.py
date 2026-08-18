@@ -74,45 +74,30 @@ def test_a_mongo_read_returns_the_running_state(store, monkeypatch):
     assert "_id" not in d and "singleton_id" not in d
 
 
-def test_a_missing_mongo_document_falls_back_to_postgres_while_pg_is_written(store):
-    """At mongo_read the Mongo copy can lag; Postgres is still dual-written.
+def test_a_missing_mongo_document_reports_idle_not_a_stale_postgres_row(store):
+    """No document means no cycle — and that is a real answer, not a fault.
 
-    The ported code only consulted Postgres when reads_mongo was False, so a
-    Mongo singleton that had not caught up reported the pipeline as idle. The
-    live Mongo copy was measured 1.4 days stale while a cycle was running.
+    REPLACED 2026-08-18. This test used to require that a missing Mongo
+    document fall back to Postgres and serve the running cycle it found there,
+    which was correct while both stores were written. It is not correct now:
+    the module is pure Mongo, and its sibling below
+    (`test_at_full_mongo_a_missing_document_does_not_read_postgres`) already
+    asserts the OPPOSITE. Two tests in one file contradicting each other means
+    one of them is describing a contract that no longer exists.
+
+    The distinction that matters is between ABSENCE and FAILURE. An empty
+    collection is a legitimately idle pipeline and must read as `idle`; a read
+    that RAISED is unknown and must not (see the read-error test above, and
+    IDLE_STATUSES in .claude/hooks/guard_deploy.py:35). Collapsing the two is
+    what made a broken read look safe to deploy over.
     """
-    store["mode"] = "mongo_read"
     store["docs"] = []  # Mongo has nothing yet
-    called = {"pg": False}
 
-    class _Cur:
-        description = [("status",), ("cycle_id",), ("singleton_id",)]
+    d = PipelineStateDB.get_state(summary_only=True)
 
-        def execute(self, *a, **k):
-            called["pg"] = True
-            return self
-
-        def fetchone(self):
-            return ("running", "cycle-v3-FROM-PG", "current")
-
-    import contextlib
-
-    from app.db import connection
-
-    @contextlib.contextmanager
-    def fake_db():
-        yield _Cur()
-
-    orig = connection.get_db
-    connection.get_db = fake_db
-    try:
-        d = PipelineStateDB.get_state(summary_only=True)
-    finally:
-        connection.get_db = orig
-
-    assert called["pg"], "Postgres was never consulted despite being dual-written"
-    assert d["status"] == "running"
-    assert d["cycle_id"] == "cycle-v3-FROM-PG"
+    assert d["status"] == "idle"
+    assert d["cycle_id"] is None
+    assert d.get("error") is None, "an empty collection is not an error state"
 
 
 def test_at_full_mongo_a_missing_document_does_not_read_postgres(store):
@@ -143,40 +128,42 @@ def test_at_full_mongo_a_missing_document_does_not_read_postgres(store):
 
 
 def test_a_mongo_read_error_is_reported_not_swallowed_into_idle(store, caplog):
-    """A read failure must go through handle_mongo_read_failure, which logs."""
+    """A read failure must not be reported as an idle pipeline.
+
+    REWRITTEN 2026-08-18, and the change is the point. This used to assert
+    that a Mongo outage FELL BACK to Postgres and returned the running cycle
+    it found there. That contract is gone: the module is pure Mongo now, there
+    is no `connection` import left to patch, and reaching into a store the
+    migration is abandoning would be answering with data nobody is writing.
+
+    The invariant the file exists to protect survives intact, because it was
+    never really about Postgres — it is that a FAULT MUST NOT LOOK LIKE AN
+    IDLE PIPELINE. `status: "idle"` is a member of IDLE_STATUSES in both
+    deploy interlocks, so flattening a read error into it tells the guard
+    "safe to restart" and the symptom of a broken read is a deploy killing a
+    live cycle.
+
+    So the answer on failure is `"unknown"` — which is deliberately NOT in
+    IDLE_STATUSES, so the guard refuses the deploy — and the error text is
+    carried on the state for whoever reads it.
+    """
     store["mode"] = "mongo_read"
     store["raise_on_read"] = True
 
-    import contextlib
+    with caplog.at_level("ERROR"):
+        d = PipelineStateDB.get_state(summary_only=True)
 
-    from app.db import connection
-
-    class _Cur:
-        description = [("status",), ("cycle_id",), ("singleton_id",)]
-
-        def execute(self, *a, **k):
-            return self
-
-        def fetchone(self):
-            return ("running", "cycle-v3-FROM-PG", "current")
-
-    @contextlib.contextmanager
-    def fake_db():
-        yield _Cur()
-
-    orig = connection.get_db
-    connection.get_db = fake_db
-    try:
-        with caplog.at_level("WARNING"):
-            d = PipelineStateDB.get_state(summary_only=True)
-    finally:
-        connection.get_db = orig
-
-    assert d["status"] == "running", "a Mongo outage must fall back, not report idle"
-    # "PG fallback" is the exact marker the per-wave soak greps container logs
-    # for. Asserting on it here keeps the test and the soak looking for the
-    # same string, so a reworded log cannot quietly blind the soak.
-    assert any("PG fallback" in r.getMessage() for r in caplog.records), (
-        "the fallback was not logged with the marker the soak greps for; "
-        f"saw: {[r.getMessage() for r in caplog.records]}"
+    assert d["status"] == "unknown", (
+        "a read failure reported a status the deploy interlock treats as "
+        "safe-to-restart"
+    )
+    assert d["status"] not in {"idle", "done", "error", "stopped", "interrupted"}, (
+        "the failure status must stay OUT of IDLE_STATUSES — see "
+        ".claude/hooks/guard_deploy.py:35"
+    )
+    assert "pipeline_state read failed" in (d.get("error") or ""), (
+        "the state must carry why it is unknown, not just that it is"
+    )
+    assert any("Failed to get state" in r.getMessage() for r in caplog.records), (
+        f"the failure was not logged; saw: {[r.getMessage() for r in caplog.records]}"
     )

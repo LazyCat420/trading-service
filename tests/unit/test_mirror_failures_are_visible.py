@@ -123,13 +123,25 @@ def test_the_detector_can_actually_fire(tmp_path):
 @pytest.mark.parametrize(
     "path,needle",
     [
-        ("app/trading/paper_trader.py", "Mongo mirror failed on BUY ledger write"),
-        ("app/trading/paper_trader.py", "Mongo mirror failed on SELL ledger write"),
+        ("app/trading/paper_trader.py", "[TRACE][BUY] ROLLBACK triggered"),
+        ("app/trading/paper_trader.py", "[TRACE][SELL] ROLLBACK triggered"),
     ],
 )
-def test_the_money_mirror_logs_at_error(path, needle):
-    """A dropped ledger mirror is not a warning-level event."""
+def test_the_money_write_failure_logs_at_error(path, needle):
+    """A lost money write is not a warning-level event.
+
+    These used to name the DUAL-WRITE mirror ("Mongo mirror failed on BUY
+    ledger write"). Mongo is the primary store now and there is no mirror, so
+    the successor of that site is the transaction handler that rolls the
+    order/fill/lot writes back: same requirement, same money path — a soak
+    grepping the container logs must see the line, so it cannot sit below
+    WARNING.
+    """
     src = (_APP.parent / path).read_text(encoding="utf-8")
     assert needle in src
-    line = next(ln for ln in src.splitlines() if needle in ln)
-    assert "logger.error" in line, line.strip()
+    lines = src.splitlines()
+    i = next(n for n, ln in enumerate(lines) if needle in ln)
+    # The message is the first argument of a multi-line logger call; the level
+    # is on the preceding line.
+    window = "\n".join(lines[max(0, i - 2):i + 1])
+    assert "logger.error" in window, window

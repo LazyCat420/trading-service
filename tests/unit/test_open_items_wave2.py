@@ -4,12 +4,26 @@ Open-items wave 2, 2026-08-11 — items 26, 28 and 41.
 Item 41 was decided rather than engineered: the 68 inert triggers are RETIRED,
 not armed. Every one is a BUY, so teaching the checker to read them would have
 started real trades. These tests pin "retired and not armed" in both directions.
+
+These used to pass a `_FakeDb` into `retire_inert_dynamic_triggers(db)` and to
+patch `app.db.connection.get_db` for the reconciliation cases, then assert on
+SQL text (`s.startswith("UPDATE")`). Neither hook exists now:
+`retire_inert_dynamic_triggers()` takes no argument and drives
+`mongo_query.find_rows` / `mongo_store.update_docs` itself, and
+`reconcile_cycle` reads both sides through `mongo_query.find_rows` — imported
+INSIDE the function, so only `app.db.mongo_query` can be patched for it.
+
+The retirement assertions are stronger for the move: instead of counting
+statements that begin with "UPDATE", they read the actual filter and the
+actual `$set`, so a sweep that retired the right count of the WRONG rows, or
+that set some other field, now fails here.
 """
 
 from unittest.mock import patch
 
 import pytest
 
+from app.trading import order_triggers
 from app.trading.order_triggers import (
     dynamic_trigger_is_evaluable,
     retire_inert_dynamic_triggers,
@@ -18,60 +32,92 @@ from app.v3.reconciliation import ReconciliationResult, reconcile_cycle
 from app.v3.shared_desk import DecisionProvenance
 
 
-class _FakeDb:
-    """Minimal db double: canned SELECT result, records every statement."""
+class _FakeTriggerStore:
+    """Captures the sweep's `update_docs` calls against `price_triggers`."""
 
-    def __init__(self, rows):
-        self._rows = rows
-        self.statements = []
+    def __init__(self):
+        self.updates = []
 
-    def execute(self, sql, args=None):
-        self.statements.append((" ".join(sql.split()), args))
-        return self
+    def update_docs(self, collection, filt, update, **kwargs):
+        assert collection == "price_triggers"
+        self.updates.append((filt, update))
+        return len(filt.get("id", {}).get("$in", []))
 
-    def fetchall(self):
-        return self._rows
+
+def _sweep_with(rows, monkeypatch, read_error=None, write_error=None):
+    """Run the sweep over `rows`, returning (result, captured store).
+
+    `rows` are the (id, ticker, dynamic_trigger_type) tuples find_rows returns
+    in that requested column order.
+    """
+    def _find_rows(collection, filt, columns, **kwargs):
+        if read_error:
+            raise read_error
+        assert collection == "price_triggers"
+        # The sweep must only ever consider ACTIVE DYNAMIC triggers; widening
+        # this filter would put static stop-losses at risk of retirement.
+        assert filt == {"trigger_type": "dynamic", "active": True}
+        assert columns == ["id", "ticker", "dynamic_trigger_type"]
+        return rows
+
+    store = _FakeTriggerStore()
+    if write_error:
+        def _update_docs(*a, **k):
+            raise write_error
+        store.update_docs = _update_docs
+
+    monkeypatch.setattr(order_triggers.mongo_query, "find_rows", _find_rows)
+    monkeypatch.setattr(order_triggers, "mongo_store", store)
+    return retire_inert_dynamic_triggers(), store
 
 
 # ── Item 41: retire the inert, arm nothing ─────────────────────────────
 
-def test_inert_triggers_are_deactivated():
-    db = _FakeDb([
+def test_inert_triggers_are_deactivated(monkeypatch):
+    retired, store = _sweep_with([
         ("trg-1", "CRM", "support_retest"),      # inert
         ("trg-2", "PLTR", "sma_50_reclaim"),     # inert
         ("trg-3", "ACHR", "sma_100_drop"),       # inert, no such column
         ("trg-4", "XOM", "sma_50_drop"),         # WORKS — must survive
         ("trg-5", "GS", "rsi_14_oversold"),      # WORKS — must survive
-    ])
-    assert retire_inert_dynamic_triggers(db) == 3
+    ], monkeypatch)
+    assert retired == 3
 
-    updates = [s for s, _ in db.statements if s.startswith("UPDATE")]
-    assert len(updates) == 1, "one bulk update, not one per row"
-    retired_ids = db.statements[-1][1][0]
+    assert len(store.updates) == 1, "one bulk update, not one per row"
+    filt, update = store.updates[0]
+    retired_ids = filt["id"]["$in"]
     assert sorted(retired_ids) == ["trg-1", "trg-2", "trg-3"]
     assert "trg-4" not in retired_ids and "trg-5" not in retired_ids
+    # Retirement means deactivation, and nothing else about the row changes.
+    assert update == {"$set": {"active": False}}
 
 
-def test_a_working_trigger_is_never_retired():
+def test_a_working_trigger_is_never_retired(monkeypatch):
     """The dangerous direction. Retiring a live watch silently removes a
     protection the desk believes it has."""
-    db = _FakeDb([("trg-a", "XOM", "sma_50_drop"), ("trg-b", "F", "sma_200_drop")])
-    assert retire_inert_dynamic_triggers(db) == 0
-    assert not [s for s, _ in db.statements if s.startswith("UPDATE")]
+    retired, store = _sweep_with(
+        [("trg-a", "XOM", "sma_50_drop"), ("trg-b", "F", "sma_200_drop")], monkeypatch)
+    assert retired == 0
+    assert store.updates == []
 
 
-def test_the_sweep_is_idempotent():
+def test_the_sweep_is_idempotent(monkeypatch):
     """It runs every 60s. A second pass finds nothing because the first
     deactivated them, so the UPDATE must not keep firing."""
-    db = _FakeDb([])
-    assert retire_inert_dynamic_triggers(db) == 0
+    retired, store = _sweep_with([], monkeypatch)
+    assert retired == 0
+    assert store.updates == []
 
 
-def test_retirement_never_raises_on_a_broken_database():
-    class _Boom:
-        def execute(self, *a, **k):
-            raise RuntimeError("db down")
-    assert retire_inert_dynamic_triggers(_Boom()) == 0
+def test_retirement_never_raises_on_a_broken_database(monkeypatch):
+    # Both halves must fail soft: the read that finds candidates...
+    retired, _ = _sweep_with([], monkeypatch, read_error=RuntimeError("db down"))
+    assert retired == 0
+    # ...and the write that retires them.
+    retired, _ = _sweep_with(
+        [("trg-1", "CRM", "support_retest")], monkeypatch,
+        write_error=RuntimeError("db down"))
+    assert retired == 0
 
 
 def test_nothing_was_armed():
@@ -106,8 +152,20 @@ def test_no_trade_gate_skip_stays_unwritten(monkeypatch):
 # ── Item 26: the reconciliation that nobody ran ────────────────────────
 
 def _reconcile_with(desks, tr_rows):
-    with patch("app.db.connection.get_db") as gd:
-        gd.return_value.__enter__.return_value = _FakeDb(tr_rows)
+    """Reconcile with `trade_results` returning `tr_rows`.
+
+    `reconcile_cycle` imports mongo_query inside the function, so the patch has
+    to land on `app.db.mongo_query` itself. Reads are dispatched on the
+    COLLECTION name: `desks` is passed in here, so only `trade_results` should
+    ever be queried, and asking for anything else is a bug worth failing on.
+    """
+    def _find_rows(collection, filt, columns, **kwargs):
+        assert collection == "trade_results", f"unexpected read of {collection}"
+        assert filt == {"cycle_id": "cycle-test"}
+        assert columns == ["ticker", "action", "decision_provenance"]
+        return tr_rows
+
+    with patch("app.db.mongo_query.find_rows", _find_rows):
         return reconcile_cycle("cycle-test", desks=desks)
 
 
@@ -158,7 +216,7 @@ def test_an_empty_comparison_is_not_a_pass():
 
 
 def test_reconciliation_never_raises():
-    with patch("app.db.connection.get_db", side_effect=RuntimeError("db down")):
+    with patch("app.db.mongo_query.find_rows", side_effect=RuntimeError("db down")):
         r = reconcile_cycle("cycle-test")
     assert r.error and not r.reconciled and not r.checked
 

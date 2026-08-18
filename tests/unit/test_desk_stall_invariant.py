@@ -10,12 +10,13 @@ seven checks that existed could not see it, because they all keyed off
 The same trap applies to testing it. A fake database that returns a fixed row
 list regardless of the query would test the reporting code and skip the part
 that actually decides what counts as a stall — the `allowed` phase set the
-check sends to SQL. That set is where the `INIT` exclusion lives, and the
-`INIT` exclusion is the difference between a useful alert and one that fires
-22 times a week on healthy triage skips until somebody mutes it.
+check sends to the database. That set is where the `INIT` exclusion lives, and
+the `INIT` exclusion is the difference between a useful alert and one that
+fires 22 times a week on healthy triage skips until somebody mutes it.
 
-So `_FakeDB` applies the check's OWN parameters to filter the roster, mimicking
-`phase <> ALL(...)`. If the check stops excluding `INIT`, these tests fail.
+So `_FakeDB` applies the check's OWN filter to the roster, mimicking the
+`{"phase": {"$nin": [...]}}` it passes to `mongo_store.find_docs`. If the check
+stops excluding `INIT`, these tests fail.
 
 Calibrated against 7 days of production (2026-07-30): PM_DONE 176 and INIT 22
 are silent; DEBATE_DONE 5 and RESEARCH_DONE 1 fire. A live replay over 48
@@ -28,8 +29,6 @@ by an env var; the synthetic half never skips.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
 import pytest
 
 from app.v3 import invariants
@@ -38,41 +37,68 @@ from app.v3 import invariants
 # ── Test doubles ─────────────────────────────────────────────────────────
 
 
-class _Result:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def fetchall(self):
-        return self._rows
-
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-
 class _FakeDB:
-    """Applies the check's own params, so the phase filter is under test.
+    """Applies the check's own filter, so the phase filter is under test.
 
     `desks` holds `(ticker, phase)` or
     `(ticker, phase, work_landed, decided, explained)` — the extra columns
     default to the HOOD shape (research lost, undecided, unexplained),
-    which is what this check was calibrated on. `execute` reproduces
-    `WHERE cycle_id = %s AND phase <> ALL(%s)` using the params the check
-    actually passed — not a hardcoded expectation of them.
+    which is what this check was calibrated on.
+
+    The check reads `shared_desk` through `mongo_store.find_docs` with
+    `{"cycle_id": ..., "phase": {"$nin": [...]}}`, and decides `work_landed` /
+    `decided` with `count_docs` against `analysis_results` / `trade_results`.
+    `find_docs` here reproduces that `$nin` using the filter the check
+    ACTUALLY passed — not a hardcoded expectation of it — so dropping the
+    `INIT` exclusion still fails these tests, exactly as it did when the check
+    spoke SQL.
     """
 
     def __init__(self, desks, cycle_id="cycle-test-1"):
         self.desks = [tuple(d) + (False, False, False)[len(d) - 2:] for d in desks]
         self.cycle_id = cycle_id
-        self.params_seen = None
+        self.filter_seen = None
+        self.collections_written = []
 
-    def execute(self, sql, params=None):
-        self.params_seen = params
-        want_cycle, allowed = params[0], set(params[1])
-        rows = [
+    # ── reads ────────────────────────────────────────────────────────
+    def find_docs(self, collection, filt, **kwargs):
+        assert collection == "shared_desk", collection
+        self.filter_seen = filt
+        want_cycle = filt["cycle_id"]
+        allowed = set(filt["phase"]["$nin"])
+        rows = sorted(
             d for d in self.desks
             if want_cycle == self.cycle_id and d[1] not in allowed
+        )
+        return [
+            {
+                "ticker": t,
+                "phase": p,
+                # `explained` is carried in desk_data, the shape the check reads.
+                "desk_data": (
+                    {"cycle_metadata": {"pipeline_incomplete": "stamped"}}
+                    if explained else {}
+                ),
+            }
+            for t, p, _landed, _decided, explained in rows
         ]
-        return _Result(sorted(rows))
+
+    def count_docs(self, collection, filt, **kwargs):
+        ticker = filt.get("ticker")
+        if filt.get("cycle_id") != self.cycle_id:
+            return 0
+        for t, _p, landed, decided, _e in self.desks:
+            if t == ticker:
+                if collection == "analysis_results":
+                    return 1 if landed else 0
+                if collection == "trade_results":
+                    return 1 if decided else 0
+        return 0
+
+    # ── writes (must never happen on this path) ──────────────────────
+    def _write(self, collection, *a, **k):
+        self.collections_written.append(collection)
+        return None
 
 
 @pytest.fixture
@@ -88,14 +114,28 @@ def recorded(monkeypatch):
     return calls
 
 
+def _install(db, monkeypatch):
+    """Point the Mongo layer at `db`.
+
+    The check imports `app.db.mongo_store` INSIDE the function, so setting an
+    attribute on `invariants` would be a silent no-op — the module attributes
+    themselves have to be replaced.
+    """
+    from app.db import mongo_store
+
+    monkeypatch.setattr(mongo_store, "find_docs", db.find_docs)
+    monkeypatch.setattr(mongo_store, "count_docs", db.count_docs)
+    for name in ("insert_docs", "upsert_doc", "update_docs", "delete_docs",
+                 "find_one_and_update"):
+        monkeypatch.setattr(
+            mongo_store, name,
+            (lambda n: lambda *a, **k: db._write(n, *a, **k))(name),
+        )
+
+
 def _run(desks, recorded, monkeypatch, cycle_id="cycle-test-1"):
     db = _FakeDB(desks, cycle_id)
-
-    @contextmanager
-    def _get_db():
-        yield db
-
-    monkeypatch.setattr("app.db.connection.get_db", _get_db)
+    _install(db, monkeypatch)
     out = invariants._check_desks_reached_terminal(cycle_id)
     return out, db
 
@@ -247,12 +287,7 @@ def test_scopes_to_the_cycle_it_was_asked_about(recorded, monkeypatch):
 
     recorded.clear()
     db = _FakeDB([("HOOD", "DEBATE_DONE")], cycle_id="cycle-OTHER")
-
-    @contextmanager
-    def _get_db():
-        yield db
-
-    monkeypatch.setattr("app.db.connection.get_db", _get_db)
+    _install(db, monkeypatch)
     assert invariants._check_desks_reached_terminal("cycle-test-1") == []
 
 
@@ -347,12 +382,17 @@ def test_the_check_is_actually_registered(monkeypatch, recorded):
 
 def test_a_probe_failure_is_not_a_violation(monkeypatch, recorded):
     """No database at all (the unit-test case) must stay silent, not fire."""
-    @contextmanager
-    def _boom():
-        raise RuntimeError("no database")
-        yield  # pragma: no cover
+    from app.db import mongo_query, mongo_store
 
-    monkeypatch.setattr("app.db.connection.get_db", _boom)
+    def _boom(*a, **k):
+        raise RuntimeError("no database")
+
+    # The probe is Mongo now; patching `connection.get_db` here intercepted
+    # nothing and left the whole test vacuous.
+    for name in ("find_docs", "count_docs", "aggregate"):
+        monkeypatch.setattr(mongo_store, name, _boom)
+    for name in ("find_row", "find_rows", "scalar", "count"):
+        monkeypatch.setattr(mongo_query, name, _boom)
 
     assert invariants.check_cycle_complete(cycle_id="cycle-test-1") == []
     assert recorded == []
@@ -366,22 +406,34 @@ def _crash(recorded, monkeypatch, error, *, desks=(("HOOD", "DEBATE_DONE"),),
     """Drive record_ticker_crash against a fake desk table, capturing writes."""
     class _DB:
         def __init__(self):
-            self.statements = []
+            self.reads = []       # (collection, filter) of every read
+            self.writes = []      # (helper, collection) of every write
 
-        def execute(self, sql, params=None):
-            self.statements.append(sql)
-            want_cycle, want_ticker = params[0], params[1]
+        def find_row(self, collection, filt, columns, **kwargs):
+            self.reads.append((collection, filt))
+            assert columns == ["phase"], columns
             rows = [(p,) for t, p in desks
-                    if t == want_ticker and want_cycle == cycle_id]
-            return _Result(rows)
+                    if t == filt.get("ticker") and filt.get("cycle_id") == cycle_id]
+            return rows[0] if rows else None
+
+        def write(self, helper, collection, *a, **k):
+            self.writes.append((helper, collection))
+            return None
 
     db = _DB()
 
-    @contextmanager
-    def _get_db():
-        yield db
+    from app.db import mongo_query, mongo_store
 
-    monkeypatch.setattr("app.db.connection.get_db", _get_db)
+    # Both halves are patched: stubbing only the read would leave any write the
+    # recorder makes pointed at the real store.
+    monkeypatch.setattr(mongo_query, "find_row", db.find_row)
+    for name in ("insert_docs", "upsert_doc", "update_docs", "delete_docs",
+                 "find_one_and_update"):
+        monkeypatch.setattr(
+            mongo_store, name,
+            (lambda n: lambda coll, *a, **k: db.write(n, coll, *a, **k))(name),
+        )
+
     out = invariants.record_ticker_crash(
         ticker=ticker, cycle_id=cycle_id, error=error,
     )
@@ -427,11 +479,12 @@ def test_the_crash_recorder_never_writes_to_shared_desk(recorded, monkeypatch):
     """
     _out, db = _crash(recorded, monkeypatch, RuntimeError("boom"))
 
-    joined = " ".join(db.statements).upper()
-    assert "UPDATE" not in joined
-    assert "INSERT" not in joined
-    assert "DELETE" not in joined
-    assert joined.count("SELECT") == 1
+    # No write helper of any kind was reached — not an upsert, not an update,
+    # not a delete, against `shared_desk` or anything else.
+    assert db.writes == []
+    # And the desk was only READ, exactly once, for its phase.
+    assert db.reads == [("shared_desk", {"cycle_id": "cycle-test-1",
+                                         "ticker": "HOOD"})]
 
 
 def test_a_crash_still_leaves_the_stall_check_firing(recorded, monkeypatch):
@@ -455,12 +508,12 @@ def test_crash_recorder_needs_both_identifiers(ticker, cycle, recorded, monkeypa
 
 def test_a_probe_failure_still_records_the_crash(recorded, monkeypatch):
     """The crash is the point; the phase is a nicety. Losing both would be worse."""
-    @contextmanager
-    def _boom():
-        raise RuntimeError("no database")
-        yield  # pragma: no cover
+    from app.db import mongo_query
 
-    monkeypatch.setattr("app.db.connection.get_db", _boom)
+    def _boom(*a, **k):
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(mongo_query, "find_row", _boom)
     out = invariants.record_ticker_crash(
         ticker="HOOD", cycle_id="cycle-test-1", error=ValueError("real cause"),
     )

@@ -50,38 +50,24 @@ STALE_LLM_SUMMARY = "Stale June one-liner about the company. " * 18   # 702 char
 FULL_ARTICLE = "The full scraped article body, sentence by sentence. " * 54  # 2,808
 
 
-class _FakeCursor:
-    """`get_db()` yields a CURSOR, not a connection."""
+def _doc(*, llm_summary, summary):
+    """One `news_articles` document as the live collection holds it.
 
-    def __init__(self, rows):
-        self._rows = rows
-
-    def execute(self, sql, params=None):
-        self.last_sql = sql
-        return self
-
-    def fetchall(self):
-        return self._rows
-
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-
-class _FakeDb:
-    def __init__(self, rows):
-        self.cursor = _FakeCursor(rows)
-
-    def __enter__(self):
-        return self.cursor
-
-    def __exit__(self, *a):
-        return False
-
-
-def _row(body):
+    Both columns are present. Which one the tool reads is precisely what is
+    under test, so the fake must NOT collapse them — the old version applied
+    the COALESCE itself inside a fake `execute`, which measured the stub.
+    """
     from datetime import UTC, datetime
 
-    return ("art-1", "A headline", "Reuters", datetime(2026, 8, 10, tzinfo=UTC), body)
+    return {
+        "id": "art-1",
+        "ticker": "UFO",
+        "title": "A headline",
+        "publisher": "Reuters",
+        "published_at": datetime(2026, 8, 10, tzinfo=UTC),
+        "summary": summary,
+        "llm_summary": llm_summary,
+    }
 
 
 # ── The defect, behaviourally ────────────────────────────────────────────────
@@ -97,23 +83,9 @@ async def test_the_grounded_extractor_is_fed_the_full_article_not_the_stale_summ
     """
     from app.tools import finance_tools
 
-    # What the DB actually holds for one of the 640 rows. The query the tool
-    # runs today collapses these two columns into one before the tool ever
-    # sees them, so the fake DB has to apply the SAME collapse the SQL does —
-    # otherwise the test would be measuring its own stub.
-    def _execute_like_postgres(sql, params=None):
-        body = STALE_LLM_SUMMARY if "llm_summary" in sql else FULL_ARTICLE
-        return _FakeCursor([_row(body)])
-
-    cur = _FakeCursor([])
-    cur.execute = _execute_like_postgres
-
-    class _Db:
-        def __enter__(self):
-            return cur
-
-        def __exit__(self, *a):
-            return False
+    # What the DB actually holds for one of the 640 rows: both columns
+    # populated, the June stub shorter than the August article.
+    docs = [_doc(llm_summary=STALE_LLM_SUMMARY, summary=FULL_ARTICLE)]
 
     seen: dict = {}
 
@@ -121,7 +93,9 @@ async def test_the_grounded_extractor_is_fed_the_full_article_not_the_stale_summ
         seen["text"] = rows[0][3]
         return {}
 
-    with patch.object(finance_tools, "get_db", lambda: _Db()), \
+    # `finance_tools` imports mongo_store INSIDE get_finnhub_news, so the
+    # module attribute is not the one that resolves — patch the source.
+    with patch("app.db.mongo_store.find_docs", return_value=docs), \
          patch("app.collectors.news_collector.collect_finnhub_news", AsyncMock()), \
          patch("app.services.news_extraction.ensure_facts", _fake_ensure_facts):
         await finance_tools.get_finnhub_news("UFO")
@@ -145,19 +119,7 @@ async def test_a_sub_400_char_stale_summary_does_not_hide_a_real_article():
     tiny = "June stub." * 12  # 120 chars, below _MIN_TEXT_CHARS
     assert len(tiny) < news_extraction._MIN_TEXT_CHARS < len(FULL_ARTICLE)
 
-    def _execute_like_postgres(sql, params=None):
-        body = tiny if "llm_summary" in sql else FULL_ARTICLE
-        return _FakeCursor([_row(body)])
-
-    cur = _FakeCursor([])
-    cur.execute = _execute_like_postgres
-
-    class _Db:
-        def __enter__(self):
-            return cur
-
-        def __exit__(self, *a):
-            return False
+    docs = [_doc(llm_summary=tiny, summary=FULL_ARTICLE)]
 
     seen: dict = {}
 
@@ -165,7 +127,7 @@ async def test_a_sub_400_char_stale_summary_does_not_hide_a_real_article():
         seen["text"] = rows[0][3]
         return {}
 
-    with patch.object(finance_tools, "get_db", lambda: _Db()), \
+    with patch("app.db.mongo_store.find_docs", return_value=docs), \
          patch("app.collectors.news_collector.collect_finnhub_news", AsyncMock()), \
          patch("app.services.news_extraction.ensure_facts", _fake_ensure_facts):
         await finance_tools.get_finnhub_news("UFO")

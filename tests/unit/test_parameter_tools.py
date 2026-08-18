@@ -47,9 +47,12 @@ def test_get_parameters_tool_returns_full_registry(monkeypatch):
     from app.services import parameter_store as ps
     from app.tools.parameter_tools import get_parameters
 
-    def _boom():
+    # `get_db` is gone: the store resolves every value through
+    # mongo_query.find_row, so that is what has to be unreachable for this to
+    # exercise the fail-open path instead of the live-DB guard.
+    def _boom(*a, **k):
         raise RuntimeError("db down")
-    monkeypatch.setattr(ps, "get_db", _boom)
+    monkeypatch.setattr(ps.mongo_query, "find_row", _boom)
     ps.invalidate_cache()
 
     out = json.loads(_run(get_parameters()))
@@ -62,9 +65,12 @@ def test_propose_tool_surfaces_governor_rejection(monkeypatch):
     from app.services import parameter_store as ps
     from app.tools.parameter_tools import propose_parameter_change
 
-    def _boom():
+    # `get_db` is gone: the store resolves every value through
+    # mongo_query.find_row, so that is what has to be unreachable for this to
+    # exercise the fail-open path instead of the live-DB guard.
+    def _boom(*a, **k):
         raise RuntimeError("db down")
-    monkeypatch.setattr(ps, "get_db", _boom)
+    monkeypatch.setattr(ps.mongo_query, "find_row", _boom)
     ps.invalidate_cache()
 
     out = json.loads(_run(propose_parameter_change(

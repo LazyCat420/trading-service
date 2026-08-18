@@ -15,49 +15,37 @@ that ran to completion and decided nothing. Wiring the two together would give
 the pipeline one observer where it has two, and two observers are only worth
 having when they can disagree.
 
-The fake DB below reproduces the check's own probe semantics from the params it
-actually passes, rather than asserting a hardcoded call shape.
+The fake DB below reproduces the check's own probe semantics from the filter it
+actually passes to `mongo_store.count_docs`, rather than asserting a hardcoded
+call shape.
 """
 
 from __future__ import annotations
-
-from contextlib import contextmanager
 
 import pytest
 
 from app.v3 import invariants
 
 
-class _Result:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-    def fetchall(self):
-        return self._rows
-
-
 class _FakeDB:
-    """Answers the two existence probes using the params the check passed.
+    """Answers the two existence probes using the filter the check passed.
 
-    Keyed off the table named in the SQL, so the test cannot pass by matching
-    the order the probes happen to run in.
+    Keyed off the COLLECTION name, so the test cannot pass by matching the
+    order the probes happen to run in.
     """
 
     def __init__(self, *, desks, trade_rows, cycle_id="cycle-test-1"):
         self.desks = set(desks)
         self.trade_rows = set(trade_rows)
         self.cycle_id = cycle_id
-        self.queries: list[str] = []
+        self.queries: list[tuple[str, dict]] = []
 
-    def execute(self, sql, params=None):
-        self.queries.append(" ".join(sql.split()))
-        cycle_id, ticker = params[0], params[1]
-        table = self.desks if "shared_desk" in sql else self.trade_rows
-        hit = cycle_id == self.cycle_id and ticker in table
-        return _Result([(1,)] if hit else [])
+    def count_docs(self, collection, filt, **kwargs):
+        self.queries.append((collection, filt))
+        assert collection in ("shared_desk", "trade_results"), collection
+        table = self.desks if collection == "shared_desk" else self.trade_rows
+        hit = filt.get("cycle_id") == self.cycle_id and filt.get("ticker") in table
+        return 1 if hit else 0
 
 
 class _Desk:
@@ -83,11 +71,11 @@ def _run(monkeypatch, *, desks=("NVDA",), trade_rows=("NVDA",),
          ticker="NVDA", cycle_id="cycle-test-1", desk=None, result=None):
     db = _FakeDB(desks=desks, trade_rows=trade_rows, cycle_id=cycle_id)
 
-    @contextmanager
-    def _get_db():
-        yield db
+    # The check imports `app.db.mongo_store` INSIDE the function, so setting
+    # the attribute on `invariants` would be a silent no-op.
+    from app.db import mongo_store
 
-    monkeypatch.setattr("app.db.connection.get_db", _get_db)
+    monkeypatch.setattr(mongo_store, "count_docs", db.count_docs)
     out = invariants.check_ticker_complete(
         ticker=ticker, cycle_id=cycle_id, desk=desk, result=result
     )
@@ -196,12 +184,14 @@ class TestItIsAProbeNotAGate:
     def test_a_db_failure_yields_no_violations(self, monkeypatch, recorded):
         """A probe that cannot read must not invent a violation — that would
         turn a transient outage into a fleet of false alarms."""
-        @contextmanager
-        def _boom():
-            raise RuntimeError("connection refused")
-            yield  # pragma: no cover
+        from app.db import mongo_store
 
-        monkeypatch.setattr("app.db.connection.get_db", _boom)
+        def _boom(*a, **k):
+            raise RuntimeError("connection refused")
+
+        # The probe is `mongo_store.count_docs` now; patching `connection.get_db`
+        # here intercepted nothing and left this test vacuous.
+        monkeypatch.setattr(mongo_store, "count_docs", _boom)
         out = invariants.check_ticker_complete(ticker="NVDA", cycle_id="c1")
         assert out == []
         assert recorded == []

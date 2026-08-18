@@ -16,39 +16,39 @@ tests pin the two mechanisms that make the question askable.
 """
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.autoresearch import skill_loader as L
 from app.autoresearch import skill_optimizer as S
 
 
-def _fake_db(row):
-    """Minimal get_db() stand-in: one fetchone() result."""
-    class _Cur:
-        def fetchone(self_inner):
-            return row
+def _skills(row):
+    """Patch the loader's Mongo read to answer `agent_skills` with `row`.
 
-        def fetchall(self_inner):
-            return [row] if row else []
+    `mongo_query.find_row` returns a TUPLE in the requested column order — the
+    loader asks for `['skill_text', 'version']` — so the fixtures are tuples,
+    not documents. Dispatch is on the COLLECTION name so a read of anything
+    else fails loudly rather than being handed a skill doc.
+    """
+    q = MagicMock()
+    q.find_row.side_effect = lambda coll, *a, **k: (
+        row if coll == "agent_skills" else None
+    )
+    return patch.object(L, "mongo_query", q)
 
-    class _DB:
-        def execute(self_inner, *a, **k):
-            return _Cur()
 
-        def __enter__(self_inner):
-            return self_inner
-
-        def __exit__(self_inner, *a):
-            return False
-
-    return _DB()
+def _skills_raise(exc_factory):
+    """The loader's read blows up — an agent run must survive it."""
+    q = MagicMock()
+    q.find_row.side_effect = lambda *a, **k: exc_factory()
+    return patch.object(L, "mongo_query", q)
 
 
 # ── The loader must report the version it SERVED ────────────────────
 
 def test_version_is_reported_alongside_the_prefix():
     L.invalidate_skill_cache()
-    with patch("app.db.connection.get_db", lambda: _fake_db(("- **A**: Always cap size.", 7))):
+    with _skills(("- **A**: Always cap size.", 7)):
         prefix = L.load_skill_prefix("v3_board_of_directors")
         version = L.active_skill_version("v3_board_of_directors")
     assert "Always cap size" in prefix
@@ -62,10 +62,10 @@ def test_version_comes_from_the_same_cache_entry_as_the_prompt():
     accept a new version mid-cycle while this process serves a cached older one
     for up to the TTL."""
     L.invalidate_skill_cache()
-    with patch("app.db.connection.get_db", lambda: _fake_db(("- **A**: Always cap size.", 7))):
+    with _skills(("- **A**: Always cap size.", 7)):
         L.load_skill_prefix("v3_board_of_directors")
     # DB now advertises v8; the cache still holds v7 and must keep reporting it.
-    with patch("app.db.connection.get_db", lambda: _fake_db(("- **A**: Always cap size.", 8))):
+    with _skills(("- **A**: Always cap size.", 8)):
         assert L.active_skill_version("v3_board_of_directors") == 7
     L.invalidate_skill_cache()
 
@@ -73,7 +73,7 @@ def test_version_comes_from_the_same_cache_entry_as_the_prompt():
 def test_no_skill_doc_is_none_not_zero():
     """Absent and "version zero" are different claims; NULL must survive."""
     L.invalidate_skill_cache()
-    with patch("app.db.connection.get_db", lambda: _fake_db(None)):
+    with _skills(None):
         assert L.active_skill_version("v3_board_of_directors") is None
     L.invalidate_skill_cache()
 
@@ -85,7 +85,7 @@ def test_a_load_failure_never_raises():
     def _boom():
         raise RuntimeError("db down")
 
-    with patch("app.db.connection.get_db", _boom):
+    with _skills_raise(_boom):
         assert L.load_skill_prefix("v3_board_of_directors") == ""
         assert L.active_skill_version("v3_board_of_directors") is None
     L.invalidate_skill_cache()
@@ -93,14 +93,14 @@ def test_a_load_failure_never_raises():
 
 def test_version_snapshot_omits_agents_with_no_doc():
     L.invalidate_skill_cache()
-    with patch("app.db.connection.get_db", lambda: _fake_db(None)):
+    with _skills(None):
         assert L.active_skill_versions() == {}
     L.invalidate_skill_cache()
 
 
 def test_version_snapshot_covers_the_target_roster():
     L.invalidate_skill_cache()
-    with patch("app.db.connection.get_db", lambda: _fake_db(("- **A**: Always cap size.", 3))):
+    with _skills(("- **A**: Always cap size.", 3)):
         snap = L.active_skill_versions()
     assert set(snap) == set(S.TARGET_AGENTS), "snapshot must cover every target agent"
     assert all(v == 3 for v in snap.values())
@@ -117,11 +117,14 @@ def test_unknown_governed_count_does_not_freeze_the_agent():
 
 
 def test_governed_count_returns_none_when_the_column_is_missing():
-    def _boom():
-        raise RuntimeError('column "skill_versions" does not exist')
-
-    with patch("app.autoresearch.skill_optimizer.get_db", _boom):
+    q = MagicMock()
+    # The count itself is what fails — an absent `skill_versions` field is the
+    # Mongo shape of the missing column this test was written for.
+    q.count.side_effect = RuntimeError("skill_versions is not indexed")
+    with patch.object(S, "mongo_query", q):
         assert S._decisions_governed("v3_board_of_directors", 5) is None
+    q.count.assert_called_once()
+    assert q.count.call_args[0][0] == "decision_outcomes"
 
 
 def test_maturity_threshold_exceeds_a_single_cycle():

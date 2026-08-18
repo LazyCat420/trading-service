@@ -209,6 +209,55 @@ def load_close_returns(ticker: str, lookback_days: int = 500) -> np.ndarray:
     return np.diff(np.log(closes))
 
 
+def dominant_source_for(ticker: str) -> str | None:
+    """The freshest-then-deepest vendor for one ticker, from MongoDB.
+
+    The Mongo counterpart of `_dominant_source_sql`, and the reason it exists:
+    the SQL version was added on 2026-07-30 after measuring a mean 20.05%
+    disagreement between vendors on dual-source tickers (ALLY 1.11%, CRH ~1%,
+    DRIP 718%), on 19% of completed desks. `price_history`'s primary key is
+    `(ticker, date, source)`, so BOTH vendors carry a row for the same date and
+    an unfiltered `sort=[("date", -1)], limit=1` returns whichever the storage
+    engine happens to emit first. Read an entry price one way and an exit price
+    the other and a vendor spread becomes P&L.
+
+    The Mongo port of `latest_close`/`forward_window` dropped that filter, so
+    the 2026-07-30 fix was live in SQL and absent the moment those functions
+    moved. This restores it with the identical rule: prefer a vendor whose most
+    recent bar is within `_FRESHNESS_LAG_DAYS` of the ticker's newest bar, then
+    the vendor with the most rows, then the name, so ties break the same way in
+    both stores.
+
+    Returns None when the ticker has no rows or only one vendor, in which case
+    the caller needs no filter.
+    """
+    from app.db import mongo_store
+
+    stats = mongo_store.aggregate("price_history", [
+        {"$match": {"ticker": ticker}},
+        {"$group": {"_id": "$source", "n": {"$sum": 1}, "mx": {"$max": "$date"}}},
+    ])
+    if len(stats) <= 1:
+        return None
+
+    newest = max(r["mx"] for r in stats if r.get("mx") is not None)
+    cutoff = newest - timedelta(days=_FRESHNESS_LAG_DAYS)
+
+    def _rank(r: dict):
+        mx = r.get("mx")
+        fresh = bool(mx is not None and mx >= cutoff)
+        # freshness DESC, count DESC, source name ASC — same order as the SQL
+        return (not fresh, -int(r.get("n") or 0), str(r["_id"] or ""))
+
+    return sorted(stats, key=_rank)[0]["_id"]
+
+
+def _one_vendor(ticker: str, query: dict) -> dict:
+    """Add the dominant-source pin to a single-ticker price_history filter."""
+    src = dominant_source_for(ticker)
+    return {**query, "source": src} if src is not None else query
+
+
 def latest_close(ticker: str) -> float | None:
     """Most recent close for `ticker`."""
     from app.db import mongo_store
@@ -216,7 +265,7 @@ def latest_close(ticker: str) -> float | None:
     ticker = ticker.strip().upper()
     docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker, "close": {"$gt": 0}},
+        _one_vendor(ticker, {"ticker": ticker, "close": {"$gt": 0}}),
         sort=[("date", -1)],
         limit=1,
     )
@@ -235,9 +284,13 @@ def forward_window(ticker: str, start, sessions: int) -> list[float] | None:
     if n < 2:
         return None
 
+    # Without the vendor pin, `limit=n` returns n ROWS spanning only ~n/2
+    # DATES on a dual-source ticker, so the "window" silently covers half the
+    # sessions it claims.
     docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker, "close": {"$gt": 0}, "date": {"$gte": start}},
+        _one_vendor(ticker, {"ticker": ticker, "close": {"$gt": 0},
+                             "date": {"$gte": start}}),
         sort=[("date", 1)],
         limit=n,
     )

@@ -232,23 +232,29 @@ def test_store_post_survives_an_unknown_comment_count():
     That combination silently dropped every RSS post while logging at INFO,
     so the table would empty out and the collector would look healthy.
     """
-    from app.collectors.reddit_collector import _store_post
+    from unittest.mock import MagicMock, patch
+
+    from app.collectors import reddit_collector as rc
 
     captured = []
 
-    class _FakeDB:
-        def execute(self, sql, params=None):
-            captured.append((sql, params))
-            return self
+    store = MagicMock()
+    store.upsert_doc.side_effect = lambda collection, key, doc, **_kw: captured.append(
+        (collection, key, doc)
+    )
 
     post = {"id": "abc", "title": "DD", "body": "y" * 200,
             "score": None, "num_comments": None, "upvote_ratio": None,
             "created_at": "2026-08-10T10:00:00+00:00"}
 
-    assert _store_post(_FakeDB(), post, "NVDA", "stocks", set()) == 1
-    insert_params = captured[0][1]
+    with patch.object(rc, "mongo_store", store):
+        assert rc._store_post(post, "NVDA", "stocks", set()) == 1
+
+    collection, key, doc = captured[0]
+    assert collection == "reddit_posts"
+    assert key == {"id": "abc_NVDA"}
     # score / upvote_ratio / comment_count / comment_velocity all NULL, not 0.
-    assert insert_params[5] is None
-    assert insert_params[6] is None
-    assert insert_params[7] is None
-    assert insert_params[11] is None
+    assert doc["score"] is None
+    assert doc["upvote_ratio"] is None
+    assert doc["comment_count"] is None
+    assert doc["comment_velocity"] is None

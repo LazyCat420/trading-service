@@ -1,97 +1,105 @@
 import pytest
-import pandas as pd
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
 
+from app.data import sector_aggregator, sector_correlation_engine
 from app.data.sector_aggregator import backfill_sector_performance
 from app.data.sector_correlation_engine import compute_all_correlations
 
 
 @pytest.mark.asyncio
-async def test_correlation_computes_with_backfilled_data(monkeypatch, mock_db):
+async def test_correlation_computes_with_backfilled_data():
     """
     Simulate startup:
     1. backfill_sector_performance runs on 20 days of data
     2. compute_all_correlations runs
     Assert that the correlations actually compute instead of skipping.
+
+    Both modules read through `mongo_query` and write through
+    `mongo_store.upsert_doc` now. The reads used to be dispatched on SQL
+    substrings and the writes read off an `executemany` parameter list; both
+    are keyed on the COLLECTION NAME here, and the written row is checked by
+    field name rather than by tuple position.
     """
-    from contextlib import contextmanager
-
-    @contextmanager
-    def mock_get_db():
-        yield mock_db
-
-    monkeypatch.setattr("app.data.sector_aggregator.get_db", mock_get_db)
-    monkeypatch.setattr("app.data.sector_correlation_engine.get_db", mock_get_db)
-    
-    # 1. Setup mock data for backfill_sector_performance
     base_date = datetime(2023, 1, 1)
     mock_dates = [(base_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(20)]
-    
-    backfill_data = []
-    # Tech sector
-    for i, date_str in enumerate(mock_dates):
-        backfill_data.append(("AAPL", date_str, 100.0 + i, "Technology"))
-    # Finance sector
-    for i, date_str in enumerate(mock_dates):
-        backfill_data.append(("JPM", date_str, 200.0 - i, "Finance"))
 
-    def mock_execute(query, *args, **kwargs):
-        cursor = MagicMock()
-        if "COUNT(DISTINCT date)" in query:
-            cursor.fetchone.return_value = (0,)
-        elif "SELECT p.ticker, p.date, p.close, t.sector" in query:
-            cursor.description = [("ticker",), ("date",), ("close",), ("sector",)]
-            cursor.fetchall.return_value = backfill_data
-        elif "SELECT sector, date, avg_return_1d" in query:
-            cursor.description = [("sector",), ("date",), ("avg_return_1d",)]
-            # Mock the data that would have been inserted by backfill
-            sector_data = []
-            for i, date_str in enumerate(mock_dates[1:]): # pct change drops first day
-                # Add variance so correlation isn't NaN
-                val = 0.01 if i % 2 == 0 else -0.01
-                sector_data.append(("Technology", date_str, val))
-                sector_data.append(("Finance", date_str, -val))
-            cursor.fetchall.return_value = sector_data
-        elif "SELECT p.ticker, p.date, p.close as stock_price, t.sector" in query:
-            cursor.description = [("ticker",), ("date",), ("stock_price",), ("sector",)]
-            cursor.fetchall.return_value = []
-        elif "SELECT symbol as commodity, date, close as comm_price" in query:
-            cursor.description = [("commodity",), ("date",), ("comm_price",)]
-            cursor.fetchall.return_value = []
-        else:
-            cursor.fetchall.return_value = []
-        return cursor
-        
-    mock_db.execute.side_effect = mock_execute
-    
-    # Run backfill
-    await backfill_sector_performance()
-    
-    # Verify backfill ran and inserted 19 days (20 - 1) * 2 sectors = 38 rows
-    assert mock_db.executemany.call_count == 1
-    insert_data = mock_db.executemany.call_args[0][1]
-    assert len(insert_data) == 38
-    
-    # Run correlations (which uses 30d period so it expects > 15 points)
-    # 19 days is > 15 days, so it should not skip
-    result = await compute_all_correlations()
-    
-    # Ensure executemany was called a second time for sector_correlations
-    assert mock_db.executemany.call_count == 2
-    
-    # Verify sector_correlations insert
-    corr_insert_query = mock_db.executemany.call_args[0][0]
-    corr_insert_data = mock_db.executemany.call_args[0][1]
-    
-    assert "INSERT INTO sector_correlations" in corr_insert_query
-    
-    # We expect 2 periods (30d and 90d) for the 1 pair (Technology, Finance)
-    # But wait, 19 days is > 15 (for 30d) but NOT > 45 (for 90d).
-    # So it should only insert the 30d correlation.
-    assert len(corr_insert_data) == 1
-    
-    row = corr_insert_data[0]
-    assert (row[0] == "Finance" and row[1] == "Technology") or (row[0] == "Technology" and row[1] == "Finance")
-    assert row[4] == "30d"
+    # price_history JOIN ticker_metadata, as `join_rows` returns it:
+    # tuples in the requested select order (ticker, date, close, sector).
+    backfill_rows = []
+    for i, date_str in enumerate(mock_dates):
+        backfill_rows.append(("AAPL", date_str, 100.0 + i, "Technology"))
+    for i, date_str in enumerate(mock_dates):
+        backfill_rows.append(("JPM", date_str, 200.0 - i, "Finance"))
+
+    # ── 1. Backfill ──────────────────────────────────────────────────────
+    agg_query = MagicMock()
+    # No existing sector_performance history, so the backfill must not skip.
+    agg_query.agg_row.return_value = (0,)
+    agg_query.join_rows.return_value = backfill_rows
+
+    agg_store = MagicMock()
+    backfilled = []
+    agg_store.upsert_doc.side_effect = (
+        lambda collection, key, doc, **_kw: backfilled.append((collection, key, doc))
+    )
+
+    with patch.object(sector_aggregator, "mongo_query", agg_query), \
+         patch.object(sector_aggregator, "mongo_store", agg_store):
+        await backfill_sector_performance()
+
+    # 19 days (20 - 1, pct_change drops the first) * 2 sectors = 38 rows.
+    assert len(backfilled) == 38
+    assert {c for c, _k, _d in backfilled} == {"sector_performance"}
+    assert {d["sector"] for _c, _k, d in backfilled} == {"Technology", "Finance"}
+    # Each row is keyed on the sector-day it describes, so a re-run updates
+    # rather than duplicating.
+    assert all(set(k) == {"sector", "date"} for _c, k, _d in backfilled)
+
+    # ── 2. Correlations ──────────────────────────────────────────────────
+    # What the backfill just wrote, read back the way the engine reads it:
+    # find_rows("sector_performance", ...) -> (sector, date, avg_return_1d).
+    # Alternating sign gives the pair a real, non-NaN correlation.
+    sector_rows = []
+    for i, date_str in enumerate(mock_dates[1:]):
+        val = 0.01 if i % 2 == 0 else -0.01
+        sector_rows.append(("Technology", date_str, val))
+        sector_rows.append(("Finance", date_str, -val))
+
+    def _find_rows(collection, *_a, **_kw):
+        if collection == "sector_performance":
+            return sector_rows
+        return []          # asset_prices: no commodities in this scenario
+
+    corr_query = MagicMock()
+    corr_query.find_rows.side_effect = _find_rows
+    corr_query.join_rows.return_value = []   # no stock rows -> no commodity pairs
+
+    corr_store = MagicMock()
+    written = []
+    corr_store.upsert_doc.side_effect = (
+        lambda collection, key, doc, **_kw: written.append((collection, key, doc))
+    )
+
+    with patch.object(sector_correlation_engine, "mongo_query", corr_query), \
+         patch.object(sector_correlation_engine, "mongo_store", corr_store):
+        result = await compute_all_correlations()
+
+    # 19 days is > 15 (half of the 30d window) but NOT > 45 (half of 90d), so
+    # only the 30d correlation for the single (Technology, Finance) pair is
+    # written.
+    assert len(written) == 1
+    collection, key, doc = written[0]
+    assert collection == "sector_correlations"
+    assert {doc["sector_a"], doc["sector_b"]} == {"Technology", "Finance"}
+    assert doc["period"] == "30d"
+    assert key == {
+        "sector_a": doc["sector_a"], "sector_b": doc["sector_b"], "period": "30d"
+    }
+    assert doc["data_points"] == 19
+    # The pair was constructed as exact mirrors, so it must come back as a
+    # strong inverse — a correlation computed over the wrong axis would not.
+    assert doc["correlation"] == pytest.approx(-1.0)
+    assert doc["tier"] == "inversely_correlated"
+
     assert "Computed 1 sector & 0 comm correlations" in result

@@ -27,6 +27,7 @@ app/db/mongo.py stay where they are.
 import logging
 import os
 from contextlib import contextmanager
+from collections.abc import Sequence
 from typing import Any, Iterable, Optional
 
 import pymongo
@@ -285,14 +286,27 @@ def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],
     _coll(collection).update_one(key, update, upsert=True, session=session)
 
 
-def bulk_upsert(collection: str, docs: list[dict[str, Any]], key_field: str = "id") -> int:
+def bulk_upsert(collection: str, docs: list[dict[str, Any]],
+                key_field: "str | Sequence[str]" = "id") -> int:
     """Upsert many docs in ONE round-trip, keyed on `key_field`. Orders of
     magnitude faster than per-doc upsert — use for backfills / big tables.
-    Returns the number of docs submitted."""
+    Returns the number of docs submitted.
+
+    `key_field` takes a sequence for a COMPOSITE natural key. Several tables
+    the migration touches are keyed on a pair — `technicals` on
+    (ticker, date), `price_history` on (ticker, date, source) — and a
+    single-field version pushed those callers back to per-document upserts:
+    technical_processor was issuing 287 round-trips to write one ticker's
+    indicators, which is the 22.6s/ticker shape its own test exists to pin.
+    """
     if not docs:
         return 0
     ensure_indexes()
-    ops = [pymongo.UpdateOne({key_field: d[key_field]}, {"$set": d}, upsert=True) for d in docs]
+    keys = [key_field] if isinstance(key_field, str) else list(key_field)
+    ops = [
+        pymongo.UpdateOne({k: d[k] for k in keys}, {"$set": d}, upsert=True)
+        for d in docs
+    ]
     _coll(collection).bulk_write(ops, ordered=False)
     return len(docs)
 
