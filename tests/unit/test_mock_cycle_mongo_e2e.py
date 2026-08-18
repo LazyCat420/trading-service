@@ -177,6 +177,10 @@ class InMemoryMongoCollection:
 
         return _DelRes()
 
+    def count_documents(self, query: Optional[dict] = None, session: Optional[Any] = None) -> int:
+        q = query or {}
+        return sum(1 for d in self.docs if self._matches(d, q))
+
     def distinct(self, key: str, query: Optional[dict] = None, session: Optional[Any] = None) -> list:
         q = query or {}
         seen = set()
@@ -197,23 +201,29 @@ class InMemoryMongoCollection:
             elif "$group" in stage:
                 group_spec = stage["$group"]
                 grouped_res = {}
+                id_spec = group_spec.get("_id")
+                if isinstance(id_spec, str) and id_spec.startswith("$"):
+                    id_field = id_spec.lstrip("$")
+                    grouped_res["_id"] = current[0].get(id_field) if current else None
                 for field, expr in group_spec.items():
                     if field == "_id":
                         continue
                     if isinstance(expr, dict):
                         op, op_field = next(iter(expr.items()))
-                        op_field = op_field.lstrip("$")
-                        vals = [float(str(d[op_field])) for d in current if d.get(op_field) is not None]
-                        if op == "$avg":
-                            grouped_res[field] = sum(vals) / len(vals) if vals else None
-                        elif op == "$max":
-                            grouped_res[field] = max(vals) if vals else None
-                        elif op == "$min":
-                            grouped_res[field] = min(vals) if vals else None
-                        elif op == "$sum":
-                            if expr[op] == 1:
-                                grouped_res[field] = len(current)
-                            else:
+                        op_field = op_field.lstrip("$") if isinstance(op_field, str) else op_field
+                        if op == "$first":
+                            grouped_res[field] = current[0].get(op_field) if current else None
+                        elif op == "$sum" and expr[op] == 1:
+                            grouped_res[field] = len(current)
+                        else:
+                            vals = [float(str(d[op_field])) for d in current if d.get(op_field) is not None]
+                            if op == "$avg":
+                                grouped_res[field] = sum(vals) / len(vals) if vals else None
+                            elif op == "$max":
+                                grouped_res[field] = max(vals) if vals else None
+                            elif op == "$min":
+                                grouped_res[field] = min(vals) if vals else None
+                            elif op == "$sum":
                                 grouped_res[field] = sum(vals)
                 current = [grouped_res]
         return current
@@ -565,3 +575,52 @@ class TestMockTradingCycleMongoE2E:
         assert gate_result["eligible"][0]["ticker"] == "AAPL"
         assert gate_result["eligible"][0]["freshness"] == "CHANGED"
         assert gate_result["eligible"][0]["delta_score"] >= 0.25
+
+        # 13. Tool Telemetry & Guardrail Firings in MongoDB
+        from app.v3.tool_telemetry import record_tool_call
+        from app.v3.telemetry import record_guardrail_firing, flush_agent_telemetry
+
+        # Record tool call in MongoDB
+        record_tool_call(
+            cycle_id=cycle_id,
+            agent_name="v3_junior_analyst",
+            tool_name="get_market_data",
+            args_hash="hash_aapl_123",
+            success=True,
+            elapsed_ms=320,
+            ticker="AAPL",
+        )
+
+        tool_calls = mongo_store.find_docs("agent_tool_telemetry", {"cycle_id": cycle_id, "ticker": "AAPL"})
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["tool_name"] == "get_market_data"
+        assert tool_calls[0]["success"] is True
+
+        # Record guardrail firing in MongoDB
+        record_guardrail_firing(
+            "coerce_unshortable_sell",
+            ticker="AAPL",
+            cycle_id=cycle_id,
+            detail={"reason": "ticker unheld, coerced to HOLD"},
+        )
+
+        guardrail_events = mongo_store.find_docs("v3_guardrail_firings", {"cycle_id": cycle_id, "ticker": "AAPL"})
+        assert len(guardrail_events) == 1
+        assert guardrail_events[0]["guardrail"] == "coerce_unshortable_sell"
+
+        # Record and flush agent telemetry in MongoDB
+        desk.agent_telemetry.append({
+            "agent_name": "v3_junior_analyst",
+            "phase": "RESEARCH_DONE",
+            "outcome": "SUCCESS",
+            "elapsed_ms": 1200,
+            "token_usage": 4500,
+            "model_used": "local-qwen-2.5-72b",
+            "_written": False,
+        })
+        flush_agent_telemetry(desk)
+
+        agent_tel = mongo_store.find_docs("v3_agent_telemetry", {"cycle_id": cycle_id, "ticker": "AAPL"})
+        assert len(agent_tel) == 1
+        assert agent_tel[0]["agent_name"] == "v3_junior_analyst"
+        assert agent_tel[0]["token_usage"] == 4500

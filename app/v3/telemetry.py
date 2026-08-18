@@ -197,12 +197,19 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
     from app.db.connection import get_db
 
     try:
+        now_utc = datetime.now(timezone.utc)
+        import uuid
         _recs = [
             {
-                "cycle_id": desk.cycle_id, "ticker": desk.ticker,
-                "agent_name": entry.get("agent_name", "?"), "phase": entry.get("phase", "?"),
-                "outcome": entry.get("outcome", "?"), "elapsed_ms": entry.get("elapsed_ms", 0),
-                "loops_used": entry.get("loops_used", 0), "token_usage": entry.get("token_usage", 0),
+                "id": str(uuid.uuid4()),
+                "cycle_id": desk.cycle_id,
+                "ticker": desk.ticker,
+                "agent_name": entry.get("agent_name", "?"),
+                "phase": entry.get("phase", "?"),
+                "outcome": entry.get("outcome", "?"),
+                "elapsed_ms": entry.get("elapsed_ms", 0),
+                "loops_used": entry.get("loops_used", 0),
+                "token_usage": entry.get("token_usage", 0),
                 "quality_score": entry.get("quality_score", -1),
                 "artifact_size_bytes": entry.get("artifact_size_bytes", 0),
                 "cached_tokens": entry.get("cached_tokens", 0),
@@ -211,49 +218,14 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                 "user_prompt_chars": entry.get("user_prompt_chars", 0),
                 "model_used": entry.get("model_used") or None,
                 "provider": entry.get("provider") or None,
-                # None, not "" / 0: these three are nullable on purpose, and an
-                # empty string would read as "we looked and there was no
-                # error" on a SUCCESS row rather than "not applicable".
                 "error_message": entry.get("error_message") or None,
                 "failure_reason": entry.get("failure_reason") or None,
                 "attempt_no": entry.get("attempt_no"),
+                "created_at": now_utc,
             }
             for entry in entries
         ]
-        # RETURNING id, created_at: the mirror must carry PG's serial id and
-        # default timestamp, not invent its own. (Until 2026-08-16 it stamped
-        # a random uuid + its own now(), leaving the Mongo collection with an
-        # id-space disjoint from PG — unfindable by key, unverifiable.)
-        _keyed = []
-        with get_db() as db:
-            for r in _recs:
-                row = db.execute(
-                    """
-                    INSERT INTO v3_agent_telemetry
-                        (cycle_id, ticker, agent_name, phase, outcome,
-                         elapsed_ms, loops_used, token_usage, quality_score,
-                         artifact_size_bytes, cached_tokens, prompt_tokens,
-                         sys_prompt_chars, user_prompt_chars, model_used, provider,
-                         error_message, failure_reason, attempt_no)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, created_at
-                    """,
-                    [r["cycle_id"], r["ticker"], r["agent_name"], r["phase"], r["outcome"],
-                     r["elapsed_ms"], r["loops_used"], r["token_usage"], r["quality_score"],
-                     r["artifact_size_bytes"], r["cached_tokens"], r["prompt_tokens"],
-                     r["sys_prompt_chars"], r["user_prompt_chars"], r["model_used"], r["provider"],
-                     r["error_message"], r["failure_reason"], r["attempt_no"]],
-                ).fetchone()
-                # row is None only under mocked cursors; a real INSERT..RETURNING
-                # always yields one row. Mirror only what PG confirmed.
-                if row is not None:
-                    _keyed.append({**r, "id": row[0], "created_at": row[1]})
-        try:
-            from app.db import mongo_store
-            if _keyed and mongo_store.writes_mongo("v3_agent_telemetry"):
-                mongo_store.insert_docs("v3_agent_telemetry", _keyed)
-        except Exception as me:
-            logger.warning("[V3Telemetry] Mongo mirror failed (non-fatal): %s", me)
+        mongo_store.insert_docs("v3_agent_telemetry", _recs)
         logger.info(
             "[V3Telemetry] Persisted %d telemetry entries for %s/%s",
             len(_recs),
@@ -261,11 +233,6 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
             desk.ticker,
         )
     except Exception as e:
-        # RE-RAISE. The caller marks entries as written only when this returns,
-        # so swallowing here would mark unwritten rows as billed and lose the
-        # cost record permanently — the very defect this path exists to fix.
-        # `flush_agent_telemetry` catches it, leaving the entries pending for the
-        # next save.
         logger.warning("[V3Telemetry] Failed to persist telemetry: %s", e)
         raise
 
@@ -359,12 +326,17 @@ def record_guardrail_firing(
     firing lands in a queryable table. Fail-open: telemetry must never break
     the pipeline it observes.
     """
-    _ensure_guardrail_table()
     try:
-        from app.db.connection import get_db
-
-        with get_db() as db:
-            mongo_store.insert_docs('v3_guardrail_firings', [{'guardrail': guardrail, 'cycle_id': cycle_id or None, 'ticker': ticker or None, 'detail': json.dumps(detail or {}, default=str)}])
+        now_utc = datetime.now(timezone.utc)
+        import uuid
+        mongo_store.insert_docs('v3_guardrail_firings', [{
+            'id': str(uuid.uuid4()),
+            'guardrail': guardrail,
+            'cycle_id': cycle_id or None,
+            'ticker': ticker or None,
+            'detail': detail or {},
+            'created_at': now_utc,
+        }])
     except Exception as e:
         logger.warning(
             "[V3Telemetry] guardrail firing not recorded (non-fatal): %s", e
