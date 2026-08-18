@@ -28,7 +28,6 @@ from typing import Optional
 import numpy as np
 
 from app.cognition.base import BaseCognitionModule
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -148,48 +147,43 @@ class BrainGraph:
         meta_json = json.dumps(metadata) if metadata else None
 
         try:
-            with get_db() as db:
-                # ── Validate that both nodes exist (prevent dangling edges) ────
-                src_exists = db.execute(
-                    "SELECT 1 FROM ontology_nodes WHERE id = %s", [source_id]
-                ).fetchone()
-                tgt_exists = db.execute(
-                    "SELECT 1 FROM ontology_nodes WHERE id = %s", [target_id]
-                ).fetchone()
-                if not src_exists or not tgt_exists:
-                    missing = []
-                    if not src_exists:
-                        missing.append(f"source={source_id}")
-                    if not tgt_exists:
-                        missing.append(f"target={target_id}")
-                    logger.error(
-                        "[BrainGraph] upsert_edge skipped — node(s) not found: %s",
-                        ", ".join(missing),
-                    )
-                    return
+            # ── Validate that both nodes exist (prevent dangling edges) ────
+            src_exists = mongo_query.exists('ontology_nodes', {'id': source_id})
+            tgt_exists = mongo_query.exists('ontology_nodes', {'id': target_id})
+            if not src_exists or not tgt_exists:
+                missing = []
+                if not src_exists:
+                    missing.append(f"source={source_id}")
+                if not tgt_exists:
+                    missing.append(f"target={target_id}")
+                logger.error(
+                    "[BrainGraph] upsert_edge skipped — node(s) not found: %s",
+                    ", ".join(missing),
+                )
+                return
 
-                # Compute weight from embeddings if not provided
-                if weight is None:
-                    try:
-                        src_row = mongo_query.find_row('ontology_nodes', {'id': source_id}, ['embedding'])
-                        tgt_row = mongo_query.find_row('ontology_nodes', {'id': target_id}, ['embedding'])
-                        emb_a = src_row[0] if src_row and src_row[0] else None
-                        emb_b = tgt_row[0] if tgt_row and tgt_row[0] else None
-                        weight = _compute_edge_weight(emb_a, emb_b)
-                    except Exception:
-                        weight = 0.5
+            # Compute weight from embeddings if not provided
+            if weight is None:
+                try:
+                    src_row = mongo_query.find_row('ontology_nodes', {'id': source_id}, ['embedding'])
+                    tgt_row = mongo_query.find_row('ontology_nodes', {'id': target_id}, ['embedding'])
+                    emb_a = src_row[0] if src_row and src_row[0] else None
+                    emb_b = tgt_row[0] if tgt_row and tgt_row[0] else None
+                    weight = _compute_edge_weight(emb_a, emb_b)
+                except Exception:
+                    weight = 0.5
 
-                existing = mongo_query.find_row('ontology_edges', {'source_id': source_id, 'target_id': target_id, 'relation': relation}, ['id', 'weight', 'evidence_count'])
+            existing = mongo_query.find_row('ontology_edges', {'source_id': source_id, 'target_id': target_id, 'relation': relation}, ['id', 'weight', 'evidence_count'])
 
-                if existing:
-                    old_weight = existing[1]
-                    old_count = existing[2]
-                    # Exponential moving average: strengthens repeated edges
-                    new_weight = min(1.0, 0.7 * old_weight + 0.3 * weight)
-                    mongo_store.update_docs('ontology_edges', {'id': existing[0]}, {'$set': {'weight': new_weight, 'evidence_count': old_count + 1, 'metadata_json': meta_json, 'updated_at': now}})
-                else:
-                    edge_id = str(uuid.uuid4())[:12]
-                    mongo_store.insert_docs('ontology_edges', [{'id': edge_id, 'source_id': source_id, 'target_id': target_id, 'relation': relation, 'weight': weight, 'decay': decay, 'evidence_count': 1, 'metadata_json': meta_json, 'created_at': now, 'updated_at': now}])
+            if existing:
+                old_weight = existing[1]
+                old_count = existing[2]
+                # Exponential moving average: strengthens repeated edges
+                new_weight = min(1.0, 0.7 * old_weight + 0.3 * weight)
+                mongo_store.update_docs('ontology_edges', {'id': existing[0]}, {'$set': {'weight': new_weight, 'evidence_count': old_count + 1, 'metadata_json': meta_json, 'updated_at': now}})
+            else:
+                edge_id = str(uuid.uuid4())[:12]
+                mongo_store.insert_docs('ontology_edges', [{'id': edge_id, 'source_id': source_id, 'target_id': target_id, 'relation': relation, 'weight': weight, 'decay': decay, 'evidence_count': 1, 'metadata_json': meta_json, 'created_at': now, 'updated_at': now}])
         except Exception as e:
             logger.error("[BrainGraph] upsert_edge error: %s", e)
 
@@ -328,19 +322,16 @@ class BrainGraph:
         activated = [(n["id"], n["activation"]) for n in result["nodes"]]
 
         now = datetime.now(timezone.utc)
-        with get_db() as db:
-            if ticker:
-                # Per-ticker refresh: decay the whole graph a little, then set
-                # the freshly activated set — repeated cycles keep hot tickers
-                # on top without zeroing other tickers' context.
-                db.execute(
-                    "UPDATE ontology_nodes SET activation = activation * 0.8 "
-                    "WHERE activation > 0.001"
-                )
-            else:
-                mongo_store.update_docs('ontology_nodes', {'activation': {'$ne': 0}}, {'$set': {'activation': 0}})
-            for nid, act in activated:
-                mongo_store.update_docs('ontology_nodes', {'id': nid}, {'$set': {'activation': act, 'updated_at': now}})
+        if ticker:
+            # Per-ticker refresh: decay the whole graph a little, then set
+            # the freshly activated set — repeated cycles keep hot tickers
+            # on top without zeroing other tickers' context.
+            mongo_store.update_docs('ontology_nodes', {'activation': {'$gt': 0.001}},
+                                    {'$mul': {'activation': 0.8}})
+        else:
+            mongo_store.update_docs('ontology_nodes', {'activation': {'$ne': 0}}, {'$set': {'activation': 0}})
+        for nid, act in activated:
+            mongo_store.update_docs('ontology_nodes', {'id': nid}, {'$set': {'activation': act, 'updated_at': now}})
 
         stats = dict(result["stats"])
         stats["persisted"] = len(activated)
@@ -471,16 +462,19 @@ class BrainGraph:
                 BrainGraph.upsert_edge(ticker, industry, "BELONGS_TO", weight=0.85)
                 count += 2
 
-        with get_db() as db:
-            # ── Correlated tickers ────────────────────────────────────────
-            try:
-                corr_rows = db.execute(
-                    "SELECT ticker_b, correlation, tier FROM ticker_correlations "
-                    "WHERE ticker_a = %s AND period = '30d' ORDER BY ABS(correlation) DESC LIMIT 5",
-                    [ticker],
-                ).fetchall()
-            except Exception:
-                corr_rows = []
+        # ── Correlated tickers ────────────────────────────────────────
+        try:
+            _docs = mongo_store.aggregate('ticker_correlations', [
+                {'$match': {'ticker_a': ticker, 'period': '30d'}},
+                {'$addFields': {'_abs_corr': {'$abs': '$correlation'}}},
+                {'$sort': {'_abs_corr': -1}},
+                {'$limit': 5},
+                {'$project': {'_id': 0, 'ticker_b': 1, 'correlation': 1, 'tier': 1}},
+            ])
+            corr_rows = [(d.get('ticker_b'), d.get('correlation'), d.get('tier'))
+                         for d in _docs]
+        except Exception:
+            corr_rows = []
 
         for corr_ticker, corr_val, tier in corr_rows:
             BrainGraph.upsert_node(corr_ticker, "Asset", label=corr_ticker)

@@ -10,7 +10,7 @@ The scorecard is:
 """
 
 import logging
-from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -24,100 +24,102 @@ def generate_box_scorecard(cycle_id: str) -> dict:
     scorecard = {}
 
     try:
-        with get_db() as db:
-            # Per-endpoint breakdown
-            rows = db.execute(
-                """
-                SELECT
-                    COALESCE(endpoint_name, 'unknown') as ep,
-                    COUNT(*) as calls,
-                    COALESCE(SUM(tokens_used), 0) as total_tokens,
-                    COALESCE(SUM(prompt_tokens), 0) as total_prompt,
-                    COALESCE(SUM(completion_tokens), 0) as total_completion,
-                    COALESCE(AVG(execution_ms), 0) as avg_latency_ms,
-                    COALESCE(MIN(execution_ms), 0) as min_latency_ms,
-                    COALESCE(MAX(execution_ms), 0) as max_latency_ms,
-                    COALESCE(SUM(execution_ms), 0) as total_ms,
-                    COALESCE(AVG(queue_wait_ms), 0) as avg_queue_wait_ms,
-                    COALESCE(AVG(tokens_per_second), 0) as avg_tok_per_sec,
-                    model
-                FROM llm_audit_logs
-                WHERE cycle_id = %s
-                GROUP BY ep, model
-                ORDER BY total_tokens DESC
-                """,
-                [cycle_id],
-            ).fetchall()
-
-            for r in rows:
-                ep_name = r[0]
-                model_name = r[11] or "unknown"
-
-                entry = {
-                    "model": model_name,
-                    "calls": r[1],
-                    "total_tokens": r[2],
-                    "prompt_tokens": r[3],
-                    "completion_tokens": r[4],
-                    "avg_latency_ms": round(r[5]),
-                    "min_latency_ms": r[6],
-                    "max_latency_ms": r[7],
-                    "total_time_s": round(r[8] / 1000, 1),
-                    "avg_queue_wait_ms": round(r[9]),
-                    "avg_tok_per_sec": round(r[10], 1),
-                    # Derived: aggregate throughput
-                    "aggregate_tok_per_sec": round(r[2] / (r[8] / 1000), 1)
-                    if r[8] > 0
-                    else 0,
-                }
-                scorecard[ep_name] = entry
-
-            # Aggregate totals
-            agg = db.execute(
-                """
-                SELECT
-                    COUNT(*) as calls,
-                    COALESCE(SUM(tokens_used), 0) as total_tokens,
-                    COALESCE(SUM(execution_ms), 0) as total_ms,
-                    COALESCE(AVG(execution_ms), 0) as avg_ms,
-                    COALESCE(AVG(queue_wait_ms), 0) as avg_queue_wait_ms
-                FROM llm_audit_logs
-                WHERE cycle_id = %s
-                """,
-                [cycle_id],
-            ).fetchone()
-
-            if agg:
-                scorecard["_aggregate"] = {
-                    "total_calls": agg[0],
-                    "total_tokens": agg[1],
-                    "total_time_s": round(agg[2] / 1000, 1) if agg[2] else 0,
-                    "avg_latency_ms": round(agg[3]) if agg[3] else 0,
-                    "avg_queue_wait_ms": round(agg[4]) if agg[4] else 0,
-                }
-
-            # Slowest calls (top 5)
-            slow = db.execute(
-                """
-                SELECT agent_step, ticker, execution_ms,
-                       COALESCE(endpoint_name, 'unknown') as ep
-                FROM llm_audit_logs
-                WHERE cycle_id = %s
-                ORDER BY execution_ms DESC
-                LIMIT 5
-                """,
-                [cycle_id],
-            ).fetchall()
-
-            scorecard["_slowest"] = [
+        # Per-endpoint breakdown. GROUP BY on COALESCE(endpoint_name,'unknown')
+        # plus model is a compound _id; the COALESCE(SUM(..),0) wrappers become
+        # `or 0` on read, since $sum over an empty/absent field yields 0/None.
+        rows = mongo_store.aggregate(
+            "llm_audit_logs",
+            [
+                {"$match": {"cycle_id": cycle_id}},
                 {
-                    "agent_step": s[0],
-                    "ticker": s[1],
-                    "execution_ms": s[2],
-                    "endpoint": s[3],
-                }
-                for s in slow
-            ]
+                    "$group": {
+                        "_id": {
+                            "ep": {"$ifNull": ["$endpoint_name", "unknown"]},
+                            "model": "$model",
+                        },
+                        "calls": {"$sum": 1},
+                        "total_tokens": {"$sum": {"$ifNull": ["$tokens_used", 0]}},
+                        "total_prompt": {"$sum": {"$ifNull": ["$prompt_tokens", 0]}},
+                        "total_completion": {
+                            "$sum": {"$ifNull": ["$completion_tokens", 0]}
+                        },
+                        "avg_latency_ms": {"$avg": "$execution_ms"},
+                        "min_latency_ms": {"$min": "$execution_ms"},
+                        "max_latency_ms": {"$max": "$execution_ms"},
+                        "total_ms": {"$sum": {"$ifNull": ["$execution_ms", 0]}},
+                        "avg_queue_wait_ms": {"$avg": "$queue_wait_ms"},
+                        "avg_tok_per_sec": {"$avg": "$tokens_per_second"},
+                    }
+                },
+                {"$sort": {"total_tokens": -1}},
+            ],
+        )
+
+        for d in rows:
+            ep_name = d["_id"]["ep"]
+            model_name = d["_id"].get("model") or "unknown"
+            total_tokens = d.get("total_tokens") or 0
+            total_ms = d.get("total_ms") or 0
+
+            entry = {
+                "model": model_name,
+                "calls": d.get("calls") or 0,
+                "total_tokens": total_tokens,
+                "prompt_tokens": d.get("total_prompt") or 0,
+                "completion_tokens": d.get("total_completion") or 0,
+                "avg_latency_ms": round(d.get("avg_latency_ms") or 0),
+                "min_latency_ms": d.get("min_latency_ms") or 0,
+                "max_latency_ms": d.get("max_latency_ms") or 0,
+                "total_time_s": round(total_ms / 1000, 1),
+                "avg_queue_wait_ms": round(d.get("avg_queue_wait_ms") or 0),
+                "avg_tok_per_sec": round(d.get("avg_tok_per_sec") or 0, 1),
+                # Derived: aggregate throughput
+                "aggregate_tok_per_sec": round(total_tokens / (total_ms / 1000), 1)
+                if total_ms > 0
+                else 0,
+            }
+            scorecard[ep_name] = entry
+
+        # Aggregate totals
+        agg = mongo_query.agg_row(
+            "llm_audit_logs",
+            {"cycle_id": cycle_id},
+            [
+                ("count", None),
+                ("sum", "tokens_used"),
+                ("sum", "execution_ms"),
+                ("avg", "execution_ms"),
+                ("avg", "queue_wait_ms"),
+            ],
+        )
+
+        if agg:
+            scorecard["_aggregate"] = {
+                "total_calls": agg[0],
+                "total_tokens": agg[1] or 0,
+                "total_time_s": round(agg[2] / 1000, 1) if agg[2] else 0,
+                "avg_latency_ms": round(agg[3]) if agg[3] else 0,
+                "avg_queue_wait_ms": round(agg[4]) if agg[4] else 0,
+            }
+
+        # Slowest calls (top 5)
+        slow = mongo_query.find_rows(
+            "llm_audit_logs",
+            {"cycle_id": cycle_id},
+            ["agent_step", "ticker", "execution_ms", "endpoint_name"],
+            sort=[("execution_ms", -1)],
+            limit=5,
+        )
+
+        scorecard["_slowest"] = [
+            {
+                "agent_step": s[0],
+                "ticker": s[1],
+                "execution_ms": s[2],
+                "endpoint": s[3] if s[3] is not None else "unknown",
+            }
+            for s in slow
+        ]
 
     except Exception as e:
         logger.error("[BOX_SCORECARD] Query failed: %s", e)

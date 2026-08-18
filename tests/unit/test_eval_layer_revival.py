@@ -44,22 +44,10 @@ class TestTraceWriter:
         # silently break the hold_bias classification.
         captured = {}
 
-        class FakeCursor:
-            def execute(self, sql, params=None):
-                captured["sql"] = sql
-                captured["params"] = params
+        def _insert(collection, docs):
+            captured[collection] = docs
 
-            def commit(self):
-                pass
-
-        class FakeCtx:
-            def __enter__(self):
-                return FakeCursor()
-
-            def __exit__(self, *a):
-                return False
-
-        with patch("app.autoresearch.trace_writer.get_db", return_value=FakeCtx()):
+        with patch("app.autoresearch.trace_writer.mongo_store.insert_docs", _insert):
             write_agent_trace(
                 cycle_id="cycle-v3-123",
                 ticker="TSM",
@@ -71,38 +59,29 @@ class TestTraceWriter:
                 latency_ms=42,
             )
 
-        params = captured["params"]
-        assert params[1] == "cycle-v3-123"  # run_id == cycle_id
-        assert params[13] == "completed"    # stop_reason matches rubric vocab
+        doc = captured["agent_traces"][0]
+        assert doc["run_id"] == "cycle-v3-123"   # run_id == cycle_id
+        assert doc["stop_reason"] == "completed"  # matches rubric vocab
 
     def test_failed_call_stops_with_error(self):
         captured = {}
 
-        class FakeCursor:
-            def execute(self, sql, params=None):
-                captured["params"] = params
+        def _insert(collection, docs):
+            captured[collection] = docs
 
-            def commit(self):
-                pass
-
-        class FakeCtx:
-            def __enter__(self):
-                return FakeCursor()
-
-            def __exit__(self, *a):
-                return False
-
-        with patch("app.autoresearch.trace_writer.get_db", return_value=FakeCtx()):
+        with patch("app.autoresearch.trace_writer.mongo_store.insert_docs", _insert):
             write_agent_trace(
                 cycle_id="c", ticker="T", agent_name="a",
                 tool_name="t", tool_args={}, tool_result="boom",
                 failed=True, latency_ms=1,
             )
-        assert captured["params"][13] == "error"
-        assert captured["params"][7].startswith("ERROR: ")
+        doc = captured["agent_traces"][0]
+        assert doc["stop_reason"] == "error"
+        assert doc["tool_result_summary"].startswith("ERROR: ")
 
     def test_never_raises_on_db_failure(self):
-        with patch("app.autoresearch.trace_writer.get_db", side_effect=RuntimeError("db down")):
+        with patch("app.autoresearch.trace_writer.mongo_store.insert_docs",
+                   side_effect=RuntimeError("db down")):
             # Must swallow — telemetry can't be allowed to break agent runs.
             write_agent_trace(
                 cycle_id="c", ticker="T", agent_name="a",

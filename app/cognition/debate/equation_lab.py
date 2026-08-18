@@ -30,7 +30,7 @@ from app.cognition.debate.equation_library import (
     save_equation,
 )
 from app.cognition.debate.backtest_runner import run_backtest_for_equation
-from app.db.connection import get_db
+from app.db import mongo_query
 from app.utils.text_utils import extract_json_str
 
 logger = logging.getLogger(__name__)
@@ -75,13 +75,14 @@ Respond with ONLY a JSON object (no markdown fences, no prose):
 
 def _pick_candidates(limit: int) -> list[dict]:
     """Most-used equations whose stored code is a non-executable stub."""
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT name, description, code, usage_count FROM quant_equation_library "
-            "WHERE code ILIKE '%%unbacktestable%%' "
-            "ORDER BY usage_count DESC NULLS LAST LIMIT %s",
-            [limit],
-        ).fetchall()
+    # ILIKE '%unbacktestable%' -> case-insensitive regex.
+    # Mongo sorts missing/null LAST in a descending sort, matching NULLS LAST.
+    rows = mongo_query.find_rows(
+        'quant_equation_library',
+        {'code': {'$regex': 'unbacktestable', '$options': 'i'}},
+        ['name', 'description', 'code', 'usage_count'],
+        sort=[('usage_count', -1)], limit=limit,
+    )
     return [
         {"name": r[0], "description": r[1] or "", "code": r[2], "usage_count": r[3] or 0}
         for r in rows

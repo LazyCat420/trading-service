@@ -252,13 +252,24 @@ def _get_memory_mb() -> float:
 
 
 def _get_pool_connection_count() -> int:
-    """Get the current number of active connections in the DB pool."""
+    """Get the current number of connections this process holds to MongoDB.
+
+    Replaces the psycopg_pool `pool_size - pool_available` reading. pymongo
+    keeps one connection pool per server in the topology, so the leak signal
+    is the sum of each pool's in-use sockets.
+    """
     try:
-        from app.db.connection import _pool
-        if _pool is not None:
-            stats = _pool.get_stats()
-            # psycopg_pool stats: pool_size, pool_available, requests_waiting, etc.
-            return stats.get("pool_size", 0) - stats.get("pool_available", 0)
+        from app.db.mongo import get_mongo_client
+
+        client = get_mongo_client()
+        total = 0
+        for server in client._topology._servers.values():
+            pool = getattr(server, "pool", None)
+            if pool is None:
+                continue
+            # active_sockets is what the pool has handed out right now.
+            total += getattr(pool, "active_sockets", 0)
+        return total
     except Exception:
         pass
     return 0

@@ -38,7 +38,6 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from app.db.connection import get_db
 from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
@@ -90,14 +89,6 @@ def write_agent_trace(
             "created_at": datetime.now(timezone.utc), "service_source": "trading-service",
             "model_name": model_name, "endpoint_name": endpoint_name,
         }
-        with get_db() as db:
-            mongo_store.insert_docs('agent_traces', [{'id': _rec["id"], 'run_id': _rec["run_id"], 'agent_name': _rec["agent_name"], 'task_type': _rec["task_type"], 'goal': _rec["goal"], 'tool_name': _rec["tool_name"], 'tool_args': _rec["tool_args"], 'tool_result_summary': _rec["tool_result_summary"], 'why_tool_was_called': _rec["why_tool_was_called"], 'tokens_before': _rec["tokens_before"], 'tokens_after': _rec["tokens_after"], 'latency_ms': _rec["latency_ms"], 'loop_step': _rec["loop_step"], 'stop_reason': _rec["stop_reason"], 'created_at': _rec["created_at"], 'service_source': _rec["service_source"], 'model_name': _rec["model_name"], 'endpoint_name': _rec["endpoint_name"]}])
-            db.commit()
-        try:
-            from app.db import mongo_store
-            if mongo_store.writes_mongo("agent_traces"):
-                mongo_store.insert_docs("agent_traces", [_rec])
-        except Exception:
-            pass
+        mongo_store.insert_docs("agent_traces", [_rec])
     except Exception as e:
         logger.debug("[TraceWriter] Failed to write agent trace (non-fatal): %s", e)

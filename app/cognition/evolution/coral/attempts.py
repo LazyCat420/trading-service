@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import uuid
 
-from app.db.connection import get_db
 from app.cognition.evolution.coral.types import RepairJob
 from app.db import mongo_query, mongo_store
 from datetime import datetime, timezone
@@ -46,19 +45,34 @@ def enqueue_job(
     same traceback until the table was one bug repeated.
     """
     job_id = str(uuid.uuid4())
-    with get_db() as db:
-        row = db.execute(
-            """
-            INSERT INTO evolution_repair_queue
-                (id, cycle_id, error_message, traceback_text,
-                 target_path, target_symbol, repro_test, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued')
-            ON CONFLICT DO NOTHING
-            RETURNING id
-            """,
-            [job_id, cycle_id, error_message, traceback_text,
-             target_path, target_symbol, repro_test],
-        ).fetchone()
+    # PG enforced this with `ON CONFLICT DO NOTHING` against the unique partial
+    # index on (target_path, target_symbol) WHERE status IN ('queued','running').
+    # Mongo has no such partial unique index, so the dedup is explicit.
+    if mongo_query.exists('evolution_repair_queue', {
+        'target_path': target_path,
+        'target_symbol': target_symbol,
+        'status': {'$in': ['queued', 'running']},
+    }):
+        row = None
+    else:
+        # DEFAULTs from the PG DDL written explicitly (status, attempts,
+        # created_at); readers filter on status and unpack attempts.
+        mongo_store.insert_docs('evolution_repair_queue', [{
+            'id': job_id,
+            'cycle_id': cycle_id,
+            'error_message': error_message,
+            'traceback_text': traceback_text,
+            'target_path': target_path,
+            'target_symbol': target_symbol,
+            'repro_test': repro_test,
+            'status': 'queued',
+            'attempts': 0,
+            'last_error': None,
+            'created_at': datetime.now(timezone.utc),
+            'claimed_at': None,
+            'finished_at': None,
+        }])
+        row = (job_id,)
     if not row:
         logger.info(
             "[FAILURE-LOG] %s::%s already has an open entry — not re-logged",

@@ -14,7 +14,6 @@ import json
 import logging
 
 from app.cognition.ontology.ontology_builder import BrainGraph
-from app.db.connection import get_db
 from app.db import mongo_store
 from datetime import datetime, timedelta, timezone
 
@@ -42,11 +41,33 @@ def _clean_text(text) -> str:
     return text
 
 
-def _emit_event(db, event_type: str, ticker: str, **kwargs) -> None:
+def _emit_event(event_type: str, ticker: str, **kwargs) -> None:
+    # created_at/consumed were PG column DEFAULTs. Mongo fills nothing, and the
+    # 7-day prune below filters on BOTH — a doc missing them is unprunable and
+    # invisible to any `consumed = FALSE` reader. Write them explicitly.
+    base = {
+        'ticker': ticker,
+        'created_at': datetime.now(timezone.utc),
+        'consumed': False,
+    }
     if event_type == "node_added":
-        mongo_store.insert_docs('graph_node_events', [{'event_type': 'node_added', 'node_id': kwargs.get("node_id"), 'node_type': kwargs.get("node_type"), 'label': kwargs.get("label"), 'metadata_json': kwargs.get("metadata_json"), 'ticker': ticker}])
+        mongo_store.insert_docs('graph_node_events', [{
+            'event_type': 'node_added',
+            'node_id': kwargs.get("node_id"),
+            'node_type': kwargs.get("node_type"),
+            'label': kwargs.get("label"),
+            'metadata_json': kwargs.get("metadata_json"),
+            **base,
+        }])
     elif event_type == "edge_added":
-        mongo_store.insert_docs('graph_node_events', [{'event_type': 'edge_added', 'source_id': kwargs.get("source_id"), 'target_id': kwargs.get("target_id"), 'relation': kwargs.get("relation"), 'weight': kwargs.get("weight", 0.5), 'ticker': ticker}])
+        mongo_store.insert_docs('graph_node_events', [{
+            'event_type': 'edge_added',
+            'source_id': kwargs.get("source_id"),
+            'target_id': kwargs.get("target_id"),
+            'relation': kwargs.get("relation"),
+            'weight': kwargs.get("weight", 0.5),
+            **base,
+        }])
 
 
 def sync_desk_to_graph(desk, cycle_id: str) -> None:
@@ -101,20 +122,19 @@ def sync_desk_to_graph(desk, cycle_id: str) -> None:
 
         BrainGraph.upsert_node(ticker, "Ticker", label=ticker,
                                metadata={"last_cycle_id": cycle_id})
-        with get_db() as db:
-            _emit_event(db, "node_added", ticker, node_id=ticker,
-                        node_type="Ticker", label=ticker)
+        _emit_event("node_added", ticker, node_id=ticker,
+                    node_type="Ticker", label=ticker)
 
-            for kind, text, weight in claims:
-                node_id = _claim_id(ticker, kind, text)
-                metadata = {"ticker": ticker, "cycle_id": cycle_id, "kind": kind, "text": text}
-                BrainGraph.upsert_node(node_id, "Claim", label=text[:120], metadata=metadata)
-                BrainGraph.upsert_edge(ticker, node_id, "HAS_CLAIM", weight=weight,
-                                       metadata={"cycle_id": cycle_id})
-                _emit_event(db, "node_added", ticker, node_id=node_id, node_type="Claim",
-                            label=text[:120], metadata_json=json.dumps(metadata))
-                _emit_event(db, "edge_added", ticker, source_id=ticker, target_id=node_id,
-                            relation="HAS_CLAIM", weight=weight)
+        for kind, text, weight in claims:
+            node_id = _claim_id(ticker, kind, text)
+            metadata = {"ticker": ticker, "cycle_id": cycle_id, "kind": kind, "text": text}
+            BrainGraph.upsert_node(node_id, "Claim", label=text[:120], metadata=metadata)
+            BrainGraph.upsert_edge(ticker, node_id, "HAS_CLAIM", weight=weight,
+                                   metadata={"cycle_id": cycle_id})
+            _emit_event("node_added", ticker, node_id=node_id, node_type="Claim",
+                        label=text[:120], metadata_json=json.dumps(metadata))
+            _emit_event("edge_added", ticker, source_id=ticker, target_id=node_id,
+                        relation="HAS_CLAIM", weight=weight)
 
         # Index the (already natural-language) claim strings into the vector
         # store so the hybrid retriever can recall this cycle's reasoning later.

@@ -13,7 +13,8 @@ from app.monitoring.metrics_collector import metrics
 from app.monitoring.pipeline_profiler import profiler as pipeline_profiler
 from app.services.prism_agent_caller import llm
 from app.config import settings
-from app.db.connection import get_db
+from app.db import mongo_query, mongo_store
+from datetime import datetime, timedelta, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -98,58 +99,78 @@ async def monitor_metrics_history(
 @router.get("/telemetry/charts")
 async def monitor_telemetry_charts(hours: int = 48):
     """Historical chart data for LLM tokens and model stats."""
-    with get_db() as db:
-        try:
-            # Tokens Timeline
-            db.execute(
-                """
-                SELECT 
-                    date_trunc('hour', created_at) as hour,
-                    COALESCE(endpoint_name, model) as endpoint_or_model,
-                    SUM(tokens_used) as total_tokens,
-                    COUNT(*) as request_count
-                FROM llm_audit_logs
-                WHERE created_at >= NOW() - INTERVAL '1 hour' * %s
-                GROUP BY 1, 2
-                ORDER BY 1 ASC
-                """,
-                [hours],
-            )
-            timeline_rows = db.fetchall()
-            timeline = []
-            if timeline_rows:
-                cols = [desc[0] for desc in db.description]
-                for row in timeline_rows:
-                    timeline.append(dict(zip(cols, row)))
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        # COALESCE(endpoint_name, model): $ifNull also folds a MISSING field,
+        # which matches Postgres NULL semantics for an absent column.
+        endpoint_or_model = {"$ifNull": ["$endpoint_name", "$model"]}
 
-            # Model Stats
-            db.execute(
-                """
-                SELECT 
-                    COALESCE(endpoint_name, model) as endpoint_or_model,
-                    model,
-                    COUNT(*) as total_requests,
-                    SUM(tokens_used) as total_tokens,
-                    AVG(execution_ms) as avg_latency_ms,
-                    AVG(tokens_per_second) as avg_tps
-                FROM llm_audit_logs
-                WHERE created_at >= NOW() - INTERVAL '1 hour' * %s
-                GROUP BY 1, 2
-                ORDER BY 2 DESC
-                """,
-                [hours],
-            )
-            stats_rows = db.fetchall()
-            model_stats = []
-            if stats_rows:
-                cols = [desc[0] for desc in db.description]
-                for row in stats_rows:
-                    model_stats.append(dict(zip(cols, row)))
+        # Tokens Timeline
+        timeline_docs = mongo_store.aggregate(
+            "llm_audit_logs",
+            [
+                {"$match": {"created_at": {"$gte": cutoff}}},
+                {
+                    "$group": {
+                        "_id": {
+                            "hour": {
+                                "$dateTrunc": {"date": "$created_at", "unit": "hour"}
+                            },
+                            "endpoint_or_model": endpoint_or_model,
+                        },
+                        "total_tokens": {"$sum": "$tokens_used"},
+                        "request_count": {"$sum": 1},
+                    }
+                },
+                {"$sort": {"_id.hour": 1}},
+            ],
+        )
+        timeline = [
+            {
+                "hour": d["_id"]["hour"],
+                "endpoint_or_model": d["_id"]["endpoint_or_model"],
+                "total_tokens": d.get("total_tokens"),
+                "request_count": d.get("request_count"),
+            }
+            for d in timeline_docs
+        ]
 
-            return {"timeline": timeline, "model_stats": model_stats}
-        except Exception as e:
-            logger.error(f"[Monitor] Failed to fetch telemetry charts: {e}")
-            return {"timeline": [], "model_stats": []}
+        # Model Stats
+        stats_docs = mongo_store.aggregate(
+            "llm_audit_logs",
+            [
+                {"$match": {"created_at": {"$gte": cutoff}}},
+                {
+                    "$group": {
+                        "_id": {
+                            "endpoint_or_model": endpoint_or_model,
+                            "model": "$model",
+                        },
+                        "total_requests": {"$sum": 1},
+                        "total_tokens": {"$sum": "$tokens_used"},
+                        "avg_latency_ms": {"$avg": "$execution_ms"},
+                        "avg_tps": {"$avg": "$tokens_per_second"},
+                    }
+                },
+                {"$sort": {"_id.model": -1}},
+            ],
+        )
+        model_stats = [
+            {
+                "endpoint_or_model": d["_id"]["endpoint_or_model"],
+                "model": d["_id"]["model"],
+                "total_requests": d.get("total_requests"),
+                "total_tokens": d.get("total_tokens"),
+                "avg_latency_ms": d.get("avg_latency_ms"),
+                "avg_tps": d.get("avg_tps"),
+            }
+            for d in stats_docs
+        ]
+
+        return {"timeline": timeline, "model_stats": model_stats}
+    except Exception as e:
+        logger.error(f"[Monitor] Failed to fetch telemetry charts: {e}")
+        return {"timeline": [], "model_stats": []}
 
 
 @router.get("/stream")
@@ -266,40 +287,31 @@ async def monitor_audit_db(
 ):
     """Query persisted audit events from the database."""
     try:
-        query = (
-            "SELECT request_id, endpoint, agent_name, model_used, "
-            "system_prompt_hash, context_build_ms, inference_ms, "
-            "tokens_input, tokens_output, tokens_total, "
-            "is_truncated, fallback_triggered, circuit_breaker_open, "
-            "ticker, cycle_id, status, detail, created_at "
-            "FROM agent_audit_log "
-            "WHERE created_at >= NOW() - INTERVAL '1 hour' * %s"
-        )
-        params: list = [hours]
-
-        if agent:
-            query += " AND agent_name = %s"
-            params.append(agent)
-        if endpoint:
-            query += " AND endpoint = %s"
-            params.append(endpoint)
-
-        query += " ORDER BY created_at DESC LIMIT %s"
-        params.append(limit)
-
-        with get_db() as db:
-            rows = db.execute(query, params).fetchall()
-            cols = [
-                "request_id", "endpoint", "agent_name", "model_used",
-                "system_prompt_hash", "context_build_ms", "inference_ms",
-                "tokens_input", "tokens_output", "tokens_total",
-                "is_truncated", "fallback_triggered", "circuit_breaker_open",
-                "ticker", "cycle_id", "status", "detail", "created_at",
-            ]
-            return {
-                "count": len(rows),
-                "events": [dict(zip(cols, r)) for r in rows],
+        mquery: dict = {
+            "created_at": {
+                "$gte": datetime.now(timezone.utc) - timedelta(hours=hours)
             }
+        }
+        if agent:
+            mquery["agent_name"] = agent
+        if endpoint:
+            mquery["endpoint"] = endpoint
+
+        cols = [
+            "request_id", "endpoint", "agent_name", "model_used",
+            "system_prompt_hash", "context_build_ms", "inference_ms",
+            "tokens_input", "tokens_output", "tokens_total",
+            "is_truncated", "fallback_triggered", "circuit_breaker_open",
+            "ticker", "cycle_id", "status", "detail", "created_at",
+        ]
+        rows = mongo_query.find_rows(
+            "agent_audit_log", mquery, cols,
+            sort=[("created_at", -1)], limit=limit,
+        )
+        return {
+            "count": len(rows),
+            "events": [dict(zip(cols, r)) for r in rows],
+        }
     except Exception as e:
         logger.error("[Monitor] Audit DB query failed: %s", e)
         return {"count": 0, "events": [], "error": str(e)}

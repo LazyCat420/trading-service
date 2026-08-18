@@ -6,8 +6,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, field_validator
 
-from app.db.connection import get_db
-from app.db import mongo_store
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
@@ -26,21 +24,10 @@ def _audit_triage(cycle_id: str, cycle_summary: dict, tickers: list[str]) -> dic
         "stale_tickers": [], "issues": []
     }
     try:
-        tier_rows = None
-        try:
-            from app.db import mongo_store
-            if mongo_store.reads_mongo("analysis_results"):
-                tier_rows = [
-                    (d["_id"], d.get("n", 0))
-                    for d in mongo_store.aggregate("analysis_results", [
-                        {"$match": {"cycle_id": cycle_id}},
-                        {"$group": {"_id": "$triage_tier", "n": {"$sum": 1}}},
-                    ])
-                ]
-        except Exception:
-            tier_rows = None
-        if tier_rows is None:
-            tier_rows = mongo_query.group_rows('analysis_results', {'cycle_id': cycle_id}, ['triage_tier'], [('count', None)], [('key', 'triage_tier'), ('agg', 0)])
+        tier_rows = mongo_query.group_rows(
+            'analysis_results', {'cycle_id': cycle_id}, ['triage_tier'],
+            [('count', None)], [('key', 'triage_tier'), ('agg', 0)],
+        )
         for tier, count in tier_rows:
             tier = (tier or "").lower()
             if "glance" in tier:
@@ -53,28 +40,11 @@ def _audit_triage(cycle_id: str, cycle_summary: dict, tickers: list[str]) -> dic
         # Stale = analyzed tickers whose latest analysis is older than 48h
         if tickers:
             cutoff_48h = datetime.now(timezone.utc) - timedelta(hours=48)
-            last_rows = None
-            try:
-                from app.db import mongo_store
-                if mongo_store.reads_mongo("analysis_results"):
-                    last_rows = [
-                        (d["_id"], d.get("last_date"))
-                        for d in mongo_store.aggregate("analysis_results", [
-                            {"$match": {"ticker": {"$in": list(tickers)}}},
-                            {"$group": {"_id": "$ticker",
-                                        "last_date": {"$max": "$created_at"}}},
-                        ])
-                    ]
-            except Exception:
-                last_rows = None
-            if last_rows is None:
-                placeholders = ",".join(["%s"] * len(tickers))
-                with get_db() as db:
-                    last_rows = db.execute(
-                        f"SELECT ticker, MAX(created_at) FROM analysis_results "
-                        f"WHERE ticker IN ({placeholders}) GROUP BY ticker",
-                        list(tickers),
-                    ).fetchall()
+            last_rows = mongo_query.group_rows(
+                'analysis_results', {'ticker': {'$in': list(tickers)}},
+                ['ticker'], [('max', 'created_at')],
+                [('key', 'ticker'), ('agg', 0)],
+            )
             last_map = {r[0]: r[1] for r in last_rows}
             for ticker in tickers:
                 last = last_map.get(ticker)

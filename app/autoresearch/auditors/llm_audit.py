@@ -1,6 +1,5 @@
 import logging
 
-from app.db.connection import get_db
 from app.db import mongo_query
 from datetime import datetime, timedelta, timezone
 
@@ -33,27 +32,31 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         eval_avg = None
         deepeval_dead = False
         try:
-            with get_db() as db:
-                row = mongo_query.agg_row('decision_evaluations', {'timestamp': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
-                if row and row[1] and row[1] >= 3:
-                    judge_avg = max(0.0, min(1.0, float(row[0]) / 5.0))
+            row = mongo_query.agg_row('decision_evaluations', {'timestamp': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
+            if row and row[1] and row[1] >= 3:
+                judge_avg = max(0.0, min(1.0, float(row[0]) / 5.0))
 
-                # "Dead" must mean dead NOW — judge over the newest rows only.
-                # A 7-day window kept flagging for a week after the grounding
-                # judge was fixed, because the pre-fix error rows dominated.
-                de = db.execute(
-                    "SELECT COUNT(*) FILTER (WHERE evidence_gathering::text LIKE %s), COUNT(*) "
-                    "FROM (SELECT evidence_gathering FROM decision_evaluations "
-                    "      WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days' "
-                    "      ORDER BY timestamp DESC LIMIT 10) recent",
-                    ["%deepeval_error%"],
-                ).fetchone()
-                if de and de[1] and de[1] >= 3 and de[0] > de[1] * 0.5:
-                    deepeval_dead = True
+            # "Dead" must mean dead NOW — judge over the newest rows only.
+            # A 7-day window kept flagging for a week after the grounding
+            # judge was fixed, because the pre-fix error rows dominated.
+            # The FILTER/subquery pair counted, over the NEWEST 10 rows in
+            # the 7-day window, how many carry a deepeval_error. The
+            # LIMIT-then-aggregate order is the point of the subquery, so it
+            # is preserved here: fetch the 10 newest, count in Python.
+            recent = mongo_query.find_rows(
+                'decision_evaluations',
+                {'timestamp': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}},
+                ['evidence_gathering'],
+                sort=[('timestamp', -1)], limit=10,
+            )
+            de_total = len(recent)
+            de_errors = sum(1 for (eg,) in recent if 'deepeval_error' in str(eg))
+            if de_total >= 3 and de_errors > de_total * 0.5:
+                deepeval_dead = True
 
-                ev = mongo_query.agg_row('eval_scores', {'created_at': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_score': {'$ne': None}}, [('avg', 'final_score'), ('count', None)])
-                if ev and ev[1] and ev[1] >= 10:
-                    eval_avg = max(0.0, min(1.0, float(ev[0]) / 100.0))
+            ev = mongo_query.agg_row('eval_scores', {'created_at': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_score': {'$ne': None}}, [('avg', 'final_score'), ('count', None)])
+            if ev and ev[1] and ev[1] >= 10:
+                eval_avg = max(0.0, min(1.0, float(ev[0]) / 100.0))
         except Exception as q_err:
             logger.debug("[LLM-AUDIT] Quality component lookup skipped: %s", q_err)
 

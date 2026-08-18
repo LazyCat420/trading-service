@@ -11,8 +11,7 @@ Prevents unbounded data growth by:
 import logging
 from datetime import datetime, timezone, timedelta
 
-from app.db.connection import get_db
-from app.db import mongo_query
+from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -50,24 +49,18 @@ def _prune_old_reports() -> int:
     pruned = 0
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=REPORT_FULL_RETENTION_DAYS)
-        with get_db() as db:
-            # Only strip reports that still have JSON blobs
-            result = db.execute(
-                """UPDATE autoresearch_reports
-                SET data_gaps = NULL,
-                    decision_issues = NULL,
-                    llm_issues = NULL,
-                    performance_metrics = NULL,
-                    reflection = NULL,
-                    recovery_stats = NULL
-                WHERE created_at < %s
-                  AND status = 'done'
-                  AND (data_gaps IS NOT NULL
-                       OR decision_issues IS NOT NULL
-                       OR reflection IS NOT NULL)""",
-                [cutoff],
-            )
-            pruned = result.rowcount if hasattr(result, 'rowcount') else 0
+        # Only strip reports that still have JSON blobs
+        pruned = mongo_store.update_docs(
+            'autoresearch_reports',
+            {'created_at': {'$lt': cutoff},
+             'status': 'done',
+             '$or': [{'data_gaps': {'$ne': None}},
+                     {'decision_issues': {'$ne': None}},
+                     {'reflection': {'$ne': None}}]},
+            {'$set': {'data_gaps': None, 'decision_issues': None,
+                      'llm_issues': None, 'performance_metrics': None,
+                      'reflection': None, 'recovery_stats': None}},
+        )
     except Exception as e:
         logger.warning("[JANITOR] Report pruning failed: %s", e)
     return pruned
@@ -78,14 +71,11 @@ def _delete_old_directives() -> int:
     deleted = 0
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=DIRECTIVE_HARD_DELETE_DAYS)
-        with get_db() as db:
-            result = db.execute(
-                """DELETE FROM cycle_directives
-                WHERE status IN ('expired', 'actioned')
-                  AND resolved_at < %s""",
-                [cutoff],
-            )
-            deleted = result.rowcount if hasattr(result, 'rowcount') else 0
+        deleted = mongo_store.delete_docs(
+            'cycle_directives',
+            {'status': {'$in': ['expired', 'actioned']},
+             'resolved_at': {'$lt': cutoff}},
+        )
     except Exception as e:
         logger.warning("[JANITOR] Directive cleanup failed: %s", e)
     return deleted
@@ -96,14 +86,11 @@ def _clean_stale_reports() -> int:
     cleaned = 0
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
-        with get_db() as db:
-            result = db.execute(
-                """UPDATE autoresearch_reports
-                SET status = 'stale'
-                WHERE status = 'running' AND created_at < %s""",
-                [cutoff],
-            )
-            cleaned = result.rowcount if hasattr(result, 'rowcount') else 0
+        cleaned = mongo_store.update_docs(
+            'autoresearch_reports',
+            {'status': 'running', 'created_at': {'$lt': cutoff}},
+            {'$set': {'status': 'stale'}},
+        )
     except Exception as e:
         logger.warning("[JANITOR] Stale report cleanup failed: %s", e)
     return cleaned

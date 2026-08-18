@@ -13,13 +13,12 @@ import logging
 import json
 import uuid
 import io
+import re
 import contextlib
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
-
-from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +161,7 @@ def save_equation(
     now = datetime.now(timezone.utc)
 
     try:
-        mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'code': code, 'description': description, 'parameters': json.dumps(parameters or {}), 'backtest_results': json.dumps(backtest_results or {}), 'updated_at': now}, '$setOnInsert': {'id': eq_id, 'author_agent': author_agent, 'ticker_origin': ticker_origin, 'created_at': now}}, upsert=True)
+        mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'code': code, 'description': description, 'parameters': json.dumps(parameters or {}), 'backtest_results': json.dumps(backtest_results or {}), 'updated_at': now}, '$setOnInsert': {'id': eq_id, 'author_agent': author_agent, 'ticker_origin': ticker_origin, 'created_at': now, 'usage_count': 0, 'avg_pnl_pct': 0.0, 'win_rate_pct': 0.0, 'sharpe_ratio': 0.0}}, upsert=True)
         logger.info("[EQ_LIBRARY] Saved equation '%s' by %s", name, author_agent)
         return {
             "status": "saved",
@@ -181,23 +180,20 @@ def search_equations(query: str = "", top_k: int = 10) -> list[dict]:
     Returns top_k equations sorted by win_rate descending.
     """
     try:
-        with get_db() as db:
-            if query:
-                rows = db.execute(
-                    """
-                    SELECT id, name, description, code, parameters,
-                           author_agent, ticker_origin, backtest_results,
-                           usage_count, avg_pnl_pct, win_rate_pct, sharpe_ratio,
-                           created_at
-                    FROM quant_equation_library
-                    WHERE name ILIKE %s OR description ILIKE %s
-                    ORDER BY win_rate_pct DESC, usage_count DESC
-                    LIMIT %s
-                    """,
-                    [f"%{query}%", f"%{query}%", top_k],
-                ).fetchall()
-            else:
-                rows = mongo_query.find_rows('quant_equation_library', {}, ['id', 'name', 'description', 'code', 'parameters', 'author_agent', 'ticker_origin', 'backtest_results', 'usage_count', 'avg_pnl_pct', 'win_rate_pct', 'sharpe_ratio', 'created_at'], sort=[('win_rate_pct', -1), ('usage_count', -1)], limit=top_k)
+        _columns = ['id', 'name', 'description', 'code', 'parameters',
+                    'author_agent', 'ticker_origin', 'backtest_results',
+                    'usage_count', 'avg_pnl_pct', 'win_rate_pct', 'sharpe_ratio',
+                    'created_at']
+        if query:
+            # ILIKE %query% -> case-insensitive regex on name OR description
+            _pat = {'$regex': re.escape(query), '$options': 'i'}
+            _filter = {'$or': [{'name': _pat}, {'description': _pat}]}
+        else:
+            _filter = {}
+        rows = mongo_query.find_rows(
+            'quant_equation_library', _filter, _columns,
+            sort=[('win_rate_pct', -1), ('usage_count', -1)], limit=top_k,
+        )
 
         results = []
         for row in rows:
@@ -245,12 +241,11 @@ def get_equation_by_name(name: str) -> dict | None:
 def increment_usage(name: str) -> None:
     """Bump usage_count for an equation."""
     try:
-        with get_db() as db:
-            db.execute(
-                "UPDATE quant_equation_library SET usage_count = usage_count + 1, "
-                "updated_at = %s WHERE name = %s",
-                [datetime.now(timezone.utc), name],
-            )
+        mongo_store.update_docs(
+            'quant_equation_library', {'name': name},
+            {'$inc': {'usage_count': 1},
+             '$set': {'updated_at': datetime.now(timezone.utc)}},
+        )
     except Exception as e:
         logger.debug("[EQ_LIBRARY] increment_usage failed (non-fatal): %s", e)
 

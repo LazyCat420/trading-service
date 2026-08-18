@@ -11,42 +11,39 @@ Integration tests use the NAS DB via conftest fixtures.
 import pytest
 from unittest.mock import patch, MagicMock
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 
 # ── Helper to mock get_db for autoresearch module ──
 
-def _mock_get_db_factory(confidence_rows=None, outcome_rows=None):
-    """Mock the two reads `_audit_decisions` makes.
-
-    They no longer come from the same place. The confidence read was converted
-    to `mongo_query.find_rows`; the outcomes read still uses SQL, because it
-    selects `EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at))` — a computed
-    column the translator refuses rather than approximate. So this module is
-    genuinely half-converted, and a mock that stubs only `get_db` now feeds the
-    outcomes query while the confidence query reads the LIVE database.
-
-    Dispatching on call_count was already fragile; with one of the two calls
-    gone it silently fed outcome_rows to the wrong query. Each read is stubbed
-    at its own boundary instead.
-    """
-    @contextmanager
-    def fake_get_db():
-        conn = MagicMock()
-        cursor = MagicMock()
-        cursor.fetchall.return_value = outcome_rows or []
-        conn.execute.return_value = cursor
-        yield conn
-
-    return fake_get_db
-
-
 @contextmanager
 def _mock_reads(confidence_rows=None, outcome_rows=None):
-    """Patch both halves together, so neither read reaches a real store."""
-    with patch("app.autoresearch.auditors.decision_audit.get_db",
-               _mock_get_db_factory(confidence_rows, outcome_rows)), \
-         patch("app.autoresearch.auditors.decision_audit.mongo_query") as mq:
-        mq.find_rows.return_value = confidence_rows or []
+    """Patch both reads `_audit_decisions` makes, so neither reaches a store.
+
+    Both now go through `mongo_query.find_rows`, so the stub dispatches on the
+    COLLECTION name rather than on call order (dispatching on call_count was
+    already fragile and could feed outcome_rows to the confidence query).
+
+    `outcome_rows` fixtures still carry the decision AGE IN DAYS in the 5th
+    slot, which is what the old `EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP -
+    created_at))/86400` column produced. The Mongo read selects `created_at`
+    and the module derives the age itself, so the age is converted back into a
+    created_at here — that keeps the module's own date arithmetic under test
+    instead of handing it the answer.
+    """
+    now = datetime.now(timezone.utc)
+
+    def _find_rows(collection, query, columns, sort=None, limit=0):
+        if collection == 'decision_outcomes':
+            return [
+                (action, conf, pnl, outcome,
+                 None if age is None else now - timedelta(days=age))
+                for action, conf, pnl, outcome, age in (outcome_rows or [])
+            ]
+        return confidence_rows or []
+
+    with patch("app.autoresearch.auditors.decision_audit.mongo_query") as mq:
+        mq.find_rows.side_effect = _find_rows
         yield
 
 
@@ -265,13 +262,8 @@ class TestDecisionScoringFormula:
 
     def test_db_error_falls_back_gracefully(self):
         """If DB query fails, score should fallback to 0.5 not crash."""
-        @contextmanager
-        def broken_db():
-            conn = MagicMock()
-            conn.execute.side_effect = Exception("Connection refused")
-            yield conn
-
-        with patch("app.autoresearch.auditors.decision_audit.get_db", broken_db):
+        with patch("app.autoresearch.auditors.decision_audit.mongo_query") as mq:
+            mq.find_rows.side_effect = Exception("Connection refused")
             from app.autoresearch.auditors.decision_audit import _audit_decisions
             result = _audit_decisions("test_cycle", self._make_summary(2, 1, 8))
 

@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
 import numpy as np
 from app.db import mongo_query, mongo_store
@@ -108,27 +109,12 @@ VERDICT_DEFINITIONS = {
 # ── persistence ──────────────────────────────────────────────────────
 
 def ensure_health_table() -> None:
-    from app.db.connection import get_db
+    """No-op on MongoDB: a collection is created by its first write.
 
-    with get_db() as db:
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS component_health_reports (
-                id                  BIGSERIAL PRIMARY KEY,
-                component           TEXT NOT NULL,
-                evaluated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                window_start        DATE,
-                window_end          DATE,
-                observations        INTEGER,
-                verdict             TEXT NOT NULL,
-                failure_kinds       JSONB,
-                consecutive_failing INTEGER,
-                metrics             JSONB,
-                action              TEXT,
-                note                TEXT
-            )
-            """
-        )
+    Kept as a call site so the readers and the writer below keep their shape
+    after the Postgres DDL was removed.
+    """
+    return None
 
 
 # ── metric computation (reads DB, pure otherwise) ────────────────────
@@ -303,8 +289,6 @@ def _failing_streak(component: str) -> int:
     """Consecutive 'failing' verdicts at the head of the report history,
     BEFORE this evaluation. 0 on any read problem — a broken history read
     must not manufacture a disable."""
-    from app.db.connection import get_db
-
     try:
         rows = mongo_query.find_rows('component_health_reports', {'component': component}, ['verdict'], sort=[('evaluated_at', -1)], limit=CONSECUTIVE_FAILING_TO_DISABLE)
         streak = 0
@@ -379,10 +363,12 @@ def run_component_health_evaluation() -> dict:
                     "worth ~22-32s/cycle is an open HUMAN call.")
 
         try:
-            from app.db.connection import get_db
-
             ensure_health_table()
-            mongo_store.insert_docs('component_health_reports', [{'component': COMPONENT_HMM, 'window_start': metrics.get("window_start"), 'window_end': metrics.get("window_end"), 'observations': metrics.get("observations"), 'verdict': verdict, 'failure_kinds': json.dumps(failures), 'consecutive_failing': streak, 'metrics': json.dumps(metrics, default=str), 'action': action, 'note': note}])
+            # evaluated_at was a Postgres DEFAULT CURRENT_TIMESTAMP. Mongo has
+            # no column defaults, and BOTH readers of this collection sort on
+            # it — omitting it would break the failing-streak read and the
+            # history ordering. Write it explicitly.
+            mongo_store.insert_docs('component_health_reports', [{'component': COMPONENT_HMM, 'evaluated_at': datetime.now(timezone.utc), 'window_start': metrics.get("window_start"), 'window_end': metrics.get("window_end"), 'observations': metrics.get("observations"), 'verdict': verdict, 'failure_kinds': json.dumps(failures), 'consecutive_failing': streak, 'metrics': json.dumps(metrics, default=str), 'action': action, 'note': note}])
         except Exception as e:  # noqa: BLE001
             logger.warning("[ComponentHealth] report write failed: %s", e)
 
@@ -402,8 +388,6 @@ def run_component_health_evaluation() -> dict:
 # ── read surfaces for the router ─────────────────────────────────────
 
 def report_history(component: str = COMPONENT_HMM, limit: int = 30) -> list[dict]:
-    from app.db.connection import get_db
-
     ensure_health_table()
     rows = mongo_query.find_rows('component_health_reports', {'component': component}, ['evaluated_at', 'window_start', 'window_end', 'observations', 'verdict', 'failure_kinds', 'consecutive_failing', 'metrics', 'action', 'note'], sort=[('evaluated_at', -1)], limit=max(1, min(int(limit), 200)))
 

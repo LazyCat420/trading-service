@@ -176,61 +176,24 @@ def log_audit_event(
 def _persist_audit_event(event: dict):
     """Best-effort write to agent_audit_log table."""
     try:
-        from app.db.connection import get_db
-        with get_db() as db:
-            # RETURNING id: the serial only exists after the insert, and the
-            # mirror doc must carry it — 31,637 id-less docs accumulated in
-            # Mongo before 2026-08-16 because the mirror ran without it.
-            _pg_id = db.execute(
-                """INSERT INTO agent_audit_log
-                   (request_id, endpoint, agent_name, model_used,
-                    system_prompt_hash, context_build_ms, inference_ms,
-                    tokens_input, tokens_output, tokens_total,
-                    is_truncated, fallback_triggered, circuit_breaker_open,
-                    ticker, cycle_id, status, detail, created_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                   RETURNING id""",
-                [
-                    event["request_id"],
-                    event["endpoint"],
-                    event["agent_name"],
-                    event["model_used"],
-                    event["system_prompt_hash"],
-                    event["context_build_ms"],
-                    event["inference_ms"],
-                    event["tokens_input"],
-                    event["tokens_output"],
-                    event["tokens_total"],
-                    event["is_truncated"],
-                    event["fallback_triggered"],
-                    event["circuit_breaker_open"],
-                    event["ticker"],
-                    event["cycle_id"],
-                    event["status"],
-                    event["detail"],
-                    event["created_at"],
-                ],
-            ).fetchone()[0]
-        # Best-effort Mongo dual-write. Natural key stays request_id (it also
-        # heals older id-less docs in place), but the doc now carries the PG
-        # serial id so by-id reads and parity verification can find it.
-        try:
-            from datetime import datetime as _dt
-            from app.db import mongo_store
-            if mongo_store.writes_mongo("agent_audit_log"):
-                doc = {k: v for k, v in event.items() if k != "id"}
-                doc["id"] = _pg_id
-                ca = doc.get("created_at")
-                if isinstance(ca, str):
-                    try:
-                        doc["created_at"] = _dt.fromisoformat(ca)
-                    except ValueError:
-                        pass
-                mongo_store.upsert_doc(
-                    "agent_audit_log", {"request_id": event["request_id"]}, doc
-                )
-        except Exception as me:
-            logger.warning("[AgentAudit] Mongo mirror failed (non-fatal): %s", me)
+        from datetime import datetime as _dt
+        from app.db import mongo_store
+
+        # The PG serial `id` is gone with the table. Every doc must still carry
+        # an `id` — 31,637 id-less docs accumulated in Mongo before 2026-08-16
+        # and by-id reads and parity verification could not find them — so mint
+        # one here. Natural key stays request_id, which also heals older docs.
+        doc = {k: v for k, v in event.items() if k != "id"}
+        doc["id"] = str(uuid.uuid4())
+        ca = doc.get("created_at")
+        if isinstance(ca, str):
+            try:
+                doc["created_at"] = _dt.fromisoformat(ca)
+            except ValueError:
+                pass
+        mongo_store.upsert_doc(
+            "agent_audit_log", {"request_id": event["request_id"]}, doc
+        )
     except Exception as e:
         logger.debug("[AgentAudit] DB persist failed (non-fatal): %s", e)
 

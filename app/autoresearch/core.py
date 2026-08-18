@@ -22,10 +22,6 @@ from app.autoresearch.directives import _generate_directives, _expire_old_direct
 from app.autoresearch.outcome_tracker import record_cycle_decisions, resolve_pending_outcomes
 from app.autoresearch.janitor import run_janitor
 from app.db import mongo_query, mongo_store
-# get_db survives for ONE call: evaluate_pending_decisions() takes a live PG
-# cursor as its first argument. That function is in app/cognition/, outside
-# this module's scope — converting it is another agent's change.
-from app.db.connection import get_db
 
 def _update_ar_state(report_id: str, **kwargs):
     updates: dict = {}
@@ -137,10 +133,9 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         _update_ar_state(report_id, phase="judge_eval")
         try:
             from app.cognition.evaluation.strategy_auditor import evaluate_pending_decisions
-            with get_db() as db:
-                judged = await evaluate_pending_decisions(
-                    db, cycle_id=cycle_id, limit=10, timeout_sec=240,
-                )
+            judged = await evaluate_pending_decisions(
+                cycle_id=cycle_id, limit=10, timeout_sec=240,
+            )
             if judged:
                 logger.info("[AUTORESEARCH] Judge evaluated %d decisions", judged)
         except Exception as je:

@@ -35,13 +35,19 @@ def _fake_frame(tickers):
 
 @pytest.fixture
 def db_ctx():
-    db = MagicMock()
-    cursor = MagicMock()
-    cursor.fetchall.return_value = [("AAA",), ("BBB",)]
-    db.execute.return_value = cursor
-    ctx = MagicMock()
-    ctx.__enter__.return_value = db
-    return ctx, db
+    """Mongo stand-ins for the collector: the ticker universe read
+    (mongo_store.distinct_values) and the price_history write
+    (mongo_store.upsert_doc). Dispatch is on COLLECTION NAME."""
+    store = MagicMock()
+
+    def _distinct(collection, field, query=None):
+        if collection == "ticker_metadata":
+            return ["AAA", "BBB"]
+        return []
+
+    store.distinct_values.side_effect = _distinct
+    store.upsert_doc.return_value = None
+    return store, store
 
 
 @pytest.mark.asyncio
@@ -65,7 +71,7 @@ async def test_event_loop_stays_responsive_during_download(db_ctx):
         time.sleep(0.3)          # synchronous, like the real yf.download
         return _fake_frame(["AAA", "BBB"])
 
-    with patch("app.data.sp500_price_collector.get_db", return_value=ctx), \
+    with patch("app.data.sp500_price_collector.mongo_store", ctx), \
          patch("app.data.sp500_price_collector.yf.download", side_effect=slow_download), \
          patch("app.data.sp500_price_collector._refresh_technicals_bulk"):
         from app.data.sp500_price_collector import collect_sp500_prices
@@ -94,17 +100,15 @@ async def test_event_loop_stays_responsive_during_insert(db_ctx):
             await asyncio.sleep(0.01)
             ticks += 1
 
-    def slow_execute(*a, **k):
-        # Only the INSERTs are slow; the ticker SELECT must stay fast.
-        if a and "INSERT" in str(a[0]):
+    def slow_upsert(collection, key, doc, **k):
+        # Only the price_history writes are slow; the universe read must
+        # stay fast.
+        if collection == "price_history":
             time.sleep(0.02)
-        cur = MagicMock()
-        cur.fetchall.return_value = [("AAA",), ("BBB",)]
-        return cur
 
-    db.execute.side_effect = slow_execute
+    db.upsert_doc.side_effect = slow_upsert
 
-    with patch("app.data.sp500_price_collector.get_db", return_value=ctx), \
+    with patch("app.data.sp500_price_collector.mongo_store", ctx), \
          patch("app.data.sp500_price_collector.yf.download",
                return_value=_fake_frame(["AAA", "BBB"])), \
          patch("app.data.sp500_price_collector._refresh_technicals_bulk"):
@@ -128,7 +132,7 @@ async def test_rows_are_still_written(db_ctx):
     refresh both depend on written_tickers surviving the thread hop."""
     ctx, db = db_ctx
 
-    with patch("app.data.sp500_price_collector.get_db", return_value=ctx), \
+    with patch("app.data.sp500_price_collector.mongo_store", ctx), \
          patch("app.data.sp500_price_collector.yf.download",
                return_value=_fake_frame(["AAA", "BBB"])), \
          patch("app.data.sp500_price_collector._refresh_technicals_bulk") as bulk:

@@ -355,36 +355,32 @@ class PipelineProfiler:
         ]
 
     def _persist_to_db(self):
-        """Save the timing report to PostgreSQL for cross-cycle comparison."""
+        """Save the timing report to MongoDB for cross-cycle comparison."""
         try:
-            from app.db.connection import get_db
             import json
 
-            with get_db() as db:
-                # Ensure table exists
-                db.execute("""
-                    CREATE TABLE IF NOT EXISTS pipeline_profiler (
-                        id VARCHAR PRIMARY KEY,
-                        cycle_id VARCHAR,
-                        total_ms INTEGER,
-                        idle_ms INTEGER,
-                        phase_count INTEGER,
-                        bottlenecks_json VARCHAR,
-                        phases_json VARCHAR,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-
-                report = self._last_report
-                mongo_store.insert_docs('pipeline_profiler', [{'id': str(uuid.uuid4()), 'cycle_id': report.get("cycle_id", ""), 'total_ms': report.get("total_ms", 0), 'idle_ms': report.get("idle_ms", 0), 'phase_count': report.get("phase_count", 0), 'bottlenecks_json': json.dumps(report.get("bottlenecks", [])), 'phases_json': json.dumps(report.get("phases", [])), 'created_at': datetime.now(timezone.utc).isoformat()}])
-                logger.info("[PROFILER] Timing data persisted to database")
+            report = self._last_report
+            mongo_store.insert_docs('pipeline_profiler', [{
+                'id': str(uuid.uuid4()),
+                'cycle_id': report.get("cycle_id", ""),
+                'total_ms': report.get("total_ms", 0),
+                'idle_ms': report.get("idle_ms", 0),
+                'phase_count': report.get("phase_count", 0),
+                'bottlenecks_json': json.dumps(report.get("bottlenecks", [])),
+                'phases_json': json.dumps(report.get("phases", [])),
+                # was a PG `DEFAULT CURRENT_TIMESTAMP`; Mongo fills nothing, and
+                # get_history() sorts on this field, so write it explicitly. A
+                # real datetime, not .isoformat(): a string sorts lexically and
+                # would not order correctly against datetime-valued docs.
+                'created_at': datetime.now(timezone.utc),
+            }])
+            logger.info("[PROFILER] Timing data persisted to database")
         except Exception as e:
             logger.warning("[PROFILER] Failed to persist timing data: %s", e)
 
     def get_history(self, limit: int = 10) -> list[dict]:
         """Get timing reports from previous cycles."""
         try:
-            from app.db.connection import get_db
             import json
 
             rows = mongo_query.find_rows('pipeline_profiler', {}, ['cycle_id', 'total_ms', 'idle_ms', 'phase_count', 'bottlenecks_json', 'phases_json', 'created_at'], sort=[('created_at', -1)], limit=limit)

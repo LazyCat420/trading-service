@@ -14,32 +14,39 @@ Unit tests use mocks — no NAS DB connection needed.
 """
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from app.autoresearch.outcome_tracker import _classify
 
 
+@contextmanager
 def _patch_db(confidence_rows=None, outcome_rows=None):
-    # The call counter must span get_db() contexts: _audit_decisions opens one
-    # context for the confidence query and another for the outcomes query.
-    calls = {"n": 0}
+    """Stub both of `_audit_decisions`' reads at the mongo_query boundary.
 
-    @contextmanager
-    def factory():
-        conn = MagicMock()
+    Both are `find_rows` now, so the stub dispatches on the COLLECTION name
+    rather than a call counter (the counter assumed one get_db context per
+    query and broke as soon as that stopped being true).
 
-        def execute_side_effect(*args, **kwargs):
-            calls["n"] += 1
-            cursor = MagicMock()
-            cursor.fetchall.return_value = (
-                (confidence_rows or []) if calls["n"] == 1 else (outcome_rows or [])
-            )
-            return cursor
+    `outcome_rows` fixtures carry the decision AGE IN DAYS in the 5th slot —
+    what the old EXTRACT(EPOCH ...)/86400 column returned. The Mongo read
+    selects `created_at` and the module derives the age, so the age is turned
+    back into a created_at here.
+    """
+    now = datetime.now(timezone.utc)
 
-        conn.execute.side_effect = execute_side_effect
-        yield conn
+    def _find_rows(collection, query, columns, sort=None, limit=0):
+        if collection == 'decision_outcomes':
+            return [
+                (action, conf, pnl, outcome,
+                 None if age is None else now - timedelta(days=age))
+                for action, conf, pnl, outcome, age in (outcome_rows or [])
+            ]
+        return confidence_rows or []
 
-    return patch("app.autoresearch.auditors.decision_audit.get_db", factory)
+    with patch("app.autoresearch.auditors.decision_audit.mongo_query") as mq:
+        mq.find_rows.side_effect = _find_rows
+        yield
 
 
 class TestClassify:

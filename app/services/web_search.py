@@ -227,32 +227,39 @@ class YouTubeRecentSource(BaseNewsSource):
     async def fetch_raw(
         self, query: str, ticker: str | None = None, max_results: int = 5
     ) -> list[dict]:
-        from app.db.connection import get_db
+        from app.db import mongo_store
 
-        with get_db() as db:
-            cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
-            if ticker:
-                rows = db.execute(
-                    """
-                    SELECT title, channel, COALESCE(summary, SUBSTRING(raw_transcript, 1, 2000)),
-                           published_at, video_id
-                    FROM youtube_transcripts
-                    WHERE (ticker = %s OR ticker IS NULL) AND published_at > %s
-                    ORDER BY published_at DESC LIMIT 1
-                """,
-                    [ticker, cutoff],
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    """
-                    SELECT title, channel, COALESCE(summary, SUBSTRING(raw_transcript, 1, 2000)),
-                           published_at, video_id
-                    FROM youtube_transcripts
-                    WHERE published_at > %s
-                    ORDER BY published_at DESC LIMIT 1
-                """,
-                    [cutoff],
-                ).fetchall()
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+        match: dict = {"published_at": {"$gt": cutoff}}
+        if ticker:
+            # ticker = %s OR ticker IS NULL — $in with None also matches docs
+            # where the field is absent, which is what IS NULL means here.
+            match["ticker"] = {"$in": [ticker, None]}
+        docs = mongo_store.aggregate(
+            "youtube_transcripts",
+            [
+                {"$match": match},
+                {"$sort": {"published_at": -1}},
+                {"$limit": 1},
+                {"$project": {
+                    "_id": 0,
+                    "title": 1,
+                    "channel": 1,
+                    # COALESCE(summary, SUBSTRING(raw_transcript, 1, 2000))
+                    "content": {"$ifNull": [
+                        "$summary",
+                        {"$substrCP": [{"$ifNull": ["$raw_transcript", ""]}, 0, 2000]},
+                    ]},
+                    "published_at": 1,
+                    "video_id": 1,
+                }},
+            ],
+        )
+        rows = [
+            (d.get("title"), d.get("channel"), d.get("content"),
+             d.get("published_at"), d.get("video_id"))
+            for d in docs
+        ]
 
         raw_list = []
         for r in rows:

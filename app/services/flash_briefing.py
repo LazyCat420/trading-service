@@ -5,9 +5,9 @@ Summarizes the latest news headlines with source citations.
 """
 
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, timedelta
 
-from app.db.connection import get_db
 from app.services.prism_agent_caller import llm, Priority
 from app.services.prism_agent_caller import call_prism_agent
 from app.db import mongo_query, mongo_store
@@ -88,38 +88,36 @@ async def _get_gainers_losers() -> str:
 async def _get_after_hours_earnings() -> str:
     """Query recent news database for earnings reports from the last 6 hours."""
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT ticker, title, summary, publisher, url, published_at
-                FROM news_articles
-                WHERE published_at >= NOW() - INTERVAL '6 hours'
-                  AND (
-                      title ILIKE '%earnings%' 
-                      OR title ILIKE '% EPS%' 
-                      OR title ILIKE '%beat%' 
-                      OR title ILIKE '%miss%' 
-                      OR title ILIKE '%revenue%'
-                      OR title ILIKE '%reports Q%'
-                  )
-                ORDER BY published_at DESC
-                LIMIT 15
-                """
-            ).fetchall()
-            
-            if not rows:
-                return "No after-hours earnings reports detected in news articles from the last 6 hours."
-                
-            earnings_text = []
-            for r in rows:
-                ticker, title, summary, publisher, url, pub_at = r
-                ticker_str = f" [{ticker}]" if ticker else ""
-                pub_str = pub_at.strftime("%H:%M") if pub_at else ""
-                earnings_text.append(
-                    f"• {title}{ticker_str} — {publisher} ({pub_str})\n"
-                    f"  Summary: {summary[:200]}..."
-                )
-            return "\n".join(earnings_text)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
+        # ILIKE '%x%' == case-insensitive substring regex.
+        patterns = ["earnings", " EPS", "beat", "miss", "revenue", "reports Q"]
+        rows = mongo_query.find_rows(
+            'news_articles',
+            {
+                'published_at': {'$gte': cutoff},
+                '$or': [
+                    {'title': {'$regex': re.escape(p), '$options': 'i'}}
+                    for p in patterns
+                ],
+            },
+            ['ticker', 'title', 'summary', 'publisher', 'url', 'published_at'],
+            sort=[('published_at', -1)],
+            limit=15,
+        )
+
+        if not rows:
+            return "No after-hours earnings reports detected in news articles from the last 6 hours."
+
+        earnings_text = []
+        for r in rows:
+            ticker, title, summary, publisher, url, pub_at = r
+            ticker_str = f" [{ticker}]" if ticker else ""
+            pub_str = pub_at.strftime("%H:%M") if pub_at else ""
+            earnings_text.append(
+                f"• {title}{ticker_str} — {publisher} ({pub_str})\n"
+                f"  Summary: {(summary or '')[:200]}..."
+            )
+        return "\n".join(earnings_text)
     except Exception as e:
         logger.error(f"[FLASH] Failed to fetch after-hours earnings: {e}")
         return f"Error loading after-hours earnings news: {str(e)}"
@@ -158,18 +156,30 @@ async def generate_flash_briefing(report_type: str | None = None) -> str | None:
         logger.info("[FLASH] news_collector not available, skipping article fetch")
 
     # Determine database interval and build context
-    news_interval = "8 hours" if report_type == "after_hours" else "4 hours"
-    
-    with get_db() as db:
-        rows = db.execute(
-            f"""
-            SELECT title, publisher, url, ticker, published_at
-            FROM news_articles
-            WHERE collected_at >= NOW() - INTERVAL '{news_interval}'
-            ORDER BY published_at DESC NULLS LAST
-            LIMIT 40
-            """,
-        ).fetchall()
+    news_cutoff = datetime.now(timezone.utc) - timedelta(
+        hours=8 if report_type == "after_hours" else 4
+    )
+    # ORDER BY published_at DESC NULLS LAST: Mongo sorts missing/null FIRST on
+    # a descending sort, so sort on a presence flag first to push them last.
+    _docs = mongo_store.aggregate(
+        'news_articles',
+        [
+            {'$match': {'collected_at': {'$gte': news_cutoff}}},
+            {'$addFields': {
+                '_no_pub': {'$cond': [
+                    {'$eq': [{'$ifNull': ['$published_at', None]}, None]}, 1, 0]},
+            }},
+            {'$sort': {'_no_pub': 1, 'published_at': -1}},
+            {'$limit': 40},
+            {'$project': {'_id': 0, 'title': 1, 'publisher': 1, 'url': 1,
+                          'ticker': 1, 'published_at': 1}},
+        ],
+    )
+    rows = [
+        (d.get('title'), d.get('publisher'), d.get('url'), d.get('ticker'),
+         d.get('published_at'))
+        for d in _docs
+    ]
 
     # Build context for the LLM
     articles_text = []

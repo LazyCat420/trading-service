@@ -95,15 +95,23 @@ def fred_curve_credit_lines() -> list[str]:
     DB — strictly better than fetching ^TNX/^IRX or an HYG/LQD price-ratio
     proxy at agent time. [] on empty/any failure — non-fatal."""
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_store
 
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT DISTINCT ON (indicator) indicator, value "
-                "FROM macro_indicators WHERE source = 'fred' "
-                "AND indicator IN ('TREASURY_10Y', 'TREASURY_2Y', 'HY_SPREAD') "
-                "ORDER BY indicator, date DESC"
-            ).fetchall()
+        # DISTINCT ON (indicator) ... ORDER BY indicator, date DESC
+        # == newest doc per indicator.
+        docs = mongo_store.aggregate(
+            "macro_indicators",
+            [
+                {"$match": {
+                    "source": "fred",
+                    "indicator": {"$in": ["TREASURY_10Y", "TREASURY_2Y", "HY_SPREAD"]},
+                }},
+                {"$sort": {"indicator": 1, "date": -1}},
+                {"$group": {"_id": "$indicator", "value": {"$first": "$value"}}},
+                {"$project": {"_id": 0, "indicator": "$_id", "value": 1}},
+            ],
+        )
+        rows = [(d.get("indicator"), d.get("value")) for d in docs]
     except Exception as e:
         logger.debug("[retrieval-ctx] fred curve/credit lines failed (non-fatal): %s", e)
         return []
@@ -129,27 +137,45 @@ def build_macro_block(ticker: str) -> str:
     macro-blind before this: the table was collected for the dashboard but
     never reached an agent prompt. '' on empty/any failure — non-fatal."""
     try:
-        from app.db.connection import get_db
+        from app.db import mongo_query, mongo_store
 
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT DISTINCT ON (indicator) indicator, date, value "
-                "FROM macro_indicators WHERE source = 'fred' "
-                "ORDER BY indicator, date DESC"
-            ).fetchall()
-            # Exact one-year base per series (FRED monthly dates are always
-            # the 1st, so the join is safe). Anchoring to CURRENT_DATE
-            # instead landed 11 months back and understated YoY.
-            yoy_rows = db.execute(
-                "SELECT a.indicator, b.value FROM ("
-                "  SELECT DISTINCT ON (indicator) indicator, date"
-                "  FROM macro_indicators WHERE source = 'fred'"
-                "  AND indicator IN ('CPI', 'PCE_CORE')"
-                "  ORDER BY indicator, date DESC"
-                ") a JOIN macro_indicators b ON b.indicator = a.indicator "
-                "AND b.source = 'fred' "
-                "AND b.date = (a.date - INTERVAL '1 year')::date"
-            ).fetchall()
+        # DISTINCT ON (indicator) ... ORDER BY indicator, date DESC
+        # == newest doc per indicator.
+        docs = mongo_store.aggregate(
+            "macro_indicators",
+            [
+                {"$match": {"source": "fred"}},
+                {"$sort": {"indicator": 1, "date": -1}},
+                {"$group": {
+                    "_id": "$indicator",
+                    "date": {"$first": "$date"},
+                    "value": {"$first": "$value"},
+                }},
+                {"$project": {"_id": 0, "indicator": "$_id", "date": 1, "value": 1}},
+            ],
+        )
+        rows = [(d.get("indicator"), d.get("date"), d.get("value")) for d in docs]
+
+        # Exact one-year base per series (FRED monthly dates are always
+        # the 1st, so the lookup is safe). Anchoring to CURRENT_DATE
+        # instead landed 11 months back and understated YoY.
+        # The PG self-join keyed on b.date = a.date - INTERVAL '1 year';
+        # the shifted date is derived, so compute it here and look each up.
+        yoy_rows = []
+        for ind, latest_date, _v in rows:
+            if ind not in ("CPI", "PCE_CORE") or latest_date is None:
+                continue
+            try:
+                base_date = latest_date.replace(year=latest_date.year - 1)
+            except ValueError:  # Feb 29
+                base_date = latest_date.replace(year=latest_date.year - 1, day=28)
+            base_val = mongo_query.scalar(
+                "macro_indicators",
+                {"source": "fred", "indicator": ind, "date": base_date},
+                "value",
+            )
+            if base_val is not None:
+                yoy_rows.append((ind, base_val))
     except Exception as e:
         logger.debug("[retrieval-ctx] macro block failed (non-fatal): %s", e)
         return ""

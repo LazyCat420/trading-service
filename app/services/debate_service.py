@@ -6,32 +6,44 @@ Provides the Civilization Council Debate reports.
 
 import json
 import logging
-from app.db.connection import get_db
+from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
 
 def get_latest_debates(limit: int = 100) -> list[dict]:
     """Return the most recent debate report per ticker."""
-    with get_db() as db:
-        rows = db.execute(
-            """
-            WITH LatestDebates AS (
-                SELECT DISTINCT ON (ar.ticker)
-                    ar.ticker,
-                    ar.result_json,
-                    ar.created_at,
-                    ar.cycle_id,
-                    tun.note
-                FROM analysis_results ar
-                LEFT JOIN ticker_user_notes tun ON ar.ticker = tun.ticker
-                ORDER BY ar.ticker, ar.created_at DESC
-            )
-            SELECT * FROM LatestDebates
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,
-            [limit],
-        ).fetchall()
+    # DISTINCT ON (ticker) ordered by created_at DESC == group by ticker keeping
+    # the newest doc; the LEFT JOIN onto ticker_user_notes becomes a $lookup
+    # that yields note=None when the ticker has no note.
+    docs = mongo_store.aggregate(
+        'analysis_results',
+        [
+            {'$sort': {'ticker': 1, 'created_at': -1}},
+            {'$group': {'_id': '$ticker', 'doc': {'$first': '$$ROOT'}}},
+            {'$replaceRoot': {'newRoot': '$doc'}},
+            {'$lookup': {
+                'from': 'ticker_user_notes',
+                'localField': 'ticker',
+                'foreignField': 'ticker',
+                'as': '_notes',
+            }},
+            {'$sort': {'created_at': -1}},
+            {'$limit': int(limit)},
+            {'$project': {
+                '_id': 0,
+                'ticker': 1,
+                'result_json': 1,
+                'created_at': 1,
+                'cycle_id': 1,
+                'note': {'$first': '$_notes.note'},
+            }},
+        ],
+    )
+    rows = [
+        (d.get('ticker'), d.get('result_json'), d.get('created_at'),
+         d.get('cycle_id'), d.get('note'))
+        for d in docs
+    ]
 
     debates = []
     for r in rows:

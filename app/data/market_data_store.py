@@ -1,7 +1,7 @@
 import logging
 import datetime
 from typing import Optional
-from app.db.connection import get_db
+from app.db import mongo_query
 from app.data.market_snapshot import MarketSnapshot
 from app.db import mongo_store
 
@@ -26,22 +26,18 @@ def get_latest_snapshot(
         minutes=max_age_minutes
     )
 
-    with get_db() as db:
-        cur = db.execute(
-            """
-            SELECT * FROM market_snapshots 
-            WHERE ticker = %s AND fetched_at >= %s
-            ORDER BY fetched_at DESC LIMIT 1
-            """,
-            [ticker, threshold],
-        )
-        row = cur.fetchone()
-
-    if not row:
+    # SELECT * ... ORDER BY fetched_at DESC LIMIT 1
+    docs = mongo_query.find_dicts(
+        'market_snapshots',
+        {'ticker': ticker, 'fetched_at': {'$gte': threshold}},
+        sort=[('fetched_at', -1)], limit=1,
+    )
+    if not docs:
         return None
 
-    cols = [description[0] for description in cur.description]
-    data = dict(zip(cols, row))
+    # A Mongo doc can simply omit a field a PG row would have held as NULL,
+    # so every read below is a .get() — a subscript would KeyError.
+    data = docs[0]
 
     # Parse fetched_at string back to datetime if needed
     fetched_at = data.get("fetched_at")
@@ -55,42 +51,42 @@ def get_latest_snapshot(
 
     # Initialize dataclass with the exact properties
     return MarketSnapshot(
-        ticker=data["ticker"],
+        ticker=data.get("ticker"),
         fetched_at=fetched_at,
-        data_source=data["data_source"],
-        candles_used=data["candles_used"],
-        price=data["price"],
-        open=data["open"],
-        high=data["high"],
-        low=data["low"],
-        volume=data["volume"],
-        vwap=data["vwap"],
-        rsi_14=data["rsi_14"],
-        macd=data["macd"],
-        macd_signal=data["macd_signal"],
-        macd_hist=data["macd_hist"],
-        bb_upper=data["bb_upper"],
-        bb_lower=data["bb_lower"],
-        bb_pct=data["bb_pct"],
-        sma_20=data["sma_20"],
-        sma_50=data["sma_50"],
-        sma_200=data["sma_200"],
-        atr_14=data["atr_14"],
-        adx_14=data["adx_14"],
-        stoch_k=data["stoch_k"],
-        stoch_d=data["stoch_d"],
-        returns_1d=data["returns_1d"],
-        returns_5d=data["returns_5d"],
-        returns_20d=data["returns_20d"],
-        volatility_20d=data["volatility_20d"],
-        sharpe_20d=data["sharpe_20d"],
-        max_drawdown_20d=data["max_drawdown_20d"],
-        beta_20d=data["beta_20d"],
-        pe_ratio=data["pe_ratio"],
-        forward_pe=data["forward_pe"],
-        eps=data["eps"],
-        market_cap=data["market_cap"],
-        revenue_growth=data["revenue_growth"],
-        profit_margin=data["profit_margin"],
-        debt_to_equity=data["debt_to_equity"],
+        data_source=data.get("data_source"),
+        candles_used=data.get("candles_used"),
+        price=data.get("price"),
+        open=data.get("open"),
+        high=data.get("high"),
+        low=data.get("low"),
+        volume=data.get("volume"),
+        vwap=data.get("vwap"),
+        rsi_14=data.get("rsi_14"),
+        macd=data.get("macd"),
+        macd_signal=data.get("macd_signal"),
+        macd_hist=data.get("macd_hist"),
+        bb_upper=data.get("bb_upper"),
+        bb_lower=data.get("bb_lower"),
+        bb_pct=data.get("bb_pct"),
+        sma_20=data.get("sma_20"),
+        sma_50=data.get("sma_50"),
+        sma_200=data.get("sma_200"),
+        atr_14=data.get("atr_14"),
+        adx_14=data.get("adx_14"),
+        stoch_k=data.get("stoch_k"),
+        stoch_d=data.get("stoch_d"),
+        returns_1d=data.get("returns_1d"),
+        returns_5d=data.get("returns_5d"),
+        returns_20d=data.get("returns_20d"),
+        volatility_20d=data.get("volatility_20d"),
+        sharpe_20d=data.get("sharpe_20d"),
+        max_drawdown_20d=data.get("max_drawdown_20d"),
+        beta_20d=data.get("beta_20d"),
+        pe_ratio=data.get("pe_ratio"),
+        forward_pe=data.get("forward_pe"),
+        eps=data.get("eps"),
+        market_cap=data.get("market_cap"),
+        revenue_growth=data.get("revenue_growth"),
+        profit_margin=data.get("profit_margin"),
+        debt_to_equity=data.get("debt_to_equity"),
     )

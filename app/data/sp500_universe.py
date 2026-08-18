@@ -6,8 +6,8 @@ Optionally enriches market cap via yfinance.
 """
 
 import logging
+from datetime import datetime, timezone
 
-from app.db.connection import get_db
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -33,71 +33,74 @@ async def load_sp500_universe(enrich: bool = False):
         len(SP500_TICKERS),
     )
 
-    with get_db() as db:
-        # Reset sp500 flag for all stocks first
-        mongo_store.update_docs('ticker_metadata', {}, {'$set': {'sp500': False}})
+    # Reset sp500 flag for all stocks first
+    mongo_store.update_docs('ticker_metadata', {}, {'$set': {'sp500': False}})
 
-        loaded = 0
-        for i, entry in enumerate(SP500_TICKERS):
-            ticker = entry["ticker"]
-            name = entry["name"]
-            sector = entry["sector"]
-            industry = entry["industry"]
-            market_cap = None
-            market_cap_tier = None
+    loaded = 0
+    for i, entry in enumerate(SP500_TICKERS):
+        ticker = entry["ticker"]
+        name = entry["name"]
+        sector = entry["sector"]
+        industry = entry["industry"]
+        market_cap = None
+        market_cap_tier = None
 
-            # Grab existing enrichment data if it exists
-            existing = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['market_cap', 'market_cap_tier'])
-            if existing:
-                market_cap = existing[0]
-                market_cap_tier = existing[1]
+        # Grab existing enrichment data if it exists
+        existing = mongo_query.find_row('ticker_metadata', {'ticker': ticker}, ['market_cap', 'market_cap_tier'])
+        if existing:
+            market_cap = existing[0]
+            market_cap_tier = existing[1]
 
-            if enrich:
-                try:
-                    import yfinance as yf
+        if enrich:
+            try:
+                import yfinance as yf
 
-                    ticker_obj = yf.Ticker(ticker)
-                    info = ticker_obj.info
-                    sector = info.get("sector", sector)
-                    industry = info.get("industry", industry)
-                    market_cap = info.get("marketCap", market_cap)
-                    name = info.get("shortName", name)
+                ticker_obj = yf.Ticker(ticker)
+                info = ticker_obj.info
+                sector = info.get("sector", sector)
+                industry = info.get("industry", industry)
+                market_cap = info.get("marketCap", market_cap)
+                name = info.get("shortName", name)
 
-                    if market_cap:
-                        if market_cap >= 200e9:
-                            market_cap_tier = "mega"
-                        elif market_cap >= 10e9:
-                            market_cap_tier = "large"
-                        elif market_cap >= 2e9:
-                            market_cap_tier = "mid"
-                        elif market_cap >= 300e6:
-                            market_cap_tier = "small"
-                        else:
-                            market_cap_tier = "micro"
-                except Exception as e:
-                    logger.debug("Failed to enrich %s via yfinance: %s", ticker, e)
+                if market_cap:
+                    if market_cap >= 200e9:
+                        market_cap_tier = "mega"
+                    elif market_cap >= 10e9:
+                        market_cap_tier = "large"
+                    elif market_cap >= 2e9:
+                        market_cap_tier = "mid"
+                    elif market_cap >= 300e6:
+                        market_cap_tier = "small"
+                    else:
+                        market_cap_tier = "micro"
+            except Exception as e:
+                logger.debug("Failed to enrich %s via yfinance: %s", ticker, e)
 
-            query = """
-                INSERT INTO ticker_metadata (ticker, name, sector, industry, market_cap, market_cap_tier, asset_class, sp500, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, 'stock', TRUE, CURRENT_TIMESTAMP)
-                ON CONFLICT (ticker) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    sector = EXCLUDED.sector,
-                    industry = EXCLUDED.industry,
-                    market_cap = COALESCE(EXCLUDED.market_cap, ticker_metadata.market_cap),
-                    market_cap_tier = COALESCE(EXCLUDED.market_cap_tier, ticker_metadata.market_cap_tier),
-                    sp500 = TRUE,
-                    updated_at = CURRENT_TIMESTAMP
-            """
-            db.execute(
-                query, (ticker, name, sector, industry, market_cap, market_cap_tier)
+        # ON CONFLICT (ticker) DO UPDATE. The two COALESCE(EXCLUDED.x,
+        # existing.x) columns are already reproduced above: market_cap /
+        # market_cap_tier were seeded from the existing row and only
+        # overwritten when enrichment produced a value.
+        now = datetime.now(timezone.utc)
+        mongo_store.upsert_doc(
+            'ticker_metadata', {'ticker': ticker},
+            {
+                'ticker': ticker,
+                'name': name,
+                'sector': sector,
+                'industry': industry,
+                'market_cap': market_cap,
+                'market_cap_tier': market_cap_tier,
+                'asset_class': 'stock',
+                'sp500': True,
+                'updated_at': now,
+            },
+        )
+        loaded += 1
+
+        if (i + 1) % 100 == 0:
+            logger.info(
+                "Loaded %d/%d S&P 500 tickers...", i + 1, len(SP500_TICKERS)
             )
-            loaded += 1
-
-            if (i + 1) % 100 == 0:
-                logger.info(
-                    "Loaded %d/%d S&P 500 tickers...", i + 1, len(SP500_TICKERS)
-                )
 
     logger.info("Successfully loaded %d S&P 500 tickers into universe.", loaded)
     return loaded

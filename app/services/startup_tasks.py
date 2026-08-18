@@ -3,7 +3,6 @@ import logging
 import datetime as _dt
 from typing import Callable
 
-from app.db.connection import get_db
 from app.db import mongo_query
 from datetime import datetime, timedelta, timezone
 
@@ -98,16 +97,16 @@ async def warmup_embedder():
     except Exception as e:
         logger.warning("Embedding model not loaded: %s", e)
 
-def _is_data_fresh(table: str, where_clause: str, max_age_days: int) -> bool:
+def _is_data_fresh(table: str, query: dict, max_age_days: int) -> bool:
     try:
-        with get_db() as db:
-            latest = db.execute(
-                f"SELECT MAX(date) FROM {table} WHERE {where_clause}"
-            ).fetchone()
+        latest = mongo_query.agg_row(table, query, [('max', 'date')])
         if latest and latest[0]:
+            newest = latest[0]
+            if isinstance(newest, _dt.datetime):
+                newest = newest.date()
             age_days = (
-                (_dt.date.today() - latest[0]).days
-                if hasattr(latest[0], "days")
+                (_dt.date.today() - newest).days
+                if isinstance(newest, _dt.date)
                 else 0
             )
             if age_days < max_age_days:
@@ -124,10 +123,10 @@ async def startup_fred_refresh(is_shutting_down: Callable[[], bool]):
     # every server restart, which is critical when --reload kills cycles).
     # Freshness needs BOTH checks: a bare MAX(date) is dominated by the daily
     # treasury series and says nothing about the monthly CPI/UNRATE lagging.
-    if (_is_data_fresh("macro_indicators", "source = 'fred'", 2)
+    if (_is_data_fresh("macro_indicators", {'source': 'fred'}, 2)
             and _is_data_fresh(
                 "macro_indicators",
-                "source = 'fred' AND indicator = 'CPI'", 45)):
+                {'source': 'fred', 'indicator': 'CPI'}, 45)):
         logger.info("[startup] FRED data already fresh, skipping refresh")
         return
 
