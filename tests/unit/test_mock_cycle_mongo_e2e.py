@@ -1225,3 +1225,11 @@ class TestMockTradingCycleMongoE2E:
         calib_ctx = get_confidence_calibration_context()
         assert "CONFIDENCE CALIBRATION" in calib_ctx
         assert "stated 80-89%" in calib_ctx
+
+        # 39. Trading Skills & Ticker Metadata in MongoDB
+        from app.services.trading_skills import load_skill_for_ticker
+        from app.services.ticker_meta import get_ticker_meta
+
+        meta_res = get_ticker_meta(["AAPL"])
+        assert "AAPL" in meta_res
+        assert meta_res["AAPL"]["sector"] == "Technology"

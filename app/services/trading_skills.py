@@ -130,13 +130,11 @@ def load_skill_for_ticker(ticker: str) -> str | None:
     if skill_name is None:
         # Try sector-based fallback from ticker_metadata
         try:
-            from app.db.connection import get_db
+            from app.db import mongo_query
 
-            with get_db() as db:
-                row = mongo_query.find_row('ticker_metadata', {'ticker': ticker_upper}, ['sector'])
+            row = mongo_query.find_row('ticker_metadata', {'ticker': ticker_upper}, ['sector'])
             if row and row[0]:
-                sector = row[0].lower().replace(" ", "-")
-                # Check if we have a skill matching this sector name
+                sector = str(row[0]).lower().replace(" ", "-")
                 if sector in _skill_cache:
                     return _skill_cache[sector]
         except Exception:
