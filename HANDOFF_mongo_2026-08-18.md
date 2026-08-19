@@ -12,12 +12,12 @@ came from a document rather than a measurement, it says so.
 
 | | measured now (2026-08-19) |
 |---|---|
-| **trading-service** `quality-purge` @ `daa3dba` | Gate 1: **0 couplings in 0 files** · suite **5039 pass / 1 fail / 0 error** |
+| **trading-service** `quality-purge` @ `5396be7` | Gate 1: **0 couplings in 0 files** · suite **5049 pass / 0 fail / 0 error** |
 | **trading-client** `client-mongo-conversion` @ `10de5952` | **810 `.execute(` sites in 126 files — untouched** |
 
-The one service failure is `test_prism_prompt_injection`, which hits a vLLM
-502. It passes in isolation and touches no Mongo, Decimal or psycopg code —
-an endpoint outage, not this work.
+(An earlier run showed `test_prism_prompt_injection` failing on a vLLM 502.
+The endpoint recovered and it passes; it touches no Mongo, Decimal or psycopg
+code. Worth knowing it is environment-sensitive.)
 
 **Phases 1, 2, 3 (partial) and 5 (partial) are DONE and pushed.** See
 `documentation/chapters/` ch.76. What remains is phase 4 (the client) plus
@@ -28,13 +28,15 @@ Both branches pushed, both worktrees clean, **nothing deployed**.
 
 ```
 scripts/gate_zero_pg.py --self-test
-  master (control): 1805 couplings in 187 files
-  HEAD    (live)  :    6 couplings in   1 file
+  master (control): 1860 couplings in 186 files
+  HEAD    (live)  :    0 couplings in   0 files
   PASS: the gate reports nonzero on master, so a zero on HEAD is meaningful.
 ```
 
-The 6 are `app/db/connection.py` itself. `connection_import` and `get_db_call`
-are both zero — no application module imports or calls `get_db`.
+Zero, and the control still fails on master, so the zero means something. The
+remaining Postgres code lives under `scripts/migration/`, which the gate does
+not scan by design — it is migration tooling that must keep reading the frozen
+backup, not unconverted application code.
 
 ### Run these before trusting anything
 
@@ -45,6 +47,15 @@ VENV=/home/lazycat/github/projects/sun/trading-service/.venv/bin/python   # the 
 PYTHONPATH=$PWD $VENV scripts/gate_zero_pg.py --self-test        # progress + its control
 PYTHONPATH=$PWD $VENV scripts/check_lost_pg_defaults.py --strict # lost PG DEFAULTs
 PYTHONPATH=$PWD $VENV -m pytest -q --timeout=180 --ignore=tests/debug
+
+# the money artifact needs a real (isolated) Mongo — it SKIPS without this
+PYTHONPATH=$PWD TRADING_BOT_MONGO_TEST=1 $VENV -m pytest -q \
+    tests/unit/test_money_is_cent_exact.py \
+    tests/unit/test_index_creation_inside_a_transaction.py \
+    tests/unit/test_deploy_interlocks_fail_closed.py
+
+# in trading-client, after every conversion batch:
+PYTHONPATH=$PWD python scripts/check_converted_tables_have_data.py
 ```
 
 **Read the errors line, not just the failure count.** pytest counts them
@@ -106,20 +117,59 @@ exhaustive sweep; everything else count-level, per the user's scoping. Nothing
 has been re-timed since the index fix, so treat any previous rows/s figure as
 void.
 
-### 4. trading-client — the whole thing, untouched
-564 `.execute(` sites in 67 files, plus 220 more in `scripts/`. The branch adds
-only a dead `mongo_query.py` and a client-only wildcard `backend_for()`; it
-converted **zero** routes.
+### 4. trading-client — tooling ported, routes still untouched
+**810 `.execute(` sites in 126 files** (not 564/67 — that count excluded `app/`
+subpackages). Zero routes converted.
 
-Hard part measured: ~67 joins — **38 LEFT JOIN, 13 LATERAL, 14 against CTE
-aliases**. `join_rows()` does two-table INNER on one equality and refuses
-LEFT/ANTI by name, so the mechanically addressable set is single digits.
-`screener.py` (15 joins) and `data.py` (12) hold ~40% of it.
+DONE (`3faf7aa3`, `92700835`, `e4b75f00`):
+- The codemod and the SQL translator now exist here. They lived only in
+  trading-service, so there was no mechanical path at all. `sqlglot` — the
+  parser they run on — was in **no requirements file anywhere**; it had been
+  installed by hand into `trading-service/.venv`, so the codemod did not run in
+  a fresh checkout. Pinned in `requirements-migration.in`.
+- The money contract (`money_policy.py`, byte-identical to the service's copy,
+  enforced by `check_backend_map.py`). It had to land BEFORE the routes: the
+  client's `_to_tuple` did no Decimal128 unwrapping at all, so every converted
+  money read would have handed a raw BSON object to a template.
+- `scripts/check_converted_tables_have_data.py`, below.
 
-Before starting: delete the wildcard `backend_for()` branch (the client honours
-a `*` entry the service ignores, in a byte-identical shared file — silent
-split-brain), and unify `mongo_query.py`/`mongo_store.py` across the two repos
-with the byte-identity check that already exists for `collection_map.json`.
+**The scope estimate below was wrong.** Measured with the codemod's own
+refusals rather than by counting joins:
+
+```
+376 call sites rewritable across 52 files
+ 72 skip: sql not a literal      <- the real blocker
+ 12 skip: shape not safely rewritable
+ 10 skip: JOIN / LEFT JOIN       <- not the blocker
+~29 skip: casts, computed columns, subqueries, DISTINCT, DDL
+```
+
+Joins account for **10** refusals, not 51. The dominant blocker is non-literal
+SQL (f-strings and variables), which is a different and more tractable problem.
+The mechanically addressable set is 376, not "single digits".
+
+**THE REAL BLOCKER IS THE SEED.** Of the 84 tables the codemod can rewrite,
+**17 are empty in Mongo** — 84 of those 376 sites — including `scraper_queue`,
+`price_history`, `technicals`, `data_flags` and `sec_13f_holdings`. Converting
+those reads ships code that returns `None`/`[]` forever, which is a legitimate
+answer no test or log distinguishes from "nothing matched". So phase 3's seed
+genuinely does gate phase 4, table by table.
+
+`scripts/check_converted_tables_have_data.py` makes that checkable: it walks
+every `mongo_query` read in `app/` and fails if the collection is empty. Run it
+after every conversion batch. Resolve through `collections.collection_for()`,
+never the raw name and never the `collection_map` entry — `apply_renames` is
+false, so those two give different answers (the map says
+`ts_price_history`, which does not exist).
+
+Correcting the note below: the wildcard `backend_for()` branch is **not** a
+split-brain. It is present and identical in BOTH repos (the two copies differ
+only by a trailing space). `mongo_query.py`/`mongo_store.py` do differ
+substantially, but deliberately — the client edition has its own client and
+does not own `ensure_indexes`.
+
+Suggested order: seed the 17 tables, then convert in batches by file, running
+the data check and the suite after each.
 
 ### 5. Cutover — after everything above
 The deploy interlocks are **DONE** @ `daa3dba`, and they were worse than
