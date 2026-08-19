@@ -100,6 +100,27 @@ def main(argv: list[str] | None = None) -> int:
         if not is_ledger and policy == "dec128":
             problems.append(f"{table} -> {e['collection']}: dec128 outside ledger_*")
 
+    # 6. A numeric_policy that OVERRIDES the ledger's must say why.
+    #    `uses_decimal128()` reads the map first and the ledger only as a
+    #    fallback (app/db/table_spec.py), deliberately — the ledger is
+    #    generated, the map is hand-corrected, and `bots` is the case that
+    #    proves it. But that precedence means a map entry can silently demote a
+    #    money table to float and nothing anywhere would disagree out loud:
+    #    the write path would stop storing Decimal128, the read path would stop
+    #    unwrapping it, and the two halves would AGREE, in float, about the
+    #    cash. `trade_results` is the live instance (ledger dec128, map float
+    #    on ch.64's reasoning that these are decision parameters rather than
+    #    settled amounts) and it carries its reason; this rule keeps the next
+    #    one from arriving without one.
+    ledger_policy = {t["table"]: t.get("numeric_policy") for t in ledger["tables"]}
+    for table, e in sorted(entries.items()):
+        theirs, ours = ledger_policy.get(table), e.get("numeric_policy")
+        if ours and theirs and ours != theirs and not e.get("numeric_policy_reason"):
+            problems.append(
+                f"{table}: map says numeric_policy={ours!r}, ledger says {theirs!r}; "
+                "the map wins, so add a numeric_policy_reason saying why"
+            )
+
     if problems:
         print(f"FAIL: {len(problems)} problem(s) in collection_map.json:")
         for p in problems:

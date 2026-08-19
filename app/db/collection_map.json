@@ -160,7 +160,8 @@
    ],
    "numeric_policy": "dec128",
    "mode_at_authoring": "pg",
-   "rename_reason": "holds cash_balance/total_pnl -- money, whatever the classifier says"
+   "rename_reason": "holds cash_balance/total_pnl -- money, whatever the classifier says",
+   "numeric_policy_reason": "PROMOTION, not a downgrade: the generated ledger classified bots as float, and this row holds the account cash_balance and total_pnl. uses_decimal128() reads this map first, so without the override the read path answered False for the cash balance while paper_trader was already writing it through dec128."
   },
   "box_benchmark_runs": {
    "collection": "log_box_benchmark_runs",

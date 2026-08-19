@@ -164,6 +164,47 @@ def test_sabotage_ledger_collection_without_dec128_fails(tree):
     assert ccm.main([]) == 1
 
 
+def test_the_shipped_map_states_a_reason_wherever_it_overrides_the_ledger(tree):
+    """`uses_decimal128()` reads the map FIRST and the ledger only as a
+    fallback, so a map entry can demote a money table to float and nothing
+    would disagree out loud: the write path stops storing Decimal128, the read
+    path stops unwrapping it, and both halves agree, in float, about the cash.
+
+    Two live overrides exist and both are deliberate — `bots` promoted to
+    dec128 against a generated `float`, `trade_results` demoted to float on
+    ch.64's reasoning that its numbers are decision parameters rather than
+    settled amounts. Each carries its reason, so the checker passes as shipped.
+    """
+    assert ccm.main([]) == 0
+
+
+def test_sabotage_a_silent_money_downgrade_fails(tree):
+    """Strip the REASON, not the policy: the override stays, its justification
+    goes. That is the shape a silent demotion actually arrives in."""
+    _edit(tree, lambda d: d["collections"]["trade_results"].pop(
+        "numeric_policy_reason", None))
+    assert ccm.main([]) == 1
+
+
+def test_sabotage_a_new_undocumented_override_fails(tree):
+    def _flip(d):
+        d["collections"]["positions"]["numeric_policy"] = "float"
+        d["collections"]["positions"].pop("numeric_policy_reason", None)
+    _edit(tree, _flip)
+    assert ccm.main([]) == 1
+
+
+def test_an_override_that_agrees_with_the_ledger_needs_no_reason(tree):
+    """NEGATIVE CONTROL: the rule fires on DISAGREEMENT, not on the presence of
+    a numeric_policy — every one of the 161 entries carries one."""
+    def _agree(d):
+        d["collections"]["bots"]["numeric_policy"] = "float"
+        d["collections"]["bots"].pop("numeric_policy_reason", None)
+        d["collections"]["bots"]["collection"] = "state_bots"   # dec128 outside ledger_* is rule 5
+    _edit(tree, _agree)
+    assert ccm.main([]) == 0
+
+
 def test_a_missing_file_is_exit_2(tree):
     (tree / "app" / "db" / "collection_map.json").unlink()
     assert ccm.main([]) == 2
