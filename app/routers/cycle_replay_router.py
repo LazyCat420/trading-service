@@ -96,6 +96,42 @@ def _cycles_total(db) -> int:
     return row[0] if row else 0
 
 
+def _cycle_triggers(db, cycle_ids: list[str]) -> dict[str, dict]:
+    """{cycle_id: trigger payload} for a whole page, in ONE query.
+
+    Per-cycle this would be a sixth fan-out query on an endpoint that already
+    measures ~1.4s for 20 cycles; batched it is one. A cycle with no
+    `cycle_trigger` event (anything that ran before this shipped) is simply
+    absent from the map — callers must render that as "unknown origin", never
+    as "manual", which would be a fabricated fact.
+    """
+    if not cycle_ids:
+        return {}
+    if _mongo_reads("pipeline_events"):
+        try:
+            from app.db import mongo_store
+            docs = mongo_store.find_docs(
+                "pipeline_events",
+                {"cycle_id": {"$in": cycle_ids}, "step": "cycle_trigger"},
+                projection={"_id": 0, "cycle_id": 1, "data": 1},
+            )
+            return {d["cycle_id"]: (d.get("data") or {}) for d in docs if d.get("cycle_id")}
+        except Exception as e:
+            handle_mongo_read_failure("pipeline_events", "[cycles] mongo trigger read", e)
+    rows = db.execute(
+        "SELECT cycle_id, data_json FROM pipeline_events "
+        "WHERE cycle_id = ANY(%s) AND step = 'cycle_trigger'",
+        [cycle_ids],
+    ).fetchall()
+    out: dict[str, dict] = {}
+    for cid, data in (rows or []):
+        try:
+            out[cid] = json.loads(data) if isinstance(data, str) else (data or {})
+        except Exception:
+            out[cid] = {}
+    return out
+
+
 def _has_done_event(db, cycle_id: str) -> bool:
     if _mongo_reads("pipeline_events"):
         try:
@@ -384,8 +420,16 @@ _PIPELINE_EDGES = [
 def list_cycles(
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
+    include_total: bool = Query(default=True),
 ):
-    """List recent pipeline cycles with summary stats."""
+    """List recent pipeline cycles with summary stats.
+
+    `include_total=false` skips `_cycles_total`, which is an unindexed
+    DISTINCT/`$group` over the whole `pipeline_events` table (372k rows and
+    growing — nothing prunes it). It exists only to drive pagination; a caller
+    that just wants the newest N cycles on a poll should not pay for a full
+    scan every tick. Default stays True so existing callers are unchanged.
+    """
     from app.v3.telemetry import _ensure_telemetry_table
     _ensure_telemetry_table()
 
@@ -406,6 +450,8 @@ def list_cycles(
         with get_db() as db:
             # Get distinct cycles from pipeline_events (most reliable source)
             rows = _cycles_page(db, limit, offset)
+
+            triggers = _cycle_triggers(db, [r[0] for r in rows if r and r[0]])
 
             cycles = []
             for row in rows:
@@ -484,10 +530,14 @@ def list_cycles(
                     "agent_count": agent_count,
                     "actions": actions,
                     "status": status,
+                    # None (not {}) for cycles that predate trigger provenance —
+                    # the client must be able to tell "we don't know" from
+                    # "nobody triggered it".
+                    "trigger": triggers.get(cycle_id) or None,
                 })
 
-            # Get total count for pagination
-            total = _cycles_total(db)
+            # Get total count for pagination (opt-out: see include_total)
+            total = _cycles_total(db) if include_total else None
 
             return {
                 "cycles": cycles,
@@ -1025,3 +1075,52 @@ def _build_mermaid(nodes: list[dict], edges: list[dict]) -> str:
         lines.append(f"    style {short_ids[aid]} fill:{_node_fill(rows)},color:#fff")
 
     return "\n".join(lines)
+
+
+# ── Raw per-cycle event + result stream ────────────────────────────────────
+#
+# `/run-cycle/status` only ever carries the events of the ONE cycle named in
+# the `pipeline_state` singleton, so the dashboard's live pipeline grid lost
+# every asset row the moment the next cycle started. The rows were never gone —
+# `pipeline_events` is append-only — but nothing served a *past* cycle's events
+# in the shape the grid parses.
+#
+# This delegates to PipelineStateDB rather than re-deriving the read, for two
+# reasons. It keeps ONE definition of the wire shape (a second copy that
+# drifted by a key would render an empty grid, not raise), and it keeps this
+# endpoint free of `get_db`/`_mongo_reads` — symbols the pure-Mongo rewrite of
+# this router on the `quality-purge` branch deletes. A tail-appended endpoint
+# merges cleanly onto that branch either way; written against those symbols it
+# would then NameError at runtime, which is far worse than a merge conflict.
+#
+# `results` is NOT optional. The only phase='trading' event carries
+# {kind, ticker, side, qty, price} with no action and no confidence, so a grid
+# row with no matching result falls through to the client's `|| 'HOLD'` / `|| 0`
+# defaults and renders a confident "HOLD 0%" for a decision nobody made.
+
+
+@router.get("/{cycle_id}/events")
+def get_cycle_events(
+    cycle_id: str,
+    limit: int = Query(default=5000, le=20000),
+):
+    """Raw append-only event stream for one cycle, plus its analysis results.
+
+    `truncated` is explicit rather than implied: a silently clipped stream
+    renders as a cycle that simply stopped emitting, which is indistinguishable
+    from a cycle that died.
+    """
+    from app.services.pipeline_state import PipelineStateDB
+
+    try:
+        events = PipelineStateDB.get_cycle_events(cycle_id, limit=limit)
+        return {
+            "cycle_id": cycle_id,
+            "events": events,
+            "results": PipelineStateDB.get_cycle_results(cycle_id),
+            "count": len(events),
+            "truncated": len(events) >= limit,
+        }
+    except Exception as e:
+        logger.exception("Error reading events for cycle %s", cycle_id)
+        raise HTTPException(status_code=500, detail=str(e))

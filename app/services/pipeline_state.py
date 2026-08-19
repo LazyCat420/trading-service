@@ -166,6 +166,121 @@ class PipelineStateDB:
         except Exception as me:
             logger.error("[PipelineStateDB] Mongo dual-write failed (non-fatal): %s", me)
 
+    # ── Per-cycle readers ─────────────────────────────────────────────────
+    #
+    # Extracted out of get_state so the SAME read can serve a cycle that is no
+    # longer the singleton. `/run-cycle/status` only ever carried the ONE cycle
+    # named in `pipeline_state`, which is why the dashboard's pipeline grid lost
+    # every asset row the moment the next cycle started. `pipeline_events` is
+    # append-only and nothing was ever deleted — there was simply no reader that
+    # took a cycle_id.
+    #
+    # These are the ONE definition of the wire shape. The cycle-replay endpoint
+    # delegates here rather than re-deriving it: a second copy that drifted by a
+    # single key would not raise, it would render an empty grid, which looks
+    # exactly like a cycle that processed nothing.
+
+    @classmethod
+    def get_cycle_events(cls, cycle_id: str, limit: int | None = None) -> list[dict]:
+        """A cycle's events, oldest-first, as {ts, phase, step, detail, status,
+        data, elapsed_ms}. Identical shape from either store."""
+        if not cycle_id:
+            return []
+        from app.db import mongo_store
+        # After cutover (MONGO_STORE_BACKEND=pipeline_events:mongo) read events
+        # from Mongo; identical dict shape either way.
+        if mongo_store.reads_mongo("pipeline_events"):
+            try:
+                events = mongo_store.read_pipeline_events(cycle_id)
+                return events[:limit] if limit else events
+            except Exception as mev_e:
+                logger.error("[PipelineStateDB] Mongo events read failed: %s", mev_e)
+                return []
+        try:
+            # A fresh connection: the `db` from the state read in get_state is
+            # out of scope here whenever the state came from Mongo, and closed
+            # even when it did not.
+            sql = (
+                "SELECT timestamp, phase, step, detail, status, data_json, elapsed_ms "
+                "FROM pipeline_events WHERE cycle_id = %s ORDER BY timestamp ASC"
+            )
+            params: list = [cycle_id]
+            if limit:
+                sql += " LIMIT %s"
+                params.append(limit)
+            with connection.get_db() as ev_db:
+                ev_rows = ev_db.execute(sql, params).fetchall()
+            events = []
+            for erow in ev_rows:
+                ts_val = erow[0]
+                ts_str = ts_val.isoformat() if hasattr(ts_val, 'isoformat') else str(ts_val) if ts_val else None
+                data_parsed = {}
+                if erow[5]:
+                    try:
+                        data_parsed = json.loads(erow[5]) if isinstance(erow[5], str) else erow[5]
+                    except Exception:
+                        pass
+                events.append({
+                    "ts": ts_str,
+                    "phase": erow[1],
+                    "step": erow[2],
+                    "detail": erow[3],
+                    "status": erow[4],
+                    "data": data_parsed,
+                    "elapsed_ms": erow[6] or 0,
+                })
+            return events
+        except Exception as ev_e:
+            logger.error("[PipelineStateDB] Failed to fetch events for %s: %s", cycle_id, ev_e)
+            return []
+
+    @classmethod
+    def get_cycle_results(cls, cycle_id: str) -> list[dict]:
+        """A cycle's analysis results (the dicts carrying action / confidence /
+        trade_executed).
+
+        The pipeline grid's OUTPUT column needs these: the only phase='trading'
+        event carries {kind, ticker, side, qty, price} and NO action, so a grid
+        row without a matching result falls through to its `|| 'HOLD'` and
+        `|| 0` defaults and renders a confident-looking "HOLD 0%" for a decision
+        nobody made. Any consumer that shows a past cycle must read these too.
+        """
+        if not cycle_id:
+            return []
+        from app.db import mongo_store
+        try:
+            ar_rows = None
+            if mongo_store.reads_mongo("analysis_results"):
+                try:
+                    ar_rows = [
+                        (doc.get("ticker"), doc.get("result_json"))
+                        for doc in mongo_store.find_docs(
+                            "analysis_results", {"cycle_id": cycle_id},
+                            projection={"_id": 0, "ticker": 1, "result_json": 1},
+                        )
+                    ]
+                except Exception as me:
+                    handle_mongo_read_failure("analysis_results", "[PipelineStateDB] mongo results read", me)
+            if ar_rows is None:
+                with connection.get_db() as ar_db:
+                    ar_rows = ar_db.execute(
+                        "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
+                        [cycle_id],
+                    ).fetchall()
+            results = []
+            for ar in ar_rows:
+                try:
+                    res = ar[1] if isinstance(ar[1], dict) else json.loads(ar[1])
+                    if "ticker" not in res:
+                        res["ticker"] = ar[0]
+                    results.append(res)
+                except Exception:
+                    pass
+            return results
+        except Exception as ar_e:
+            logger.error("[PipelineStateDB] Failed to fetch results for %s: %s", cycle_id, ar_e)
+            return []
+
     @classmethod
     def get_state(cls, summary_only: bool = False) -> dict:
         try:
@@ -208,84 +323,8 @@ class PipelineStateDB:
                     # Enrich with events and results if summary_only is False and cycle_id exists
                     cycle_id = d.get("cycle_id")
                     if cycle_id and not summary_only:
-                        # After cutover (MONGO_STORE_BACKEND=pipeline_events:mongo)
-                        # read events from Mongo; identical dict shape either way.
-                        from app.db import mongo_store
-                        _events_from_mongo = mongo_store.reads_mongo("pipeline_events")
-                        if _events_from_mongo:
-                            try:
-                                d["events"] = mongo_store.read_pipeline_events(cycle_id)
-                            except Exception as mev_e:
-                                logger.error("[PipelineStateDB] Mongo events read failed: %s", mev_e)
-                                d["events"] = []
-                        else:
-                            try:
-                                # A fresh connection: the `db` from the state
-                                # read above is out of scope here whenever the
-                                # state came from Mongo, and closed even when
-                                # it did not.
-                                with connection.get_db() as ev_db:
-                                    ev_rows = ev_db.execute(
-                                        "SELECT timestamp, phase, step, detail, status, data_json, elapsed_ms "
-                                        "FROM pipeline_events WHERE cycle_id = %s ORDER BY timestamp ASC",
-                                        [cycle_id],
-                                    ).fetchall()
-                                events = []
-                                for erow in ev_rows:
-                                    ts_val = erow[0]
-                                    ts_str = ts_val.isoformat() if hasattr(ts_val, 'isoformat') else str(ts_val) if ts_val else None
-                                    data_parsed = {}
-                                    if erow[5]:
-                                        try:
-                                            data_parsed = json.loads(erow[5]) if isinstance(erow[5], str) else erow[5]
-                                        except Exception:
-                                            pass
-                                    events.append({
-                                        "ts": ts_str,
-                                        "phase": erow[1],
-                                        "step": erow[2],
-                                        "detail": erow[3],
-                                        "status": erow[4],
-                                        "data": data_parsed,
-                                        "elapsed_ms": erow[6] or 0,
-                                    })
-                                d["events"] = events
-                            except Exception as ev_e:
-                                logger.error("[PipelineStateDB] Failed to fetch events for state: %s", ev_e)
-                                d["events"] = []
-
-                        try:
-                            ar_rows = None
-                            if mongo_store.reads_mongo("analysis_results"):
-                                try:
-                                    ar_rows = [
-                                        (d.get("ticker"), d.get("result_json"))
-                                        for d in mongo_store.find_docs(
-                                            "analysis_results", {"cycle_id": cycle_id},
-                                            projection={"_id": 0, "ticker": 1, "result_json": 1},
-                                        )
-                                    ]
-                                except Exception as me:
-                                    handle_mongo_read_failure("analysis_results", "[PipelineStateDB] mongo results read", me)
-                            if ar_rows is None:
-                                with connection.get_db() as ar_db:
-                                    ar_rows = ar_db.execute(
-                                        "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
-                                        [cycle_id],
-                                    ).fetchall()
-                            results = []
-                            for ar in ar_rows:
-                                try:
-                                    res = ar[1] if isinstance(ar[1], dict) else json.loads(ar[1])
-                                    if "ticker" not in res:
-                                        res["ticker"] = ar[0]
-                                    results.append(res)
-                                except Exception:
-                                    pass
-                            d["results"] = results
-                        except Exception as ar_e:
-                            logger.error("[PipelineStateDB] Failed to fetch results for state: %s", ar_e)
-                            d["results"] = []
+                        d["events"] = cls.get_cycle_events(cycle_id)
+                        d["results"] = cls.get_cycle_results(cycle_id)
                     else:
                         d["events"] = []
                         d["results"] = []
