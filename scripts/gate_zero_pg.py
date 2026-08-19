@@ -29,16 +29,19 @@ Exit status:
   2   the scan itself failed (a file could not be parsed)
 
 Negative control (REQUIRED before trusting a zero):
-    python scripts/gate_zero_pg.py --root <a checkout of master>
+    python scripts/gate_zero_pg.py --root <a checkout of a COUPLED tree>
 must report a large nonzero count. A gate that has never been seen to fail is
-not evidence. `--self-test` runs that control automatically against the
-repo's own git history.
+not evidence. `--self-test` runs that control automatically, against
+CONTROL_REF — a commit pinned BY SHA because it is known to contain the
+defect. It used to say "master", which stopped working the day the fix
+merged into master.
 
 Usage:
     python scripts/gate_zero_pg.py
     python scripts/gate_zero_pg.py --json reports/gate_zero_pg.json
     python scripts/gate_zero_pg.py --show get_db_call --limit 40
     python scripts/gate_zero_pg.py --self-test
+    python scripts/gate_zero_pg.py --self-test --control-ref <sha>
 """
 from __future__ import annotations
 
@@ -299,45 +302,61 @@ def render(result: dict, show: str | None, limit: int) -> None:
             print(f"    {n:5}  {rel}")
 
 
-def self_test() -> int:
-    """Negative control: the gate must report nonzero against master.
+# The last commit on master that still had Postgres couplings, used as the
+# negative control. This was `master` until 2026-08-19, when quality-purge
+# merged and master became the converted tree — at which point the control
+# reported 0, the self-test failed, and the failure said "the gate is broken"
+# when what had actually happened is that the gate had won. A control has to
+# name a commit that is KNOWN to contain the defect; "whatever master is now"
+# stops being that the moment the fix lands.
+CONTROL_REF = "a2540d1"           # pre-merge master; scan finds 1,861 couplings
+CONTROL_EXPECTED = 1861
+
+
+def self_test(control_ref: str = CONTROL_REF) -> int:
+    """Negative control: the gate must report nonzero against a tree that is
+    KNOWN to be coupled to Postgres.
 
     A gate is only evidence if it has been seen to fail. This checks out
-    master into a temp dir and asserts the same scan finds couplings there.
+    `control_ref` into a temp dir and asserts the same scan finds couplings
+    there.
     """
-    print("Gate 1 self-test — the gate must FAIL on master (negative control)")
+    print(f"Gate 1 self-test — the gate must FAIL on {control_ref} (negative control)")
     print()
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            subprocess.run(
-                ["git", "archive", "--format=tar", "master"],
+            tar = subprocess.run(
+                ["git", "archive", "--format=tar", control_ref],
                 cwd=REPO,
                 check=True,
                 stdout=subprocess.PIPE,
-            )
+            ).stdout
         except subprocess.CalledProcessError as exc:
-            print(f"  could not read master: {exc}")
+            print(f"  could not read {control_ref}: {exc}")
+            print("  (a shallow clone will not have it — fetch the full history)")
             return 2
-        tar = subprocess.run(
-            ["git", "archive", "--format=tar", "master"],
-            cwd=REPO,
-            check=True,
-            stdout=subprocess.PIPE,
-        ).stdout
         subprocess.run(["tar", "-x", "-C", tmp], input=tar, check=True)
         control = scan(Path(tmp))
 
     live = scan(REPO)
-    print(f"  master (control): {control['total']:5} couplings in {control['file_count']} files")
-    print(f"  HEAD    (live)  : {live['total']:5} couplings in {live['file_count']} files")
+    print(f"  {control_ref} (control): {control['total']:5} couplings in {control['file_count']} files")
+    print(f"  HEAD          (live)  : {live['total']:5} couplings in {live['file_count']} files")
     print()
     if control["total"] == 0:
-        print("  FAIL: the control reports zero. The gate cannot detect couplings;")
-        print("        a zero from it would mean nothing.")
+        print(f"  FAIL: the control reports zero. Either {control_ref} is not the")
+        print("        coupled tree it is supposed to be, or the gate can no longer")
+        print("        detect couplings — a zero from it would mean nothing either way.")
         return 2
-    print("  PASS: the gate reports nonzero on master, so a zero on HEAD is meaningful.")
+    if control["total"] != CONTROL_EXPECTED:
+        # Not fatal: the scan may have legitimately been sharpened. But an
+        # unannounced change in what the control measures is worth saying out
+        # loud, because it is how a control quietly drifts into agreeing with
+        # everything.
+        print(f"  NOTE: control found {control['total']}, expected {CONTROL_EXPECTED}."
+              " The scan's reach changed; update CONTROL_EXPECTED deliberately.")
+    print(f"  PASS: the gate reports nonzero on {control_ref}, so a zero on HEAD is meaningful.")
     if live["total"] < control["total"]:
-        print(f"  progress: {control['total'] - live['total']} couplings removed on this branch.")
+        print(f"  progress: {control['total'] - live['total']} couplings removed since the control.")
     return 0
 
 
@@ -347,7 +366,10 @@ def main() -> int:
     ap.add_argument("--json", help="write the full finding list here")
     ap.add_argument("--show", choices=KINDS, help="print individual sites of this kind")
     ap.add_argument("--limit", type=int, default=40)
-    ap.add_argument("--self-test", action="store_true", help="run the negative control against master")
+    ap.add_argument("--self-test", action="store_true",
+                    help="run the negative control against CONTROL_REF")
+    ap.add_argument("--control-ref", default=CONTROL_REF,
+                    help=f"the known-coupled commit the control scans (default {CONTROL_REF})")
     ap.add_argument("--targets", nargs="*", default=list(DEFAULT_TARGETS),
                     help="paths to scan, relative to --root (default: app cycle_main.py)")
     ap.add_argument("--max", type=int, default=0, metavar="N",
@@ -360,7 +382,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
-        return self_test()
+        return self_test(args.control_ref)
 
     result = scan(Path(args.root).resolve(), targets=tuple(args.targets))
     render(result, args.show, args.limit)
