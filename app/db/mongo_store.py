@@ -256,8 +256,25 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     for coll in _ID_UNIQUE_COLLECTIONS:
         _try(coll, "id", unique=True,
              partialFilterExpression={"id": {"$type": _ID_TYPES}})
+        # ...and a PLAIN index on the same field, which is the one the planner
+        # can actually use. A partial index is only considered when the query
+        # predicate is provably a subset of its filter, and `{"id": <value>}`
+        # is not a subset of `{"id": {"$type": [...]}}` — MongoDB does not
+        # infer type membership from a literal. So every keyed read and every
+        # upsert filter on these collections was a COLLSCAN: measured
+        # 2026-08-19, `{"id": "err_..."}` against execution_errors (173,005
+        # docs) planned COLLSCAN, and the backfill crawled at 22-83 rows/s
+        # against 5,900-7,100 for the collections that happened to carry a
+        # plain index beside the partial one.
+        #
+        # A separate NAME is required: create_index with the same key and
+        # different options is an error, not a modification. `agent_audit_log`
+        # has carried exactly this pair (`request_id_plain_1`) since someone
+        # hit the problem there and fixed the one collection in front of them.
+        _try(coll, "id", name="id_plain_1")
     _try("agent_audit_log", "request_id", unique=True,
          partialFilterExpression={"request_id": {"$type": "string"}})
+    _try("agent_audit_log", "request_id", name="request_id_plain_1")
     # NO TTL on llm_audit_logs: PG keeps full history (AUDIT_LOG_TTL_DAYS only
     # rotates log *files*), and the dashboard/box_scorecard/strategy_auditor
     # readers use rows older than any short window. A 14-day TTL lived here
@@ -273,6 +290,7 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     _try("trade_results", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
     _try("context_blobs", "context_hash", unique=True,
          partialFilterExpression={"context_hash": {"$type": "string"}})
+    _try("context_blobs", "context_hash", name="context_hash_plain_1")
     # Read-path keys used by the report/replay UIs after cutover.
     _try("ticker_reports", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
     _try("analysis_results", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])

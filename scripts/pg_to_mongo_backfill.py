@@ -481,8 +481,25 @@ def ensure_key_index(table: str, key_fields: list[str]) -> str:
     table_spec, not guessed — so it always matches the upsert filter.
     """
     coll = mongo_store.get_doc_db()[collection_for(table)]
-    existing = {tuple(i["key"].keys()) for i in coll.list_indexes()}
-    if tuple(key_fields) in existing:
+    # PARTIAL indexes do not count. `ensure_indexes` builds the natural key as
+    # `unique=True, partialFilterExpression={"id": {"$type": [...]}}`, and
+    # MongoDB will only use a partial index when the QUERY predicate is
+    # provably a subset of that filter — `{"id": "err_0000..."}` is not, so the
+    # planner falls back to a COLLSCAN. This guard used to compare index KEY
+    # SHAPES, saw ("id",), reported "already present", and skipped building the
+    # one index that would have been used: the exact quadratic load its own
+    # docstring exists to prevent, passing its own check.
+    #
+    # Measured 2026-08-19 on execution_errors (173,005 docs, partial-only):
+    # explain says COLLSCAN, and the seed ran at 22-83 rows/s. The collections
+    # that happened to carry a plain index beside the partial one — congress_trades
+    # (natural_key), agent_audit_log (request_id_plain_1) — ran at 5,900-7,100.
+    usable = {
+        tuple(i["key"].keys())
+        for i in coll.list_indexes()
+        if "partialFilterExpression" not in i
+    }
+    if tuple(key_fields) in usable:
         return f"index on {key_fields} already present"
     # Not unique: several collections were mirrored before this ran and may
     # already hold duplicates on the key. A unique index would fail to build
