@@ -13,7 +13,7 @@ came from a document rather than a measurement, it says so.
 | | measured now (2026-08-19) |
 |---|---|
 | **trading-service** `quality-purge` @ `5396be7` | Gate 1: **0 couplings in 0 files** · suite **5049 pass / 0 fail / 0 error** |
-| **trading-client** `client-mongo-conversion` @ `10de5952` | **810 `.execute(` sites in 126 files — untouched** |
+| **trading-client** `client-mongo-conversion` @ `9c1ea192` | **30 files converted** · 237 sites still rewritable, all blocked on seeding · suite **314 pass / 5 fail (pre-existing) / 0 error** |
 
 (An earlier run showed `test_prism_prompt_injection` failing on a vLLM 502.
 The endpoint recovered and it passes; it touches no Mongo, Decimal or psycopg
@@ -168,8 +168,31 @@ only by a trailing space). `mongo_query.py`/`mongo_store.py` do differ
 substantially, but deliberately — the client edition has its own client and
 does not own `ensure_indexes`.
 
-Suggested order: seed the 17 tables, then convert in batches by file, running
-the data check and the suite after each.
+**Batch 1 is done** (`9c1ea192`): the 31 files where EVERY table they touch is
+already seeded. 30 changed, 174 insertions, 812 deletions; the data check
+passes for all 39 tables now read through `mongo_query`.
+
+That batch also exposed the bigger problem: **the client's tests had stopped
+isolating the database.** The fixtures patch `get_db`, the routes no longer
+call it, so the mocks intercepted nothing and eight tests began reading LIVE
+`trading_bot` — `test_grid_empty_state` asserted `agents == {}` and got eight
+real agents. They had been passing for the wrong reason. `tests/conftest.py`
+now carries `block_production_mongo` (ported from trading-service, which hit
+this first): autouse, raises on any unpatched Mongo client, opt in with
+`@pytest.mark.real_mongo`. Verified — an unmocked read raises.
+
+Two things that will recur in the next batch:
+- A bare `MagicMock` is TRUTHY, so `reads_mongo(...)` silently diverts a route
+  into a hand-written Mongo branch the test was never written for. Answer the
+  predicates explicitly.
+- Assertions on the SQL MECHANISM (`"ticker_reports" in sql`,
+  `execute.call_count == 1`) must be RE-EXPRESSED against the `mongo_query`
+  call, not deleted — the invariants behind them are real. One test also had
+  its failure injected on `execute`, where nothing raises any more, so it was
+  proving only that a happy path returns 200.
+
+**Remaining: 237 sites across 22 files, every one blocked on an unseeded
+table.** So the next step is genuinely the seed, not more conversion.
 
 ### 5. Cutover — after everything above
 The deploy interlocks are **DONE** @ `daa3dba`, and they were worse than
