@@ -195,6 +195,91 @@ def uses_decimal128(table: str) -> bool:
     return bool(row and row.get("numeric_policy") == "dec128")
 
 
+# Columns that sit inside a money table but are NOT money, by exact
+# `table.column`. The numeric policy is recorded per TABLE, which is one
+# granularity too coarse: of the 25 numeric columns across the 7 money
+# collections, three are not settled amounts, and promoting them to Decimal is
+# what produced `TypeError: unsupported operand type(s) for *: 'Decimal' and
+# 'float'` at paper_trader.py:1173 — `entry_price * (1 + effective_tp)`, where
+# the entry price is money and the target is a ratio.
+#
+# A ratio is not money: it is multiplied by money, compared against float
+# quotes from vendors, and fed to numpy and pandas. Making it Decimal buys no
+# exactness (there are no cents in 0.08) and costs a TypeError at every
+# boundary. Share counts are excluded for the same reason — `qty` is a
+# multiplicand, not an amount, and it is float on both sides of the migration.
+#
+# Each entry is a column whose PG type is DOUBLE PRECISION in
+# scripts/migration/schema_pg.sql (or added by pg_migrations.py) and whose
+# meaning is a rate, not a sum.
+_NON_MONEY_COLUMNS: frozenset[str] = frozenset({
+    # Risk parameters — fractions of a price, e.g. 0.08 == 8%.
+    "positions.stop_loss_pct",
+    "positions.take_profit_pct",   # added by pg_migrations.py:88
+    # A rate in [0, 1], not an amount.
+    "bots.win_rate",
+})
+
+# Share counts. Money tables carry quantities alongside amounts, and a count
+# multiplied by a price is money — but the count itself is not, and it meets
+# float prices, numpy and pandas everywhere. Listed separately from the ratios
+# above only so the reason stays legible.
+_QUANTITY_COLUMNS: frozenset[str] = frozenset({
+    "positions.qty",
+    "orders.qty",
+    "position_lots.original_qty",
+    "position_lots.remaining_qty",
+    "trade_fills.fill_qty",
+    "lot_closures.closed_qty",
+})
+
+
+# The numeric columns of each money table, from scripts/migration/schema_pg.sql
+# plus the columns pg_migrations.py adds. A money table is mostly NOT money:
+# `bots` carries a bot_id, a name and timestamps alongside its four numbers.
+#
+# This is an allow-list rather than a deny-list because the two directions fail
+# differently. Asking "is this column excluded?" answers True for `ticker` and
+# `created_at` — every text and timestamp column in a money table — and a
+# caller that trusts the name then hands a string to Decimal128 and gets
+# `InvalidOperation`. Asking "is this column one of the known amounts?" answers
+# False for anything unrecognised, which is the safe direction: a new column is
+# float until someone classifies it, and a float that should have been money is
+# a precision bug, while a string that becomes money is a crash.
+_MONEY_COLUMNS: frozenset[str] = frozenset({
+    "positions.avg_entry_price",
+    "bots.cash_balance", "bots.starting_cash", "bots.total_pnl",
+    "position_lots.entry_price",
+    "orders.price", "orders.realized_pnl",
+    "trade_fills.fill_price", "trade_fills.fill_value", "trade_fills.fees",
+    "lot_closures.entry_price", "lot_closures.exit_price",
+    "lot_closures.realized_pnl",
+    "portfolio_snapshots.cash_balance", "portfolio_snapshots.total_value",
+    "portfolio_snapshots.realized_pnl", "portfolio_snapshots.unrealized_pnl",
+})
+
+
+def column_is_money(table: str, column: str) -> bool:
+    """True when THIS column must be Decimal128, not just its table.
+
+    Read by both halves of the money contract — `_coerce()` on the write side
+    and `mongo_query._clean_val()` on the read side — so a column cannot be
+    stored as Decimal128 and read back as float, or vice versa. That symmetry
+    is the point: the two sides disagreeing about one column is the defect this
+    function exists to make impossible.
+
+    Gated on `uses_decimal128(table)` as well as membership, so a table
+    reclassified out of money (as `trade_results` was, ch.64) takes its columns
+    with it and cannot be re-promoted by a stale entry here.
+    """
+    if not uses_decimal128(table):
+        return False
+    qualified = f"{table}.{column}"
+    if qualified in _NON_MONEY_COLUMNS or qualified in _QUANTITY_COLUMNS:
+        return False
+    return qualified in _MONEY_COLUMNS
+
+
 def columns_for(table: str, db) -> list[tuple[str, str, str]]:
     """(name, data_type, udt_name) in ordinal order, from the live schema."""
     cur = db.execute(
@@ -262,14 +347,18 @@ def spec_for(table: str, db) -> tuple[str, list[str], Callable]:
             f"key column(s) {missing} are not columns of {table!r} (has: {', '.join(names)})"
         )
 
-    money = uses_decimal128(table)
+    # Per COLUMN, not per table: a money table also carries ratios and share
+    # counts, and storing those as Decimal128 makes every read that multiplies
+    # them by a float quote raise TypeError. See `column_is_money`.
+    money_cols = {name: column_is_money(table, name) for name in names}
     types = {name: (dt, udt) for name, dt, udt in cols}
     select_sql = f"SELECT {', '.join(quote_ident(n) for n in names)} FROM {quote_ident(table)}"
 
     def _mapper(row, row_cols):
         d = dict(zip(row_cols, row))
         return {
-            name: _coerce(d.get(name), *types.get(name, ("text", "text")), money)
+            name: _coerce(d.get(name), *types.get(name, ("text", "text")),
+                          money_cols.get(name, False))
             for name in row_cols
         }
 

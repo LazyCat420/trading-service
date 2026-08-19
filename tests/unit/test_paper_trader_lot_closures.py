@@ -54,6 +54,14 @@ class _MongoDouble:
         self.query.find_row.side_effect = self._find_row
         self.query.find_rows.side_effect = self._find_rows
         self.query.agg_row.side_effect = lambda *_a, **_k: (None,)
+        # The REAL as_money, for the same reason dec128 is value-preserving
+        # below: `paper_trader` promotes floats to Decimal at every money
+        # boundary, and a MagicMock here turns every price into an opaque
+        # sentinel — `mock.as_money().__sub__().__mul__()` — so the P&L
+        # assertions would stop testing arithmetic while still passing.
+        from app.db.mongo_query import as_money
+
+        self.query.as_money.side_effect = as_money
 
         self.store.with_txn.side_effect = self._with_txn
         # Value-PRESERVING dec128 so the monetary assertions below read the

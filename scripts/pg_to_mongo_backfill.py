@@ -258,23 +258,59 @@ def known_tables() -> list[str]:
     return sorted(set(TABLES) | set(ledger_tables))
 
 
-def _normalize(v):
+def _normalize(v, *, money: bool = False):
     """Collapse representation differences that are not data differences:
     Mongo stores datetimes as naive-UTC with millisecond precision; PG hands
-    back tz-aware microsecond datetimes and Decimals."""
+    back tz-aware microsecond datetimes and Decimals.
+
+    `money=True` keeps decimals EXACT instead of collapsing them to float. See
+    `_values_equal` for why that distinction is the whole point.
+    """
     if isinstance(v, datetime):
         if v.tzinfo is not None:
             v = v.astimezone(timezone.utc).replace(tzinfo=None)
         return v.replace(microsecond=(v.microsecond // 1000) * 1000)
+    if hasattr(v, "to_decimal"):          # bson.Decimal128 off the Mongo side
+        v = v.to_decimal()
     if isinstance(v, Decimal):
-        return float(v)
+        # Money stays Decimal. Everything else collapses to float, because for
+        # a non-money column a Decimal on one side and a float on the other is
+        # a representation difference, not a data difference.
+        return v if money else float(v)
+    if money and isinstance(v, (int, float)) and not isinstance(v, bool):
+        # The PG side is DOUBLE PRECISION (there is not one NUMERIC column in
+        # the schema), so a money column arrives here as a float. Route it
+        # through str() — Decimal(0.07) is 0.070000000000000006938..., which
+        # would fail an exact comparison against the Decimal128 that was
+        # written from the same printed value.
+        return Decimal(str(v))
     return v
 
 
-def _values_equal(a, b) -> bool:
-    a, b = _normalize(a), _normalize(b)
+def _values_equal(a, b, *, money: bool = False) -> bool:
+    """Are these the same value?
+
+    NON-MONEY columns compare with a 1e-9 tolerance, because both stores hold
+    IEEE doubles and the last bit is not data.
+
+    MONEY columns compare EXACTLY, and that is not a stylistic choice. The
+    default tolerance is `abs_tol=1e-9`, which is a hundred-millionth of a
+    cent — so a money column that drifted by any real amount would still fail,
+    but the reason to be exact here is subtler: `_normalize` used to demote
+    every Decimal to float before comparing. That threw away the exactness on
+    the way INTO the comparator, so a Decimal128 of 100000.07 and a float of
+    100000.06999999999 compared equal, and the parity check could not see the
+    very drift the Decimal128 migration exists to remove. The check would have
+    certified a money table as at-parity while the values disagreed in the
+    cents column after enough accumulated operations.
+    """
+    a, b = _normalize(a, money=money), _normalize(b, money=money)
     if a is None and b is None:
         return True
+    if money:
+        if isinstance(a, Decimal) and isinstance(b, Decimal):
+            return a == b
+        return a == b
     if isinstance(a, float) or isinstance(b, float):
         try:
             return math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=1e-9)
@@ -310,7 +346,8 @@ def verify_fields(table: str, sample: int) -> int:
             continue
         doc = docs[0]
         for k, v in expected.items():
-            if not _values_equal(v, doc.get(k)):
+            if not _values_equal(v, doc.get(k),
+                                 money=table_spec.column_is_money(table, k)):
                 mismatches[k] += 1
     checked = len(rows) - missing
     print(f"[{table}] FIELD-VERIFY: sampled={len(rows)} compared={checked} "
@@ -393,7 +430,8 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
                 mismatches["__missing__"] += 1
                 continue
             for k, v in expected.items():
-                if not _values_equal(v, doc.get(k)):
+                if not _values_equal(v, doc.get(k),
+                                     money=table_spec.column_is_money(table, k)):
                     mismatches[k] += 1
                     if len(samples.setdefault(k, [])) < examples:
                         samples[k].append((key, v, doc.get(k)))
@@ -421,6 +459,39 @@ def verify_all(table: str, batch: int = 2000, examples: int = 5) -> int:
     return 0 if ok else 1
 
 
+def ensure_key_index(table: str, key_fields: list[str]) -> str:
+    """Index the natural key BEFORE backfilling, or the load is quadratic.
+
+    The backfill upserts with `UpdateOne({key: ...}, upsert=True)`. Without an
+    index on that key every single upsert is a COLLECTION SCAN, so a batch of
+    2,000 against a 40,000-document collection examines 80 million documents.
+    Measured on macro_indicators, which had only its `_id` index: ~29 rows/sec,
+    getting slower as the collection grew. price_history (15.7M rows) would
+    never have finished at that rate.
+
+    THIS LIVES HERE, NOT IN THE CALLER. It used to be defined only in
+    `scripts/migrate_all.py`, which meant the invariant held for one entrypoint
+    and silently did not for the other: running `pg_to_mongo_backfill.py`
+    directly — the documented way to seed a single table — upserted against a
+    collection scan and nobody could tell from the output, because the only
+    symptom is that it is slow. `backfill()` now calls it itself, so no
+    entrypoint can skip it.
+
+    The index is created on the same fields the backfill keys on — read from
+    table_spec, not guessed — so it always matches the upsert filter.
+    """
+    coll = mongo_store.get_doc_db()[collection_for(table)]
+    existing = {tuple(i["key"].keys()) for i in coll.list_indexes()}
+    if tuple(key_fields) in existing:
+        return f"index on {key_fields} already present"
+    # Not unique: several collections were mirrored before this ran and may
+    # already hold duplicates on the key. A unique index would fail to build
+    # and abort the table; deduplication is a separate, deliberate step.
+    coll.create_index([(k, 1) for k in key_fields], name="natural_key",
+                      background=True)
+    return f"created index on {key_fields}"
+
+
 def backfill(table: str, batch: int = 2000, verify_only: bool = False,
              rate_limit: float = 0.0) -> int:
     try:
@@ -435,6 +506,10 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
     print(f"[{table}] postgres rows={pg_count}  mongo docs(before)={mongo_before}")
 
     if not verify_only:
+        # BEFORE the first upsert, always. See ensure_key_index's docstring:
+        # without this the upserts are collection scans and the seed runs at
+        # ~29 rows/s regardless of batch size.
+        print(f"[{table}] {ensure_key_index(table, key_fields)}")
         moved = 0
         # Keyset pagination — type-agnostic: the first page has NO where clause
         # (so we never compare an int id against a sentinel string), and later
@@ -469,7 +544,73 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
     ok = mongo_after >= pg_count
     print(f"[{table}] VERIFY: postgres={pg_count}  mongo={mongo_after}  "
           f"{'OK' if ok else 'MISMATCH'}")
+    if not verify_only:
+        stamp_backfilled(table, pg_rows=pg_count, mongo_docs=mongo_after, ok=ok)
     return 0 if ok else 1
+
+
+def stamp_backfilled(table: str, *, pg_rows: int, mongo_docs: int,
+                     ok: bool) -> None:
+    """Record that this table was seeded, with the counts, in the ledger.
+
+    WHY THIS EXISTS: `migration_ledger.json` has carried a `backfilled_at`
+    field for every table since it was generated, and on 2026-08-18 all 161
+    migrate-scope rows still had it empty — the writer was never built. So
+    claims like "135/141 seeded" had no artifact behind them: nothing in the
+    repo recorded which tables had actually been loaded, or when, or whether
+    the counts agreed. The field existing and being empty is worse than its
+    absence, because it reads as "nothing has been seeded yet" whether or not
+    that is true.
+
+    Only a SUCCESSFUL backfill stamps. A mismatch leaves `backfilled_at` unset
+    and records the counts under `backfill_last_attempt`, so a failed load can
+    never be mistaken for a completed one by a reader that checks only for the
+    presence of the timestamp.
+
+    Writes are atomic (temp file + replace): the ledger is 406KB of migration
+    state and a half-written file during a long sweep would lose it.
+    """
+    import datetime
+    import os
+    import tempfile
+
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    # The same constant table_spec reads, not a second path expression — two
+    # spellings of one file is how a writer ends up stamping a ledger nobody
+    # reads.
+    path = table_spec._LEDGER_PATH
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        print(f"[{table}] ledger not updated ({exc})", file=sys.stderr)
+        return
+
+    rows = data["tables"] if isinstance(data, dict) else data
+    row = next((r for r in rows if r.get("table") == table), None)
+    if row is None:
+        print(f"[{table}] not in the ledger — not stamping", file=sys.stderr)
+        return
+
+    row["backfill_last_attempt"] = {
+        "at": now, "pg_rows": pg_rows, "mongo_docs": mongo_docs, "ok": ok,
+    }
+    if ok:
+        row["backfilled_at"] = now
+        row["backfilled_pg_rows"] = pg_rows
+        row["backfilled_mongo_docs"] = mongo_docs
+
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True, default=str)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    print(f"[{table}] ledger stamped: backfilled_at={now if ok else 'NOT SET (mismatch)'}")
 
 
 def main():

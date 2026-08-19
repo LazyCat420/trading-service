@@ -274,7 +274,7 @@ def mock_mongo_db(monkeypatch):
         return collections[name]
 
     monkeypatch.setattr(mongo_store, "_coll", _get_coll)
-    monkeypatch.setattr(mongo_store, "ensure_indexes", lambda: None)
+    monkeypatch.setattr(mongo_store, "ensure_indexes", lambda session=None: None)
     monkeypatch.setattr(mongo_store, "get_doc_db", lambda: collections)
 
     # Context manager for with_txn: pass through session=None

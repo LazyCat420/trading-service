@@ -1,24 +1,60 @@
 """Print `running|<cycle_id>` when a V3 cycle is in flight, else `idle|`.
 
-A FILE, not a heredoc: the calling hook consumes stdin for its JSON payload,
-so an inline `python - <<'PY'` heredoc receives nothing and runs an empty
-program — silently. Fails OPEN (prints `unknown|`) so a DB blip never blocks a
-deploy.
+Reads `pipeline_state` from MONGO. It used to read Postgres with `psycopg2`,
+which was wrong twice over:
+
+  1. `psycopg2` is not installed (the repo uses psycopg3, and since the
+     2026-08-18 teardown no Postgres driver is in the app image at all), so the
+     import raised on every single call; and
+  2. `pipeline_state` is staged at `:mongo` in deploy-kit/.env.deploy, so the
+     Postgres row stops being written from the next deploy onward.
+
+Either alone made this print `unknown|` forever — and the calling hook
+(`guard_deploy_during_cycle.sh`) only blocks on `running*`, so `unknown` fell
+through to exit 0. The guard has been permitting every deploy, including ones
+that would kill a live cycle, while looking installed and healthy.
+
+A FILE, not a heredoc: the calling hook consumes stdin for its JSON payload, so
+an inline `python - <<'PY'` heredoc receives nothing and runs an empty program —
+silently.
+
+FAILS CLOSED. On any error this prints `unknown|<reason>`, and the caller
+treats `unknown` as a block with an explicit override. A check that cannot read
+its subject has no evidence that nothing is running; it must not be mistaken
+for evidence that nothing is.
 """
 import os
+import sys
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
-    import psycopg2
 
-    conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=8)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT status, cycle_id FROM pipeline_state WHERE singleton_id = 'current'"
-    )
-    row = cur.fetchone()
-    conn.close()
-    print(f"{row[0]}|{row[1]}" if row else "unknown|")
-except Exception:
-    print("unknown|")
+    # A bare `load_dotenv()` searches the CWD, which is the worktree the hook
+    # was invoked from — and a git worktree has no `.env`. It therefore found
+    # nothing, the connection details were absent, and the probe reported
+    # `unknown|` from every worktree: the trees where the migration work
+    # actually happens. Load the primary checkout's `.env` explicitly, then let
+    # a CWD-local one override it if there is one.
+    sun = os.environ.get("CLAUDE_PROJECT_DIR") or "/home/lazycat/github/projects/sun"
+    load_dotenv(os.path.join(sun, "trading-service", ".env"))
+    load_dotenv(override=False)
+    import pymongo
+
+    uri = os.environ.get("PRISM_MONGO_URI") or os.environ.get("MONGO_URI")
+    if not uri:
+        print("unknown|no PRISM_MONGO_URI in the environment")
+        sys.exit(0)
+
+    db_name = os.environ.get("TRADING_MONGO_DB") or "trading_bot"
+    client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=8000)
+    doc = client[db_name]["pipeline_state"].find_one({"singleton_id": "current"})
+    client.close()
+
+    if not doc:
+        # No row is a legitimate idle state: a store that has never run a cycle
+        # has nothing to strand.
+        print("idle|")
+    else:
+        print(f"{doc.get('status') or 'unknown'}|{doc.get('cycle_id') or ''}")
+except Exception as exc:  # noqa: BLE001 - the reason is the useful part
+    print(f"unknown|{type(exc).__name__}: {exc}"[:300])

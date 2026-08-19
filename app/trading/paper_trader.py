@@ -16,6 +16,7 @@ Features:
 import datetime
 import uuid
 import logging
+from decimal import Decimal
 from typing import Any
 from app.config import settings
 from app.config.config_tickers import classify_asset as _classify_asset
@@ -842,18 +843,28 @@ async def sell(
             open_lots = mongo_query.find_rows('position_lots', {'bot_id': bot_id, 'ticker': ticker, 'status': {'$in': ['open', 'partial']}}, ['lot_id', 'remaining_qty', 'entry_price', 'opened_at'], sort=[('opened_at', 1)], session=session)
 
             remaining_to_sell = qty_to_sell
-            total_realized_pnl = 0.0
-            remaining_lots_value = 0.0
+            # Money accumulators stay Decimal for the whole FIFO walk. This
+            # loop is the ledger: it runs once per lot and its running total
+            # becomes `realized_pnl`, so accumulating in float is precisely
+            # where per-cent error compounds into a balance that no longer
+            # reconciles. `lot_entry` arrives as Decimal (position_lots is a
+            # money collection) and used to be demoted with `float()` on the
+            # line below — that demotion is the drift, not a formatting detail.
+            total_realized_pnl = Decimal(0)
+            remaining_lots_value = Decimal(0)
             remaining_lots_qty = 0.0
+            price_now = mongo_query.as_money(current_price)
 
             for lot_row in open_lots:
                 lot_id, lot_remaining, lot_entry, lot_opened = lot_row
+                # A share count is not money; it meets float quantities
+                # everywhere and carries no cents.
                 lot_remaining = float(lot_remaining)
-                lot_entry = float(lot_entry)
+                lot_entry = mongo_query.as_money(lot_entry)
 
                 if remaining_to_sell > 0:
                     closed_qty = min(remaining_to_sell, lot_remaining)
-                    lot_pnl = (current_price - lot_entry) * closed_qty
+                    lot_pnl = (price_now - lot_entry) * mongo_query.as_money(closed_qty)
                     total_realized_pnl += lot_pnl
 
                     new_remaining = lot_remaining - closed_qty
@@ -861,7 +872,7 @@ async def sell(
 
                     if new_remaining > 0.0001:
                         remaining_lots_qty += new_remaining
-                        remaining_lots_value += new_remaining * lot_entry
+                        remaining_lots_value += mongo_query.as_money(new_remaining) * lot_entry
 
                     # Calculate holding duration
                     holding_days = None
@@ -917,7 +928,7 @@ async def sell(
                 else:
                     # Lot is not sold, track its value for the new average cost basis
                     remaining_lots_qty += lot_remaining
-                    remaining_lots_value += lot_remaining * lot_entry
+                    remaining_lots_value += mongo_query.as_money(lot_remaining) * lot_entry
 
             if remaining_to_sell > 0.0001:
                 logger.warning(
@@ -926,18 +937,21 @@ async def sell(
                     remaining_to_sell,
                 )
                 total_realized_pnl += (
-                    current_price - float(avg_entry_price)
-                ) * remaining_to_sell
+                    price_now - mongo_query.as_money(avg_entry_price)
+                ) * mongo_query.as_money(remaining_to_sell)
 
             # 2. Update positions table and recalculate cost basis if partial
             if qty_to_sell >= float(total_qty) - 0.0001:
                 mongo_store.delete_docs('positions', {'id': pos_id}, session=session)
             else:
                 new_pos_qty = float(total_qty) - qty_to_sell
+                # Stays Decimal: this is written straight back to
+                # positions.avg_entry_price, a money column, and it is the cost
+                # basis every later P&L on this position is measured against.
                 new_avg_price = (
-                    (remaining_lots_value / remaining_lots_qty)
+                    (remaining_lots_value / mongo_query.as_money(remaining_lots_qty))
                     if remaining_lots_qty > 0.0001
-                    else float(avg_entry_price)
+                    else mongo_query.as_money(avg_entry_price)
                 )
                 mongo_store.update_docs(
                     'positions',
@@ -1019,15 +1033,26 @@ async def sell(
         )
         return {"error": f"Transaction failed: {e}"}
 
-    cost_basis = avg_entry_price * qty_to_sell
-    pnl_pct = (total_realized_pnl / cost_basis) * 100 if cost_basis != 0 else 0.0
+    # money x share-count = money: promote the count rather than demoting the
+    # entry price, so the cost basis this P&L is measured against stays exact.
+    cost_basis = mongo_query.as_money(avg_entry_price) * mongo_query.as_money(qty_to_sell)
+    pnl_pct = (
+        float((mongo_query.as_money(total_realized_pnl) / cost_basis) * 100)
+        if cost_basis != 0
+        else 0.0
+    )
+    # This dict is the API response, and `json.dumps` raises TypeError on a
+    # Decimal. A PRESENTATION boundary is the one place demoting is right: the
+    # exact value is already committed to the ledger above, and what leaves
+    # here is a rounded display figure. Demoting after the arithmetic loses
+    # nothing; demoting before it was the drift.
     result = {
         "action": "SELL",
         "ticker": ticker,
         "qty": round(qty_to_sell, 4),
         "price": current_price,
-        "proceeds": round(proceeds, 2),
-        "realized_pnl": round(total_realized_pnl, 2),
+        "proceeds": round(float(proceeds), 2),
+        "realized_pnl": round(float(total_realized_pnl), 2),
         "pnl_pct": round(pnl_pct, 2),
     }
     if price_age_hours is not None:
@@ -1170,9 +1195,16 @@ async def check_take_profits(
             )
             effective_tp = effective_stop * reward_risk_ratio
 
-        target_price = entry_price * (1 + effective_tp)
-        if current_price >= target_price:
-            pnl_pct = ((current_price - entry_price) / entry_price) * 100
+        # `entry_price` is money (Decimal); `effective_tp` is a ratio and
+        # `current_price` a vendor quote, both float. Promote the float side —
+        # demoting the entry price would discard the exactness it is stored
+        # for, in the comparison that decides whether to sell.
+        entry_price = mongo_query.as_money(entry_price)
+        target_price = entry_price * (1 + mongo_query.as_money(effective_tp))
+        if mongo_query.as_money(current_price) >= target_price:
+            pnl_pct = float(
+                ((mongo_query.as_money(current_price) - entry_price) / entry_price) * 100
+            )
             logger.info(
                 "[take-profit] %s: HARVEST TRIGGERED @ $%.2f (entry=$%.2f, target=%.1f%% =$%.2f, gain=%.1f%%)",
                 ticker,

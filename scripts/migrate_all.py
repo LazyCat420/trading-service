@@ -52,35 +52,12 @@ LARGE_ROW_THRESHOLD = 1_000_000
 SKIP = {"embeddings"}
 
 
-def ensure_key_index(table: str) -> str:
-    """Index the natural key BEFORE backfilling, or the load is quadratic.
-
-    The backfill upserts with `UpdateOne({key: ...}, upsert=True)`. Without an
-    index on that key every single upsert is a COLLECTION SCAN, so a batch of
-    2,000 against a 40,000-document collection examines 80 million documents.
-    Measured on macro_indicators, which had only its `_id` index: ~29 rows/sec,
-    getting slower as the collection grew. price_history (15.7M rows) would
-    never have finished.
-
-    The index is created on the same fields the backfill keys on — read from
-    table_spec, not guessed — so it always matches the upsert filter.
-    """
-    from scripts.migration import pg_connection as connection, table_spec
-    from app.db.collections import collection_for
-    from app.db.mongo_store import get_doc_db
-
-    with connection.get_db() as db:
-        _, keys, _ = table_spec.spec_for(table, db)
-    keys = [keys] if isinstance(keys, str) else list(keys)
-    coll = get_doc_db()[collection_for(table)]
-    existing = {tuple(i["key"].keys()) for i in coll.list_indexes()}
-    if tuple(keys) in existing:
-        return f"index on {keys} already present"
-    # Not unique: several collections were mirrored before this ran and may
-    # already hold duplicates on the key. A unique index would fail to build
-    # and abort the table; deduplication is a separate, deliberate step.
-    coll.create_index([(k, 1) for k in keys], name="natural_key", background=True)
-    return f"created index on {keys}"
+# ensure_key_index moved to scripts/pg_to_mongo_backfill.py on 2026-08-18 and
+# is re-exported here for anything that imported it from this module. It had to
+# move because the invariant lived in the CALLER: seeding a table by running
+# pg_to_mongo_backfill.py directly skipped it entirely and upserted against a
+# collection scan. `backfill()` now calls it itself.
+from scripts.pg_to_mongo_backfill import ensure_key_index  # noqa: E402,F401
 
 
 def migrate_scope() -> dict[str, str]:
@@ -149,7 +126,9 @@ def main() -> int:
               + (f"  @ {rl:,.0f} rows/s" if rl else ""))
         t0 = time.monotonic()
         try:
-            print(f"[{t}] {ensure_key_index(t)}")
+            # ensure_key_index is NOT called here any more: `backfill()` calls
+            # it itself, so the invariant cannot be skipped by running the
+            # other entrypoint. Calling it twice would just re-list indexes.
             rc = backfill(t, batch=args.batch, rate_limit=rl)
         except Exception as exc:  # one table must not end the sweep
             print(f"[{t}] ERROR (sweep continues): {type(exc).__name__}: {exc}",

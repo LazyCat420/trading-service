@@ -25,6 +25,7 @@ later index in the tuple.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Optional, Sequence
 
 from app.db import mongo_store
@@ -57,53 +58,101 @@ def _clean_val(v: Any, *, as_decimal: bool = False) -> Any:
     into numpy, json and pandas, where a Decimal is a TypeError rather than a
     precision improvement.
 
-    NOT YET, AND HERE IS THE MEASUREMENT
-    ------------------------------------
-    Flipping money reads to Decimal was tried on 2026-08-18 and reverted the
-    same hour. It works — `find_row("bots", ...)` returns exact Decimals and
-    100000.07 + 0.03 gives 100000.10 rather than 100000.09999999999 — but the
-    money path mixes money with things that are NOT money: ratios
-    (`take_profit_pct`), vendor quotes (`price_history.close`, still float),
-    and share counts. `entry_price * (1 + effective_tp)` raises TypeError the
-    moment entry_price is a Decimal, and that is one of 39 such sites across
-    8 modules (paper_trader 13, bot_manager 11, portfolio 10).
+    WHY THE FIRST ATTEMPT WAS REVERTED, AND WHAT CHANGED
+    ----------------------------------------------------
+    Flipping this on 2026-08-18 raised `TypeError: unsupported operand type(s)
+    for *: 'Decimal' and 'float'`, and the flip was reverted. The diagnosis
+    recorded at the time — that the money path "mixes money with things that
+    are NOT money" — was right. The granularity was the bug: the decision was
+    read per TABLE, so `positions.stop_loss_pct` (a ratio) and `positions.qty`
+    (a share count) were promoted to Decimal along with `avg_entry_price`, and
+    `entry_price * (1 + effective_tp)` broke on the ratio, not on the money.
 
-    Doing it properly means deciding, per boundary, whether the float side is
-    promoted or the Decimal side demoted — and proving the result with the
-    cent-exact reconciliation artifact Tier F requires, not with a green
-    suite. That is phase S3, and it is a change to the money path that
-    deserves its own pass rather than a tail-end edit.
+    The policy is now per COLUMN (`table_spec.column_is_money`), applied to
+    BOTH halves — `_coerce()` writes and `_clean_val()` reads resolve through
+    the same function. Of the 25 numeric columns across the 7 money
+    collections, 9 are share counts and 3 are ratios; the other 13 are settled
+    amounts and are the only ones that become Decimal.
 
-    The `as_decimal` parameter and `_money()` below are the plumbing, already
-    wired and tested; only the flip is deferred.
+    That reduces the boundary problem rather than solving it by declaration:
+    money still meets float vendor quotes (`price_history.close`), and each
+    such site is fixed by promoting the float, never by demoting the Decimal —
+    demoting would discard the exactness the column was promoted for.
     """
     if v is None:
         return None
     if hasattr(v, "to_decimal"):
-        # STILL FLOAT, deliberately — see the NOT-YET note below.
-        return float(str(v))
+        # Decimal128 -> str -> Decimal, never through float: routing an exact
+        # value through a float would throw away the exactness the column was
+        # promoted for.
+        return Decimal(str(v)) if as_decimal else float(str(v))
     return v
 
 
-def _to_tuple(doc: dict, columns: Sequence[str], *, as_decimal: bool = False) -> tuple:
+def _to_tuple(doc: dict, columns: Sequence[str], *, money_cols: frozenset[str] = frozenset()) -> tuple:
     # `doc.get(c)` and not `doc[c]`: a document written before a column was
     # added simply lacks the field, and Postgres would have returned NULL for
     # it. Raising here would fail a read that the SQL answered fine.
-    return tuple(_clean_val(doc.get(c), as_decimal=as_decimal) for c in columns)
+    return tuple(
+        _clean_val(doc.get(c), as_decimal=c in money_cols) for c in columns
+    )
 
 
-def _money(collection: str) -> bool:
-    """Does this collection carry the dec128 numeric policy?
+def _money_cols(collection: str, columns: Sequence[str]) -> frozenset[str]:
+    """Which of `columns` are money in `collection`.
 
-    Read from the same table_spec helper the WRITE path uses, so the two sides
-    cannot disagree about which collections are money.
+    Resolved per COLUMN, through the same `table_spec` helper the WRITE path
+    uses, so the two halves of the money contract cannot disagree about a
+    field: anything stored as Decimal128 reads back as Decimal, and anything
+    stored as float reads back as float.
+
+    Per column and not per table because a money collection also carries
+    things that are not money — `positions.stop_loss_pct` is a ratio,
+    `positions.qty` is a share count — and promoting those to Decimal raises
+    TypeError the moment they meet a float quote. See
+    `table_spec.column_is_money`.
     """
     try:
-        from app.db.table_spec import uses_decimal128
+        from app.db.table_spec import column_is_money
 
-        return uses_decimal128(collection)
+        return frozenset(c for c in columns if column_is_money(collection, c))
     except Exception:  # noqa: BLE001 - a missing ledger must not break reads
-        return False
+        return frozenset()
+
+
+def as_money(value: Any) -> Any:
+    """Promote a float/int to `Decimal` so it can meet money in arithmetic.
+
+    THE RULE AT A MONEY/FLOAT BOUNDARY: promote the float, never demote the
+    Decimal. Money read from Mongo is exact; a vendor quote, a ratio or a share
+    count arriving as float is not. `Decimal(x) * float(y)` raises TypeError,
+    and the two ways to silence it are not equivalent —
+
+        float(entry_price) * tp        discards the exactness the column was
+                                       promoted for, at every call site, and
+                                       silently reintroduces float drift into
+                                       a value the ledger reconciles on
+        entry_price * as_money(tp)     keeps the result exact
+
+    — so this exists to make the correct direction the short one.
+
+    Via `str()`, not `Decimal(float)`: `Decimal(0.08)` is
+    0.08000000000000000166533453693773481063544750213623046875, whereas
+    `Decimal("0.08")` is exactly 0.08. The float already carries whatever error
+    it carries; printing it is the closest recoverable value, and it is what
+    `mongo_store._money()` does on the write side, so a value that round-trips
+    through both is unchanged.
+
+    `None` passes through as `None`, matching every other helper here: a NULL
+    column stays NULL rather than becoming `Decimal("0")`, which would turn a
+    missing stop-loss into a real one.
+    """
+    if value is None or isinstance(value, Decimal):
+        return value
+    if isinstance(value, bool):
+        # bool subclasses int; a flag is not an amount.
+        raise TypeError("as_money() received a bool, which is not an amount")
+    return Decimal(str(value))
 
 
 def find_rows(collection: str, query: dict[str, Any], columns: Sequence[str],
@@ -113,8 +162,8 @@ def find_rows(collection: str, query: dict[str, Any], columns: Sequence[str],
     docs = mongo_store.find_docs(collection, query, sort=sort,
                                  projection=_project(columns), limit=limit,
                                  session=session)
-    as_dec = _money(collection)
-    return [_to_tuple(d, columns, as_decimal=as_dec) for d in docs]
+    money = _money_cols(collection, columns)
+    return [_to_tuple(d, columns, money_cols=money) for d in docs]
 
 
 def find_row(collection: str, query: dict[str, Any], columns: Sequence[str],
@@ -124,7 +173,9 @@ def find_row(collection: str, query: dict[str, Any], columns: Sequence[str],
     docs = mongo_store.find_docs(collection, query, sort=sort,
                                  projection=_project(columns), limit=1,
                                  session=session)
-    return _to_tuple(docs[0], columns, as_decimal=_money(collection)) if docs else None
+    if not docs:
+        return None
+    return _to_tuple(docs[0], columns, money_cols=_money_cols(collection, columns))
 
 
 def find_dicts(collection: str, query: dict[str, Any],
@@ -188,13 +239,27 @@ def agg_row(collection: str, query: dict[str, Any],
     if not rows:
         return tuple(0 if op.startswith("count") else None for op, _ in aggs)
     doc = rows[0]
+    money = _money_cols(collection, [f for _, f in aggs if f])
     out = []
-    for i, (op, _) in enumerate(aggs):
+    for i, (op, field) in enumerate(aggs):
         v = doc.get(f"a{i}")
         if op == "count_distinct":
             # $addToSet drops duplicates but keeps NULL; SQL COUNT(DISTINCT c)
             # does not count it.
             v = len([x for x in (v or []) if x is not None])
+        else:
+            # $sum/$avg/$min/$max over a Decimal128 column returns a raw
+            # bson.Decimal128, which is neither a number a caller can do
+            # arithmetic on nor something `format()` understands —
+            # `f"{Decimal128('30.03'):.2f}"` raises TypeError. Postgres handed
+            # back a plain number here, so unwrap it the same way the row
+            # readers do, honouring the same per-column money policy: an
+            # aggregate over money is money.
+            #
+            # `$avg` is deliberately included: Mongo computes the average of
+            # Decimal128 inputs in decimal, so demoting it to float here would
+            # discard the exactness before the caller ever sees it.
+            v = _clean_val(v, as_decimal=field in money)
         out.append(v)
     return tuple(out)
 
@@ -242,16 +307,27 @@ def group_rows(collection: str, query: dict[str, Any],
     if limit:
         pipeline.append({"$limit": limit})
 
+    # Same unwrapping as agg_row: a grouped $sum over a Decimal128 column
+    # returns a raw bson.Decimal128, and a GROUP BY key can itself be a money
+    # column. Both must come back as numbers, under the same per-column policy.
+    referenced = [ref for kind, ref in select if kind == "key"]
+    referenced += [aggs[ref][1] for kind, ref in select
+                   if kind != "key" and aggs[ref][1]]
+    money = _money_cols(collection, referenced)
+
     out = []
     for doc in mongo_store.aggregate(collection, pipeline):
         row = []
         for kind, ref in select:
             if kind == "key":
-                row.append((doc.get("_id") or {}).get(ref))
+                v = (doc.get("_id") or {}).get(ref)
+                row.append(_clean_val(v, as_decimal=ref in money))
             else:
                 v = doc.get(f"a{ref}")
                 if aggs[ref][0] == "count_distinct":
                     v = len([x for x in (v or []) if x is not None])
+                else:
+                    v = _clean_val(v, as_decimal=aggs[ref][1] in money)
                 row.append(v)
         out.append(tuple(row))
     return out
@@ -286,11 +362,23 @@ def join_rows(left: str, left_query: dict[str, Any], left_key: str,
         projection={f: 1 for f in list(left_fields) + [left_key]} | {"_id": 0},
         sort=sort)
 
+    # Money resolves against the collection the column comes FROM: a join can
+    # select `positions.avg_entry_price` (money) beside `technicals.rsi_14`
+    # (not), and the side decides which policy applies. Without this a joined
+    # money column comes back as a raw bson.Decimal128 while the same column
+    # read through find_rows() comes back as Decimal — the same field with two
+    # types depending on which helper fetched it.
+    l_money = _money_cols(left, [c for side, c in select if side == "l"])
+    r_money = _money_cols(right, [c for side, c in select if side != "l"])
+
     out = []
     for l in l_docs:
         for r in index.get(l.get(left_key), ()):      # inner join: no match, no row
-            out.append(tuple((l if side == "l" else r).get(col)
-                             for side, col in select))
+            out.append(tuple(
+                _clean_val((l if side == "l" else r).get(col),
+                           as_decimal=col in (l_money if side == "l" else r_money))
+                for side, col in select
+            ))
             if limit and len(out) >= limit:
                 return out
     return out

@@ -181,13 +181,48 @@ _ID_UNIQUE_COLLECTIONS = (
 _ID_TYPES = ["string", "int", "long", "double"]
 
 
-def ensure_indexes() -> None:
+def ensure_indexes(session: Optional[Any] = None) -> None:
     """Idempotently create indexes for migrated collections. Safe to call often;
     guarded so it only touches Mongo once per process. Per-collection failures
     (e.g. pre-existing duplicates blocking a unique build) are logged and do not
-    stop the rest."""
+    stop the rest.
+
+    NEVER RUNS WHILE A TRANSACTION IS OPEN
+    --------------------------------------
+    `create_index` on a collection that does not exist yet CREATES it, and a
+    catalog write aborts any transaction in flight against that namespace:
+
+        Collection namespace 'trading_bot.lot_closures' is already in use.
+        ... Transaction with { txnNumber: N } has been aborted. (code 251)
+
+    Every write helper below calls this first, and `paper_trader.sell()` calls
+    those helpers from inside `with_txn()`. So on a store where the collections
+    do not exist yet, the FIRST transactional SELL of a process aborts — the
+    money path failing on a fresh deployment, in the one code path that is
+    wrapped in a transaction precisely because it must not half-apply.
+
+    Passing the active session makes the helper SKIP the DDL rather than
+    perform it: the write proceeds (Mongo creates the collection implicitly,
+    which a transaction is allowed to do), `_indexes_ready` stays False, and
+    the next call outside a transaction builds the indexes for real. Deferring
+    is safe; running it here is not.
+
+    Why this survived so long: `_indexes_ready` is a process global, so in a
+    long-lived container the first write is usually NOT in a transaction and
+    the flag is already set by the time a SELL runs. And both pure-Mongo E2E
+    tests stubbed this function out entirely
+    (`monkeypatch.setattr(mongo_store, "ensure_indexes", lambda: None)`),
+    which disabled the only failure mode it has. See
+    tests/unit/test_index_creation_inside_a_transaction.py.
+    """
     global _indexes_ready
     if _indexes_ready:
+        return
+    if session is not None and getattr(session, "in_transaction", False):
+        logger.debug(
+            "[mongo_store] deferring index creation: a transaction is open "
+            "(creating a collection here would abort it)"
+        )
         return
     try:
         db = get_doc_db()
@@ -262,7 +297,7 @@ def insert_docs(collection: str, docs: list[dict[str, Any]],
     """
     if not docs:
         return 0
-    ensure_indexes()
+    ensure_indexes(session)
     try:
         res = _coll(collection).insert_many(docs, ordered=False, session=session)
         return len(res.inserted_ids)
@@ -281,7 +316,7 @@ def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],
     """Upsert `doc` by the `key` filter (the natural key). $set semantics.
     insert_only=True mirrors PG's ON CONFLICT DO NOTHING: existing docs are
     left untouched (use for immutable, content-addressed rows)."""
-    ensure_indexes()
+    ensure_indexes(session)
     update = {"$setOnInsert": doc} if insert_only else {"$set": doc}
     _coll(collection).update_one(key, update, upsert=True, session=session)
 
