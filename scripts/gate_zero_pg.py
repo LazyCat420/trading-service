@@ -96,6 +96,14 @@ SCHEMA_FILES = {
 # So it stays, and stays exempt: its `execute_call` findings are SQL aimed at
 # the frozen Postgres backup, not unconverted application work.
 MIGRATION_TOOLING = {
+    # The soak's quiescence probe. Its whole job is to read Postgres — the
+    # per-table counters in pg_stat_user_tables are the only proof the trading
+    # cycle has stopped touching it that application code cannot fake. It reads
+    # nothing but the statistics views, and it must keep working after the
+    # application stops.
+    "scripts/pg_quiescence.py": "reads pg_stat_user_tables to PROVE the cycle "
+                                "has stopped reading Postgres; statistics "
+                                "views only, never application tables",
     "app/db/table_spec.py": "emits information_schema SQL for the backfill "
                             "mappers, but imports no driver; stays in app/db "
                             "because mongo_query._money() reads its dec128 policy",

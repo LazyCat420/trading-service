@@ -109,7 +109,10 @@ KNOWN_UNPINNED: dict[str, int] = {
     # instruction — do not raise it again.
     "app/services/cycle_scheduler.py": 0,
     "scripts/confidence_audit.py": 1,
-    "scripts/cycle_healthcheck.py": 1,
+    # cycle_healthcheck left this list on 2026-08-19 with its Mongo port: the
+    # SQL freshness probe became a distinct-ticker count, which is
+    # vendor-immune by construction rather than merely out of the SQL
+    # scanner's sight (the Mongo scan checks the same file).
     "scripts/factor_backtest.py": 1,
     "scripts/gate_ablation.py": 1,
     "scripts/mine_shkreli_doctrine.py": 1,
@@ -353,6 +356,16 @@ def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
         src = " ".join(ast.unparse(node).split())
         if _pins_source(src):
             continue
+        # `distinct_values('price_history', 'ticker'|'date', ...)` is
+        # vendor-immune by construction: a second vendor's print for the same
+        # ticker-day adds a duplicate ROW, and a distinct set of tickers or
+        # dates cannot be changed by a duplicate. Pinning a vendor there would
+        # make a coverage/freshness count report the coverage of ONE vendor
+        # while claiming to report the store's.
+        if (fn.attr == "distinct_values" and len(node.args) > 1
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in ("ticker", "date")):
+            continue
         # A pure MAX/MIN/COUNT DISTINCT over `date` is vendor-immune.
         if fn.attr == "agg_row" and all(
             op in _MONGO_IMMUNE_AGGS
@@ -394,7 +407,10 @@ KNOWN_UNPINNED_MONGO: dict[str, int] = {
     "app/processors/technical_processor.py": 1,
     "app/quant/regime_grading.py": 1,
     "app/quant/regime_hmm.py": 1,
-    "app/quant/technical_baseline.py": 3,
+    # 3 -> 2 on 2026-08-19: one of the three was a `distinct_values` over
+    # tickers, which the scanner now recognises as vendor-immune by
+    # construction (a duplicate vendor row cannot change a distinct set).
+    "app/quant/technical_baseline.py": 2,
     "app/routers/market_router.py": 2,
     "app/services/boot_service.py": 2,
     "app/tools/market_tools.py": 1,
