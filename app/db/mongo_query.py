@@ -333,6 +333,22 @@ def group_rows(collection: str, query: dict[str, Any],
     return out
 
 
+def _index_by(docs, key: str) -> dict:
+    """Right-hand docs grouped by join key, MINUS the ones with no key.
+
+    `NULL = NULL` is not true in SQL, so a missing join key matches nothing.
+    Grouping them under `None` instead would join every keyless right document
+    to every keyless left one — a cross product of exactly the rows that should
+    not have joined at all, and one that no row count would look wrong.
+    """
+    index: dict[Any, list[dict]] = {}
+    for d in docs:
+        k = d.get(key)
+        if k is not None:
+            index.setdefault(k, []).append(d)
+    return index
+
+
 def join_rows(left: str, left_query: dict[str, Any], left_key: str,
               right: str, right_key: str, right_query: Optional[dict] = None,
               left_fields: Sequence[str] = (), right_fields: Sequence[str] = (),
@@ -353,9 +369,7 @@ def join_rows(left: str, left_query: dict[str, Any], left_key: str,
     r_docs = mongo_store.find_docs(
         right, right_query or {},
         projection={f: 1 for f in list(right_fields) + [right_key]} | {"_id": 0})
-    index: dict[Any, list[dict]] = {}
-    for d in r_docs:
-        index.setdefault(d.get(right_key), []).append(d)
+    index = _index_by(r_docs, right_key)
 
     l_docs = mongo_store.find_docs(
         left, left_query,
@@ -373,14 +387,118 @@ def join_rows(left: str, left_query: dict[str, Any], left_key: str,
 
     out = []
     for l in l_docs:
-        for r in index.get(l.get(left_key), ()):      # inner join: no match, no row
-            out.append(tuple(
-                _clean_val((l if side == "l" else r).get(col),
-                           as_decimal=col in (l_money if side == "l" else r_money))
-                for side, col in select
-            ))
+        key = l.get(left_key)
+        for r in (() if key is None else index.get(key, ())):  # no match, no row
+            out.append(_stitch(l, r, select, l_money, r_money))
             if limit and len(out) >= limit:
                 return out
+    return out
+
+
+def _stitch(l: dict, r: Optional[dict], select, l_money, r_money) -> tuple:
+    """One output row. `r is None` is the unmatched left row of an outer join,
+    where every right column is NULL — which is what SQL returns and what the
+    callers' `is None` branches already test for."""
+    return tuple(
+        _clean_val((l if side == "l" else (r or {})).get(col),
+                   as_decimal=col in (l_money if side == "l" else r_money))
+        for side, col in select
+    )
+
+
+def left_join_rows(left: str, left_query: dict[str, Any], left_key: str,
+                   right: str, right_key: str, right_query: Optional[dict] = None,
+                   left_fields: Sequence[str] = (), right_fields: Sequence[str] = (),
+                   select: Sequence[tuple[str, str]] = (),
+                   sort: Optional[list] = None, limit: int = 0) -> list[tuple]:
+    """A LEFT OUTER JOIN on one equality — every left row survives.
+
+    Separate from `join_rows` rather than a flag on it, because the two return
+    DIFFERENT ROW COUNTS from the same arguments and a flag is a thing a codemod
+    can get wrong silently. An inner join used where the SQL said LEFT JOIN
+    drops exactly the rows the outer join exists to keep: `sector_aggregator`
+    hit this first — an inner stitch there turns "every S&P 500 name in this
+    sector" into "the ones that happen to have a price row", i.e. a shorter
+    listing that still looks complete.
+
+    Unmatched left rows come back with every right column None, which is what
+    Postgres returns and what the callers already branch on.
+    """
+    r_docs = mongo_store.find_docs(
+        right, right_query or {},
+        projection={f: 1 for f in list(right_fields) + [right_key]} | {"_id": 0})
+    index = _index_by(r_docs, right_key)
+
+    l_docs = mongo_store.find_docs(
+        left, left_query,
+        projection={f: 1 for f in list(left_fields) + [left_key]} | {"_id": 0},
+        sort=sort)
+
+    l_money = _money_cols(left, [c for side, c in select if side == "l"])
+    r_money = _money_cols(right, [c for side, c in select if side != "l"])
+
+    out = []
+    for l in l_docs:
+        key = l.get(left_key)
+        matches = () if key is None else index.get(key, ())
+        for r in matches or (None,):        # no match -> ONE row, right side NULL
+            out.append(_stitch(l, r, select, l_money, r_money))
+            if limit and len(out) >= limit:
+                return out
+    return out
+
+
+def anti_join_rows(left: str, left_query: dict[str, Any], left_key: str,
+                   right: str, right_key: str, right_query: Optional[dict] = None,
+                   left_fields: Sequence[str] = (),
+                   select: Sequence[tuple[str, str]] = (),
+                   sort: Optional[list] = None, limit: int = 0) -> list[tuple]:
+    """`LEFT JOIN r ON ... WHERE r.key IS NULL` — the left rows with NO match.
+
+    THE TRAP THIS EXISTS FOR: an anti-join is the COMPLEMENT of an inner join,
+    so translating one with `join_rows` does not return slightly wrong rows —
+    it returns exactly the rows that should have been excluded, and every one
+    of them looks plausible. "Tickers with no analysis yet" comes back as
+    "tickers that already have one", the caller queues them, and the symptom is
+    duplicated work rather than an error. Known consumers: `pending_review`,
+    `smart_money_tools`, and two sites in `strategy_auditor`.
+
+    `select` takes LEFT columns only: every right column of an anti-join is
+    NULL by construction, so naming one is a sign the statement was not
+    actually an anti-join.
+    """
+    bad = [c for side, c in select if side != "l"]
+    if bad:
+        raise ValueError(
+            f"anti_join_rows selects only left columns; {bad} come from the "
+            "right side, which is NULL for every row an anti-join returns — "
+            "if the query needs them it is a LEFT JOIN (use left_join_rows), "
+            "not an anti-join")
+
+    # Only the key is needed from the right side: the question is membership.
+    r_keys = {
+        d.get(right_key)
+        for d in mongo_store.find_docs(right, right_query or {},
+                                       projection={right_key: 1, "_id": 0})
+    } - {None}
+
+    l_docs = mongo_store.find_docs(
+        left, left_query,
+        projection={f: 1 for f in list(left_fields) + [left_key]} | {"_id": 0},
+        sort=sort)
+
+    l_money = _money_cols(left, [c for side, c in select if side == "l"])
+
+    out = []
+    for l in l_docs:
+        key = l.get(left_key)
+        # A NULL key matches nothing (`NULL = NULL` is not true), so a left row
+        # without one is UNMATCHED and belongs in an anti-join's output.
+        if key is not None and key in r_keys:
+            continue
+        out.append(_stitch(l, None, select, l_money, frozenset()))
+        if limit and len(out) >= limit:
+            return out
     return out
 
 
