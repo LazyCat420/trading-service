@@ -23,6 +23,61 @@ from app.db import mongo_store
 logger = logging.getLogger(__name__)
 
 
+# ── Who started this cycle ────────────────────────────────────────────────
+#
+# START_CYCLE payloads already carry the producer's fingerprint; until now it
+# was accepted, logged as "informational" and dropped. These two helpers turn
+# it into one durable event so the replay API and the dashboard can say WHY a
+# run happened instead of showing an anonymous `cycle-v3-<epoch>`.
+#
+# Ordering is deliberate: `watch_wake` is checked before `dynamic_selection_mode`
+# because the Watch Desk sets neither flag exclusively, and a wake mislabelled
+# as a schedule would hide the tripwire that actually fired.
+
+def _trigger_source(kwargs: dict) -> str:
+    if kwargs.get("watch_wake"):
+        return "watch_desk"
+    if kwargs.get("research_request"):
+        return "research_governor"
+    if kwargs.get("dynamic_selection_mode"):
+        return "schedule"
+    return "manual"
+
+
+def _trigger_payload(kwargs: dict, tickers) -> dict:
+    """Structured provenance for the cycle_trigger event's `data`."""
+    trigger = kwargs.get("watch_trigger") or {}
+    if not isinstance(trigger, dict):
+        trigger = {}
+    return {
+        "source": _trigger_source(kwargs),
+        # The Watch Desk's tripwire type (price_below, rsi, news, ...), when one
+        # fired. Absent rather than empty-stringed: a blank type reads as a
+        # trigger that fired with no condition.
+        "trigger_type": trigger.get("type") or kwargs.get("trigger_type") or None,
+        "reason": (trigger.get("detail") or kwargs.get("research_reason") or None),
+        "tickers": list(tickers or []),
+    }
+
+
+def _trigger_detail(kwargs: dict, tickers) -> str:
+    p = _trigger_payload(kwargs, tickers)
+    labels = {
+        "watch_desk": "Watch Desk trip",
+        "research_governor": "Research Governor",
+        "schedule": "Scheduled cycle",
+        "manual": "Manual run",
+    }
+    parts = [labels[p["source"]]]
+    if p["tickers"]:
+        parts.append(", ".join(p["tickers"][:8]))
+    if p["trigger_type"]:
+        parts.append(f"({p['trigger_type']})")
+    if p["reason"]:
+        parts.append(f"— {p['reason']}")
+    return " ".join(parts)[:500]
+
+
 class _ExplicitTickersPinned(Exception):
     """Control-flow sentinel: an explicit ticker list was requested, so the
     discovery/scoring/freshness/gatekeeper funnel is skipped entirely."""
@@ -590,6 +645,31 @@ class PipelineService:
         })
         cls.save_state()
         cls._stop_requested = False
+
+        # ── Trigger provenance ──
+        # Five producers enqueue START_CYCLE (Watch Desk `wd-`, the UI's `job_`,
+        # the scheduler's `sch-cmd-`/`sch-open-`, the research governor's
+        # `sch-rsrch-`), but the command id is discarded the moment the worker
+        # claims it and the cycle gets a fresh `cycle-v3-<epoch>`. Nothing ever
+        # linked a cycle back to what started it, so "why did this run happen?"
+        # was unanswerable from the dashboard. These kwargs already arrive and
+        # were explicitly informational-only; one event pins them to the
+        # append-only stream, where the replay API can read them back.
+        #
+        # Phase is `starting` ON PURPOSE: the client's parseEvents only treats
+        # collecting/analyzing/trading events as per-ticker, and reads the last
+        # "_"-segment of `step` as a ticker. A trigger event under one of those
+        # phases would invent a phantom asset row.
+        try:
+            cls.emit(
+                "starting",
+                "cycle_trigger",
+                _trigger_detail(kwargs, tickers),
+                status="ok",
+                data={"kind": "cycle_trigger", **_trigger_payload(kwargs, tickers)},
+            )
+        except Exception as e:
+            logger.warning("[PipelineService] trigger provenance emit failed: %s", e)
 
         # ── US Ticker Gate: resolve foreign tickers before they enter the pipeline ──
         if tickers:

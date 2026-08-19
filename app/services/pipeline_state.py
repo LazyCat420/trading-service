@@ -84,6 +84,68 @@ class PipelineStateDB:
         except Exception as me:
             logger.error("[PipelineStateDB] Mongo events append failed: %s", me)
 
+    # ── Per-cycle readers ─────────────────────────────────────────────────
+    #
+    # Extracted out of get_state so the SAME read can serve a cycle that is no
+    # longer the singleton. `/run-cycle/status` only ever carried the ONE cycle
+    # named in `pipeline_state`, which is why the dashboard's pipeline grid lost
+    # every asset row the moment the next cycle started. `pipeline_events` is
+    # append-only and nothing was ever deleted — there was simply no reader that
+    # took a cycle_id.
+    #
+    # These are the ONE definition of the wire shape. The cycle-replay endpoint
+    # delegates here rather than re-deriving it: a second copy that drifted by a
+    # single key would not raise, it would render an empty grid, which looks
+    # exactly like a cycle that processed nothing.
+
+    @classmethod
+    def get_cycle_events(cls, cycle_id: str, limit: int | None = None) -> list[dict]:
+        """A cycle's events, oldest-first, as {ts, phase, step, detail, status,
+        data, elapsed_ms}. Identical shape from either store."""
+        if not cycle_id:
+            return []
+        try:
+            events = mongo_store.read_pipeline_events(cycle_id)
+            return events[:limit] if limit else events
+        except Exception as mev_e:
+            logger.error("[PipelineStateDB] Mongo events read failed for %s: %s", cycle_id, mev_e)
+            return []
+
+    @classmethod
+    def get_cycle_results(cls, cycle_id: str) -> list[dict]:
+        """A cycle's analysis results (the dicts carrying action / confidence /
+        trade_executed).
+
+        The pipeline grid's OUTPUT column needs these: the only phase='trading'
+        event carries {kind, ticker, side, qty, price} and NO action, so a grid
+        row without a matching result falls through to its `|| 'HOLD'` and
+        `|| 0` defaults and renders a confident-looking "HOLD 0%" for a decision
+        nobody made. Any consumer that shows a past cycle must read these too.
+        """
+        if not cycle_id:
+            return []
+        try:
+            results = []
+            for doc in mongo_store.find_docs(
+                "analysis_results", {"cycle_id": cycle_id},
+                projection={"_id": 0, "ticker": 1, "result_json": 1},
+            ):
+                try:
+                    res = doc.get("result_json")
+                    if isinstance(res, str):
+                        res = json.loads(res)
+                    elif not isinstance(res, dict):
+                        res = {}
+                    if "ticker" not in res and doc.get("ticker"):
+                        res["ticker"] = doc["ticker"]
+                    results.append(res)
+                except Exception:
+                    pass
+            return results
+        except Exception as ar_e:
+            logger.error("[PipelineStateDB] Failed to fetch results for %s: %s", cycle_id, ar_e)
+            return []
+
     @classmethod
     def get_state(cls, summary_only: bool = False) -> dict:
         try:
@@ -97,37 +159,13 @@ class PipelineStateDB:
                 d.pop("singleton_id", None)
 
             if d:
+                # Enrich with events and results when the caller wants the
+                # full state; both readers are the ONE definition of the wire
+                # shape (see the per-cycle readers above).
                 cycle_id = d.get("cycle_id")
                 if cycle_id and not summary_only:
-                    try:
-                        d["events"] = mongo_store.read_pipeline_events(cycle_id)
-                    except Exception as mev_e:
-                        logger.error("[PipelineStateDB] Mongo events read failed: %s", mev_e)
-                        d["events"] = []
-
-                    try:
-                        ar_docs = mongo_store.find_docs(
-                            "analysis_results",
-                            {"cycle_id": cycle_id},
-                            projection={"_id": 0, "ticker": 1, "result_json": 1},
-                        )
-                        results = []
-                        for ar in ar_docs:
-                            try:
-                                res = ar.get("result_json")
-                                if isinstance(res, str):
-                                    res = json.loads(res)
-                                elif not isinstance(res, dict):
-                                    res = {}
-                                if "ticker" not in res and ar.get("ticker"):
-                                    res["ticker"] = ar["ticker"]
-                                results.append(res)
-                            except Exception:
-                                pass
-                        d["results"] = results
-                    except Exception as ar_e:
-                        logger.error("[PipelineStateDB] Failed to fetch results for state: %s", ar_e)
-                        d["results"] = []
+                    d["events"] = cls.get_cycle_events(cycle_id)
+                    d["results"] = cls.get_cycle_results(cycle_id)
                 else:
                     d["events"] = []
                     d["results"] = []
