@@ -695,8 +695,20 @@ class TestMockTradingCycleMongoE2E:
             "days_to_disclose": 15,
         }])
 
-        # Query fundamentals tool
-        fund_tool_res = json.loads(await get_finviz_fundamentals_tool("MSFT"))
+        # Query fundamentals tool.
+        #
+        # The scrape is stubbed out because this assertion is about the STORED
+        # row: the tool calls collect_fundamentals() first, which fetches
+        # finviz over the network and upserts a real row with today's
+        # snapshot_date. This used to pass only by accident — the scraped row
+        # carried a `datetime.date` and the fixture a `datetime`, so the two
+        # sorted apart and the fixture happened to win. Now that a DATE column
+        # stores one type (app/db/date_fields.py) both are the same midnight,
+        # the sort is a tie, and the test would assert MSFT's live P/E.
+        # A unit test should not have been reaching the network for this at all.
+        with patch("app.collectors.finviz_scraper.collect_fundamentals",
+                   new=AsyncMock(return_value=None)):
+            fund_tool_res = json.loads(await get_finviz_fundamentals_tool("MSFT"))
         assert fund_tool_res["ticker"] == "MSFT"
         assert fund_tool_res["pe_ratio"] == 35.5
 
