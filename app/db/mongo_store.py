@@ -33,6 +33,7 @@ from typing import Any, Iterable, Optional
 import pymongo
 
 from app.config import settings
+from app.db import date_fields
 from app.db.mongo import get_mongo_client
 
 logger = logging.getLogger(__name__)
@@ -298,6 +299,7 @@ def insert_docs(collection: str, docs: list[dict[str, Any]],
     if not docs:
         return 0
     ensure_indexes(session)
+    docs = date_fields.coerce_docs(collection, docs)
     try:
         res = _coll(collection).insert_many(docs, ordered=False, session=session)
         return len(res.inserted_ids)
@@ -317,6 +319,8 @@ def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],
     insert_only=True mirrors PG's ON CONFLICT DO NOTHING: existing docs are
     left untouched (use for immutable, content-addressed rows)."""
     ensure_indexes(session)
+    key = date_fields.coerce_filter(collection, key)
+    doc = date_fields.coerce_doc(collection, doc)
     update = {"$setOnInsert": doc} if insert_only else {"$set": doc}
     _coll(collection).update_one(key, update, upsert=True, session=session)
 
@@ -337,6 +341,7 @@ def bulk_upsert(collection: str, docs: list[dict[str, Any]],
     if not docs:
         return 0
     ensure_indexes()
+    docs = date_fields.coerce_docs(collection, docs)
     keys = [key_field] if isinstance(key_field, str) else list(key_field)
     ops = [
         pymongo.UpdateOne({k: d[k] for k in keys}, {"$set": d}, upsert=True)
@@ -349,6 +354,7 @@ def bulk_upsert(collection: str, docs: list[dict[str, Any]],
 def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = None,
               projection: Optional[dict] = None, limit: int = 0,
               session: Optional[Any] = None) -> list[dict[str, Any]]:
+    query = date_fields.coerce_filter(collection, query)
     cur = _coll(collection).find(query, projection, session=session)
     if sort:
         cur = cur.sort(sort)
@@ -361,15 +367,16 @@ def aggregate(collection: str, pipeline: list[dict[str, Any]],
               session: Optional[Any] = None) -> list[dict[str, Any]]:
     """Run an aggregation pipeline (the Mongo replacement for SQL GROUP BY /
     DISTINCT ON readers)."""
+    pipeline = date_fields.coerce_pipeline(collection, pipeline)
     return list(_coll(collection).aggregate(pipeline, allowDiskUse=True, session=session))
 
 
 def count_docs(collection: str, query: Optional[dict] = None) -> int:
-    return _coll(collection).count_documents(query or {})
+    return _coll(collection).count_documents(date_fields.coerce_filter(collection, query or {}))
 
 
 def distinct_values(collection: str, field: str, query: Optional[dict] = None) -> list:
-    return _coll(collection).distinct(field, query or {})
+    return _coll(collection).distinct(field, date_fields.coerce_filter(collection, query or {}))
 
 
 def delete_docs(collection: str, query: dict[str, Any],
@@ -380,7 +387,8 @@ def delete_docs(collection: str, query: dict[str, Any],
     if not query:
         raise ValueError("delete_docs with an empty query would empty the collection; "
                          "pass an explicit filter (or use {'_id': {'$exists': True}} deliberately)")
-    res = _coll(collection).delete_many(query, session=session)
+    res = _coll(collection).delete_many(
+        date_fields.coerce_filter(collection, query), session=session)
     return res.deleted_count
 
 
@@ -391,6 +399,8 @@ def update_docs(collection: str, query: dict[str, Any], update: dict[str, Any],
     operators ($set/$inc/...)."""
     if not any(k.startswith("$") for k in update):
         update = {"$set": update}
+    query = date_fields.coerce_filter(collection, query)
+    update = date_fields.coerce_update(collection, update)
     res = _coll(collection).update_many(query, update, upsert=upsert, session=session)
     return res.modified_count
 
@@ -406,6 +416,8 @@ def find_one_and_update(collection: str, query: dict[str, Any], update: dict[str
     default) or None when nothing matched."""
     if not any(k.startswith("$") for k in update):
         update = {"$set": update}
+    query = date_fields.coerce_filter(collection, query)
+    update = date_fields.coerce_update(collection, update)
     return _coll(collection).find_one_and_update(
         query, update, sort=sort, upsert=upsert,
         return_document=pymongo.ReturnDocument.AFTER if return_after else pymongo.ReturnDocument.BEFORE,

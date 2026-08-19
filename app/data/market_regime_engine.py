@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pymongo
 import yfinance as yf
-from app.db import mongo_query, mongo_store
+from app.db import date_fields, mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ async def compute_sector_breadth():
         inserts.append(
             (
                 sector,
-                latest_date.strftime("%Y-%m-%d"),
+                date_fields.as_date(latest_date),   # DATE column — see date_fields
                 float(pct_above_50) if pd.notna(pct_above_50) else 0.0,
                 float(pct_above_200) if pd.notna(pct_above_200) else 0.0,
                 int(new_highs),
@@ -171,7 +171,7 @@ async def compute_market_regime():
             regime_label = "Neutral"
 
         doc = {
-            "date": pd.Timestamp.now().strftime("%Y-%m-%d"),
+            "date": date_fields.as_date(pd.Timestamp.now()),   # DATE column
             "vix_level": vix_level,
             "vix_signal": "Elevated" if vix_level > 20 else "Normal",
             "vix_zscore": 0.0,

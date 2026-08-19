@@ -12,6 +12,8 @@ per sector-day, so the test now reads the upsert KEY and the stored fields
 rather than a positional tuple whose meaning depended on the column order in
 a SQL string.
 """
+from datetime import datetime
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -78,10 +80,16 @@ async def test_backfill_sector_performance_populates_history():
     assert len(written) == 1
     key, doc = written[0]
     # The upsert must be keyed on the sector-day identity, or a re-run would
-    # append duplicate history instead of replacing it.
-    assert key == {"sector": "Technology", "date": "2023-01-02"}
+    # append duplicate history instead of replacing it — and the day must be a
+    # DATETIME, not the "2023-01-02" string this used to assert. `date` is a
+    # DATE column: Postgres parsed the string on the way in, Mongo would have
+    # stored it verbatim beside the date-typed documents the backfill wrote,
+    # and the key would then have matched none of them. See
+    # app/db/date_fields.py and tests/unit/test_date_fields_are_one_type.py.
+    assert key == {"sector": "Technology", "date": datetime(2023, 1, 2)}
     assert doc["sector"] == "Technology"
-    assert doc["date"] == "2023-01-02"
+    assert doc["date"] == datetime(2023, 1, 2)
+    assert type(doc["date"]) is datetime   # not a pandas Timestamp subclass
     # AAPL went 100 -> 105 (5%), MSFT went 200 -> 210 (5%), average is 5% (0.05)
     assert doc["avg_return_1d"] == pytest.approx(0.05)
 

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pymongo
 
-from app.db import mongo_query, mongo_store
+from app.db import date_fields, mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +201,11 @@ async def compute_sector_performance():
         inserts.append(
             (
                 sector,
-                latest_date.strftime("%Y-%m-%d"),
+                # `date` is a DATE column: one representation, set by the store
+                # (app/db/date_fields.py). Under Postgres this line wrote the
+                # string "2026-08-18" and PG parsed it; Mongo would have STORED
+                # the string, beside 2,798 date-typed documents.
+                date_fields.as_date(latest_date),
                 float(avg_1d) if pd.notna(avg_1d) else 0.0,
                 float(avg_5d) if pd.notna(avg_5d) else 0.0,
                 float(avg_30d) if pd.notna(avg_30d) else 0.0,
@@ -284,7 +288,7 @@ async def backfill_sector_performance():
     sector_daily = sector_daily.dropna(subset=["avg_return_1d"])
 
     inserts = [
-        (row["sector"], row["date"].strftime("%Y-%m-%d"), float(row["avg_return_1d"]))
+        (row["sector"], date_fields.as_date(row["date"]), float(row["avg_return_1d"]))
         for _, row in sector_daily.iterrows()
     ]
 
